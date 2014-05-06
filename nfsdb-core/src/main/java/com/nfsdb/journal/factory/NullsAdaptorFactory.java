@@ -18,8 +18,8 @@ package com.nfsdb.journal.factory;
 
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
 
-public interface NullsAdaptorFactory {
+public interface NullsAdaptorFactory<B> {
 
-    public <T> NullsAdaptor<T> getInstance(Class<T> type) throws JournalConfigurationException;
+    public <T extends B> NullsAdaptor<T> getInstance(Class<T> type) throws JournalConfigurationException;
 
 }

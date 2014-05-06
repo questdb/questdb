@@ -269,7 +269,10 @@ public class Partition<T> implements Iterable<T>, Closeable {
                     break;
             }
         }
-        journal.getMetadata().getNullsAdaptor().setNulls(obj, nulls);
+
+        if (nullsAdaptor != null) {
+            nullsAdaptor.setNulls(obj, nulls);
+        }
     }
 
     public void append(Iterator<T> it) throws JournalException {
@@ -281,7 +284,11 @@ public class Partition<T> implements Iterable<T>, Closeable {
     public void append(T obj) throws JournalException {
         int columnCount = journal.getMetadata().getColumnCount();
         nulls.clear();
-        nullsAdaptor.getNulls(obj, nulls);
+
+        if (nullsAdaptor != null) {
+            nullsAdaptor.getNulls(obj, nulls);
+        }
+
         for (int i = 0; i < columnCount; i++) {
             Journal.ColumnMetadata meta = journal.getColumnMetadata(i);
             switch (meta.meta.type) {

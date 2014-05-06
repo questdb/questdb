@@ -14,9 +14,12 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal;
+package com.nfsdb.thrift;
 
-import com.nfsdb.journal.factory.ThriftNullsAdaptor;
+import org.apache.thrift.TBase;
+import org.apache.thrift.TException;
+import org.apache.thrift.TFieldIdEnum;
+import org.apache.thrift.protocol.TProtocol;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -34,7 +37,7 @@ public class ThriftNullsTest {
 
         ByteFieldSample sample = new ByteFieldSample();
         adaptor.setNulls(sample, source);
-        Assert.assertEquals("10001", Integer.toBinaryString(sample.__isset_bitfield));
+        Assert.assertEquals("1", Integer.toBinaryString(sample.__isset_bitfield));
     }
 
     @Test
@@ -43,11 +46,11 @@ public class ThriftNullsTest {
         BitSet source = new BitSet();
         source.set(0);
         source.set(2);
-        source.set(3);
+        source.set(1);
 
         ShortFieldSample sample = new ShortFieldSample();
         adaptor.setNulls(sample, source);
-        Assert.assertEquals("1", Integer.toBinaryString(sample.__isset_bitfield));
+        Assert.assertEquals("10", Integer.toBinaryString(sample.__isset_bitfield));
     }
 
     @Test
@@ -73,7 +76,7 @@ public class ThriftNullsTest {
 
         LongFieldSample sample = new LongFieldSample();
         adaptor.setNulls(sample, source);
-        Assert.assertEquals("10001", Integer.toBinaryString(sample.__isset_bitfield));
+        Assert.assertEquals("1", Integer.toBinaryString(sample.__isset_bitfield));
     }
 
     @Test
@@ -144,48 +147,136 @@ public class ThriftNullsTest {
         Assert.assertEquals("{1}", dst.toString());
     }
 
+    private static abstract class AbstractSample implements TBase {
+        @Override
+        public void read(TProtocol tProtocol) throws TException {
+
+        }
+
+        @Override
+        public void write(TProtocol tProtocol) throws TException {
+
+        }
+
+        @Override
+        public TFieldIdEnum fieldForId(int i) {
+            return null;
+        }
+
+        @Override
+        public boolean isSet(TFieldIdEnum tFieldIdEnum) {
+            return false;
+        }
+
+        @Override
+        public Object getFieldValue(TFieldIdEnum tFieldIdEnum) {
+            return null;
+        }
+
+        @Override
+        public void setFieldValue(TFieldIdEnum tFieldIdEnum, Object o) {
+
+        }
+
+        @Override
+        public TBase deepCopy() {
+            return null;
+        }
+
+
+        @Override
+        public int compareTo(Object o) {
+            return this == o ? 0 : -1;
+        }
+    }
+
     @SuppressWarnings("unused")
-    private static class ByteFieldSample {
+    private static class ByteFieldSample extends AbstractSample {
         private byte __isset_bitfield = 16;
         private String s1;
         private int a;
         private String s2;
         private long b;
+
+        @Override
+        public void clear() {
+            __isset_bitfield = 0;
+            s1 = null;
+            a = 0;
+            s2 = null;
+            b = 0;
+        }
     }
 
     @SuppressWarnings("unused")
-    private static class ShortFieldSample {
+    private static class ShortFieldSample extends AbstractSample {
         private short __isset_bitfield = 0;
         private String s1;
         private int a;
         private String s2;
         private long b;
+
+        @Override
+        public void clear() {
+            __isset_bitfield = 0;
+            s1 = null;
+            a = 0;
+            s2 = null;
+            b = 0;
+        }
     }
 
     @SuppressWarnings("unused")
-    private static class IntFieldSample {
+    private static class IntFieldSample extends AbstractSample {
         private int __isset_bitfield = 0;
         private String s1;
         private int a;
         private String s2;
         private long b;
+
+        @Override
+        public void clear() {
+            __isset_bitfield = 0;
+            s1 = null;
+            a = 0;
+            s2 = null;
+            b = 0;
+        }
     }
 
     @SuppressWarnings("unused")
-    private static class LongFieldSample {
+    private static class LongFieldSample extends AbstractSample {
         private int __isset_bitfield = 16;
         private String s1;
         private int a;
         private String s2;
         private long b;
+
+        @Override
+        public void clear() {
+            __isset_bitfield = 0;
+            s1 = null;
+            a = 0;
+            s2 = null;
+            b = 0;
+        }
     }
 
     @SuppressWarnings("unused")
-    private static class BitSetSample {
+    private static class BitSetSample extends AbstractSample {
         private final BitSet __isset_bit_vector = new BitSet(2);
         private String s1;
         private int a;
         private String s2;
         private long b;
+
+        @Override
+        public void clear() {
+            __isset_bit_vector.clear();
+            s1 = null;
+            a = 0;
+            s2 = null;
+            b = 0;
+        }
     }
 }

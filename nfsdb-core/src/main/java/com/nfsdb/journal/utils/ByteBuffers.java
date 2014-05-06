@@ -58,8 +58,8 @@ public final class ByteBuffers {
         return result;
     }
 
-    public static int copy(ReadableByteChannel from, ByteBuffer to) throws JournalNetworkException {
-        return copy(from, to, to.remaining());
+    public static void copy(ReadableByteChannel from, ByteBuffer to) throws JournalNetworkException {
+        copy(from, to, to.remaining());
     }
 
     public static int copy(ReadableByteChannel from, ByteBuffer to, int count) throws JournalNetworkException {

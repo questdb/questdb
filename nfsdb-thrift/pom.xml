@@ -20,10 +20,9 @@
 
     <version>1.0</version>
     <groupId>com.nfsdb</groupId>
-    <artifactId>nfsdb-core</artifactId>
+    <artifactId>nfsdb-thrift</artifactId>
     <packaging>jar</packaging>
-    <name>NFSdb.Core.Library</name>
-    <description>Low Latency, high throughput database and cache</description>
+    <name>NFSdb.Thrift.Support</name>
 
     <url>http://www.nfsdb.org</url>
     <licenses>
@@ -63,44 +62,6 @@
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-jar-plugin</artifactId>
-                <version>2.4</version>
-                <executions>
-                    <execution>
-                        <goals>
-                            <goal>test-jar</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-source-plugin</artifactId>
-                <version>2.2.1</version>
-                <executions>
-                    <execution>
-                        <id>attach-sources</id>
-                        <goals>
-                            <goal>jar</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-javadoc-plugin</artifactId>
-                <version>2.9.1</version>
-                <executions>
-                    <execution>
-                        <id>attach-javadocs</id>
-                        <goals>
-                            <goal>jar</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-gpg-plugin</artifactId>
                 <version>1.5</version>
                 <executions>
@@ -119,24 +80,16 @@
     <dependencies>
 
         <dependency>
-            <groupId>net.sf.trove4j</groupId>
-            <artifactId>trove4j</artifactId>
-            <version>3.0.3</version>
+            <groupId>com.nfsdb</groupId>
+            <artifactId>nfsdb-core</artifactId>
+            <version>1.0</version>
         </dependency>
 
         <dependency>
-            <groupId>joda-time</groupId>
-            <artifactId>joda-time</artifactId>
-            <version>2.3</version>
+            <groupId>org.apache.thrift</groupId>
+            <artifactId>libthrift</artifactId>
+            <version>0.9.1</version>
         </dependency>
-
-        <dependency>
-            <groupId>com.lmax</groupId>
-            <artifactId>disruptor</artifactId>
-            <version>3.2.1</version>
-        </dependency>
-
-        <!-- test dependencies -->
 
         <dependency>
             <groupId>junit</groupId>
@@ -146,11 +99,20 @@
         </dependency>
 
         <dependency>
-            <groupId>nfsdb</groupId>
+            <groupId>com.nfsdb</groupId>
             <artifactId>nfsdb-test-model</artifactId>
             <version>1.0</version>
             <scope>test</scope>
         </dependency>
 
+        <dependency>
+            <groupId>com.nfsdb</groupId>
+            <artifactId>nfsdb-core</artifactId>
+            <version>1.0</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+
     </dependencies>
+
 </project>

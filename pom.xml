@@ -3,7 +3,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <version>1.0</version>
-    <groupId>nfsdb</groupId>
+    <groupId>com.nfsdb</groupId>
     <artifactId>NFSdb</artifactId>
     <packaging>pom</packaging>
     <name>NFSdb.Development</name>
@@ -11,6 +11,7 @@
     <modules>
         <module>nfsdb-test-model</module>
         <module>nfsdb-core</module>
+        <module>nfsdb-thrift</module>
         <module>nfsdb-guice</module>
     </modules>
 </project>

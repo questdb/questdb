@@ -26,6 +26,7 @@ import com.nfsdb.journal.exceptions.JournalUnsupportedTypeException;
 import com.nfsdb.journal.factory.JournalClosingListener;
 import com.nfsdb.journal.factory.JournalConfiguration;
 import com.nfsdb.journal.factory.JournalMetadata;
+import com.nfsdb.journal.factory.NullsAdaptor;
 import com.nfsdb.journal.iterators.JournalIterator;
 import com.nfsdb.journal.iterators.ParallelIterator;
 import com.nfsdb.journal.locks.Lock;
@@ -348,31 +349,35 @@ public class Journal<T> implements Iterable<T>, Closeable {
     }
 
     public void clearObject(T obj) {
-        for (int i = 0, count = metadata.getColumnCount(); i < count; i++) {
-            JournalMetadata.ColumnMetadata m = metadata.getColumnMetadata(i);
+        NullsAdaptor nullsAdaptor = metadata.getNullsAdaptor();
+        if (nullsAdaptor != null) {
             metadata.getNullsAdaptor().clear(obj);
-            switch (m.type) {
-                case BOOLEAN:
-                    Unsafe.getUnsafe().putBoolean(obj, m.offset, false);
-                    break;
-                case BYTE:
-                    Unsafe.getUnsafe().putByte(obj, m.offset, (byte) 0);
-                    break;
-                case DOUBLE:
-                    Unsafe.getUnsafe().putDouble(obj, m.offset, 0d);
-                    break;
-                case INT:
-                    Unsafe.getUnsafe().putInt(obj, m.offset, 0);
-                    break;
-                case LONG:
-                    Unsafe.getUnsafe().putLong(obj, m.offset, 0L);
-                    break;
-                case STRING:
-                case SYMBOL:
-                    Unsafe.getUnsafe().putObject(obj, m.offset, null);
-                    break;
-                default:
-                    throw new JournalUnsupportedTypeException(m.type);
+        } else {
+            for (int i = 0, count = metadata.getColumnCount(); i < count; i++) {
+                JournalMetadata.ColumnMetadata m = metadata.getColumnMetadata(i);
+                switch (m.type) {
+                    case BOOLEAN:
+                        Unsafe.getUnsafe().putBoolean(obj, m.offset, false);
+                        break;
+                    case BYTE:
+                        Unsafe.getUnsafe().putByte(obj, m.offset, (byte) 0);
+                        break;
+                    case DOUBLE:
+                        Unsafe.getUnsafe().putDouble(obj, m.offset, 0d);
+                        break;
+                    case INT:
+                        Unsafe.getUnsafe().putInt(obj, m.offset, 0);
+                        break;
+                    case LONG:
+                        Unsafe.getUnsafe().putLong(obj, m.offset, 0L);
+                        break;
+                    case STRING:
+                    case SYMBOL:
+                        Unsafe.getUnsafe().putObject(obj, m.offset, null);
+                        break;
+                    default:
+                        throw new JournalUnsupportedTypeException(m.type);
+                }
             }
         }
     }

@@ -14,31 +14,38 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal;
+package com.nfsdb.thrift;
 
+import com.nfsdb.journal.Journal;
+import com.nfsdb.journal.JournalMode;
+import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.collections.LongArrayList;
 import com.nfsdb.journal.column.SymbolIndex;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.query.api.QueryAllBuilder;
 import com.nfsdb.journal.test.model.Quote;
-import com.nfsdb.journal.test.tools.AbstractTest;
+import com.nfsdb.journal.test.tools.JournalTestFactory;
 import com.nfsdb.journal.test.tools.TestUtils;
 import com.nfsdb.journal.utils.Dates;
 import org.joda.time.Interval;
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.Rule;
 import org.junit.Test;
 
 import java.io.File;
 import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 
-public class PerformanceTest extends AbstractTest {
+public class PerformanceTest {
 
     public static final int TEST_DATA_SIZE = 1000000;
     private static final Logger LOGGER = Logger.getLogger(PerformanceTest.class);
     private static boolean enabled = false;
+
+    @Rule
+    public JournalTestFactory factory = new JournalTestFactory(new ThriftNullsAdaptorFactory());
 
     @BeforeClass
     public static void setUp() throws Exception {

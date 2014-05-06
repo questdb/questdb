@@ -19,7 +19,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <version>1.0</version>
-    <groupId>nfsdb</groupId>
+    <groupId>com.nfsdb</groupId>
     <artifactId>nfsdb-guice</artifactId>
     <packaging>jar</packaging>
     <name>NFSdb.Guice.Support.Library</name>
@@ -125,7 +125,7 @@
         </dependency>
 
         <dependency>
-            <groupId>nfsdb</groupId>
+            <groupId>com.nfsdb</groupId>
             <artifactId>nfsdb-core</artifactId>
             <version>1.0</version>
         </dependency>
@@ -139,7 +139,7 @@
         </dependency>
 
         <dependency>
-            <groupId>nfsdb</groupId>
+            <groupId>com.nfsdb</groupId>
             <artifactId>nfsdb-core</artifactId>
             <version>1.0</version>
             <type>test-jar</type>
@@ -147,7 +147,7 @@
         </dependency>
 
         <dependency>
-            <groupId>nfsdb</groupId>
+            <groupId>com.nfsdb</groupId>
             <artifactId>nfsdb-test-model</artifactId>
             <version>1.0</version>
             <scope>test</scope>

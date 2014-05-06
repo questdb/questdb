@@ -37,8 +37,9 @@ public class ResultSetTest extends AbstractTest {
         Journal<TestEntity> r = factory.reader(TestEntity.class);
         ResultSet<TestEntity> rs = r.query().all().asResultSet();
         Assert.assertEquals(3, rs.size());
-        Assert.assertTrue(rs.isNull(0, 2));
-        Assert.assertFalse(rs.isNull(0, 3));
+        Assert.assertTrue(rs.isNull(0, 5));
+        Assert.assertTrue(rs.isNull(0, 6));
+        Assert.assertFalse(rs.isNull(0, 1));
     }
 
     @Test

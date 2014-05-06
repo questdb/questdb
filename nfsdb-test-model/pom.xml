@@ -19,7 +19,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <version>1.0</version>
-    <groupId>nfsdb</groupId>
+    <groupId>com.nfsdb</groupId>
     <artifactId>nfsdb-test-model</artifactId>
     <packaging>jar</packaging>
     <name>NFSdb.Test.Model</name>
@@ -27,10 +27,6 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
-
-    <scm>
-        <url>scm:git:https://github.com/bluestreak01/nfsdb.git</url>
-    </scm>
 
     <build>
         <plugins>

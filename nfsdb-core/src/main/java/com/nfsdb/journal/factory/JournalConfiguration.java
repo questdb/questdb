@@ -62,7 +62,7 @@ public class JournalConfiguration {
     private final String configurationFile;
     private final int globalRecordHint;
     private boolean configured = false;
-    private NullsAdaptorFactory nullsAdaptorFactory = new ThriftNullsAdaptorFactory();
+    private NullsAdaptorFactory nullsAdaptorFactory;
 
     public JournalConfiguration(File journalBase) {
         this(DEFAULT_CONFIG_FILE, journalBase);
@@ -220,7 +220,7 @@ public class JournalConfiguration {
                             getIntAttr(xmlr, "openPartitionTTL", OPEN_PARTITION_TTL),
                             getIntAttr(xmlr, "lagHours", DEFAULT_LAG_HOURS),
                             getStringAttr(xmlr, "key"),
-                            nullsAdaptorFactory.getInstance(type)
+                            nullsAdaptorFactory == null ? null : nullsAdaptorFactory.getInstance(type)
                     );
                 } catch (ClassNotFoundException e) {
                     throw new JournalConfigurationException("Cannot load class: " + className, e);

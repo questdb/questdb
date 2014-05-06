@@ -19,6 +19,7 @@ package com.nfsdb.journal.factory;
 import java.util.BitSet;
 
 public interface NullsAdaptor<T> {
+
     public void setNulls(T obj, BitSet src);
 
     public void getNulls(T obj, BitSet dst);

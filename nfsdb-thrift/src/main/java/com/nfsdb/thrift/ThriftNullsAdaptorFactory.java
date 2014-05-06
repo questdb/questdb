@@ -14,14 +14,17 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.factory;
+package com.nfsdb.thrift;
 
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
+import com.nfsdb.journal.factory.NullsAdaptor;
+import com.nfsdb.journal.factory.NullsAdaptorFactory;
+import org.apache.thrift.TBase;
 
-public class ThriftNullsAdaptorFactory implements NullsAdaptorFactory {
+public class ThriftNullsAdaptorFactory implements NullsAdaptorFactory<TBase> {
 
     @Override
-    public <T> NullsAdaptor<T> getInstance(Class<T> type) throws JournalConfigurationException {
+    public <T extends TBase> NullsAdaptor<T> getInstance(Class<T> type) throws JournalConfigurationException {
         return new ThriftNullsAdaptor<>(type);
     }
 }

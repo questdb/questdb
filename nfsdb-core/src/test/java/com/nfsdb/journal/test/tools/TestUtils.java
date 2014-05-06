@@ -52,7 +52,7 @@ public final class TestUtils {
         Quote q = new Quote();
         Random r = new Random(System.currentTimeMillis());
         for (int i = 0; i < count; i++) {
-            w.clearObject(q);
+            q.clear();
             q.setSym(symbols[Math.abs(r.nextInt() % (symbols.length))]);
             q.setAsk(Math.abs(r.nextDouble()));
             q.setBid(Math.abs(r.nextDouble()));
@@ -75,7 +75,7 @@ public final class TestUtils {
         Quote q = new Quote();
         Random r = new Random(System.currentTimeMillis());
         for (int i = 0; i < count; i++) {
-            w.clearObject(q);
+            q.clear();
             q.setSym(symbols[Math.abs(r.nextInt() % (symbols.length - 1))]);
             q.setAsk(Math.abs(r.nextDouble()));
             q.setBid(Math.abs(r.nextDouble()));
@@ -117,7 +117,7 @@ public final class TestUtils {
             Random r = new Random(System.currentTimeMillis());
 
             for (int k = 0; k < perMonth; k++) {
-                w.clearObject(q);
+                q.clear();
                 q.setSym(symbols[Math.abs(r.nextInt() % (symbols.length - 1))]);
                 q.setAsk(Math.abs(r.nextDouble()));
                 q.setBid(Math.abs(r.nextDouble()));

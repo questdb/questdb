@@ -23,6 +23,7 @@ import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalClosingListener;
 import com.nfsdb.journal.factory.JournalConfiguration;
 import com.nfsdb.journal.factory.JournalFactory;
+import com.nfsdb.journal.factory.NullsAdaptorFactory;
 import com.nfsdb.journal.utils.Files;
 import org.junit.rules.TestRule;
 import org.junit.runner.Description;
@@ -37,6 +38,10 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
 
     public JournalTestFactory() {
         super(new JournalConfiguration(Files.makeTempDir()));
+    }
+
+    public <B> JournalTestFactory(NullsAdaptorFactory<B> factory) {
+        super(new JournalConfiguration(Files.makeTempDir()).setNullsAdaptorFactory(factory));
     }
 
     @Override
