@@ -60,7 +60,7 @@ public class PerformanceTest extends AbstractTest {
 
 
         long result = System.nanoTime() - t;
-        LOGGER.info("append (1M): " + TimeUnit.NANOSECONDS.toMillis(result/5) + "ms");
+        LOGGER.info("append (1M): " + TimeUnit.NANOSECONDS.toMillis(result / 5) + "ms");
         if (enabled) {
             Assert.assertTrue("Append speed must be under 750ms (" + TimeUnit.NANOSECONDS.toMillis(result) + ")", TimeUnit.NANOSECONDS.toMillis(result) < 700);
         }

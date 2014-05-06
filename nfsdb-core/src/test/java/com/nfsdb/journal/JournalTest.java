@@ -21,7 +21,6 @@ import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalConfiguration;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.test.model.Quote;
-import com.nfsdb.journal.test.model.Trade2;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestData;
 import com.nfsdb.journal.test.tools.TestUtils;
