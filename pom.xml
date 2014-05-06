@@ -4,10 +4,21 @@
 
     <version>1.0</version>
     <groupId>com.nfsdb</groupId>
-    <artifactId>NFSdb</artifactId>
+    <artifactId>nfsdb-devel</artifactId>
     <packaging>pom</packaging>
     <name>NFSdb.Development</name>
 
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-deploy-plugin</artifactId>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
     <modules>
         <module>nfsdb-test-model</module>
         <module>nfsdb-core</module>
