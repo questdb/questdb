@@ -24,6 +24,27 @@
     <packaging>jar</packaging>
     <name>NFSdb.Test.Model</name>
 
+    <url>http://www.nfsdb.org</url>
+    <licenses>
+        <license>
+            <name>The Apache Software License, Version 2.0</name>
+            <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+            <comments>A business-friendly OSS license</comments>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <name>Vlad Ilyushchenko</name>
+            <email>bluestreak@gmail.com</email>
+        </developer>
+    </developers>
+
+    <scm>
+        <url>scm:git:https://github.com/bluestreak01/nfsdb.git</url>
+    </scm>
+
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
@@ -51,25 +72,18 @@
                 </executions>
             </plugin>
             <plugin>
-                <groupId>com.google.code.maven-replacer-plugin</groupId>
-                <artifactId>replacer</artifactId>
-                <version>1.5.2</version>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-gpg-plugin</artifactId>
+                <version>1.5</version>
                 <executions>
                     <execution>
-                        <phase>generate-sources</phase>
+                        <id>sign-artifacts</id>
+                        <phase>verify</phase>
                         <goals>
-                            <goal>replace</goal>
+                            <goal>sign</goal>
                         </goals>
                     </execution>
                 </executions>
-                <configuration>
-                    <includes>
-                        <include>target/generated-sources/**/*.java</include>
-                    </includes>
-                    <regex>true</regex>
-                    <token>\s+private _Fields optionals\[\] = .*</token>
-                    <value/>
-                </configuration>
             </plugin>
         </plugins>
     </build>

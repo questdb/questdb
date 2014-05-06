@@ -23,6 +23,7 @@
     <artifactId>nfsdb-thrift</artifactId>
     <packaging>jar</packaging>
     <name>NFSdb.Thrift.Support</name>
+    <description>NFSdb Apache Thrift support library</description>
 
     <url>http://www.nfsdb.org</url>
     <licenses>
