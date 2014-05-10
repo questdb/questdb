@@ -18,10 +18,10 @@ package com.nfsdb.journal;
 
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.iterators.ParallelIterator;
+import com.nfsdb.journal.iterators.ConcurrentIterator;
 import com.nfsdb.journal.iterators.ResultSetBufferedIterator;
+import com.nfsdb.journal.iterators.ResultSetConcurrentIterator;
 import com.nfsdb.journal.iterators.ResultSetIterator;
-import com.nfsdb.journal.iterators.ResultSetParallelIterator;
 import com.nfsdb.journal.utils.Rows;
 import gnu.trove.list.TLongList;
 import gnu.trove.list.array.TLongArrayList;
@@ -137,12 +137,12 @@ public class ResultSet<T> implements Iterable<T> {
         return new ResultSetBufferedIterator<>(this);
     }
 
-    public ParallelIterator<T> parallelIterator() {
+    public ConcurrentIterator<T> parallelIterator() {
         return parallelIterator(1024);
     }
 
-    public ParallelIterator<T> parallelIterator(int bufferSize) {
-        return new ResultSetParallelIterator<>(this, bufferSize);
+    public ConcurrentIterator<T> parallelIterator(int bufferSize) {
+        return new ResultSetConcurrentIterator<>(this, bufferSize);
     }
 
     public T readFirst() throws JournalException {

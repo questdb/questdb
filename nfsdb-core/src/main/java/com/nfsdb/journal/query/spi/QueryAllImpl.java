@@ -84,9 +84,13 @@ public class QueryAllImpl<T> implements QueryAll<T> {
         return new JournalBufferedIterator<>(journal, createRanges());
     }
 
+    public JournalRowBufferedIterator<T> bufferedRowIterator() {
+        return new JournalRowBufferedIterator<>(journal, createRanges());
+    }
+
     @Override
-    public AbstractParallelIterator<T> parallelIterator() {
-        return new JournalParallelIterator<>(journal, createRanges(), 1024);
+    public AbstractConcurrentIterator<T> concurrentIterator() {
+        return new JournalConcurrentIterator<>(journal, createRanges(), 1024);
     }
 
     @Override
@@ -100,13 +104,13 @@ public class QueryAllImpl<T> implements QueryAll<T> {
     }
 
     @Override
-    public AbstractParallelIterator<T> parallelIterator(Interval interval) {
-        return new JournalParallelIterator<>(journal, createRanges(interval), 1024);
+    public AbstractConcurrentIterator<T> concurrentIterator(Interval interval) {
+        return new JournalConcurrentIterator<>(journal, createRanges(interval), 1024);
     }
 
     @Override
-    public JournalIterator<T> iterator(long rowID) {
-        return new JournalIteratorImpl<>(journal, createRanges(rowID));
+    public JournalIterator<T> iterator(long loRowID) {
+        return new JournalIteratorImpl<>(journal, createRanges(loRowID));
     }
 
     @Override
@@ -115,8 +119,8 @@ public class QueryAllImpl<T> implements QueryAll<T> {
     }
 
     @Override
-    public AbstractParallelIterator<T> parallelIterator(long rowid) {
-        return new JournalParallelIterator<>(journal, createRanges(rowid), 1024);
+    public AbstractConcurrentIterator<T> concurrentIterator(long rowid) {
+        return new JournalConcurrentIterator<>(journal, createRanges(rowid), 1024);
     }
 
     private List<JournalIteratorRange> createRanges() {
@@ -151,16 +155,16 @@ public class QueryAllImpl<T> implements QueryAll<T> {
         return ranges;
     }
 
-    private List<JournalIteratorRange> createRanges(long hi) {
+    private List<JournalIteratorRange> createRanges(long lo) {
         List<JournalIteratorRange> ranges = new ArrayList<>();
-        int ceilingPartitionID = Rows.toPartitionIndex(hi);
-        long ceilingLocalRowID = Rows.toLocalRowID(hi);
+        int loPartitionID = Rows.toPartitionIndex(lo);
+        long loLocalRowID = Rows.toLocalRowID(lo);
 
         try {
-            for (int i = ceilingPartitionID; i < journal.getPartitionCount(); i++) {
+            for (int i = loPartitionID; i < journal.getPartitionCount(); i++) {
                 long localRowID = 0;
-                if (i == ceilingPartitionID) {
-                    localRowID = ceilingLocalRowID;
+                if (i == loPartitionID) {
+                    localRowID = loLocalRowID;
                 }
 
                 Partition<T> p = journal.getPartition(i, true);

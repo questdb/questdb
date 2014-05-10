@@ -228,7 +228,7 @@ public class SymbolIndex implements Closeable {
     }
 
     /**
-     * Counts values for a key. Uses case for this method is best illustrated by this code sample:
+     * Counts values for a key. Uses case for this method is best illustrated by this code examples:
      * <p/>
      * int c = index.getValueCount(key)
      * for (int i = c-1; i >=0; i--) {

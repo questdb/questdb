@@ -19,6 +19,7 @@ package com.nfsdb.journal.factory;
 import com.nfsdb.journal.concurrent.NamedDaemonThreadFactory;
 import com.nfsdb.journal.concurrent.TimerCache;
 import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.logging.Logger;
 
 import java.io.Closeable;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -27,16 +28,18 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class JournalPool implements Closeable {
+    private static final Logger LOGGER = Logger.getLogger(JournalPool.class);
+
     private final ArrayBlockingQueue<JournalCachingFactory> pool;
     private final ExecutorService service = Executors.newCachedThreadPool(new NamedDaemonThreadFactory("pool-release-thread", true));
     private final AtomicBoolean running = new AtomicBoolean(true);
 
-    public JournalPool(JournalConfiguration configuration, int capacity) {
+    public JournalPool(JournalConfiguration configuration, int capacity) throws InterruptedException {
         this.pool = new ArrayBlockingQueue<>(capacity, true);
 
         TimerCache timerCache = new TimerCache().start();
         for (int i = 0; i < capacity; i++) {
-            assert pool.offer(new JournalCachingFactory(configuration, timerCache, this));
+            pool.put(new JournalCachingFactory(configuration, timerCache, this));
         }
     }
 
@@ -62,15 +65,16 @@ public class JournalPool implements Closeable {
 
     void release(final JournalCachingFactory factory) {
         service.submit(new Runnable() {
-            @Override
-            public void run() {
-                while (true) {
-                    factory.expireOpenFiles();
-                    if (pool.offer(factory)) {
-                        break;
-                    }
-                }
-            }
-        });
+                           @Override
+                           public void run() {
+                               factory.expireOpenFiles();
+                               try {
+                                   pool.put(factory);
+                               } catch (InterruptedException e) {
+                                   LOGGER.error("Cannot return factory to pool", e);
+                               }
+                           }
+                       }
+        );
     }
 }

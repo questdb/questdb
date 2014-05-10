@@ -17,8 +17,8 @@
 package com.nfsdb.journal;
 
 import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.iterators.ConcurrentIterator;
 import com.nfsdb.journal.iterators.JournalIterator;
-import com.nfsdb.journal.iterators.ParallelIterator;
 import com.nfsdb.journal.query.api.Query;
 import com.nfsdb.journal.query.api.QueryAllBuilder;
 import com.nfsdb.journal.query.api.QueryHeadBuilder;
@@ -658,7 +658,7 @@ public class QueryTest extends AbstractTest {
         Interval interval = Dates.interval("2013-05-04T06:40:00.000Z", "2013-05-05T17:23:20.000Z");
         Query<Quote> q2 = factory.reader(Quote.class).query();
         JournalIterator<Quote> expected = q.all().iterator(interval);
-        try (ParallelIterator<Quote> actual = q2.all().parallelIterator(interval)) {
+        try (ConcurrentIterator<Quote> actual = q2.all().concurrentIterator(interval)) {
             TestUtils.assertEquals(expected, actual);
         }
     }
@@ -1197,7 +1197,7 @@ public class QueryTest extends AbstractTest {
 
         Query<Quote> q2 = buildQuery2();
         TestUtils.assertEquals(expected, q2.all().iterator(35184372088930L));
-        try (ParallelIterator<Quote> iterator = q2.all().parallelIterator(35184372088930L)) {
+        try (ConcurrentIterator<Quote> iterator = q2.all().concurrentIterator(35184372088930L)) {
             TestUtils.assertEquals(expected, iterator);
 
         }
@@ -1207,7 +1207,7 @@ public class QueryTest extends AbstractTest {
     public void testResultSetParallelIterator() throws Exception {
         JournalIterator<Quote> expected = q.all().bufferedIterator();
         Query<Quote> q2 = factory.reader(Quote.class).query();
-        try (ParallelIterator<Quote> actual = q2.all().asResultSet().parallelIterator()) {
+        try (ConcurrentIterator<Quote> actual = q2.all().asResultSet().parallelIterator()) {
             TestUtils.assertEquals(expected, actual);
         }
     }

@@ -24,5 +24,6 @@
         <module>nfsdb-core</module>
         <module>nfsdb-thrift</module>
         <module>nfsdb-guice</module>
+        <module>nfsdb-samples</module>
     </modules>
 </project>

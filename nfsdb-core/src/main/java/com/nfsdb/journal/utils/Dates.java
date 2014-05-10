@@ -106,7 +106,7 @@ public final class Dates {
             case MONTH:
                 return interval.getStart().toString("YYYY-MM");
             case DAY:
-                return interval.getStart().toString("YYYY-MM-DD");
+                return interval.getStart().toString("YYYY-MM-dd");
             case NONE:
                 return "default";
         }

@@ -21,8 +21,8 @@ import com.nfsdb.journal.exceptions.JournalException;
 import java.io.Closeable;
 
 public abstract class AbstractColumn implements Closeable {
+    protected long txAppendOffset = -1;
     private final MappedFile mappedFile;
-    private long txAppendOffset = -1;
 
     public abstract void truncate(long size);
 

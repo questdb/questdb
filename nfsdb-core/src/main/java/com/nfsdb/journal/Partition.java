@@ -21,10 +21,10 @@ import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.factory.JournalMetadata;
 import com.nfsdb.journal.factory.NullsAdaptor;
-import com.nfsdb.journal.iterators.ParallelIterator;
+import com.nfsdb.journal.iterators.ConcurrentIterator;
 import com.nfsdb.journal.iterators.PartitionBufferedIterator;
+import com.nfsdb.journal.iterators.PartitionConcurrentIterator;
 import com.nfsdb.journal.iterators.PartitionIterator;
-import com.nfsdb.journal.iterators.PartitionParallelIterator;
 import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.utils.ByteBuffers;
 import com.nfsdb.journal.utils.Dates;
@@ -347,14 +347,15 @@ public class Partition<T> implements Iterable<T>, Closeable {
                     break;
                 case SYMBOL:
                     String sym = (String) Unsafe.getUnsafe().getObject(obj, meta.meta.offset);
+                    long oldSz;
                     if (sym == null) {
                         nulls.set(i);
-                        ((FixedWidthColumn) columns[i]).putInt(SymbolTable.VALUE_IS_NULL);
+                        oldSz = ((FixedWidthColumn) columns[i]).putInt(SymbolTable.VALUE_IS_NULL);
                     } else {
-                        ((FixedWidthColumn) columns[i]).putInt(meta.symbolTable.put(sym));
+                        oldSz = ((FixedWidthColumn) columns[i]).putInt(meta.symbolTable.put(sym));
                     }
                     if (meta.meta.indexed) {
-                        columnIndexProxies.get(i).getIndex().put(meta.symbolTable.put(sym), columns[i].size());
+                        columnIndexProxies.get(i).getIndex().put(meta.symbolTable.put(sym), oldSz);
                     }
                     break;
             }
@@ -501,16 +502,16 @@ public class Partition<T> implements Iterable<T>, Closeable {
         return new PartitionBufferedIterator<>(this, lo, hi);
     }
 
-    public ParallelIterator<T> parallelIterator() {
+    public ConcurrentIterator<T> parallelIterator() {
         return parallelIterator(0, size() - 1);
     }
 
-    public ParallelIterator<T> parallelIterator(long lo, long hi) {
+    public ConcurrentIterator<T> parallelIterator(long lo, long hi) {
         return parallelIterator(lo, hi, 1024);
     }
 
-    public ParallelIterator<T> parallelIterator(long lo, long hi, int bufferSize) {
-        return new PartitionParallelIterator<>(this, lo, hi, bufferSize);
+    public ConcurrentIterator<T> parallelIterator(long lo, long hi, int bufferSize) {
+        return new PartitionConcurrentIterator<>(this, lo, hi, bufferSize);
     }
 
     @Override

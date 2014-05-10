@@ -45,7 +45,7 @@ public class PerformanceTest {
     private static boolean enabled = false;
 
     @Rule
-    public JournalTestFactory factory = new JournalTestFactory(new ThriftNullsAdaptorFactory());
+    public final JournalTestFactory factory = new JournalTestFactory(new ThriftNullsAdaptorFactory());
 
     @BeforeClass
     public static void setUp() throws Exception {

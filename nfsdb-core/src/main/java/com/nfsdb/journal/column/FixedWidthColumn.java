@@ -74,8 +74,9 @@ public class FixedWidthColumn extends AbstractColumn {
         getBuffer().putFloat(value);
     }
 
-    public void putInt(int value) {
+    public long putInt(int value) {
         getBuffer().putInt(value);
+        return txAppendOffset / width - 1;
     }
 
     public void putLong(long value) {

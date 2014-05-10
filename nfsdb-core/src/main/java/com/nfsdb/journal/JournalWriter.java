@@ -24,8 +24,8 @@ import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.factory.JournalConfiguration;
 import com.nfsdb.journal.factory.JournalMetadata;
+import com.nfsdb.journal.iterators.ConcurrentIterator;
 import com.nfsdb.journal.iterators.MergingIterator;
-import com.nfsdb.journal.iterators.ParallelIterator;
 import com.nfsdb.journal.locks.Lock;
 import com.nfsdb.journal.locks.LockManager;
 import com.nfsdb.journal.logging.Logger;
@@ -54,7 +54,7 @@ public class JournalWriter<T> extends Journal<T> {
     private TxListener txListener;
     private boolean txActive = false;
     private int txPartitionIndex = -1;
-    private long hardMaxTimestamp = 0;
+    private long hardMaxTimestamp = -1;
     private PartitionCleaner partitionCleaner;
     private boolean autoCommit = true;
     // irregular partition related
@@ -141,7 +141,7 @@ public class JournalWriter<T> extends Journal<T> {
                     getSymbolTable(i).truncate(tx.symbolTableSizes[i]);
                 }
             }
-            hardMaxTimestamp = 0;
+            hardMaxTimestamp = -1;
             txActive = false;
         }
     }
@@ -256,7 +256,7 @@ public class JournalWriter<T> extends Journal<T> {
         for (int i = 0; i < getSymbolTableCount(); i++) {
             getSymbolTable(i).truncate();
         }
-        hardMaxTimestamp = 0;
+        hardMaxTimestamp = -1;
         commit();
     }
 
@@ -333,7 +333,7 @@ public class JournalWriter<T> extends Journal<T> {
      * @throws com.nfsdb.journal.exceptions.JournalException if journal cannot calculate timestamp.
      */
     public long getImmutableMaxTimestamp() throws JournalException {
-        if (hardMaxTimestamp == 0) {
+        if (hardMaxTimestamp == -1) {
             if (nonLagPartitionCount() == 0) {
                 return 0;
             }
@@ -400,7 +400,7 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     public void append(Journal<T> journal) throws JournalException {
-        try (ParallelIterator<T> iterator = journal.parallelIterator()) {
+        try (ConcurrentIterator<T> iterator = journal.concurrentIterator()) {
             for (T obj : iterator) {
                 append(obj);
             }

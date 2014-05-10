@@ -205,25 +205,6 @@ public final class TestUtils {
         }
     }
 
-    public static void generateQuoteData2(int count, long timetamp, int increment) {
-        String symbols[] = {"ALDW", "AMD", "HSBA.L"};
-        String exchanges[] = {"LXE", "GR", "SK", "LN"};
-        Random r = new Random(System.currentTimeMillis());
-        for (int i = 0; i < count; i++) {
-            Quote q = new Quote();
-            q.setSym(symbols[Math.abs(r.nextInt() % (symbols.length))]);
-            q.setAsk(Math.abs(r.nextDouble()));
-            q.setBid(Math.abs(r.nextDouble()));
-            q.setAskSize(Math.abs(r.nextInt()));
-            q.setBidSize(Math.abs(r.nextInt()));
-            q.setEx(exchanges[Math.abs(r.nextInt() % (exchanges.length))]);
-            q.setMode("Fast trading");
-            q.setTimestamp(timetamp);
-            timetamp += increment;
-            print(q);
-        }
-    }
-
     public static void generateTestEntityData(JournalWriter<TestEntity> w, int count, long timetamp, int increment) throws JournalException {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L", null};
         Random r = new Random(System.currentTimeMillis());
@@ -338,10 +319,6 @@ public final class TestUtils {
             }
             Assert.assertEquals(expected.next(), actual.next());
         }
-    }
-
-    public static void main(String[] args) {
-        generateQuoteData2(100, Dates.toMillis("2013-02-10T10:00:00.000Z"), 50000);
     }
 
     private TestUtils() {

@@ -27,8 +27,9 @@ import com.nfsdb.journal.factory.JournalClosingListener;
 import com.nfsdb.journal.factory.JournalConfiguration;
 import com.nfsdb.journal.factory.JournalMetadata;
 import com.nfsdb.journal.factory.NullsAdaptor;
+import com.nfsdb.journal.iterators.ConcurrentIterator;
 import com.nfsdb.journal.iterators.JournalIterator;
-import com.nfsdb.journal.iterators.ParallelIterator;
+import com.nfsdb.journal.iterators.JournalRowBufferedIterator;
 import com.nfsdb.journal.locks.Lock;
 import com.nfsdb.journal.locks.LockManager;
 import com.nfsdb.journal.logging.Logger;
@@ -71,11 +72,13 @@ public class Journal<T> implements Iterable<T>, Closeable {
             return (x < y) ? -1 : ((x == y) ? 0 : 1);
         }
     };
+    private final NullsAdaptor<T> nullsAdaptor;
     private boolean open;
     private String readColumns[] = {};
     private ColumnMetadata columnMetadata[];
     private Partition<T> irregularPartition;
     private JournalClosingListener closeListener;
+
 
     public Journal(JournalKey<T> key, JournalMetadata<T> metadata, TimerCache timerCache) throws JournalException {
         this.metadata = metadata;
@@ -85,6 +88,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         this.txLog = new TxLog(location, getMode());
         this.open = true;
         this.timestampOffset = getMetadata().getTimestampColumnMetadata() == null ? -1 : getMetadata().getTimestampColumnMetadata().offset;
+        this.nullsAdaptor = getMetadata().getNullsAdaptor();
         configure();
     }
 
@@ -349,7 +353,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
     }
 
     public void clearObject(T obj) {
-        NullsAdaptor nullsAdaptor = metadata.getNullsAdaptor();
         if (nullsAdaptor != null) {
             metadata.getNullsAdaptor().clear(obj);
         } else {
@@ -405,8 +408,12 @@ public class Journal<T> implements Iterable<T>, Closeable {
         return query().all().bufferedIterator();
     }
 
-    public ParallelIterator<T> parallelIterator() {
-        return query().all().parallelIterator();
+    public JournalRowBufferedIterator<T> bufferedRowIterator() {
+        return query().all().bufferedRowIterator();
+    }
+
+    public ConcurrentIterator<T> concurrentIterator() {
+        return query().all().concurrentIterator();
     }
 
     /**

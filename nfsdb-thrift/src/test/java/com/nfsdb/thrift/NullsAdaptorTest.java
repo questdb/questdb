@@ -14,7 +14,7 @@ import org.junit.Test;
 public class NullsAdaptorTest {
 
     @Rule
-    public JournalTestFactory factory = new JournalTestFactory(new ThriftNullsAdaptorFactory());
+    public final JournalTestFactory factory = new JournalTestFactory(new ThriftNullsAdaptorFactory());
 
     @Test
     public void testFirstSymbolNull() throws JournalException {

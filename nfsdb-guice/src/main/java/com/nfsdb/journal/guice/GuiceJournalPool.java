@@ -25,7 +25,7 @@ import com.nfsdb.journal.factory.JournalPool;
 public class GuiceJournalPool extends JournalPool {
 
     @Inject
-    public GuiceJournalPool(JournalConfiguration configuration, SizeHolder holder) {
+    public GuiceJournalPool(JournalConfiguration configuration, SizeHolder holder) throws InterruptedException {
         super(configuration, holder.maxSize);
     }
 
