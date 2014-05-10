@@ -1,11 +1,25 @@
 NFSdb
 ======
 
-Monster performance. Brutal simplicity. Sub-microsecond latency with no GC overhead. Unlimited capacity. Open Source. Tiny total cost of ownership.
+NFSdb is a low latency, high throughput time-series database written entirely in Java. The goal of the project is a study of what's possible in java with large datasets and to share benefits of this study with everybody.
 
-Yes, it is another database and no, it is not like any other. Too good to be true? Download now and try for yourself.
+NFSdb requires minimum of Java 7.
 
-NFSdb opens new horizons for software development: you no longer have to worry about how to store your data, you can focus on thinking what you can do with it.
+It is available on maven Central
 
+```xml
+        <dependency>
+            <groupId>com.nfsdb</groupId>
+            <artifactId>nfsdb-core</artifactId>
+            <version>1.0.1</version>
+        </dependency>
 
-Jump to our [wiki page] (https://github.com/bluestreak01/nfsdb/wiki) to get started!
+```
+
+I would like to encourage you to try it out. You can find sample code in [nfsdb-samples] (https://github.com/bluestreak01/nfsdb/tree/master/nfsdb-samples) repository.
+
+Alternatively there is quick start guide on github [wiki] (https://github.com/bluestreak01/nfsdb/wiki)
+
+Repository as is this page is being actively supported and there will be more examples available in the next couple of days.
+
+10 May 2014.
