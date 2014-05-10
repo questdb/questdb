@@ -19,9 +19,9 @@ NFSdb requires minimum of Java 7 and stable release is available from maven Cent
 
 ### Getting started
 
-To help you getting started we have created code examples in [nfsdb-samples] (https://github.com/bluestreak01/nfsdb/tree/master/nfsdb-samples) repository.
+To help you getting started we have created code examples in [nfsdb-samples] (https://github.com/NFSdb/nfsdb/tree/master/nfsdb-samples) repository.
 
-Alternatively there is quick start guide on github [wiki] (https://github.com/bluestreak01/nfsdb/wiki)
+Alternatively there is quick start guide on github [wiki] (https://github.com/NFSdb/nfsdb/wiki)
 
 ### Performance
 
