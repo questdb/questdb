@@ -35,6 +35,6 @@ NFSdb is available under [Apache 2.0 License] (http://www.apache.org/licenses/LI
 
 NFSdb project is being actively developed and supported. You can raise and [Issue] (https://github.com/bluestreak01/nfsdb/issues) on github or join our [google group] (https://groups.google.com/forum/#!forum/nfsdb)
 
-Our project web site [www.nfsdb.org] (http://www.nfsdb.org) is coming soon!
+Our project web site [www.nfsdb.org] (http://nfsdb.org) is coming soon!
 
 12 May 2014.
