@@ -4,9 +4,11 @@ import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.utils.Dates;
+import com.nfsdb.journal.utils.Files;
 import org.joda.time.DateTime;
 import org.nfsdb.examples.model.Quote;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Random;
@@ -35,6 +37,10 @@ public class AppendUnorderedToLag {
         String journalLocation = args[0];
 
         try (JournalFactory factory = new JournalFactory(journalLocation)) {
+
+            // delete existing quote journal
+            Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote-lag"));
+
             try (JournalWriter<Quote> writer = factory.writer(
                     Quote.class             // model class
                     , "quote-lag"           // directory name where journal is stored. This is relative to factory location.

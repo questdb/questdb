@@ -200,16 +200,16 @@ public class JournalMetadata<T> {
         return recordHint;
     }
 
-    public void setRecordHint(int recordHint) {
+    public void setRecordHint(int recordHint) throws JournalConfigurationException {
         this.recordHint = recordHint;
-        adjustHintsForStrings();
+        adjustHintsForComplexTypes();
     }
 
     public String getKey() {
         return key;
     }
 
-    void updateVariableSizes() {
+    void updateVariableSizes() throws JournalConfigurationException {
 
         for (int i = 0, columnMetadataListSize = columnMetadataList.size(); i < columnMetadataListSize; i++) {
             ColumnMetadata m = columnMetadataList.get(i);
@@ -234,7 +234,7 @@ public class JournalMetadata<T> {
             }
         }
 
-        adjustHintsForStrings();
+        adjustHintsForComplexTypes();
     }
 
     @SuppressWarnings("unchecked")
@@ -242,7 +242,7 @@ public class JournalMetadata<T> {
         try {
             this.constructor = modelClass.getDeclaredConstructor();
         } catch (NoSuchMethodException e) {
-            throw new JournalConfigurationException("No default constructor declared on " + modelClass.getName());
+            throw new JournalConfigurationException("No default constructor declared on %s", modelClass.getName());
         }
 
         Field[] classFields = modelClass.getDeclaredFields();
@@ -278,21 +278,28 @@ public class JournalMetadata<T> {
         }
 
         if (timestampColumn != null && !columnMetadataMap.containsKey(timestampColumn)) {
-            throw new JournalConfigurationException("Invalid timestampColumn value on journal: " + this);
+            throw new JournalConfigurationException("Invalid timestampColumn value on journal: %s", this);
         }
 
         if (partitionType != PartitionType.NONE && timestampColumn == null) {
             throw new JournalConfigurationException(
-                    "Either use partitionType=NONE or specify 'timestampColumn' on journal: " + this);
+                    "Either use partitionType=NONE or specify 'timestampColumn' on journal: %s", this);
         }
     }
 
-    private void adjustHintsForStrings() {
+    private void adjustHintsForComplexTypes() throws JournalConfigurationException {
         for (int i = 0, columnMetadataListSize = columnMetadataList.size(); i < columnMetadataListSize; i++) {
             ColumnMetadata meta = columnMetadataList.get(i);
+            if (meta.size == 0 || meta.avgSize == 0) {
+                throw new JournalConfigurationException("Invalid size for column %s.%s", this.getModelClass().getName(), meta.name);
+            }
             switch (meta.type) {
                 case STRING:
                     meta.bitHint = ByteBuffers.getBitHint(meta.avgSize * 2, recordHint);
+                    meta.indexBitHint = ByteBuffers.getBitHint(8, recordHint);
+                    break;
+                case BINARY:
+                    meta.bitHint = ByteBuffers.getBitHint(meta.avgSize, recordHint);
                     meta.indexBitHint = ByteBuffers.getBitHint(8, recordHint);
                     break;
                 default:

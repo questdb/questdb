@@ -17,6 +17,7 @@
 package com.nfsdb.journal.test.tools;
 
 import com.nfsdb.journal.Journal;
+import com.nfsdb.journal.JournalBulkWriter;
 import com.nfsdb.journal.JournalKey;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
@@ -87,6 +88,14 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
     @Override
     public <T> JournalWriter<T> writer(JournalKey<T> key) throws JournalException {
         JournalWriter<T> writer = super.writer(key);
+        journals.add(writer);
+        writer.setCloseListener(this);
+        return writer;
+    }
+
+    @Override
+    public <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException {
+        JournalBulkWriter<T> writer = super.bulkWriter(key);
         journals.add(writer);
         writer.setCloseListener(this);
         return writer;

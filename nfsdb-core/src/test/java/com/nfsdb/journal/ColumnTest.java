@@ -16,17 +16,21 @@
 
 package com.nfsdb.journal;
 
-import com.nfsdb.journal.column.FixedWidthColumn;
+import com.nfsdb.journal.column.FixedColumn;
 import com.nfsdb.journal.column.MappedFile;
 import com.nfsdb.journal.column.MappedFileImpl;
-import com.nfsdb.journal.column.VarcharColumn;
+import com.nfsdb.journal.column.VariableColumn;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalMetadata;
+import com.nfsdb.journal.test.tools.TestUtils;
+import com.nfsdb.journal.utils.ByteBuffers;
 import com.nfsdb.journal.utils.Files;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
+import java.nio.ByteBuffer;
+import java.util.Random;
 
 public class ColumnTest {
     @Rule
@@ -52,7 +56,7 @@ public class ColumnTest {
 
         MappedFile mf = new MappedFileImpl(dataFile, 22, JournalMode.APPEND);
 
-        try (FixedWidthColumn pcc = new FixedWidthColumn(mf, 4)) {
+        try (FixedColumn pcc = new FixedColumn(mf, 4)) {
             for (int i = 0; i < 10000; i++) {
                 pcc.putInt(i);
                 pcc.commit();
@@ -61,7 +65,7 @@ public class ColumnTest {
 
         MappedFile mf2 = new MappedFileImpl(dataFile, 22, JournalMode.READ);
 
-        try (FixedWidthColumn pcc2 = new FixedWidthColumn(mf2, 4)) {
+        try (FixedColumn pcc2 = new FixedColumn(mf2, 4)) {
             Assert.assertEquals(66, pcc2.getInt(66));
             Assert.assertEquals(4597, pcc2.getInt(4597));
             Assert.assertEquals(120, pcc2.getInt(120));
@@ -69,7 +73,7 @@ public class ColumnTest {
         }
 
         MappedFile mf3 = new MappedFileImpl(dataFile, 22, JournalMode.READ);
-        try (FixedWidthColumn pcc3 = new FixedWidthColumn(mf3, 4)) {
+        try (FixedColumn pcc3 = new FixedColumn(mf3, 4)) {
             Assert.assertEquals(4598, pcc3.getInt(4598));
         }
     }
@@ -81,7 +85,7 @@ public class ColumnTest {
         MappedFile df1 = new MappedFileImpl(dataFile, 22, JournalMode.APPEND);
         MappedFile idxFile1 = new MappedFileImpl(indexFile, 22, JournalMode.APPEND);
 
-        try (VarcharColumn varchar1 = new VarcharColumn(df1, idxFile1, JournalMetadata.BYTE_LIMIT)) {
+        try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1, JournalMetadata.BYTE_LIMIT)) {
             for (int i = 0; i < recordCount; i++) {
                 varchar1.putString("s" + i);
                 varchar1.commit();
@@ -91,7 +95,7 @@ public class ColumnTest {
         MappedFile df2 = new MappedFileImpl(dataFile, 22, JournalMode.APPEND);
         MappedFile idxFile2 = new MappedFileImpl(indexFile, 22, JournalMode.APPEND);
 
-        try (VarcharColumn varchar2 = new VarcharColumn(df2, idxFile2, JournalMetadata.BYTE_LIMIT)) {
+        try (VariableColumn varchar2 = new VariableColumn(df2, idxFile2, JournalMetadata.BYTE_LIMIT)) {
             Assert.assertEquals(recordCount, varchar2.size());
             for (int i = 0; i < varchar2.size(); i++) {
                 String s = varchar2.getString(i);
@@ -105,7 +109,7 @@ public class ColumnTest {
         MappedFile df1 = new MappedFileImpl(dataFile, 22, JournalMode.APPEND);
         MappedFile idxFile1 = new MappedFileImpl(indexFile, 22, JournalMode.APPEND);
 
-        try (VarcharColumn varchar1 = new VarcharColumn(df1, idxFile1, JournalMetadata.BYTE_LIMIT)) {
+        try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1, JournalMetadata.BYTE_LIMIT)) {
             varchar1.putString("string1");
             varchar1.commit();
             varchar1.putString("string2");
@@ -123,7 +127,7 @@ public class ColumnTest {
         MappedFile df2 = new MappedFileImpl(dataFile, 22, JournalMode.READ);
         MappedFile idxFile2 = new MappedFileImpl(indexFile, 22, JournalMode.READ);
 
-        try (VarcharColumn varchar2 = new VarcharColumn(df2, idxFile2, JournalMetadata.BYTE_LIMIT)) {
+        try (VariableColumn varchar2 = new VariableColumn(df2, idxFile2, JournalMetadata.BYTE_LIMIT)) {
             Assert.assertEquals("string1", varchar2.getString(0));
             Assert.assertEquals("string2", varchar2.getString(1));
 //            Assert.assertNull(varchar2.getString(2));
@@ -139,7 +143,7 @@ public class ColumnTest {
         MappedFile df1 = new MappedFileImpl(dataFile, 22, JournalMode.APPEND);
         MappedFile idxFile1 = new MappedFileImpl(indexFile, 22, JournalMode.APPEND);
 
-        try (VarcharColumn varchar1 = new VarcharColumn(df1, idxFile1, JournalMetadata.BYTE_LIMIT)) {
+        try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1, JournalMetadata.BYTE_LIMIT)) {
             varchar1.putString("string1");
             varchar1.commit();
             varchar1.putString("string2");
@@ -167,7 +171,7 @@ public class ColumnTest {
         MappedFile df2 = new MappedFileImpl(dataFile, 22, JournalMode.READ);
         MappedFile idxFile12 = new MappedFileImpl(indexFile, 22, JournalMode.READ);
 
-        try (VarcharColumn varchar2 = new VarcharColumn(df2, idxFile12, JournalMetadata.BYTE_LIMIT)) {
+        try (VariableColumn varchar2 = new VariableColumn(df2, idxFile12, JournalMetadata.BYTE_LIMIT)) {
             Assert.assertEquals("string1", varchar2.getString(0));
             Assert.assertEquals("string2", varchar2.getString(1));
 //            Assert.assertNull(varchar2.getString(2));
@@ -177,7 +181,7 @@ public class ColumnTest {
 
     @Test
     public void testFixedWidthFloat() throws Exception {
-        try (FixedWidthColumn col = new FixedWidthColumn(new MappedFileImpl(dataFile, 22, JournalMode.APPEND), 4)) {
+        try (FixedColumn col = new FixedColumn(new MappedFileImpl(dataFile, 22, JournalMode.APPEND), 4)) {
             int max = 150;
             for (int i = 0; i < max; i++) {
                 col.putFloat((max - i) + 0.33f);
@@ -192,7 +196,7 @@ public class ColumnTest {
 
     @Test
     public void testFixedWidthNull() throws Exception {
-        try (FixedWidthColumn col = new FixedWidthColumn(new MappedFileImpl(dataFile, 22, JournalMode.APPEND), 4)) {
+        try (FixedColumn col = new FixedColumn(new MappedFileImpl(dataFile, 22, JournalMode.APPEND), 4)) {
             int max = 150;
             for (int i = 0; i < max; i++) {
                 col.putNull();
@@ -200,6 +204,34 @@ public class ColumnTest {
             }
 
             Assert.assertEquals(max, col.size());
+        }
+    }
+
+    @Test
+    public void testVarByteBuffer() throws Exception {
+        // bit hint 12 = 4k buffer, length of stored buffer must be larger than 4k for proper test.
+        MappedFile df1 = new MappedFileImpl(dataFile, 12, JournalMode.APPEND);
+        MappedFile idxFile1 = new MappedFileImpl(indexFile, 12, JournalMode.APPEND);
+
+        final Random random = new Random(System.currentTimeMillis());
+        final int len = 5024;
+        try (VariableColumn col = new VariableColumn(df1, idxFile1, 10)) {
+            ByteBuffer buf = ByteBuffer.allocate(len);
+            String s = TestUtils.randomString(random, buf.remaining() / 2);
+            ByteBuffers.putStr(buf, s);
+            buf.flip();
+            col.putBuffer(buf);
+            col.commit();
+
+            ByteBuffer bb = ByteBuffer.allocate(col.getBufferSize(0));
+            col.getBuffer(0, bb, bb.remaining());
+            bb.flip();
+            char chars[] = new char[bb.remaining() / 2];
+            for (int i = 0; i < chars.length; i++) {
+                chars[i] = bb.getChar();
+            }
+            String actual = new String(chars);
+            Assert.assertEquals(s, actual);
         }
     }
 }

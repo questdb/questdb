@@ -26,15 +26,15 @@ import com.nfsdb.journal.utils.ByteBuffers;
 import java.nio.ByteBuffer;
 
 
-public class VarcharColumn extends AbstractColumn {
-    private static final Logger LOGGER = Logger.getLogger(VarcharColumn.class);
-    private final FixedWidthColumn indexColumn;
+public class VariableColumn extends AbstractColumn {
+    private static final Logger LOGGER = Logger.getLogger(VariableColumn.class);
+    private final FixedColumn indexColumn;
     private final int maxLen;
     private char buffer[] = new char[32];
 
-    public VarcharColumn(MappedFile dataFile, MappedFile indexFile, int maxLen) {
+    public VariableColumn(MappedFile dataFile, MappedFile indexFile, int maxLen) {
         super(dataFile);
-        this.indexColumn = new FixedWidthColumn(indexFile, JournalConfiguration.VARCHAR_INDEX_COLUMN_WIDTH);
+        this.indexColumn = new FixedColumn(indexFile, JournalConfiguration.VARCHAR_INDEX_COLUMN_WIDTH);
         this.maxLen = maxLen;
     }
 
@@ -106,8 +106,46 @@ public class VarcharColumn extends AbstractColumn {
         this.indexColumn.compact();
     }
 
-    public FixedWidthColumn getIndexColumn() {
+    public FixedColumn getIndexColumn() {
         return indexColumn;
+    }
+
+    public void putBuffer(ByteBuffer value) {
+        final long rowOffset = getOffset();
+        final long targetOffset = rowOffset + value.remaining() + 4;
+        long appendOffset = rowOffset;
+
+        ByteBuffer target = getBufferInternal(4).getByteBuffer();
+        target.putInt(value.remaining());
+        appendOffset += 4;
+        while (true) {
+            appendOffset += ByteBuffers.copy(value, target, targetOffset - appendOffset);
+            if (appendOffset < targetOffset) {
+                target = getBuffer(appendOffset, 1).getByteBuffer();
+            } else {
+                break;
+            }
+        }
+        commitAppend(rowOffset, (int) (targetOffset - rowOffset));
+    }
+
+    public int getBufferSize(long localRowID) {
+        ByteBuffer bb = getBufferInternal(localRowID, 4).getByteBuffer();
+        return bb.getInt();
+    }
+
+    public void getBuffer(long localRowID, ByteBuffer target, int count) {
+        long offset = getOffset(localRowID) + 4; // skip size
+        if (count < target.remaining()) {
+            throw new JournalRuntimeException("ByteBuffer too small");
+        }
+
+        while (count > 0) {
+            ByteBuffer bb = getBuffer(offset, 1).getByteBuffer();
+            int sz = ByteBuffers.copy(bb, target, count);
+            count -= sz;
+            offset += sz;
+        }
     }
 
     public void putNull() {

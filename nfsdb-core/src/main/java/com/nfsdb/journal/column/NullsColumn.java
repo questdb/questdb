@@ -21,7 +21,7 @@ import com.nfsdb.journal.utils.BitSetAccessor;
 import java.nio.ByteBuffer;
 import java.util.BitSet;
 
-public class NullsColumn extends FixedWidthColumn {
+public class NullsColumn extends FixedColumn {
     private final BitSet bitSet;
     private final int wordCount;
     private long cachedRowID;

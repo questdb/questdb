@@ -57,7 +57,7 @@ public class ThriftNullsAdaptor<T extends TBase> implements NullsAdaptor<T> {
                 } else if (type == BitSet.class) {
                     bitFieldType = BitFieldType.BIT_SET;
                 } else {
-                    throw new JournalConfigurationException("Unsupported bitfield type: " + type + ". Unsupported Thrift version?");
+                    throw new JournalConfigurationException("Unsupported bitfield type: %s. Unsupported Thrift version?", type);
                 }
                 bitFieldOffset = Unsafe.getUnsafe().objectFieldOffset(f);
                 continue;

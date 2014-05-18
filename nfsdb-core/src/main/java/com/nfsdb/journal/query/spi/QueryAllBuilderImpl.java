@@ -41,7 +41,7 @@ public class QueryAllBuilderImpl<T> implements QueryAllBuilder<T> {
     }
 
     @Override
-    public QueryAllBuilder<T> limit(Interval interval) {
+    public QueryAllBuilder<T> slice(Interval interval) {
         setInterval(interval);
         return this;
     }

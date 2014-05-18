@@ -86,16 +86,16 @@ public class JournalConfiguration {
     public JournalConfiguration build() throws JournalConfigurationException {
         if (!configured) {
             if (!this.journalBase.isDirectory()) {
-                throw new JournalConfigurationException("Not a directory: " + journalBase);
+                throw new JournalConfigurationException("Not a directory: %s", journalBase);
             }
 
             if (!this.journalBase.canRead()) {
-                throw new JournalConfigurationException("Not readable: " + journalBase);
+                throw new JournalConfigurationException("Not readable: %s", journalBase);
             }
 
             InputStream is = JournalConfiguration.class.getResourceAsStream(configurationFile);
             if (is == null) {
-                throw new JournalConfigurationException("Cannot load configuration: " + configurationFile);
+                throw new JournalConfigurationException("Cannot load configuration: %s", configurationFile);
             }
             try {
                 metadataMap.putAll(parseConfiguration(is));
@@ -240,13 +240,23 @@ public class JournalConfiguration {
             }
 
             // <string>
-            if (xmlr.isStartElement() && "string".equals(xmlr.getLocalName())) {
+            if (xmlr.isStartElement() && ("string".equals(xmlr.getLocalName()))) {
                 if (metadata == null) {
                     throw new JournalConfigurationException("<string> element must be a child of <journal>");
                 }
                 JournalMetadata.ColumnMetadata ccm = metadata.getColumnMetadata(getStringAttr(xmlr, "name"));
                 ccm.maxSize = getIntAttr(xmlr, "maxsize", DEFAULT_STRING_MAX_SIZE);
                 ccm.avgSize = getIntAttr(xmlr, "avgsize", DEFAULT_STRING_AVG_SIZE);
+            }
+
+            // <binary>
+            if (xmlr.isStartElement() && ("binary".equals(xmlr.getLocalName()))) {
+                if (metadata == null) {
+                    throw new JournalConfigurationException("<binary> element must be a child of <journal>");
+                }
+                JournalMetadata.ColumnMetadata ccm = metadata.getColumnMetadata(getStringAttr(xmlr, "name"));
+                ccm.size = getIntAttr(xmlr, "avgsize", DEFAULT_STRING_MAX_SIZE);
+                ccm.avgSize = ccm.size;
             }
 
             // </journal>
@@ -275,7 +285,7 @@ public class JournalConfiguration {
         String columnName = getStringAttr(xmlr, "name");
         JournalMetadata.ColumnMetadata ccm = metadata.getColumnMetadata(columnName);
         if (ccm.type != ColumnType.STRING) {
-            throw new JournalConfigurationException("Column '" + columnName + "' is of type " + ccm.type + " and cannot be a symbol in class " + metadata.getModelClass().getName());
+            throw new JournalConfigurationException("Column '%s' is of type %s and cannot be a symbol in class %s", columnName, ccm.type, metadata.getModelClass().getName());
         }
         ccm.type = ColumnType.SYMBOL;
         ccm.indexed = "true".equals(xmlr.getAttributeValue("", "indexed"));

@@ -28,11 +28,13 @@ public class ResultSetBufferedIterator<T> implements JournalIterator<T> {
 
     private final ResultSet<T> rs;
     private final T obj;
+    private final Journal<T> journal;
     private int counter = 0;
 
     public ResultSetBufferedIterator(ResultSet<T> rs) {
         this.rs = rs;
         this.obj = rs.getJournal().newObject();
+        this.journal = rs.getJournal();
     }
 
     @Override
@@ -43,8 +45,8 @@ public class ResultSetBufferedIterator<T> implements JournalIterator<T> {
     @Override
     public T next() {
         try {
-            rs.getJournal().clearObject(obj);
-            rs.read(counter++, obj);
+            journal.clearObject(obj);
+            journal.read(rs.getRowID(counter++), obj);
             return obj;
         } catch (JournalException e) {
             throw new JournalRuntimeException("Journal exception", e);

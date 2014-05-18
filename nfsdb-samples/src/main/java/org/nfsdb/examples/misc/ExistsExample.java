@@ -5,9 +5,11 @@ import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
+import com.nfsdb.journal.utils.Files;
 import org.nfsdb.examples.model.Quote;
 import org.nfsdb.examples.support.QuoteGenerator;
 
+import java.io.File;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -20,6 +22,9 @@ public class ExistsExample {
             System.exit(1);
         }
         try (JournalFactory factory = new JournalFactory(args[0])) {
+
+            // delete existing quote journal
+            Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote"));
 
             // get some data in :)
             try (JournalWriter<Quote> w = factory.writer(Quote.class)) {

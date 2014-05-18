@@ -16,6 +16,8 @@
 
 package com.nfsdb.journal.column;
 
+import java.nio.ByteBuffer;
+
 public enum ColumnType {
     BOOLEAN(boolean.class, 1, true),
     BYTE(byte.class, 1, true),
@@ -24,7 +26,8 @@ public enum ColumnType {
     LONG(long.class, 8, true),
     SHORT(short.class, 2, true),
     STRING(String.class, 0, false),
-    SYMBOL(null, 4, true);
+    SYMBOL(null, 4, true),
+    BINARY(ByteBuffer.class, 0, false);
 
     private final Class type;
     private final boolean primitive;

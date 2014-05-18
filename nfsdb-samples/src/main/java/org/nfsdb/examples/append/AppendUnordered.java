@@ -5,8 +5,10 @@ import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.PartitionType;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
+import com.nfsdb.journal.utils.Files;
 import org.nfsdb.examples.model.Quote;
 
+import java.io.File;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
@@ -28,6 +30,10 @@ public class AppendUnordered {
         String journalLocation = args[0];
 
         try (JournalFactory factory = new JournalFactory(journalLocation)) {
+
+            // delete existing quote journal
+            Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote-unordered"));
+
             try (JournalWriter<Quote> writer = factory.writer(new JournalKey<>(
                     Quote.class             // model class
                     , "quote-unordered"     // directory name where journal is stored. This is relative to factory location.

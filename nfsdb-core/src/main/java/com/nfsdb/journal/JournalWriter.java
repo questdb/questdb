@@ -16,7 +16,7 @@
 
 package com.nfsdb.journal;
 
-import com.nfsdb.journal.column.FixedWidthColumn;
+import com.nfsdb.journal.column.FixedColumn;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.concurrent.PartitionCleaner;
 import com.nfsdb.journal.concurrent.TimerCache;
@@ -194,38 +194,34 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     public void purgeUnusedTempPartitions(TxLog txLog) throws JournalException {
-        if (getMode() == JournalMode.APPEND) {
-            final String lagPartitionName = hasIrregularPartition() ? getIrregularPartition().getName() : null;
-            final String txLagName = txLog != null ? txLog.get().lagName : null;
+        final String lagPartitionName = hasIrregularPartition() ? getIrregularPartition().getName() : null;
+        final String txLagName = txLog != null ? txLog.get().lagName : null;
 
-            File[] files = getLocation().listFiles(new FileFilter() {
-                public boolean accept(File f) {
-                    return f.isDirectory() && f.getName().startsWith(JournalConfiguration.TEMP_DIRECTORY_PREFIX) &&
-                            (lagPartitionName == null || !lagPartitionName.equals(f.getName())) &&
-                            (txLagName == null || !txLagName.equals(f.getName()));
-                }
-            });
-
-            Arrays.sort(files);
-
-            for (File file : files) {
-                // get exclusive lock
-                Lock lock = LockManager.lockExclusive(file);
-                try {
-                    if (lock != null && lock.isValid()) {
-                        LOGGER.trace("Purging : %s", file);
-                        if (!Files.delete(file)) {
-                            LOGGER.info("Could not purge: %s", file);
-                        }
-                    } else {
-                        LOGGER.trace("Partition in use: %s", file);
-                    }
-                } finally {
-                    LockManager.release(lock);
-                }
+        File[] files = getLocation().listFiles(new FileFilter() {
+            public boolean accept(File f) {
+                return f.isDirectory() && f.getName().startsWith(JournalConfiguration.TEMP_DIRECTORY_PREFIX) &&
+                        (lagPartitionName == null || !lagPartitionName.equals(f.getName())) &&
+                        (txLagName == null || !txLagName.equals(f.getName()));
             }
-        } else {
-            throw new JournalRuntimeException("Cannot purge temp partitions in read-only mode");
+        });
+
+        Arrays.sort(files);
+
+        for (File file : files) {
+            // get exclusive lock
+            Lock lock = LockManager.lockExclusive(file);
+            try {
+                if (lock != null && lock.isValid()) {
+                    LOGGER.trace("Purging : %s", file);
+                    if (!Files.delete(file)) {
+                        LOGGER.info("Could not purge: %s", file);
+                    }
+                } else {
+                    LOGGER.trace("Partition in use: %s", file);
+                }
+            } finally {
+                LockManager.release(lock);
+            }
         }
     }
 
@@ -338,7 +334,7 @@ public class JournalWriter<T> extends Journal<T> {
                 return 0;
             }
 
-            FixedWidthColumn column = lastNonEmptyNonLag().getTimestampColumn();
+            FixedColumn column = lastNonEmptyNonLag().getTimestampColumn();
             if (column.size() > 0) {
                 hardMaxTimestamp = column.getLong(column.size() - 1);
             } else {

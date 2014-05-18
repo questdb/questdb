@@ -142,6 +142,7 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
                             filterSymbolIndexes[i] = partition.getIndexForColumn(filterSymbols.get(i));
                             int filterKey = filterSymbolKeys.getQuick(i);
                             if (filterSymbolIndexes[i].contains(filterKey)) {
+                                filterSymbolRows[i].setCapacity(filterSymbolIndexes[i].getValueCount(filterKey));
                                 filterSymbolIndexes[i].getValues(filterKey, filterSymbolRows[i]);
                             } else {
                                 filterOk = false;

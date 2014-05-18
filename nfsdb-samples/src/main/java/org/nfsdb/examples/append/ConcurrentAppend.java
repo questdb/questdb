@@ -4,8 +4,10 @@ import com.lmax.disruptor.*;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
+import com.nfsdb.journal.utils.Files;
 import org.nfsdb.examples.model.Quote;
 
+import java.io.File;
 import java.util.Random;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -33,6 +35,10 @@ public class ConcurrentAppend {
         final SequenceBarrier sequenceBarrier = ringBuffer.newBarrier();
 
         try (JournalFactory factory = new JournalFactory(args[0])) {
+
+            Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote_1"));
+            Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote_2"));
+
             try (JournalWriter<Quote> writer1 = factory.writer(Quote.class, "quote_1")) {
                 try (JournalWriter<Quote> writer2 = factory.writer(Quote.class, "quote_2")) {
 

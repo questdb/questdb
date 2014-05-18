@@ -148,7 +148,7 @@ public class PerformanceTest extends AbstractTest {
             int count = 1000;
             Interval interval = Dates.interval(Dates.toMillis("2013-10-05T10:00:00.000Z"), Dates.toMillis("2013-10-15T10:00:00.000Z"));
             long t = System.nanoTime();
-            QueryAllBuilder<Quote> builder = journal.query().all().withKeys("LLOY.L").limit(interval);
+            QueryAllBuilder<Quote> builder = journal.query().all().withKeys("LLOY.L").slice(interval);
             for (int i = 0; i < count; i++) {
                 builder.asResultSet();
             }

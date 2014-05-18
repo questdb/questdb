@@ -5,9 +5,12 @@ import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.utils.Dates;
+import com.nfsdb.journal.utils.Files;
+import org.joda.time.DateTime;
 import org.nfsdb.examples.model.Quote;
 import org.nfsdb.examples.support.QuoteGenerator;
 
+import java.io.File;
 import java.util.concurrent.TimeUnit;
 
 public class IntervalExample {
@@ -21,6 +24,9 @@ public class IntervalExample {
         // which is used in this case implements JIT-friendly object reset method, which is quite fast.
         try (JournalFactory factory = new JournalFactory(journalLocation)) {
 
+            // delete existing quote journal
+            Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote"));
+
             // get some data in :)
             try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
                 QuoteGenerator.generateQuoteData(w, 10000000, 90);
@@ -31,10 +37,8 @@ public class IntervalExample {
                 int count = 0;
                 long t = System.nanoTime();
 
-                // 10 days from now
-                long lo = System.currentTimeMillis() + 10 * 24 * 60 * 60 * 1000;
-                // 20 days from now
-                long hi = lo + 10 * 24 * 60 * 60 * 1000;
+                DateTime lo = Dates.utc().plusDays(10);
+                DateTime hi = lo.plusDays(10);
 
                 // iterate the interval between lo and hi millis.
                 for (Quote q : journal.query().all().iterator(Dates.interval(lo, hi))) {

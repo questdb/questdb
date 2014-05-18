@@ -3,9 +3,9 @@ package org.nfsdb.examples.iterate;
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.factory.JournalConfiguration;
 import com.nfsdb.journal.factory.JournalFactory;
-import com.nfsdb.thrift.ThriftNullsAdaptorFactory;
+import com.nfsdb.journal.utils.Files;
+import com.nfsdb.thrift.JournalThriftFactory;
 import org.nfsdb.examples.model.Quote;
 import org.nfsdb.examples.support.QuoteGenerator;
 
@@ -23,7 +23,10 @@ public class SelectColumnsExample {
 
         // this is another way to setup JournalFactory if you would like to provide NullsAdaptor. NullsAdaptor for thrift,
         // which is used in this case implements JIT-friendly object reset method, which is quite fast.
-        try (JournalFactory factory = new JournalFactory(new JournalConfiguration(new File(journalLocation)).setNullsAdaptorFactory(new ThriftNullsAdaptorFactory()).build())) {
+        try (JournalFactory factory = new JournalThriftFactory(journalLocation)) {
+
+            // delete existing quote journal
+            Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote"));
 
             // get some data in :)
             try (JournalWriter<Quote> w = factory.writer(Quote.class)) {

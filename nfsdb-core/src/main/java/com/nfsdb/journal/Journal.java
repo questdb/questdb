@@ -17,7 +17,7 @@
 package com.nfsdb.journal;
 
 import com.nfsdb.journal.column.ColumnType;
-import com.nfsdb.journal.column.FixedWidthColumn;
+import com.nfsdb.journal.column.FixedColumn;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.concurrent.TimerCache;
 import com.nfsdb.journal.exceptions.JournalException;
@@ -47,6 +47,7 @@ import java.io.Closeable;
 import java.io.File;
 import java.io.FileFilter;
 import java.lang.reflect.Array;
+import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
@@ -339,7 +340,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         if (p == null) {
             return 0;
         }
-        FixedWidthColumn column = p.getTimestampColumn();
+        FixedColumn column = p.getTimestampColumn();
         if (column.size() > 0) {
             return column.getLong(column.size() - 1);
         } else {
@@ -378,6 +379,11 @@ public class Journal<T> implements Iterable<T>, Closeable {
                     case SYMBOL:
                         Unsafe.getUnsafe().putObject(obj, m.offset, null);
                         break;
+                    case BINARY:
+                        ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, m.offset);
+                        if (buf != null) {
+                            buf.clear();
+                        }
                     default:
                         throw new JournalUnsupportedTypeException(m.type);
                 }

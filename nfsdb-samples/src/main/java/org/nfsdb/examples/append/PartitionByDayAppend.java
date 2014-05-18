@@ -5,8 +5,10 @@ import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.PartitionType;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
+import com.nfsdb.journal.utils.Files;
 import org.nfsdb.examples.model.Quote;
 
+import java.io.File;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
@@ -27,6 +29,9 @@ public class PartitionByDayAppend {
 
         String journalLocation = args[0];
         try (JournalFactory factory = new JournalFactory(journalLocation)) {
+
+            Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote-by-day"));
+
             // default partition type is configured in nfsdb.xml and it is MONTH
             // you can change it in runtime and also, optionally put journal in alternative location
             try (JournalWriter<Quote> writer = factory.writer(new JournalKey<>(Quote.class, "quote-by-day", PartitionType.DAY))) {

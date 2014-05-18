@@ -65,9 +65,10 @@ public class SymbolIndex implements Closeable {
     private boolean inTransaction = false;
 
     public SymbolIndex(File baseName, int keyCountHint, int recordCountHint, JournalMode mode, long txAddress) throws JournalException {
+        final JournalMode m = mode == JournalMode.APPEND_ONLY ? JournalMode.APPEND : mode;
         this.keyCountHint = Math.max(keyCountHint, 1);
         this.rowBlockLen = Math.max(recordCountHint / this.keyCountHint / 2, 1);
-        this.kData = new MappedFileImpl(new File(baseName.getParentFile(), baseName.getName() + ".k"), ByteBuffers.getBitHint(8 + 8, this.keyCountHint), mode);
+        this.kData = new MappedFileImpl(new File(baseName.getParentFile(), baseName.getName() + ".k"), ByteBuffers.getBitHint(8 + 8, this.keyCountHint), m);
         this.keyBlockAddressOffset = 8;
 
         this.keyBlockSizeOffset = 16;
@@ -79,7 +80,7 @@ public class SymbolIndex implements Closeable {
             this.keyBlockSizeOffset = txAddress == 0 ? getLong(kData, keyBlockAddressOffset) : txAddress;
             this.keyBlockSize = getLong(kData, keyBlockSizeOffset);
             this.maxValue = getLong(kData, keyBlockSizeOffset + 8);
-        } else if (mode == JournalMode.APPEND) {
+        } else if (m == JournalMode.APPEND) {
             putLong(kData, 0, this.rowBlockLen); // 8
             putLong(kData, keyBlockAddressOffset, keyBlockSizeOffset); // 8
             putLong(kData, keyBlockSizeOffset, keyBlockSize); // 8
@@ -89,7 +90,7 @@ public class SymbolIndex implements Closeable {
 
         this.firstEntryOffset = keyBlockSizeOffset + 16;
         this.rowBlockSize = rowBlockLen * 8 + 8;
-        this.rData = new MappedFileImpl(new File(baseName.getParentFile(), baseName.getName() + ".r"), ByteBuffers.getBitHint(rowBlockSize, keyCountHint * 2), mode);
+        this.rData = new MappedFileImpl(new File(baseName.getParentFile(), baseName.getName() + ".r"), ByteBuffers.getBitHint(rowBlockSize, keyCountHint * 2), m);
     }
 
     public static void delete(File base) {

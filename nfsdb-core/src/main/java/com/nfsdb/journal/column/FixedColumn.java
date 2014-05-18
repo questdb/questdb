@@ -18,10 +18,10 @@ package com.nfsdb.journal.column;
 
 import java.nio.ByteBuffer;
 
-public class FixedWidthColumn extends AbstractColumn {
+public class FixedColumn extends AbstractColumn {
     private final int width;
 
-    public FixedWidthColumn(MappedFile mappedFile, int width) {
+    public FixedColumn(MappedFile mappedFile, int width) {
         super(mappedFile);
         this.width = width;
     }

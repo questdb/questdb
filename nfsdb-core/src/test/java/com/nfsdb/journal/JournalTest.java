@@ -21,6 +21,7 @@ import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalConfiguration;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.test.model.Quote;
+import com.nfsdb.journal.test.model.TestEntity;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestData;
 import com.nfsdb.journal.test.tools.TestUtils;
@@ -449,7 +450,25 @@ public class JournalTest extends AbstractTest {
         } catch (JournalException e) {
             // expect exception
         }
+    }
 
+    @Test
+    public void testAppendBreak() throws Exception {
+        Random random = new Random(System.nanoTime());
+        JournalWriter<TestEntity> w = factory.writer(TestEntity.class);
+        try {
+            w.append(new TestEntity().setSym("ABC").setDStr("test1"));
+            w.append(new TestEntity().setSym("ABC").setDStr(TestUtils.randomString(random, 100)));
+            w.append(new TestEntity().setSym("ABC").setDStr(TestUtils.randomString(random, 70000)));
+        } catch (Exception e) {
+            // OK
+        } finally {
+            w.commit();
+        }
+        w.append(new TestEntity().setSym("ABC").setDStr(TestUtils.randomString(random, 300)));
+
+        Assert.assertEquals(3, w.query().all().withKeys("ABC").asResultSet().size());
+        Assert.assertEquals(1, w.query().head().withKeys("ABC").asResultSet().size());
     }
 
     private static class TestTxListener implements TxListener {

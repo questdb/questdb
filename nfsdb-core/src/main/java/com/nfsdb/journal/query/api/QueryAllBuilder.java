@@ -22,7 +22,7 @@ import org.joda.time.Interval;
 
 public interface QueryAllBuilder<T> {
 
-    QueryAllBuilder<T> limit(Interval interval);
+    QueryAllBuilder<T> slice(Interval interval);
 
     QueryAllBuilder<T> filter(String symbol, String value);
 

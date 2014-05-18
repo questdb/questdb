@@ -63,8 +63,9 @@ public class MappedFileImpl implements MappedFile {
 
         int bufferSize = 1 << bitHint;
         int bufferIndex = (int) (offset >>> bitHint);
-        long bufferOffset = bufferIndex * bufferSize;
+        long bufferOffset = ((long) bufferIndex) * ((long) bufferSize);
         int bufferPos = (int) (offset - bufferOffset);
+
 
         Lists.advance(buffers, bufferIndex);
 
@@ -79,6 +80,15 @@ public class MappedFileImpl implements MappedFile {
             buffer = new ByteBufferWrapper(bufferOffset, mapBufferInternal(bufferOffset, bufferSize));
             assert bufferSize > 0;
             buffers.set(bufferIndex, buffer);
+            if (mode == JournalMode.APPEND_ONLY) {
+                for (int i = 0; i < bufferIndex; i++) {
+                    ByteBufferWrapper w = buffers.get(i);
+                    if (w != null) {
+                        w.release();
+                        buffers.set(i, null);
+                    }
+                }
+            }
         }
 
         buffer.getByteBuffer().position(bufferPos);
@@ -183,7 +193,6 @@ public class MappedFileImpl implements MappedFile {
             case READ:
                 m = "r";
                 break;
-            case APPEND:
             default:
                 m = "rw";
         }
@@ -228,7 +237,6 @@ public class MappedFileImpl implements MappedFile {
                     }
                     assert sz > 0;
                     return channel.map(FileChannel.MapMode.READ_ONLY, actualOffset, sz).order(ByteOrder.LITTLE_ENDIAN);
-                case APPEND:
                 default:
                     return channel.map(FileChannel.MapMode.READ_WRITE, actualOffset, size).order(ByteOrder.LITTLE_ENDIAN);
             }

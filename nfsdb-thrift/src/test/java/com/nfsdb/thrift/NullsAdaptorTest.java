@@ -31,7 +31,6 @@ public class NullsAdaptorTest {
                 Assert.assertFalse(q.isSetAsk());
             }
 
-
             q.setTimestamp(timestamp);
             w.append(q);
         }

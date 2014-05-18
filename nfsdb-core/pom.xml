@@ -18,7 +18,12 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <version>1.0.1</version>
+    <properties>
+        <project.version>1.0.2-SNAPSHOT</project.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <version>${project.version}</version>
     <groupId>com.nfsdb</groupId>
     <artifactId>nfsdb-core</artifactId>
     <packaging>jar</packaging>
@@ -45,10 +50,6 @@
     <scm>
         <url>scm:git:https://github.com/bluestreak01/nfsdb.git</url>
     </scm>
-
-    <properties>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    </properties>
 
     <build>
         <plugins>
@@ -146,9 +147,9 @@
         </dependency>
 
         <dependency>
-            <groupId>nfsdb</groupId>
+            <groupId>com.nfsdb</groupId>
             <artifactId>nfsdb-test-model</artifactId>
-            <version>1.0</version>
+            <version>${project.version}</version>
             <scope>test</scope>
         </dependency>
 

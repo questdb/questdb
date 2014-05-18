@@ -17,8 +17,13 @@
 package com.nfsdb.journal.exceptions;
 
 public class JournalConfigurationException extends JournalException {
+
     public JournalConfigurationException(String message) {
         super(message);
+    }
+
+    public JournalConfigurationException(String message, Object... args) {
+        super(message, args);
     }
 
     public JournalConfigurationException(String message, Throwable cause) {

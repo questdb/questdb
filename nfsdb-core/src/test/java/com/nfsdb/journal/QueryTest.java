@@ -59,7 +59,7 @@ public class QueryTest extends AbstractTest {
                 "2013-05-02T04:40:00.000Z\tRRS.L\t0.6061643091896248\t0.9812017566926329\t183363356\t965895392\tFast trading\tSK\n" +
                 "2013-05-03T09:50:00.000Z\tRRS.L\t0.5590262812936236\t0.13652035496254744\t1522957952\t1962377774\tFast trading\tLXE\n";
 
-        ResultSet<Quote> rs = q.all().withKeys("RRS.L").limit(Dates.interval(ts1, ts2)).asResultSet();
+        ResultSet<Quote> rs = q.all().withKeys("RRS.L").slice(Dates.interval(ts1, ts2)).asResultSet();
         TestUtils.assertOrder(rs);
         TestUtils.assertEquals(expected, rs);
     }
@@ -76,7 +76,7 @@ public class QueryTest extends AbstractTest {
                 "2013-05-02T04:40:00.000Z\tRRS.L\t0.6061643091896248\t0.9812017566926329\t183363356\t965895392\tFast trading\tSK\n" +
                 "2013-05-03T09:50:00.000Z\tRRS.L\t0.5590262812936236\t0.13652035496254744\t1522957952\t1962377774\tFast trading\tLXE\n";
 
-        ResultSet<Quote> rs = q.all().withKeys("RRS.L").limit(Dates.interval(ts1, ts2)).asResultSet();
+        ResultSet<Quote> rs = q.all().withKeys("RRS.L").slice(Dates.interval(ts1, ts2)).asResultSet();
         TestUtils.assertOrder(rs);
         TestUtils.assertEquals(expected, rs);
     }
@@ -93,7 +93,7 @@ public class QueryTest extends AbstractTest {
                 "2013-05-02T11:36:40.000Z\tGKN.L\t0.7299258007491024\t0.6912012922060378\t980854034\t1765743108\tFast trading\tLXE\n" +
                 "2013-05-02T21:20:00.000Z\tGKN.L\t0.4057095419320843\t0.2930651074363966\t970097888\t1768370800\tFast trading\tGR\n" +
                 "2013-05-03T15:23:20.000Z\tGKN.L\t0.5275167947685228\t0.5630377869323533\t1843235138\t1122238976\tFast trading\tGR\n";
-        ResultSet<Quote> rs = q.all().withKeys("GKN.L").limit(Dates.interval(ts1, ts2)).asResultSet();
+        ResultSet<Quote> rs = q.all().withKeys("GKN.L").slice(Dates.interval(ts1, ts2)).asResultSet();
         TestUtils.assertOrder(rs);
         TestUtils.assertEquals(expected, rs);
     }
@@ -269,7 +269,7 @@ public class QueryTest extends AbstractTest {
                 .withKeys("TLW.L", "BP.L")
                 .filter("ex", "SK")
                 .filter("ex", "GR")
-                .limit(Dates.interval(ts1, ts2))
+                .slice(Dates.interval(ts1, ts2))
                 .asResultSet();
 
         TestUtils.assertEquals(expected, rs.sort());
@@ -277,7 +277,7 @@ public class QueryTest extends AbstractTest {
 
     @Test
     public void testAllBySymbolValuesOverInterval() throws Exception {
-        ResultSet<Quote> rs = q.all().withKeys().limit(Dates.interval(ts1, ts2)).asResultSet();
+        ResultSet<Quote> rs = q.all().withKeys().slice(Dates.interval(ts1, ts2)).asResultSet();
         Assert.assertEquals(0, rs.size());
 
         String expected = "2013-04-29T01:40:00.000Z\tWTB.L\t0.154905273744959\t0.3463641298845208\t1190004376\t548681062\tFast trading\tSK\n" +
@@ -295,7 +295,7 @@ public class QueryTest extends AbstractTest {
                 "2013-05-02T18:33:20.000Z\tBT-A.L\t0.9296374772157955\t0.19088899950218174\t980203892\t1476326981\tFast trading\tLXE\n" +
                 "2013-05-02T22:43:20.000Z\tBT-A.L\t0.12282110119740142\t0.822933043281861\t997442403\t430556502\tFast trading\tSK\n" +
                 "2013-05-03T07:03:20.000Z\tBT-A.L\t0.008144226019699663\t0.8149620429664706\t1492076657\t2143247261\tFast trading\tLXE\n";
-        rs = q.all().withKeys("WTB.L", "BT-A.L").limit(Dates.interval(ts1, ts2)).asResultSet();
+        rs = q.all().withKeys("WTB.L", "BT-A.L").slice(Dates.interval(ts1, ts2)).asResultSet();
         TestUtils.assertEquals(expected, rs);
     }
 

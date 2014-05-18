@@ -3,8 +3,10 @@ package org.nfsdb.examples.append;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
+import com.nfsdb.journal.utils.Files;
 import org.nfsdb.examples.model.Quote;
 
+import java.io.File;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
@@ -23,6 +25,10 @@ public class BasicRecordAppend {
         }
         String journalLocation = args[0];
         try (JournalFactory factory = new JournalFactory(journalLocation)) {
+
+            // delete existing quote journal
+            Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote"));
+
             try (JournalWriter<Quote> writer = factory.writer(Quote.class)) {
 
                 final int count = 1000000;

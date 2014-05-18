@@ -18,7 +18,13 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <version>1.0.1</version>
+    <properties>
+        <project.version>1.0.2-SNAPSHOT</project.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <thrift.version>0.9.1</thrift.version>
+    </properties>
+
+    <version>${project.version}</version>
     <groupId>com.nfsdb</groupId>
     <artifactId>nfsdb-thrift</artifactId>
     <packaging>jar</packaging>
@@ -45,10 +51,6 @@
     <scm>
         <url>scm:git:https://github.com/bluestreak01/nfsdb.git</url>
     </scm>
-
-    <properties>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    </properties>
 
     <build>
         <plugins>
@@ -121,13 +123,13 @@
         <dependency>
             <groupId>com.nfsdb</groupId>
             <artifactId>nfsdb-core</artifactId>
-            <version>1.0.1</version>
+            <version>${project.version}</version>
         </dependency>
 
         <dependency>
             <groupId>org.apache.thrift</groupId>
             <artifactId>libthrift</artifactId>
-            <version>0.9.1</version>
+            <version>${thrift.version}</version>
         </dependency>
 
         <dependency>
@@ -140,14 +142,14 @@
         <dependency>
             <groupId>com.nfsdb</groupId>
             <artifactId>nfsdb-test-model</artifactId>
-            <version>1.0</version>
+            <version>${project.version}</version>
             <scope>test</scope>
         </dependency>
 
         <dependency>
             <groupId>com.nfsdb</groupId>
             <artifactId>nfsdb-core</artifactId>
-            <version>1.0.1</version>
+            <version>${project.version}</version>
             <type>test-jar</type>
             <scope>test</scope>
         </dependency>

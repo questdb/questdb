@@ -16,6 +16,7 @@
 
 package com.nfsdb.journal.factory;
 
+import com.nfsdb.journal.JournalBulkWriter;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
 
@@ -26,6 +27,12 @@ public interface JournalWriterFactory {
     <T> JournalWriter<T> writer(Class<T> clazz, String location) throws JournalException;
 
     <T> JournalWriter<T> writer(Class<T> clazz, String location, int recordHint) throws JournalException;
+
+    <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz) throws JournalException;
+
+    <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz, String location) throws JournalException;
+
+    <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz, String location, int recordHint) throws JournalException;
 
     JournalConfiguration getConfiguration();
 

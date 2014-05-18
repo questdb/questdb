@@ -28,6 +28,8 @@ import java.nio.channels.WritableByteChannel;
 
 public final class ByteBuffers {
 
+    private static final int[] multipliers = new int[]{1, 3, 5, 7, 9, 11, 13};
+
     public static void copy(ByteBuffer from, WritableByteChannel to) throws JournalNetworkException {
         copy(from, to, from.remaining());
     }
@@ -162,13 +164,29 @@ public final class ByteBuffers {
     }
 
     public static int getBitHint(int recSize, int recCount) {
-        return Math.min(30, 32 - Integer.numberOfLeadingZeros(recSize * recCount));
+        long target = ((long) recSize) * recCount;
+        long minDeviation = Long.MAX_VALUE;
+        int resultBits = 0;
+        for (int i = 0; i < multipliers.length; i++) {
+            int m = multipliers[i];
+            int bits = Math.min(30, 32 - Integer.numberOfLeadingZeros(recSize * recCount / m));
+            long actual = (1 << bits) * m;
+
+            long deviation;
+            if (actual <= target) {
+                deviation = 100 + ((target % actual) * 100 / (1 << bits));
+            } else {
+                deviation = (actual * 100) / target;
+            }
+            if (deviation < minDeviation) {
+                minDeviation = deviation;
+                resultBits = bits;
+            }
+        }
+        return resultBits;
     }
 
-    private ByteBuffers() {
-    }
-
-    private static int copy(ByteBuffer from, ByteBuffer to, long count) {
+    public static int copy(ByteBuffer from, ByteBuffer to, long count) {
         int result = 0;
         if (to != null && to.remaining() > 0) {
             int limit = from.limit();
@@ -186,11 +204,25 @@ public final class ByteBuffers {
         return result;
     }
 
-    private static void putStr(ByteBuffer buffer, String value) {
+    public static void putStr(ByteBuffer buffer, String value) {
         for (int i = 0; i < value.length(); i++) {
             buffer.putChar(value.charAt(i));
         }
     }
 
-
+    private ByteBuffers() {
+    }
+//
+//    public static void main(String[] args) {
+//        int multiplier = 1;
+//        int recSize = 127;
+//        int count = 10000000;
+//        int bits = getBitHint2(recSize, count);
+//        long needed = recSize * count;
+//        long actual = (1 << bits) * multiplier;
+//        System.out.println(bits);
+//        System.out.printf("needed: %d\n", needed);
+//        System.out.println("actual: " + actual);
+//        System.out.println("overshot: " + ((actual * 100) / needed) + "%");
+//    }
 }

@@ -44,17 +44,17 @@ public class SymbolTable implements Closeable {
     private final String column;
     private final TObjectIntHashMap<String> valueCache;
     private final ArrayList<String> keyCache;
-    private VarcharColumn data;
+    private VariableColumn data;
     private SymbolIndex index;
     private int size;
 
     public SymbolTable(int capacity, int maxLen, File directory, String column, JournalMode mode, int size, long indexTxAddress) throws JournalException {
         this.capacity = capacity;
         this.column = column;
-        MappedFile dataFile = new MappedFileImpl(new File(directory, column + DATA_FILE_SUFFIX), ByteBuffers.getBitHint(maxLen, capacity), mode);
-        MappedFile indexFile = new MappedFileImpl(new File(directory, column + INDEX_FILE_SUFFIX), ByteBuffers.getBitHint(8, capacity), mode);
+        MappedFile dataFile = new MappedFileImpl(new File(directory, column + DATA_FILE_SUFFIX), ByteBuffers.getBitHint(maxLen, capacity), mode == JournalMode.APPEND_ONLY ? JournalMode.APPEND : mode);
+        MappedFile indexFile = new MappedFileImpl(new File(directory, column + INDEX_FILE_SUFFIX), ByteBuffers.getBitHint(8, capacity), mode == JournalMode.APPEND_ONLY ? JournalMode.APPEND : mode);
 
-        this.data = new VarcharColumn(dataFile, indexFile, maxLen);
+        this.data = new VariableColumn(dataFile, indexFile, maxLen);
         this.size = size;
 
         this.index = new SymbolIndex(new File(directory, column + HASH_INDEX_FILE_SUFFIX), capacity, capacity * HASH_GROUPING_RATE, mode, indexTxAddress);
@@ -101,7 +101,7 @@ public class SymbolTable implements Closeable {
 
 
         LongArrayList values = index.getValues(hashKey);
-        for (int i = 0; i < values.size(); i++) {
+        for (int i = 0, sz = values.size(); i < sz; i++) {
             key = (int) values.get(i);
             String s = data.getString(key);
             if (value.equals(s)) {
@@ -205,7 +205,7 @@ public class SymbolTable implements Closeable {
         }
     }
 
-    public VarcharColumn getDataColumn() {
+    public VariableColumn getDataColumn() {
         return data;
     }
 

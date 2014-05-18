@@ -53,4 +53,12 @@
         <sym name="ex" indexed="true" maxsize="2" hintDistinctCount="30"/>
         <sym name="cond" hintDistinctCount="30"/>
     </journal>
+
+    <journal class="com.nfsdb.journal.test.model.Band" defaultPath="band" timestampColumn="timestamp"
+             partitionType="NONE"
+             recordHint="1000000" openPartitionTTL="180" key="name">
+        <sym name="name" indexed="true" maxsize="255" hintDistinctCount="1200"/>
+        <sym name="type" indexed="true" maxsize="255" hintDistinctCount="10"/>
+        <binary name="image" avgSize="10000"/>
+    </journal>
 </db>

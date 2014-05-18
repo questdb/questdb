@@ -321,6 +321,22 @@ public final class TestUtils {
         }
     }
 
+    public static String randomString(Random random, int len) {
+        char chars[] = new char[len];
+        for (int i = 0; i < len; i++) {
+            chars[i] = (char) (Math.abs(random.nextInt()) % 25 + 66);
+        }
+        return new String(chars);
+    }
+
+    public static byte[] randomBytes(Random random, int len) {
+        byte bytes[] = new byte[len];
+        for (int i = 0; i < len; i++) {
+            bytes[i] = (byte) (Math.abs(random.nextInt()) % 25 + 66);
+        }
+        return bytes;
+    }
+
     private TestUtils() {
     }
 
