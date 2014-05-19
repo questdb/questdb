@@ -172,5 +172,4 @@ public class PerformanceTest extends AbstractTest {
             LOGGER.info("latestBySymbol (query+read) latency: " + (System.nanoTime() - t) / count + "ns");
         }
     }
-
 }

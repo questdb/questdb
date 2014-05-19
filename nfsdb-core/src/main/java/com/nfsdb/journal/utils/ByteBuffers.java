@@ -173,6 +173,10 @@ public final class ByteBuffers {
             long actual = (1 << bits) * m;
 
             long deviation;
+            if (target / actual > multipliers[multipliers.length - 1]) {
+                return bits;
+            }
+
             if (actual <= target) {
                 deviation = 100 + ((target % actual) * 100 / (1 << bits));
             } else {
