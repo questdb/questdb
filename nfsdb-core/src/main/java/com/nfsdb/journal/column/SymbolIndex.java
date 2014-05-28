@@ -43,7 +43,7 @@ public class SymbolIndex implements Closeable {
         }
     */
 
-    static final byte[] ZERO_BYTE_ARRAY = new byte[4096];
+    static final byte[] ZERO_BYTE_ARRAY = new byte[10 * 4096];
 
     static {
         Arrays.fill(ZERO_BYTE_ARRAY, (byte) 0);
@@ -118,18 +118,18 @@ public class SymbolIndex implements Closeable {
             // to mitigate that as soon as we see an attempt to extend key block past ENTRY_SIZE we need to
             // fill created gap with zeroes.
             if (keyBlockSize - oldSize > ENTRY_SIZE) {
-                ByteBuffer buf = kData.getBuffer(firstEntryOffset + oldSize, (int) (keyBlockSize - oldSize - ENTRY_SIZE)).getByteBuffer();
-                while (buf.hasRemaining()) {
-                    buf.put(ZERO_BYTE_ARRAY, 0, Math.min(ZERO_BYTE_ARRAY.length, buf.remaining()));
+                ByteBuffer buf = kData.getBuffer(firstEntryOffset + oldSize, (int) (keyBlockSize - oldSize - ENTRY_SIZE));
+                int remaining;
+                while ((remaining = buf.remaining()) > 0) {
+                    buf.put(ZERO_BYTE_ARRAY, 0, Math.min(ZERO_BYTE_ARRAY.length, remaining));
                 }
             }
         }
 
-        ByteBuffer buf = kData.getBuffer(keyOffset, ENTRY_SIZE).getByteBuffer();
-        buf.mark();
+        ByteBuffer buf = kData.getBuffer(keyOffset, ENTRY_SIZE);
+        int pos = buf.position();
         rowBlockOffset = buf.getLong();
         rowCount = buf.getLong();
-        buf.reset();
 
         int cellIndex = (int) (rowCount % rowBlockLen);
         if (rowBlockOffset == 0 || cellIndex == 0) {
@@ -137,10 +137,10 @@ public class SymbolIndex implements Closeable {
             rowBlockOffset = rData.getAppendOffset() + rowBlockSize;
             rData.setAppendOffset(rowBlockOffset);
             putLong(rData, rowBlockOffset - 8, prevBlockOffset);
+            buf.putLong(pos, rowBlockOffset);
         }
         putLong(rData, rowBlockOffset - rowBlockSize + 8 * cellIndex, value);
-        buf.putLong(rowBlockOffset);
-        buf.putLong(rowCount + 1);
+        buf.putLong(pos + 8, rowCount + 1);
 
         if (maxValue <= value) {
             maxValue = value + 1;
@@ -249,7 +249,7 @@ public class SymbolIndex implements Closeable {
         if (keyOffset >= firstEntryOffset + keyBlockSize) {
             return 0;
         } else {
-            ByteBuffer buf = kData.getBuffer(keyOffset + 8, 8).getByteBuffer();
+            ByteBuffer buf = kData.getBuffer(keyOffset + 8, 8);
             return (int) buf.getLong();
         }
     }
@@ -306,7 +306,7 @@ public class SymbolIndex implements Closeable {
         if (keyOffset >= firstEntryOffset + keyBlockSize) {
             return;
         }
-        ByteBuffer buf = kData.getBuffer(keyOffset, ENTRY_SIZE).getByteBuffer();
+        ByteBuffer buf = kData.getBuffer(keyOffset, ENTRY_SIZE);
         long rowBlockOffset = buf.getLong();
         long rowCount = buf.getLong();
 
@@ -321,13 +321,12 @@ public class SymbolIndex implements Closeable {
         }
 
         for (int i = rowBlockCount - 1; i >= 0; i--) {
-            ByteBuffer b = rData.getBuffer(rowBlockOffset - rowBlockSize, rowBlockSize).getByteBuffer();
+            ByteBuffer b = rData.getBuffer(rowBlockOffset - rowBlockSize, rowBlockSize);
             int z = i * rowBlockLen;
             for (int k = 0; k < len; k++) {
                 values.setQuick(z + k, b.getLong());
             }
-            b.position(b.position() + (rowBlockLen - len) * 8);
-            rowBlockOffset = b.getLong();
+            rowBlockOffset = b.getLong(b.position() + (rowBlockLen - len) * 8);
             len = rowBlockLen;
         }
     }
@@ -365,7 +364,7 @@ public class SymbolIndex implements Closeable {
         long offset = firstEntryOffset;
         long sz = 0;
         while (offset < firstEntryOffset + keyBlockSize) {
-            ByteBuffer buffer = kData.getBuffer(offset, ENTRY_SIZE).getByteBuffer();
+            ByteBuffer buffer = kData.getBuffer(offset, ENTRY_SIZE);
             buffer.mark();
             long rowBlockOffset = buffer.getLong();
             long rowCount = buffer.getLong();
@@ -375,7 +374,7 @@ public class SymbolIndex implements Closeable {
                 len = rowBlockLen;
             }
             while (rowBlockOffset > 0) {
-                ByteBuffer buf = rData.getBuffer(rowBlockOffset - rowBlockSize, rowBlockSize).getByteBuffer();
+                ByteBuffer buf = rData.getBuffer(rowBlockOffset - rowBlockSize, rowBlockSize);
                 buf.mark();
                 int pos = 0;
                 long max = -1;
@@ -415,11 +414,11 @@ public class SymbolIndex implements Closeable {
     }
 
     private long getLong(MappedFileImpl storage, long offset) {
-        return storage.getBuffer(offset, 8).getByteBuffer().getLong();
+        return storage.getBuffer(offset, 8).getLong();
     }
 
     private void putLong(MappedFileImpl storage, long offset, long value) {
-        storage.getBuffer(offset, 8).getByteBuffer().putLong(value);
+        storage.getBuffer(offset, 8).putLong(value);
     }
 
     private void tx() throws JournalException {
@@ -436,11 +435,11 @@ public class SymbolIndex implements Closeable {
 
                 while (size > 0) {
                     if (src == null || !src.hasRemaining()) {
-                        src = kReader.getBuffer(srcOffset, 1).getByteBuffer();
+                        src = kReader.getBuffer(srcOffset, 1);
                     }
 
                     if (dst == null || !dst.hasRemaining()) {
-                        dst = kData.getBuffer(dstOffset, 1).getByteBuffer();
+                        dst = kData.getBuffer(dstOffset, 1);
                     }
 
                     int limit = src.limit();
@@ -473,6 +472,6 @@ public class SymbolIndex implements Closeable {
         if (keyOffset >= firstEntryOffset + keyBlockSize) {
             throw new JournalRuntimeException("Key doesn't exist: %d", key);
         }
-        return kData.getBuffer(keyOffset, ENTRY_SIZE).getByteBuffer();
+        return kData.getBuffer(keyOffset, ENTRY_SIZE);
     }
 }

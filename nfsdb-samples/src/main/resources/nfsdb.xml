@@ -19,7 +19,7 @@
     <journal class="org.nfsdb.examples.model.Quote" defaultPath="quote" timestampColumn="timestamp"
              partitionType="MONTH" recordHint="1000000" openPartitionTTL="180" lagHours="24" key="sym">
         <sym name="sym" indexed="true" maxsize="4" hintDistinctCount="15"/>
-        <sym name="ex" indexed="true" maxsize="2" hintDistinctCount="30"/>
-        <sym name="mode" indexed="true" hintDistinctCount="30"/>
+        <sym name="ex" indexed="true" maxsize="2" hintDistinctCount="1"/>
+        <sym name="mode" indexed="true" hintDistinctCount="1"/>
     </journal>
 </db>

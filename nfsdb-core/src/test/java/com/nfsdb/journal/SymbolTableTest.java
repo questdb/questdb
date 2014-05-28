@@ -173,7 +173,7 @@ public class SymbolTableTest extends AbstractTest {
         String data[] = createData();
         createTestTable(data);
 
-        try (SymbolTable tab = getReader()) {
+        try (SymbolTable tab = getWriter()) {
             Assert.assertEquals(DATA_SIZE, tab.size());
             Assert.assertTrue(tab.valueExists("TEST25"));
             tab.truncate();
@@ -204,6 +204,10 @@ public class SymbolTableTest extends AbstractTest {
     }
 
     private SymbolTable getReader() throws JournalException {
+        return new SymbolTable(DATA_SIZE, 256, factory.getConfiguration().getJournalBase(), "test", JournalMode.READ, tab.size(), tab.getIndexTxAddress());
+    }
+
+    private SymbolTable getWriter() throws JournalException {
         return new SymbolTable(DATA_SIZE, 256, factory.getConfiguration().getJournalBase(), "test", JournalMode.APPEND, tab.size(), tab.getIndexTxAddress());
     }
 }

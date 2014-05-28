@@ -115,13 +115,13 @@ public class VariableColumn extends AbstractColumn {
         final long targetOffset = rowOffset + value.remaining() + 4;
         long appendOffset = rowOffset;
 
-        ByteBuffer target = getBufferInternal(4).getByteBuffer();
+        ByteBuffer target = getBuffer(rowOffset, 4);
         target.putInt(value.remaining());
         appendOffset += 4;
         while (true) {
             appendOffset += ByteBuffers.copy(value, target, targetOffset - appendOffset);
             if (appendOffset < targetOffset) {
-                target = getBuffer(appendOffset, 1).getByteBuffer();
+                target = getBuffer(appendOffset, 1);
             } else {
                 break;
             }
@@ -130,7 +130,7 @@ public class VariableColumn extends AbstractColumn {
     }
 
     public int getBufferSize(long localRowID) {
-        ByteBuffer bb = getBufferInternal(localRowID, 4).getByteBuffer();
+        ByteBuffer bb = getBufferInternal(localRowID, 4);
         return bb.getInt();
     }
 
@@ -141,7 +141,7 @@ public class VariableColumn extends AbstractColumn {
         }
 
         while (count > 0) {
-            ByteBuffer bb = getBuffer(offset, 1).getByteBuffer();
+            ByteBuffer bb = getBuffer(offset, 1);
             int sz = ByteBuffers.copy(bb, target, count);
             count -= sz;
             offset += sz;
@@ -149,28 +149,24 @@ public class VariableColumn extends AbstractColumn {
     }
 
     public void putNull() {
-        ByteBufferWrapper buf = getBufferInternal(1);
-        ByteBuffer bb = buf.getByteBuffer();
-        long rowOffset = buf.getOffset() + bb.position();
-        commitAppend(rowOffset, 0);
+        commitAppend(getOffset(), 0);
     }
 
     private void putStringW(String value) {
         int len = value.length() * 2 + JournalConfiguration.VARCHAR_MEDIUM_HEADER_LENGTH;
-        ByteBufferWrapper buf = getBufferInternal(len);
-        ByteBuffer bb = buf.getByteBuffer();
-        long rowOffset = buf.getOffset() + bb.position();
+        long offset = getOffset();
+        ByteBuffer bb = getBuffer(offset, len);
         ByteBuffers.putStringW(bb, value);
-        commitAppend(rowOffset, len);
+        commitAppend(offset, len);
     }
 
     private String getStringW(long localRowID) {
         // read delegate buffer which lets us read "null" flag and string length.
-        ByteBuffer bb = getBufferInternal(localRowID, JournalConfiguration.VARCHAR_MEDIUM_HEADER_LENGTH).getByteBuffer();
+        ByteBuffer bb = getBufferInternal(localRowID, JournalConfiguration.VARCHAR_MEDIUM_HEADER_LENGTH);
         int len = bb.getChar();
         // check if buffer can have actual string (char=2*byte)
         if (bb.remaining() < len * 2) {
-            bb = getBufferInternal(localRowID, len * 2 + JournalConfiguration.VARCHAR_MEDIUM_HEADER_LENGTH).getByteBuffer();
+            bb = getBufferInternal(localRowID, len * 2 + JournalConfiguration.VARCHAR_MEDIUM_HEADER_LENGTH);
             bb.position(bb.position() + JournalConfiguration.VARCHAR_MEDIUM_HEADER_LENGTH);
         }
 
@@ -179,20 +175,19 @@ public class VariableColumn extends AbstractColumn {
 
     private void putStringDW(String value) {
         int len = value.length() * 2 + JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH;
-        ByteBufferWrapper buf = getBufferInternal(len);
-        ByteBuffer bb = buf.getByteBuffer();
-        long rowOffset = buf.getOffset() + bb.position();
+        long offset = getOffset();
+        ByteBuffer bb = getBuffer(offset, len);
         ByteBuffers.putStringDW(bb, value);
-        commitAppend(rowOffset, len);
+        commitAppend(offset, len);
     }
 
     private String getStringDW(long localRowID) {
         // read delegate buffer which lets us read "null" flag and string length.
-        ByteBuffer bb = getBufferInternal(localRowID, JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH).getByteBuffer();
+        ByteBuffer bb = getBufferInternal(localRowID, JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH);
         int len = bb.getInt();
         // check if buffer can have actual string (char=2*byte)
         if (bb.remaining() < len * 2) {
-            bb = getBufferInternal(localRowID, len * 2 + JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH).getByteBuffer();
+            bb = getBufferInternal(localRowID, len * 2 + JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH);
             bb.position(bb.position() + JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH);
         }
 
@@ -210,7 +205,7 @@ public class VariableColumn extends AbstractColumn {
         return new String(buffer, 0, len);
     }
 
-    private ByteBufferWrapper getBufferInternal(long localRowID, int recordLength) {
+    private ByteBuffer getBufferInternal(long localRowID, int recordLength) {
         long max = indexColumn.size();
 
         if (localRowID > max) {
@@ -224,10 +219,6 @@ public class VariableColumn extends AbstractColumn {
         }
     }
 
-    ByteBufferWrapper getBufferInternal(int recordLength) {
-        return getBuffer(getOffset(), recordLength);
-    }
-
     void commitAppend(long offset, int size) {
         preCommit(offset + size);
         indexColumn.putLong(offset);
@@ -235,20 +226,19 @@ public class VariableColumn extends AbstractColumn {
 
     private void putStringB(String value) {
         int len = value.length();
-        ByteBufferWrapper buf = getBufferInternal(len * 2 + JournalConfiguration.VARCHAR_SHORT_HEADER_LENGTH);
-        ByteBuffer bb = buf.getByteBuffer();
-        long rowOffset = buf.getOffset() + bb.position();
+        long offset = getOffset();
+        ByteBuffer bb = getBuffer(offset, len * 2 + JournalConfiguration.VARCHAR_SHORT_HEADER_LENGTH);
         ByteBuffers.putStringB(bb, value);
-        commitAppend(rowOffset, JournalConfiguration.VARCHAR_SHORT_HEADER_LENGTH + 2 * len);
+        commitAppend(offset, JournalConfiguration.VARCHAR_SHORT_HEADER_LENGTH + 2 * len);
     }
 
     private String getStringB(long localRowID) {
         // read delegate buffer which lets us read "null" flag and string length.
-        ByteBuffer buf = getBufferInternal(localRowID, JournalConfiguration.VARCHAR_SHORT_HEADER_LENGTH).getByteBuffer();
+        ByteBuffer buf = getBufferInternal(localRowID, JournalConfiguration.VARCHAR_SHORT_HEADER_LENGTH);
         int len = buf.get() & 0xff;
         // check if buffer can have actual string (char=2*byte)
         if (buf.remaining() < len * 2) {
-            buf = getBufferInternal(localRowID, len * 2 + JournalConfiguration.VARCHAR_SHORT_HEADER_LENGTH).getByteBuffer();
+            buf = getBufferInternal(localRowID, len * 2 + JournalConfiguration.VARCHAR_SHORT_HEADER_LENGTH);
             buf.position(buf.position() + JournalConfiguration.VARCHAR_SHORT_HEADER_LENGTH);
         }
 

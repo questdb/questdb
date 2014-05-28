@@ -48,9 +48,9 @@ public class TxLog {
         long offset = getTxAddress();
         assert offset > 0 : "zero offset";
         Tx tx = new Tx();
-        ByteBuffer buffer = mf.getBuffer(offset, 4).getByteBuffer();
+        ByteBuffer buffer = mf.getBuffer(offset, 4);
         int txSize = buffer.getInt();
-        buffer = mf.getBuffer(offset + 4, txSize).getByteBuffer();
+        buffer = mf.getBuffer(offset + 4, txSize);
 
         tx.prevTxAddress = buffer.getLong();
         tx.command = buffer.get();
@@ -113,7 +113,7 @@ public class TxLog {
         }
 
         long offset = Math.max(9, mf.getAppendOffset());
-        ByteBuffer buffer = mf.getBuffer(offset, tx.size() + 4).getByteBuffer();
+        ByteBuffer buffer = mf.getBuffer(offset, tx.size() + 4);
 
         // 4
         buffer.putInt(tx.size());
@@ -148,7 +148,7 @@ public class TxLog {
         ByteBuffers.putLongW(buffer, tx.lagIndexPointers);
 
         // write out tx address
-        buffer = mf.getBuffer(0, 9).getByteBuffer();
+        buffer = mf.getBuffer(0, 9);
         buffer.mark();
         buffer.put((byte) 0);
         buffer.putLong(offset);
@@ -167,7 +167,7 @@ public class TxLog {
             return 0;
         }
 
-        ByteBuffer buffer = mf.getBuffer(0, 9).getByteBuffer();
+        ByteBuffer buffer = mf.getBuffer(0, 9);
         buffer.mark();
         long limit = 100;
         while (limit > 0 && buffer.get() == 0) {

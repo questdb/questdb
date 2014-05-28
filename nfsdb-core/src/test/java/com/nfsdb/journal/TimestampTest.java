@@ -34,7 +34,7 @@ public class TimestampTest extends AbstractTest {
         try (JournalWriter<Quote> journal = factory.writer(Quote.class)) {
             // make sure initial timestamp is zero
             // also, prime cache with values if there is caching going on
-            Assert.assertEquals(0, journal.getImmutableMaxTimestamp());
+            Assert.assertEquals(0, journal.getAppendTimestampLo());
             Assert.assertEquals(0, journal.getMaxTimestamp());
 
             Quote Quote1 = new Quote().setSym("123").setTimestamp(Dates.toMillis("2011-09-10T10:00:00Z"));
@@ -45,23 +45,23 @@ public class TimestampTest extends AbstractTest {
             // make sure both hard and soft timestamps are the same
             // because we are not touching lag partition
             // and also both timestamps equal to max of two timestamps we inserted
-            Assert.assertEquals(Dates.toMillis("2011-09-11T10:00:00Z"), journal.getImmutableMaxTimestamp());
-            Assert.assertEquals(journal.getMaxTimestamp(), journal.getImmutableMaxTimestamp());
+            Assert.assertEquals(Dates.toMillis("2011-09-11T10:00:00Z"), journal.getAppendTimestampLo());
+            Assert.assertEquals(journal.getMaxTimestamp(), journal.getAppendTimestampLo());
         }
 
         List<Quote> data = new ArrayList<>();
 
         // open journal again and check that timestamps are ok
         try (JournalWriter<Quote> journal = factory.writer(Quote.class)) {
-            Assert.assertEquals(Dates.toMillis("2011-09-11T10:00:00Z"), journal.getImmutableMaxTimestamp());
-            Assert.assertEquals(journal.getMaxTimestamp(), journal.getImmutableMaxTimestamp());
+            Assert.assertEquals(Dates.toMillis("2011-09-11T10:00:00Z"), journal.getAppendTimestampLo());
+            Assert.assertEquals(journal.getMaxTimestamp(), journal.getAppendTimestampLo());
 
             // utc add some more data, which goes into new partition
             Quote Quote3 = new Quote().setSym("333").setTimestamp(Dates.toMillis("2012-08-11T10:00:00Z"));
             journal.append(Quote3);
             // make sure timestamps moved on
-            Assert.assertEquals(Dates.toMillis("2012-08-11T10:00:00Z"), journal.getImmutableMaxTimestamp());
-            Assert.assertEquals(journal.getMaxTimestamp(), journal.getImmutableMaxTimestamp());
+            Assert.assertEquals(Dates.toMillis("2012-08-11T10:00:00Z"), journal.getAppendTimestampLo());
+            Assert.assertEquals(journal.getMaxTimestamp(), journal.getAppendTimestampLo());
 
 
             // populate lag (lag is configured to 48 hours)
@@ -71,14 +71,14 @@ public class TimestampTest extends AbstractTest {
             journal.commit();
 
             // check that hard timestamp hasn't changed
-            Assert.assertEquals(Dates.toMillis("2012-08-11T10:00:00Z"), journal.getImmutableMaxTimestamp());
+            Assert.assertEquals(Dates.toMillis("2012-08-11T10:00:00Z"), journal.getAppendTimestampLo());
             // check that soft timestamp has changed
             Assert.assertEquals(Dates.toMillis("2012-08-11T15:00:00Z"), journal.getMaxTimestamp());
         }
 
         // reopen journal and check timestamps
         try (JournalWriter<Quote> journal = factory.writer(Quote.class)) {
-            Assert.assertEquals(Dates.toMillis("2012-08-11T10:00:00Z"), journal.getImmutableMaxTimestamp());
+            Assert.assertEquals(Dates.toMillis("2012-08-11T10:00:00Z"), journal.getAppendTimestampLo());
             Assert.assertEquals(Dates.toMillis("2012-08-11T15:00:00Z"), journal.getMaxTimestamp());
 
             // append timestamp that would make lag shift
@@ -88,14 +88,14 @@ public class TimestampTest extends AbstractTest {
             data.add(Quote5);
             journal.appendIrregular(data);
 
-            Assert.assertEquals("2012-08-11T10:00:00.000Z", Dates.toString(journal.getImmutableMaxTimestamp()));
+            Assert.assertEquals("2012-08-11T10:00:00.000Z", Dates.toString(journal.getAppendTimestampLo()));
             Assert.assertEquals("2012-08-12T16:00:00.000Z", Dates.toString(journal.getMaxTimestamp()));
 
             // create new empty partition
             journal.getAppendPartition(Dates.toMillis("2013-08-12T16:00:00Z"));
 
             // check timestamps again
-            Assert.assertEquals("2012-08-11T10:00:00.000Z", Dates.toString(journal.getImmutableMaxTimestamp()));
+            Assert.assertEquals("2012-08-11T10:00:00.000Z", Dates.toString(journal.getAppendTimestampLo()));
             Assert.assertEquals("2012-08-12T16:00:00.000Z", Dates.toString(journal.getMaxTimestamp()));
         }
     }

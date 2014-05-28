@@ -46,8 +46,12 @@ public class MappedFileImpl implements MappedFile {
     private final int dataOffset = 8;
     private FileChannel channel;
     private ByteBuffer offsetBuffer;
-    private List<ByteBufferWrapper> buffers;
+    private List<ByteBuffer> buffers;
     private List<ByteBufferWrapper> stitches;
+    private ByteBuffer cachedBuffer;
+    private long cachedBufferLo = -1;
+    private long cachedBufferHi = -1;
+    private long cachedAppendOffset = -1;
 
     public MappedFileImpl(File file, int bitHint, JournalMode mode) throws JournalException {
         this.file = file;
@@ -59,66 +63,15 @@ public class MappedFileImpl implements MappedFile {
     }
 
     @Override
-    public ByteBufferWrapper getBuffer(long offset, int size) {
-
-        int bufferSize = 1 << bitHint;
-        int bufferIndex = (int) (offset >>> bitHint);
-        long bufferOffset = ((long) bufferIndex) * ((long) bufferSize);
-        int bufferPos = (int) (offset - bufferOffset);
-
-
-        Lists.advance(buffers, bufferIndex);
-
-        ByteBufferWrapper buffer = buffers.get(bufferIndex);
-
-        if (buffer != null && buffer.getByteBuffer().limit() < bufferPos) {
-            buffer.release();
-            buffer = null;
+    public ByteBuffer getBuffer(long offset, int size) {
+        if (offset >= cachedBufferLo && offset + size <= cachedBufferHi) {
+            cachedBuffer.position((int) (offset - cachedBufferLo));
+        } else {
+            cachedBuffer = getBufferInternal(offset, size);
+            cachedBufferLo = offset - cachedBuffer.position();
+            cachedBufferHi = cachedBufferLo + cachedBuffer.limit();
         }
-
-        if (buffer == null) {
-            buffer = new ByteBufferWrapper(bufferOffset, mapBufferInternal(bufferOffset, bufferSize));
-            assert bufferSize > 0;
-            buffers.set(bufferIndex, buffer);
-            if (mode == JournalMode.APPEND_ONLY) {
-                for (int i = 0; i < bufferIndex; i++) {
-                    ByteBufferWrapper w = buffers.get(i);
-                    if (w != null) {
-                        w.release();
-                        buffers.set(i, null);
-                    }
-                }
-            }
-        }
-
-        buffer.getByteBuffer().position(bufferPos);
-
-        // if the desired size is larger than remaining buffer we need to crate
-        // a stitch buffer, which would accommodate the size
-        if (buffer.getByteBuffer().remaining() < size) {
-
-            Lists.advance(stitches, bufferIndex);
-
-            buffer = stitches.get(bufferIndex);
-            long stitchOffset = bufferOffset + bufferPos;
-            if (buffer != null) {
-                // if we already have a stitch for this buffer
-                // it could be too small for the size
-                // if that's the case - discard the existing stitch and create a larger one.
-                if (buffer.getOffset() != stitchOffset || buffer.getByteBuffer().limit() < size) {
-                    buffer.release();
-                    buffer = null;
-                } else {
-                    buffer.getByteBuffer().rewind();
-                }
-            }
-
-            if (buffer == null) {
-                buffer = new ByteBufferWrapper(stitchOffset, mapBufferInternal(stitchOffset, size));
-                stitches.set(bufferIndex, buffer);
-            }
-        }
-        return buffer;
+        return cachedBuffer;
     }
 
     public void delete() {
@@ -143,16 +96,21 @@ public class MappedFileImpl implements MappedFile {
     }
 
     public long getAppendOffset() {
-        if (offsetBuffer != null) {
-            offsetBuffer.position(0);
-            return offsetBuffer.getLong();
+
+        if (mode == JournalMode.READ || cachedAppendOffset == -1L) {
+            if (offsetBuffer != null) {
+                cachedAppendOffset = offsetBuffer.getLong(0);
+                return cachedAppendOffset;
+            }
+            return -1L;
+        } else {
+            return cachedAppendOffset;
         }
-        return -1L;
     }
 
     public void setAppendOffset(long offset) {
-        offsetBuffer.position(0);
-        offsetBuffer.putLong(offset);
+        cachedAppendOffset = offset;
+        offsetBuffer.putLong(0, offset);
     }
 
     @Override
@@ -177,6 +135,77 @@ public class MappedFileImpl implements MappedFile {
 
     public String getFullFileName() {
         return this.file.getAbsolutePath();
+    }
+
+    public JournalMode getMode() {
+        return mode;
+    }
+
+    private ByteBuffer getBufferInternal(long offset, int size) {
+
+        int bufferSize = 1 << bitHint;
+        int bufferIndex = (int) (offset >>> bitHint);
+        long bufferOffset = ((long) bufferIndex) * ((long) bufferSize);
+        int bufferPos = (int) (offset - bufferOffset);
+
+
+        Lists.advance(buffers, bufferIndex);
+
+        ByteBuffer buffer = buffers.get(bufferIndex);
+
+        if (buffer != null && buffer.limit() < bufferPos) {
+            ByteBuffers.release(buffer);
+            buffer = null;
+        }
+
+        if (buffer == null) {
+            buffer = mapBufferInternal(bufferOffset, bufferSize);
+            assert bufferSize > 0;
+            buffers.set(bufferIndex, buffer);
+            if (mode == JournalMode.APPEND_ONLY) {
+                cachedBuffer = null;
+                cachedBufferLo = cachedBufferHi = -1;
+                for (int i = 0; i < bufferIndex; i++) {
+                    ByteBuffer b = buffers.get(i);
+                    if (b != null) {
+                        ByteBuffers.release(b);
+                        buffers.set(i, null);
+                    }
+                }
+            }
+        }
+
+        buffer.position(bufferPos);
+
+        // if the desired size is larger than remaining buffer we need to crate
+        // a stitch buffer, which would accommodate the size
+        if (buffer.remaining() < size) {
+
+            Lists.advance(stitches, bufferIndex);
+
+            ByteBufferWrapper bufferWrapper = stitches.get(bufferIndex);
+
+            long stitchOffset = bufferOffset + bufferPos;
+            if (bufferWrapper != null) {
+                // if we already have a stitch for this buffer
+                // it could be too small for the size
+                // if that's the case - discard the existing stitch and create a larger one.
+                if (bufferWrapper.getOffset() != stitchOffset || bufferWrapper.getByteBuffer().limit() < size) {
+                    bufferWrapper.release();
+                    bufferWrapper = null;
+                } else {
+                    bufferWrapper.getByteBuffer().rewind();
+                }
+            }
+
+            if (bufferWrapper == null) {
+                bufferWrapper = new ByteBufferWrapper(stitchOffset, mapBufferInternal(stitchOffset, size));
+                stitches.set(bufferIndex, bufferWrapper);
+            }
+
+            return bufferWrapper.getByteBuffer();
+        }
+        return buffer;
     }
 
     private long size() throws JournalException {
@@ -247,9 +276,9 @@ public class MappedFileImpl implements MappedFile {
 
     private void releaseBuffers() {
         for (int i = 0, buffersSize = buffers.size(); i < buffersSize; i++) {
-            ByteBufferWrapper b = buffers.get(i);
+            ByteBuffer b = buffers.get(i);
             if (b != null) {
-                b.release();
+                ByteBuffers.release(b);
             }
         }
         for (int i = 0, stitchesSize = stitches.size(); i < stitchesSize; i++) {
@@ -258,6 +287,8 @@ public class MappedFileImpl implements MappedFile {
                 b.release();
             }
         }
+        cachedBuffer = null;
+        cachedBufferLo = cachedBufferHi = -1;
         buffers.clear();
         stitches.clear();
     }

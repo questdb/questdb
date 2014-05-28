@@ -50,22 +50,25 @@ public class JournalWriter<T> extends Journal<T> {
     private static final Logger LOGGER = Logger.getLogger(JournalWriter.class);
     private final long lagMillis;
     private final long lagSwellMillis;
+    private final boolean checkOrder;
     private Lock writeLock;
     private TxListener txListener;
     private boolean txActive = false;
     private int txPartitionIndex = -1;
-    private long hardMaxTimestamp = -1;
+    private long appendTimestampLo = -1;
     private PartitionCleaner partitionCleaner;
     private boolean autoCommit = true;
     // irregular partition related
     private boolean doDiscard = true;
     private boolean doJournal = true;
-
+    private Partition<T> appendPartition;
+    private long appendTimestampHi = -1;
 
     public JournalWriter(JournalMetadata<T> metadata, JournalKey<T> key, TimerCache timerCache) throws JournalException {
         super(key, metadata, timerCache);
         this.lagMillis = TimeUnit.HOURS.toMillis(getMetadata().getLagHours());
         this.lagSwellMillis = lagMillis * 3;
+        this.checkOrder = key.isOrdered() && getTimestampOffset() != -1;
     }
 
     @Override
@@ -141,7 +144,9 @@ public class JournalWriter<T> extends Journal<T> {
                     getSymbolTable(i).truncate(tx.symbolTableSizes[i]);
                 }
             }
-            hardMaxTimestamp = -1;
+            appendTimestampLo = -1;
+            appendTimestampHi = -1;
+            appendPartition = null;
             txActive = false;
         }
     }
@@ -252,7 +257,7 @@ public class JournalWriter<T> extends Journal<T> {
         for (int i = 0; i < getSymbolTableCount(); i++) {
             getSymbolTable(i).truncate();
         }
-        hardMaxTimestamp = -1;
+        appendTimestampLo = -1;
         commit();
     }
 
@@ -303,18 +308,44 @@ public class JournalWriter<T> extends Journal<T> {
             throw new JournalException("Cannot append NULL to %s", this);
         }
 
-        beginTx();
+        if (!txActive) {
+            beginTx();
+        }
 
-        if (getTimestampOffset() != -1) {
+        if (checkOrder) {
             long timestamp = getTimestamp(obj);
-            if (getKey().isOrdered() && timestamp < getImmutableMaxTimestamp()) {
-                throw new JournalException("Cannot insert records out of order. maxHardTimestamp=%d (%s), timestamp=%d (%s): %s"
-                        , hardMaxTimestamp, Dates.toString(hardMaxTimestamp), timestamp, Dates.toString(timestamp), this);
-            }
-            getAppendPartition(timestamp).append(obj);
 
-            if (timestamp > hardMaxTimestamp) {
-                hardMaxTimestamp = timestamp;
+            if (timestamp > appendTimestampHi) {
+
+                boolean computeTimestampLo = appendPartition == null;
+
+                appendPartition = getAppendPartition(timestamp);
+                Interval interval = appendPartition.getInterval();
+                if (interval == null) {
+                    appendTimestampHi = Long.MAX_VALUE;
+                } else {
+                    appendTimestampHi = appendPartition.getInterval().getEndMillis();
+                }
+
+                if (computeTimestampLo) {
+                    FixedColumn column = appendPartition.getTimestampColumn();
+                    if (column.size() > 0) {
+                        appendTimestampLo = column.getLong(column.size() - 1);
+                    }
+                } else {
+                    appendTimestampLo = appendPartition.getInterval().getStartMillis();
+                }
+            }
+
+            if (timestamp < appendTimestampLo) {
+                throw new JournalException("Cannot insert records out of order. maxHardTimestamp=%d (%s), timestamp=%d (%s): %s"
+                        , appendTimestampLo, Dates.toString(appendTimestampLo), timestamp, Dates.toString(timestamp), this);
+            }
+
+            appendPartition.append(obj);
+
+            if (timestamp > appendTimestampLo) {
+                appendTimestampLo = timestamp;
             }
         } else {
             getAppendPartition().append(obj);
@@ -328,28 +359,28 @@ public class JournalWriter<T> extends Journal<T> {
      * @return max timestamp older then which append is impossible.
      * @throws com.nfsdb.journal.exceptions.JournalException if journal cannot calculate timestamp.
      */
-    public long getImmutableMaxTimestamp() throws JournalException {
-        if (hardMaxTimestamp == -1) {
+    public long getAppendTimestampLo() throws JournalException {
+        if (appendTimestampLo == -1) {
             if (nonLagPartitionCount() == 0) {
                 return 0;
             }
 
             FixedColumn column = lastNonEmptyNonLag().getTimestampColumn();
             if (column.size() > 0) {
-                hardMaxTimestamp = column.getLong(column.size() - 1);
+                appendTimestampLo = column.getLong(column.size() - 1);
             } else {
                 return 0;
             }
         }
-        return hardMaxTimestamp;
+        return appendTimestampLo;
     }
 
     public Partition<T> getAppendPartition(long timestamp) throws JournalException {
         int sz = nonLagPartitionCount();
         if (sz > 0) {
-            Partition<T> result = partitions.get(sz - 1).access();
+            Partition<T> result = partitions.get(sz - 1);
             if (result.getInterval() == null || result.getInterval().contains(timestamp)) {
-                return result.open();
+                return result.open().access();
             } else if (result.getInterval().isBefore(timestamp)) {
                 return createPartition(Dates.intervalForDate(timestamp, getMetadata().getPartitionType()), sz);
             } else {
@@ -442,7 +473,7 @@ public class JournalWriter<T> extends Journal<T> {
         }
 
         long dataMaxTimestamp = getTimestamp(data.get(data.size() - 1));
-        long hard = getImmutableMaxTimestamp();
+        long hard = getAppendTimestampLo();
 
         if (dataMaxTimestamp < hard) {
             return;
@@ -553,6 +584,13 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     @Override
+    protected void closePartitions() {
+        super.closePartitions();
+        appendPartition = null;
+        appendTimestampHi = -1;
+    }
+
+    @Override
     protected void configure() throws JournalException {
         writeLock = LockManager.lockExclusive(getLocation());
         if (writeLock == null || !writeLock.isValid()) {
@@ -591,8 +629,9 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     Partition<T> getAppendPartition() throws JournalException {
-        if (nonLagPartitionCount() > 0) {
-            return getPartition(nonLagPartitionCount() - 1, true);
+        int count = nonLagPartitionCount();
+        if (count > 0) {
+            return getPartition(count - 1, true);
         } else {
             if (getMetadata().getPartitionType() != PartitionType.NONE) {
                 throw new JournalException("getAppendPartition() without timestamp on partitioned journal: %s", this);

@@ -1213,7 +1213,7 @@ public class QueryTest extends AbstractTest {
     }
 
     private Query<Quote> advanceTestData() throws JournalException {
-        long max = w.getImmutableMaxTimestamp();
+        long max = w.getAppendTimestampLo();
         long inc = System.currentTimeMillis() - max;
 
         JournalWriter<Quote> w2 = factory.writer(Quote.class, "w2");

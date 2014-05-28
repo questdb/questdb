@@ -152,7 +152,7 @@ public class PerformanceTest extends AbstractTest {
             for (int i = 0; i < count; i++) {
                 builder.asResultSet();
             }
-            LOGGER.info("allBySymbolValueOverInterval (query) latency: " + (System.nanoTime() - t) / count / 1000 + "μs");
+            LOGGER.info("journal.query().all().withKeys(\"LLOY.L\").slice(interval) (query only) latency: " + (System.nanoTime() - t) / count / 1000 + "μs");
         }
     }
 
@@ -169,7 +169,7 @@ public class PerformanceTest extends AbstractTest {
             for (int i = 0; i < count; i++) {
                 journal.query().head().withKeys().asResultSet().read();
             }
-            LOGGER.info("latestBySymbol (query+read) latency: " + (System.nanoTime() - t) / count + "ns");
+            LOGGER.info("journal.query().head().withKeys() (query+read) latency: " + (System.nanoTime() - t) / count + "ns");
         }
     }
 }

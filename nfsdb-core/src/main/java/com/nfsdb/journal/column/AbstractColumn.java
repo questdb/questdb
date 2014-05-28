@@ -19,6 +19,7 @@ package com.nfsdb.journal.column;
 import com.nfsdb.journal.exceptions.JournalException;
 
 import java.io.Closeable;
+import java.nio.ByteBuffer;
 
 public abstract class AbstractColumn implements Closeable {
     protected long txAppendOffset = -1;
@@ -53,7 +54,7 @@ public abstract class AbstractColumn implements Closeable {
 
     public abstract long size();
 
-    public ByteBufferWrapper getBuffer(long offset, int size) {
+    public ByteBuffer getBuffer(long offset, int size) {
         return mappedFile.getBuffer(offset, size);
     }
 

@@ -38,7 +38,7 @@ public class SymbolTable implements Closeable {
     private static final String DATA_FILE_SUFFIX = ".symd";
     private static final String INDEX_FILE_SUFFIX = ".symi";
     private static final String HASH_INDEX_FILE_SUFFIX = ".symr";
-    private static final int HASH_GROUPING_RATE = 25;
+    private static final long HASH_GROUPING_RATE = 25L;
     private static final float CACHE_LOAD_FACTOR = 0.2f;
     private final int capacity;
     private final String column;

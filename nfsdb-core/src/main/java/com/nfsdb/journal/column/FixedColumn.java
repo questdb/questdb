@@ -27,7 +27,7 @@ public class FixedColumn extends AbstractColumn {
     }
 
     public ByteBuffer getBuffer(long localRowID) {
-        return getBuffer(getOffset(localRowID), width).getByteBuffer();
+        return getBuffer(getOffset(localRowID), width);
     }
 
     public boolean getBool(long localRowID) {
@@ -112,8 +112,7 @@ public class FixedColumn extends AbstractColumn {
 
     ByteBuffer getBuffer() {
         long appendOffset = getOffset();
-        ByteBufferWrapper buf = getBuffer(appendOffset, width);
         preCommit(appendOffset + width);
-        return buf.getByteBuffer();
+        return getBuffer(appendOffset, width);
     }
 }
