@@ -21,7 +21,7 @@
     <properties>
         <project.version>1.0.2-SNAPSHOT</project.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <thrift.version>0.9.1</thrift.version>
+        <thrift.version>0.9.0</thrift.version>
     </properties>
 
     <version>${project.version}</version>
@@ -66,11 +66,6 @@
                 <groupId>org.apache.thrift.tools</groupId>
                 <artifactId>maven-thrift-plugin</artifactId>
                 <version>0.1.11</version>
-<!--
-                <configuration>
-                    <thriftExecutable>thrift-${thrift.version}.exe</thriftExecutable>
-                </configuration>
--->
                 <executions>
                     <execution>
                         <id>thrift-sources</id>
