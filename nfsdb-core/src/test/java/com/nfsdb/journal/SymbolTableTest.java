@@ -194,7 +194,7 @@ public class SymbolTableTest extends AbstractTest {
 
     private void createTestTable(String data[]) throws JournalException {
         if (tab == null) {
-            tab = new SymbolTable(DATA_SIZE, 256, factory.getConfiguration().getJournalBase(), "test", JournalMode.APPEND, 0, 0);
+            tab = new SymbolTable(DATA_SIZE, 256, 1, factory.getConfiguration().getJournalBase(), "test", JournalMode.APPEND, 0, 0);
         }
 
         for (String s : data) {
@@ -204,10 +204,10 @@ public class SymbolTableTest extends AbstractTest {
     }
 
     private SymbolTable getReader() throws JournalException {
-        return new SymbolTable(DATA_SIZE, 256, factory.getConfiguration().getJournalBase(), "test", JournalMode.READ, tab.size(), tab.getIndexTxAddress());
+        return new SymbolTable(DATA_SIZE, 256, 1, factory.getConfiguration().getJournalBase(), "test", JournalMode.READ, tab.size(), tab.getIndexTxAddress());
     }
 
     private SymbolTable getWriter() throws JournalException {
-        return new SymbolTable(DATA_SIZE, 256, factory.getConfiguration().getJournalBase(), "test", JournalMode.APPEND, tab.size(), tab.getIndexTxAddress());
+        return new SymbolTable(DATA_SIZE, 256, 1, factory.getConfiguration().getJournalBase(), "test", JournalMode.APPEND, tab.size(), tab.getIndexTxAddress());
     }
 }

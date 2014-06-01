@@ -17,5 +17,5 @@
 package com.nfsdb.journal;
 
 public enum JournalMode {
-    READ, APPEND, APPEND_ONLY
+    READ, BULK_READ, APPEND, BULK_APPEND
 }

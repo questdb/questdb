@@ -24,10 +24,10 @@ import com.nfsdb.journal.exceptions.JournalRuntimeException;
 
 import java.util.Iterator;
 
-public class ResultSetIterator<T> implements JournalIterator<T> {
+public class ResultSetIterator<T> implements JournalIterator<T>, PeekingIterator<T> {
 
     private final ResultSet<T> rs;
-    private int counter = 0;
+    private int cursor = 0;
 
     public ResultSetIterator(ResultSet<T> rs) {
         this.rs = rs;
@@ -35,13 +35,13 @@ public class ResultSetIterator<T> implements JournalIterator<T> {
 
     @Override
     public boolean hasNext() {
-        return counter < rs.size();
+        return cursor < rs.size();
     }
 
     @Override
     public T next() {
         try {
-            return rs.read(counter++);
+            return rs.read(cursor++);
         } catch (JournalException e) {
             throw new JournalRuntimeException("Journal exception", e);
         }
@@ -55,6 +55,29 @@ public class ResultSetIterator<T> implements JournalIterator<T> {
     @Override
     public Journal<T> getJournal() {
         return rs.getJournal();
+    }
+
+    @Override
+    public T peekLast() {
+        try {
+            return rs.readLast();
+        } catch (JournalException e) {
+            throw new JournalRuntimeException("Journal exception", e);
+        }
+    }
+
+    @Override
+    public T peekFirst() {
+        try {
+            return rs.readFirst();
+        } catch (JournalException e) {
+            throw new JournalRuntimeException("Journal exception", e);
+        }
+    }
+
+    @Override
+    public boolean isEmpty() {
+        return cursor >= rs.size();
     }
 
     @Override

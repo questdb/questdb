@@ -14,19 +14,14 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal;
+package com.nfsdb.journal.iterators;
 
-import com.nfsdb.journal.concurrent.TimerCache;
-import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.factory.JournalMetadata;
+import java.util.Iterator;
 
-public class JournalBulkWriter<T> extends JournalWriter<T> {
-    public JournalBulkWriter(JournalMetadata<T> metadata, JournalKey<T> key, TimerCache timerCache) throws JournalException {
-        super(metadata, key, timerCache);
-    }
+public interface PeekingIterator<T> extends Iterable<T>, Iterator<T> {
+    T peekLast();
 
-    @Override
-    public JournalMode getMode() {
-        return JournalMode.BULK_APPEND;
-    }
+    T peekFirst();
+
+    boolean isEmpty();
 }

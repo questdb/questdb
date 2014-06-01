@@ -81,7 +81,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
     private JournalClosingListener closeListener;
 
 
-    public Journal(JournalKey<T> key, JournalMetadata<T> metadata, TimerCache timerCache) throws JournalException {
+    public Journal(JournalMetadata<T> metadata, JournalKey<T> key, TimerCache timerCache) throws JournalException {
         this.metadata = metadata;
         this.key = key;
         this.location = new File(metadata.getLocation());
@@ -297,7 +297,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      * @throws com.nfsdb.journal.exceptions.JournalException if there is an error
      */
     public long getMaxRowID() throws JournalException {
-        Partition<T> p = lastNonEmpty();
+        Partition<T> p = getLastPartition();
         if (p == null) {
             return -1;
         } else {
@@ -305,7 +305,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         }
     }
 
-    public Partition<T> lastNonEmpty() throws JournalException {
+    public Partition<T> getLastPartition() throws JournalException {
         Partition<T> result;
 
         if (getPartitionCount() == 0) {
@@ -336,7 +336,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
 
     public long getMaxTimestamp() throws JournalException {
 
-        Partition p = lastNonEmpty();
+        Partition p = getLastPartition();
         if (p == null) {
             return 0;
         }
@@ -592,7 +592,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
                 int tabIndex = symbolTables.size();
                 int tabSize = tx.symbolTableSizes.length > tabIndex ? tx.symbolTableSizes[tabIndex] : 0;
                 long indexTxAddress = tx.symbolTableIndexPointers.length > tabIndex ? tx.symbolTableIndexPointers[tabIndex] : 0;
-                SymbolTable tab = new SymbolTable(meta.distinctCountHint, meta.maxSize, location, meta.name, getMode(), tabSize, indexTxAddress);
+                SymbolTable tab = new SymbolTable(meta.distinctCountHint, meta.maxSize, getMetadata().getTxCountHint(), location, meta.name, getMode(), tabSize, indexTxAddress);
                 symbolTables.add(tab);
                 symbolTableMap.put(meta.name, tab);
                 columnMetadata[i].symbolTable = tab;

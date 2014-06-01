@@ -26,6 +26,7 @@ import com.nfsdb.journal.factory.JournalConfiguration;
 import com.nfsdb.journal.factory.JournalMetadata;
 import com.nfsdb.journal.iterators.ConcurrentIterator;
 import com.nfsdb.journal.iterators.MergingIterator;
+import com.nfsdb.journal.iterators.PeekingIterator;
 import com.nfsdb.journal.locks.Lock;
 import com.nfsdb.journal.locks.LockManager;
 import com.nfsdb.journal.logging.Logger;
@@ -35,6 +36,7 @@ import com.nfsdb.journal.tx.TxListener;
 import com.nfsdb.journal.tx.TxLog;
 import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Files;
+import com.nfsdb.journal.utils.PeekingListIterator;
 import com.nfsdb.journal.utils.Rows;
 import org.joda.time.Interval;
 
@@ -51,6 +53,7 @@ public class JournalWriter<T> extends Journal<T> {
     private final long lagMillis;
     private final long lagSwellMillis;
     private final boolean checkOrder;
+    private final PeekingListIterator<T> peekingListIterator = new PeekingListIterator<>();
     private Lock writeLock;
     private TxListener txListener;
     private boolean txActive = false;
@@ -65,7 +68,7 @@ public class JournalWriter<T> extends Journal<T> {
     private long appendTimestampHi = -1;
 
     public JournalWriter(JournalMetadata<T> metadata, JournalKey<T> key, TimerCache timerCache) throws JournalException {
-        super(key, metadata, timerCache);
+        super(metadata, key, timerCache);
         this.lagMillis = TimeUnit.HOURS.toMillis(getMetadata().getLagHours());
         this.lagSwellMillis = lagMillis * 3;
         this.checkOrder = key.isOrdered() && getTimestampOffset() != -1;
@@ -320,6 +323,18 @@ public class JournalWriter<T> extends Journal<T> {
                 boolean computeTimestampLo = appendPartition == null;
 
                 appendPartition = getAppendPartition(timestamp);
+
+                switch (getMode()) {
+                    case BULK_APPEND:
+                        for (int i = appendPartition.getPartitionIndex() - 1; i >= 0; i--) {
+                            Partition<T> partition = partitions.get(i);
+                            if (partition == null || !partition.isOpen()) {
+                                break;
+                            }
+                            partition.close();
+                        }
+
+                }
                 Interval interval = appendPartition.getInterval();
                 if (interval == null) {
                     appendTimestampHi = Long.MAX_VALUE;
@@ -460,7 +475,16 @@ public class JournalWriter<T> extends Journal<T> {
         return JournalMode.APPEND;
     }
 
-    public void appendIrregular(List<T> data) throws JournalException {
+    public void appendLag(List<T> list) throws JournalException {
+        this.peekingListIterator.setDelegate(list);
+        appendLag(this.peekingListIterator);
+    }
+
+    public void appendLag(ResultSet<T> resultSet) throws JournalException {
+        appendLag(resultSet.bufferedIterator());
+    }
+
+    public void appendLag(PeekingIterator<T> data) throws JournalException {
 
         if (lagMillis == 0) {
             throw new JournalException("This journal is not configured to have lag partition");
@@ -468,11 +492,11 @@ public class JournalWriter<T> extends Journal<T> {
 
         beginTx();
 
-        if (data == null || data.size() == 0) {
+        if (data == null || data.isEmpty()) {
             return;
         }
 
-        long dataMaxTimestamp = getTimestamp(data.get(data.size() - 1));
+        long dataMaxTimestamp = getTimestamp(data.peekLast());
         long hard = getAppendTimestampLo();
 
         if (dataMaxTimestamp < hard) {
@@ -483,7 +507,7 @@ public class JournalWriter<T> extends Journal<T> {
         this.doDiscard = true;
         this.doJournal = true;
 
-        long dataMinTimestamp = getTimestamp(data.get(0));
+        long dataMinTimestamp = getTimestamp(data.peekFirst());
         long lagMaxTimestamp = getMaxTimestamp();
         long lagMinTimestamp = lagPartition.size() == 0L ? 0 : getTimestamp(lagPartition.read(0));
         long soft = Math.max(dataMaxTimestamp, lagMaxTimestamp) - lagMillis;
@@ -509,11 +533,11 @@ public class JournalWriter<T> extends Journal<T> {
 
                 Partition<T> tempPartition = createTempPartition().open();
                 splitAppend(lagPartition.bufferedIterator(), hard, soft, tempPartition);
-                splitAppend(data.iterator(), hard, soft, tempPartition);
+                splitAppend(data, hard, soft, tempPartition);
                 replaceIrregularPartition(tempPartition);
             } else {
                 // simplest case, just append to lag
-                lagPartition.append(data.iterator());
+                lagPartition.append(data);
             }
         } else {
 
@@ -531,7 +555,7 @@ public class JournalWriter<T> extends Journal<T> {
                 splitAppend(lagPartition.bufferedIterator(0, lagMid1), hard, soft, tempPartition);
 
                 // merge lag with data and copy result to temp partition
-                splitAppendMerge(data.iterator(), lagPartition.iterator(lagMid1 + 1, lagMid2 - 1), hard, soft, tempPartition);
+                splitAppendMerge(data, lagPartition.bufferedIterator(lagMid1 + 1, lagMid2 - 1), hard, soft, tempPartition);
 
                 // copy part of lag below data
                 splitAppend(lagPartition.bufferedIterator(lagMid2, lagPartition.size() - 1), hard, soft, tempPartition);
@@ -540,7 +564,7 @@ public class JournalWriter<T> extends Journal<T> {
                 //
                 // overlap scenario 2: data sits directly above lag
                 //
-                splitAppend(data.iterator(), hard, soft, tempPartition);
+                splitAppend(data, hard, soft, tempPartition);
                 splitAppend(lagPartition.bufferedIterator(), hard, soft, tempPartition);
             } else if (dataMinTimestamp <= lagMinTimestamp && dataMaxTimestamp < lagMaxTimestamp) {
                 //
@@ -551,7 +575,7 @@ public class JournalWriter<T> extends Journal<T> {
                 long split = lagPartition.indexOf(dataMaxTimestamp, BinarySearch.SearchType.GREATER_OR_EQUAL);
 
                 // merge lag with data and copy result to temp partition
-                splitAppendMerge(data.iterator(), lagPartition.iterator(0, split - 1), hard, soft, tempPartition);
+                splitAppendMerge(data, lagPartition.bufferedIterator(0, split - 1), hard, soft, tempPartition);
 
                 // copy part of lag below data
                 splitAppend(lagPartition.bufferedIterator(split, lagPartition.size() - 1), hard, soft, tempPartition);
@@ -565,14 +589,14 @@ public class JournalWriter<T> extends Journal<T> {
                 splitAppend(lagPartition.bufferedIterator(0, split), hard, soft, tempPartition);
 
                 // merge lag with data and copy result to temp partition
-                splitAppendMerge(data.iterator(), lagPartition.iterator(split + 1, lagPartition.size() - 1), hard, soft, tempPartition);
+                splitAppendMerge(data, lagPartition.bufferedIterator(split + 1, lagPartition.size() - 1), hard, soft, tempPartition);
             } else if (dataMinTimestamp <= lagMinTimestamp && dataMaxTimestamp >= lagMaxTimestamp) {
                 //
                 // overlap scenario 5: lag is fully inside of data
                 //
 
                 // merge lag with data and copy result to temp partition
-                splitAppendMerge(data.iterator(), lagPartition.iterator(), hard, soft, tempPartition);
+                splitAppendMerge(data, lagPartition.bufferedIterator(), hard, soft, tempPartition);
             } else {
                 throw new JournalRuntimeException("Unsupported overlap type: lag min/max [%s/%s] data min/max: [%s/%s]"
                         , Dates.toString(lagMinTimestamp), Dates.toString(lagMaxTimestamp)
@@ -733,6 +757,7 @@ public class JournalWriter<T> extends Journal<T> {
         purgeTempPartitions();
     }
 
+    // TODO: reuse merging iterator
     private void splitAppendMerge(Iterator<T> a, Iterator<T> b, long hard, long soft, Partition<T> temp) throws JournalException {
         splitAppend(new MergingIterator<>(a, b, getTimestampComparator()), hard, soft, temp);
     }

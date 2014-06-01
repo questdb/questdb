@@ -82,7 +82,7 @@ public class MappedFileImpl implements MappedFile {
     @Override
     public void close() {
         try {
-            releaseBuffers();
+            unmap();
             channel.close();
         } catch (IOException e) {
             throw new JournalRuntimeException("Cannot close file", e);
@@ -97,7 +97,7 @@ public class MappedFileImpl implements MappedFile {
 
     public long getAppendOffset() {
 
-        if (mode == JournalMode.READ || cachedAppendOffset == -1L) {
+        if (mode == JournalMode.READ || mode == JournalMode.BULK_READ || cachedAppendOffset == -1L) {
             if (offsetBuffer != null) {
                 cachedAppendOffset = offsetBuffer.getLong(0);
                 return cachedAppendOffset;
@@ -137,10 +137,6 @@ public class MappedFileImpl implements MappedFile {
         return this.file.getAbsolutePath();
     }
 
-    public JournalMode getMode() {
-        return mode;
-    }
-
     private ByteBuffer getBufferInternal(long offset, int size) {
 
         int bufferSize = 1 << bitHint;
@@ -162,16 +158,18 @@ public class MappedFileImpl implements MappedFile {
             buffer = mapBufferInternal(bufferOffset, bufferSize);
             assert bufferSize > 0;
             buffers.set(bufferIndex, buffer);
-            if (mode == JournalMode.APPEND_ONLY) {
-                cachedBuffer = null;
-                cachedBufferLo = cachedBufferHi = -1;
-                for (int i = 0; i < bufferIndex; i++) {
-                    ByteBuffer b = buffers.get(i);
-                    if (b != null) {
-                        ByteBuffers.release(b);
-                        buffers.set(i, null);
+            switch (mode) {
+                case BULK_READ:
+                case BULK_APPEND:
+                    cachedBuffer = null;
+                    cachedBufferLo = cachedBufferHi = -1;
+                    for (int i = bufferIndex - 1; i >= 0; i--) {
+                        ByteBuffer b = buffers.get(i);
+                        if (b != null) {
+                            ByteBuffers.release(b);
+                            buffers.set(i, null);
+                        }
                     }
-                }
             }
         }
 
@@ -216,10 +214,11 @@ public class MappedFileImpl implements MappedFile {
         }
     }
 
-    private void open() throws JournalException {
+    void open() throws JournalException {
         String m;
         switch (mode) {
             case READ:
+            case BULK_READ:
                 m = "r";
                 break;
             default:
@@ -256,6 +255,7 @@ public class MappedFileImpl implements MappedFile {
         try {
             switch (mode) {
                 case READ:
+                case BULK_READ:
                     // make sure size does not extend beyond actual file size, otherwise
                     // java would assume we want to write and throw an exception
                     long sz;
@@ -274,7 +274,7 @@ public class MappedFileImpl implements MappedFile {
         }
     }
 
-    private void releaseBuffers() {
+    private void unmap() {
         for (int i = 0, buffersSize = buffers.size(); i < buffersSize; i++) {
             ByteBuffer b = buffers.get(i);
             if (b != null) {

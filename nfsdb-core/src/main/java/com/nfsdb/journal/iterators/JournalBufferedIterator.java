@@ -25,7 +25,7 @@ import com.nfsdb.journal.utils.Rows;
 import java.util.Iterator;
 import java.util.List;
 
-public class JournalBufferedIterator<T> implements JournalIterator<T> {
+public class JournalBufferedIterator<T> implements JournalIterator<T>, PeekingIterator<T> {
     boolean hasNext = true;
     private final List<JournalIteratorRange> ranges;
     private final Journal<T> journal;
@@ -65,6 +65,35 @@ public class JournalBufferedIterator<T> implements JournalIterator<T> {
     }
 
     @Override
+    public T peekLast() {
+        JournalIteratorRange w = ranges.get(ranges.size() - 1);
+        try {
+            journal.clearObject(obj);
+            journal.read(Rows.toRowID(w.partitionID, w.hi), obj);
+            return obj;
+        } catch (JournalException e) {
+            throw new JournalRuntimeException("Error in iterator at last element", e);
+        }
+    }
+
+    @Override
+    public T peekFirst() {
+        JournalIteratorRange w = ranges.get(0);
+        try {
+            journal.clearObject(obj);
+            journal.read(Rows.toRowID(w.partitionID, w.lo), obj);
+            return obj;
+        } catch (JournalException e) {
+            throw new JournalRuntimeException("Error in iterator at last element", e);
+        }
+    }
+
+    @Override
+    public boolean isEmpty() {
+        return ranges == null || ranges.size() == 0;
+    }
+
+    @Override
     public void remove() {
         throw new JournalImmutableIteratorException();
     }
@@ -93,8 +122,8 @@ public class JournalBufferedIterator<T> implements JournalIterator<T> {
     private void updateVariables() {
         if (currentIndex < ranges.size()) {
             JournalIteratorRange w = ranges.get(currentIndex);
-            currentRowID = w.lowerRowIDBound;
-            currentUpperBound = w.upperRowIDBound;
+            currentRowID = w.lo;
+            currentUpperBound = w.hi;
             currentPartitionID = w.partitionID;
         } else {
             hasNext = false;

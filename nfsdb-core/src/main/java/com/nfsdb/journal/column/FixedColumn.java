@@ -111,8 +111,8 @@ public class FixedColumn extends AbstractColumn {
     }
 
     ByteBuffer getBuffer() {
-        long appendOffset = getOffset();
+        long appendOffset = mappedFile.getAppendOffset();
         preCommit(appendOffset + width);
-        return getBuffer(appendOffset, width);
+        return mappedFile.getBuffer(appendOffset, width);
     }
 }

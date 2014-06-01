@@ -67,7 +67,7 @@ public class TimestampTest extends AbstractTest {
             // populate lag (lag is configured to 48 hours)
             Quote Quote4 = new Quote().setSym("444").setTimestamp(Dates.toMillis("2012-08-11T15:00:00Z"));
             data.add(Quote4);
-            journal.appendIrregular(data);
+            journal.appendLag(data);
             journal.commit();
 
             // check that hard timestamp hasn't changed
@@ -86,7 +86,7 @@ public class TimestampTest extends AbstractTest {
             Quote Quote5 = new Quote().setSym("555").setTimestamp(Dates.toMillis("2012-08-12T16:00:00Z"));
             data.clear();
             data.add(Quote5);
-            journal.appendIrregular(data);
+            journal.appendLag(data);
 
             Assert.assertEquals("2012-08-11T10:00:00.000Z", Dates.toString(journal.getAppendTimestampLo()));
             Assert.assertEquals("2012-08-12T16:00:00.000Z", Dates.toString(journal.getMaxTimestamp()));
@@ -109,8 +109,8 @@ public class TimestampTest extends AbstractTest {
         data.add(Quote2);
 
         try (JournalWriter<Quote> journal = factory.writer(Quote.class)) {
-            journal.appendIrregular(data);
-            journal.appendIrregular(data);
+            journal.appendLag(data);
+            journal.appendLag(data);
         }
     }
 

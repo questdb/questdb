@@ -90,7 +90,7 @@ public class PerformanceTest extends AbstractTest {
         File indexFile = new File(factory.getConfiguration().getJournalBase(), "index-test");
         int totalKeys = 30000;
         int totalValues = 20000000;
-        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, JournalMode.APPEND, 0)) {
+        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
             long valuesPerKey = totalValues / totalKeys;
 
             long t = System.nanoTime();

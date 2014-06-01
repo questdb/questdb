@@ -48,16 +48,29 @@ public class SymbolTable implements Closeable {
     private SymbolIndex index;
     private int size;
 
-    public SymbolTable(int capacity, int maxLen, File directory, String column, JournalMode mode, int size, long indexTxAddress) throws JournalException {
+    public SymbolTable(int capacity, int maxLen, int txCountHint, File directory, String column, JournalMode mode, int size, long indexTxAddress) throws JournalException {
         this.capacity = capacity;
         this.column = column;
-        MappedFile dataFile = new MappedFileImpl(new File(directory, column + DATA_FILE_SUFFIX), ByteBuffers.getBitHint(maxLen, capacity), mode == JournalMode.APPEND_ONLY ? JournalMode.APPEND : mode);
-        MappedFile indexFile = new MappedFileImpl(new File(directory, column + INDEX_FILE_SUFFIX), ByteBuffers.getBitHint(8, capacity), mode == JournalMode.APPEND_ONLY ? JournalMode.APPEND : mode);
+        JournalMode m;
+
+        switch (mode) {
+            case BULK_APPEND:
+                m = JournalMode.APPEND;
+                break;
+            case BULK_READ:
+                m = JournalMode.READ;
+                break;
+            default:
+                m = mode;
+        }
+
+        MappedFile dataFile = new MappedFileImpl(new File(directory, column + DATA_FILE_SUFFIX), ByteBuffers.getBitHint(maxLen, capacity), m);
+        MappedFile indexFile = new MappedFileImpl(new File(directory, column + INDEX_FILE_SUFFIX), ByteBuffers.getBitHint(8, capacity), m);
 
         this.data = new VariableColumn(dataFile, indexFile, maxLen);
         this.size = size;
 
-        this.index = new SymbolIndex(new File(directory, column + HASH_INDEX_FILE_SUFFIX), capacity, capacity * HASH_GROUPING_RATE, mode, indexTxAddress);
+        this.index = new SymbolIndex(new File(directory, column + HASH_INDEX_FILE_SUFFIX), capacity, capacity * HASH_GROUPING_RATE, txCountHint, mode, indexTxAddress);
         this.valueCache = new TObjectIntHashMap<>(capacity, CACHE_LOAD_FACTOR, VALUE_NOT_FOUND);
         this.keyCache = new ArrayList<>(capacity);
     }
@@ -71,7 +84,7 @@ public class SymbolTable implements Closeable {
         this.size = (int) data.size();
     }
 
-    public int put(String value) throws JournalException {
+    public int put(String value) {
 
         int key = getQuick(value);
         if (key == VALUE_NOT_FOUND) {
@@ -197,7 +210,7 @@ public class SymbolTable implements Closeable {
         }
     }
 
-    public void updateIndex(int oldSize, int newSize) throws JournalException {
+    public void updateIndex(int oldSize, int newSize) {
         if (oldSize < newSize) {
             for (int i = oldSize; i < newSize; i++) {
                 index.put(hashKey(data.getString(i)), i);

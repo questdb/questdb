@@ -24,13 +24,15 @@ import com.nfsdb.journal.exceptions.JournalRuntimeException;
 
 import java.util.Iterator;
 
-public class PartitionBufferedIterator<T> implements JournalIterator<T> {
+public class PartitionBufferedIterator<T> implements JournalIterator<T>, PeekingIterator<T> {
     private final long hi;
+    private final long lo;
     private final T obj;
     private final Partition<T> partition;
     private long cursor;
 
     public PartitionBufferedIterator(Partition<T> partition, long lo, long hi) {
+        this.lo = lo;
         this.cursor = lo;
         this.hi = hi;
         this.obj = partition.getJournal().newObject();
@@ -44,16 +46,22 @@ public class PartitionBufferedIterator<T> implements JournalIterator<T> {
 
     @Override
     public T next() {
-        try {
-            if (!partition.isOpen()) {
-                partition.open();
-            }
-            partition.getJournal().clearObject(obj);
-            partition.read(cursor++, obj);
-            return obj;
-        } catch (JournalException e) {
-            throw new JournalRuntimeException("Cannot read partition " + partition + " at " + (cursor - 1), e);
-        }
+        return get(cursor++);
+    }
+
+    @Override
+    public T peekLast() {
+        return get(hi);
+    }
+
+    @Override
+    public T peekFirst() {
+        return get(lo);
+    }
+
+    @Override
+    public boolean isEmpty() {
+        return cursor > hi;
     }
 
     @Override
@@ -69,5 +77,18 @@ public class PartitionBufferedIterator<T> implements JournalIterator<T> {
     @Override
     public Journal<T> getJournal() {
         return partition.getJournal();
+    }
+
+    private T get(long localRowID) {
+        try {
+            if (!partition.isOpen()) {
+                partition.open();
+            }
+            partition.getJournal().clearObject(obj);
+            partition.read(localRowID, obj);
+            return obj;
+        } catch (JournalException e) {
+            throw new JournalRuntimeException("Cannot read partition " + partition + " at " + localRowID, e);
+        }
     }
 }

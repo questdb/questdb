@@ -73,6 +73,7 @@ class SymbolIndexProxy<T> implements Closeable {
                     meta.getColumnIndexBase(partition.getPartitionDir(), columnIndex),
                     meta.getColumnMetadata(columnIndex).distinctCountHint,
                     meta.getRecordHint(),
+                    meta.getTxCountHint(),
                     partition.getJournal().getMode(),
                     txAddress
             );

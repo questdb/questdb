@@ -70,7 +70,7 @@ public final class TestUtils {
         generateQuoteData(w, count, timetamp, 0);
     }
 
-    public static void generateQuoteData(JournalWriter<Quote> w, int count, long timetamp, int increment) throws JournalException {
+    public static void generateQuoteData(JournalWriter<Quote> w, int count, long timetamp, long increment) throws JournalException {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
         Quote q = new Quote();
         Random r = new Random(System.currentTimeMillis());

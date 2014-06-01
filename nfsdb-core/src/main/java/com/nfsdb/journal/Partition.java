@@ -58,6 +58,8 @@ public class Partition<T> implements Iterable<T>, Closeable {
     private File partitionDir;
     private long lastAccessed = System.currentTimeMillis();
     private long txLimit;
+    private FixedColumn timestampColumn;
+    private BinarySearch.LongTimeSeriesProvider indexOfVisitor;
 
     public NullsColumn getNullsColumn() {
         return nullsColumn;
@@ -78,7 +80,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
                     columns.length
             );
 
-            String readColumns[] = journal.getMode() == JournalMode.APPEND || journal.getMode() == JournalMode.APPEND_ONLY ? null : journal.getReadColumns();
+            String readColumns[] = journal.getMode() == JournalMode.APPEND || journal.getMode() == JournalMode.BULK_APPEND ? null : journal.getReadColumns();
             if (readColumns == null || readColumns.length == 0) {
                 for (int i = 0; i < columns.length; i++) {
                     open(i);
@@ -87,6 +89,22 @@ public class Partition<T> implements Iterable<T>, Closeable {
                 for (String name : readColumns) {
                     open(journal.getMetadata().getColumnIndex(name));
                 }
+            }
+
+            timestampColumn = getFixedWidthColumn(journal.getMetadata().getTimestampColumnIndex());
+
+            if (timestampColumn != null) {
+                this.indexOfVisitor = new BinarySearch.LongTimeSeriesProvider() {
+                    @Override
+                    public long readLong(long index) {
+                        return timestampColumn.getLong(index);
+                    }
+
+                    @Override
+                    public long size() {
+                        return timestampColumn.size();
+                    }
+                };
             }
         }
         return this;
@@ -232,6 +250,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
     public void read(long localRowID, T obj) {
 
+        sun.misc.Unsafe u = Unsafe.getUnsafe();
         BitSet nulls = nullsColumn.getBitSet(localRowID);
         for (int i = 0; i < columnCount; i++) {
 
@@ -242,34 +261,34 @@ public class Partition<T> implements Iterable<T>, Closeable {
             Journal.ColumnMetadata m = journal.getColumnMetadata(i);
             switch (m.meta.type) {
                 case BOOLEAN:
-                    Unsafe.getUnsafe().putBoolean(obj, m.meta.offset, ((FixedColumn) columns[i]).getBool(localRowID));
+                    u.putBoolean(obj, m.meta.offset, ((FixedColumn) columns[i]).getBool(localRowID));
                     break;
                 case BYTE:
-                    Unsafe.getUnsafe().putByte(obj, m.meta.offset, ((FixedColumn) columns[i]).getByte(localRowID));
+                    u.putByte(obj, m.meta.offset, ((FixedColumn) columns[i]).getByte(localRowID));
                     break;
                 case DOUBLE:
-                    Unsafe.getUnsafe().putDouble(obj, m.meta.offset, ((FixedColumn) columns[i]).getDouble(localRowID));
+                    u.putDouble(obj, m.meta.offset, ((FixedColumn) columns[i]).getDouble(localRowID));
                     break;
                 case INT:
-                    Unsafe.getUnsafe().putInt(obj, m.meta.offset, ((FixedColumn) columns[i]).getInt(localRowID));
+                    u.putInt(obj, m.meta.offset, ((FixedColumn) columns[i]).getInt(localRowID));
                     break;
                 case LONG:
-                    Unsafe.getUnsafe().putLong(obj, m.meta.offset, ((FixedColumn) columns[i]).getLong(localRowID));
+                    u.putLong(obj, m.meta.offset, ((FixedColumn) columns[i]).getLong(localRowID));
                     break;
                 case SHORT:
-                    Unsafe.getUnsafe().putShort(obj, m.meta.offset, ((FixedColumn) columns[i]).getShort(localRowID));
+                    u.putShort(obj, m.meta.offset, ((FixedColumn) columns[i]).getShort(localRowID));
                     break;
                 case STRING:
                     String s = ((VariableColumn) columns[i]).getString(localRowID);
                     if (s != null) {
-                        Unsafe.getUnsafe().putObject(obj, m.meta.offset, s);
+                        u.putObject(obj, m.meta.offset, s);
                     }
                     break;
                 case SYMBOL:
                     int symbolIndex = ((FixedColumn) columns[i]).getInt(localRowID);
                     // check if symbol was null
                     if (symbolIndex > SymbolTable.VALUE_IS_NULL) {
-                        Unsafe.getUnsafe().putObject(obj, m.meta.offset, m.symbolTable.value(symbolIndex));
+                        u.putObject(obj, m.meta.offset, m.symbolTable.value(symbolIndex));
                     }
                     break;
                 case BINARY:
@@ -277,7 +296,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
                     ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, m.meta.offset);
                     if (buf == null || buf.capacity() < size) {
                         buf = ByteBuffer.allocate(size);
-                        Unsafe.getUnsafe().putObject(obj, m.meta.offset, buf);
+                        u.putObject(obj, m.meta.offset, buf);
                     }
 
                     if (buf.remaining() < size) {
@@ -303,59 +322,63 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
 
     public void append(T obj) throws JournalException {
+        boolean checkNulls = false;
+        sun.misc.Unsafe u = Unsafe.getUnsafe();
         nulls.clear();
+
 
         if (nullsAdaptor != null) {
             nullsAdaptor.getNulls(obj, nulls);
+            checkNulls = true;
         }
 
         for (int i = 0; i < columnCount; i++) {
             Journal.ColumnMetadata meta = journal.getColumnMetadata(i);
             switch (meta.meta.type) {
                 case BOOLEAN:
-                    if (nulls.get(i)) {
+                    if (checkNulls && nulls.get(i)) {
                         ((FixedColumn) columns[i]).putNull();
                     } else {
-                        ((FixedColumn) columns[i]).putBool(Unsafe.getUnsafe().getBoolean(obj, meta.meta.offset));
+                        ((FixedColumn) columns[i]).putBool(u.getBoolean(obj, meta.meta.offset));
                     }
                     break;
                 case BYTE:
-                    if (nulls.get(i)) {
+                    if (checkNulls && nulls.get(i)) {
                         ((FixedColumn) columns[i]).putNull();
                     } else {
-                        ((FixedColumn) columns[i]).putByte(Unsafe.getUnsafe().getByte(obj, meta.meta.offset));
+                        ((FixedColumn) columns[i]).putByte(u.getByte(obj, meta.meta.offset));
                     }
                     break;
                 case DOUBLE:
-                    if (nulls.get(i)) {
+                    if (checkNulls && nulls.get(i)) {
                         ((FixedColumn) columns[i]).putNull();
                     } else {
-                        ((FixedColumn) columns[i]).putDouble(Unsafe.getUnsafe().getDouble(obj, meta.meta.offset));
+                        ((FixedColumn) columns[i]).putDouble(u.getDouble(obj, meta.meta.offset));
                     }
                     break;
                 case INT:
-                    if (nulls.get(i)) {
+                    if (checkNulls && nulls.get(i)) {
                         ((FixedColumn) columns[i]).putNull();
                     } else {
-                        ((FixedColumn) columns[i]).putInt(Unsafe.getUnsafe().getInt(obj, meta.meta.offset));
+                        ((FixedColumn) columns[i]).putInt(u.getInt(obj, meta.meta.offset));
                     }
                     break;
                 case LONG:
-                    if (nulls.get(i)) {
+                    if (checkNulls && nulls.get(i)) {
                         ((FixedColumn) columns[i]).putNull();
                     } else {
-                        ((FixedColumn) columns[i]).putLong(Unsafe.getUnsafe().getLong(obj, meta.meta.offset));
+                        ((FixedColumn) columns[i]).putLong(u.getLong(obj, meta.meta.offset));
                     }
                     break;
                 case SHORT:
-                    if (nulls.get(i)) {
+                    if (checkNulls && nulls.get(i)) {
                         ((FixedColumn) columns[i]).putNull();
                     } else {
-                        ((FixedColumn) columns[i]).putShort(Unsafe.getUnsafe().getShort(obj, meta.meta.offset));
+                        ((FixedColumn) columns[i]).putShort(u.getShort(obj, meta.meta.offset));
                     }
                     break;
                 case STRING:
-                    String s = (String) Unsafe.getUnsafe().getObject(obj, meta.meta.offset);
+                    String s = (String) u.getObject(obj, meta.meta.offset);
                     if (s == null) {
                         nulls.set(i);
                         ((VariableColumn) columns[i]).putNull();
@@ -366,7 +389,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
                     }
                     break;
                 case SYMBOL:
-                    String sym = (String) Unsafe.getUnsafe().getObject(obj, meta.meta.offset);
+                    String sym = (String) u.getObject(obj, meta.meta.offset);
                     int key;
                     if (sym == null) {
                         nulls.set(i);
@@ -384,7 +407,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
                     }
                     break;
                 case BINARY:
-                    ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, meta.meta.offset);
+                    ByteBuffer buf = (ByteBuffer) u.getObject(obj, meta.meta.offset);
                     if (buf == null || buf.remaining() == 0) {
                         nulls.set(i);
                         ((VariableColumn) columns[i]).putNull();
@@ -430,19 +453,10 @@ public class Partition<T> implements Iterable<T>, Closeable {
     }
 
     public long indexOf(long timestamp, BinarySearch.SearchType type) {
-        final FixedColumn column = getTimestampColumn();
-
-        return BinarySearch.indexOf(new BinarySearch.LongTimeSeriesProvider() {
-            @Override
-            public long readLong(long index) {
-                return column.getLong(index);
-            }
-
-            @Override
-            public long size() {
-                return column.size();
-            }
-        }, timestamp, type);
+        if (indexOfVisitor == null) {
+            throw new JournalRuntimeException("There is no timestamp column in: " + this);
+        }
+        return BinarySearch.indexOf(indexOfVisitor, timestamp, type);
     }
 
     public FixedColumn getTimestampColumn() {
@@ -468,9 +482,11 @@ public class Partition<T> implements Iterable<T>, Closeable {
      * @throws com.nfsdb.journal.exceptions.JournalException if the operation fails
      */
     public void rebuildIndex(int columnIndex) throws JournalException {
+        JournalMetadata<T> meta = journal.getMetadata();
         rebuildIndex(columnIndex,
-                journal.getMetadata().getColumnMetadata(columnIndex).distinctCountHint,
-                journal.getMetadata().getRecordHint());
+                meta.getColumnMetadata(columnIndex).distinctCountHint,
+                meta.getRecordHint(),
+                meta.getTxCountHint());
     }
 
     /**
@@ -481,7 +497,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
      * @param recordCountHint the record count hint override
      * @throws com.nfsdb.journal.exceptions.JournalException if the operation fails
      */
-    public void rebuildIndex(int columnIndex, int keyCountHint, int recordCountHint) throws JournalException {
+    public void rebuildIndex(int columnIndex, int keyCountHint, int recordCountHint, int txCountHint) throws JournalException {
         final long time = LOGGER.isInfoEnabled() ? System.nanoTime() : 0L;
 
         getIndexForColumn(columnIndex).close();
@@ -489,7 +505,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
         File base = journal.getMetadata().getColumnIndexBase(partitionDir, columnIndex);
         SymbolIndex.delete(base);
 
-        try (SymbolIndex index = new SymbolIndex(base, keyCountHint, recordCountHint, JournalMode.APPEND, 0)) {
+        try (SymbolIndex index = new SymbolIndex(base, keyCountHint, recordCountHint, txCountHint, JournalMode.APPEND, 0)) {
             FixedColumn col = getFixedWidthColumn(columnIndex);
             for (long localRowID = 0, sz = size(); localRowID < sz; localRowID++) {
                 index.put(col.getInt(localRowID), localRowID);

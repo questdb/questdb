@@ -29,7 +29,6 @@ import com.nfsdb.journal.tx.TxFuture;
 import com.nfsdb.journal.tx.TxListener;
 import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Files;
-import com.nfsdb.journal.utils.Lists;
 import com.nfsdb.journal.utils.Rows;
 import org.junit.Assert;
 import org.junit.Test;
@@ -61,8 +60,8 @@ public class JournalTest extends AbstractTest {
         long maxRowID = w.getMaxRowID();
         int partitionID = Rows.toPartitionIndex(maxRowID);
         long localRowID = Rows.toLocalRowID(maxRowID);
-        Assert.assertEquals(w.lastNonEmpty().getPartitionIndex(), partitionID);
-        Assert.assertEquals(w.lastNonEmpty().size() - 1, localRowID);
+        Assert.assertEquals(w.getLastPartition().getPartitionIndex(), partitionID);
+        Assert.assertEquals(w.getLastPartition().size() - 1, localRowID);
         Assert.assertEquals(35184372088864L, maxRowID);
     }
 
@@ -189,7 +188,7 @@ public class JournalTest extends AbstractTest {
 
         Journal<Quote> r = factory.reader(Quote.class).setReadColumns("sym");
         Assert.assertEquals(999, r.getMaxRowID());
-        Assert.assertNull(r.lastNonEmpty().getAbstractColumn(3));
+        Assert.assertNull(r.getLastPartition().getAbstractColumn(3));
     }
 
     @Test
@@ -199,7 +198,7 @@ public class JournalTest extends AbstractTest {
 
         Journal<Quote> r = factory.reader(Quote.class).setReadColumns("sym");
         Assert.assertEquals(-1, r.getMaxRowID());
-        Assert.assertNull(r.lastNonEmpty());
+        Assert.assertNull(r.getLastPartition());
     }
 
     @Test
@@ -217,7 +216,7 @@ public class JournalTest extends AbstractTest {
             Assert.assertEquals(1, w.getPartitionCount());
             Assert.assertEquals(0, w.getSymbolTable("sym").size());
             Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, w.getSymbolTable("sym").getQuick("LLOY.L"));
-            Assert.assertNull(w.lastNonEmpty());
+            Assert.assertNull(w.getLastPartition());
             Partition<Quote> p = w.getPartition(w.getPartitionCount() - 1, false);
             Assert.assertNotNull(p);
             Assert.assertEquals(0, p.getIndexForColumn("sym").size());
@@ -307,15 +306,15 @@ public class JournalTest extends AbstractTest {
         JournalWriter<Quote> w = factory.writer(Quote.class);
         w.append(origin.query().all().asResultSet().subset(0, 100000));
         w.commit();
-        w.appendIrregular(Lists.asList(origin.query().all().asResultSet().subset(100000, 120000).read()));
+        w.appendLag(origin.query().all().asResultSet().subset(100000, 120000));
         w.commit();
 
         Journal<Quote> r = factory.reader(Quote.class);
         TestUtils.assertEquals(w, r);
-        w.appendIrregular(Lists.asList(origin.query().all().asResultSet().subset(120000, 150000).read()));
+        w.appendLag(origin.query().all().asResultSet().subset(120000, 150000));
         w.rollback();
         TestUtils.assertEquals(w, r);
-        w.appendIrregular(Lists.asList(origin.query().all().asResultSet().subset(120000, 150000).read()));
+        w.appendLag(origin.query().all().asResultSet().subset(120000, 150000));
         w.commit();
 
         r.refresh();
@@ -339,8 +338,7 @@ public class JournalTest extends AbstractTest {
         try {
             for (int i = 0; i < originRs.size(); ) {
                 int d = Math.min(i + blockSize, originRs.size());
-                ResultSet<Quote> rs = originRs.subset(i, d);
-                w.appendIrregular(Lists.asList(rs.read()));
+                w.appendLag(originRs.subset(i, d));
 
                 if (rnd.nextBoolean()) {
                     w.commit();

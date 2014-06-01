@@ -99,7 +99,7 @@ public class AppendUnorderedToLag {
                     Collections.sort(batch, writer.getTimestampComparator());
 
                     // append batch and have journal merge data
-                    writer.appendIrregular(batch);
+                    writer.appendLag(batch);
                 }
 
                 // commit is necessary

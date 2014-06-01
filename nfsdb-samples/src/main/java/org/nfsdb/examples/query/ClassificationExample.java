@@ -68,7 +68,7 @@ public class ClassificationExample {
                 SymbolTable tab = journal.getSymbolTable("sym");
 
                 // index is a sparse matrix (key x value) where key is "sym" key and values are localRowIDs
-                SymbolIndex index = journal.lastNonEmpty().getIndexForColumn("sym");
+                SymbolIndex index = journal.getLastPartition().getIndexForColumn("sym");
 
                 long total = 0;
                 for (int i = 0, sz = tab.size(); i < sz; i++) {

@@ -16,8 +16,6 @@
 
 package com.nfsdb.journal.utils;
 
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 public final class Lists {
@@ -26,13 +24,6 @@ public final class Lists {
         while (list.size() <= index) {
             list.add(null);
         }
-    }
-
-    @SafeVarargs
-    public static <E> List<E> asList(E... e) {
-        ArrayList<E> result = new ArrayList<>(e.length);
-        Collections.addAll(result, e);
-        return result;
     }
 
     private Lists() {

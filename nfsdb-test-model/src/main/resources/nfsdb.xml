@@ -4,7 +4,7 @@
   ~
   ~ Licensed under the Apache License, Version 2.0 (the "License");
   ~ you may not use this file except in compliance with the License.
-  ~ You may obtain a copy of the License at
+  ~ You may obtain a copy of the License at                                                             R
   ~
   ~ http://www.apache.org/licenses/LICENSE-2.0
   ~
@@ -17,22 +17,23 @@
 
 <db>
     <journal class="com.nfsdb.journal.test.model.Quote" defaultPath="quote" timestampColumn="timestamp"
-             partitionType="MONTH" recordHint="1000000" openPartitionTTL="180" lagHours="12" key="sym">
-        <sym name="sym" indexed="true" maxsize="4" hintDistinctCount="15"/>
+             partitionType="MONTH" recordCountHint="1000000" openPartitionTTL="180" lagHours="12"
+             key="sym">
+    <sym name="sym" indexed="true" maxsize="4" hintDistinctCount="15"/>
         <sym name="ex" indexed="true" maxsize="2" hintDistinctCount="1"/>
         <sym name="mode" indexed="true" hintDistinctCount="1"/>
     </journal>
 
     <journal class="com.nfsdb.journal.test.model.Trade" defaultPath="trade" timestampColumn="timestamp"
-             partitionType="MONTH" recordHint="1000000" openPartitionTTL="180" key="sym">
-        <sym name="sym" indexed="true" maxsize="4" hintDistinctCount="15"/>
+             partitionType="MONTH" recordCountHint="1000000" openPartitionTTL="180" key="sym">
+    <sym name="sym" indexed="true" maxsize="4" hintDistinctCount="15"/>
         <sym name="ex" indexed="true" maxsize="2" hintDistinctCount="30"/>
         <sym name="cond" hintDistinctCount="30"/>
     </journal>
 
     <journal class="com.nfsdb.journal.test.model.RDFData" defaultPath="rdfdata" timestampColumn="timestamp"
-             key="subj" partitionType="NONE" recordHint="25000">
-        <sym name="subj" indexed="true" hintDistinctCount="12000"/>
+             key="subj" partitionType="NONE" recordCountHint="25000">
+    <sym name="subj" indexed="true" hintDistinctCount="12000"/>
         <sym name="subjType" indexed="true" hintDistinctCount="5"/>
         <sym name="predicate" indexed="true" hintDistinctCount="5"/>
         <sym name="obj" sameAs="subj" indexed="true"/>
@@ -40,24 +41,24 @@
     </journal>
 
     <journal class="com.nfsdb.journal.test.model.TestEntity" defaultPath="quote" timestampColumn="timestamp"
-             partitionType="MONTH" recordHint="18000000" openPartitionTTL="180" lagHours="48" key="sym">
-        <sym name="sym" indexed="true" maxsize="4" hintDistinctCount="15"/>
+             partitionType="MONTH" recordCountHint="18000000" openPartitionTTL="180" lagHours="48" key="sym">
+    <sym name="sym" indexed="true" maxsize="4" hintDistinctCount="15"/>
         <string name="bStr" maxsize="255" avgsize="32"/>
         <string name="dStr" maxsize="64000" avgsize="32"/>
         <string name="dwStr" maxsize="100000" avgsize="32"/>
     </journal>
 
     <journal class="com.nfsdb.journal.test.model.Trade2" defaultPath="trade" timestampColumn="timestamp"
-             partitionType="MONTH" recordHint="1000000" openPartitionTTL="180" key="sym">
-        <sym name="sym" indexed="true" maxsize="4" hintDistinctCount="15"/>
+             partitionType="MONTH" recordCountHint="1000000" openPartitionTTL="180" key="sym">
+    <sym name="sym" indexed="true" maxsize="4" hintDistinctCount="15"/>
         <sym name="ex" indexed="true" maxsize="2" hintDistinctCount="30"/>
         <sym name="cond" hintDistinctCount="30"/>
     </journal>
 
     <journal class="com.nfsdb.journal.test.model.Band" defaultPath="band" timestampColumn="timestamp"
              partitionType="NONE"
-             recordHint="1000000" openPartitionTTL="180" key="name">
-        <sym name="name" indexed="true" maxsize="255" hintDistinctCount="1200"/>
+             recordCountHint="1000000" openPartitionTTL="180" key="name">
+    <sym name="name" indexed="true" maxsize="255" hintDistinctCount="1200"/>
         <sym name="type" indexed="true" maxsize="255" hintDistinctCount="10"/>
         <binary name="image" avgSize="10000"/>
     </journal>

@@ -50,8 +50,8 @@ public class SymbolIndex implements Closeable {
     }
 
     private static final int ENTRY_SIZE = 16;
-    private final int keyCountHint;
     private MappedFileImpl kData;
+    private MappedFileImpl kDataR;
     // storage for rows
     // block structure is [ rowid1, rowid2 ..., rowidn, prevBlockOffset]
     private MappedFileImpl rData;
@@ -64,10 +64,11 @@ public class SymbolIndex implements Closeable {
     private long maxValue;
     private boolean inTransaction = false;
 
-    public SymbolIndex(File baseName, long keyCountHint, long recordCountHint, JournalMode mode, long txAddress) throws JournalException {
-        this.keyCountHint = (int) Math.min(Integer.MAX_VALUE, Math.max(keyCountHint, 1));
-        this.rowBlockLen = (int) Math.min(134217728, Math.max(recordCountHint / this.keyCountHint / 2, 1));
-        this.kData = new MappedFileImpl(new File(baseName.getParentFile(), baseName.getName() + ".k"), ByteBuffers.getBitHint(8 + 8, this.keyCountHint), mode);
+    public SymbolIndex(File baseName, long keyCountHint, long recordCountHint, int txCountHint, JournalMode mode, long txAddress) throws JournalException {
+        int bitHint = (int) Math.min(Integer.MAX_VALUE, Math.max(keyCountHint, 1));
+        this.rowBlockLen = (int) Math.min(134217728, Math.max(recordCountHint / bitHint, 1));
+        this.kData = new MappedFileImpl(new File(baseName.getParentFile(), baseName.getName() + ".k"), ByteBuffers.getBitHint(8 + 8, bitHint * txCountHint), mode);
+        this.kDataR = new MappedFileImpl(new File(baseName.getParentFile(), baseName.getName() + ".k"), ByteBuffers.getBitHint(8 + 8, bitHint * txCountHint), JournalMode.BULK_READ);
         this.keyBlockAddressOffset = 8;
 
         this.keyBlockSizeOffset = 16;
@@ -79,7 +80,7 @@ public class SymbolIndex implements Closeable {
             this.keyBlockSizeOffset = txAddress == 0 ? getLong(kData, keyBlockAddressOffset) : txAddress;
             this.keyBlockSize = getLong(kData, keyBlockSizeOffset);
             this.maxValue = getLong(kData, keyBlockSizeOffset + 8);
-        } else if (mode == JournalMode.APPEND || mode == JournalMode.APPEND_ONLY) {
+        } else if (mode == JournalMode.APPEND || mode == JournalMode.BULK_APPEND) {
             putLong(kData, 0, this.rowBlockLen); // 8
             putLong(kData, keyBlockAddressOffset, keyBlockSizeOffset); // 8
             putLong(kData, keyBlockSizeOffset, keyBlockSize); // 8
@@ -89,7 +90,7 @@ public class SymbolIndex implements Closeable {
 
         this.firstEntryOffset = keyBlockSizeOffset + 16;
         this.rowBlockSize = rowBlockLen * 8 + 8;
-        this.rData = new MappedFileImpl(new File(baseName.getParentFile(), baseName.getName() + ".r"), ByteBuffers.getBitHint(rowBlockSize, this.keyCountHint * 2), mode);
+        this.rData = new MappedFileImpl(new File(baseName.getParentFile(), baseName.getName() + ".r"), ByteBuffers.getBitHint(rowBlockSize, bitHint), mode);
     }
 
     public static void delete(File base) {
@@ -103,9 +104,11 @@ public class SymbolIndex implements Closeable {
      * @param key   value of key
      * @param value value
      */
-    public void put(int key, long value) throws JournalException {
+    public void put(int key, long value) {
 
-        tx();
+        if (!inTransaction) {
+            tx();
+        }
 
         long keyOffset = getKeyOffset(key);
         long rowBlockOffset;
@@ -136,10 +139,10 @@ public class SymbolIndex implements Closeable {
             long prevBlockOffset = rowBlockOffset;
             rowBlockOffset = rData.getAppendOffset() + rowBlockSize;
             rData.setAppendOffset(rowBlockOffset);
-            putLong(rData, rowBlockOffset - 8, prevBlockOffset);
+            rData.getBuffer(rowBlockOffset - 8, 8).putLong(prevBlockOffset);
             buf.putLong(pos, rowBlockOffset);
         }
-        putLong(rData, rowBlockOffset - rowBlockSize + 8 * cellIndex, value);
+        rData.getBuffer(rowBlockOffset - rowBlockSize + 8 * cellIndex, 8).putLong(value);
         buf.putLong(pos + 8, rowCount + 1);
 
         if (maxValue <= value) {
@@ -346,6 +349,7 @@ public class SymbolIndex implements Closeable {
      */
     public void close() {
         rData.close();
+        kDataR.close();
         kData.close();
     }
 
@@ -356,8 +360,10 @@ public class SymbolIndex implements Closeable {
      * @throws JournalException
      */
     public void compact() throws JournalException {
+        kDataR.close();
         kData.compact();
         rData.compact();
+        kDataR.open();
     }
 
     public void truncate(long size) {
@@ -421,46 +427,43 @@ public class SymbolIndex implements Closeable {
         storage.getBuffer(offset, 8).putLong(value);
     }
 
-    private void tx() throws JournalException {
+    private void tx() {
         if (!inTransaction) {
             this.keyBlockSizeOffset = kData.getAppendOffset();
             this.firstEntryOffset = keyBlockSizeOffset + 16;
 
-            try (MappedFileImpl kReader = new MappedFileImpl(new File(kData.getFullFileName()), ByteBuffers.getBitHint(8 + 8, keyCountHint), JournalMode.READ)) {
-                long srcOffset = getLong(kReader, keyBlockAddressOffset);
-                long dstOffset = this.keyBlockSizeOffset;
-                long size = this.keyBlockSize + 8 + 8;
-                ByteBuffer src = null;
-                ByteBuffer dst = null;
+            long srcOffset = getLong(kDataR, keyBlockAddressOffset);
+            long dstOffset = this.keyBlockSizeOffset;
+            long size = this.keyBlockSize + 8 + 8;
+            ByteBuffer src = null;
+            ByteBuffer dst = null;
 
-                while (size > 0) {
-                    if (src == null || !src.hasRemaining()) {
-                        src = kReader.getBuffer(srcOffset, 1);
-                    }
-
-                    if (dst == null || !dst.hasRemaining()) {
-                        dst = kData.getBuffer(dstOffset, 1);
-                    }
-
-                    int limit = src.limit();
-                    int len;
-                    try {
-                        if (src.remaining() > size) {
-                            src.limit(src.position() + (int) size);
-                        }
-                        len = ByteBuffers.copy(src, dst);
-                        size -= len;
-                    } finally {
-                        src.limit(limit);
-                    }
-                    srcOffset += len;
-                    dstOffset += len;
+            while (size > 0) {
+                if (src == null || !src.hasRemaining()) {
+                    src = kDataR.getBuffer(srcOffset, 1);
                 }
-                keyBlockSize = dstOffset - firstEntryOffset;
-            }
 
-            inTransaction = true;
+                if (dst == null || !dst.hasRemaining()) {
+                    dst = kData.getBuffer(dstOffset, 1);
+                }
+
+                int limit = src.limit();
+                int len;
+                try {
+                    if (src.remaining() > size) {
+                        src.limit(src.position() + (int) size);
+                    }
+                    len = ByteBuffers.copy(src, dst);
+                    size -= len;
+                } finally {
+                    src.limit(limit);
+                }
+                srcOffset += len;
+                dstOffset += len;
+            }
+            keyBlockSize = dstOffset - firstEntryOffset;
         }
+        inTransaction = true;
     }
 
     private long getKeyOffset(long key) {

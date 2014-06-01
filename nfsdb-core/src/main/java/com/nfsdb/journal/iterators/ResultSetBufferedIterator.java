@@ -24,12 +24,12 @@ import com.nfsdb.journal.exceptions.JournalRuntimeException;
 
 import java.util.Iterator;
 
-public class ResultSetBufferedIterator<T> implements JournalIterator<T> {
+public class ResultSetBufferedIterator<T> implements JournalIterator<T>, PeekingIterator<T> {
 
     private final ResultSet<T> rs;
     private final T obj;
     private final Journal<T> journal;
-    private int counter = 0;
+    private int cursor = 0;
 
     public ResultSetBufferedIterator(ResultSet<T> rs) {
         this.rs = rs;
@@ -39,18 +39,12 @@ public class ResultSetBufferedIterator<T> implements JournalIterator<T> {
 
     @Override
     public boolean hasNext() {
-        return counter < rs.size();
+        return cursor < rs.size();
     }
 
     @Override
     public T next() {
-        try {
-            journal.clearObject(obj);
-            journal.read(rs.getRowID(counter++), obj);
-            return obj;
-        } catch (JournalException e) {
-            throw new JournalRuntimeException("Journal exception", e);
-        }
+        return get(cursor++);
     }
 
     @Override
@@ -66,5 +60,30 @@ public class ResultSetBufferedIterator<T> implements JournalIterator<T> {
     @Override
     public Journal<T> getJournal() {
         return rs.getJournal();
+    }
+
+    @Override
+    public T peekLast() {
+        return get(rs.size() - 1);
+    }
+
+    @Override
+    public T peekFirst() {
+        return get(0);
+    }
+
+    @Override
+    public boolean isEmpty() {
+        return false;
+    }
+
+    private T get(int rsIndex) {
+        try {
+            journal.clearObject(obj);
+            rs.read(rsIndex, obj);
+            return obj;
+        } catch (JournalException e) {
+            throw new JournalRuntimeException("Journal exception at [" + rsIndex + "]", e);
+        }
     }
 }

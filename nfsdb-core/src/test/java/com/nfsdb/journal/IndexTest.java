@@ -39,7 +39,7 @@ public class IndexTest extends AbstractTest {
 
     @Test
     public void testIndexReadWrite() throws JournalException {
-        SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, JournalMode.APPEND, 0);
+        SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0);
         index.put(0, 0);
         index.put(1, 1);
         index.put(1, 2);
@@ -63,7 +63,7 @@ public class IndexTest extends AbstractTest {
 
     @Test(expected = JournalRuntimeException.class)
     public void testValueOutOfBounds() throws JournalException {
-        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, JournalMode.APPEND, 0)) {
+        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
             index.put(0, 0);
             index.put(1, 1);
             index.put(1, 2);
@@ -73,7 +73,7 @@ public class IndexTest extends AbstractTest {
 
     @Test
     public void testKeyOutOfBounds() throws JournalException {
-        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, JournalMode.APPEND, 0)) {
+        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
             index.put(0, 0);
             index.put(1, 1);
             index.put(1, 2);
@@ -83,7 +83,7 @@ public class IndexTest extends AbstractTest {
 
     @Test
     public void testTruncateMiddle() throws JournalException {
-        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, JournalMode.APPEND, 0)) {
+        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
             index.put(0, 0);
             index.put(1, 1);
             index.put(1, 2);
@@ -106,7 +106,7 @@ public class IndexTest extends AbstractTest {
 
     @Test
     public void testTruncateAtTail() throws JournalException {
-        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, JournalMode.APPEND, 0)) {
+        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
             index.put(0, 0);
             index.put(1, 1);
             index.put(1, 2);
@@ -132,7 +132,7 @@ public class IndexTest extends AbstractTest {
 
     @Test
     public void testTruncateBeyondTail() throws JournalException {
-        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, JournalMode.APPEND, 0)) {
+        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
             index.put(0, 0);
             index.put(1, 1);
             index.put(1, 2);
@@ -160,7 +160,7 @@ public class IndexTest extends AbstractTest {
 
     @Test
     public void testTruncateBeforeStart() throws JournalException {
-        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, JournalMode.APPEND, 0)) {
+        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
             index.put(0, 0);
             index.put(1, 1);
             index.put(1, 2);
@@ -180,7 +180,7 @@ public class IndexTest extends AbstractTest {
     public void testSmallValueArray() throws JournalException {
         int totalKeys = 2;
         int totalValues = 1;
-        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, JournalMode.APPEND, 0)) {
+        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
             for (int i = 0; i < totalKeys; i++) {
                 index.put(i, i);
             }
@@ -197,7 +197,7 @@ public class IndexTest extends AbstractTest {
     public void testAppendNullAfterTruncate() throws JournalException {
         int totalKeys = 2;
         int totalValues = 1;
-        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, JournalMode.APPEND, 0)) {
+        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
             for (int i = -1; i < totalKeys; i++) {
                 index.put(i, i);
             }
@@ -219,7 +219,7 @@ public class IndexTest extends AbstractTest {
                 {0, 3, 5, 6, 8, 10, 12, 14, 16, 22},
                 {1, 2, 3, 4, 6, 8, 9, 11, 16, 21, 33}
         };
-        try (SymbolIndex index = new SymbolIndex(indexFile, 10, 60, JournalMode.APPEND, 0)) {
+        try (SymbolIndex index = new SymbolIndex(indexFile, 10, 60, 1, JournalMode.APPEND, 0)) {
             putValues(expected, index);
             assertValues(expected, index);
         }
@@ -231,7 +231,7 @@ public class IndexTest extends AbstractTest {
                 {0, 3, 5, 6, 8, 10, 12, 14, 16, 22},
                 {1, 2, 3, 4, 6, 8, 9, 11, 16, 21, 33}
         };
-        try (SymbolIndex index = new SymbolIndex(indexFile, 10, 200, JournalMode.APPEND, 0)) {
+        try (SymbolIndex index = new SymbolIndex(indexFile, 10, 200, 1, JournalMode.APPEND, 0)) {
             putValues(expected, index);
             assertValues(expected, index);
         }
@@ -243,7 +243,7 @@ public class IndexTest extends AbstractTest {
                 {0, 3, 5, 6, 8, 10, 12, 14, 16, 22},
                 {1, 2, 3, 4, 6, 8, 9, 11, 16, 21, 33}
         };
-        try (SymbolIndex index = new SymbolIndex(indexFile, 10, 60, JournalMode.APPEND, 0)) {
+        try (SymbolIndex index = new SymbolIndex(indexFile, 10, 60, 1, JournalMode.APPEND, 0)) {
             putValues(expected, index);
 
             for (int i = 0; i < expected.length; i++) {
@@ -261,7 +261,7 @@ public class IndexTest extends AbstractTest {
                 {0, 3, 5, 6, 8, 10, 12, 14, 16, 22},
                 {1, 2, 3, 4, 6, 8, 9, 11, 16, 21, 33}
         };
-        try (SymbolIndex index = new SymbolIndex(indexFile, 10, 60, JournalMode.APPEND, 0); SymbolIndex reader = new SymbolIndex(indexFile, 10, 60, JournalMode.READ, 0)) {
+        try (SymbolIndex index = new SymbolIndex(indexFile, 10, 60, 1, JournalMode.APPEND, 0); SymbolIndex reader = new SymbolIndex(indexFile, 10, 60, 1, JournalMode.READ, 0)) {
             // populate writer
             putValues(expected, index);
 
@@ -299,7 +299,7 @@ public class IndexTest extends AbstractTest {
             Assert.assertEquals(11, reader.getValueCount(1));
 
             // open new reader and check if it can see only committed changes
-            try (SymbolIndex reader2 = new SymbolIndex(indexFile, 10, 60, JournalMode.READ, reader.getTxAddress())) {
+            try (SymbolIndex reader2 = new SymbolIndex(indexFile, 10, 60, 1, JournalMode.READ, reader.getTxAddress())) {
                 Assert.assertEquals(34, reader2.size());
                 Assert.assertTrue(reader2.contains(0));
                 Assert.assertTrue(reader2.contains(1));
@@ -310,7 +310,7 @@ public class IndexTest extends AbstractTest {
 
             index.commit();
 
-            try (SymbolIndex reader2 = new SymbolIndex(indexFile, 10, 60, JournalMode.READ, index.getTxAddress())) {
+            try (SymbolIndex reader2 = new SymbolIndex(indexFile, 10, 60, 1, JournalMode.READ, index.getTxAddress())) {
                 Assert.assertEquals(47, reader2.size());
                 Assert.assertTrue(reader2.contains(0));
                 Assert.assertTrue(reader2.contains(1));
@@ -321,7 +321,7 @@ public class IndexTest extends AbstractTest {
         }
     }
 
-    private void putValues(long values[][], SymbolIndex index) throws JournalException {
+    private void putValues(long values[][], SymbolIndex index) {
         for (int i = 0; i < values.length; i++) {
             for (int k = 0; k < values[i].length; k++) {
                 index.put(i, values[i][k]);

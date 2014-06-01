@@ -18,12 +18,12 @@ package com.nfsdb.journal.iterators;
 
 public final class JournalIteratorRange {
     final int partitionID;
-    final long upperRowIDBound;
-    final long lowerRowIDBound;
+    final long hi;
+    final long lo;
 
-    public JournalIteratorRange(int partitionID, long lowerRowIDBound, long upperRowIDBound) {
+    public JournalIteratorRange(int partitionID, long lo, long hi) {
         this.partitionID = partitionID;
-        this.lowerRowIDBound = lowerRowIDBound;
-        this.upperRowIDBound = upperRowIDBound;
+        this.lo = lo;
+        this.hi = hi;
     }
 }

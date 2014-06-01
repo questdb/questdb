@@ -45,7 +45,7 @@ public class LockTest extends AbstractTest {
         List<Quote> data = new ArrayList<>();
         data.add(new Quote().setSym("S1").setTimestamp(Dates.utc(2013, 3, 10, 15, 0).getMillis()));
         data.add(new Quote().setSym("S2").setTimestamp(Dates.utc(2013, 3, 10, 16, 0).getMillis()));
-        rw.appendIrregular(data);
+        rw.appendLag(data);
         rw.commit();
 
         new TestAccessor(factory.getConfiguration().getJournalBase());

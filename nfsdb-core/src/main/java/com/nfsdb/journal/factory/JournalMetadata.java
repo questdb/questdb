@@ -46,6 +46,7 @@ public class JournalMetadata<T> {
     private final String key;
     private final int openPartitionTTL;
     private final NullsAdaptor<T> nullsAdaptor;
+    private final int txCountHint;
     private String location;
     private PartitionType partitionType;
     private int recordHint;
@@ -59,6 +60,7 @@ public class JournalMetadata<T> {
             , String timestampColumn
             , PartitionType partitionType
             , int recordHint
+            , int txCountHint
             , int openPartitionTTL
             , int lagHours
             , String key
@@ -68,6 +70,7 @@ public class JournalMetadata<T> {
         this.timestampColumn = timestampColumn;
         this.partitionType = partitionType;
         this.recordHint = recordHint;
+        this.txCountHint = txCountHint;
         this.openPartitionTTL = openPartitionTTL;
         this.lagHours = lagHours;
         this.key = key;
@@ -82,6 +85,7 @@ public class JournalMetadata<T> {
         this.location = that.location;
         this.partitionType = that.partitionType;
         this.recordHint = that.recordHint;
+        this.txCountHint = that.txCountHint;
         this.columnMetadataMap = that.columnMetadataMap;
         this.columnMetadataList = that.columnMetadataList;
         this.constructor = that.constructor;
@@ -184,6 +188,7 @@ public class JournalMetadata<T> {
                 ", location='" + location + '\'' +
                 ", partitionType*=" + partitionType +
                 ", recordHint=" + recordHint +
+                ", txCountHint=" + txCountHint +
                 ", lagHours=" + lagHours +
                 '}';
     }
@@ -198,6 +203,10 @@ public class JournalMetadata<T> {
 
     public int getRecordHint() {
         return recordHint;
+    }
+
+    public int getTxCountHint() {
+        return txCountHint;
     }
 
     public void setRecordHint(int recordHint) throws JournalConfigurationException {

@@ -34,8 +34,10 @@ public class TimerCache {
         service.submit(new Runnable() {
             @Override
             public void run() {
-                millis = System.currentTimeMillis();
-                LockSupport.parkNanos(updateFrequency);
+                while (!service.isTerminated()) {
+                    millis = System.currentTimeMillis();
+                    LockSupport.parkNanos(updateFrequency);
+                }
             }
         });
         return this;

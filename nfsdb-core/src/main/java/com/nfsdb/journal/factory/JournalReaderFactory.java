@@ -17,6 +17,7 @@
 package com.nfsdb.journal.factory;
 
 import com.nfsdb.journal.Journal;
+import com.nfsdb.journal.JournalBulkReader;
 import com.nfsdb.journal.JournalKey;
 import com.nfsdb.journal.exceptions.JournalException;
 
@@ -31,6 +32,12 @@ public interface JournalReaderFactory extends Closeable {
     <T> Journal<T> reader(Class<T> clazz) throws JournalException;
 
     <T> Journal<T> reader(Class<T> clazz, String location) throws JournalException;
+
+    <T> JournalBulkReader<T> bulkReader(Class<T> clazz, String location) throws JournalException;
+
+    <T> JournalBulkReader<T> bulkReader(Class<T> clazz) throws JournalException;
+
+    <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException;
 
     JournalConfiguration getConfiguration();
 }

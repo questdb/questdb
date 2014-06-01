@@ -95,8 +95,8 @@ public class JournalRowBufferedIterator<T> implements Iterable<JournalRow<T>>, I
     private void updateVariables() {
         if (currentIndex < ranges.size()) {
             JournalIteratorRange w = ranges.get(currentIndex);
-            currentRowID = w.lowerRowIDBound;
-            currentUpperBound = w.upperRowIDBound;
+            currentRowID = w.lo;
+            currentUpperBound = w.hi;
             currentPartitionID = w.partitionID;
         } else {
             hasNext = false;

@@ -21,7 +21,6 @@ import com.nfsdb.journal.test.model.Quote;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestUtils;
 import com.nfsdb.journal.utils.Dates;
-import com.nfsdb.journal.utils.Lists;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -77,7 +76,7 @@ public class JournalRefreshTest extends AbstractTest {
         List<Quote> data = new ArrayList<>();
         data.add(new Quote().setSym("IMO-5").setTimestamp(Dates.utc(2013, 3, 10, 15, 0).getMillis()));
         data.add(new Quote().setSym("IMO-6").setTimestamp(Dates.utc(2013, 3, 10, 16, 0).getMillis()));
-        rw.appendIrregular(data);
+        rw.appendLag(data);
 
         rw.commit();
 
@@ -166,7 +165,7 @@ public class JournalRefreshTest extends AbstractTest {
         reader.refresh();
         Assert.assertEquals(rw.size(), reader.size());
 
-        rw.appendIrregular(Lists.asList(origin.query().all().asResultSet().subset(500, 600).read()));
+        rw.appendLag(origin.query().all().asResultSet().subset(500, 600));
         rw.commit();
         reader.refresh();
         Assert.assertEquals(rw.size(), reader.size());

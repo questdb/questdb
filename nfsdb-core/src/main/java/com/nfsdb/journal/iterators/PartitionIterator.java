@@ -24,37 +24,47 @@ import com.nfsdb.journal.exceptions.JournalRuntimeException;
 
 import java.util.Iterator;
 
-public class PartitionIterator<T> implements JournalIterator<T> {
-    private final long end;
+public class PartitionIterator<T> implements JournalIterator<T>, PeekingIterator<T> {
+    private final long lo;
+    private final long hi;
     private final Partition<T> partition;
     private long cursor;
 
-    public PartitionIterator(Partition<T> partition, long start, long end) {
+    public PartitionIterator(Partition<T> partition, long lo, long hi) {
         this.partition = partition;
-        this.cursor = start;
-        this.end = end;
+        this.lo = lo;
+        this.cursor = lo;
+        this.hi = hi;
     }
 
     @Override
     public boolean hasNext() {
-        return cursor <= end;
+        return cursor <= hi;
     }
 
     @Override
     public T next() {
-        try {
-            if (!partition.isOpen()) {
-                partition.open();
-            }
-            return partition.read(cursor++);
-        } catch (JournalException e) {
-            throw new JournalRuntimeException("Cannot read partition " + partition + " at " + (cursor - 1), e);
-        }
+        return get(cursor++);
+    }
+
+    @Override
+    public T peekFirst() {
+        return get(lo);
     }
 
     @Override
     public void remove() {
         throw new JournalImmutableIteratorException();
+    }
+
+    @Override
+    public T peekLast() {
+        return get(hi);
+    }
+
+    @Override
+    public boolean isEmpty() {
+        return cursor > hi;
     }
 
     @Override
@@ -65,5 +75,16 @@ public class PartitionIterator<T> implements JournalIterator<T> {
     @Override
     public Iterator<T> iterator() {
         return this;
+    }
+
+    private T get(long localRowID) {
+        try {
+            if (!partition.isOpen()) {
+                partition.open();
+            }
+            return partition.read(localRowID);
+        } catch (JournalException e) {
+            throw new JournalRuntimeException("Cannot read partition " + partition + " at " + localRowID, e);
+        }
     }
 }

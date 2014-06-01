@@ -211,12 +211,14 @@ public class JournalConfiguration {
                 String className = getStringAttr(xmlr, "class");
                 try {
                     Class type = Class.forName(className);
+                    int recordHint = globalRecordHint == -1 ? getIntAttr(xmlr, "recordCountHint", DEFAULT_RECORD_HINT) : globalRecordHint;
                     metadata = new JournalMetadata(
                             type,
                             getStringAttr(xmlr, "defaultPath"),
                             getStringAttr(xmlr, "timestampColumn"),
                             PartitionType.valueOf(getStringAttr(xmlr, "partitionType")),
-                            globalRecordHint == -1 ? getIntAttr(xmlr, "recordHint", DEFAULT_RECORD_HINT) : globalRecordHint,
+                            recordHint,
+                            getIntAttr(xmlr, "txCountHint", (recordHint) / 100),
                             getIntAttr(xmlr, "openPartitionTTL", OPEN_PARTITION_TTL),
                             getIntAttr(xmlr, "lagHours", DEFAULT_LAG_HOURS),
                             getStringAttr(xmlr, "key"),

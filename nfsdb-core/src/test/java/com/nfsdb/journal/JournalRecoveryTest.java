@@ -20,7 +20,6 @@ import com.nfsdb.journal.test.model.Quote;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestUtils;
 import com.nfsdb.journal.utils.Dates;
-import com.nfsdb.journal.utils.Lists;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -64,10 +63,10 @@ public class JournalRecoveryTest extends AbstractTest {
         try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
             w.setAutoCommit(false);
             w.append(origin.query().all().asResultSet().subset(0, 15000));
-            w.appendIrregular(Lists.asList(origin.query().all().asResultSet().subset(15000, 17000).shuffle(r).read()));
+            w.appendLag(origin.query().all().asResultSet().subset(15000, 17000).shuffle(r));
             w.commit();
-            w.appendIrregular(Lists.asList(origin.query().all().asResultSet().subset(17000, 27000).shuffle(r).read()));
-            w.appendIrregular(Lists.asList(origin.query().all().asResultSet().subset(27000, 37000).shuffle(r).read()));
+            w.appendLag(origin.query().all().asResultSet().subset(17000, 27000).shuffle(r));
+            w.appendLag(origin.query().all().asResultSet().subset(27000, 37000).shuffle(r));
             Assert.assertEquals("2013-02-01T00:00:00.000Z", Dates.toString(w.getMaxTimestamp()));
             Assert.assertEquals(37000, w.size());
         }

@@ -16,10 +16,7 @@
 
 package com.nfsdb.journal.test.tools;
 
-import com.nfsdb.journal.Journal;
-import com.nfsdb.journal.JournalBulkWriter;
-import com.nfsdb.journal.JournalKey;
-import com.nfsdb.journal.JournalWriter;
+import com.nfsdb.journal.*;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalClosingListener;
 import com.nfsdb.journal.factory.JournalConfiguration;
@@ -99,6 +96,14 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
         journals.add(writer);
         writer.setCloseListener(this);
         return writer;
+    }
+
+    @Override
+    public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
+        JournalBulkReader<T> reader = super.bulkReader(key);
+        journals.add(reader);
+        reader.setCloseListener(this);
+        return reader;
     }
 
     @Override
