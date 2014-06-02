@@ -56,7 +56,10 @@ public class QueryAllBuilderImpl<T> implements QueryAllBuilder<T> {
         SymbolTable symbolTable = journal.getSymbolTable(symbol);
         this.symbolKeys.resetQuick();
         for (String value : values) {
-            symbolKeys.add(symbolTable.get(value));
+            int key = symbolTable.getQuick(value);
+            if (key != SymbolTable.VALUE_NOT_FOUND) {
+                symbolKeys.add(key);
+            }
         }
     }
 

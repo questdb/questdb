@@ -60,7 +60,10 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
         } else {
             this.symbolKeys.ensureCapacity(values.length);
             for (String value : values) {
-                symbolKeys.add(symbolTable.get(value));
+                int key = symbolTable.getQuick(value);
+                if (key != SymbolTable.VALUE_NOT_FOUND) {
+                    symbolKeys.add(key);
+                }
             }
         }
     }

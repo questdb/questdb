@@ -250,7 +250,7 @@ public class QueryTest extends AbstractTest {
                 "2013-05-06T18:23:20.000Z\tBP.L\t0.45621034230309654\t0.1747016272521107\t1179616540\t908015035\tFast trading\tGR\n" +
                 "2013-05-06T22:33:20.000Z\tBP.L\t0.46114752131469783\t0.8979723557722048\t1579801637\t2117833235\tFast trading\tGR\n";
 
-        ResultSet<Quote> rs = q.all().withKeys("TLW.L", "BP.L").filter("ex", "SK").filter("ex", "GR").asResultSet();
+        ResultSet<Quote> rs = q.all().withKeys("TLW.L", "BP.L", "NON_EXISTING").filter("ex", "SK").filter("ex", "GR").asResultSet();
         TestUtils.assertEquals(expected, rs);
     }
 
@@ -528,7 +528,7 @@ public class QueryTest extends AbstractTest {
     public void testLatestByKeyValuesOverInterval() throws Exception {
         String expected = "2013-05-03T18:10:00.000Z\tBP.L\t0.02942030917851568\t0.572757460747041\t683641977\t1362036057\tFast trading\tLXE\n" +
                 "2013-05-03T22:20:00.000Z\tAGK.L\t0.9788182552381814\t0.3069421348721998\t2053761104\t1032198554\tFast trading\tLXE\n";
-        UnorderedResultSet<Quote> rs = q.head().withKeys("BP.L", "AGK.L").limit(Dates.interval(ts1, ts2)).asResultSet();
+        UnorderedResultSet<Quote> rs = q.head().withKeys("BP.L", "AGK.L", "BAD").limit(Dates.interval(ts1, ts2)).asResultSet();
         TestUtils.assertEquals(expected, rs);
     }
 

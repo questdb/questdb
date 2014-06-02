@@ -19,7 +19,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <properties>
-        <project.version>1.0.2</project.version>
+        <project.version>1.0.3-SNAPSHOT</project.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
