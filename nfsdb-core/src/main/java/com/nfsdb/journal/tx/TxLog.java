@@ -17,6 +17,7 @@
 package com.nfsdb.journal.tx;
 
 import com.nfsdb.journal.JournalMode;
+import com.nfsdb.journal.column.MappedFile;
 import com.nfsdb.journal.column.MappedFileImpl;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
@@ -29,7 +30,7 @@ import java.nio.ByteBuffer;
 public class TxLog {
 
     private long address = 0;
-    private MappedFileImpl mf;
+    private MappedFile mf;
     private char[] buf;
 
     public TxLog(File baseLocation, JournalMode mode) throws JournalException {
@@ -160,6 +161,10 @@ public class TxLog {
 
     public void close() {
         mf.close();
+    }
+
+    public void force() {
+        mf.force();
     }
 
     private long getTxAddress() {

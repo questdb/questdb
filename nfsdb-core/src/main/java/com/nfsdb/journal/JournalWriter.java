@@ -261,18 +261,15 @@ public class JournalWriter<T> extends Journal<T> {
             getSymbolTable(i).truncate();
         }
         appendTimestampLo = -1;
-        commit();
+        commit(true);
     }
 
     public void commit() throws JournalException {
-        if (txActive) {
-            commit(Tx.TX_NORMAL);
-            expireOpenFiles();
-            if (txListener != null) {
-                txListener.notifyAsyncNoWait();
-            }
-            txActive = false;
-        }
+        commit(false);
+    }
+
+    public void commitDurable() throws JournalException {
+        commit(true);
     }
 
     /**
@@ -648,6 +645,17 @@ public class JournalWriter<T> extends Journal<T> {
 
     }
 
+    private void commit(boolean force) throws JournalException {
+        if (txActive) {
+            commit(force ? Tx.TX_FORCE : Tx.TX_NORMAL);
+            expireOpenFiles();
+            if (txListener != null) {
+                txListener.notifyAsyncNoWait();
+            }
+            txActive = false;
+        }
+    }
+
     Partition<T> createTempPartition() throws JournalException {
         return createTempPartition(JournalConfiguration.TEMP_DIRECTORY_PREFIX + "." + System.currentTimeMillis() + "." + UUID.randomUUID().toString());
     }
@@ -665,6 +673,7 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     private void commit(byte command) throws JournalException {
+        boolean force = command == Tx.TX_FORCE;
         Partition<T> partition = lastNonEmptyNonLag();
         Partition<T> lag = getIrregularPartition();
 
@@ -679,13 +688,21 @@ public class JournalWriter<T> extends Journal<T> {
         for (int i = 0; i < getSymbolTableCount(); i++) {
             SymbolTable tab = getSymbolTable(i);
             tab.commit();
+            if (force) {
+                tab.force();
+            }
             tx.symbolTableSizes[i] = tab.size();
             tx.symbolTableIndexPointers[i] = tab.getIndexTxAddress();
         }
         tx.indexPointers = new long[getMetadata().getColumnCount()];
 
         for (int i = Math.max(txPartitionIndex, 0); i < nonLagPartitionCount(); i++) {
-            getPartition(i, true).commit();
+            Partition<T> p = getPartition(i, true);
+            p.commit();
+            if (force) {
+                p.force();
+            }
+
         }
 
         if (partition != null) {
@@ -695,10 +712,14 @@ public class JournalWriter<T> extends Journal<T> {
         tx.lagIndexPointers = new long[getMetadata().getColumnCount()];
         if (lag != null) {
             lag.commit();
+            if (force) {
+                lag.force();
+            }
             lag.getIndexPointers(tx.lagIndexPointers);
         }
 
         txLog.create(tx);
+        txLog.force();
     }
 
     private void rollbackPartitionDirs() throws JournalException {

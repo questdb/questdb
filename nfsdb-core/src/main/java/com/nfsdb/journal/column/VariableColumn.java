@@ -45,6 +45,12 @@ public class VariableColumn extends AbstractColumn {
     }
 
     @Override
+    public void force() {
+        super.force();
+        indexColumn.force();
+    }
+
+    @Override
     public void close() {
         indexColumn.close();
         super.close();

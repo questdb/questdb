@@ -47,6 +47,10 @@ public abstract class AbstractColumn implements Closeable {
         }
     }
 
+    public void force() {
+        mappedFile.force();
+    }
+
     @Override
     public String toString() {
         return this.getClass().getName() + "[file=" + mappedFile.toString() + ", size=" + size() + "]";

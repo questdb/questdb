@@ -29,8 +29,8 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.ArrayList;
 import java.util.List;
@@ -45,10 +45,10 @@ public class MappedFileImpl implements MappedFile {
     // so the actual data begins from "dataOffset"
     private final int dataOffset = 8;
     private FileChannel channel;
-    private ByteBuffer offsetBuffer;
-    private List<ByteBuffer> buffers;
+    private MappedByteBuffer offsetBuffer;
+    private List<MappedByteBuffer> buffers;
     private List<ByteBufferWrapper> stitches;
-    private ByteBuffer cachedBuffer;
+    private MappedByteBuffer cachedBuffer;
     private long cachedBufferLo = -1;
     private long cachedBufferHi = -1;
     private long cachedAppendOffset = -1;
@@ -63,7 +63,7 @@ public class MappedFileImpl implements MappedFile {
     }
 
     @Override
-    public ByteBuffer getBuffer(long offset, int size) {
+    public MappedByteBuffer getBuffer(long offset, int size) {
         if (offset >= cachedBufferLo && offset + size <= cachedBufferHi) {
             cachedBuffer.position((int) (offset - cachedBufferLo));
         } else {
@@ -137,7 +137,25 @@ public class MappedFileImpl implements MappedFile {
         return this.file.getAbsolutePath();
     }
 
-    private ByteBuffer getBufferInternal(long offset, int size) {
+    public void force() {
+        int stitchesSize = stitches.size();
+        offsetBuffer.force();
+        for (int i = 0, buffersSize = buffers.size(); i < buffersSize; i++) {
+            MappedByteBuffer b = buffers.get(i);
+            if (b != null) {
+                b.force();
+            }
+
+            if (i < stitchesSize) {
+                ByteBufferWrapper s = stitches.get(i);
+                if (s != null) {
+                    s.getByteBuffer().force();
+                }
+            }
+        }
+    }
+
+    private MappedByteBuffer getBufferInternal(long offset, int size) {
 
         int bufferSize = 1 << bitHint;
         int bufferIndex = (int) (offset >>> bitHint);
@@ -147,11 +165,10 @@ public class MappedFileImpl implements MappedFile {
 
         Lists.advance(buffers, bufferIndex);
 
-        ByteBuffer buffer = buffers.get(bufferIndex);
+        MappedByteBuffer buffer = buffers.get(bufferIndex);
 
         if (buffer != null && buffer.limit() < bufferPos) {
-            ByteBuffers.release(buffer);
-            buffer = null;
+            buffer = ByteBuffers.release(buffer);
         }
 
         if (buffer == null) {
@@ -161,13 +178,23 @@ public class MappedFileImpl implements MappedFile {
             switch (mode) {
                 case BULK_READ:
                 case BULK_APPEND:
+                    // for bulk operations unmap all buffers except for current one
+                    // this is to prevent OS paging large files.
                     cachedBuffer = null;
                     cachedBufferLo = cachedBufferHi = -1;
+                    int ssz = stitches.size();
                     for (int i = bufferIndex - 1; i >= 0; i--) {
-                        ByteBuffer b = buffers.get(i);
+                        MappedByteBuffer b = buffers.get(i);
                         if (b != null) {
-                            ByteBuffers.release(b);
-                            buffers.set(i, null);
+                            buffers.set(i, ByteBuffers.release(b));
+                        }
+
+                        if (i < ssz) {
+                            ByteBufferWrapper stitch = stitches.get(i);
+                            if (stitch != null) {
+                                stitch.release();
+                                stitches.set(i, null);
+                            }
                         }
                     }
             }
@@ -236,11 +263,11 @@ public class MappedFileImpl implements MappedFile {
         }
 
         try {
-            FileChannel offsetChannel = this.channel = new RandomAccessFile(file, mode).getChannel();
+            this.channel = new RandomAccessFile(file, mode).getChannel();
             if ("r".equals(mode)) {
-                this.offsetBuffer = offsetChannel.map(FileChannel.MapMode.READ_ONLY, 0, Math.min(offsetChannel.size(), 8));
+                this.offsetBuffer = channel.map(FileChannel.MapMode.READ_ONLY, 0, Math.min(channel.size(), 8));
             } else {
-                this.offsetBuffer = offsetChannel.map(FileChannel.MapMode.READ_WRITE, 0, 8);
+                this.offsetBuffer = channel.map(FileChannel.MapMode.READ_WRITE, 0, 8);
             }
         } catch (FileNotFoundException e) {
             throw new JournalNoSuchFileException(e);
@@ -249,10 +276,11 @@ public class MappedFileImpl implements MappedFile {
         }
     }
 
-    private ByteBuffer mapBufferInternal(long offset, int size) {
+    private MappedByteBuffer mapBufferInternal(long offset, int size) {
         long actualOffset = offset + dataOffset;
 
         try {
+            MappedByteBuffer buf;
             switch (mode) {
                 case READ:
                 case BULK_READ:
@@ -265,10 +293,14 @@ public class MappedFileImpl implements MappedFile {
                         sz = size;
                     }
                     assert sz > 0;
-                    return channel.map(FileChannel.MapMode.READ_ONLY, actualOffset, sz).order(ByteOrder.LITTLE_ENDIAN);
+                    buf = channel.map(FileChannel.MapMode.READ_ONLY, actualOffset, sz);
+                    break;
                 default:
-                    return channel.map(FileChannel.MapMode.READ_WRITE, actualOffset, size).order(ByteOrder.LITTLE_ENDIAN);
+                    buf = channel.map(FileChannel.MapMode.READ_WRITE, actualOffset, size);
+                    break;
             }
+            buf.order(ByteOrder.LITTLE_ENDIAN);
+            return buf;
         } catch (IOException e) {
             throw new JournalRuntimeException("Failed to memory map: %s", e, file.getAbsolutePath());
         }
@@ -276,7 +308,7 @@ public class MappedFileImpl implements MappedFile {
 
     private void unmap() {
         for (int i = 0, buffersSize = buffers.size(); i < buffersSize; i++) {
-            ByteBuffer b = buffers.get(i);
+            MappedByteBuffer b = buffers.get(i);
             if (b != null) {
                 ByteBuffers.release(b);
             }

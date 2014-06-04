@@ -18,13 +18,13 @@ package com.nfsdb.journal.column;
 
 import com.nfsdb.journal.utils.ByteBuffers;
 
-import java.nio.ByteBuffer;
+import java.nio.MappedByteBuffer;
 
 public class ByteBufferWrapper {
     private final long offset;
-    private ByteBuffer byteBuffer;
+    private MappedByteBuffer byteBuffer;
 
-    public ByteBufferWrapper(long offset, ByteBuffer byteBuffer) {
+    public ByteBufferWrapper(long offset, MappedByteBuffer byteBuffer) {
         this.offset = offset;
         this.byteBuffer = byteBuffer;
     }
@@ -33,7 +33,7 @@ public class ByteBufferWrapper {
         return offset;
     }
 
-    public ByteBuffer getByteBuffer() {
+    public MappedByteBuffer getByteBuffer() {
         return byteBuffer;
     }
 

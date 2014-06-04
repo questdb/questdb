@@ -101,7 +101,7 @@ public final class ByteBuffers {
      * @param buffer direct byte buffer
      * @return null if buffer is released or same buffer if release is not possible.
      */
-    public static ByteBuffer release(final ByteBuffer buffer) {
+    public static <T extends ByteBuffer> T release(final T buffer) {
         if (buffer != null) {
             if (buffer instanceof DirectBuffer) {
                 Cleaner cleaner = ((DirectBuffer) buffer).cleaner();

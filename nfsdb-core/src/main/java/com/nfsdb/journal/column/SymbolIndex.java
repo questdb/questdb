@@ -183,6 +183,10 @@ public class SymbolIndex implements Closeable {
         }
     }
 
+    public void force() {
+        kData.force();
+    }
+
     /**
      * Searches for indexed value of a key. This method will lookup newest values much faster then oldest.
      * If either key doesn't exist in index or value index is out of bounds an exception will be thrown.

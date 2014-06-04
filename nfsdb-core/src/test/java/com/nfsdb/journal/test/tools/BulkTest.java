@@ -18,6 +18,7 @@ package com.nfsdb.journal.test.tools;
 
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
+import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.test.model.Quote;
 import org.junit.Assert;
 import org.junit.Test;
@@ -39,5 +40,32 @@ public class BulkTest extends AbstractTest {
             count++;
         }
         Assert.assertEquals(batchSize, count);
+    }
+
+    @Test
+    public void testDurable() throws Exception {
+        JournalFactory f = factory;
+        final int batchSize = 1000000;
+        final int iterations = 10;
+        JournalWriter<Quote> writer = f.bulkWriter(Quote.class);
+        Journal<Quote> reader = f.bulkReader(Quote.class);
+
+
+        long start = System.currentTimeMillis();
+        long p = 10L * 24L * 60L * 60L * 1000L;
+        for (int i = 0; i < iterations; i++) {
+            TestUtils.generateQuoteData(writer, batchSize, start, p / batchSize);
+            writer.commitDurable();
+            start += p;
+        }
+
+        Assert.assertTrue(reader.refresh());
+
+        long count = 0;
+        for (Quote q : reader.bufferedIterator()) {
+            assert q != null;
+            count++;
+        }
+        Assert.assertEquals(batchSize * iterations, count);
     }
 }

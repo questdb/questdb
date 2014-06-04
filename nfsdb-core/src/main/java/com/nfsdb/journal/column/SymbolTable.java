@@ -241,6 +241,11 @@ public class SymbolTable implements Closeable {
         index.commit();
     }
 
+    public void force() {
+        data.force();
+        index.force();
+    }
+
     private void cache(int key, String value) {
         valueCache.put(value, key);
         Lists.advance(keyCache, key);

@@ -19,10 +19,10 @@ package com.nfsdb.journal.column;
 import com.nfsdb.journal.exceptions.JournalException;
 
 import java.io.Closeable;
-import java.nio.ByteBuffer;
+import java.nio.MappedByteBuffer;
 
 public interface MappedFile extends Closeable {
-    public ByteBuffer getBuffer(long offset, int size);
+    public MappedByteBuffer getBuffer(long offset, int size);
 
     void close();
 
@@ -31,4 +31,6 @@ public interface MappedFile extends Closeable {
     void setAppendOffset(long offset);
 
     void compact() throws JournalException;
+
+    void force();
 }

@@ -724,6 +724,23 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
     }
 
+    void force() throws JournalException {
+        for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
+            SymbolIndexProxy<T> proxy = indexProxies.get(i);
+            proxy.getIndex().force();
+        }
+
+        if (columns != null) {
+            for (int i = 0; i < columns.length; i++) {
+                AbstractColumn column = columns[i];
+                if (column != null) {
+                    column.force();
+                }
+            }
+            nullsColumn.force();
+        }
+    }
+
     private void createSymbolIndexProxies(long[] indexTxAddresses) {
         indexProxies.clear();
         columnIndexProxies.clear();
