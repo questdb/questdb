@@ -39,7 +39,7 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
     }
 
     public <B> JournalTestFactory(NullsAdaptorFactory<B> factory) {
-        super(new JournalConfiguration(Files.makeTempDir()).setNullsAdaptorFactory(factory));
+        super(new JournalConfiguration(JournalConfiguration.DEFAULT_CONFIG_FILE, Files.makeTempDir(), 10000, factory));
     }
 
     @Override

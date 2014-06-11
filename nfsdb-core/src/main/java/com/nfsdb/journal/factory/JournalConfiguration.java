@@ -61,8 +61,8 @@ public class JournalConfiguration {
     private final File journalBase;
     private final String configurationFile;
     private final int globalRecordHint;
+    private final NullsAdaptorFactory nullsAdaptorFactory;
     private boolean configured = false;
-    private NullsAdaptorFactory nullsAdaptorFactory;
 
     public JournalConfiguration(File journalBase) {
         this(DEFAULT_CONFIG_FILE, journalBase);
@@ -73,14 +73,14 @@ public class JournalConfiguration {
     }
 
     public JournalConfiguration(String configurationFile, File journalBase, int globalRecordHint) {
+        this(configurationFile, journalBase, globalRecordHint, null);
+    }
+
+    public JournalConfiguration(String configurationFile, File journalBase, int globalRecordHint, NullsAdaptorFactory nullsAdaptorFactory) {
         this.globalRecordHint = globalRecordHint;
         this.journalBase = journalBase;
         this.configurationFile = configurationFile;
-    }
-
-    public JournalConfiguration setNullsAdaptorFactory(NullsAdaptorFactory nullsAdaptorFactory) {
         this.nullsAdaptorFactory = nullsAdaptorFactory;
-        return this;
     }
 
     public JournalConfiguration build() throws JournalConfigurationException {

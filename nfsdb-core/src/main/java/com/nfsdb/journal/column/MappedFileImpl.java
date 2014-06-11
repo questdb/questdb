@@ -269,6 +269,7 @@ public class MappedFileImpl implements MappedFile {
             } else {
                 this.offsetBuffer = channel.map(FileChannel.MapMode.READ_WRITE, 0, 8);
             }
+            offsetBuffer.order(ByteOrder.LITTLE_ENDIAN);
         } catch (FileNotFoundException e) {
             throw new JournalNoSuchFileException(e);
         } catch (IOException e) {

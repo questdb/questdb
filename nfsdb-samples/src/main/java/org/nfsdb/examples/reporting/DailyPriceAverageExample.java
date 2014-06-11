@@ -19,14 +19,13 @@ package org.nfsdb.examples.reporting;
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.factory.JournalConfiguration;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.printer.JournalPrinter;
 import com.nfsdb.journal.printer.appender.StdOutAppender;
 import com.nfsdb.journal.query.api.QueryAllBuilder;
 import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Files;
-import com.nfsdb.thrift.ThriftNullsAdaptorFactory;
+import com.nfsdb.thrift.JournalThriftFactory;
 import org.joda.time.DateTime;
 import org.joda.time.DateTimeField;
 import org.joda.time.chrono.ISOChronology;
@@ -47,7 +46,7 @@ public class DailyPriceAverageExample {
         String journalLocation = args[0];
         // this is another way to setup JournalFactory if you would like to provide NullsAdaptor. NullsAdaptor for thrift,
         // which is used in this case implements JIT-friendly object reset method, which is quite fast.
-        try (JournalFactory factory = new JournalFactory(new JournalConfiguration(new File(journalLocation)).setNullsAdaptorFactory(new ThriftNullsAdaptorFactory()).build())) {
+        try (JournalFactory factory = new JournalThriftFactory(journalLocation)) {
 
             // delete existing quote journal
             Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote"));

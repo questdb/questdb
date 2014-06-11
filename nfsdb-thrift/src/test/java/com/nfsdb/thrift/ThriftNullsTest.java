@@ -16,16 +16,26 @@
 
 package com.nfsdb.thrift;
 
+import com.nfsdb.journal.Journal;
+import com.nfsdb.journal.JournalWriter;
+import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.test.model.Quote;
+import com.nfsdb.journal.test.tools.JournalTestFactory;
+import com.nfsdb.journal.utils.Dates;
 import org.apache.thrift.TBase;
 import org.apache.thrift.TException;
 import org.apache.thrift.TFieldIdEnum;
 import org.apache.thrift.protocol.TProtocol;
 import org.junit.Assert;
+import org.junit.Rule;
 import org.junit.Test;
 
 import java.util.BitSet;
 
 public class ThriftNullsTest {
+
+    @Rule
+    public JournalTestFactory factory = new JournalTestFactory(new ThriftNullsAdaptorFactory());
 
     @Test
     public void testByteBitField() throws Exception {
@@ -145,6 +155,35 @@ public class ThriftNullsTest {
         sample.__isset_bit_vector.set(1);
         adaptor.getNulls(sample, dst);
         Assert.assertEquals("{1}", dst.toString());
+    }
+
+    @Test
+    public void testFirstSymbolNull() throws JournalException {
+
+        JournalWriter<Quote> w = factory.writer(Quote.class, "quote", 1000);
+        long timestamp = Dates.toMillis("2013-10-05T10:00:00.000Z");
+        Quote q = new Quote();
+        for (int i = 0; i < 3; i++) {
+            w.clearObject(q);
+            if (i == 0) {
+                q.setAsk(123);
+            }
+
+            q.setTimestamp(timestamp);
+            w.append(q);
+        }
+
+        w.commit();
+        w.close();
+
+        Journal<Quote> r = factory.reader(Quote.class, "quote");
+        q = r.read(0);
+        Quote q1 = r.read(1);
+
+        Assert.assertNull(q.getSym());
+        Assert.assertTrue(q.isSetAsk());
+
+        Assert.assertFalse(q1.isSetAsk());
     }
 
     private static abstract class AbstractSample implements TBase {

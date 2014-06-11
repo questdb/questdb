@@ -18,22 +18,31 @@ package com.nfsdb.journal.printer.appender;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.io.PrintWriter;
 
 public class OutputStreamAppender implements Appender {
-    private final PrintWriter w;
+    private final OutputStream out;
+    private byte[] lineSeparator;
 
     public OutputStreamAppender(OutputStream out) {
-        w = new PrintWriter(out);
+        this.out = out;
+
+        String separator = System.getProperty("line.separator");
+        lineSeparator = new byte[separator.length()];
+        for (int i = 0; i < separator.length(); i++) {
+            lineSeparator[i] = (byte) separator.charAt(i);
+        }
     }
 
     @Override
     public void append(StringBuilder stringBuilder) throws IOException {
-        w.println(stringBuilder.toString());
+        for (int i = 0; i < stringBuilder.length(); i++) {
+            out.write(stringBuilder.charAt(i));
+        }
+        out.write(this.lineSeparator);
     }
 
     @Override
     public void close() throws IOException {
-        w.flush();
+        out.flush();
     }
 }

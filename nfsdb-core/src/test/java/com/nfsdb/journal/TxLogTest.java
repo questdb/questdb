@@ -16,6 +16,9 @@
 
 package com.nfsdb.journal;
 
+import com.nfsdb.journal.test.model.Quote;
+import com.nfsdb.journal.test.tools.AbstractTest;
+import com.nfsdb.journal.test.tools.TestUtils;
 import com.nfsdb.journal.tx.Tx;
 import com.nfsdb.journal.tx.TxLog;
 import org.junit.Assert;
@@ -25,7 +28,7 @@ import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 
-public class TxLogTest {
+public class TxLogTest extends AbstractTest {
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
 
@@ -54,7 +57,9 @@ public class TxLogTest {
 
         TxLog r = new TxLog(dir, JournalMode.READ);
         Assert.assertTrue(r.hasNext());
-        Tx tx1 = r.get();
+
+        Tx tx1 = new Tx();
+        r.head(tx1);
         Assert.assertEquals(0, tx1.command);
         Assert.assertEquals(10, tx1.journalMaxRowID);
         Assert.assertEquals(12, tx1.lagSize);
@@ -73,4 +78,31 @@ public class TxLogTest {
         txLog.close();
         r.close();
     }
+
+    @Test
+    public void testTxLogWalk() throws Exception {
+        JournalWriter<Quote> writer = factory.writer(Quote.class);
+        // tx1
+        TestUtils.generateQuoteData(writer, 100, System.currentTimeMillis());
+        writer.commit();
+        // tx2
+        TestUtils.generateQuoteData(writer, 100, System.currentTimeMillis());
+        writer.commit();
+        // tx3
+        TestUtils.generateQuoteData(writer, 100, System.currentTimeMillis());
+        writer.commit();
+        // tx4
+        TestUtils.generateQuoteData(writer, 100, System.currentTimeMillis());
+        writer.commit();
+
+        Assert.assertEquals(400, writer.size());
+        writer.rollback(writer.txLog.prevAddress(writer.txLog.headAddress()));
+        Assert.assertEquals(300, writer.size());
+
+        Tx tx = new Tx();
+        long address = writer.txLog.headAddress();
+        writer.txLog.get(address, tx);
+        Assert.assertEquals(300, tx.journalMaxRowID);
+    }
 }
+

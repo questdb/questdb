@@ -26,6 +26,7 @@ import com.nfsdb.journal.utils.ByteBuffers;
 
 import java.io.File;
 import java.nio.ByteBuffer;
+import java.nio.MappedByteBuffer;
 
 public class TxLog {
 
@@ -45,66 +46,17 @@ public class TxLog {
         return mf.getAppendOffset() <= 9;
     }
 
-    public Tx get() {
-        long offset = getTxAddress();
-        assert offset > 0 : "zero offset";
-        Tx tx = new Tx();
-        ByteBuffer buffer = mf.getBuffer(offset, 4);
-        int txSize = buffer.getInt();
-        buffer = mf.getBuffer(offset + 4, txSize);
+    public void head(Tx tx) {
+        get(headAddress(), tx);
+    }
 
-        tx.prevTxAddress = buffer.getLong();
-        tx.command = buffer.get();
-        tx.timestamp = buffer.getLong();
-        tx.journalMaxRowID = buffer.getLong();
-        tx.lastPartitionTimestamp = buffer.getLong();
-        tx.lagSize = buffer.getLong();
+    public long headAddress() {
+        return this.address = getTxAddress();
+    }
 
-        int sz = buffer.get();
-        if (sz == 0) {
-            tx.lagName = null;
-        } else {
-            // lagName
-            sz = buffer.get();
-            if (buf == null || buf.length < sz) {
-                buf = new char[sz];
-            }
-            for (int i = 0; i < sz; i++) {
-                buf[i] = buffer.getChar();
-            }
-            tx.lagName = new String(buf, 0, sz);
-        }
-
-        // symbolTableSizes
-        sz = buffer.getChar();
-        tx.symbolTableSizes = new int[sz];
-        for (int i = 0; i < sz; i++) {
-            tx.symbolTableSizes[i] = buffer.getInt();
-        }
-
-        //symbolTableIndexPointers
-        sz = buffer.getChar();
-        tx.symbolTableIndexPointers = new long[sz];
-        for (int i = 0; i < sz; i++) {
-            tx.symbolTableIndexPointers[i] = buffer.getLong();
-        }
-
-        //indexPointers
-        sz = buffer.getChar();
-        tx.indexPointers = new long[sz];
-        for (int i = 0; i < sz; i++) {
-            tx.indexPointers[i] = buffer.getLong();
-        }
-
-        //lagIndexPointers
-        sz = buffer.getChar();
-        tx.lagIndexPointers = new long[sz];
-        for (int i = 0; i < sz; i++) {
-            tx.lagIndexPointers[i] = buffer.getLong();
-        }
-
-        this.address = offset;
-        return tx;
+    public long prevAddress(long address) {
+        ByteBuffer buffer = mf.getBuffer(address, 12);
+        return buffer.getLong(buffer.position() + 4);
     }
 
     public void create(Tx tx) {
@@ -149,12 +101,7 @@ public class TxLog {
         ByteBuffers.putLongW(buffer, tx.lagIndexPointers);
 
         // write out tx address
-        buffer = mf.getBuffer(0, 9);
-        buffer.mark();
-        buffer.put((byte) 0);
-        buffer.putLong(offset);
-        buffer.reset();
-        buffer.put((byte) 1);
+        setTxAddress(offset);
         address = offset + tx.size();
         mf.setAppendOffset(address);
     }
@@ -167,22 +114,107 @@ public class TxLog {
         mf.force();
     }
 
-    private long getTxAddress() {
-        if (isEmpty()) {
-            return 0;
+    public long getTxAddress() {
+        ByteBuffer buf = mf.getBuffer(0, 9);
+        long address;
+        while (true) {
+            address = buf.getLong();
+            byte checksum = buf.get();
+            byte b0 = (byte) address;
+            byte b1 = (byte) (address >> 8);
+            byte b2 = (byte) (address >> 16);
+            byte b3 = (byte) (address >> 24);
+            byte b4 = (byte) (address >> 32);
+            byte b5 = (byte) (address >> 40);
+            byte b6 = (byte) (address >> 48);
+            byte b7 = (byte) (address >> 56);
+
+            if ((b0 ^ b1 ^ b2 ^ b3 ^ b4 ^ b5 ^ b6 ^ b7) == checksum) {
+                break;
+            }
+        }
+        return address;
+    }
+
+    public void setTxAddress(long address) {
+        MappedByteBuffer buffer = mf.getBuffer(0, 8);
+        buffer.putLong(address);
+
+        // checksum
+        byte b0 = (byte) address;
+        byte b1 = (byte) (address >> 8);
+        byte b2 = (byte) (address >> 16);
+        byte b3 = (byte) (address >> 24);
+        byte b4 = (byte) (address >> 32);
+        byte b5 = (byte) (address >> 40);
+        byte b6 = (byte) (address >> 48);
+        byte b7 = (byte) (address >> 56);
+        buffer.put((byte) (b0 ^ b1 ^ b2 ^ b3 ^ b4 ^ b5 ^ b6 ^ b7));
+    }
+
+    public void get(long address, Tx tx) {
+        assert address > 0 : "zero address";
+        tx.address = address;
+        ByteBuffer buffer = mf.getBuffer(address, 4);
+        int txSize = buffer.getInt();
+        buffer = mf.getBuffer(address + 4, txSize);
+
+        tx.prevTxAddress = buffer.getLong();
+        tx.command = buffer.get();
+        tx.timestamp = buffer.getLong();
+        tx.journalMaxRowID = buffer.getLong();
+        tx.lastPartitionTimestamp = buffer.getLong();
+        tx.lagSize = buffer.getLong();
+
+        int sz = buffer.get();
+        if (sz == 0) {
+            tx.lagName = null;
+        } else {
+            // lagName
+            sz = buffer.get();
+            if (buf == null || buf.length < sz) {
+                buf = new char[sz];
+            }
+            for (int i = 0; i < sz; i++) {
+                buf[i] = buffer.getChar();
+            }
+            tx.lagName = new String(buf, 0, sz);
         }
 
-        ByteBuffer buffer = mf.getBuffer(0, 9);
-        buffer.mark();
-        long limit = 100;
-        while (limit > 0 && buffer.get() == 0) {
-            Thread.yield();
-            buffer.reset();
-            limit--;
+        // symbolTableSizes
+        sz = buffer.getChar();
+        if (tx.symbolTableSizes == null || tx.symbolTableSizes.length < sz) {
+            tx.symbolTableSizes = new int[sz];
         }
-        if (limit == 0) {
-            throw new JournalRuntimeException("Could not get spin-lock on txLog");
+        for (int i = 0; i < sz; i++) {
+            tx.symbolTableSizes[i] = buffer.getInt();
         }
-        return buffer.getLong();
+
+        //symbolTableIndexPointers
+        sz = buffer.getChar();
+        if (tx.symbolTableIndexPointers == null || tx.symbolTableIndexPointers.length < sz) {
+            tx.symbolTableIndexPointers = new long[sz];
+        }
+        for (int i = 0; i < sz; i++) {
+            tx.symbolTableIndexPointers[i] = buffer.getLong();
+        }
+
+        //indexPointers
+        sz = buffer.getChar();
+        if (tx.indexPointers == null || tx.indexPointers.length < sz) {
+            tx.indexPointers = new long[sz];
+        }
+        for (int i = 0; i < sz; i++) {
+            tx.indexPointers[i] = buffer.getLong();
+        }
+
+        //lagIndexPointers
+        sz = buffer.getChar();
+        if (tx.lagIndexPointers == null || tx.lagIndexPointers.length < sz) {
+            tx.lagIndexPointers = new long[sz];
+        }
+        for (int i = 0; i < sz; i++) {
+            tx.lagIndexPointers[i] = buffer.getLong();
+        }
     }
 }

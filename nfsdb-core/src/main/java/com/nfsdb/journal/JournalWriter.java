@@ -121,37 +121,47 @@ public class JournalWriter<T> extends Journal<T> {
 
     public void rollback() throws JournalException {
         if (txActive) {
-            Tx tx = txLog.get();
-
-            // partitions need to be dealt with first to make sure new lag is assigned a correct partitionIndex
-            rollbackPartitions(tx);
-
-            Partition<T> lag = getIrregularPartition();
-            if (tx.lagName != null && tx.lagName.length() > 0 && (lag == null || !tx.lagName.equals(lag.getName()))) {
-                Partition<T> newLag = createTempPartition(tx.lagName);
-                setIrregularPartition(newLag);
-                newLag.applyTx(tx.lagSize, tx.lagIndexPointers);
-            } else if (lag != null && tx.lagName == null) {
-                removeIrregularPartitionInternal();
-            } else if (lag != null) {
-                lag.truncate(tx.lagSize);
-            }
-
-
-            if (tx.symbolTableSizes.length == 0) {
-                for (int i = 0; i < getSymbolTableCount(); i++) {
-                    getSymbolTable(i).truncate();
-                }
-            } else {
-                for (int i = 0; i < getSymbolTableCount(); i++) {
-                    getSymbolTable(i).truncate(tx.symbolTableSizes[i]);
-                }
-            }
-            appendTimestampLo = -1;
-            appendTimestampHi = -1;
-            appendPartition = null;
+            rollback(txLog.headAddress());
             txActive = false;
         }
+    }
+
+    public void rollback(long address) throws JournalException {
+
+        txLog.get(address, tx);
+
+        if (tx.address == 0) {
+            throw new JournalException("Invalid transaction address");
+        }
+        // partitions need to be dealt with first to make sure new lag is assigned a correct partitionIndex
+        rollbackPartitions(tx);
+
+        Partition<T> lag = getIrregularPartition();
+        if (tx.lagName != null && tx.lagName.length() > 0 && (lag == null || !tx.lagName.equals(lag.getName()))) {
+            Partition<T> newLag = createTempPartition(tx.lagName);
+            setIrregularPartition(newLag);
+            newLag.applyTx(tx.lagSize, tx.lagIndexPointers);
+        } else if (lag != null && tx.lagName == null) {
+            removeIrregularPartitionInternal();
+        } else if (lag != null) {
+            lag.truncate(tx.lagSize);
+        }
+
+
+        if (tx.symbolTableSizes.length == 0) {
+            for (int i = 0; i < getSymbolTableCount(); i++) {
+                getSymbolTable(i).truncate();
+            }
+        } else {
+            for (int i = 0; i < getSymbolTableCount(); i++) {
+                getSymbolTable(i).truncate(tx.symbolTableSizes[i]);
+            }
+        }
+        appendTimestampLo = -1;
+        appendTimestampHi = -1;
+        appendPartition = null;
+        txLog.setTxAddress(tx.address);
+        txActive = false;
     }
 
     public void setTxListener(TxListener txListener) {
@@ -202,8 +212,10 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     public void purgeUnusedTempPartitions(TxLog txLog) throws JournalException {
+        final Tx tx = new Tx();
+        txLog.head(tx);
         final String lagPartitionName = hasIrregularPartition() ? getIrregularPartition().getName() : null;
-        final String txLagName = txLog != null ? txLog.get().lagName : null;
+        final String txLagName = tx.lagName;
 
         File[] files = getLocation().listFiles(new FileFilter() {
             public boolean accept(File f) {
@@ -261,7 +273,7 @@ public class JournalWriter<T> extends Journal<T> {
             getSymbolTable(i).truncate();
         }
         appendTimestampLo = -1;
-        commit(true);
+        commitDurable();
     }
 
     public void commit() throws JournalException {
@@ -621,7 +633,7 @@ public class JournalWriter<T> extends Journal<T> {
         if (txLog.isEmpty()) {
             commit(Tx.TX_NORMAL);
         }
-        Tx tx = txLog.get();
+        txLog.head(tx);
 
         File meta = new File(getLocation(), JournalConfiguration.JOURNAL_META_FILE);
         if (!meta.exists()) {
@@ -679,6 +691,7 @@ public class JournalWriter<T> extends Journal<T> {
 
         Tx tx = new Tx();
         tx.command = command;
+        tx.prevTxAddress = txLog.getTxAddress();
         tx.journalMaxRowID = partition == null ? 0 : Rows.toRowID(partition.getPartitionIndex(), partition.size());
         tx.lastPartitionTimestamp = partition == null || partition.getInterval() == null ? 0 : partition.getInterval().getStartMillis();
         tx.lagSize = lag == null ? 0 : lag.open().size();
@@ -719,7 +732,9 @@ public class JournalWriter<T> extends Journal<T> {
         }
 
         txLog.create(tx);
-        txLog.force();
+        if (force) {
+            txLog.force();
+        }
     }
 
     private void rollbackPartitionDirs() throws JournalException {

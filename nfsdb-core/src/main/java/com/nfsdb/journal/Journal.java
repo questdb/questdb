@@ -56,6 +56,8 @@ public class Journal<T> implements Iterable<T>, Closeable {
     public static final long TX_LIMIT_EVAL = -1L;
     private static final Logger LOGGER = Logger.getLogger(Journal.class);
     protected final List<Partition<T>> partitions = new ArrayList<>();
+    // empty container for current transaction
+    protected final Tx tx = new Tx();
     protected TxLog txLog;
     private final JournalMetadata<T> metadata;
     private final File location;
@@ -126,8 +128,8 @@ public class Journal<T> implements Iterable<T>, Closeable {
 
     public boolean refresh() throws JournalException {
         if (txLog.hasNext()) {
-            Tx tx = txLog.get();
-            refresh(tx);
+            txLog.head(tx);
+            refreshInternal();
             for (int i = 0; i < symbolTables.size(); i++) {
                 symbolTables.get(i).applyTx(tx.symbolTableSizes[i], tx.symbolTableIndexPointers[i]);
             }
@@ -559,10 +561,10 @@ public class Journal<T> implements Iterable<T>, Closeable {
     }
 
     protected void configure() throws JournalException {
-        Tx tx = txLog.get();
-        configureColumns(tx);
+        txLog.head(tx);
+        configureColumns();
         configureSymbolTableSynonyms();
-        configurePartitions(tx);
+        configurePartitions();
     }
 
     protected void removeIrregularPartitionInternal() {
@@ -582,7 +584,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         return timerCache;
     }
 
-    private void configureColumns(Tx tx) throws JournalException {
+    private void configureColumns() throws JournalException {
         int columnCount = getMetadata().getColumnCount();
         columnMetadata = new ColumnMetadata[columnCount];
         for (int i = 0; i < columnCount; i++) {
@@ -612,7 +614,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         }
     }
 
-    private void configurePartitions(Tx tx) throws JournalException {
+    private void configurePartitions() throws JournalException {
         File[] files = getLocation().listFiles(new FileFilter() {
             public boolean accept(File f) {
                 return f.isDirectory() && !f.getName().startsWith(JournalConfiguration.TEMP_DIRECTORY_PREFIX);
@@ -658,15 +660,15 @@ public class Journal<T> implements Iterable<T>, Closeable {
                 }
             }
         }
-        configureIrregularPartition(tx);
+        configureIrregularPartition();
     }
 
-    private void configureIrregularPartition(Tx tx) throws JournalException {
+    private void configureIrregularPartition() throws JournalException {
         // if journal is under intense write activity in another process
         // lag partition can keep changing
         // so we will be trying to pin lag partition
         while (true) {
-            String lagPartitionName = tx != null ? tx.lagName : null;
+            String lagPartitionName = tx.lagName;
             if (lagPartitionName != null && (irregularPartition == null || !lagPartitionName.equals(irregularPartition.getName()))) {
                 // new lag partition
                 // try to lock lag directory before any activity
@@ -706,21 +708,21 @@ public class Journal<T> implements Iterable<T>, Closeable {
      * Replaces current Lag partition, which is cached in this instance of Partition Manager with Lag partition,
      * which was written to _lag file by another process.
      */
-    void refresh(Tx tx) throws JournalException {
+    void refreshInternal() throws JournalException {
 
-        assert tx != null;
+        assert tx.address > 0;
 
         int txPartitionIndex = Rows.toPartitionIndex(tx.journalMaxRowID);
         if (partitions.size() != txPartitionIndex + 1 || tx.journalMaxRowID == 0) {
             if (tx.journalMaxRowID == 0 || partitions.size() > txPartitionIndex + 1) {
                 closePartitions();
             }
-            configurePartitions(tx);
+            configurePartitions();
         } else {
             long txPartitionSize = Rows.toLocalRowID(tx.journalMaxRowID);
             Partition<T> partition = partitions.get(txPartitionIndex);
             partition.applyTx(txPartitionSize, tx.indexPointers);
-            configureIrregularPartition(tx);
+            configureIrregularPartition();
         }
     }
 

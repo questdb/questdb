@@ -20,7 +20,7 @@ import com.nfsdb.journal.utils.ByteBuffers;
 
 import java.nio.MappedByteBuffer;
 
-public class ByteBufferWrapper {
+class ByteBufferWrapper {
     private final long offset;
     private MappedByteBuffer byteBuffer;
 

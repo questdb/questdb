@@ -22,4 +22,9 @@
         <sym name="ex" indexed="true" maxsize="2" hintDistinctCount="1"/>
         <sym name="mode" indexed="true" hintDistinctCount="1"/>
     </journal>
+
+    <journal class="org.nfsdb.examples.model.Price" defaultPath="price" timestampColumn="timestamp"
+             partitionType="MONTH" recordCountHint="1000000" openPartitionTTL="180" lagHours="24" key="sym">
+        <sym name="sym" indexed="true" maxsize="4" hintDistinctCount="15"/>
+    </journal>
 </db>

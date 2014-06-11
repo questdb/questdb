@@ -25,6 +25,10 @@ import java.io.File;
 public class JournalThriftFactory extends JournalFactory {
 
     public JournalThriftFactory(String journalBase) throws JournalConfigurationException {
-        super(new JournalConfiguration(new File(journalBase)).setNullsAdaptorFactory(new ThriftNullsAdaptorFactory()).build());
+        this(new File(journalBase));
+    }
+
+    public JournalThriftFactory(File journalBase) throws JournalConfigurationException {
+        super(new JournalConfiguration(JournalConfiguration.DEFAULT_CONFIG_FILE, journalBase, -1, new ThriftNullsAdaptorFactory()).build());
     }
 }

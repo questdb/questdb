@@ -87,11 +87,6 @@ public final class Lock {
     }
 
     Lock(File location, boolean shared) throws JournalException {
-        if (!location.exists()) {
-            if (!location.mkdirs()) {
-                throw new JournalException("Could not create directory: %s", location);
-            }
-        }
 
         try {
             this.location = location;

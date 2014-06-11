@@ -22,6 +22,8 @@ public class Tx {
 
     public static final byte TX_NORMAL = 0;
     public static final byte TX_FORCE = 1;
+    // transient
+    public long address;
     // 8
     public long prevTxAddress;
     // 1
@@ -48,7 +50,8 @@ public class Tx {
     @Override
     public String toString() {
         return "Tx{" +
-                "prevTxAddress=" + prevTxAddress +
+                "address=" + address +
+                ", prevTxAddress=" + prevTxAddress +
                 ", command=" + command +
                 ", timestamp=" + timestamp +
                 ", journalMaxRowID=" + journalMaxRowID +

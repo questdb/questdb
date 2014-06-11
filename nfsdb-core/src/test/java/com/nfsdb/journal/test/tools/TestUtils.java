@@ -186,7 +186,7 @@ public final class TestUtils {
         }
     }
 
-    public static void generateQuoteData(int count, long timetamp, int increment) {
+    public static void generateQuoteData(int count, long timestamp, int increment) {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
         String exchanges[] = {"LXE", "GR", "SK", "LN"};
         Random r = new Random(System.currentTimeMillis());
@@ -199,8 +199,8 @@ public final class TestUtils {
             q.setBidSize(Math.abs(r.nextInt()));
             q.setEx(exchanges[Math.abs(r.nextInt() % (exchanges.length - 1))]);
             q.setMode("Fast trading");
-            q.setTimestamp(timetamp);
-            timetamp += increment;
+            q.setTimestamp(timestamp);
+            timestamp += increment;
             print(q);
         }
     }

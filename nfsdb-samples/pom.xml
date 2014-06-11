@@ -49,7 +49,7 @@
     </developers>
 
     <scm>
-        <url>scm:git:https://github.com/bluestreak01/nfsdb.git</url>
+        <url>scm:git:https://github.com/NFSdb/nfsdb.git</url>
     </scm>
 
     <build>
