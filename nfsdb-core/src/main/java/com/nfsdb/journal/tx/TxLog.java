@@ -43,7 +43,7 @@ public class TxLog {
     }
 
     public boolean isEmpty() {
-        return mf.getAppendOffset() <= 9;
+        return mf.getAppendOffset() <= 9 && getTxAddress() <= 0;
     }
 
     public void head(Tx tx) {
