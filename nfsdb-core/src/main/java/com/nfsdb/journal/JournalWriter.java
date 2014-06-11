@@ -212,10 +212,17 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     public void purgeUnusedTempPartitions(TxLog txLog) throws JournalException {
-        final Tx tx = new Tx();
-        txLog.head(tx);
+        final String txLagName;
+
+        if (txLog.isEmpty()) {
+            txLagName = null;
+        } else {
+            final Tx tx = new Tx();
+            txLog.head(tx);
+            txLagName = tx.lagName;
+        }
+
         final String lagPartitionName = hasIrregularPartition() ? getIrregularPartition().getName() : null;
-        final String txLagName = tx.lagName;
 
         File[] files = getLocation().listFiles(new FileFilter() {
             public boolean accept(File f) {
