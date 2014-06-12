@@ -115,11 +115,13 @@ public class TxLog {
     }
 
     public long getTxAddress() {
-        ByteBuffer buf = mf.getBuffer(0, 9);
+        final ByteBuffer buf = mf.getBuffer(0, 9);
+        final int pos = buf.position();
+
         long address;
         while (true) {
-            address = buf.getLong();
-            byte checksum = buf.get();
+            address = buf.getLong(pos);
+            byte checksum = buf.get(pos + 8);
             byte b0 = (byte) address;
             byte b1 = (byte) (address >> 8);
             byte b2 = (byte) (address >> 16);
@@ -137,7 +139,7 @@ public class TxLog {
     }
 
     public void setTxAddress(long address) {
-        MappedByteBuffer buffer = mf.getBuffer(0, 8);
+        MappedByteBuffer buffer = mf.getBuffer(0, 9);
         buffer.putLong(address);
 
         // checksum
@@ -153,7 +155,7 @@ public class TxLog {
     }
 
     public void get(long address, Tx tx) {
-        assert address > 0 : "zero address";
+        assert address > 0 : "zero address: " + address;
         tx.address = address;
         ByteBuffer buffer = mf.getBuffer(address, 4);
         int txSize = buffer.getInt();
