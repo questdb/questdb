@@ -43,7 +43,7 @@ public class SymbolIndex implements Closeable {
         }
     */
 
-    static final byte[] ZERO_BYTE_ARRAY = new byte[10 * 4096];
+    static final byte[] ZERO_BYTE_ARRAY = new byte[1024 * 1024];
 
     static {
         Arrays.fill(ZERO_BYTE_ARRAY, (byte) 0);
@@ -131,18 +131,20 @@ public class SymbolIndex implements Closeable {
 
         ByteBuffer buf = kData.getBuffer(keyOffset, ENTRY_SIZE);
         int pos = buf.position();
-        rowBlockOffset = buf.getLong();
-        rowCount = buf.getLong();
+        rowBlockOffset = buf.getLong(pos);
+        rowCount = buf.getLong(pos + 8);
 
         int cellIndex = (int) (rowCount % rowBlockLen);
         if (rowBlockOffset == 0 || cellIndex == 0) {
             long prevBlockOffset = rowBlockOffset;
             rowBlockOffset = rData.getAppendOffset() + rowBlockSize;
             rData.setAppendOffset(rowBlockOffset);
-            rData.getBuffer(rowBlockOffset - 8, 8).putLong(prevBlockOffset);
+            ByteBuffer bb = rData.getBuffer(rowBlockOffset - 8, 8);
+            bb.putLong(bb.position(), prevBlockOffset);
             buf.putLong(pos, rowBlockOffset);
         }
-        rData.getBuffer(rowBlockOffset - rowBlockSize + 8 * cellIndex, 8).putLong(value);
+        ByteBuffer bb = rData.getBuffer(rowBlockOffset - rowBlockSize + 8 * cellIndex, 8);
+        bb.putLong(bb.position(), value);
         buf.putLong(pos + 8, rowCount + 1);
 
         if (maxValue <= value) {
@@ -198,9 +200,9 @@ public class SymbolIndex implements Closeable {
     public long getValueQuick(int key, int i) {
 
         ByteBuffer buf = keyBufferOrError(key);
-
-        long rowBlockOffset = buf.getLong();
-        long rowCount = buf.getLong();
+        int pos = buf.position();
+        long rowBlockOffset = buf.getLong(pos);
+        long rowCount = buf.getLong(pos + 8);
 
         if (i >= rowCount) {
             throw new JournalRuntimeException("Index out of bounds: %d, max: %d", i, rowCount - 1);
@@ -257,7 +259,7 @@ public class SymbolIndex implements Closeable {
             return 0;
         } else {
             ByteBuffer buf = kData.getBuffer(keyOffset + 8, 8);
-            return (int) buf.getLong();
+            return (int) buf.getLong(buf.position());
         }
     }
 
@@ -272,8 +274,9 @@ public class SymbolIndex implements Closeable {
     @SuppressWarnings("unused")
     public long lastValue(int key) {
         ByteBuffer buf = keyBufferOrError(key);
-        long rowBlockOffset = buf.getLong();
-        long rowCount = buf.getLong();
+        int pos = buf.position();
+        long rowBlockOffset = buf.getLong(pos);
+        long rowCount = buf.getLong(pos + 8);
         int cellIndex = (int) ((rowCount - 1) % rowBlockLen);
         return getLong(rData, rowBlockOffset - rowBlockSize + 8 * cellIndex);
     }
@@ -314,8 +317,9 @@ public class SymbolIndex implements Closeable {
             return;
         }
         ByteBuffer buf = kData.getBuffer(keyOffset, ENTRY_SIZE);
-        long rowBlockOffset = buf.getLong();
-        long rowCount = buf.getLong();
+        int pos = buf.position();
+        long rowBlockOffset = buf.getLong(pos);
+        long rowCount = buf.getLong(pos + 8);
 
         values.setCapacity((int) rowCount);
         values.setPos((int) rowCount);
@@ -330,10 +334,12 @@ public class SymbolIndex implements Closeable {
         for (int i = rowBlockCount - 1; i >= 0; i--) {
             ByteBuffer b = rData.getBuffer(rowBlockOffset - rowBlockSize, rowBlockSize);
             int z = i * rowBlockLen;
+            int p = b.position();
             for (int k = 0; k < len; k++) {
-                values.setQuick(z + k, b.getLong());
+                values.setQuick(z + k, b.getLong(p));
+                p += 8;
             }
-            rowBlockOffset = b.getLong(b.position() + (rowBlockLen - len) * 8);
+            rowBlockOffset = b.getLong(p + (rowBlockLen - len) * 8);
             len = rowBlockLen;
         }
     }
@@ -424,11 +430,13 @@ public class SymbolIndex implements Closeable {
     }
 
     private long getLong(MappedFileImpl storage, long offset) {
-        return storage.getBuffer(offset, 8).getLong();
+        ByteBuffer bb = storage.getBuffer(offset, 8);
+        return bb.getLong(bb.position());
     }
 
     private void putLong(MappedFileImpl storage, long offset, long value) {
-        storage.getBuffer(offset, 8).putLong(value);
+        ByteBuffer bb = storage.getBuffer(offset, 8);
+        bb.putLong(bb.position(), value);
     }
 
     private void tx() {

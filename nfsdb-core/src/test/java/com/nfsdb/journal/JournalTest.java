@@ -112,7 +112,7 @@ public class JournalTest extends AbstractTest {
                 "null\tAMD\t0.061826046796662926\t0.0\t0\t0\tnull\tnull\n" +
                 "null\tHSBA.L\t0.30903524429086027\t0.0\t0\t0\tnull\tnull";
 
-        Journal<Quote> r = factory.reader(Quote.class).setReadColumns("sym", "bid");
+        Journal<Quote> r = factory.reader(Quote.class).select("sym", "bid");
         TestUtils.assertEquals(expected, r.query().all().asResultSet().subset(90, 100));
     }
 
@@ -186,9 +186,8 @@ public class JournalTest extends AbstractTest {
             w.commit();
         }
 
-        Journal<Quote> r = factory.reader(Quote.class).setReadColumns("sym");
+        Journal<Quote> r = factory.reader(Quote.class).select("sym");
         Assert.assertEquals(999, r.getMaxRowID());
-        Assert.assertNull(r.getLastPartition().getAbstractColumn(3));
     }
 
     @Test
@@ -196,7 +195,7 @@ public class JournalTest extends AbstractTest {
         JournalWriter<Quote> w = factory.writer(Quote.class);
         w.close();
 
-        Journal<Quote> r = factory.reader(Quote.class).setReadColumns("sym");
+        Journal<Quote> r = factory.reader(Quote.class).select("sym");
         Assert.assertEquals(-1, r.getMaxRowID());
         Assert.assertNull(r.getLastPartition());
     }

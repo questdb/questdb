@@ -94,6 +94,21 @@ public class VariableColumn extends AbstractColumn {
         }
     }
 
+    public boolean equalsString(long localRowID, String value) {
+        try {
+            if (maxLen <= JournalMetadata.BYTE_LIMIT) {
+                return equalsStringB(localRowID, value);
+            } else if (maxLen <= JournalMetadata.TWO_BYTE_LIMIT) {
+                return equalsStringW(localRowID, value);
+            } else {
+                return equalsStringDW(localRowID, value);
+            }
+        } catch (RuntimeException e) {
+            LOGGER.error(this + " Could not read string [localRowID=" + localRowID + "]");
+            throw e;
+        }
+    }
+
     public void putString(String value) {
         if (value == null) {
             putNull();
@@ -137,7 +152,7 @@ public class VariableColumn extends AbstractColumn {
 
     public int getBufferSize(long localRowID) {
         ByteBuffer bb = getBufferInternal(localRowID, 4);
-        return bb.getInt();
+        return bb.getInt(bb.position());
     }
 
     public void getBuffer(long localRowID, ByteBuffer target, int count) {
@@ -204,9 +219,10 @@ public class VariableColumn extends AbstractColumn {
         if (buffer.length < len) {
             buffer = new char[len];
         }
-
+        int p = bb.position();
         for (int i = 0; i < len; i++) {
-            buffer[i] = bb.getChar();
+            buffer[i] = bb.getChar(p);
+            p += 2;
         }
         return new String(buffer, 0, len);
     }
@@ -249,5 +265,89 @@ public class VariableColumn extends AbstractColumn {
         }
 
         return asString(buf, len);
+    }
+
+    private boolean equalsStringB(long localRowID, String value) {
+        // read delegate buffer which lets us read "null" flag and string length.
+        ByteBuffer buf = getBufferInternal(localRowID, JournalConfiguration.VARCHAR_SHORT_HEADER_LENGTH);
+        int len = buf.get() & 0xff;
+
+        if (len != value.length()) {
+            return false;
+        }
+
+        int p;
+        // check if buffer can have actual string (char=2*byte)
+        if (buf.remaining() < len * 2) {
+            buf = getBufferInternal(localRowID, len * 2 + JournalConfiguration.VARCHAR_SHORT_HEADER_LENGTH);
+            p = buf.position() + JournalConfiguration.VARCHAR_SHORT_HEADER_LENGTH;
+        } else {
+            p = buf.position();
+        }
+
+        for (int i = 0; i < len; i++) {
+            if (buf.getChar(p) != value.charAt(i)) {
+                return false;
+            }
+            p += 2;
+        }
+
+        return true;
+    }
+
+    private boolean equalsStringW(long localRowID, String value) {
+        // read delegate buffer which lets us read "null" flag and string length.
+        ByteBuffer buf = getBufferInternal(localRowID, JournalConfiguration.VARCHAR_MEDIUM_HEADER_LENGTH);
+        int len = buf.getChar();
+
+        if (len != value.length()) {
+            return false;
+        }
+
+        int p;
+        // check if buffer can have actual string (char=2*byte)
+        if (buf.remaining() < len * 2) {
+            buf = getBufferInternal(localRowID, len * 2 + JournalConfiguration.VARCHAR_MEDIUM_HEADER_LENGTH);
+            p = buf.position() + JournalConfiguration.VARCHAR_MEDIUM_HEADER_LENGTH;
+        } else {
+            p = buf.position();
+        }
+
+        for (int i = 0; i < len; i++) {
+            if (buf.getChar(p) != value.charAt(i)) {
+                return false;
+            }
+            p += 2;
+        }
+
+        return true;
+    }
+
+    private boolean equalsStringDW(long localRowID, String value) {
+        // read delegate buffer which lets us read "null" flag and string length.
+        ByteBuffer buf = getBufferInternal(localRowID, JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH);
+        int len = buf.getInt();
+
+        if (len != value.length()) {
+            return false;
+        }
+
+        int p;
+        // check if buffer can have actual string (char=2*byte)
+        if (buf.remaining() < len * 2) {
+            buf = getBufferInternal(localRowID, len * 2 + JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH);
+            p = buf.position() + JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH;
+        } else {
+            p = buf.position();
+        }
+
+        for (int i = 0; i < len; i++) {
+            if (buf.getChar(p) != value.charAt(i)) {
+                return false;
+            }
+            p += 2;
+        }
+
+        return true;
     }
 }

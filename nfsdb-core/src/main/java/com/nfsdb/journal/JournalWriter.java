@@ -482,11 +482,6 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     @Override
-    public JournalWriter<T> setReadColumns(String... columns) {
-        throw new JournalRuntimeException("Cannot limit columns in read/write flow model");
-    }
-
-    @Override
     public JournalMode getMode() {
         return JournalMode.APPEND;
     }

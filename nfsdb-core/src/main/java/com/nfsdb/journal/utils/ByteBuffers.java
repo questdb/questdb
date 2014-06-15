@@ -145,10 +145,14 @@ public final class ByteBuffers {
         if (array == null) {
             buffer.putChar((char) 0);
         } else {
-            buffer.putChar((char) array.length);
-            for (long v : array) {
-                buffer.putLong(v);
+            int p = buffer.position();
+            buffer.putChar(p, (char) array.length);
+            p += 2;
+            for (int i = 0; i < array.length; i++) {
+                buffer.putLong(p, array[i]);
+                p += 8;
             }
+            buffer.position(p);
         }
     }
 
@@ -156,10 +160,14 @@ public final class ByteBuffers {
         if (array == null) {
             buffer.putChar((char) 0);
         } else {
-            buffer.putChar((char) array.length);
-            for (int v : array) {
-                buffer.putInt(v);
+            int p = buffer.position();
+            buffer.putChar(p, (char) array.length);
+            p += 2;
+            for (int i = 0; i < array.length; i++) {
+                buffer.putInt(p, array[i]);
+                p += 4;
             }
+            buffer.position(p);
         }
     }
 
@@ -209,24 +217,14 @@ public final class ByteBuffers {
     }
 
     public static void putStr(ByteBuffer buffer, String value) {
+        int p = buffer.position();
         for (int i = 0; i < value.length(); i++) {
-            buffer.putChar(value.charAt(i));
+            buffer.putChar(p, value.charAt(i));
+            p += 2;
         }
+        buffer.position(p);
     }
 
     private ByteBuffers() {
     }
-//
-//    public static void main(String[] args) {
-//        int multiplier = 1;
-//        int recSize = 127;
-//        int count = 10000000;
-//        int bits = getBitHint2(recSize, count);
-//        long needed = recSize * count;
-//        long actual = (1 << bits) * multiplier;
-//        System.out.println(bits);
-//        System.out.printf("needed: %d\n", needed);
-//        System.out.println("actual: " + actual);
-//        System.out.println("overshot: " + ((actual * 100) / needed) + "%");
-//    }
 }

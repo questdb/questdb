@@ -116,8 +116,7 @@ public class SymbolTable implements Closeable {
         LongArrayList values = index.getValues(hashKey);
         for (int i = 0, sz = values.size(); i < sz; i++) {
             key = (int) values.get(i);
-            String s = data.getString(key);
-            if (value.equals(s)) {
+            if (data.equalsString(key, value)) {
                 cache(key, value);
                 return key;
             }

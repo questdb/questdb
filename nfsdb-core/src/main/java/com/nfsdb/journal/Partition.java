@@ -80,15 +80,8 @@ public class Partition<T> implements Iterable<T>, Closeable {
                     columns.length
             );
 
-            String readColumns[] = journal.getMode() == JournalMode.APPEND || journal.getMode() == JournalMode.BULK_APPEND ? null : journal.getReadColumns();
-            if (readColumns == null || readColumns.length == 0) {
-                for (int i = 0; i < columns.length; i++) {
-                    open(i);
-                }
-            } else {
-                for (String name : readColumns) {
-                    open(journal.getMetadata().getColumnIndex(name));
-                }
+            for (int i = 0; i < columns.length; i++) {
+                open(i);
             }
 
             timestampColumn = getFixedWidthColumn(journal.getMetadata().getTimestampColumnIndex());
@@ -252,10 +245,11 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
         sun.misc.Unsafe u = Unsafe.getUnsafe();
         BitSet nulls = nullsColumn.getBitSet(localRowID);
+        nulls.or(journal.getInactiveColumns());
         for (int i = 0; i < columnCount; i++) {
 
             // fail fast
-            if (columns[i] == null || nulls.get(i)) {
+            if (nulls.get(i)) {
                 continue;
             }
             Journal.ColumnMetadata m = journal.getColumnMetadata(i);

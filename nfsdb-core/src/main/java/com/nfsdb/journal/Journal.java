@@ -76,8 +76,8 @@ public class Journal<T> implements Iterable<T>, Closeable {
         }
     };
     private final NullsAdaptor<T> nullsAdaptor;
+    private final BitSet inactiveColumns;
     private boolean open;
-    private String readColumns[] = {};
     private ColumnMetadata columnMetadata[];
     private Partition<T> irregularPartition;
     private JournalClosingListener closeListener;
@@ -92,6 +92,8 @@ public class Journal<T> implements Iterable<T>, Closeable {
         this.open = true;
         this.timestampOffset = getMetadata().getTimestampColumnMetadata() == null ? -1 : getMetadata().getTimestampColumnMetadata().offset;
         this.nullsAdaptor = getMetadata().getNullsAdaptor();
+        this.inactiveColumns = new BitSet(metadata.getColumnCount());
+
         configure();
     }
 
@@ -190,12 +192,19 @@ public class Journal<T> implements Iterable<T>, Closeable {
     }
 
     /**
-     * Set the names of all the columns that have to be read (only in RO flow mode).
+     * Selects column names to be accessed by this journal.
      *
-     * @param readColumns the names of all the columns that have to be read.
+     * @param columns the names of all the columns that have to be read.
      */
-    public Journal<T> setReadColumns(String... readColumns) {
-        this.readColumns = readColumns;
+    public Journal<T> select(String... columns) {
+        if (columns == null || columns.length == 0) {
+            inactiveColumns.clear();
+        } else {
+            inactiveColumns.set(0, metadata.getColumnCount());
+            for (int i = 0; i < columns.length; i++) {
+                inactiveColumns.clear(metadata.getColumnIndex(columns[i]));
+            }
+        }
         return this;
     }
 
@@ -576,8 +585,8 @@ public class Journal<T> implements Iterable<T>, Closeable {
         }
     }
 
-    String[] getReadColumns() {
-        return readColumns;
+    BitSet getInactiveColumns() {
+        return inactiveColumns;
     }
 
     TimerCache getTimerCache() {

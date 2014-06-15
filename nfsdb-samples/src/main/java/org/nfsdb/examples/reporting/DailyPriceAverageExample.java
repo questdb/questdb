@@ -61,7 +61,7 @@ public class DailyPriceAverageExample {
 
             System.out.println("Created " + count + " records in " + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t) + "ms");
 
-            try (Journal<Quote> journal = factory.reader(Quote.class).setReadColumns("ask", "timestamp")) {
+            try (Journal<Quote> journal = factory.reader(Quote.class).select("ask", "timestamp")) {
                 count = 0;
                 t = System.nanoTime();
                 final String symbol = "BP.L";

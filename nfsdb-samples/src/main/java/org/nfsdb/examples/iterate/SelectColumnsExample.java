@@ -50,7 +50,7 @@ public class SelectColumnsExample {
             }
 
             // read only sym and askSize columns
-            try (Journal<Quote> journal = factory.reader(Quote.class).setReadColumns("sym", "askSize")) {
+            try (Journal<Quote> journal = factory.reader(Quote.class).select("sym", "askSize")) {
                 int count = 0;
                 long t = System.nanoTime();
                 for (Quote q : journal.bufferedIterator()) {

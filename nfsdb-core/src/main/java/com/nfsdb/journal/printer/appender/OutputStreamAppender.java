@@ -21,7 +21,7 @@ import java.io.OutputStream;
 
 public class OutputStreamAppender implements Appender {
     private final OutputStream out;
-    private byte[] lineSeparator;
+    private final byte[] lineSeparator;
 
     public OutputStreamAppender(OutputStream out) {
         this.out = out;

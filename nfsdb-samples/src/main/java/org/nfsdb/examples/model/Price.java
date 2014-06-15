@@ -7,116 +7,18 @@
 package org.nfsdb.examples.model;
 
 import org.apache.commons.lang.builder.HashCodeBuilder;
+import org.apache.thrift.EncodingUtils;
+import org.apache.thrift.protocol.TTupleProtocol;
 import org.apache.thrift.scheme.IScheme;
 import org.apache.thrift.scheme.SchemeFactory;
 import org.apache.thrift.scheme.StandardScheme;
-
 import org.apache.thrift.scheme.TupleScheme;
-import org.apache.thrift.protocol.TTupleProtocol;
-import org.apache.thrift.protocol.TProtocolException;
-import org.apache.thrift.EncodingUtils;
-import org.apache.thrift.TException;
-import java.util.List;
-import java.util.ArrayList;
-import java.util.Map;
-import java.util.HashMap;
-import java.util.EnumMap;
-import java.util.Set;
-import java.util.HashSet;
-import java.util.EnumSet;
-import java.util.Collections;
-import java.util.BitSet;
-import java.nio.ByteBuffer;
-import java.util.Arrays;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import java.util.*;
 
 public class Price implements org.apache.thrift.TBase<Price, Price._Fields>, java.io.Serializable, Cloneable {
-    private static final org.apache.thrift.protocol.TStruct STRUCT_DESC = new org.apache.thrift.protocol.TStruct("Price");
-
-    private static final org.apache.thrift.protocol.TField TIMESTAMP_FIELD_DESC = new org.apache.thrift.protocol.TField("timestamp", org.apache.thrift.protocol.TType.I64, (short)1);
-    private static final org.apache.thrift.protocol.TField SYM_FIELD_DESC = new org.apache.thrift.protocol.TField("sym", org.apache.thrift.protocol.TType.STRING, (short)2);
-    private static final org.apache.thrift.protocol.TField PRICE_FIELD_DESC = new org.apache.thrift.protocol.TField("price", org.apache.thrift.protocol.TType.DOUBLE, (short)3);
-
-    private static final Map<Class<? extends IScheme>, SchemeFactory> schemes = new HashMap<Class<? extends IScheme>, SchemeFactory>();
-    static {
-        schemes.put(StandardScheme.class, new PriceStandardSchemeFactory());
-        schemes.put(TupleScheme.class, new PriceTupleSchemeFactory());
-    }
-
-    public long timestamp; // required
-    public String sym; // required
-    public double price; // required
-
-    /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
-    public enum _Fields implements org.apache.thrift.TFieldIdEnum {
-        TIMESTAMP((short)1, "timestamp"),
-        SYM((short)2, "sym"),
-        PRICE((short)3, "price");
-
-        private static final Map<String, _Fields> byName = new HashMap<String, _Fields>();
-
-        static {
-            for (_Fields field : EnumSet.allOf(_Fields.class)) {
-                byName.put(field.getFieldName(), field);
-            }
-        }
-
-        /**
-         * Find the _Fields constant that matches fieldId, or null if its not found.
-         */
-        public static _Fields findByThriftId(int fieldId) {
-            switch(fieldId) {
-                case 1: // TIMESTAMP
-                    return TIMESTAMP;
-                case 2: // SYM
-                    return SYM;
-                case 3: // PRICE
-                    return PRICE;
-                default:
-                    return null;
-            }
-        }
-
-        /**
-         * Find the _Fields constant that matches fieldId, throwing an exception
-         * if it is not found.
-         */
-        public static _Fields findByThriftIdOrThrow(int fieldId) {
-            _Fields fields = findByThriftId(fieldId);
-            if (fields == null) throw new IllegalArgumentException("Field " + fieldId + " doesn't exist!");
-            return fields;
-        }
-
-        /**
-         * Find the _Fields constant that matches name, or null if its not found.
-         */
-        public static _Fields findByName(String name) {
-            return byName.get(name);
-        }
-
-        private final short _thriftId;
-        private final String _fieldName;
-
-        _Fields(short thriftId, String fieldName) {
-            _thriftId = thriftId;
-            _fieldName = fieldName;
-        }
-
-        public short getThriftFieldId() {
-            return _thriftId;
-        }
-
-        public String getFieldName() {
-            return _fieldName;
-        }
-    }
-
-    // isset id assignments
-    private static final int __TIMESTAMP_ISSET_ID = 0;
-    private static final int __PRICE_ISSET_ID = 1;
-    private byte __isset_bitfield = 0;
     public static final Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
+
     static {
         Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
         tmpMap.put(_Fields.TIMESTAMP, new org.apache.thrift.meta_data.FieldMetaData("timestamp", org.apache.thrift.TFieldRequirementType.REQUIRED,
@@ -129,14 +31,30 @@ public class Price implements org.apache.thrift.TBase<Price, Price._Fields>, jav
         org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(Price.class, metaDataMap);
     }
 
+    private static final org.apache.thrift.protocol.TStruct STRUCT_DESC = new org.apache.thrift.protocol.TStruct("Price");
+    private static final org.apache.thrift.protocol.TField TIMESTAMP_FIELD_DESC = new org.apache.thrift.protocol.TField("timestamp", org.apache.thrift.protocol.TType.I64, (short)1);
+    private static final org.apache.thrift.protocol.TField SYM_FIELD_DESC = new org.apache.thrift.protocol.TField("sym", org.apache.thrift.protocol.TType.STRING, (short)2);
+    private static final org.apache.thrift.protocol.TField PRICE_FIELD_DESC = new org.apache.thrift.protocol.TField("price", org.apache.thrift.protocol.TType.DOUBLE, (short)3);
+    private static final Map<Class<? extends IScheme>, SchemeFactory> schemes = new HashMap<Class<? extends IScheme>, SchemeFactory>();
+    static {
+        schemes.put(StandardScheme.class, new PriceStandardSchemeFactory());
+        schemes.put(TupleScheme.class, new PriceTupleSchemeFactory());
+    }
+    // isset id assignments
+    private static final int __TIMESTAMP_ISSET_ID = 0;
+    private static final int __PRICE_ISSET_ID = 1;
+    public long timestamp; // required
+    public String sym; // required
+    public double price; // required
+    private byte __isset_bitfield = 0;
+
     public Price() {
     }
 
     public Price(
             long timestamp,
             String sym,
-            double price)
-    {
+            double price) {
         this();
         this.timestamp = timestamp;
         setTimestampIsSet(true);
@@ -184,7 +102,9 @@ public class Price implements org.apache.thrift.TBase<Price, Price._Fields>, jav
         __isset_bitfield = EncodingUtils.clearBit(__isset_bitfield, __TIMESTAMP_ISSET_ID);
     }
 
-    /** Returns true if field timestamp is set (has been assigned a value) and false otherwise */
+    /**
+     * Returns true if field timestamp is set (has been assigned a value) and false otherwise
+     */
     public boolean isSetTimestamp() {
         return EncodingUtils.testBit(__isset_bitfield, __TIMESTAMP_ISSET_ID);
     }
@@ -206,7 +126,9 @@ public class Price implements org.apache.thrift.TBase<Price, Price._Fields>, jav
         this.sym = null;
     }
 
-    /** Returns true if field sym is set (has been assigned a value) and false otherwise */
+    /**
+     * Returns true if field sym is set (has been assigned a value) and false otherwise
+     */
     public boolean isSetSym() {
         return this.sym != null;
     }
@@ -231,7 +153,9 @@ public class Price implements org.apache.thrift.TBase<Price, Price._Fields>, jav
         __isset_bitfield = EncodingUtils.clearBit(__isset_bitfield, __PRICE_ISSET_ID);
     }
 
-    /** Returns true if field price is set (has been assigned a value) and false otherwise */
+    /**
+     * Returns true if field price is set (has been assigned a value) and false otherwise
+     */
     public boolean isSetPrice() {
         return EncodingUtils.testBit(__isset_bitfield, __PRICE_ISSET_ID);
     }
@@ -246,7 +170,7 @@ public class Price implements org.apache.thrift.TBase<Price, Price._Fields>, jav
                 if (value == null) {
                     unsetTimestamp();
                 } else {
-                    setTimestamp((Long)value);
+                    setTimestamp((Long) value);
                 }
                 break;
 
@@ -254,7 +178,7 @@ public class Price implements org.apache.thrift.TBase<Price, Price._Fields>, jav
                 if (value == null) {
                     unsetSym();
                 } else {
-                    setSym((String)value);
+                    setSym((String) value);
                 }
                 break;
 
@@ -262,7 +186,7 @@ public class Price implements org.apache.thrift.TBase<Price, Price._Fields>, jav
                 if (value == null) {
                     unsetPrice();
                 } else {
-                    setPrice((Double)value);
+                    setPrice((Double) value);
                 }
                 break;
 
@@ -284,7 +208,9 @@ public class Price implements org.apache.thrift.TBase<Price, Price._Fields>, jav
         throw new IllegalStateException();
     }
 
-    /** Returns true if field corresponding to fieldID is set (has been assigned a value) and false otherwise */
+    /**
+     * Returns true if field corresponding to fieldID is set (has been assigned a value) and false otherwise
+     */
     public boolean isSet(_Fields field) {
         if (field == null) {
             throw new IllegalArgumentException();
@@ -306,7 +232,7 @@ public class Price implements org.apache.thrift.TBase<Price, Price._Fields>, jav
         if (that == null)
             return false;
         if (that instanceof Price)
-            return this.equals((Price)that);
+            return this.equals((Price) that);
         return false;
     }
 
@@ -372,7 +298,7 @@ public class Price implements org.apache.thrift.TBase<Price, Price._Fields>, jav
         }
 
         int lastComparison = 0;
-        Price typedOther = (Price)other;
+        Price typedOther = (Price) other;
 
         lastComparison = Boolean.valueOf(isSetTimestamp()).compareTo(typedOther.isSetTimestamp());
         if (lastComparison != 0) {
@@ -468,6 +394,72 @@ public class Price implements org.apache.thrift.TBase<Price, Price._Fields>, jav
             read(new org.apache.thrift.protocol.TCompactProtocol(new org.apache.thrift.transport.TIOStreamTransport(in)));
         } catch (org.apache.thrift.TException te) {
             throw new java.io.IOException(te);
+        }
+    }
+
+    /**
+     * The set of fields this struct contains, along with convenience methods for finding and manipulating them.
+     */
+    public enum _Fields implements org.apache.thrift.TFieldIdEnum {
+        TIMESTAMP((short) 1, "timestamp"),
+        SYM((short) 2, "sym"),
+        PRICE((short) 3, "price");
+
+        private static final Map<String, _Fields> byName = new HashMap<String, _Fields>();
+
+        static {
+            for (_Fields field : EnumSet.allOf(_Fields.class)) {
+                byName.put(field.getFieldName(), field);
+            }
+        }
+
+        private final short _thriftId;
+        private final String _fieldName;
+
+        /**
+         * Find the _Fields constant that matches fieldId, or null if its not found.
+         */
+        public static _Fields findByThriftId(int fieldId) {
+            switch (fieldId) {
+                case 1: // TIMESTAMP
+                    return TIMESTAMP;
+                case 2: // SYM
+                    return SYM;
+                case 3: // PRICE
+                    return PRICE;
+                default:
+                    return null;
+            }
+        }
+
+        /**
+         * Find the _Fields constant that matches fieldId, throwing an exception
+         * if it is not found.
+         */
+        public static _Fields findByThriftIdOrThrow(int fieldId) {
+            _Fields fields = findByThriftId(fieldId);
+            if (fields == null) throw new IllegalArgumentException("Field " + fieldId + " doesn't exist!");
+            return fields;
+        }
+
+        /**
+         * Find the _Fields constant that matches name, or null if its not found.
+         */
+        public static _Fields findByName(String name) {
+            return byName.get(name);
+        }
+
+        public short getThriftFieldId() {
+            return _thriftId;
+        }
+
+        public String getFieldName() {
+            return _fieldName;
+        }
+
+        _Fields(short thriftId, String fieldName) {
+            _thriftId = thriftId;
+            _fieldName = fieldName;
         }
     }
 

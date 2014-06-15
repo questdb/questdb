@@ -31,60 +31,74 @@ public class FixedColumn extends AbstractColumn {
     }
 
     public boolean getBool(long localRowID) {
-        return getBuffer(localRowID).get() == 1;
+        ByteBuffer bb = getBuffer(localRowID);
+        return bb.get(bb.position()) == 1;
     }
 
     public byte getByte(long localRowID) {
-        return getBuffer(localRowID).get();
+        ByteBuffer bb = getBuffer(localRowID);
+        return bb.get(bb.position());
     }
 
     public double getDouble(long localRowID) {
-        return getBuffer(localRowID).getDouble();
+        ByteBuffer bb = getBuffer(localRowID);
+        return bb.getDouble(bb.position());
     }
 
     public float getFloat(long localRowID) {
-        return getBuffer(localRowID).getFloat();
+        ByteBuffer bb = getBuffer(localRowID);
+        return bb.getFloat(bb.position());
     }
 
     public int getInt(long localRowID) {
-        return getBuffer(localRowID).getInt();
+        ByteBuffer bb = getBuffer(localRowID);
+        return bb.getInt(bb.position());
     }
 
     public long getLong(long localRowID) {
-        return getBuffer(localRowID).getLong();
+        ByteBuffer bb = getBuffer(localRowID);
+        return bb.getLong(bb.position());
     }
 
     public short getShort(long localRowID) {
-        return getBuffer(localRowID).getShort();
+        ByteBuffer bb = getBuffer(localRowID);
+        return bb.getShort(bb.position());
     }
 
     public void putBool(boolean value) {
-        getBuffer().put((byte) (value ? 1 : 0));
+        ByteBuffer bb = getBuffer();
+        bb.put(bb.position(), (byte) (value ? 1 : 0));
     }
 
     public void putByte(byte b) {
-        getBuffer().put(b);
+        ByteBuffer bb = getBuffer();
+        bb.put(bb.position(), b);
     }
 
     public void putDouble(double value) {
-        getBuffer().putDouble(value);
+        ByteBuffer bb = getBuffer();
+        bb.putDouble(bb.position(), value);
     }
 
     public void putFloat(float value) {
-        getBuffer().putFloat(value);
+        ByteBuffer bb = getBuffer();
+        bb.putFloat(bb.position(), value);
     }
 
     public long putInt(int value) {
-        getBuffer().putInt(value);
+        ByteBuffer bb = getBuffer();
+        bb.putInt(bb.position(), value);
         return txAppendOffset / width - 1;
     }
 
     public void putLong(long value) {
-        getBuffer().putLong(value);
+        ByteBuffer bb = getBuffer();
+        bb.putLong(bb.position(), value);
     }
 
     public void putShort(short value) {
-        getBuffer().putShort(value);
+        ByteBuffer bb = getBuffer();
+        bb.putShort(bb.position(), value);
     }
 
     public void putNull() {

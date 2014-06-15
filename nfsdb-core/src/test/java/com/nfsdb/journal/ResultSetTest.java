@@ -67,7 +67,5 @@ public class ResultSetTest extends AbstractTest {
             Assert.assertEquals(e.getDStr(), rs.getString(i, dStrIndex));
             Assert.assertEquals(e.getDwStr(), rs.getString(i, dwStrIndex));
         }
-
-
     }
 }
