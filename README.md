@@ -1,7 +1,7 @@
 [![Build Status](https://secure.travis-ci.org/NFSdb/nfsdb.png?branch=master)](http://travis-ci.org/NFSdb/nfsdb)
 
-NFSdb
-======
+NFSdb (www.nfsdb.org)
+=====================
 
 NFSdb is a low latency, high throughput time-series database written entirely in Java. We use memory-mapped files to bring you fully persisted database with performance characteristics of in-memory cache.
 The goal of this project is to make the fastest and most developer friendly database in the world.
