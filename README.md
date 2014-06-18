@@ -13,7 +13,7 @@ NFSdb requires minimum of Java 7 and stable release is available from maven Cent
         <dependency>
             <groupId>com.nfsdb</groupId>
             <artifactId>nfsdb-core</artifactId>
-            <version>1.0.2</version>
+            <version>1.0.3</version>
         </dependency>
 
 ```
@@ -42,9 +42,4 @@ Please visit our official web site [www.nfsdb.org] (http://nfsdb.org).
 
 ### Upcoming release Change Log
 
-- thrift support is optional. NFSdb works well with POJOs.
-- durable transaction support (JournalWriter.commitDurable())
-- Journal.select() to chose active columns. This saves a lot of unnecessary disk reading.
-- Queries for invalid symbols return empty result set instead of throwing exceptions
-- Maven: can assemble .zip file from nfsdb-core.
-- 5% performance improvement
+- nothing yet
