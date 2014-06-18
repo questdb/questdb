@@ -1,6 +1,5 @@
 package org.nfsdb.examples.append;
 
-import com.nfsdb.journal.JournalKey;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
@@ -23,7 +22,7 @@ public class SimplestAppend {
             Files.delete(new File(factory.getConfiguration().getJournalBase(), "price"));
             final int count = 1000000;
 
-            try (JournalWriter<Price> writer = factory.writer(new JournalKey<>(Price.class))) {
+            try (JournalWriter<Price> writer = factory.writer(Price.class)) {
                 long tZero = System.nanoTime();
                 Price p = new Price();
 
