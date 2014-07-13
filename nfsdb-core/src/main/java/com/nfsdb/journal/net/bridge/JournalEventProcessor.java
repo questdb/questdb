@@ -36,6 +36,7 @@ public class JournalEventProcessor {
             try {
                 while (nextSequence <= availableSequence) {
                     JournalEvent event = ringBuffer.get(nextSequence);
+                    System.out.println("calling handler");
                     handler.handle(event);
                     nextSequence++;
                 }

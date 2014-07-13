@@ -294,6 +294,7 @@ public class JournalServerAgent {
                 JournalClientState status = clientStates.get(journalIndex);
                 if (status != null && status.noCommitNotification()) {
                     status.setWriterUpdateReceived(true);
+                    System.out.println("handler sending data");
                     dataSent = dispatch(channel, journalIndex) || dataSent;
                 }
             }
