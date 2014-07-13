@@ -183,9 +183,9 @@ public class JournalServerAgent {
 
         handler.setChannel(channel);
         boolean dataSent = false;
-        LOGGER.info("processing events");
+        System.out.println("processing events");
         if (eventProcessor.process(handler, blocking)) {
-            LOGGER.info("have event");
+            System.out.println("have event");
             dataSent = handler.isDataSent();
 
             // handler would have dispatched those journals, which received updates
@@ -205,7 +205,7 @@ public class JournalServerAgent {
             }
         } else {
             commandProducer.write(channel, Command.SERVER_HEARTBEAT);
-            LOGGER.info("Heartbeat: %s", channel);
+            LOGGER.debug("Heartbeat: %s", channel);
         }
         return dataSent;
     }

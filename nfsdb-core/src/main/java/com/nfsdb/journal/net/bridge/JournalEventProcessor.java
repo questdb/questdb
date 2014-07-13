@@ -48,6 +48,7 @@ public class JournalEventProcessor {
         } catch (InterruptedException | AlertException e) {
             throw new JournalRuntimeException(e);
         } catch (TimeoutException e) {
+            System.out.println("event timeout");
             return false;
         }
     }

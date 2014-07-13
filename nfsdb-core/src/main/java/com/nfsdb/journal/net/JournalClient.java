@@ -214,7 +214,7 @@ public class JournalClient {
 
     private void sendReady() throws JournalNetworkException {
         commandProducer.write(channel, Command.CLIENT_READY_CMD);
-        LOGGER.info("Client ready: " + channel);
+        LOGGER.debug("Client ready: " + channel);
     }
 
     private final class Handler implements Runnable {

@@ -60,10 +60,8 @@ public class IntegrationTest extends AbstractTest {
 
         System.out.println("stopping client");
         client.halt();
-        System.out.println("stopping server");
         server.halt();
         Journal<Quote> local = factory.reader(Quote.class, "local");
-        System.out.println("asserting");
         TestUtils.assertDataEquals(remote, local);
     }
 
