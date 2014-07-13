@@ -85,11 +85,11 @@ public class IntegrationTest extends AbstractTest {
         server.halt();
 
         Journal<Quote> local1 = factory.reader(Quote.class, "local1");
-        Assert.assertEquals(size, local1.size());
+        Assert.assertEquals("Local1 has wrong size", size, local1.size());
 
         Journal<TestEntity> local2 = factory.reader(TestEntity.class, "local2");
-        Assert.assertEquals(size, remote2.size());
-        Assert.assertEquals(size, local2.size());
+        Assert.assertEquals("Remote2 has wrong size", size, remote2.size());
+        Assert.assertEquals("Local2 has wrong size", size, local2.size());
     }
 
     @Test
