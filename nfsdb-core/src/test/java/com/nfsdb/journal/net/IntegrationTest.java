@@ -79,7 +79,7 @@ public class IntegrationTest extends AbstractTest {
         TestUtils.generateQuoteData(remote1, size);
         TestUtils.generateTestEntityData(remote2, size);
 
-        Thread.sleep(100);
+        Thread.sleep(1000);
 
         client.halt();
         server.halt();
