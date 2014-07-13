@@ -42,4 +42,7 @@ Please visit our official web site [www.nfsdb.org] (http://nfsdb.org).
 
 ### Upcoming release Change Log
 
-- nothing yet
+- Journal replication over network
+- Binary compatibility warning: All strings are stored with length as 4-byte int. Journal would use more space but it reduces CPU overhead on reads and appends.
+- SymbolIndex class is renamed to KVIndex. SymbolIndex.put() is replaced with KVIndex.add()
+- Improved Index performance
