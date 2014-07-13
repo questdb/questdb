@@ -35,7 +35,6 @@ public class ScenarioTest extends AbstractTest {
 
     private final ServerConfig serverConfig = new ServerConfig() {{
         setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(300));
-//        setIfName("lo");
         setHostname("localhost");
     }};
 

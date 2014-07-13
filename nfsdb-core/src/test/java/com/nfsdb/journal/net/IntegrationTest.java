@@ -39,7 +39,7 @@ public class IntegrationTest extends AbstractTest {
     @Before
     public void setUp() throws Exception {
         server = new JournalServer(new ServerConfig() {{
-            setIfName("lo");
+            setHostname("localhost");
             setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
         }}, factory);
         client = new JournalClient(ClientConfig.INSTANCE, factory);
