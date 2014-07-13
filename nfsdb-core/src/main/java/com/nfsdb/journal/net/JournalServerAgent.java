@@ -183,9 +183,7 @@ public class JournalServerAgent {
 
         handler.setChannel(channel);
         boolean dataSent = false;
-        System.out.println("processing events");
         if (eventProcessor.process(handler, blocking)) {
-            System.out.println("have event");
             dataSent = handler.isDataSent();
 
             // handler would have dispatched those journals, which received updates
@@ -294,7 +292,6 @@ public class JournalServerAgent {
                 JournalClientState status = clientStates.get(journalIndex);
                 if (status != null && status.noCommitNotification()) {
                     status.setWriterUpdateReceived(true);
-                    System.out.println("handler sending data");
                     dataSent = dispatch(channel, journalIndex) || dataSent;
                 }
             }

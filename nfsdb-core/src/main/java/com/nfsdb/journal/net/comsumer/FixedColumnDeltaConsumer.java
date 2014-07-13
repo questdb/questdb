@@ -54,7 +54,6 @@ public class FixedColumnDeltaConsumer extends AbstractChannelConsumer {
 
     @Override
     protected void doRead(ReadableByteChannel channel) throws JournalNetworkException {
-        System.out.println("consuming column: " + this.column);
         ByteBuffers.copy(channel, header);
 
         // if header is complete, extract target column size and release header

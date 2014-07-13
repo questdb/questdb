@@ -228,7 +228,6 @@ public class JournalClient {
                     if (commandConsumer.isComplete()) {
                         switch (commandConsumer.getValue()) {
                             case JOURNAL_DELTA_CMD:
-                                System.out.println("client is receiving data");
                                 statsChannel.setDelegate(channel);
                                 intResponseConsumer.read(statsChannel);
                                 if (intResponseConsumer.isComplete()) {
@@ -237,7 +236,6 @@ public class JournalClient {
                                     deltaConsumer.read(statsChannel);
                                     statusSentList.set(index, (byte) 0);
                                 }
-                                System.out.println("client received data");
                                 statsChannel.logStats();
                                 break;
                             case SERVER_READY_CMD:

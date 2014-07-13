@@ -47,8 +47,7 @@ public class IntegrationTest extends AbstractTest {
 
     @Test
     public void testSingleJournalSync() throws Exception {
-        System.out.println("testSingleJournalSync");
-        int size = 1000000;
+        int size = 10000;
         JournalWriter<Quote> remote = factory.writer(Quote.class, "remote", 2 * size);
         server.export(remote);
         server.start();
@@ -58,7 +57,6 @@ public class IntegrationTest extends AbstractTest {
 
         TestUtils.generateQuoteData(remote, size);
 
-        System.out.println("stopping client");
         client.halt();
         server.halt();
         Journal<Quote> local = factory.reader(Quote.class, "local");
@@ -67,7 +65,6 @@ public class IntegrationTest extends AbstractTest {
 
     @Test
     public void testTwoJournalsSync() throws Exception {
-        System.out.println("testTwoJournalsSync");
         int size = 10000;
         JournalWriter<Quote> remote1 = factory.writer(Quote.class, "remote1", 2 * size);
         JournalWriter<TestEntity> remote2 = factory.writer(TestEntity.class, "remote2", 2 * size);
@@ -97,7 +94,6 @@ public class IntegrationTest extends AbstractTest {
 
     @Test
     public void testTwoClientsSync() throws Exception {
-        System.out.println("testTwoClientsSync");
         int size = 10000;
         JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
         TestUtils.generateQuoteData(origin, size);
@@ -141,7 +137,6 @@ public class IntegrationTest extends AbstractTest {
 
     @Test
     public void testServerStartStop() throws Exception {
-        System.out.println("testServerStartStop");
         server.start();
         Thread.sleep(TimeUnit.SECONDS.toMillis(1));
         server.halt();
@@ -150,13 +145,11 @@ public class IntegrationTest extends AbstractTest {
 
     @Test(expected = JournalNetworkException.class)
     public void testClientConnect() throws Exception {
-        System.out.println("testClientConnect");
         client.start();
     }
 
     @Test
     public void testClientConnectServerHalt() throws Exception {
-        System.out.println("testClientConnectServerHalt");
         server.start();
         client.start();
         Thread.sleep(TimeUnit.SECONDS.toMillis(1));
@@ -169,7 +162,6 @@ public class IntegrationTest extends AbstractTest {
 
     @Test
     public void testClientDisconnect() throws Exception {
-        System.out.println("testClientDisconnect");
         server.start();
         client.start();
         Thread.sleep(100);
@@ -181,7 +173,6 @@ public class IntegrationTest extends AbstractTest {
 
     @Test
     public void testWriterShutdown() throws Exception {
-        System.out.println("testWriterShutdown");
         int size = 10000;
         try (JournalWriter<Quote> remote = factory.writer(Quote.class, "remote", 2 * size)) {
             server.export(remote);

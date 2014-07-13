@@ -88,7 +88,6 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
     @SuppressWarnings("unchecked")
     protected void doRead(ReadableByteChannel channel) throws JournalNetworkException {
         journalServerStateConsumer.read(channel);
-        System.out.println("consumed state");
         if (journalServerStateConsumer.isComplete()) {
 
             journal.beginTx();
@@ -96,12 +95,10 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
             try {
                 if (state == null) {
                     state = journalServerStateConsumer.getValue();
-                    System.out.println("creating partitions");
                     createPartitions(state);
                 }
 
                 if (state.isSymbolTables()) {
-                    System.out.println("consuming symbol tables");
                     journalSymbolTableConsumer.read(channel);
                 }
 
@@ -114,7 +111,6 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
                         JournalServerState.PartitionMetadata meta = state.getMeta(metaIndex);
                         if (meta.getEmpty() == 0) {
                             PartitionDeltaConsumer partitionDeltaConsumer = getPartitionDeltaConsumer(meta.getPartitionIndex());
-                            System.out.println("consuming partition: " + metaIndex);
                             partitionDeltaConsumer.read(channel);
 
                             if (partitionDeltaConsumer.isComplete()) {

@@ -36,7 +36,6 @@ public class JournalEventProcessor {
             try {
                 while (nextSequence <= availableSequence) {
                     JournalEvent event = ringBuffer.get(nextSequence);
-                    System.out.println("calling handler");
                     handler.handle(event);
                     nextSequence++;
                 }
@@ -49,7 +48,6 @@ public class JournalEventProcessor {
         } catch (InterruptedException | AlertException e) {
             throw new JournalRuntimeException(e);
         } catch (TimeoutException e) {
-            System.out.println("event timeout");
             return false;
         }
     }
