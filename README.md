@@ -1,4 +1,4 @@
-NFSdb (www.nfsdb.org) [![Build Status](https://secure.travis-ci.org/NFSdb/nfsdb.png?branch=master)](http://travis-ci.org/NFSdb/nfsdb)[![Coverage Status](https://coveralls.io/repos/NFSdb/nfsdb/badge.png)](https://coveralls.io/r/NFSdb/nfsdb)
+NFSdb (www.nfsdb.org) [![Build Status](https://secure.travis-ci.org/NFSdb/nfsdb.png?branch=master)](http://travis-ci.org/NFSdb/nfsdb)   [![Coverage Status](https://coveralls.io/repos/NFSdb/nfsdb/badge.png)](https://coveralls.io/r/NFSdb/nfsdb)
 =====================
 
 NFSdb is a low latency, high throughput time-series database written entirely in Java. We use memory-mapped files to bring you fully persisted database with performance characteristics of in-memory cache.
