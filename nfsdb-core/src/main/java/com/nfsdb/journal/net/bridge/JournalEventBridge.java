@@ -17,7 +17,6 @@
 package com.nfsdb.journal.net.bridge;
 
 import com.lmax.disruptor.*;
-import com.lmax.disruptor.TimeoutBlockingWaitStrategy;
 import com.nfsdb.journal.concurrent.NamedDaemonThreadFactory;
 import com.nfsdb.journal.tx.TxFuture;
 

@@ -24,7 +24,7 @@
         <thrift.version>0.9.0</thrift.version>
     </properties>
 
-    <version>${project.version}</version>
+    <version>1.0.4-SNAPSHOT</version>
     <groupId>com.nfsdb</groupId>
     <artifactId>nfsdb-samples</artifactId>
     <packaging>jar</packaging>
