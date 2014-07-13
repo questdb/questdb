@@ -183,7 +183,9 @@ public class JournalServerAgent {
 
         handler.setChannel(channel);
         boolean dataSent = false;
+        LOGGER.info("processing events");
         if (eventProcessor.process(handler, blocking)) {
+            LOGGER.info("have event");
             dataSent = handler.isDataSent();
 
             // handler would have dispatched those journals, which received updates
