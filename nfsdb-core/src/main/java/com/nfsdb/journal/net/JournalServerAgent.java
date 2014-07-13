@@ -203,7 +203,7 @@ public class JournalServerAgent {
             }
         } else {
             commandProducer.write(channel, Command.SERVER_HEARTBEAT);
-            LOGGER.debug("Heartbeat: %s", channel);
+            LOGGER.info("Heartbeat: %s", channel);
         }
         return dataSent;
     }
