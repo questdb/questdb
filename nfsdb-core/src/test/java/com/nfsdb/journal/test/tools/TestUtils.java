@@ -61,9 +61,6 @@ public final class TestUtils {
             q.setEx("LXE");
             q.setMode("Fast trading");
             q.setTimestamp(timestamps[i * timestamps.length / count]);
-            if (i % 10000 == 0) {
-                System.out.print(".");
-            }
             w.append(q);
         }
         w.commit();

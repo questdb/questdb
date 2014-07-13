@@ -25,10 +25,13 @@ import com.nfsdb.journal.test.model.Quote;
 import com.nfsdb.journal.test.model.TestEntity;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestUtils;
+import com.nfsdb.journal.tx.TxFuture;
+import com.nfsdb.journal.tx.TxListener;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 public class IntegrationTest extends AbstractTest {
@@ -47,15 +50,33 @@ public class IntegrationTest extends AbstractTest {
 
     @Test
     public void testSingleJournalSync() throws Exception {
-        int size = 10000;
+        int size = 100000;
         JournalWriter<Quote> remote = factory.writer(Quote.class, "remote", 2 * size);
         server.export(remote);
         server.start();
 
-        client.sync(Quote.class, "remote", "local", 2 * size);
+        final CountDownLatch latch = new CountDownLatch(1);
+        client.sync(Quote.class, "remote", "local", 2 * size, new TxListener() {
+            @Override
+            public boolean notifySync(long timeout, TimeUnit unit) {
+                return false;
+            }
+
+            @Override
+            public void notifyAsyncNoWait() {
+                latch.countDown();
+            }
+
+            @Override
+            public TxFuture notifyAsync() {
+                return null;
+            }
+        });
         client.start();
 
         TestUtils.generateQuoteData(remote, size);
+
+        latch.await();
 
         client.halt();
         server.halt();
@@ -72,14 +93,46 @@ public class IntegrationTest extends AbstractTest {
         server.export(remote2);
         server.start();
 
-        client.sync(Quote.class, "remote1", "local1", 2 * size);
-        client.sync(TestEntity.class, "remote2", "local2", 2 * size);
+        final CountDownLatch latch = new CountDownLatch(2);
+        client.sync(Quote.class, "remote1", "local1", 2 * size, new TxListener() {
+            @Override
+            public boolean notifySync(long timeout, TimeUnit unit) {
+                return false;
+            }
+
+            @Override
+            public void notifyAsyncNoWait() {
+                latch.countDown();
+            }
+
+            @Override
+            public TxFuture notifyAsync() {
+                return null;
+            }
+        });
+
+        client.sync(TestEntity.class, "remote2", "local2", 2 * size, new TxListener() {
+            @Override
+            public boolean notifySync(long timeout, TimeUnit unit) {
+                return false;
+            }
+
+            @Override
+            public void notifyAsyncNoWait() {
+                latch.countDown();
+            }
+
+            @Override
+            public TxFuture notifyAsync() {
+                return null;
+            }
+        });
         client.start();
 
         TestUtils.generateQuoteData(remote1, size);
         TestUtils.generateTestEntityData(remote2, size);
 
-        Thread.sleep(10000);
+        latch.await();
 
         client.halt();
         server.halt();
@@ -111,11 +164,43 @@ public class IntegrationTest extends AbstractTest {
             local2.append(origin.query().all().asResultSet().subset(0, 1500));
         }
 
+        final CountDownLatch latch = new CountDownLatch(2);
 
-        client.sync(Quote.class, "remote", "local1");
+        client.sync(Quote.class, "remote", "local1", new TxListener() {
+            @Override
+            public boolean notifySync(long timeout, TimeUnit unit) {
+                return false;
+            }
+
+            @Override
+            public void notifyAsyncNoWait() {
+                latch.countDown();
+            }
+
+            @Override
+            public TxFuture notifyAsync() {
+                return null;
+            }
+        });
 
         JournalClient client2 = new JournalClient(ClientConfig.INSTANCE, factory);
-        client2.sync(Quote.class, "remote", "local2");
+
+        client2.sync(Quote.class, "remote", "local2", new TxListener() {
+            @Override
+            public boolean notifySync(long timeout, TimeUnit unit) {
+                return false;
+            }
+
+            @Override
+            public void notifyAsyncNoWait() {
+                latch.countDown();
+            }
+
+            @Override
+            public TxFuture notifyAsync() {
+                return null;
+            }
+        });
 
         client.start();
         client2.start();
@@ -123,7 +208,8 @@ public class IntegrationTest extends AbstractTest {
         remote.append(origin.query().all().asResultSet().subset(3000, 10000));
         remote.commit();
 
-        Thread.sleep(TimeUnit.MILLISECONDS.toMillis(500));
+        latch.await();
+
         client.halt();
         client2.halt();
         server.halt();
