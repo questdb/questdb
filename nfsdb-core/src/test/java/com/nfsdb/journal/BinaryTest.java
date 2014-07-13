@@ -49,7 +49,7 @@ public class BinaryTest extends AbstractTest {
 
         int count = 0;
         for (Band b : writer) {
-            Assert.assertArrayEquals(bytes.get(count), b.getImage());
+            Assert.assertArrayEquals(bytes.get(count), b.getImage().array());
             count++;
         }
     }
@@ -71,7 +71,7 @@ public class BinaryTest extends AbstractTest {
         long t = System.nanoTime();
         Band band = new Band();
         for (int i = 0; i < count; i++) {
-            band.clear();
+            writer.clearObject(band);
             band.setName(bands[Math.abs(r.nextInt() % bands.length)]);
             band.setType(types[Math.abs(r.nextInt() % types.length)]);
             band.setImage(bytes);

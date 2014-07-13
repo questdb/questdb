@@ -16,9 +16,17 @@
 
 package com.nfsdb.journal.collections;
 
+import gnu.trove.TLongCollection;
 import gnu.trove.list.array.TLongArrayList;
 
 public class LongArrayList extends TLongArrayList {
+
+    public LongArrayList() {
+    }
+
+    public LongArrayList(TLongCollection collection) {
+        super(collection);
+    }
 
     public void setCapacity(int capacity) {
         if (capacity > _data.length) {

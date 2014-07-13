@@ -74,7 +74,7 @@ public class PrinterTest {
     @Test
     public void testCRLFStripping() throws Exception {
         try (JournalPrinter printer = new JournalPrinter()) {
-            printer.setAppender(testAppender)
+            printer.setAppender(testAppender).setNullString("")
                     .types(String.class, TestEntity.class)
                     .v(0).c(new StripCRLFStringConverter(printer)).h("Test String")
                     .f("bStr").c(new StripCRLFStringConverter(printer)).h("destination");

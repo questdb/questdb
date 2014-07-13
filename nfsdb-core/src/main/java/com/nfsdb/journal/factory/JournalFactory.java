@@ -36,6 +36,10 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
         this(new JournalConfiguration(journalBase).build());
     }
 
+    public JournalFactory(String configurationFile, File journalBase) throws JournalConfigurationException {
+        this(new JournalConfiguration(configurationFile, journalBase).build());
+    }
+
     public JournalFactory(JournalConfiguration configuration) {
         super(configuration);
     }
@@ -55,10 +59,12 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
         return writer(new JournalKey<>(clazz, location, PartitionType.DEFAULT, recordHint));
     }
 
+    @Override
     public <T> JournalWriter<T> writer(JournalKey<T> key) throws JournalException {
         return new JournalWriter<>(getConfiguration().getMetadata(key), key, getTimerCache());
     }
 
+    @Override
     public <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException {
         return new JournalBulkWriter<>(getConfiguration().getMetadata(key), key, getTimerCache());
     }

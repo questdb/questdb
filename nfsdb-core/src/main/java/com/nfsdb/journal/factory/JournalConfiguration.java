@@ -17,19 +17,17 @@
 package com.nfsdb.journal.factory;
 
 import com.nfsdb.journal.JournalKey;
-import com.nfsdb.journal.PartitionType;
-import com.nfsdb.journal.column.ColumnType;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
+import com.nfsdb.journal.factory.parser.ParserDefaults;
+import com.nfsdb.journal.factory.parser.XmlParser;
+import com.nfsdb.journal.factory.parser.XmlStreamParser;
 import com.nfsdb.journal.logging.Logger;
+import com.nfsdb.journal.utils.Base64;
 import com.nfsdb.journal.utils.Checksum;
 import com.nfsdb.journal.utils.Files;
 
-import javax.xml.bind.DatatypeConverter;
-import javax.xml.stream.XMLInputFactory;
-import javax.xml.stream.XMLStreamException;
-import javax.xml.stream.XMLStreamReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -40,19 +38,14 @@ public class JournalConfiguration {
     public static final String TEMP_DIRECTORY_PREFIX = "temp";
     public static final String DEFAULT_CONFIG_FILE = "/nfsdb.xml";
     public static final String JOURNAL_META_FILE = "_meta";
-
     public static final int PIPE_BIT_HINT = 16;
-
     public static final int VARCHAR_INDEX_COLUMN_WIDTH = 8;
-    public static final int VARCHAR_SHORT_HEADER_LENGTH = 1;
-    public static final int VARCHAR_MEDIUM_HEADER_LENGTH = 2;
     public static final int VARCHAR_LARGE_HEADER_LENGTH = 4;
-
     public static final int DEFAULT_RECORD_HINT = 1000000;
     public static final int DEFAULT_STRING_AVG_SIZE = 12;
     public static final int DEFAULT_STRING_MAX_SIZE = 255;
     public static final int DEFAULT_SYMBOL_MAX_SIZE = 128;
-    public static final int DEFAULT_DISTINCT_COUNT_HINT = 255;
+    public static final int DEFAULT_DISTINCT_COUNT_HINT = 1;
     public static final int NULL_RECORD_HINT = 0;
     public static final int OPEN_PARTITION_TTL = 60; // seconds
     public static final int DEFAULT_LAG_HOURS = 0;
@@ -60,9 +53,9 @@ public class JournalConfiguration {
     private final Map<String, JournalMetadata> metadataMap = new HashMap<>();
     private final File journalBase;
     private final String configurationFile;
-    private final int globalRecordHint;
-    private final NullsAdaptorFactory nullsAdaptorFactory;
+    private final ParserDefaults parserDefaults;
     private boolean configured = false;
+
 
     public JournalConfiguration(File journalBase) {
         this(DEFAULT_CONFIG_FILE, journalBase);
@@ -77,10 +70,18 @@ public class JournalConfiguration {
     }
 
     public JournalConfiguration(String configurationFile, File journalBase, int globalRecordHint, NullsAdaptorFactory nullsAdaptorFactory) {
-        this.globalRecordHint = globalRecordHint;
         this.journalBase = journalBase;
         this.configurationFile = configurationFile;
-        this.nullsAdaptorFactory = nullsAdaptorFactory;
+        this.parserDefaults = new ParserDefaults();
+        this.parserDefaults.setNullsAdaptorFactory(nullsAdaptorFactory);
+        this.parserDefaults.setDistinctCount(DEFAULT_DISTINCT_COUNT_HINT);
+        this.parserDefaults.setGlobalRecordHint(globalRecordHint);
+        this.parserDefaults.setLagHours(DEFAULT_LAG_HOURS);
+        this.parserDefaults.setOpenPartitionTTL(OPEN_PARTITION_TTL);
+        this.parserDefaults.setRecordHint(DEFAULT_RECORD_HINT);
+        this.parserDefaults.setStringAvgSize(DEFAULT_STRING_AVG_SIZE);
+        this.parserDefaults.setStringMaxSize(DEFAULT_STRING_MAX_SIZE);
+        this.parserDefaults.setSymbolMaxSize(DEFAULT_SYMBOL_MAX_SIZE);
     }
 
     public JournalConfiguration build() throws JournalConfigurationException {
@@ -93,12 +94,16 @@ public class JournalConfiguration {
                 throw new JournalConfigurationException("Not readable: %s", journalBase);
             }
 
+            if (LOGGER.isInfoEnabled()) {
+                LOGGER.info("Using: %s", JournalConfiguration.class.getResource(configurationFile));
+            }
             InputStream is = JournalConfiguration.class.getResourceAsStream(configurationFile);
             if (is == null) {
                 throw new JournalConfigurationException("Cannot load configuration: %s", configurationFile);
             }
             try {
-                metadataMap.putAll(parseConfiguration(is));
+                XmlParser parser = new XmlStreamParser(parserDefaults);
+                metadataMap.putAll(parser.parse(is));
             } finally {
                 try {
                     is.close();
@@ -160,7 +165,7 @@ public class JournalConfiguration {
                 throw new JournalException("Cannot find journal metadata checksum. Corrupt journal?");
             }
             String existingChecksum = metaStr.substring(lo + pattern.length(), hi);
-            String requestedChecksum = DatatypeConverter.printBase64Binary(Checksum.getChecksum(metadata));
+            String requestedChecksum = Base64._printBase64Binary(Checksum.getChecksum(metadata));
 
             if (!existingChecksum.equals(requestedChecksum)) {
                 throw new JournalException("Wrong metadata. Compare config on disk:\n\r" + metaStr + "\n\r with what you trying to use to open journal:\n\r" + metadata.toString() + "\n\rImportant fields are marked with *");
@@ -172,128 +177,6 @@ public class JournalConfiguration {
 
     public File getJournalBase() {
         return journalBase;
-    }
-
-    /////////////////////// PUBLIC API ///////////////////////////
-
-    private Map<String, JournalMetadata> parseConfiguration(InputStream is) throws JournalConfigurationException {
-        XMLInputFactory xmlif = XMLInputFactory.newInstance();
-        try {
-            XMLStreamReader xmlr = xmlif.createXMLStreamReader(is);
-            try {
-                return parseConfiguration(xmlr);
-            } finally {
-                xmlr.close();
-            }
-        } catch (XMLStreamException e) {
-            throw new JournalConfigurationException("Cannot parse database configuration", e);
-        } catch (JournalConfigurationException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new JournalConfigurationException("exception throw in constructor", e);
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, JournalMetadata> parseConfiguration(XMLStreamReader xmlr) throws XMLStreamException, JournalConfigurationException {
-        JournalMetadata metadata = null;
-        Map<String, JournalMetadata> metaMap = new HashMap<>();
-
-        while (xmlr.hasNext()) {
-            xmlr.next();
-
-            // <journal>
-            if (xmlr.isStartElement() && "journal".equals(xmlr.getLocalName())) {
-                if (metadata != null) {
-                    throw new JournalConfigurationException("Nested journal elements are not allowed");
-                }
-
-                String className = getStringAttr(xmlr, "class");
-                try {
-                    Class type = Class.forName(className);
-                    int recordHint = globalRecordHint == -1 ? getIntAttr(xmlr, "recordCountHint", DEFAULT_RECORD_HINT) : globalRecordHint;
-                    metadata = new JournalMetadata(
-                            type,
-                            getStringAttr(xmlr, "defaultPath"),
-                            getStringAttr(xmlr, "timestampColumn"),
-                            PartitionType.valueOf(getStringAttr(xmlr, "partitionType")),
-                            recordHint,
-                            getIntAttr(xmlr, "txCountHint", (recordHint) / 100),
-                            getIntAttr(xmlr, "openPartitionTTL", OPEN_PARTITION_TTL),
-                            getIntAttr(xmlr, "lagHours", DEFAULT_LAG_HOURS),
-                            getStringAttr(xmlr, "key"),
-                            nullsAdaptorFactory == null ? null : nullsAdaptorFactory.getInstance(type)
-                    );
-                } catch (ClassNotFoundException e) {
-                    throw new JournalConfigurationException("Cannot load class: " + className, e);
-                }
-
-                metaMap.put(className, metadata);
-                continue;
-            }
-
-            // <sym>
-            if (xmlr.isStartElement() && "sym".equals(xmlr.getLocalName())) {
-                if (metadata == null) {
-                    throw new JournalConfigurationException("<sym> element must be a child of <journal>");
-                }
-                parseSymbol(xmlr, metadata);
-                continue;
-            }
-
-            // <string>
-            if (xmlr.isStartElement() && ("string".equals(xmlr.getLocalName()))) {
-                if (metadata == null) {
-                    throw new JournalConfigurationException("<string> element must be a child of <journal>");
-                }
-                JournalMetadata.ColumnMetadata ccm = metadata.getColumnMetadata(getStringAttr(xmlr, "name"));
-                ccm.maxSize = getIntAttr(xmlr, "maxsize", DEFAULT_STRING_MAX_SIZE);
-                ccm.avgSize = getIntAttr(xmlr, "avgsize", DEFAULT_STRING_AVG_SIZE);
-            }
-
-            // <binary>
-            if (xmlr.isStartElement() && ("binary".equals(xmlr.getLocalName()))) {
-                if (metadata == null) {
-                    throw new JournalConfigurationException("<binary> element must be a child of <journal>");
-                }
-                JournalMetadata.ColumnMetadata ccm = metadata.getColumnMetadata(getStringAttr(xmlr, "name"));
-                ccm.size = getIntAttr(xmlr, "avgsize", DEFAULT_STRING_MAX_SIZE);
-                ccm.avgSize = ccm.size;
-            }
-
-            // </journal>
-            if (xmlr.isEndElement() && "journal".equals(xmlr.getLocalName())) {
-                if (metadata == null) {
-                    throw new JournalConfigurationException("Unbalanced </journal> element");
-                }
-                metadata.updateVariableSizes();
-                LOGGER.debug("Loaded metadata for: " + metadata.getModelClass().getName());
-                metadata = null;
-            }
-        }
-        return metaMap;
-    }
-
-    private String getStringAttr(XMLStreamReader xmlr, String name) {
-        return xmlr.getAttributeValue("", name);
-    }
-
-    private int getIntAttr(XMLStreamReader xmlr, String name, int defaultValue) {
-        String s = getStringAttr(xmlr, name);
-        return s == null || s.length() == 0 ? defaultValue : Integer.parseInt(s);
-    }
-
-    private void parseSymbol(XMLStreamReader xmlr, JournalMetadata metadata) throws JournalConfigurationException {
-        String columnName = getStringAttr(xmlr, "name");
-        JournalMetadata.ColumnMetadata ccm = metadata.getColumnMetadata(columnName);
-        if (ccm.type != ColumnType.STRING) {
-            throw new JournalConfigurationException("Column '%s' is of type %s and cannot be a symbol in class %s", columnName, ccm.type, metadata.getModelClass().getName());
-        }
-        ccm.type = ColumnType.SYMBOL;
-        ccm.indexed = "true".equals(xmlr.getAttributeValue("", "indexed"));
-        ccm.maxSize = getIntAttr(xmlr, "maxsize", DEFAULT_SYMBOL_MAX_SIZE);
-        ccm.distinctCountHint = getIntAttr(xmlr, "hintDistinctCount", DEFAULT_DISTINCT_COUNT_HINT);
-        ccm.sameAs = getStringAttr(xmlr, "sameAs");
     }
 
     private void checkConfigured() {

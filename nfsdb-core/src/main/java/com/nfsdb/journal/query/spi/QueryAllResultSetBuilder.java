@@ -20,8 +20,9 @@ import com.nfsdb.journal.Partition;
 import com.nfsdb.journal.UnorderedResultSetBuilder;
 import com.nfsdb.journal.collections.IntArrayList;
 import com.nfsdb.journal.collections.LongArrayList;
-import com.nfsdb.journal.column.SymbolIndex;
 import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.index.experimental.Cursor;
+import com.nfsdb.journal.index.KVIndex;
 import com.nfsdb.journal.utils.Rows;
 import org.joda.time.Interval;
 
@@ -32,8 +33,8 @@ public class QueryAllResultSetBuilder<T> extends UnorderedResultSetBuilder<T> {
     private final List<String> filterSymbols;
     private final IntArrayList filterSymbolKeys;
     final private String symbol;
-    private SymbolIndex index;
-    private SymbolIndex[] searchIndices;
+    private KVIndex index;
+    private KVIndex[] searchIndices;
 
     public QueryAllResultSetBuilder(Interval interval, String symbol, IntArrayList symbolKeys, List<String> filterSymbols, IntArrayList filterSymbolKeys) {
         super(interval);
@@ -52,7 +53,7 @@ public class QueryAllResultSetBuilder<T> extends UnorderedResultSetBuilder<T> {
         if (symbolKeys.size() > 0) {
             for (int i = 0; i < symbolKeys.size(); i++) {
                 if (index.contains(symbolKeys.getQuick(i))) {
-                    searchIndices = new SymbolIndex[filterSymbols.size()];
+                    searchIndices = new KVIndex[filterSymbols.size()];
                     for (int k = 0; k < filterSymbols.size(); k++) {
                         searchIndices[k] = partition.getIndexForColumn(filterSymbols.get(k));
                     }
@@ -73,35 +74,30 @@ public class QueryAllResultSetBuilder<T> extends UnorderedResultSetBuilder<T> {
                     for (int k = 0; k < searchIndices.length; k++) {
                         if (searchIndices[k].contains(filterSymbolKeys.get(k))) {
                             LongArrayList searchLocalRowIDs = searchIndices[k].getValues(filterSymbolKeys.get(k));
-                            LongArrayList symbolKeyRowIDs = index.getValues(symbolKey);
-                            for (int j = 0; j < symbolKeyRowIDs.size(); j++) {
-                                long localRowID = symbolKeyRowIDs.get(j);
-                                if (localRowID >= lo && localRowID <= hi && searchLocalRowIDs.binarySearch(localRowID) >= 0) {
+
+                            Cursor cursor = index.cachedCursor(symbolKey);
+                            while (cursor.hasNext()) {
+                                long localRowID = cursor.next();
+                                if (localRowID < lo) {
+                                    break;
+                                }
+                                if (localRowID <= hi && searchLocalRowIDs.binarySearch(localRowID) >= 0) {
                                     result.add(Rows.toRowID(partition.getPartitionIndex(), localRowID));
                                 }
                             }
                         }
                     }
                 } else {
-                    LongArrayList symbolKeyRowIDs = index.getValues(symbolKey);
-                    int sz = symbolKeyRowIDs.size();
-                    result.setCapacity(sz);
-                    // optimise a bit
-                    if (symbolKeyRowIDs.get(0) >= lo && symbolKeyRowIDs.get(sz - 1) <= hi) {
-                        for (int j = 0; j < sz; j++) {
-                            result.add(Rows.toRowID(partition.getPartitionIndex(), symbolKeyRowIDs.getQuick(j)));
-                        }
-                    } else {
-                        for (int j = 0; j < sz; j++) {
-                            long localRowID = symbolKeyRowIDs.getQuick(j);
-                            if (localRowID >= lo && localRowID <= hi) {
-                                result.add(Rows.toRowID(partition.getPartitionIndex(), localRowID));
-                            }
+                    KVIndex.IndexCursor cursor = index.cachedCursor(symbolKey);
+                    result.setCapacity((int) cursor.size());
+                    while (cursor.hasNext()) {
+                        long localRowID = cursor.next();
+                        if (localRowID >= lo && localRowID <= hi) {
+                            result.add(Rows.toRowID(partition.getPartitionIndex(), localRowID));
                         }
                     }
                 }
             }
         }
     }
-
 }

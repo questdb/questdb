@@ -176,7 +176,7 @@ public class JournalTest extends AbstractTest {
         // check if we can open a reader
         Assert.assertTrue(factory.reader(Quote.class) != null);
         // check if we can open writer in alt location
-        Assert.assertTrue(factory.writer(Quote.class, "test-quote") != null);
+        Assert.assertTrue(factory.writer(Quote.class, "test-Quote") != null);
     }
 
     @Test
@@ -219,7 +219,6 @@ public class JournalTest extends AbstractTest {
             Partition<Quote> p = w.getPartition(w.getPartitionCount() - 1, false);
             Assert.assertNotNull(p);
             Assert.assertEquals(0, p.getIndexForColumn("sym").size());
-            Assert.assertEquals(0, p.getIndexForColumn("ex").size());
         }
     }
 
@@ -456,7 +455,7 @@ public class JournalTest extends AbstractTest {
         try {
             w.append(new TestEntity().setSym("ABC").setDStr("test1"));
             w.append(new TestEntity().setSym("ABC").setDStr(TestUtils.randomString(random, 100)));
-            w.append(new TestEntity().setSym("ABC").setDStr(TestUtils.randomString(random, 70000)));
+            w.append(new TestEntity().setSym("ABC").setDStr(TestUtils.randomString(random, 70000)).setTimestamp(-1));
         } catch (Exception e) {
             // OK
         } finally {

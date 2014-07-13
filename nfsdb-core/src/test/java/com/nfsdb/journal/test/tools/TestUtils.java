@@ -20,11 +20,12 @@ import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.Partition;
 import com.nfsdb.journal.ResultSet;
-import com.nfsdb.journal.column.SymbolIndex;
+import com.nfsdb.journal.collections.LongArrayList;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.factory.JournalMetadata;
+import com.nfsdb.journal.index.KVIndex;
 import com.nfsdb.journal.iterators.JournalIterator;
 import com.nfsdb.journal.printer.JournalPrinter;
 import com.nfsdb.journal.printer.appender.AssertingAppender;
@@ -33,7 +34,6 @@ import com.nfsdb.journal.test.model.Quote;
 import com.nfsdb.journal.test.model.TestEntity;
 import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Unsafe;
-import gnu.trove.list.array.TLongArrayList;
 import gnu.trove.map.hash.TIntIntHashMap;
 import org.joda.time.DateTime;
 import org.joda.time.Interval;
@@ -66,14 +66,36 @@ public final class TestUtils {
         w.commit();
     }
 
+    public static void generateQuoteDataRandomMode(JournalWriter<Quote> w, int count) throws JournalException {
+        String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
+        long timestamps[] = {Dates.toMillis("2013-09-04T10:00:00.000Z"), Dates.toMillis("2013-10-04T10:00:00.000Z"), Dates.toMillis("2013-11-04T10:00:00.000Z")};
+        Quote q = new Quote();
+        Random r = new Random(System.currentTimeMillis());
+        for (int i = 0; i < count; i++) {
+            q.clear();
+            q.setSym(symbols[Math.abs(r.nextInt() % (symbols.length))]);
+            q.setAsk(Math.abs(r.nextDouble()));
+            q.setBid(Math.abs(r.nextDouble()));
+            q.setAskSize(Math.abs(r.nextInt()));
+            q.setBidSize(Math.abs(r.nextInt()));
+            q.setEx("LXE");
+            q.setMode("Fast trading" + i % ((count / 10000)));
+            q.setTimestamp(timestamps[i * timestamps.length / count]);
+            w.append(q);
+        }
+        w.commit();
+    }
+
     public static void generateQuoteData(JournalWriter<Quote> w, int count, long timetamp) throws JournalException {
         generateQuoteData(w, count, timetamp, 0);
     }
 
-    public static void generateQuoteData(JournalWriter<Quote> w, int count, long timetamp, long increment) throws JournalException {
+    public static long generateQuoteData(JournalWriter<Quote> w, int count, long timetamp, long increment) throws JournalException {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
         Quote q = new Quote();
         Random r = new Random(System.currentTimeMillis());
+        long tZero = System.nanoTime();
+
         for (int i = 0; i < count; i++) {
             q.clear();
             q.setSym(symbols[Math.abs(r.nextInt() % (symbols.length - 1))]);
@@ -87,6 +109,7 @@ public final class TestUtils {
             timetamp += increment;
             w.append(q);
         }
+        return tZero;
     }
 
     public static void generateQuoteData(JournalWriter<Quote> w, int count, Interval interval) throws JournalException {
@@ -156,10 +179,6 @@ public final class TestUtils {
         }
     }
 
-    public static <T> void assertOrder(ResultSet<T> rs) {
-        assertOrder(rs.bufferedIterator());
-    }
-
     public static <T> void assertOrder(JournalIterator<T> rs) {
         JournalMetadata.ColumnMetadata meta = rs.getJournal().getMetadata().getTimestampColumnMetadata();
         long max = 0;
@@ -167,6 +186,18 @@ public final class TestUtils {
             long timestamp = Unsafe.getUnsafe().getLong(obj, meta.offset);
             if (timestamp < max) {
                 throw new AssertionError("Timestamp out of order. [ " + Dates.toString(timestamp) + " < " + Dates.toString(max) + "]");
+            }
+            max = timestamp;
+        }
+    }
+
+    public static <T> void assertOrderDesc(JournalIterator<T> rs) {
+        JournalMetadata.ColumnMetadata meta = rs.getJournal().getMetadata().getTimestampColumnMetadata();
+        long max = Long.MAX_VALUE;
+        for (T obj : rs) {
+            long timestamp = Unsafe.getUnsafe().getLong(obj, meta.offset);
+            if (timestamp > max) {
+                throw new AssertionError("Timestamp out of order. [ " + Dates.toString(timestamp) + " > " + Dates.toString(max) + "]");
             }
             max = timestamp;
         }
@@ -284,14 +315,14 @@ public final class TestUtils {
 
             for (int k = 0; k < expected.getMetadata().getColumnCount(); k++) {
                 if (expected.getColumnMetadata(k).meta.indexed) {
-                    SymbolIndex ei = ep.getIndexForColumn(k);
-                    SymbolIndex ai = ap.getIndexForColumn(k);
+                    KVIndex ei = ep.getIndexForColumn(k);
+                    KVIndex ai = ap.getIndexForColumn(k);
 
                     int count = colKeyCount.get(k);
 
                     for (int j = 0; j < count; j++) {
-                        TLongArrayList ev = ei.getValues(j);
-                        TLongArrayList av = ai.getValues(j);
+                        LongArrayList ev = ei.getValues(j);
+                        LongArrayList av = ai.getValues(j);
 
                         Assert.assertEquals("Values mismatch. partition=" + i + ",column=" + expected.getColumnMetadata(k).meta.name + ", key=" + j + ": ", ev.size(), av.size());
                         for (int l = 0; l < ev.size(); l++) {

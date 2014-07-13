@@ -29,6 +29,6 @@ public class JournalThriftFactory extends JournalFactory {
     }
 
     public JournalThriftFactory(File journalBase) throws JournalConfigurationException {
-        super(new JournalConfiguration(JournalConfiguration.DEFAULT_CONFIG_FILE, journalBase, -1, new ThriftNullsAdaptorFactory()).build());
+        super(new JournalConfiguration("/journals.xml", journalBase, -1, new ThriftNullsAdaptorFactory()).build());
     }
 }

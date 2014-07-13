@@ -19,23 +19,18 @@ package com.nfsdb.journal.column;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.factory.JournalConfiguration;
-import com.nfsdb.journal.factory.JournalMetadata;
-import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.utils.ByteBuffers;
 
 import java.nio.ByteBuffer;
 
 
 public class VariableColumn extends AbstractColumn {
-    private static final Logger LOGGER = Logger.getLogger(VariableColumn.class);
     private final FixedColumn indexColumn;
-    private final int maxLen;
     private char buffer[] = new char[32];
 
-    public VariableColumn(MappedFile dataFile, MappedFile indexFile, int maxLen) {
+    public VariableColumn(MappedFile dataFile, MappedFile indexFile) {
         super(dataFile);
         this.indexColumn = new FixedColumn(indexFile, JournalConfiguration.VARCHAR_INDEX_COLUMN_WIDTH);
-        this.maxLen = maxLen;
     }
 
     @Override
@@ -80,44 +75,55 @@ public class VariableColumn extends AbstractColumn {
     }
 
     public String getString(long localRowID) {
-        try {
-            if (maxLen <= JournalMetadata.BYTE_LIMIT) {
-                return getStringB(localRowID);
-            } else if (maxLen <= JournalMetadata.TWO_BYTE_LIMIT) {
-                return getStringW(localRowID);
-            } else {
-                return getStringDW(localRowID);
-            }
-        } catch (RuntimeException e) {
-            LOGGER.error(this + " Could not read string [localRowID=" + localRowID + "]");
-            throw e;
+        // read delegate buffer which lets us read "null" flag and string length.
+        ByteBuffer bb = getBufferInternal(localRowID, JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH);
+        int len = bb.getInt();
+        // check if buffer can have actual string (char=2*byte)
+        if (bb.remaining() < len * 2) {
+            bb = getBufferInternal(localRowID, len * 2 + JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH);
+            bb.position(bb.position() + JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH);
         }
+
+        return asString(bb, len);
     }
 
     public boolean equalsString(long localRowID, String value) {
-        try {
-            if (maxLen <= JournalMetadata.BYTE_LIMIT) {
-                return equalsStringB(localRowID, value);
-            } else if (maxLen <= JournalMetadata.TWO_BYTE_LIMIT) {
-                return equalsStringW(localRowID, value);
-            } else {
-                return equalsStringDW(localRowID, value);
-            }
-        } catch (RuntimeException e) {
-            LOGGER.error(this + " Could not read string [localRowID=" + localRowID + "]");
-            throw e;
+        // read delegate buffer which lets us read "null" flag and string length.
+        ByteBuffer buf = getBufferInternal(localRowID, JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH);
+        int len = buf.getInt();
+
+        if (len != value.length()) {
+            return false;
         }
+
+        int p;
+        // check if buffer can have actual string (char=2*byte)
+        if (buf.remaining() < len * 2) {
+            buf = getBufferInternal(localRowID, len * 2 + JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH);
+            p = buf.position() + JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH;
+        } else {
+            p = buf.position();
+        }
+
+        for (int i = 0; i < len; i++) {
+            if (buf.getChar(p) != value.charAt(i)) {
+                return false;
+            }
+            p += 2;
+        }
+
+        return true;
     }
 
-    public void putString(String value) {
+    public long putString(String value) {
         if (value == null) {
-            putNull();
-        } else if (maxLen <= JournalMetadata.BYTE_LIMIT) {
-            putStringB(value);
-        } else if (maxLen <= JournalMetadata.TWO_BYTE_LIMIT) {
-            putStringW(value);
+            return putNull();
         } else {
-            putStringDW(value);
+            int len = value.length() * 2 + JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH;
+            long offset = getOffset();
+            ByteBuffer bb = getBuffer(offset, len);
+            ByteBuffers.putStringDW(bb, value);
+            return commitAppend(offset, len);
         }
     }
 
@@ -169,50 +175,8 @@ public class VariableColumn extends AbstractColumn {
         }
     }
 
-    public void putNull() {
-        commitAppend(getOffset(), 0);
-    }
-
-    private void putStringW(String value) {
-        int len = value.length() * 2 + JournalConfiguration.VARCHAR_MEDIUM_HEADER_LENGTH;
-        long offset = getOffset();
-        ByteBuffer bb = getBuffer(offset, len);
-        ByteBuffers.putStringW(bb, value);
-        commitAppend(offset, len);
-    }
-
-    private String getStringW(long localRowID) {
-        // read delegate buffer which lets us read "null" flag and string length.
-        ByteBuffer bb = getBufferInternal(localRowID, JournalConfiguration.VARCHAR_MEDIUM_HEADER_LENGTH);
-        int len = bb.getChar();
-        // check if buffer can have actual string (char=2*byte)
-        if (bb.remaining() < len * 2) {
-            bb = getBufferInternal(localRowID, len * 2 + JournalConfiguration.VARCHAR_MEDIUM_HEADER_LENGTH);
-            bb.position(bb.position() + JournalConfiguration.VARCHAR_MEDIUM_HEADER_LENGTH);
-        }
-
-        return asString(bb, len);
-    }
-
-    private void putStringDW(String value) {
-        int len = value.length() * 2 + JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH;
-        long offset = getOffset();
-        ByteBuffer bb = getBuffer(offset, len);
-        ByteBuffers.putStringDW(bb, value);
-        commitAppend(offset, len);
-    }
-
-    private String getStringDW(long localRowID) {
-        // read delegate buffer which lets us read "null" flag and string length.
-        ByteBuffer bb = getBufferInternal(localRowID, JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH);
-        int len = bb.getInt();
-        // check if buffer can have actual string (char=2*byte)
-        if (bb.remaining() < len * 2) {
-            bb = getBufferInternal(localRowID, len * 2 + JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH);
-            bb.position(bb.position() + JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH);
-        }
-
-        return asString(bb, len);
+    public long putNull() {
+        return commitAppend(getOffset(), 0);
     }
 
     private String asString(ByteBuffer bb, int len) {
@@ -241,113 +205,9 @@ public class VariableColumn extends AbstractColumn {
         }
     }
 
-    void commitAppend(long offset, int size) {
+    long commitAppend(long offset, int size) {
         preCommit(offset + size);
-        indexColumn.putLong(offset);
+        return indexColumn.putLong(offset);
     }
 
-    private void putStringB(String value) {
-        int len = value.length();
-        long offset = getOffset();
-        ByteBuffer bb = getBuffer(offset, len * 2 + JournalConfiguration.VARCHAR_SHORT_HEADER_LENGTH);
-        ByteBuffers.putStringB(bb, value);
-        commitAppend(offset, JournalConfiguration.VARCHAR_SHORT_HEADER_LENGTH + 2 * len);
-    }
-
-    private String getStringB(long localRowID) {
-        // read delegate buffer which lets us read "null" flag and string length.
-        ByteBuffer buf = getBufferInternal(localRowID, JournalConfiguration.VARCHAR_SHORT_HEADER_LENGTH);
-        int len = buf.get() & 0xff;
-        // check if buffer can have actual string (char=2*byte)
-        if (buf.remaining() < len * 2) {
-            buf = getBufferInternal(localRowID, len * 2 + JournalConfiguration.VARCHAR_SHORT_HEADER_LENGTH);
-            buf.position(buf.position() + JournalConfiguration.VARCHAR_SHORT_HEADER_LENGTH);
-        }
-
-        return asString(buf, len);
-    }
-
-    private boolean equalsStringB(long localRowID, String value) {
-        // read delegate buffer which lets us read "null" flag and string length.
-        ByteBuffer buf = getBufferInternal(localRowID, JournalConfiguration.VARCHAR_SHORT_HEADER_LENGTH);
-        int len = buf.get() & 0xff;
-
-        if (len != value.length()) {
-            return false;
-        }
-
-        int p;
-        // check if buffer can have actual string (char=2*byte)
-        if (buf.remaining() < len * 2) {
-            buf = getBufferInternal(localRowID, len * 2 + JournalConfiguration.VARCHAR_SHORT_HEADER_LENGTH);
-            p = buf.position() + JournalConfiguration.VARCHAR_SHORT_HEADER_LENGTH;
-        } else {
-            p = buf.position();
-        }
-
-        for (int i = 0; i < len; i++) {
-            if (buf.getChar(p) != value.charAt(i)) {
-                return false;
-            }
-            p += 2;
-        }
-
-        return true;
-    }
-
-    private boolean equalsStringW(long localRowID, String value) {
-        // read delegate buffer which lets us read "null" flag and string length.
-        ByteBuffer buf = getBufferInternal(localRowID, JournalConfiguration.VARCHAR_MEDIUM_HEADER_LENGTH);
-        int len = buf.getChar();
-
-        if (len != value.length()) {
-            return false;
-        }
-
-        int p;
-        // check if buffer can have actual string (char=2*byte)
-        if (buf.remaining() < len * 2) {
-            buf = getBufferInternal(localRowID, len * 2 + JournalConfiguration.VARCHAR_MEDIUM_HEADER_LENGTH);
-            p = buf.position() + JournalConfiguration.VARCHAR_MEDIUM_HEADER_LENGTH;
-        } else {
-            p = buf.position();
-        }
-
-        for (int i = 0; i < len; i++) {
-            if (buf.getChar(p) != value.charAt(i)) {
-                return false;
-            }
-            p += 2;
-        }
-
-        return true;
-    }
-
-    private boolean equalsStringDW(long localRowID, String value) {
-        // read delegate buffer which lets us read "null" flag and string length.
-        ByteBuffer buf = getBufferInternal(localRowID, JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH);
-        int len = buf.getInt();
-
-        if (len != value.length()) {
-            return false;
-        }
-
-        int p;
-        // check if buffer can have actual string (char=2*byte)
-        if (buf.remaining() < len * 2) {
-            buf = getBufferInternal(localRowID, len * 2 + JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH);
-            p = buf.position() + JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH;
-        } else {
-            p = buf.position();
-        }
-
-        for (int i = 0; i < len; i++) {
-            if (buf.getChar(p) != value.charAt(i)) {
-                return false;
-            }
-            p += 2;
-        }
-
-        return true;
-    }
 }

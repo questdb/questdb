@@ -16,11 +16,11 @@
 
 package com.nfsdb.journal;
 
-import com.nfsdb.journal.column.SymbolIndex;
+import com.nfsdb.journal.collections.LongArrayList;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
+import com.nfsdb.journal.index.KVIndex;
 import com.nfsdb.journal.test.tools.AbstractTest;
-import gnu.trove.list.array.TLongArrayList;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -39,15 +39,15 @@ public class IndexTest extends AbstractTest {
 
     @Test
     public void testIndexReadWrite() throws JournalException {
-        SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0);
-        index.put(0, 0);
-        index.put(1, 1);
-        index.put(1, 2);
-        index.put(0, 3);
-        index.put(0, 4);
-        index.put(1, 5);
-        index.put(1, 6);
-        index.put(0, 7);
+        KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0);
+        index.add(0, 0);
+        index.add(1, 1);
+        index.add(1, 2);
+        index.add(0, 3);
+        index.add(0, 4);
+        index.add(1, 5);
+        index.add(1, 6);
+        index.add(0, 7);
         Assert.assertEquals(1, index.getValueQuick(1, 0));
         Assert.assertEquals(2, index.getValueQuick(1, 1));
         Assert.assertEquals(5, index.getValueQuick(1, 2));
@@ -63,35 +63,35 @@ public class IndexTest extends AbstractTest {
 
     @Test(expected = JournalRuntimeException.class)
     public void testValueOutOfBounds() throws JournalException {
-        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
-            index.put(0, 0);
-            index.put(1, 1);
-            index.put(1, 2);
+        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
+            index.add(0, 0);
+            index.add(1, 1);
+            index.add(1, 2);
             index.getValueQuick(0, 1);
         }
     }
 
     @Test
     public void testKeyOutOfBounds() throws JournalException {
-        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
-            index.put(0, 0);
-            index.put(1, 1);
-            index.put(1, 2);
+        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
+            index.add(0, 0);
+            index.add(1, 1);
+            index.add(1, 2);
             Assert.assertEquals(0, index.getValues(2).size());
         }
     }
 
     @Test
     public void testTruncateMiddle() throws JournalException {
-        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
-            index.put(0, 0);
-            index.put(1, 1);
-            index.put(1, 2);
-            index.put(0, 3);
-            index.put(0, 4);
-            index.put(1, 5);
-            index.put(1, 6);
-            index.put(0, 7);
+        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
+            index.add(0, 0);
+            index.add(1, 1);
+            index.add(1, 2);
+            index.add(0, 3);
+            index.add(0, 4);
+            index.add(1, 5);
+            index.add(1, 6);
+            index.add(0, 7);
             index.truncate(5);
             Assert.assertEquals(3, index.getValues(0).size());
             Assert.assertEquals(2, index.getValues(1).size());
@@ -106,15 +106,15 @@ public class IndexTest extends AbstractTest {
 
     @Test
     public void testTruncateAtTail() throws JournalException {
-        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
-            index.put(0, 0);
-            index.put(1, 1);
-            index.put(1, 2);
-            index.put(0, 3);
-            index.put(0, 4);
-            index.put(1, 5);
-            index.put(1, 6);
-            index.put(0, 7);
+        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
+            index.add(0, 0);
+            index.add(1, 1);
+            index.add(1, 2);
+            index.add(0, 3);
+            index.add(0, 4);
+            index.add(1, 5);
+            index.add(1, 6);
+            index.add(0, 7);
             index.truncate(6);
             Assert.assertEquals(3, index.getValues(0).size());
             Assert.assertEquals(3, index.getValues(1).size());
@@ -132,15 +132,15 @@ public class IndexTest extends AbstractTest {
 
     @Test
     public void testTruncateBeyondTail() throws JournalException {
-        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
-            index.put(0, 0);
-            index.put(1, 1);
-            index.put(1, 2);
-            index.put(0, 3);
-            index.put(0, 4);
-            index.put(1, 5);
-            index.put(1, 6);
-            index.put(0, 7);
+        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
+            index.add(0, 0);
+            index.add(1, 1);
+            index.add(1, 2);
+            index.add(0, 3);
+            index.add(0, 4);
+            index.add(1, 5);
+            index.add(1, 6);
+            index.add(0, 7);
             index.truncate(10);
             Assert.assertEquals(4, index.getValues(0).size());
             Assert.assertEquals(4, index.getValues(1).size());
@@ -160,15 +160,15 @@ public class IndexTest extends AbstractTest {
 
     @Test
     public void testTruncateBeforeStart() throws JournalException {
-        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
-            index.put(0, 0);
-            index.put(1, 1);
-            index.put(1, 2);
-            index.put(0, 3);
-            index.put(0, 4);
-            index.put(1, 5);
-            index.put(1, 6);
-            index.put(0, 7);
+        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
+            index.add(0, 0);
+            index.add(1, 1);
+            index.add(1, 2);
+            index.add(0, 3);
+            index.add(0, 4);
+            index.add(1, 5);
+            index.add(1, 6);
+            index.add(0, 7);
             index.truncate(0);
             Assert.assertFalse(index.contains(0));
             Assert.assertFalse(index.contains(1));
@@ -180,9 +180,9 @@ public class IndexTest extends AbstractTest {
     public void testSmallValueArray() throws JournalException {
         int totalKeys = 2;
         int totalValues = 1;
-        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
+        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
             for (int i = 0; i < totalKeys; i++) {
-                index.put(i, i);
+                index.add(i, i);
             }
 
             Assert.assertEquals(totalKeys, index.size());
@@ -197,9 +197,9 @@ public class IndexTest extends AbstractTest {
     public void testAppendNullAfterTruncate() throws JournalException {
         int totalKeys = 2;
         int totalValues = 1;
-        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
+        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
             for (int i = -1; i < totalKeys; i++) {
-                index.put(i, i);
+                index.add(i, i);
             }
 
             Assert.assertEquals(totalKeys, index.size());
@@ -207,9 +207,8 @@ public class IndexTest extends AbstractTest {
             index.truncate(0);
 
             Assert.assertEquals(0, index.size());
-            index.put(-1, 10);
+            index.add(-1, 10);
             Assert.assertEquals(11, index.size());
-
         }
     }
 
@@ -219,7 +218,7 @@ public class IndexTest extends AbstractTest {
                 {0, 3, 5, 6, 8, 10, 12, 14, 16, 22},
                 {1, 2, 3, 4, 6, 8, 9, 11, 16, 21, 33}
         };
-        try (SymbolIndex index = new SymbolIndex(indexFile, 10, 60, 1, JournalMode.APPEND, 0)) {
+        try (KVIndex index = new KVIndex(indexFile, 10, 60, 1, JournalMode.APPEND, 0)) {
             putValues(expected, index);
             assertValues(expected, index);
         }
@@ -231,7 +230,7 @@ public class IndexTest extends AbstractTest {
                 {0, 3, 5, 6, 8, 10, 12, 14, 16, 22},
                 {1, 2, 3, 4, 6, 8, 9, 11, 16, 21, 33}
         };
-        try (SymbolIndex index = new SymbolIndex(indexFile, 10, 200, 1, JournalMode.APPEND, 0)) {
+        try (KVIndex index = new KVIndex(indexFile, 10, 200, 1, JournalMode.APPEND, 0)) {
             putValues(expected, index);
             assertValues(expected, index);
         }
@@ -243,7 +242,7 @@ public class IndexTest extends AbstractTest {
                 {0, 3, 5, 6, 8, 10, 12, 14, 16, 22},
                 {1, 2, 3, 4, 6, 8, 9, 11, 16, 21, 33}
         };
-        try (SymbolIndex index = new SymbolIndex(indexFile, 10, 60, 1, JournalMode.APPEND, 0)) {
+        try (KVIndex index = new KVIndex(indexFile, 10, 60, 1, JournalMode.APPEND, 0)) {
             putValues(expected, index);
 
             for (int i = 0; i < expected.length; i++) {
@@ -261,7 +260,7 @@ public class IndexTest extends AbstractTest {
                 {0, 3, 5, 6, 8, 10, 12, 14, 16, 22},
                 {1, 2, 3, 4, 6, 8, 9, 11, 16, 21, 33}
         };
-        try (SymbolIndex index = new SymbolIndex(indexFile, 10, 60, 1, JournalMode.APPEND, 0); SymbolIndex reader = new SymbolIndex(indexFile, 10, 60, 1, JournalMode.READ, 0)) {
+        try (KVIndex index = new KVIndex(indexFile, 10, 60, 1, JournalMode.APPEND, 0); KVIndex reader = new KVIndex(indexFile, 10, 60, 1, JournalMode.READ, 0)) {
             // populate writer
             putValues(expected, index);
 
@@ -287,8 +286,8 @@ public class IndexTest extends AbstractTest {
             reader.setTxAddress(index.getTxAddress());
 
             // add some more uncommitted changes to make life more difficult
-            index.put(0, 35);
-            index.put(1, 46);
+            index.add(0, 35);
+            index.add(1, 46);
 
             // check if refreshed reader saw only committed changes
             Assert.assertEquals(34, reader.size());
@@ -299,7 +298,7 @@ public class IndexTest extends AbstractTest {
             Assert.assertEquals(11, reader.getValueCount(1));
 
             // open new reader and check if it can see only committed changes
-            try (SymbolIndex reader2 = new SymbolIndex(indexFile, 10, 60, 1, JournalMode.READ, reader.getTxAddress())) {
+            try (KVIndex reader2 = new KVIndex(indexFile, 10, 60, 1, JournalMode.READ, reader.getTxAddress())) {
                 Assert.assertEquals(34, reader2.size());
                 Assert.assertTrue(reader2.contains(0));
                 Assert.assertTrue(reader2.contains(1));
@@ -310,7 +309,7 @@ public class IndexTest extends AbstractTest {
 
             index.commit();
 
-            try (SymbolIndex reader2 = new SymbolIndex(indexFile, 10, 60, 1, JournalMode.READ, index.getTxAddress())) {
+            try (KVIndex reader2 = new KVIndex(indexFile, 10, 60, 1, JournalMode.READ, index.getTxAddress())) {
                 Assert.assertEquals(47, reader2.size());
                 Assert.assertTrue(reader2.contains(0));
                 Assert.assertTrue(reader2.contains(1));
@@ -321,20 +320,26 @@ public class IndexTest extends AbstractTest {
         }
     }
 
-    private void putValues(long values[][], SymbolIndex index) {
+    private void putValues(long values[][], KVIndex index) {
         for (int i = 0; i < values.length; i++) {
             for (int k = 0; k < values[i].length; k++) {
-                index.put(i, values[i][k]);
+                index.add(i, values[i][k]);
             }
         }
     }
 
-    private void assertValues(long values[][], SymbolIndex index) {
+    private void assertValues(long values[][], KVIndex index) {
         for (int i = 0; i < values.length; i++) {
-            TLongArrayList array = index.getValues(i);
+            LongArrayList array = index.getValues(i);
             Assert.assertEquals(values[i].length, array.size());
             for (int k = 0; k < values[i].length; k++) {
                 Assert.assertEquals(values[i][k], array.get(k));
+            }
+
+            KVIndex.IndexCursor cursor = index.cachedCursor(i);
+            int k = (int) cursor.size();
+            while (cursor.hasNext()) {
+                Assert.assertEquals(values[i][--k], cursor.next());
             }
         }
     }

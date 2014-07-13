@@ -114,15 +114,6 @@ public final class ByteBuffers {
         return buffer;
     }
 
-    public static void putStringB(ByteBuffer buffer, String value) {
-        if (value == null) {
-            buffer.put((byte) 0);
-        } else {
-            buffer.put((byte) value.length());
-            putStr(buffer, value);
-        }
-    }
-
     public static void putStringW(ByteBuffer buffer, String value) {
         if (value == null) {
             buffer.putChar((char) 0);
@@ -214,6 +205,21 @@ public final class ByteBuffers {
             }
         }
         return result;
+    }
+
+    public static int copy(ByteBuffer from, int fromPos, ByteBuffer to, int toPos, int count) {
+        if (to != null && to.limit() > toPos) {
+            int toRem = to.limit() - toPos;
+            int fromRem = from.limit() - fromPos;
+
+            int c = fromRem < count ? fromRem : count;
+            c = toRem < c ? toRem : c;
+            for (int i = 0; i < c; i++) {
+                to.put(toPos + i, from.get(fromPos + i));
+            }
+            return c;
+        }
+        return 0;
     }
 
     public static void putStr(ByteBuffer buffer, String value) {

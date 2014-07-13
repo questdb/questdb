@@ -18,6 +18,7 @@ package com.nfsdb.journal.locks;
 
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
+import com.nfsdb.journal.logging.Logger;
 
 import java.io.File;
 import java.io.IOException;
@@ -27,6 +28,8 @@ import java.nio.channels.OverlappingFileLockException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class Lock {
+
+    private static final Logger LOGGER = Logger.getLogger(Lock.class);
 
     private final AtomicInteger refCount = new AtomicInteger(0);
     private RandomAccessFile file;
@@ -66,7 +69,8 @@ public final class Lock {
 
     synchronized void delete() {
         if (!lockName.delete()) {
-            throw new JournalRuntimeException("Could not delete lock: %s", lockName);
+            LOGGER.error("Could not delete lock: %s", lockName);
+//            throw new JournalRuntimeException("Could not delete lock: %s", lockName);
         }
     }
 

@@ -27,13 +27,13 @@ public class JournalKeyTest {
     @Test
     public void testKeyEquals() throws Exception {
         JournalKey<Quote> key1 = new JournalKey<>(Quote.class);
-        JournalKey<Quote> key2 = new JournalKey<>(Quote.class, "quote2");
+        JournalKey<Quote> key2 = new JournalKey<>(Quote.class, "Quote22");
         Assert.assertNotEquals(key1, key2);
     }
 
     @Test
     public void testKeySerialization() throws Exception {
-        JournalKey<Quote> key = new JournalKey<>(Quote.class, "quote2");
+        JournalKey<Quote> key = new JournalKey<>(Quote.class, "Quote22");
         ByteBuffer buffer = ByteBuffer.allocate(key.getBufferSize()).order(ByteOrder.LITTLE_ENDIAN);
         key.write(buffer);
         Assert.assertEquals(key.getBufferSize(), buffer.position());

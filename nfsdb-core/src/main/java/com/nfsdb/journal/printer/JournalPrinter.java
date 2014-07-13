@@ -69,8 +69,9 @@ public class JournalPrinter implements Closeable {
         return nullString;
     }
 
-    public void setNullString(String forNull) {
+    public JournalPrinter setNullString(String forNull) {
         nullString = forNull;
+        return this;
     }
 
     public JournalPrinter setAppender(Appender appender) {
@@ -112,7 +113,7 @@ public class JournalPrinter implements Closeable {
                     // first type in typeTemplate array wins
                     for (int i = 0; i < typeTemplate.length; i++) {
                         Class clazz = typeTemplate[i];
-                        for (java.lang.reflect.Field field : clazz.getFields()) {
+                        for (java.lang.reflect.Field field : clazz.getDeclaredFields()) {
                             if (f.name.equals(field.getName())) {
                                 f.fromType = field.getType();
                                 f.typeTemplateIndex = i;
@@ -129,12 +130,12 @@ public class JournalPrinter implements Closeable {
                     if (f.typeTemplateIndex == -1) {
                         throw new RuntimeException("No such field: " + f.name);
                     }
-                    f.offset = Unsafe.getUnsafe().objectFieldOffset(getType(f.typeTemplateIndex).getField(f.name));
+                    f.offset = Unsafe.getUnsafe().objectFieldOffset(getType(f.typeTemplateIndex).getDeclaredField(f.name));
                 } else {
                     // reference field with known type template index
                     Class t = getType(f.typeTemplateIndex);
-                    f.fromType = t.getField(f.name).getType();
-                    f.offset = Unsafe.getUnsafe().objectFieldOffset(t.getField(f.name));
+                    f.fromType = t.getDeclaredField(f.name).getType();
+                    f.offset = Unsafe.getUnsafe().objectFieldOffset(t.getDeclaredField(f.name));
                 }
 
                 setConverter(f);

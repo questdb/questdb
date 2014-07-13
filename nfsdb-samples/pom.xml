@@ -83,18 +83,6 @@
         </dependency>
 
         <dependency>
-            <groupId>com.nfsdb</groupId>
-            <artifactId>nfsdb-thrift</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>org.apache.thrift</groupId>
-            <artifactId>libthrift</artifactId>
-            <version>${thrift.version}</version>
-        </dependency>
-
-        <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
             <version>4.11</version>

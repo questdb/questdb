@@ -18,6 +18,7 @@ package com.nfsdb.journal.logging;
 
 
 import java.util.logging.Level;
+import java.util.logging.LogRecord;
 
 /**
  * Logger class with lazy evaluation.
@@ -45,7 +46,7 @@ public class Logger {
 
     public void trace(String format, Object... args) {
         if (isTraceEnabled()) {
-            logger.finest(String.format(format, args));
+            log(Level.FINEST, String.format(format, args));
         }
     }
 
@@ -61,12 +62,12 @@ public class Logger {
     }
 
     public void debug(java.lang.Object message, java.lang.Throwable throwable) {
-        logger.log(Level.FINE, message.toString(), throwable);
+        log(Level.FINE, message.toString(), throwable);
     }
 
     public void debug(String format, Object... args) {
         if (isDebugEnabled()) {
-            logger.fine(String.format(format, args));
+            log(Level.FINE, String.format(format, args));
         }
     }
 
@@ -76,23 +77,23 @@ public class Logger {
 
     public void debug(String format, java.lang.Throwable throwable, Object... args) {
         if (isDebugEnabled()) {
-            logger.log(Level.FINE, String.format(format, args), throwable);
+            log(Level.FINE, String.format(format, args), throwable);
         }
     }
 
     /////////////////////////////////////////////////////////////////
 
     public void info(java.lang.Object message) {
-        logger.info(message.toString());
+        log(Level.INFO, message.toString());
     }
 
     public void info(java.lang.Object message, java.lang.Throwable throwable) {
-        logger.log(Level.INFO, message.toString(), throwable);
+        log(Level.INFO, message.toString(), throwable);
     }
 
     public void info(String format, Object... args) {
         if (isInfoEnabled()) {
-            logger.info(String.format(format, args));
+            log(Level.INFO, String.format(format, args));
         }
     }
 
@@ -102,29 +103,29 @@ public class Logger {
 
     public void info(String format, java.lang.Throwable throwable, Object... args) {
         if (isInfoEnabled()) {
-            logger.log(Level.INFO, String.format(format, args), throwable);
+            log(Level.INFO, String.format(format, args), throwable);
         }
     }
-
-    /////////////////////////////////////////////////////////////////
 
     public void warn(java.lang.Object message) {
         logger.warning(message.toString());
     }
 
-    /////////////////////////////////////////////////////////////////
-
     public void error(java.lang.Object message) {
         logger.severe(message.toString());
     }
 
+    /////////////////////////////////////////////////////////////////
+
     public void error(java.lang.Object message, java.lang.Throwable throwable) {
-        logger.log(Level.SEVERE, message.toString(), throwable);
+        log(Level.SEVERE, message.toString(), throwable);
     }
+
+    /////////////////////////////////////////////////////////////////
 
     public void error(String format, Object... args) {
         if (isErrorEnabled()) {
-            logger.severe(String.format(format, args));
+            log(Level.SEVERE, String.format(format, args));
         }
     }
 
@@ -134,13 +135,24 @@ public class Logger {
 
     public void error(String format, java.lang.Throwable throwable, Object... args) {
         if (isErrorEnabled()) {
-            logger.log(Level.SEVERE, String.format(format, args), throwable);
+            log(Level.SEVERE, String.format(format, args), throwable);
         }
+    }
+
+    private Logger(Class<?> aClass) {
+        logger = java.util.logging.Logger.getLogger(aClass.getName());
+    }
+
+    private void log(Level level, String message) {
+        log(level, message, null);
     }
 
     /////////////////////////////////////////////////////////////////
 
-    private Logger(Class<?> aClass) {
-        logger = java.util.logging.Logger.getLogger(aClass.getName());
+    private void log(Level level, String message, Throwable throwable) {
+        LogRecord lr = new LogRecord(level, message);
+        lr.setThrown(throwable);
+        lr.setSourceClassName(logger.getName());
+        logger.log(lr);
     }
 }

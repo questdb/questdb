@@ -20,14 +20,13 @@ import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalMode;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.collections.LongArrayList;
-import com.nfsdb.journal.column.SymbolIndex;
 import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.index.KVIndex;
 import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.query.api.QueryAllBuilder;
-import com.nfsdb.journal.test.model.Quote;
 import com.nfsdb.journal.test.tools.JournalTestFactory;
-import com.nfsdb.journal.test.tools.TestUtils;
 import com.nfsdb.journal.utils.Dates;
+import com.nfsdb.thrift.model.Quote;
 import org.joda.time.Interval;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -45,7 +44,7 @@ public class PerformanceTest {
     private static boolean enabled = false;
 
     @Rule
-    public final JournalTestFactory factory = new JournalTestFactory(new ThriftNullsAdaptorFactory());
+    public final JournalTestFactory factory = new JournalTestFactory("/nfsdb-thrift.xml", new ThriftNullsAdaptorFactory());
 
     @BeforeClass
     public static void setUp() throws Exception {
@@ -61,7 +60,7 @@ public class PerformanceTest {
             if (i == 0) {
                 t = System.nanoTime();
             }
-            TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.toMillis("2013-10-05T10:00:00.000Z"), 1000);
+            Utils.generateQuoteData(w, TEST_DATA_SIZE, Dates.toMillis("2013-10-05T10:00:00.000Z"), 1000);
             w.commit();
         }
 
@@ -97,14 +96,14 @@ public class PerformanceTest {
         File indexFile = new File(factory.getConfiguration().getJournalBase(), "index-test");
         int totalKeys = 30000;
         int totalValues = 20000000;
-        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
+        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
             long valuesPerKey = totalValues / totalKeys;
 
             long t = System.nanoTime();
             long count = 0;
             for (int k = 0; k < totalKeys; k++) {
                 for (int v = 0; v < valuesPerKey; v++) {
-                    index.put(k, k * valuesPerKey + v);
+                    index.add(k, k * valuesPerKey + v);
                     count++;
                 }
             }
@@ -148,7 +147,7 @@ public class PerformanceTest {
     public void testAllBySymbolValueOverInterval() throws JournalException {
 
         JournalWriter<Quote> w = factory.writer(Quote.class, "quote", TEST_DATA_SIZE);
-        TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.toMillis("2013-10-05T10:00:00.000Z"), 1000);
+        Utils.generateQuoteData(w, TEST_DATA_SIZE, Dates.toMillis("2013-10-05T10:00:00.000Z"), 1000);
         w.commit();
 
         try (Journal<Quote> journal = factory.reader(Quote.class)) {
@@ -167,7 +166,7 @@ public class PerformanceTest {
     public void testLatestBySymbol() throws JournalException {
 
         JournalWriter<Quote> w = factory.writer(Quote.class, "quote", TEST_DATA_SIZE);
-        TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.toMillis("2013-10-05T10:00:00.000Z"), 1000);
+        Utils.generateQuoteData(w, TEST_DATA_SIZE, Dates.toMillis("2013-10-05T10:00:00.000Z"), 1000);
         w.commit();
 
         try (Journal<Quote> journal = factory.reader(Quote.class)) {

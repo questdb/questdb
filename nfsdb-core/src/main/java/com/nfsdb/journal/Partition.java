@@ -21,15 +21,13 @@ import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.factory.JournalMetadata;
 import com.nfsdb.journal.factory.NullsAdaptor;
+import com.nfsdb.journal.index.KVIndex;
 import com.nfsdb.journal.iterators.ConcurrentIterator;
 import com.nfsdb.journal.iterators.PartitionBufferedIterator;
 import com.nfsdb.journal.iterators.PartitionConcurrentIterator;
 import com.nfsdb.journal.iterators.PartitionIterator;
 import com.nfsdb.journal.logging.Logger;
-import com.nfsdb.journal.utils.ByteBuffers;
-import com.nfsdb.journal.utils.Dates;
-import com.nfsdb.journal.utils.Rows;
-import com.nfsdb.journal.utils.Unsafe;
+import com.nfsdb.journal.utils.*;
 import org.joda.time.Interval;
 
 import java.io.Closeable;
@@ -223,11 +221,11 @@ public class Partition<T> implements Iterable<T>, Closeable {
         return columns[i];
     }
 
-    public SymbolIndex getIndexForColumn(String columnName) throws JournalException {
+    public KVIndex getIndexForColumn(String columnName) throws JournalException {
         return getIndexForColumn(journal.getMetadata().getColumnIndex(columnName));
     }
 
-    public SymbolIndex getIndexForColumn(final int columnIndex) throws JournalException {
+    public KVIndex getIndexForColumn(final int columnIndex) throws JournalException {
         SymbolIndexProxy h = columnIndexProxies.get(columnIndex);
         if (h == null) {
             throw new JournalException("There is no index for column '%s' in %s", journal.getMetadata().getColumnMetadata(columnIndex).name, this);
@@ -326,6 +324,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
             checkNulls = true;
         }
 
+        int key;
         for (int i = 0; i < columnCount; i++) {
             Journal.ColumnMetadata meta = journal.getColumnMetadata(i);
             switch (meta.meta.type) {
@@ -375,23 +374,29 @@ public class Partition<T> implements Iterable<T>, Closeable {
                     String s = (String) u.getObject(obj, meta.meta.offset);
                     if (s == null) {
                         nulls.set(i);
-                        ((VariableColumn) columns[i]).putNull();
-                    } else if (s.length() > meta.meta.maxSize) {
-                        throw new JournalException("String value too large: %s [%d]", meta.meta.name, s.length());
+                        if (meta.meta.indexed) {
+                            appendKeyCache[i] = SymbolTable.VALUE_IS_NULL;
+                            appendSizeCache[i] = ((VariableColumn) columns[i]).putNull();
+                        } else {
+                            ((VariableColumn) columns[i]).putNull();
+                        }
                     } else {
-                        ((VariableColumn) columns[i]).putString(s);
+                        if (meta.meta.indexed) {
+                            appendKeyCache[i] = Checksum.hash(s, meta.meta.distinctCountHint);
+                            appendSizeCache[i] = ((VariableColumn) columns[i]).putString(s);
+                        } else {
+                            ((VariableColumn) columns[i]).putString(s);
+                        }
                     }
                     break;
                 case SYMBOL:
                     String sym = (String) u.getObject(obj, meta.meta.offset);
-                    int key;
                     if (sym == null) {
                         nulls.set(i);
                         key = SymbolTable.VALUE_IS_NULL;
                     } else {
                         key = meta.symbolTable.put(sym);
                     }
-                    appendSizeCache[i] = ((FixedColumn) columns[i]).putInt(key);
                     if (meta.meta.indexed) {
                         appendKeyCache[i] = key;
                         appendSizeCache[i] = ((FixedColumn) columns[i]).putInt(key);
@@ -415,7 +420,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
         for (int i = 0, len = appendKeyCache.length; i < len; i++) {
             if (appendKeyCache[i] > -3) {
-                columnIndexProxies.get(i).getIndex().put(appendKeyCache[i], appendSizeCache[i]);
+                columnIndexProxies.get(i).getIndex().add(appendKeyCache[i], appendSizeCache[i]);
             }
         }
 
@@ -497,12 +502,12 @@ public class Partition<T> implements Iterable<T>, Closeable {
         getIndexForColumn(columnIndex).close();
 
         File base = journal.getMetadata().getColumnIndexBase(partitionDir, columnIndex);
-        SymbolIndex.delete(base);
+        KVIndex.delete(base);
 
-        try (SymbolIndex index = new SymbolIndex(base, keyCountHint, recordCountHint, txCountHint, JournalMode.APPEND, 0)) {
+        try (KVIndex index = new KVIndex(base, keyCountHint, recordCountHint, txCountHint, JournalMode.APPEND, 0)) {
             FixedColumn col = getFixedWidthColumn(columnIndex);
             for (long localRowID = 0, sz = size(); localRowID < sz; localRowID++) {
-                index.put(col.getInt(localRowID), localRowID);
+                index.add(col.getInt(localRowID), localRowID);
             }
             index.commit();
         }
@@ -599,10 +604,10 @@ public class Partition<T> implements Iterable<T>, Closeable {
             try {
                 for (int i1 = 0, indexProxiesSize = indexProxies.size(); i1 < indexProxiesSize; i1++) {
                     SymbolIndexProxy<T> proxy = indexProxies.get(i1);
-                    SymbolIndex index = proxy.getIndex();
+                    KVIndex index = proxy.getIndex();
                     FixedColumn col = getFixedWidthColumn(proxy.getColumnIndex());
                     for (long i = oldSize; i < newSize; i++) {
-                        index.put(col.getInt(i), i);
+                        index.add(col.getInt(i), i);
                     }
                     index.commit();
                 }
@@ -653,8 +658,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
             case BINARY:
                 columns[columnIndex] = new VariableColumn(
                         new MappedFileImpl(new File(partitionDir, m.name + ".d"), m.bitHint, journal.getMode())
-                        , new MappedFileImpl(new File(partitionDir, m.name + ".i"), m.indexBitHint, journal.getMode())
-                        , m.maxSize);
+                        , new MappedFileImpl(new File(partitionDir, m.name + ".i"), m.indexBitHint, journal.getMode()));
                 break;
             default:
                 columns[columnIndex] = new FixedColumn(

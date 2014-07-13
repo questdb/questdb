@@ -25,7 +25,6 @@ import com.nfsdb.journal.printer.appender.StdOutAppender;
 import com.nfsdb.journal.query.api.QueryAllBuilder;
 import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Files;
-import com.nfsdb.thrift.JournalThriftFactory;
 import org.joda.time.DateTime;
 import org.joda.time.DateTimeField;
 import org.joda.time.chrono.ISOChronology;
@@ -44,9 +43,8 @@ public class DailyPriceAverageExample {
             System.exit(1);
         }
         String journalLocation = args[0];
-        // this is another way to setup JournalFactory if you would like to provide NullsAdaptor. NullsAdaptor for thrift,
-        // which is used in this case implements JIT-friendly object reset method, which is quite fast.
-        try (JournalFactory factory = new JournalThriftFactory(journalLocation)) {
+
+        try (JournalFactory factory = new JournalFactory(journalLocation)) {
 
             // delete existing quote journal
             Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote"));
@@ -92,17 +90,17 @@ public class DailyPriceAverageExample {
                     // so this loop leverages data order by printing out result when
                     // day of year changes
                     for (Quote q : builder.asResultSet().bufferedIterator()) {
-                        int thisDay = dayOfYear.get(q.timestamp);
+                        int thisDay = dayOfYear.get(q.getTimestamp());
                         if (thisDay != previousDay) {
                             if (previousDay != -1) {
                                 printer.out(symbol, Dates.utc().withDayOfYear(previousDay).withHourOfDay(0).withMinuteOfHour(0).withSecondOfMinute(0).withMillisOfSecond(0), avgSum / avgCount);
                             }
                             avgCount = 1;
-                            avgSum = q.ask;
+                            avgSum = q.getTimestamp();
                             previousDay = thisDay;
                         } else {
                             avgCount++;
-                            avgSum += q.ask;
+                            avgSum += q.getTimestamp();
                         }
                         count++;
                     }

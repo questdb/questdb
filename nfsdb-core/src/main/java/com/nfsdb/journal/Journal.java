@@ -395,6 +395,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
                         if (buf != null) {
                             buf.clear();
                         }
+                        break;
                     default:
                         throw new JournalUnsupportedTypeException(m.type);
                 }
@@ -603,7 +604,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
                 int tabIndex = symbolTables.size();
                 int tabSize = tx.symbolTableSizes.length > tabIndex ? tx.symbolTableSizes[tabIndex] : 0;
                 long indexTxAddress = tx.symbolTableIndexPointers.length > tabIndex ? tx.symbolTableIndexPointers[tabIndex] : 0;
-                SymbolTable tab = new SymbolTable(meta.distinctCountHint, meta.maxSize, getMetadata().getTxCountHint(), location, meta.name, getMode(), tabSize, indexTxAddress);
+                SymbolTable tab = new SymbolTable(meta.distinctCountHint, meta.avgSize, getMetadata().getTxCountHint(), location, meta.name, getMode(), tabSize, indexTxAddress);
                 symbolTables.add(tab);
                 symbolTableMap.put(meta.name, tab);
                 columnMetadata[i].symbolTable = tab;

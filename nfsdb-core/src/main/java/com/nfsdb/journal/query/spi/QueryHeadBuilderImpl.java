@@ -22,9 +22,9 @@ import com.nfsdb.journal.UnorderedResultSet;
 import com.nfsdb.journal.UnorderedResultSetBuilder;
 import com.nfsdb.journal.collections.IntArrayList;
 import com.nfsdb.journal.collections.LongArrayList;
-import com.nfsdb.journal.column.SymbolIndex;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.index.KVIndex;
 import com.nfsdb.journal.query.api.QueryHeadBuilder;
 import com.nfsdb.journal.utils.Rows;
 import org.joda.time.Interval;
@@ -119,7 +119,7 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
 
         return journal.iteratePartitionsDesc(
                 new UnorderedResultSetBuilder<T>(interval) {
-                    private final SymbolIndex filterSymbolIndexes[] = new SymbolIndex[filterSymbolKeys.size()];
+                    private final KVIndex filterKVIndexes[] = new KVIndex[filterSymbolKeys.size()];
                     private final LongArrayList filterSymbolRows[] = new LongArrayList[filterSymbolKeys.size()];
                     private IntArrayList keys = symbolKeys;
                     private IntArrayList remainingKeys = new IntArrayList(keys.size());
@@ -138,15 +138,15 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
 
                     @Override
                     public void read(long lo, long hi) throws JournalException {
-                        SymbolIndex index = partition.getIndexForColumn(symbolColumnIndex);
+                        KVIndex index = partition.getIndexForColumn(symbolColumnIndex);
 
                         boolean filterOk = true;
                         for (int i = 0; i < filterSymbols.size(); i++) {
-                            filterSymbolIndexes[i] = partition.getIndexForColumn(filterSymbols.get(i));
+                            filterKVIndexes[i] = partition.getIndexForColumn(filterSymbols.get(i));
                             int filterKey = filterSymbolKeys.getQuick(i);
-                            if (filterSymbolIndexes[i].contains(filterKey)) {
-                                filterSymbolRows[i].setCapacity(filterSymbolIndexes[i].getValueCount(filterKey));
-                                filterSymbolIndexes[i].getValues(filterKey, filterSymbolRows[i]);
+                            if (filterKVIndexes[i].contains(filterKey)) {
+                                filterSymbolRows[i].setCapacity(filterKVIndexes[i].getValueCount(filterKey));
+                                filterKVIndexes[i].getValues(filterKey, filterSymbolRows[i]);
                             } else {
                                 filterOk = false;
                                 break;
@@ -158,9 +158,11 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
                             for (int k = 0; k < keys.size(); k++) {
                                 int key = keys.getQuick(k);
                                 boolean found = false;
+                                KVIndex.IndexCursor cursor = index.cachedCursor(key);
+
                                 NEXT_KEY:
-                                for (int i = index.getValueCount(key) - 1; i >= 0; i--) {
-                                    long localRowID = index.getValueQuick(key, i);
+                                while (cursor.hasNext()) {
+                                    long localRowID = cursor.next();
                                     if (localRowID <= hi && localRowID >= lo && (partition.getPartitionIndex() > minPartitionIndex || localRowID > minLocalRowID)) {
 
                                         boolean matches = true;

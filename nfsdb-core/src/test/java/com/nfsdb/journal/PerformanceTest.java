@@ -17,8 +17,8 @@
 package com.nfsdb.journal;
 
 import com.nfsdb.journal.collections.LongArrayList;
-import com.nfsdb.journal.column.SymbolIndex;
 import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.index.KVIndex;
 import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.query.api.QueryAllBuilder;
 import com.nfsdb.journal.test.model.Quote;
@@ -49,7 +49,8 @@ public class PerformanceTest extends AbstractTest {
     public void testJournalAppendAndReadSpeed() throws JournalException {
         JournalWriter<Quote> w = factory.writer(Quote.class, "quote", TEST_DATA_SIZE);
         long t = 0;
-        for (int i = -3; i < 5; i++) {
+        int count = 10;
+        for (int i = -10; i < count; i++) {
             w.truncate();
             if (i == 0) {
                 t = System.nanoTime();
@@ -60,26 +61,26 @@ public class PerformanceTest extends AbstractTest {
 
 
         long result = System.nanoTime() - t;
-        LOGGER.info("append (1M): " + TimeUnit.NANOSECONDS.toMillis(result / 5) + "ms");
+        LOGGER.info("append (1M): " + TimeUnit.NANOSECONDS.toMillis(result / count) + "ms");
         if (enabled) {
             Assert.assertTrue("Append speed must be under 750ms (" + TimeUnit.NANOSECONDS.toMillis(result) + ")", TimeUnit.NANOSECONDS.toMillis(result) < 700);
         }
 
 
-        for (int i = -5; i < 10; i++) {
+        for (int i = -10; i < count; i++) {
             if (i == 0) {
                 t = System.nanoTime();
             }
             Iterator<Quote> iterator = w.bufferedIterator();
-            int count = 0;
+            int cnt = 0;
             while (iterator.hasNext()) {
                 iterator.next();
-                count++;
+                cnt++;
             }
-            Assert.assertEquals(TEST_DATA_SIZE, count);
+            Assert.assertEquals(TEST_DATA_SIZE, cnt);
         }
         result = System.nanoTime() - t;
-        LOGGER.info("read (1M): " + TimeUnit.NANOSECONDS.toMillis(result / 10) + "ms");
+        LOGGER.info("read (1M): " + TimeUnit.NANOSECONDS.toMillis(result / count) + "ms");
         if (enabled) {
             Assert.assertTrue("Read speed must be under 300ms (" + TimeUnit.NANOSECONDS.toMillis(result) + ")", TimeUnit.NANOSECONDS.toMillis(result) < 300);
         }
@@ -90,14 +91,14 @@ public class PerformanceTest extends AbstractTest {
         File indexFile = new File(factory.getConfiguration().getJournalBase(), "index-test");
         int totalKeys = 30000;
         int totalValues = 20000000;
-        try (SymbolIndex index = new SymbolIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
+        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
             long valuesPerKey = totalValues / totalKeys;
 
             long t = System.nanoTime();
             long count = 0;
             for (int k = 0; k < totalKeys; k++) {
                 for (int v = 0; v < valuesPerKey; v++) {
-                    index.put(k, k * valuesPerKey + v);
+                    index.add(k, k * valuesPerKey + v);
                     count++;
                 }
             }
@@ -147,9 +148,12 @@ public class PerformanceTest extends AbstractTest {
         try (Journal<Quote> journal = factory.reader(Quote.class)) {
             int count = 1000;
             Interval interval = Dates.interval(Dates.toMillis("2013-10-05T10:00:00.000Z"), Dates.toMillis("2013-10-15T10:00:00.000Z"));
-            long t = System.nanoTime();
+            long t = 0;
             QueryAllBuilder<Quote> builder = journal.query().all().withKeys("LLOY.L").slice(interval);
-            for (int i = 0; i < count; i++) {
+            for (int i = -1000; i < count; i++) {
+                if (i == 0) {
+                    t = System.nanoTime();
+                }
                 builder.asResultSet();
             }
             LOGGER.info("journal.query().all().withKeys(\"LLOY.L\").slice(interval) (query only) latency: " + (System.nanoTime() - t) / count / 1000 + "μs");

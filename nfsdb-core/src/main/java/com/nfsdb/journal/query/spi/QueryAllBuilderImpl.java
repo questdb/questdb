@@ -48,7 +48,7 @@ public class QueryAllBuilderImpl<T> implements QueryAllBuilder<T> {
 
     @Override
     public UnorderedResultSet<T> asResultSet() throws JournalException {
-        return journal.iteratePartitions(new QueryAllResultSetBuilder<T>(interval, symbol, symbolKeys, filterSymbols, filterSymbolKeys));
+        return journal.iteratePartitionsDesc(new QueryAllResultSetBuilder<T>(interval, symbol, symbolKeys, filterSymbols, filterSymbolKeys));
     }
 
     public void setSymbol(String symbol, String... values) {

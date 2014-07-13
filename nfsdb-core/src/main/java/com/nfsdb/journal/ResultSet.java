@@ -16,6 +16,7 @@
 
 package com.nfsdb.journal;
 
+import com.nfsdb.journal.collections.LongArrayList;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.iterators.ConcurrentIterator;
@@ -24,7 +25,6 @@ import com.nfsdb.journal.iterators.ResultSetConcurrentIterator;
 import com.nfsdb.journal.iterators.ResultSetIterator;
 import com.nfsdb.journal.utils.Rows;
 import gnu.trove.list.TLongList;
-import gnu.trove.list.array.TLongArrayList;
 
 import java.util.Iterator;
 import java.util.Random;
@@ -170,7 +170,7 @@ public class ResultSet<T> implements Iterable<T> {
     }
 
     public ResultSet<T> shuffle(Random random) {
-        TLongArrayList rows = new TLongArrayList(this.rowIDs);
+        LongArrayList rows = new LongArrayList(this.rowIDs);
         rows.shuffle(random);
         return new ResultSet<>(journal, rows);
     }

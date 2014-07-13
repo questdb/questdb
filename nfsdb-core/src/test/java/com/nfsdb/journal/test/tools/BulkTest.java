@@ -26,7 +26,7 @@ import org.junit.Test;
 public class BulkTest extends AbstractTest {
     @Test
     public void testBulkWrite() throws Exception {
-        final int batchSize = 5000000;
+        final int batchSize = 1000000;
         JournalWriter<Quote> writer = factory.bulkWriter(Quote.class);
         Journal<Quote> reader = factory.bulkReader(Quote.class);
 
@@ -45,7 +45,7 @@ public class BulkTest extends AbstractTest {
     @Test
     public void testDurable() throws Exception {
         JournalFactory f = factory;
-        final int batchSize = 1000000;
+        final int batchSize = 100000;
         final int iterations = 10;
         JournalWriter<Quote> writer = f.bulkWriter(Quote.class);
         Journal<Quote> reader = f.bulkReader(Quote.class);

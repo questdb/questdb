@@ -21,7 +21,7 @@ import com.nfsdb.journal.column.MappedFile;
 import com.nfsdb.journal.column.MappedFileImpl;
 import com.nfsdb.journal.column.VariableColumn;
 import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.factory.JournalMetadata;
+import com.nfsdb.journal.test.tools.RandomString;
 import com.nfsdb.journal.test.tools.TestUtils;
 import com.nfsdb.journal.utils.ByteBuffers;
 import com.nfsdb.journal.utils.Files;
@@ -85,7 +85,7 @@ public class ColumnTest {
         MappedFile df1 = new MappedFileImpl(dataFile, 22, JournalMode.APPEND);
         MappedFile idxFile1 = new MappedFileImpl(indexFile, 22, JournalMode.APPEND);
 
-        try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1, JournalMetadata.BYTE_LIMIT)) {
+        try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1)) {
             for (int i = 0; i < recordCount; i++) {
                 varchar1.putString("s" + i);
                 varchar1.commit();
@@ -95,7 +95,7 @@ public class ColumnTest {
         MappedFile df2 = new MappedFileImpl(dataFile, 22, JournalMode.APPEND);
         MappedFile idxFile2 = new MappedFileImpl(indexFile, 22, JournalMode.APPEND);
 
-        try (VariableColumn varchar2 = new VariableColumn(df2, idxFile2, JournalMetadata.BYTE_LIMIT)) {
+        try (VariableColumn varchar2 = new VariableColumn(df2, idxFile2)) {
             Assert.assertEquals(recordCount, varchar2.size());
             for (int i = 0; i < varchar2.size(); i++) {
                 String s = varchar2.getString(i);
@@ -109,7 +109,7 @@ public class ColumnTest {
         MappedFile df1 = new MappedFileImpl(dataFile, 22, JournalMode.APPEND);
         MappedFile idxFile1 = new MappedFileImpl(indexFile, 22, JournalMode.APPEND);
 
-        try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1, JournalMetadata.BYTE_LIMIT)) {
+        try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1)) {
             varchar1.putString("string1");
             varchar1.commit();
             varchar1.putString("string2");
@@ -127,7 +127,7 @@ public class ColumnTest {
         MappedFile df2 = new MappedFileImpl(dataFile, 22, JournalMode.READ);
         MappedFile idxFile2 = new MappedFileImpl(indexFile, 22, JournalMode.READ);
 
-        try (VariableColumn varchar2 = new VariableColumn(df2, idxFile2, JournalMetadata.BYTE_LIMIT)) {
+        try (VariableColumn varchar2 = new VariableColumn(df2, idxFile2)) {
             Assert.assertEquals("string1", varchar2.getString(0));
             Assert.assertEquals("string2", varchar2.getString(1));
 //            Assert.assertNull(varchar2.getString(2));
@@ -143,7 +143,7 @@ public class ColumnTest {
         MappedFile df1 = new MappedFileImpl(dataFile, 22, JournalMode.APPEND);
         MappedFile idxFile1 = new MappedFileImpl(indexFile, 22, JournalMode.APPEND);
 
-        try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1, JournalMetadata.BYTE_LIMIT)) {
+        try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1)) {
             varchar1.putString("string1");
             varchar1.commit();
             varchar1.putString("string2");
@@ -171,7 +171,7 @@ public class ColumnTest {
         MappedFile df2 = new MappedFileImpl(dataFile, 22, JournalMode.READ);
         MappedFile idxFile12 = new MappedFileImpl(indexFile, 22, JournalMode.READ);
 
-        try (VariableColumn varchar2 = new VariableColumn(df2, idxFile12, JournalMetadata.BYTE_LIMIT)) {
+        try (VariableColumn varchar2 = new VariableColumn(df2, idxFile12)) {
             Assert.assertEquals("string1", varchar2.getString(0));
             Assert.assertEquals("string2", varchar2.getString(1));
 //            Assert.assertNull(varchar2.getString(2));
@@ -215,7 +215,7 @@ public class ColumnTest {
 
         final Random random = new Random(System.currentTimeMillis());
         final int len = 5024;
-        try (VariableColumn col = new VariableColumn(df1, idxFile1, 10)) {
+        try (VariableColumn col = new VariableColumn(df1, idxFile1)) {
             ByteBuffer buf = ByteBuffer.allocate(len);
             String s = TestUtils.randomString(random, buf.remaining() / 2);
             ByteBuffers.putStr(buf, s);
@@ -232,6 +232,32 @@ public class ColumnTest {
             }
             String actual = new String(chars);
             Assert.assertEquals(s, actual);
+        }
+    }
+
+    @Test
+    public void testTwoByteEdges() throws JournalException {
+
+        RandomString rs = new RandomString(65000);
+        String s1 = rs.nextString();
+        String s2 = rs.nextString();
+        MappedFile df1 = new MappedFileImpl(dataFile, 22, JournalMode.APPEND);
+        MappedFile idxFile1 = new MappedFileImpl(indexFile, 22, JournalMode.APPEND);
+
+        try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1)) {
+
+            varchar1.putString(s1);
+            varchar1.commit();
+            varchar1.putString(s2);
+            varchar1.commit();
+        }
+
+        MappedFile df2 = new MappedFileImpl(dataFile, 22, JournalMode.READ);
+        MappedFile idxFile2 = new MappedFileImpl(indexFile, 22, JournalMode.READ);
+
+        try (VariableColumn varchar2 = new VariableColumn(df2, idxFile2)) {
+            Assert.assertEquals(s1, varchar2.getString(0));
+            Assert.assertEquals(s2, varchar2.getString(1));
         }
     }
 }

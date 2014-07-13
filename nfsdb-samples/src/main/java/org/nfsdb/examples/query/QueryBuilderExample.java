@@ -23,7 +23,6 @@ import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.query.api.QueryAllBuilder;
 import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Files;
-import com.nfsdb.thrift.JournalThriftFactory;
 import org.joda.time.DateTime;
 import org.nfsdb.examples.model.Quote;
 import org.nfsdb.examples.support.QuoteGenerator;
@@ -39,9 +38,8 @@ public class QueryBuilderExample {
             System.exit(1);
         }
         String journalLocation = args[0];
-        // this is another way to setup JournalFactory if you would like to provide NullsAdaptor. NullsAdaptor for thrift,
-        // which is used in this case implements JIT-friendly object reset method, which is quite fast.
-        try (JournalFactory factory = new JournalThriftFactory(journalLocation)) {
+
+        try (JournalFactory factory = new JournalFactory(journalLocation)) {
 
             // delete existing quote journal
             Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote"));

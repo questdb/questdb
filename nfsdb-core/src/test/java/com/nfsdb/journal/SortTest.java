@@ -42,8 +42,8 @@ public class SortTest extends AbstractTest {
     public void testSortDouble() throws JournalException {
         double last = -1;
         for (TestEntity p : q.all().asResultSet().sort("aDouble").bufferedIterator()) {
-            Assert.assertTrue("Journal records are out of order", last <= p.aDouble);
-            last = p.aDouble;
+            Assert.assertTrue("Journal records are out of order", last <= p.getADouble());
+            last = p.getADouble();
         }
     }
 

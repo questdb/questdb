@@ -91,9 +91,10 @@ public class FixedColumn extends AbstractColumn {
         return txAppendOffset / width - 1;
     }
 
-    public void putLong(long value) {
+    public long putLong(long value) {
         ByteBuffer bb = getBuffer();
         bb.putLong(bb.position(), value);
+        return txAppendOffset / width - 1;
     }
 
     public void putShort(short value) {

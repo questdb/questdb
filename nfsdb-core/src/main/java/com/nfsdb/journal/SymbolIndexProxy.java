@@ -16,9 +16,9 @@
 
 package com.nfsdb.journal;
 
-import com.nfsdb.journal.column.SymbolIndex;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalMetadata;
+import com.nfsdb.journal.index.KVIndex;
 import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.utils.Dates;
 
@@ -29,7 +29,7 @@ class SymbolIndexProxy<T> implements Closeable {
     private static final Logger LOGGER = Logger.getLogger(SymbolIndexProxy.class);
     private final Partition<T> partition;
     private final int columnIndex;
-    private SymbolIndex index;
+    private KVIndex index;
     private volatile long lastAccessed;
     private long txAddress;
 
@@ -65,11 +65,11 @@ class SymbolIndexProxy<T> implements Closeable {
         return columnIndex;
     }
 
-    SymbolIndex getIndex() throws JournalException {
+    KVIndex getIndex() throws JournalException {
         lastAccessed = partition.getJournal().getTimerCache().getMillis();
         if (index == null) {
             JournalMetadata<T> meta = partition.getJournal().getMetadata();
-            index = new SymbolIndex(
+            index = new KVIndex(
                     meta.getColumnIndexBase(partition.getPartitionDir(), columnIndex),
                     meta.getColumnMetadata(columnIndex).distinctCountHint,
                     meta.getRecordHint(),

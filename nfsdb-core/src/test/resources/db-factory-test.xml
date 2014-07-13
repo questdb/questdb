@@ -16,7 +16,7 @@
   -->
 
 <db>
-    <journal class="com.nfsdb.journal.test.model.TestEntity" defaultPath="quote" timestampColumn="timestamp"
+    <journal class="com.nfsdb.journal.test.model.TestEntity" defaultPath="test-entity" timestampColumn="timestamp"
              partitionType="MONTH" recordHint="18000000" maxOpenPartitions="12" openPartitionTTL="180" lagHours="48"
              key="sym">
         <sym name="sym" indexed="true" maxsize="4" hintDistinctCount="15"/>

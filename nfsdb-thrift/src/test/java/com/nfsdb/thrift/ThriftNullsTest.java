@@ -19,9 +19,9 @@ package com.nfsdb.thrift;
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.test.model.Quote;
 import com.nfsdb.journal.test.tools.JournalTestFactory;
 import com.nfsdb.journal.utils.Dates;
+import com.nfsdb.thrift.model.Quote;
 import org.apache.thrift.TBase;
 import org.apache.thrift.TException;
 import org.apache.thrift.TFieldIdEnum;
@@ -35,7 +35,7 @@ import java.util.BitSet;
 public class ThriftNullsTest {
 
     @Rule
-    public JournalTestFactory factory = new JournalTestFactory(new ThriftNullsAdaptorFactory());
+    public final JournalTestFactory factory = new JournalTestFactory("/nfsdb-thrift.xml", new ThriftNullsAdaptorFactory());
 
     @Test
     public void testByteBitField() throws Exception {

@@ -17,12 +17,14 @@
 package com.nfsdb.journal.column;
 
 import com.nfsdb.journal.JournalMode;
-import com.nfsdb.journal.collections.LongArrayList;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalImmutableIteratorException;
 import com.nfsdb.journal.exceptions.JournalInvalidSymbolValueException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
+import com.nfsdb.journal.index.experimental.Cursor;
+import com.nfsdb.journal.index.KVIndex;
 import com.nfsdb.journal.utils.ByteBuffers;
+import com.nfsdb.journal.utils.Checksum;
 import com.nfsdb.journal.utils.Lists;
 import gnu.trove.map.hash.TObjectIntHashMap;
 
@@ -45,10 +47,10 @@ public class SymbolTable implements Closeable {
     private final TObjectIntHashMap<String> valueCache;
     private final ArrayList<String> keyCache;
     private VariableColumn data;
-    private SymbolIndex index;
+    private KVIndex index;
     private int size;
 
-    public SymbolTable(int capacity, int maxLen, int txCountHint, File directory, String column, JournalMode mode, int size, long indexTxAddress) throws JournalException {
+    public SymbolTable(int capacity, int avgStringSize, int txCountHint, File directory, String column, JournalMode mode, int size, long indexTxAddress) throws JournalException {
         this.capacity = capacity;
         this.column = column;
         JournalMode m;
@@ -64,13 +66,13 @@ public class SymbolTable implements Closeable {
                 m = mode;
         }
 
-        MappedFile dataFile = new MappedFileImpl(new File(directory, column + DATA_FILE_SUFFIX), ByteBuffers.getBitHint(maxLen, capacity), m);
+        MappedFile dataFile = new MappedFileImpl(new File(directory, column + DATA_FILE_SUFFIX), ByteBuffers.getBitHint(avgStringSize * 2 + 4, capacity), m);
         MappedFile indexFile = new MappedFileImpl(new File(directory, column + INDEX_FILE_SUFFIX), ByteBuffers.getBitHint(8, capacity), m);
 
-        this.data = new VariableColumn(dataFile, indexFile, maxLen);
+        this.data = new VariableColumn(dataFile, indexFile);
         this.size = size;
 
-        this.index = new SymbolIndex(new File(directory, column + HASH_INDEX_FILE_SUFFIX), capacity, capacity * HASH_GROUPING_RATE, txCountHint, mode, indexTxAddress);
+        this.index = new KVIndex(new File(directory, column + HASH_INDEX_FILE_SUFFIX), capacity, capacity * HASH_GROUPING_RATE, txCountHint, mode, indexTxAddress);
         this.valueCache = new TObjectIntHashMap<>(capacity, CACHE_LOAD_FACTOR, VALUE_NOT_FOUND);
         this.keyCache = new ArrayList<>(capacity);
     }
@@ -91,7 +93,7 @@ public class SymbolTable implements Closeable {
             data.putString(value);
             data.commit();
             key = (int) (data.size() - 1);
-            index.put(hashKey(value), key);
+            index.add(hashKey(value), key);
             size++;
             cache(key, value);
         }
@@ -112,16 +114,14 @@ public class SymbolTable implements Closeable {
             return VALUE_NOT_FOUND;
         }
 
-
-        LongArrayList values = index.getValues(hashKey);
-        for (int i = 0, sz = values.size(); i < sz; i++) {
-            key = (int) values.get(i);
+        Cursor cursor = index.cachedCursor(hashKey);
+        while (cursor.hasNext()) {
+            key = (int) cursor.next();
             if (data.equalsString(key, value)) {
                 cache(key, value);
                 return key;
             }
         }
-
         return VALUE_NOT_FOUND;
     }
 
@@ -212,7 +212,7 @@ public class SymbolTable implements Closeable {
     public void updateIndex(int oldSize, int newSize) {
         if (oldSize < newSize) {
             for (int i = oldSize; i < newSize; i++) {
-                index.put(hashKey(data.getString(i)), i);
+                index.add(hashKey(data.getString(i)), i);
             }
         }
     }
@@ -257,6 +257,6 @@ public class SymbolTable implements Closeable {
     }
 
     private int hashKey(String value) {
-        return value == null ? 0 : (value.hashCode() & 0x7fffffff) % capacity;
+        return Checksum.hash(value, capacity);
     }
 }

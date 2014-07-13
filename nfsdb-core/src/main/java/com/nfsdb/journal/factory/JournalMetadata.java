@@ -20,13 +20,13 @@ import com.nfsdb.journal.PartitionType;
 import com.nfsdb.journal.column.ColumnType;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
+import com.nfsdb.journal.utils.Base64;
 import com.nfsdb.journal.utils.ByteBuffers;
 import com.nfsdb.journal.utils.Checksum;
 import com.nfsdb.journal.utils.Unsafe;
 import gnu.trove.map.TObjectIntMap;
 import gnu.trove.map.hash.TObjectIntHashMap;
 
-import javax.xml.bind.DatatypeConverter;
 import java.io.File;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -35,8 +35,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class JournalMetadata<T> {
-    public static final int BYTE_LIMIT = 0xff;
-    public static final int TWO_BYTE_LIMIT = 0xffff;
     private static final int INVALID_INDEX = -1;
     private int timestampColumnIndex = INVALID_INDEX;
     private final TObjectIntMap<String> columnMetadataMap;
@@ -178,7 +176,7 @@ public class JournalMetadata<T> {
     @Override
     public String toString() {
         return "JournalMetadata{" +
-                "SHA='" + DatatypeConverter.printBase64Binary(Checksum.getChecksum(this)) + '\'' +
+                "SHA='" + Base64._printBase64Binary(Checksum.getChecksum(this)) + '\'' +
                 ", columnMetadataList*=" + columnMetadataList +
                 ", modelClass*=" + modelClass +
                 ", timestampColumn='" + timestampColumn + '\'' +
@@ -218,23 +216,13 @@ public class JournalMetadata<T> {
         return key;
     }
 
-    void updateVariableSizes() throws JournalConfigurationException {
+    public void updateVariableSizes() throws JournalConfigurationException {
 
         for (int i = 0, columnMetadataListSize = columnMetadataList.size(); i < columnMetadataListSize; i++) {
             ColumnMetadata m = columnMetadataList.get(i);
             switch (m.type) {
                 case STRING:
-                    if (m.maxSize <= BYTE_LIMIT) {
-                        m.size = m.maxSize + 1;
-                    } else if (m.size <= TWO_BYTE_LIMIT) {
-                        m.size = m.maxSize + 2;
-                    } else {
-                        m.size = m.maxSize + 4;
-                    }
-                    m.size += 1;
-                    if (m.avgSize == ColumnMetadata.AUTO_AVG_SIZE) {
-                        m.avgSize = m.maxSize;
-                    }
+                    m.size = m.avgSize + 4;
                     break;
                 case SYMBOL:
                     m.size = 4;
@@ -318,12 +306,11 @@ public class JournalMetadata<T> {
     }
 
     public static class ColumnMetadata {
-        public static final int AUTO_AVG_SIZE = -1;
         public String name;
         public ColumnType type;
         public long offset;
         public int size;
-        public int avgSize = AUTO_AVG_SIZE;
+        public int avgSize = -1;
         public boolean indexed;
         public int bitHint;
         public int indexBitHint;
@@ -343,12 +330,7 @@ public class JournalMetadata<T> {
                     ", indexBitHint=" + indexBitHint +
                     ", distinctCountHint*=" + distinctCountHint +
                     ", sameAs*='" + sameAs + '\'' +
-                    ", maxSize=" + maxSize +
                     '}';
         }
-
-        public int maxSize = JournalMetadata.BYTE_LIMIT;
-
-
     }
 }
