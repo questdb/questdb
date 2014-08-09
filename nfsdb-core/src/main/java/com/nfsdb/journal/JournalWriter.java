@@ -232,22 +232,25 @@ public class JournalWriter<T> extends Journal<T> {
             }
         });
 
-        Arrays.sort(files);
+        if (files != null) {
 
-        for (File file : files) {
-            // get exclusive lock
-            Lock lock = LockManager.lockExclusive(file);
-            try {
-                if (lock != null && lock.isValid()) {
-                    LOGGER.trace("Purging : %s", file);
-                    if (!Files.delete(file)) {
-                        LOGGER.info("Could not purge: %s", file);
+            Arrays.sort(files);
+
+            for (File file : files) {
+                // get exclusive lock
+                Lock lock = LockManager.lockExclusive(file);
+                try {
+                    if (lock != null && lock.isValid()) {
+                        LOGGER.trace("Purging : %s", file);
+                        if (!Files.delete(file)) {
+                            LOGGER.info("Could not purge: %s", file);
+                        }
+                    } else {
+                        LOGGER.trace("Partition in use: %s", file);
                     }
-                } else {
-                    LOGGER.trace("Partition in use: %s", file);
+                } finally {
+                    LockManager.release(lock);
                 }
-            } finally {
-                LockManager.release(lock);
             }
         }
     }
