@@ -43,9 +43,6 @@ public class JournalConfiguration {
     public static final int VARCHAR_LARGE_HEADER_LENGTH = 4;
     public static final int DEFAULT_RECORD_HINT = 1000000;
     public static final int DEFAULT_STRING_AVG_SIZE = 12;
-    public static final int DEFAULT_STRING_MAX_SIZE = 255;
-    public static final int DEFAULT_SYMBOL_MAX_SIZE = 128;
-    public static final int DEFAULT_DISTINCT_COUNT_HINT = 1;
     public static final int NULL_RECORD_HINT = 0;
     public static final int OPEN_PARTITION_TTL = 60; // seconds
     public static final int DEFAULT_LAG_HOURS = 0;
@@ -74,14 +71,11 @@ public class JournalConfiguration {
         this.configurationFile = configurationFile;
         this.parserDefaults = new ParserDefaults();
         this.parserDefaults.setNullsAdaptorFactory(nullsAdaptorFactory);
-        this.parserDefaults.setDistinctCount(DEFAULT_DISTINCT_COUNT_HINT);
         this.parserDefaults.setGlobalRecordHint(globalRecordHint);
         this.parserDefaults.setLagHours(DEFAULT_LAG_HOURS);
         this.parserDefaults.setOpenPartitionTTL(OPEN_PARTITION_TTL);
         this.parserDefaults.setRecordHint(DEFAULT_RECORD_HINT);
         this.parserDefaults.setStringAvgSize(DEFAULT_STRING_AVG_SIZE);
-        this.parserDefaults.setStringMaxSize(DEFAULT_STRING_MAX_SIZE);
-        this.parserDefaults.setSymbolMaxSize(DEFAULT_SYMBOL_MAX_SIZE);
     }
 
     public JournalConfiguration build() throws JournalConfigurationException {

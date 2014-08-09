@@ -14,20 +14,12 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.index.experimental.filter;
+package com.nfsdb.journal.index.experimental.v2;
 
-import com.nfsdb.journal.column.VariableColumn;
+import com.nfsdb.journal.Partition;
 
-public class StringEqualsFilter extends AbstractColumnFilter {
+import java.util.Iterator;
 
-    private String searchTerm;
+public interface PartitionSource extends Iterator<Partition> {
 
-    public void withValue(String searchTerm) {
-        this.searchTerm = searchTerm;
-    }
-
-    @Override
-    public boolean accept(long value) {
-        return ((VariableColumn) column).equalsString(value, searchTerm);
-    }
 }

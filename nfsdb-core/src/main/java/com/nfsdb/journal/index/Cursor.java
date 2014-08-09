@@ -14,20 +14,16 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.index.experimental.filter;
+package com.nfsdb.journal.index;
 
-import com.nfsdb.journal.column.VariableColumn;
+import com.nfsdb.journal.Partition;
+import com.nfsdb.journal.exceptions.JournalException;
 
-public class StringEqualsFilter extends AbstractColumnFilter {
+public interface Cursor {
 
-    private String searchTerm;
+    void configure(Partition partition) throws JournalException;
 
-    public void withValue(String searchTerm) {
-        this.searchTerm = searchTerm;
-    }
+    boolean hasNext();
 
-    @Override
-    public boolean accept(long value) {
-        return ((VariableColumn) column).equalsString(value, searchTerm);
-    }
+    long next();
 }

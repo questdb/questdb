@@ -228,6 +228,27 @@ public class VariableColumnTest {
         for (int i = 0; i < 1000; i++) {
             Assert.assertEquals("test123" + (max + 1000 - i), col2.getString(i + max));
         }
+    }
 
+    @Test
+    public void testNulls() throws Exception {
+        VariableColumn col1 = new VariableColumn(file, indexFile);
+        VariableColumn col2 = new VariableColumn(file2, indexFile2);
+
+        ChannelConsumer consumer = new VariableColumnDeltaConsumer(col2);
+        VariableColumnDeltaProducer producer = new VariableColumnDeltaProducer(col1);
+
+        col1.putNull();
+        col1.commit();
+
+        consumer.reset();
+        producer.configure(col2.size(), col1.size());
+        Assert.assertTrue(producer.hasContent());
+        producer.write(channel);
+        consumer.read(channel);
+        col2.commit();
+
+        Assert.assertEquals(1, col1.size());
+        Assert.assertEquals(1, col2.size());
     }
 }

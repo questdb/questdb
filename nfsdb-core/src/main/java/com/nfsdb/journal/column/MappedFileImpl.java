@@ -56,6 +56,9 @@ public class MappedFileImpl implements MappedFile {
     public MappedFileImpl(File file, int bitHint, JournalMode mode) throws JournalException {
         this.file = file;
         this.mode = mode;
+        if (bitHint < 2) {
+            LOGGER.warn("BitHint is too small for %s", file);
+        }
         this.bitHint = bitHint;
         open();
         this.buffers = new ArrayList<>((int) (size() >>> bitHint) + 1);

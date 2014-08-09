@@ -16,7 +16,9 @@
 
 package com.nfsdb.journal.index.experimental;
 
-public final class AndCursor extends AbstractFilteredCursor {
+import com.nfsdb.journal.index.Cursor;
+
+public final class AndCursor extends AbstractCursor {
 
     private final Cursor a;
     private final Cursor b;

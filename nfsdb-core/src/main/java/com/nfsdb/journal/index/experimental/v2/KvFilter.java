@@ -14,34 +14,10 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.index.experimental;
+package com.nfsdb.journal.index.experimental.v2;
 
-public abstract class AbstractFilteredCursor implements Cursor {
+import com.nfsdb.journal.Partition;
 
-    private long next = -1;
-
-    @Override
-    public boolean hasNext() {
-        if (next == -1) {
-            next = getNext();
-        }
-        return next > -1;
-    }
-
-    @Override
-    public long next() {
-        if (next == -1) {
-            return getNext();
-        } else {
-            long n = next;
-            next = -1;
-            return n;
-        }
-    }
-
-    public void reset() {
-        next = -1;
-    }
-
-    abstract protected long getNext();
+public interface KvFilter {
+    KvAcceptor acceptor(Partition partition);
 }

@@ -107,8 +107,18 @@ public class Logger {
         }
     }
 
+    public boolean isWarnEnabled() {
+        return logger.isLoggable(Level.INFO);
+    }
+
     public void warn(java.lang.Object message) {
-        logger.warning(message.toString());
+        log(Level.WARNING, message.toString());
+    }
+
+    public void warn(String format, Object... args) {
+        if (isWarnEnabled()) {
+            log(Level.WARNING, String.format(format, args));
+        }
     }
 
     public void error(java.lang.Object message) {

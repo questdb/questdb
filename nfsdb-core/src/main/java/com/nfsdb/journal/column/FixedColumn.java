@@ -31,37 +31,37 @@ public class FixedColumn extends AbstractColumn {
     }
 
     public boolean getBool(long localRowID) {
-        ByteBuffer bb = getBuffer(localRowID);
+        ByteBuffer bb = getBuffer(getOffset(localRowID), width);
         return bb.get(bb.position()) == 1;
     }
 
     public byte getByte(long localRowID) {
-        ByteBuffer bb = getBuffer(localRowID);
+        ByteBuffer bb = getBuffer(getOffset(localRowID), width);
         return bb.get(bb.position());
     }
 
     public double getDouble(long localRowID) {
-        ByteBuffer bb = getBuffer(localRowID);
+        ByteBuffer bb = getBuffer(getOffset(localRowID), width);
         return bb.getDouble(bb.position());
     }
 
     public float getFloat(long localRowID) {
-        ByteBuffer bb = getBuffer(localRowID);
+        ByteBuffer bb = getBuffer(getOffset(localRowID), width);
         return bb.getFloat(bb.position());
     }
 
     public int getInt(long localRowID) {
-        ByteBuffer bb = getBuffer(localRowID);
+        ByteBuffer bb = getBuffer(getOffset(localRowID), width);
         return bb.getInt(bb.position());
     }
 
     public long getLong(long localRowID) {
-        ByteBuffer bb = getBuffer(localRowID);
+        ByteBuffer bb = getBuffer(getOffset(localRowID), width);
         return bb.getLong(bb.position());
     }
 
     public short getShort(long localRowID) {
-        ByteBuffer bb = getBuffer(localRowID);
+        ByteBuffer bb = getBuffer(getOffset(localRowID), width);
         return bb.getShort(bb.position());
     }
 

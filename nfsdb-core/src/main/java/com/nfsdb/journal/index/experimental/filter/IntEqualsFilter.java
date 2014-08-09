@@ -22,8 +22,9 @@ public class IntEqualsFilter extends AbstractColumnFilter {
 
     private int searchTerm;
 
-    public void setSearchTerm(int searchTerm) {
+    public IntEqualsFilter with(int searchTerm) {
         this.searchTerm = searchTerm;
+        return this;
     }
 
     @Override

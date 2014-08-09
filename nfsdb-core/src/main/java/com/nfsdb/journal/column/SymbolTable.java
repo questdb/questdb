@@ -21,7 +21,7 @@ import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalImmutableIteratorException;
 import com.nfsdb.journal.exceptions.JournalInvalidSymbolValueException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
-import com.nfsdb.journal.index.experimental.Cursor;
+import com.nfsdb.journal.index.Cursor;
 import com.nfsdb.journal.index.KVIndex;
 import com.nfsdb.journal.utils.ByteBuffers;
 import com.nfsdb.journal.utils.Checksum;
@@ -40,9 +40,8 @@ public class SymbolTable implements Closeable {
     private static final String DATA_FILE_SUFFIX = ".symd";
     private static final String INDEX_FILE_SUFFIX = ".symi";
     private static final String HASH_INDEX_FILE_SUFFIX = ".symr";
-    private static final long HASH_GROUPING_RATE = 25L;
     private static final float CACHE_LOAD_FACTOR = 0.2f;
-    private final int capacity;
+    private final int hashKeyCount;
     private final String column;
     private final TObjectIntHashMap<String> valueCache;
     private final ArrayList<String> keyCache;
@@ -51,7 +50,9 @@ public class SymbolTable implements Closeable {
     private int size;
 
     public SymbolTable(int capacity, int avgStringSize, int txCountHint, File directory, String column, JournalMode mode, int size, long indexTxAddress) throws JournalException {
-        this.capacity = capacity;
+        // number of hash keys stored in index
+        // assume it is 20% of stated capacity
+        this.hashKeyCount = Math.max(1, (int) (capacity * CACHE_LOAD_FACTOR));
         this.column = column;
         JournalMode m;
 
@@ -72,7 +73,7 @@ public class SymbolTable implements Closeable {
         this.data = new VariableColumn(dataFile, indexFile);
         this.size = size;
 
-        this.index = new KVIndex(new File(directory, column + HASH_INDEX_FILE_SUFFIX), capacity, capacity * HASH_GROUPING_RATE, txCountHint, mode, indexTxAddress);
+        this.index = new KVIndex(new File(directory, column + HASH_INDEX_FILE_SUFFIX), this.hashKeyCount, capacity, txCountHint, mode, indexTxAddress);
         this.valueCache = new TObjectIntHashMap<>(capacity, CACHE_LOAD_FACTOR, VALUE_NOT_FOUND);
         this.keyCache = new ArrayList<>(capacity);
     }
@@ -257,6 +258,6 @@ public class SymbolTable implements Closeable {
     }
 
     private int hashKey(String value) {
-        return Checksum.hash(value, capacity);
+        return Checksum.hash(value, hashKeyCount);
     }
 }

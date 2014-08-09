@@ -23,10 +23,7 @@ public class ParserDefaults {
     private int recordHint;
     private int openPartitionTTL;
     private int lagHours;
-    private int stringMaxSize;
     private int stringAvgSize;
-    private int symbolMaxSize;
-    private int distinctCount;
 
     private NullsAdaptorFactory nullsAdaptorFactory;
 
@@ -62,36 +59,12 @@ public class ParserDefaults {
         this.lagHours = lagHours;
     }
 
-    public int getStringMaxSize() {
-        return stringMaxSize;
-    }
-
-    public void setStringMaxSize(int stringMaxSize) {
-        this.stringMaxSize = stringMaxSize;
-    }
-
     public int getStringAvgSize() {
         return stringAvgSize;
     }
 
     public void setStringAvgSize(int stringAvgSize) {
         this.stringAvgSize = stringAvgSize;
-    }
-
-    public int getSymbolMaxSize() {
-        return symbolMaxSize;
-    }
-
-    public void setSymbolMaxSize(int symbolMaxSize) {
-        this.symbolMaxSize = symbolMaxSize;
-    }
-
-    public int getDistinctCount() {
-        return distinctCount;
-    }
-
-    public void setDistinctCount(int distinctCount) {
-        this.distinctCount = distinctCount;
     }
 
     public NullsAdaptorFactory getNullsAdaptorFactory() {

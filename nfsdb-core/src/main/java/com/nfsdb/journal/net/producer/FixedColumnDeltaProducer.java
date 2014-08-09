@@ -26,7 +26,6 @@ import java.nio.channels.WritableByteChannel;
 
 public class FixedColumnDeltaProducer implements ColumnDeltaProducer {
 
-
     private static final int REPLICATION_FRAGMENT_HEADER_SIZE = 8;
     private final ByteBuffer header = ByteBuffer.allocateDirect(REPLICATION_FRAGMENT_HEADER_SIZE).order(ByteOrder.LITTLE_ENDIAN);
     private final AbstractColumn column;

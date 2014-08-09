@@ -14,10 +14,8 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.index.experimental;
+package com.nfsdb.journal.index.experimental.v2;
 
-public interface Cursor {
-    boolean hasNext();
-
-    long next();
+public interface RowAcceptor {
+    Choice accept(long localRowIDA, long localRowIDB);
 }

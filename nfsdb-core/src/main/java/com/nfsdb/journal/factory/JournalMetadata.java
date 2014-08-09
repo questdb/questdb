@@ -310,7 +310,7 @@ public class JournalMetadata<T> {
         public ColumnType type;
         public long offset;
         public int size;
-        public int avgSize = -1;
+        public int avgSize = JournalConfiguration.DEFAULT_STRING_AVG_SIZE;
         public boolean indexed;
         public int bitHint;
         public int indexBitHint;

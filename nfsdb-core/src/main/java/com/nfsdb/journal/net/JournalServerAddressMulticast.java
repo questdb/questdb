@@ -63,7 +63,7 @@ public class JournalServerAddressMulticast implements Runnable {
                         LOGGER.info("Replying");
                         break;
                     default:
-                        LOGGER.warn("Unlnown command: " + data[0]);
+                        LOGGER.warn("Unknown command: ", data[0]);
                 }
             } catch (IOException e) {
                 LOGGER.debug("Server multicast error: %s", e.getMessage());

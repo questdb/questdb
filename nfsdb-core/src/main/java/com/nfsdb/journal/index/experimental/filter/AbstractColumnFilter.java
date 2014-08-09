@@ -16,14 +16,26 @@
 
 package com.nfsdb.journal.index.experimental.filter;
 
+import com.nfsdb.journal.Partition;
 import com.nfsdb.journal.column.AbstractColumn;
 import com.nfsdb.journal.index.experimental.CursorFilter;
 
 public abstract class AbstractColumnFilter implements CursorFilter {
 
     protected AbstractColumn column;
+    protected String columnName;
+    private int columnIndex = -1;
 
-    public void setColumn(AbstractColumn column) {
-        this.column = column;
+    public AbstractColumnFilter withColumn(String columnName) {
+        this.columnName = columnName;
+        this.columnIndex = -1;
+        return this;
+    }
+
+    public void configure(Partition partition) {
+        if (this.columnIndex == -1) {
+            this.columnIndex = partition.getJournal().getMetadata().getColumnIndex(columnName);
+        }
+        this.column = partition.getAbstractColumn(columnIndex);
     }
 }

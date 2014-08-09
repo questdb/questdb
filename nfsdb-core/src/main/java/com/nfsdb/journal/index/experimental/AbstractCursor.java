@@ -20,30 +20,33 @@ import com.nfsdb.journal.Partition;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.index.Cursor;
 
-public class FilteredCursor<C extends Cursor, F extends CursorFilter> extends AbstractCursor {
+public abstract class AbstractCursor implements Cursor {
 
-    protected C delegate;
-    protected F filter;
+    private long next = -1;
 
-    public FilteredCursor(C delegate, F filter) {
-        this.delegate = delegate;
-        this.filter = filter;
-    }
-
-    public void configure(Partition partition) throws JournalException {
-        super.configure(partition);
-        delegate.configure(partition);
-        filter.configure(partition);
+    @Override
+    public boolean hasNext() {
+        if (next == -1) {
+            next = getNext();
+        }
+        return next > -1;
     }
 
     @Override
-    protected long getNext() {
-        while (delegate.hasNext()) {
-            long value = delegate.next();
-            if (filter.accept(value)) {
-                return value;
-            }
+    public long next() {
+        if (next == -1) {
+            return getNext();
+        } else {
+            long n = next;
+            next = -1;
+            return n;
         }
-        return -2;
     }
+
+    @Override
+    public void configure(Partition partition) throws JournalException {
+        this.next = -1;
+    }
+
+    abstract protected long getNext();
 }

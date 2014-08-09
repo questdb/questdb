@@ -78,6 +78,11 @@ public class VariableColumn extends AbstractColumn {
         // read delegate buffer which lets us read "null" flag and string length.
         ByteBuffer bb = getBufferInternal(localRowID, JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH);
         int len = bb.getInt();
+
+        if (len == -1) {
+            return null;
+        }
+
         // check if buffer can have actual string (char=2*byte)
         if (bb.remaining() < len * 2) {
             bb = getBufferInternal(localRowID, len * 2 + JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH);
@@ -176,7 +181,10 @@ public class VariableColumn extends AbstractColumn {
     }
 
     public long putNull() {
-        return commitAppend(getOffset(), 0);
+        long offset = getOffset();
+        ByteBuffer bb = getBuffer(offset, 4);
+        bb.putInt(bb.position(), -1);
+        return commitAppend(offset, 4);
     }
 
     private String asString(ByteBuffer bb, int len) {

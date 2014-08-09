@@ -113,7 +113,7 @@ public class XmlStreamParser implements XmlParser {
                 JournalMetadata.ColumnMetadata ccm = metadata.getColumnMetadata(getStringAttr(xmlr, "name"));
                 ccm.avgSize = getIntAttr(xmlr, "avgsize", defaults.getStringAvgSize());
                 ccm.indexed = "true".equals(getStringAttr(xmlr, "indexed"));
-                ccm.distinctCountHint = getIntAttr(xmlr, "hintDistinctCount", defaults.getDistinctCount());
+                ccm.distinctCountHint = getIntAttr(xmlr, "hintDistinctCount", metadata.getRecordHint() / 2);
                 if (ccm.indexed && ccm.distinctCountHint <= 1) {
                     throw new JournalConfigurationException("hintDistinctCount for " + metadata.getModelClass().getName() + "." + ccm.name + " must be > 1 for index to make sense. Either review hintDistinctCount or set indexed=\"false\"");
                 }
@@ -137,7 +137,7 @@ public class XmlStreamParser implements XmlParser {
                     throw new JournalConfigurationException("<index> element must be a child of <journal>");
                 }
                 JournalMetadata.ColumnMetadata ccm = metadata.getColumnMetadata(getStringAttr(xmlr, "name"));
-                ccm.distinctCountHint = getIntAttr(xmlr, "hintDistinctCount", defaults.getDistinctCount());
+                ccm.distinctCountHint = getIntAttr(xmlr, "hintDistinctCount", metadata.getRecordHint() / 2);
                 ccm.indexed = true;
                 continue;
             }
@@ -172,7 +172,7 @@ public class XmlStreamParser implements XmlParser {
         }
         ccm.type = ColumnType.SYMBOL;
         ccm.indexed = "true".equals(getStringAttr(xmlr, "indexed"));
-        ccm.distinctCountHint = getIntAttr(xmlr, "hintDistinctCount", defaults.getDistinctCount());
+        ccm.distinctCountHint = getIntAttr(xmlr, "hintDistinctCount", metadata.getRecordHint() / 2);
         if (ccm.indexed && ccm.distinctCountHint <= 1) {
             throw new JournalConfigurationException("hintDistinctCount for " + metadata.getModelClass().getName() + "." + columnName + " must be > 1 for index to make sense. Either review hintDistinctCount or set indexed=\"false\"");
         }

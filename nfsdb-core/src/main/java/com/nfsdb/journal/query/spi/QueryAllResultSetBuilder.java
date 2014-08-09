@@ -21,7 +21,7 @@ import com.nfsdb.journal.UnorderedResultSetBuilder;
 import com.nfsdb.journal.collections.IntArrayList;
 import com.nfsdb.journal.collections.LongArrayList;
 import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.index.experimental.Cursor;
+import com.nfsdb.journal.index.Cursor;
 import com.nfsdb.journal.index.KVIndex;
 import com.nfsdb.journal.utils.Rows;
 import org.joda.time.Interval;

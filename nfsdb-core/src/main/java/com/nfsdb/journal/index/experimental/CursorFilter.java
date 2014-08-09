@@ -16,6 +16,10 @@
 
 package com.nfsdb.journal.index.experimental;
 
+import com.nfsdb.journal.Partition;
+
 public interface CursorFilter {
+    void configure(Partition partition);
+
     boolean accept(long value);
 }

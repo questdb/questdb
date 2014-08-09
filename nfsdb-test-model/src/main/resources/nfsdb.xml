@@ -4,7 +4,7 @@
   ~
   ~ Licensed under the Apache License, Version 2.0 (the "License");
   ~ you may not use this file except in compliance with the License.
-  ~ You may obtain a copy of the License at                                                             R
+  ~ You may obtain a copy of the License at
   ~
   ~ http://www.apache.org/licenses/LICENSE-2.0
   ~
@@ -21,7 +21,7 @@
              key="sym">
         <sym name="sym" indexed="true" maxsize="4" hintDistinctCount="15"/>
         <sym name="ex" maxsize="2" hintDistinctCount="5" indexed="true"/>
-        <sym name="mode" hintDistinctCount="1"/>
+        <!--<sym name="mode" hintDistinctCount="1"/>-->
     </journal>
 
     <journal class="com.nfsdb.journal.test.model.Trade" defaultPath="trade" timestampColumn="timestamp"

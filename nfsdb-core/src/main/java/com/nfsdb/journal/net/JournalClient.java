@@ -255,7 +255,7 @@ public class JournalClient {
                                 }
                                 break;
                             default:
-                                LOGGER.warn("Unknown command: " + commandConsumer.getValue());
+                                LOGGER.warn("Unknown command: ", commandConsumer.getValue());
                         }
                         commandConsumer.reset();
                         intResponseConsumer.reset();

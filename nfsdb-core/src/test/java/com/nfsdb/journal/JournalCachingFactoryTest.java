@@ -19,6 +19,7 @@ package com.nfsdb.journal;
 import com.nfsdb.journal.factory.JournalCachingFactory;
 import com.nfsdb.journal.test.model.Quote;
 import com.nfsdb.journal.test.tools.AbstractTest;
+import com.nfsdb.journal.utils.Files;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -51,5 +52,8 @@ public class JournalCachingFactoryTest extends AbstractTest {
 
         Journal<Quote> reader4 = cachingFactory.reader(Quote.class, "loc");
         Assert.assertSame(reader3, reader4);
+
+        cachingFactory.close();
+        Files.delete(cachingFactory.getConfiguration().getJournalBase());
     }
 }
