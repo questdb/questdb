@@ -42,8 +42,10 @@ Please visit our official web site [www.nfsdb.org] (http://nfsdb.org).
 
 ### Upcoming release Change Log
 
-- NEW: Journal replication over network
-- BREAKING: All strings are stored with length as 4-byte int. Journal would use more space but it reduces CPU overhead on reads and appends.
-- BREAKING: SymbolIndex class is renamed to KVIndex. SymbolIndex.put() is replaced with KVIndex.add()
-- IMPROVEMENT: Improved Index performance
-- IMPROVEMENT: Improved append performance
+- NEW FEATURE:   TCP replication stack
+- BREAKING:      All strings are stored with length as 4-byte int. Journal would use more space but it reduces CPU overhead on reads and appends.
+- BREAKING:      SymbolIndex class is renamed to KVIndex. SymbolIndex.put() is replaced with KVIndex.add()
+- IMPROVEMENT:   Improved Index performance
+- IMPROVEMENT:   Improved append performance
+- IMPROVEMENT:   Revised data size calculations, Journals should now be smaller
+- BUG:           TCP replication broke for tailing null values
