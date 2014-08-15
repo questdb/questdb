@@ -18,7 +18,8 @@ package com.nfsdb.journal;
 
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
-import com.nfsdb.journal.test.model.Quote;
+import com.nfsdb.journal.model.Quote;
+import com.nfsdb.journal.model.configuration.ModelConfiguration;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.utils.Dates;
 import org.junit.Assert;
@@ -58,7 +59,7 @@ public class LockTest extends AbstractTest {
 
     public static class TestAccessor {
         public TestAccessor(File journalBase) throws JournalException {
-            JournalFactory factory = new JournalFactory(journalBase);
+            JournalFactory factory = new JournalFactory(ModelConfiguration.MAIN.build(journalBase));
             Journal<Quote> reader = factory.reader(Quote.class);
             Assert.assertEquals(2, reader.size());
             reader.close();

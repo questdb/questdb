@@ -24,14 +24,15 @@ import com.nfsdb.journal.collections.LongArrayList;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
-import com.nfsdb.journal.factory.JournalMetadata;
+import com.nfsdb.journal.factory.configuration.ColumnMetadata;
+import com.nfsdb.journal.factory.configuration.JournalMetadata;
 import com.nfsdb.journal.index.KVIndex;
 import com.nfsdb.journal.iterators.JournalIterator;
+import com.nfsdb.journal.model.Quote;
+import com.nfsdb.journal.model.TestEntity;
 import com.nfsdb.journal.printer.JournalPrinter;
 import com.nfsdb.journal.printer.appender.AssertingAppender;
 import com.nfsdb.journal.printer.converter.DateConverter;
-import com.nfsdb.journal.test.model.Quote;
-import com.nfsdb.journal.test.model.TestEntity;
 import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Unsafe;
 import gnu.trove.map.hash.TIntIntHashMap;
@@ -180,7 +181,7 @@ public final class TestUtils {
     }
 
     public static <T> void assertOrder(JournalIterator<T> rs) {
-        JournalMetadata.ColumnMetadata meta = rs.getJournal().getMetadata().getTimestampColumnMetadata();
+        ColumnMetadata meta = rs.getJournal().getMetadata().getTimestampColumnMetadata();
         long max = 0;
         for (T obj : rs) {
             long timestamp = Unsafe.getUnsafe().getLong(obj, meta.offset);
@@ -192,7 +193,7 @@ public final class TestUtils {
     }
 
     public static <T> void assertOrderDesc(JournalIterator<T> rs) {
-        JournalMetadata.ColumnMetadata meta = rs.getJournal().getMetadata().getTimestampColumnMetadata();
+        ColumnMetadata meta = rs.getJournal().getMetadata().getTimestampColumnMetadata();
         long max = Long.MAX_VALUE;
         for (T obj : rs) {
             long timestamp = Unsafe.getUnsafe().getLong(obj, meta.offset);

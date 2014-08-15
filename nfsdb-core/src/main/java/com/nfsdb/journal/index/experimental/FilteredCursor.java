@@ -22,8 +22,8 @@ import com.nfsdb.journal.index.Cursor;
 
 public class FilteredCursor<C extends Cursor, F extends CursorFilter> extends AbstractCursor {
 
-    protected C delegate;
-    protected F filter;
+    protected final C delegate;
+    protected final F filter;
 
     public FilteredCursor(C delegate, F filter) {
         this.delegate = delegate;

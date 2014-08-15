@@ -20,6 +20,7 @@ import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalBulkReader;
 import com.nfsdb.journal.JournalKey;
 import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.factory.configuration.JournalConfiguration;
 
 import java.io.Closeable;
 

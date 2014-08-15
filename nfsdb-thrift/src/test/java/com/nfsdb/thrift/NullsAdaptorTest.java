@@ -21,6 +21,7 @@ import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.test.tools.JournalTestFactory;
 import com.nfsdb.journal.utils.Dates;
+import com.nfsdb.journal.utils.Files;
 import com.nfsdb.thrift.model.Quote;
 import com.nfsdb.thrift.model.Trade2;
 import org.junit.Assert;
@@ -30,7 +31,7 @@ import org.junit.Test;
 public class NullsAdaptorTest {
 
     @Rule
-    public final JournalTestFactory factory = new JournalTestFactory("/nfsdb-thrift.xml", new ThriftNullsAdaptorFactory());
+    public final JournalTestFactory factory = new JournalTestFactory(Configuration.MAIN.build(Files.makeTempDir()));
 
     @Test
     public void testFirstSymbolNull() throws JournalException {

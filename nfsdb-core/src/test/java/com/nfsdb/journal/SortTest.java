@@ -18,8 +18,8 @@ package com.nfsdb.journal;
 
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
+import com.nfsdb.journal.model.TestEntity;
 import com.nfsdb.journal.query.api.Query;
-import com.nfsdb.journal.test.model.TestEntity;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestUtils;
 import com.nfsdb.journal.utils.Dates;

@@ -45,12 +45,12 @@ public class ConcurrentIteratorExample {
             Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote-copy"));
 
             // get some data in :)
-            try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
+            try (JournalWriter<Quote> w = factory.bulkWriter(Quote.class, "quote")) {
                 QuoteGenerator.generateQuoteData(w, 10000000);
             }
 
-            // copying journal using fast BufferedIterator
-            try (Journal<Quote> src = factory.reader(Quote.class)) {
+            // copying journal using concurrent iterator
+            try (Journal<Quote> src = factory.bulkReader(Quote.class, "quote")) {
                 try (JournalWriter<Quote> w = factory.bulkWriter(Quote.class, "quote-copy2")) {
                     long t = System.nanoTime();
                     int count = 0;
@@ -66,7 +66,7 @@ public class ConcurrentIteratorExample {
             }
 
             // copying journal using fast BufferedIterator
-            try (Journal<Quote> src = factory.reader(Quote.class)) {
+            try (Journal<Quote> src = factory.bulkReader(Quote.class, "quote")) {
                 try (JournalWriter<Quote> w = factory.bulkWriter(Quote.class, "quote-copy")) {
                     long t = System.nanoTime();
                     int count = 0;

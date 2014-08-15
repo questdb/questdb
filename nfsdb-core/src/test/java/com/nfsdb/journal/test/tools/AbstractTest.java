@@ -16,9 +16,21 @@
 
 package com.nfsdb.journal.test.tools;
 
+import com.nfsdb.journal.exceptions.JournalConfigurationException;
+import com.nfsdb.journal.exceptions.JournalRuntimeException;
+import com.nfsdb.journal.model.configuration.ModelConfiguration;
+import com.nfsdb.journal.utils.Files;
 import org.junit.Rule;
 
 public abstract class AbstractTest {
     @Rule
-    public final JournalTestFactory factory = new JournalTestFactory();
+    public final JournalTestFactory factory;
+
+    protected AbstractTest() {
+        try {
+            this.factory = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
+        } catch (JournalConfigurationException e) {
+            throw new JournalRuntimeException(e);
+        }
+    }
 }

@@ -18,9 +18,9 @@ package com.nfsdb.journal.net;
 
 import com.nfsdb.journal.*;
 import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.net.config.ClientConfig;
 import com.nfsdb.journal.net.config.ServerConfig;
-import com.nfsdb.journal.test.model.Quote;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestData;
 import com.nfsdb.journal.test.tools.TestUtils;

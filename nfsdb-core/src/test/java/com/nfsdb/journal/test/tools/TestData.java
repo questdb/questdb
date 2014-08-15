@@ -18,7 +18,7 @@ package com.nfsdb.journal.test.tools;
 
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.test.model.Quote;
+import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.utils.Dates;
 
 public final class TestData {

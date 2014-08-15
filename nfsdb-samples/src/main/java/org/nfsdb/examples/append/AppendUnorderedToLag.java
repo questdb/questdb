@@ -19,6 +19,7 @@ package org.nfsdb.examples.append;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
+import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Files;
 import org.joda.time.DateTime;
@@ -35,7 +36,7 @@ public class AppendUnorderedToLag {
 
     /**
      * For cases where incoming data feed is not in chronological order but you would like your journal to be in chronological order.
-     * This is a lossy way to append data as journal would only be merging a slice of data as specified by "lagHours" attribute in nfsdb.xml.
+     * This is a lossy way to append data as journal would only be merging a slice of data as specified by "lag" attribute.
      *
      * @param args factory directory
      * @throws JournalException
@@ -49,15 +50,18 @@ public class AppendUnorderedToLag {
 
         String journalLocation = args[0];
 
-        try (JournalFactory factory = new JournalFactory(journalLocation)) {
+        try (JournalFactory factory = new JournalFactory(new JournalConfigurationBuilder() {{
+            $(Quote.class)
+                    .location("quote-lag")
+                    .lag(24, TimeUnit.HOURS) // enable lag
+                    .$ts() // tell factory that Quote has "timestamp" column. If column is called differently you can pass its name
+            ;
+        }}.build(journalLocation))) {
 
             // delete existing quote journal
             Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote-lag"));
 
-            try (JournalWriter<Quote> writer = factory.writer(
-                    Quote.class             // model class
-                    , "quote-lag"           // directory name where journal is stored. This is relative to factory location.
-            )) {
+            try (JournalWriter<Quote> writer = factory.writer(Quote.class)) {
 
                 final String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
                 final Random r = new Random(System.currentTimeMillis());

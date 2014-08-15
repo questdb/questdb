@@ -20,13 +20,14 @@ import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.query.api.QueryAllBuilder;
+import org.nfsdb.examples.model.ModelConfiguration;
 import org.nfsdb.examples.model.Price;
 
 import java.util.concurrent.TimeUnit;
 
 public class SimplestSymbolQuery {
     public static void main(String[] args) throws JournalException {
-        try (JournalFactory factory = new JournalFactory("c:\\temp\\nfsdb")) {
+        try (JournalFactory factory = new JournalFactory(ModelConfiguration.CONFIG.build("c:\\temp\\nfsdb"))) {
             try (Journal<Price> journal = factory.reader(Price.class)) {
                 long tZero = System.nanoTime();
                 int count = 0;

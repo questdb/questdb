@@ -20,6 +20,7 @@ import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.utils.Files;
+import org.nfsdb.examples.model.ModelConfiguration;
 import org.nfsdb.examples.model.Price;
 
 import java.io.File;
@@ -33,9 +34,9 @@ public class SimplestAppend {
      * @throws com.nfsdb.journal.exceptions.JournalException
      */
     public static void main(String[] args) throws JournalException {
-        try (JournalFactory factory = new JournalFactory("c:\\temp\\nfsdb")) {
+        try (JournalFactory factory = new JournalFactory(ModelConfiguration.CONFIG.build("c:\\temp\\nfsdb"))) {
             // delete existing price journal
-            Files.delete(new File(factory.getConfiguration().getJournalBase(), "price"));
+            Files.delete(new File(factory.getConfiguration().getJournalBase(), Price.class.getName()));
             final int count = 1000000;
 
             try (JournalWriter<Price> writer = factory.writer(Price.class)) {

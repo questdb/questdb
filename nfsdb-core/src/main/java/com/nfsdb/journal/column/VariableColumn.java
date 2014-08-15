@@ -18,7 +18,6 @@ package com.nfsdb.journal.column;
 
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
-import com.nfsdb.journal.factory.JournalConfiguration;
 import com.nfsdb.journal.utils.ByteBuffers;
 
 import java.nio.ByteBuffer;
@@ -30,7 +29,7 @@ public class VariableColumn extends AbstractColumn {
 
     public VariableColumn(MappedFile dataFile, MappedFile indexFile) {
         super(dataFile);
-        this.indexColumn = new FixedColumn(indexFile, JournalConfiguration.VARCHAR_INDEX_COLUMN_WIDTH);
+        this.indexColumn = new FixedColumn(indexFile, 8);
     }
 
     @Override
@@ -76,7 +75,7 @@ public class VariableColumn extends AbstractColumn {
 
     public String getString(long localRowID) {
         // read delegate buffer which lets us read "null" flag and string length.
-        ByteBuffer bb = getBufferInternal(localRowID, JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH);
+        ByteBuffer bb = getBufferInternal(localRowID, 4);
         int len = bb.getInt();
 
         if (len == -1) {
@@ -85,8 +84,8 @@ public class VariableColumn extends AbstractColumn {
 
         // check if buffer can have actual string (char=2*byte)
         if (bb.remaining() < len * 2) {
-            bb = getBufferInternal(localRowID, len * 2 + JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH);
-            bb.position(bb.position() + JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH);
+            bb = getBufferInternal(localRowID, len * 2 + 4);
+            bb.position(bb.position() + 4);
         }
 
         return asString(bb, len);
@@ -94,7 +93,7 @@ public class VariableColumn extends AbstractColumn {
 
     public boolean equalsString(long localRowID, String value) {
         // read delegate buffer which lets us read "null" flag and string length.
-        ByteBuffer buf = getBufferInternal(localRowID, JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH);
+        ByteBuffer buf = getBufferInternal(localRowID, 4);
         int len = buf.getInt();
 
         if (len != value.length()) {
@@ -104,8 +103,8 @@ public class VariableColumn extends AbstractColumn {
         int p;
         // check if buffer can have actual string (char=2*byte)
         if (buf.remaining() < len * 2) {
-            buf = getBufferInternal(localRowID, len * 2 + JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH);
-            p = buf.position() + JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH;
+            buf = getBufferInternal(localRowID, len * 2 + 4);
+            p = buf.position() + 4;
         } else {
             p = buf.position();
         }
@@ -124,7 +123,7 @@ public class VariableColumn extends AbstractColumn {
         if (value == null) {
             return putNull();
         } else {
-            int len = value.length() * 2 + JournalConfiguration.VARCHAR_LARGE_HEADER_LENGTH;
+            int len = value.length() * 2 + 4;
             long offset = getOffset();
             ByteBuffer bb = getBuffer(offset, len);
             ByteBuffers.putStringDW(bb, value);

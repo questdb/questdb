@@ -16,7 +16,7 @@
 
 package com.nfsdb.journal;
 
-import com.nfsdb.journal.test.model.Quote;
+import com.nfsdb.journal.model.Quote;
 import org.junit.Assert;
 import org.junit.Test;
 

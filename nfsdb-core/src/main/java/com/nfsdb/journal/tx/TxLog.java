@@ -21,7 +21,7 @@ import com.nfsdb.journal.column.MappedFile;
 import com.nfsdb.journal.column.MappedFileImpl;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
-import com.nfsdb.journal.factory.JournalConfiguration;
+import com.nfsdb.journal.factory.configuration.Constants;
 import com.nfsdb.journal.utils.ByteBuffers;
 
 import java.io.File;
@@ -35,7 +35,8 @@ public class TxLog {
     private char[] buf;
 
     public TxLog(File baseLocation, JournalMode mode) throws JournalException {
-        this.mf = new MappedFileImpl(new File(baseLocation, "_tx"), JournalConfiguration.PIPE_BIT_HINT, mode);
+        // todo: calculate hint
+        this.mf = new MappedFileImpl(new File(baseLocation, "_tx"), Constants.PIPE_BIT_HINT, mode);
     }
 
     public boolean hasNext() {

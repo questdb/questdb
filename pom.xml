@@ -20,9 +20,9 @@
 
     <version>1.0</version>
     <groupId>com.nfsdb</groupId>
-    <artifactId>nfsdb-devel</artifactId>
+    <artifactId>nfsdb</artifactId>
     <packaging>pom</packaging>
-    <name>NFSdb.Development</name>
+    <name>NFSdb</name>
 
     <build>
         <plugins>
@@ -37,10 +37,8 @@
         </plugins>
     </build>
     <modules>
-        <module>nfsdb-test-model</module>
         <module>nfsdb-core</module>
         <module>nfsdb-thrift</module>
-        <module>nfsdb-guice</module>
         <module>nfsdb-samples</module>
     </modules>
 </project>

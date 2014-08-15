@@ -19,8 +19,9 @@ package com.nfsdb.journal;
 import com.nfsdb.journal.column.*;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
-import com.nfsdb.journal.factory.JournalMetadata;
 import com.nfsdb.journal.factory.NullsAdaptor;
+import com.nfsdb.journal.factory.configuration.ColumnMetadata;
+import com.nfsdb.journal.factory.configuration.JournalMetadata;
 import com.nfsdb.journal.index.KVIndex;
 import com.nfsdb.journal.iterators.ConcurrentIterator;
 import com.nfsdb.journal.iterators.PartitionBufferedIterator;
@@ -82,7 +83,10 @@ public class Partition<T> implements Iterable<T>, Closeable {
                 open(i);
             }
 
-            timestampColumn = getFixedWidthColumn(journal.getMetadata().getTimestampColumnIndex());
+            int tsIndex = journal.getMetadata().getTimestampColumnIndex();
+            if (tsIndex >= 0) {
+                timestampColumn = getFixedWidthColumn(tsIndex);
+            }
 
             if (timestampColumn != null) {
                 this.indexOfVisitor = new BinarySearch.LongTimeSeriesProvider() {
@@ -475,7 +479,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
     }
 
     /**
-     * Rebuild the index of a column using the default keyCountHint and recordCountHint values from nfsdb.xml.
+     * Rebuild the index of a column using the default keyCountHint and recordCountHint values.
      *
      * @param columnIndex the column index
      * @throws com.nfsdb.journal.exceptions.JournalException if the operation fails
@@ -652,7 +656,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
     private void open(int columnIndex) throws JournalException {
 
-        JournalMetadata.ColumnMetadata m = journal.getMetadata().getColumnMetadata(columnIndex);
+        ColumnMetadata m = journal.getMetadata().getColumnMetadata(columnIndex);
         switch (m.type) {
             case STRING:
             case BINARY:
@@ -699,7 +703,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
     }
 
     void expireOpenIndices() {
-        long expiry = System.currentTimeMillis() - TimeUnit.SECONDS.toMillis(journal.getMetadata().getOpenPartitionTTL());
+        long expiry = System.currentTimeMillis() - TimeUnit.SECONDS.toMillis(journal.getMetadata().getOpenFileTTL());
         for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
             SymbolIndexProxy<T> proxy = indexProxies.get(i);
             if (expiry > proxy.getLastAccessed()) {

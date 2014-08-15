@@ -19,13 +19,12 @@ package com.nfsdb.journal.net;
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalNetworkException;
+import com.nfsdb.journal.model.Quote;
+import com.nfsdb.journal.model.TestEntity;
 import com.nfsdb.journal.net.config.ClientConfig;
 import com.nfsdb.journal.net.config.ServerConfig;
-import com.nfsdb.journal.test.model.Quote;
-import com.nfsdb.journal.test.model.TestEntity;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestUtils;
-import com.nfsdb.journal.tx.TxFuture;
 import com.nfsdb.journal.tx.TxListener;
 import org.junit.Assert;
 import org.junit.Before;
@@ -58,18 +57,8 @@ public class IntegrationTest extends AbstractTest {
         final CountDownLatch latch = new CountDownLatch(1);
         client.sync(Quote.class, "remote", "local", 2 * size, new TxListener() {
             @Override
-            public boolean notifySync(long timeout, TimeUnit unit) {
-                return false;
-            }
-
-            @Override
-            public void notifyAsyncNoWait() {
+            public void onCommit() {
                 latch.countDown();
-            }
-
-            @Override
-            public TxFuture notifyAsync() {
-                return null;
             }
         });
         client.start();
@@ -96,35 +85,15 @@ public class IntegrationTest extends AbstractTest {
         final CountDownLatch latch = new CountDownLatch(2);
         client.sync(Quote.class, "remote1", "local1", 2 * size, new TxListener() {
             @Override
-            public boolean notifySync(long timeout, TimeUnit unit) {
-                return false;
-            }
-
-            @Override
-            public void notifyAsyncNoWait() {
+            public void onCommit() {
                 latch.countDown();
-            }
-
-            @Override
-            public TxFuture notifyAsync() {
-                return null;
             }
         });
 
         client.sync(TestEntity.class, "remote2", "local2", 2 * size, new TxListener() {
             @Override
-            public boolean notifySync(long timeout, TimeUnit unit) {
-                return false;
-            }
-
-            @Override
-            public void notifyAsyncNoWait() {
+            public void onCommit() {
                 latch.countDown();
-            }
-
-            @Override
-            public TxFuture notifyAsync() {
-                return null;
             }
         });
         client.start();
@@ -168,18 +137,8 @@ public class IntegrationTest extends AbstractTest {
 
         client.sync(Quote.class, "remote", "local1", new TxListener() {
             @Override
-            public boolean notifySync(long timeout, TimeUnit unit) {
-                return false;
-            }
-
-            @Override
-            public void notifyAsyncNoWait() {
+            public void onCommit() {
                 latch.countDown();
-            }
-
-            @Override
-            public TxFuture notifyAsync() {
-                return null;
             }
         });
 
@@ -187,18 +146,8 @@ public class IntegrationTest extends AbstractTest {
 
         client2.sync(Quote.class, "remote", "local2", new TxListener() {
             @Override
-            public boolean notifySync(long timeout, TimeUnit unit) {
-                return false;
-            }
-
-            @Override
-            public void notifyAsyncNoWait() {
+            public void onCommit() {
                 latch.countDown();
-            }
-
-            @Override
-            public TxFuture notifyAsync() {
-                return null;
             }
         });
 

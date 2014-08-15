@@ -28,6 +28,7 @@ import com.nfsdb.journal.utils.Files;
 import org.joda.time.DateTime;
 import org.joda.time.DateTimeField;
 import org.joda.time.chrono.ISOChronology;
+import org.nfsdb.examples.model.ModelConfiguration;
 import org.nfsdb.examples.model.Quote;
 import org.nfsdb.examples.support.QuoteGenerator;
 
@@ -44,10 +45,10 @@ public class DailyPriceAverageExample {
         }
         String journalLocation = args[0];
 
-        try (JournalFactory factory = new JournalFactory(journalLocation)) {
+        try (JournalFactory factory = new JournalFactory(ModelConfiguration.CONFIG.build(journalLocation))) {
 
             // delete existing quote journal
-            Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote"));
+            Files.delete(new File(factory.getConfiguration().getJournalBase(), Quote.class.getName()));
 
             int count = 10000000;
             long t = System.nanoTime();

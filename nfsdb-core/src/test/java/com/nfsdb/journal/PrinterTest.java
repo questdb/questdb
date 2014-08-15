@@ -16,13 +16,13 @@
 
 package com.nfsdb.journal;
 
+import com.nfsdb.journal.model.Quote;
+import com.nfsdb.journal.model.TestEntity;
 import com.nfsdb.journal.printer.JournalPrinter;
 import com.nfsdb.journal.printer.appender.Appender;
 import com.nfsdb.journal.printer.converter.DateConverter;
 import com.nfsdb.journal.printer.converter.ScaledDoubleConverter;
 import com.nfsdb.journal.printer.converter.StripCRLFStringConverter;
-import com.nfsdb.journal.test.model.Quote;
-import com.nfsdb.journal.test.model.TestEntity;
 import com.nfsdb.journal.utils.Dates;
 import org.junit.Assert;
 import org.junit.Test;

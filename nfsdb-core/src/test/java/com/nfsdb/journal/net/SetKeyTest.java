@@ -18,10 +18,10 @@ package com.nfsdb.journal.net;
 
 import com.nfsdb.journal.JournalKey;
 import com.nfsdb.journal.PartitionType;
+import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.net.model.IndexedJournalKey;
 import com.nfsdb.journal.net.protocol.commands.SetKeyRequestConsumer;
 import com.nfsdb.journal.net.protocol.commands.SetKeyRequestProducer;
-import com.nfsdb.journal.test.model.Quote;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;

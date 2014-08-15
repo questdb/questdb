@@ -17,11 +17,11 @@
 package com.nfsdb.journal.test.tools;
 
 import com.nfsdb.journal.*;
+import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalClosingListener;
-import com.nfsdb.journal.factory.JournalConfiguration;
 import com.nfsdb.journal.factory.JournalFactory;
-import com.nfsdb.journal.factory.NullsAdaptorFactory;
+import com.nfsdb.journal.factory.configuration.JournalConfiguration;
 import com.nfsdb.journal.utils.Files;
 import org.junit.rules.TestRule;
 import org.junit.runner.Description;
@@ -34,12 +34,8 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
 
     private final List<Journal> journals = new ArrayList<>();
 
-    public JournalTestFactory() {
-        super(new JournalConfiguration(Files.makeTempDir()));
-    }
-
-    public <B> JournalTestFactory(String configurationFile, NullsAdaptorFactory<B> factory) {
-        super(new JournalConfiguration(configurationFile, Files.makeTempDir(), 10000, factory));
+    public JournalTestFactory(JournalConfiguration configuration) throws JournalConfigurationException {
+        super(configuration);
     }
 
     @Override
@@ -50,7 +46,6 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
             public void evaluate() throws Throwable {
                 Throwable throwable = null;
                 try {
-                    getConfiguration().build();
                     Files.deleteOrException(getConfiguration().getJournalBase());
                     Files.mkDirsOrException(getConfiguration().getJournalBase());
                     base.evaluate();

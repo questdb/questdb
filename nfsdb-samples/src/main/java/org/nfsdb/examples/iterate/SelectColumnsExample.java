@@ -20,6 +20,7 @@ import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
+import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.utils.Files;
 import org.nfsdb.examples.model.Quote;
 import org.nfsdb.examples.support.QuoteGenerator;
@@ -36,10 +37,16 @@ public class SelectColumnsExample {
         }
         String journalLocation = args[0];
 
-        try (JournalFactory factory = new JournalFactory(journalLocation)) {
+        try (JournalFactory factory = new JournalFactory(new JournalConfigurationBuilder() {{
+            $(Quote.class)
+                    .recordCountHint(10000000)
+                    .$sym("sym").valueCountHint(15) // declare "sym" as symbol, it will improve storage efficiency
+                    .$ts()
+            ;
+        }}.build(journalLocation))) {
 
             // delete existing quote journal
-            Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote"));
+            Files.delete(new File(factory.getConfiguration().getJournalBase(), Quote.class.getName()));
 
             // get some data in :)
             try (JournalWriter<Quote> w = factory.writer(Quote.class)) {

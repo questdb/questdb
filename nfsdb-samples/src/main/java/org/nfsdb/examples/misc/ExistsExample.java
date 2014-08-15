@@ -18,9 +18,11 @@ package org.nfsdb.examples.misc;
 
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
+import com.nfsdb.journal.PartitionType;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
+import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.utils.Files;
 import org.nfsdb.examples.model.Quote;
 import org.nfsdb.examples.support.QuoteGenerator;
@@ -37,10 +39,18 @@ public class ExistsExample {
             System.out.println("Usage: " + ExistsExample.class.getName() + " <path>");
             System.exit(1);
         }
-        try (JournalFactory factory = new JournalFactory(args[0])) {
+        try (JournalFactory factory = new JournalFactory(new JournalConfigurationBuilder() {{
+            $(Quote.class)
+                    .partitionBy(PartitionType.MONTH)
+                    .$sym("sym").index().size(4).valueCountHint(15)
+                    .$sym("ex").size(2).valueCountHint(1)
+                    .$sym("ex").size(1).valueCountHint(1)
+                    .$ts()
+            ;
+        }}.build(args[0]))) {
 
             // delete existing quote journal
-            Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote"));
+            Files.delete(new File(factory.getConfiguration().getJournalBase(), Quote.class.getName()));
 
             // get some data in :)
             try (JournalWriter<Quote> w = factory.writer(Quote.class)) {

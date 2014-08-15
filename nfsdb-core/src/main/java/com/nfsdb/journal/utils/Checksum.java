@@ -17,7 +17,8 @@
 package com.nfsdb.journal.utils;
 
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
-import com.nfsdb.journal.factory.JournalMetadata;
+import com.nfsdb.journal.factory.configuration.ColumnMetadata;
+import com.nfsdb.journal.factory.configuration.JournalMetadata;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -48,7 +49,7 @@ public final class Checksum {
             flushBuf(md, buf, type.length() * 2).put(type.getBytes(Files.UTF_8));
             flushBuf(md, buf, metadata.getPartitionType().name().length() * 2).put(metadata.getPartitionType().name().getBytes(Files.UTF_8));
             for (int i = 0; i < metadata.getColumnCount(); i++) {
-                JournalMetadata.ColumnMetadata m = metadata.getColumnMetadata(i);
+                ColumnMetadata m = metadata.getColumnMetadata(i);
                 flushBuf(md, buf, m.name.length() * 2).put(m.name.getBytes(Files.UTF_8));
                 flushBuf(md, buf, 4).putInt(m.size);
                 flushBuf(md, buf, 4).putInt(m.distinctCountHint);

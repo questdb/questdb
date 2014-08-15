@@ -20,6 +20,7 @@ import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalKey;
 import com.nfsdb.journal.concurrent.TimerCache;
 import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.factory.configuration.JournalConfiguration;
 
 import java.util.HashMap;
 import java.util.Map;

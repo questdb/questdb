@@ -24,9 +24,9 @@ import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.exceptions.JournalUnsupportedTypeException;
 import com.nfsdb.journal.factory.JournalClosingListener;
-import com.nfsdb.journal.factory.JournalConfiguration;
-import com.nfsdb.journal.factory.JournalMetadata;
 import com.nfsdb.journal.factory.NullsAdaptor;
+import com.nfsdb.journal.factory.configuration.Constants;
+import com.nfsdb.journal.factory.configuration.JournalMetadata;
 import com.nfsdb.journal.iterators.ConcurrentIterator;
 import com.nfsdb.journal.iterators.JournalIterator;
 import com.nfsdb.journal.iterators.JournalRowBufferedIterator;
@@ -258,13 +258,16 @@ public class Journal<T> implements Iterable<T>, Closeable {
     }
 
     public void expireOpenFiles() {
-        long expiry = System.currentTimeMillis() - TimeUnit.SECONDS.toMillis(getMetadata().getOpenPartitionTTL());
-        for (int i = 0, partitionsSize = partitions.size(); i < partitionsSize; i++) {
-            Partition<T> partition = partitions.get(i);
-            if (expiry > partition.getLastAccessed() && partition.isOpen()) {
-                partition.close();
-            } else {
-                partition.expireOpenIndices();
+        long ttl = getMetadata().getOpenFileTTL();
+        if (ttl > 0) {
+            long expiry = System.currentTimeMillis() - TimeUnit.SECONDS.toMillis(getMetadata().getOpenFileTTL());
+            for (int i = 0, partitionsSize = partitions.size(); i < partitionsSize; i++) {
+                Partition<T> partition = partitions.get(i);
+                if (expiry > partition.getLastAccessed() && partition.isOpen()) {
+                    partition.close();
+                } else {
+                    partition.expireOpenIndices();
+                }
             }
         }
     }
@@ -369,7 +372,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
             metadata.getNullsAdaptor().clear(obj);
         } else {
             for (int i = 0, count = metadata.getColumnCount(); i < count; i++) {
-                JournalMetadata.ColumnMetadata m = metadata.getColumnMetadata(i);
+                com.nfsdb.journal.factory.configuration.ColumnMetadata m = metadata.getColumnMetadata(i);
                 switch (m.type) {
                     case BOOLEAN:
                         Unsafe.getUnsafe().putBoolean(obj, m.offset, false);
@@ -539,7 +542,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
     }
 
     public TempPartition<T> createTempPartition(String name) throws JournalException {
-        int lag = getMetadata().getLagHours();
+        int lag = getMetadata().getLag();
         if (lag <= 0) {
             throw new JournalRuntimeException("Journal doesn't support temp partitions: %s", this);
         }
@@ -599,7 +602,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         columnMetadata = new ColumnMetadata[columnCount];
         for (int i = 0; i < columnCount; i++) {
             columnMetadata[i] = new ColumnMetadata();
-            JournalMetadata.ColumnMetadata meta = metadata.getColumnMetadata(i);
+            com.nfsdb.journal.factory.configuration.ColumnMetadata meta = metadata.getColumnMetadata(i);
             if (meta.type == ColumnType.SYMBOL && meta.sameAs == null) {
                 int tabIndex = symbolTables.size();
                 int tabSize = tx.symbolTableSizes.length > tabIndex ? tx.symbolTableSizes[tabIndex] : 0;
@@ -615,7 +618,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
 
     private void configureSymbolTableSynonyms() {
         for (int i = 0, columnCount = getMetadata().getColumnCount(); i < columnCount; i++) {
-            JournalMetadata.ColumnMetadata meta = metadata.getColumnMetadata(i);
+            com.nfsdb.journal.factory.configuration.ColumnMetadata meta = metadata.getColumnMetadata(i);
             if (meta.type == ColumnType.SYMBOL && meta.sameAs != null) {
                 SymbolTable tab = getSymbolTable(meta.sameAs);
                 symbolTableMap.put(meta.name, tab);
@@ -627,7 +630,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
     private void configurePartitions() throws JournalException {
         File[] files = getLocation().listFiles(new FileFilter() {
             public boolean accept(File f) {
-                return f.isDirectory() && !f.getName().startsWith(JournalConfiguration.TEMP_DIRECTORY_PREFIX);
+                return f.isDirectory() && !f.getName().startsWith(Constants.TEMP_DIRECTORY_PREFIX);
             }
         });
 
@@ -738,6 +741,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
 
     public static class ColumnMetadata {
         public SymbolTable symbolTable;
-        public JournalMetadata.ColumnMetadata meta;
+        public com.nfsdb.journal.factory.configuration.ColumnMetadata meta;
     }
 }

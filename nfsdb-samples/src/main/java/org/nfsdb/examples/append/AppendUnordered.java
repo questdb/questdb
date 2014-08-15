@@ -16,9 +16,7 @@
 
 package org.nfsdb.examples.append;
 
-import com.nfsdb.journal.JournalKey;
 import com.nfsdb.journal.JournalWriter;
-import com.nfsdb.journal.PartitionType;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.utils.Files;
@@ -50,12 +48,7 @@ public class AppendUnordered {
             // delete existing quote journal
             Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote-unordered"));
 
-            try (JournalWriter<Quote> writer = factory.writer(new JournalKey<>(
-                    Quote.class             // model class
-                    , "quote-unordered"     // directory name where journal is stored. This is relative to factory location.
-                    , PartitionType.NONE    // NONE - no partitioning
-                    , false                 // order enforcement is turned off
-            ))) {
+            try (JournalWriter<Quote> writer = factory.writer(Quote.class)) {
 
                 final int count = 1000000;
                 final String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};

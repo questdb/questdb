@@ -18,8 +18,10 @@ package org.nfsdb.examples.iterate;
 
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
+import com.nfsdb.journal.PartitionType;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
+import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Files;
 import org.joda.time.DateTime;
@@ -36,12 +38,16 @@ public class IntervalExample {
             System.exit(1);
         }
         String journalLocation = args[0];
-        // this is another way to setup JournalFactory if you would like to provide NullsAdaptor. NullsAdaptor for thrift,
-        // which is used in this case implements JIT-friendly object reset method, which is quite fast.
-        try (JournalFactory factory = new JournalFactory(journalLocation)) {
+        try (JournalFactory factory = new JournalFactory(new JournalConfigurationBuilder() {{
+            $(Quote.class)
+                    .recordCountHint(5000000) // hint that journal is going to be big
+                    .partitionBy(PartitionType.MONTH) // partition by MONTH
+                    .$ts() // tell factory that Quote has "timestamp" column. If column is called differently you can pass its name
+            ;
+        }}.build(journalLocation))) {
 
             // delete existing quote journal
-            Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote"));
+            Files.delete(new File(factory.getConfiguration().getJournalBase(), Quote.class.getName()));
 
             // get some data in :)
             try (JournalWriter<Quote> w = factory.bulkWriter(Quote.class)) {

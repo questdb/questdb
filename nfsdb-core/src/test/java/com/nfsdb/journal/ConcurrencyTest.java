@@ -20,7 +20,7 @@ package com.nfsdb.journal;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalPool;
 import com.nfsdb.journal.factory.JournalReaderFactory;
-import com.nfsdb.journal.test.model.Quote;
+import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestUtils;
 import org.junit.Assert;

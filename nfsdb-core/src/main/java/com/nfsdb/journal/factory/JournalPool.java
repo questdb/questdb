@@ -19,6 +19,7 @@ package com.nfsdb.journal.factory;
 import com.nfsdb.journal.concurrent.NamedDaemonThreadFactory;
 import com.nfsdb.journal.concurrent.TimerCache;
 import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.factory.configuration.JournalConfiguration;
 import com.nfsdb.journal.logging.Logger;
 
 import java.io.Closeable;

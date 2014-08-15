@@ -75,22 +75,20 @@ public final class Dates {
                 return intervalForDate(Dates.utc(name + "T00:00:00.000Z").getMillis(), partitionType);
             case NONE:
                 if ("default".equals(name)) {
-                    break;
+                    return new Interval(0, Long.MAX_VALUE, DateTimeZone.UTC);
                 }
             default:
                 throw new JournalUnsupportedTypeException(partitionType);
         }
-        return null;
     }
 
     public static Interval intervalForDate(long timestamp, PartitionType partitionType) {
-        long lo = intervalStart(timestamp, partitionType);
-        long hi = intervalEnd(lo, partitionType);
-
         switch (partitionType) {
             case NONE:
-                return null;
+                return new Interval(0, Long.MAX_VALUE, DateTimeZone.UTC);
             default:
+                long lo = intervalStart(timestamp, partitionType);
+                long hi = intervalEnd(lo, partitionType);
                 return new Interval(lo, hi, DateTimeZone.UTC);
         }
     }

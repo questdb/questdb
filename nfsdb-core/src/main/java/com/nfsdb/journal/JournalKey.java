@@ -16,54 +16,55 @@
 
 package com.nfsdb.journal;
 
-import com.nfsdb.journal.factory.JournalConfiguration;
+import com.nfsdb.journal.factory.configuration.Constants;
 import com.nfsdb.journal.utils.ByteBuffers;
 import com.nfsdb.journal.utils.Files;
 
 import java.nio.ByteBuffer;
 
 public class JournalKey<T> {
-    private final String clazz;
+    private final String modelClassName;
+    private final Class<T> modelClass;
     private String location;
     private PartitionType partitionType = PartitionType.DEFAULT;
-    private int recordHint = JournalConfiguration.NULL_RECORD_HINT;
+    private int recordHint = Constants.NULL_RECORD_HINT;
     private boolean ordered = true;
 
     public JournalKey(Class<T> clazz) {
-        this.clazz = clazz.getName();
+        this.modelClass = clazz;
+        this.modelClassName = clazz.getName();
     }
 
     public JournalKey(Class<T> clazz, int recordHint) {
-        this.clazz = clazz.getName();
+        this.modelClass = clazz;
+        this.modelClassName = clazz.getName();
         this.recordHint = recordHint;
     }
 
     public JournalKey(Class<T> clazz, String location) {
-        this.clazz = clazz.getName();
-        this.location = location;
-    }
-
-
-    public JournalKey(String clazz, String location) {
-        this.clazz = clazz;
+        this.modelClass = clazz;
+        this.modelClassName = clazz.getName();
         this.location = location;
     }
 
     public JournalKey(Class<T> clazz, String location, PartitionType partitionType) {
-        this.clazz = clazz.getName();
+        this.modelClass = clazz;
+        this.modelClassName = clazz.getName();
         this.location = location;
         this.partitionType = partitionType;
     }
 
     public JournalKey(Class<T> clazz, String location, PartitionType partitionType, int recordHint) {
-        this.clazz = clazz.getName();
+        this.modelClass = clazz;
+        this.modelClassName = clazz.getName();
         this.location = location;
         this.partitionType = partitionType;
         this.recordHint = recordHint;
     }
 
     public JournalKey(Class<T> clazz, String location, PartitionType partitionType, int recordHint, boolean ordered) {
-        this.clazz = clazz.getName();
+        this.modelClass = clazz;
+        this.modelClassName = clazz.getName();
         this.location = location;
         this.partitionType = partitionType;
         this.recordHint = recordHint;
@@ -71,14 +72,15 @@ public class JournalKey<T> {
     }
 
     public JournalKey(Class<T> clazz, String location, PartitionType partitionType, boolean ordered) {
-        this.clazz = clazz.getName();
+        this.modelClass = clazz;
+        this.modelClassName = clazz.getName();
         this.location = location;
         this.partitionType = partitionType;
         this.ordered = ordered;
     }
 
     public static JournalKey<Object> fromBuffer(ByteBuffer buffer) {
-        // clazz
+        // modelClassName
         int clazzLen = buffer.getInt();
         byte[] clazz = new byte[clazzLen];
         buffer.get(clazz);
@@ -101,8 +103,12 @@ public class JournalKey<T> {
         return new JournalKey<>(new String(clazz, Files.UTF_8), location == null ? null : new String(location), partitionType, recordHint, ordered);
     }
 
-    public String getClazz() {
-        return clazz;
+    public String getModelClassName() {
+        return modelClassName;
+    }
+
+    public Class<T> getModelClass() {
+        return modelClass;
     }
 
     public String getLocation() {
@@ -126,13 +132,13 @@ public class JournalKey<T> {
         if (this == o) return true;
         if (!(o instanceof JournalKey)) return false;
         JournalKey that = (JournalKey) o;
-        return ordered == that.ordered && recordHint == that.recordHint && !(clazz != null ? !clazz.equals(that.clazz) : that.clazz != null) && !(location != null ? !location.equals(that.location) : that.location != null) && partitionType == that.partitionType;
+        return ordered == that.ordered && recordHint == that.recordHint && !(modelClassName != null ? !modelClassName.equals(that.modelClassName) : that.modelClassName != null) && !(location != null ? !location.equals(that.location) : that.location != null) && partitionType == that.partitionType;
 
     }
 
     @Override
     public int hashCode() {
-        int result = clazz != null ? clazz.hashCode() : 0;
+        int result = modelClassName != null ? modelClassName.hashCode() : 0;
         result = 31 * result + (location != null ? location.hashCode() : 0);
         result = 31 * result + (partitionType != null ? partitionType.hashCode() : 0);
         result = 31 * result + recordHint;
@@ -143,7 +149,7 @@ public class JournalKey<T> {
     @Override
     public String toString() {
         return "JournalKey{" +
-                "clazz=" + clazz +
+                "modelClassName=" + modelClassName +
                 ", location='" + location + '\'' +
                 ", partitionType=" + partitionType +
                 ", recordHint=" + recordHint +
@@ -154,13 +160,13 @@ public class JournalKey<T> {
     //////////////////////// REPLICATION CODE //////////////////////
 
     public int getBufferSize() {
-        return 4 + clazz.getBytes(Files.UTF_8).length + 4 + 2 * (location == null ? 0 : location.length()) + 1 + 1 + 4;
+        return 4 + modelClassName.getBytes(Files.UTF_8).length + 4 + 2 * (location == null ? 0 : location.length()) + 1 + 1 + 4;
     }
 
     public void write(ByteBuffer buffer) {
-        // clazz
-        buffer.putInt(clazz.length());
-        for (byte b : clazz.getBytes(Files.UTF_8)) {
+        // modelClassName
+        buffer.putInt(modelClassName.length());
+        for (byte b : modelClassName.getBytes(Files.UTF_8)) {
             buffer.put(b);
         }
         // location
@@ -174,7 +180,8 @@ public class JournalKey<T> {
     }
 
     private JournalKey(String clazz, String location, PartitionType partitionType, int recordHint, boolean ordered) {
-        this.clazz = clazz;
+        this.modelClass = null;
+        this.modelClassName = clazz;
         this.location = location;
         this.partitionType = partitionType;
         this.recordHint = recordHint;

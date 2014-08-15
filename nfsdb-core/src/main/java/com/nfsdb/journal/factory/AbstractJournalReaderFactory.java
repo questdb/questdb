@@ -21,6 +21,7 @@ import com.nfsdb.journal.JournalBulkReader;
 import com.nfsdb.journal.JournalKey;
 import com.nfsdb.journal.concurrent.TimerCache;
 import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.factory.configuration.JournalConfiguration;
 
 import java.io.Closeable;
 
@@ -41,7 +42,7 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
 
     @Override
     public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        return new Journal<>(configuration.getMetadata(key), key, timerCache);
+        return new Journal<>(configuration.createMetadata(key), key, timerCache);
     }
 
     @Override
@@ -56,7 +57,7 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
 
     @Override
     public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
-        return new JournalBulkReader<>(configuration.getMetadata(key), key, timerCache);
+        return new JournalBulkReader<>(configuration.createMetadata(key), key, timerCache);
     }
 
     public JournalConfiguration getConfiguration() {

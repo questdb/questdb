@@ -19,7 +19,7 @@ package com.nfsdb.journal.test.tools;
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.factory.JournalFactory;
-import com.nfsdb.journal.test.model.Quote;
+import com.nfsdb.journal.model.Quote;
 import org.junit.Assert;
 import org.junit.Test;
 

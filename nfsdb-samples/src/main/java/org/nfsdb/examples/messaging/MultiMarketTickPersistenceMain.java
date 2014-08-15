@@ -21,10 +21,9 @@ import com.lmax.disruptor.BusySpinWaitStrategy;
 import com.lmax.disruptor.RingBuffer;
 import com.lmax.disruptor.SequenceBarrier;
 import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.factory.JournalConfiguration;
 import com.nfsdb.journal.factory.JournalFactory;
+import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 
-import java.io.File;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -67,7 +66,17 @@ public class MultiMarketTickPersistenceMain {
             System.exit(1);
         }
 
-        MultiMarketTickPersistenceMain main = new MultiMarketTickPersistenceMain(new JournalFactory(new JournalConfiguration("/tiq.xml", new File(args[0])).build()), 100, 2, 200000000);
+        MultiMarketTickPersistenceMain main = new MultiMarketTickPersistenceMain(
+                new JournalFactory(
+                        new JournalConfigurationBuilder() {{
+                            $(Tick.class)
+                                    .recordCountHint(10000000)
+                                    .$ts()
+                            ;
+                        }}.build(args[0])
+                )
+                , 100, 2, 200000000
+        );
         long t = System.currentTimeMillis();
         main.execute();
         System.out.println(System.currentTimeMillis() - t + "ms");

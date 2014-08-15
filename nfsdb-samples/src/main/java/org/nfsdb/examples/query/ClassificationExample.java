@@ -23,6 +23,7 @@ import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.index.KVIndex;
 import com.nfsdb.journal.utils.Files;
+import org.nfsdb.examples.model.ModelConfiguration;
 import org.nfsdb.examples.model.Quote;
 import org.nfsdb.examples.support.QuoteGenerator;
 
@@ -43,7 +44,7 @@ public class ClassificationExample {
         }
         String journalLocation = args[0];
 
-        try (JournalFactory factory = new JournalFactory(journalLocation)) {
+        try (JournalFactory factory = new JournalFactory(ModelConfiguration.CONFIG.build(journalLocation))) {
 
             // delete existing quote journal
             Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote"));

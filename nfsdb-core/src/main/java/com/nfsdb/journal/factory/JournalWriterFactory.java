@@ -20,6 +20,7 @@ import com.nfsdb.journal.JournalBulkWriter;
 import com.nfsdb.journal.JournalKey;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.factory.configuration.JournalConfiguration;
 
 public interface JournalWriterFactory {
 

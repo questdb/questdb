@@ -17,7 +17,7 @@
 package com.nfsdb.journal;
 
 /**
- * Setting partition type on JournalKey to override default settings in nfsdb.xml.
+ * Setting partition type on JournalKey to override default settings.
  */
 public enum PartitionType {
     DAY, MONTH, YEAR,
@@ -27,7 +27,7 @@ public enum PartitionType {
      */
     NONE,
     /**
-     * Setting partition type to DEFAULT will use whatever partition type is specified in nfsdb.xml.
+     * Setting partition type to DEFAULT will use whatever partition type is specified in journal configuration.
      */
     DEFAULT
 }

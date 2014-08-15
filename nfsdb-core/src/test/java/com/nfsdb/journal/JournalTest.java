@@ -18,13 +18,15 @@ package com.nfsdb.journal;
 
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.factory.JournalConfiguration;
+import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.factory.JournalFactory;
-import com.nfsdb.journal.test.model.Quote;
-import com.nfsdb.journal.test.model.TestEntity;
+import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
+import com.nfsdb.journal.model.Quote;
+import com.nfsdb.journal.model.TestEntity;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestData;
 import com.nfsdb.journal.test.tools.TestUtils;
+import com.nfsdb.journal.tx.TxAsyncListener;
 import com.nfsdb.journal.tx.TxFuture;
 import com.nfsdb.journal.tx.TxListener;
 import com.nfsdb.journal.utils.Dates;
@@ -399,13 +401,13 @@ public class JournalTest extends AbstractTest {
 
         TestTxListener lsnr = new TestTxListener();
         w.setTxListener(lsnr);
+        w.setTxAsyncListener(lsnr);
 
 
         w.append(origin.query().all().asResultSet().subset(0, 1000));
         w.commit();
         Assert.assertTrue(lsnr.isNotifyAsyncNoWait());
         Assert.assertFalse(lsnr.isNotifyAsync());
-        Assert.assertFalse(lsnr.isNotifySync());
 
         lsnr.reset();
 
@@ -414,16 +416,6 @@ public class JournalTest extends AbstractTest {
         Assert.assertNotNull(future);
         Assert.assertFalse(lsnr.isNotifyAsyncNoWait());
         Assert.assertTrue(lsnr.isNotifyAsync());
-        Assert.assertFalse(lsnr.isNotifySync());
-
-
-        lsnr.reset();
-
-        w.append(origin.query().all().asResultSet().subset(2000, 4000));
-        Assert.assertTrue(w.commitAndWait(100, TimeUnit.MILLISECONDS));
-        Assert.assertFalse(lsnr.isNotifyAsyncNoWait());
-        Assert.assertFalse(lsnr.isNotifyAsync());
-        Assert.assertTrue(lsnr.isNotifySync());
     }
 
     @Test
@@ -435,15 +427,19 @@ public class JournalTest extends AbstractTest {
         try {
             factory.writer(new JournalKey<>(Quote.class, "quote", PartitionType.MONTH));
             Assert.fail("Exception expected");
-        } catch (JournalException e) {
+        } catch (JournalRuntimeException e) {
             // expect exception
         }
 
-        JournalFactory f2 = new JournalFactory(new JournalConfiguration("/db-factory-test.xml", factory.getConfiguration().getJournalBase()).build());
+        JournalFactory f2 = new JournalFactory(new JournalConfigurationBuilder() {{
+            $(Quote.class)
+                    .$sym("mode");
+        }}.build(factory.getConfiguration().getJournalBase()));
+
         try {
-            f2.writer(new JournalKey<>(Quote.class, "quote", PartitionType.NONE));
+            f2.writer(new JournalKey<>(Quote.class, "quote"));
             Assert.fail("Exception expected");
-        } catch (JournalException e) {
+        } catch (JournalRuntimeException e) {
             // expect exception
         }
     }
@@ -467,15 +463,13 @@ public class JournalTest extends AbstractTest {
         Assert.assertEquals(1, w.query().head().withKeys("ABC").asResultSet().size());
     }
 
-    private static class TestTxListener implements TxListener {
+    private static class TestTxListener implements TxListener, TxAsyncListener {
 
         private boolean notifyAsyncNoWait = false;
-        private boolean notifySync = false;
         private boolean notifyAsync = false;
 
         public void reset() {
             notifyAsyncNoWait = false;
-            notifySync = false;
             notifyAsync = false;
         }
 
@@ -483,27 +477,17 @@ public class JournalTest extends AbstractTest {
             return notifyAsyncNoWait;
         }
 
-        public boolean isNotifySync() {
-            return notifySync;
-        }
-
         public boolean isNotifyAsync() {
             return notifyAsync;
         }
 
         @Override
-        public boolean notifySync(long timeout, TimeUnit unit) {
-            notifySync = true;
-            return true;
-        }
-
-        @Override
-        public void notifyAsyncNoWait() {
+        public void onCommit() {
             notifyAsyncNoWait = true;
         }
 
         @Override
-        public TxFuture notifyAsync() {
+        public TxFuture onCommitAsync() {
             notifyAsync = true;
             return new TxFuture() {
                 @Override

@@ -18,17 +18,19 @@ package com.nfsdb.journal;
 
 import com.nfsdb.journal.collections.LongArrayList;
 import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.index.Cursor;
 import com.nfsdb.journal.index.StringIndexCursor;
 import com.nfsdb.journal.index.experimental.CursorFilter;
 import com.nfsdb.journal.index.experimental.FilteredCursor;
 import com.nfsdb.journal.index.experimental.filter.IntEqualsFilter;
 import com.nfsdb.journal.index.experimental.v2.Q;
-import com.nfsdb.journal.test.model.Quote;
-import com.nfsdb.journal.test.model.Trade;
+import com.nfsdb.journal.model.Quote;
+import com.nfsdb.journal.model.Trade;
 import com.nfsdb.journal.test.tools.JournalTestFactory;
 import com.nfsdb.journal.test.tools.TestUtils;
 import com.nfsdb.journal.utils.Dates;
+import com.nfsdb.journal.utils.Files;
 import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
@@ -36,7 +38,16 @@ import org.junit.Test;
 public class CursorTest {
 
     @Rule
-    public final JournalTestFactory factory = new JournalTestFactory("/nfsdb-cursor-test.xml", null);
+    public final JournalTestFactory factory = new JournalTestFactory(
+
+            new JournalConfigurationBuilder() {{
+                $(Quote.class)
+                        .$sym("sym").index().valueCountHint(15)
+                        .$sym("ex").index().valueCountHint(2)
+                        .$str("mode").size(60).index();
+
+            }}.build(Files.makeTempDir())
+    );
 
     @Test
     @Ignore

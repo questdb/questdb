@@ -18,9 +18,9 @@ package com.nfsdb.journal;
 
 import com.nfsdb.journal.map.JournalHashMap;
 import com.nfsdb.journal.map.JournalMap;
+import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.printer.JournalPrinter;
 import com.nfsdb.journal.printer.appender.OutputStreamAppender;
-import com.nfsdb.journal.test.model.Quote;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestData;
 import com.nfsdb.journal.test.tools.TestUtils;

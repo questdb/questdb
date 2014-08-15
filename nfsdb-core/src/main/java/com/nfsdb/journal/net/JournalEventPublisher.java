@@ -17,12 +17,11 @@
 package com.nfsdb.journal.net;
 
 import com.nfsdb.journal.net.bridge.JournalEventBridge;
+import com.nfsdb.journal.tx.TxAsyncListener;
 import com.nfsdb.journal.tx.TxFuture;
 import com.nfsdb.journal.tx.TxListener;
 
-import java.util.concurrent.TimeUnit;
-
-public class JournalEventPublisher implements TxListener {
+public class JournalEventPublisher implements TxListener, TxAsyncListener {
     private final int journalIndex;
     private final JournalEventBridge bridge;
 
@@ -31,21 +30,14 @@ public class JournalEventPublisher implements TxListener {
         this.bridge = bridge;
     }
 
-
     @Override
-    public boolean notifySync(long timeout, TimeUnit unit) {
-        TxFuture future = notifyAsync();
-        return future.waitFor(timeout, unit);
-    }
-
-    @Override
-    public void notifyAsyncNoWait() {
+    public void onCommit() {
         long timestamp = System.currentTimeMillis();
         bridge.publish(journalIndex, timestamp);
     }
 
     @Override
-    public TxFuture notifyAsync() {
+    public TxFuture onCommitAsync() {
         long timestamp = System.currentTimeMillis();
         TxFuture future = bridge.createRemoteCommitFuture(journalIndex, timestamp);
         bridge.publish(journalIndex, timestamp);

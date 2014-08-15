@@ -26,6 +26,7 @@ import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.query.api.QueryAllBuilder;
 import com.nfsdb.journal.test.tools.JournalTestFactory;
 import com.nfsdb.journal.utils.Dates;
+import com.nfsdb.journal.utils.Files;
 import com.nfsdb.thrift.model.Quote;
 import org.joda.time.Interval;
 import org.junit.Assert;
@@ -44,7 +45,7 @@ public class PerformanceTest {
     private static boolean enabled = false;
 
     @Rule
-    public final JournalTestFactory factory = new JournalTestFactory("/nfsdb-thrift.xml", new ThriftNullsAdaptorFactory());
+    public final JournalTestFactory factory = new JournalTestFactory(Configuration.MAIN.build(Files.makeTempDir()));
 
     @BeforeClass
     public static void setUp() throws Exception {

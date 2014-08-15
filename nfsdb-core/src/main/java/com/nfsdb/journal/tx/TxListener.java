@@ -16,13 +16,6 @@
 
 package com.nfsdb.journal.tx;
 
-import java.util.concurrent.TimeUnit;
-
 public interface TxListener {
-
-    boolean notifySync(long timeout, TimeUnit unit);
-
-    void notifyAsyncNoWait();
-
-    TxFuture notifyAsync();
+    void onCommit();
 }

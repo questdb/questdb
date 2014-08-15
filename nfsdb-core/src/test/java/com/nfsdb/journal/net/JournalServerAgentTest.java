@@ -18,6 +18,8 @@ package com.nfsdb.journal.net;
 
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
+import com.nfsdb.journal.model.Quote;
+import com.nfsdb.journal.model.Trade;
 import com.nfsdb.journal.net.comsumer.JournalDeltaConsumer;
 import com.nfsdb.journal.net.config.NetworkConfig;
 import com.nfsdb.journal.net.config.ServerConfig;
@@ -30,8 +32,6 @@ import com.nfsdb.journal.net.protocol.CommandProducer;
 import com.nfsdb.journal.net.protocol.commands.IntResponseConsumer;
 import com.nfsdb.journal.net.protocol.commands.SetKeyRequestProducer;
 import com.nfsdb.journal.net.protocol.commands.StringResponseConsumer;
-import com.nfsdb.journal.test.model.Quote;
-import com.nfsdb.journal.test.model.Trade;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestUtils;
 import org.junit.Assert;

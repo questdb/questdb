@@ -17,7 +17,7 @@
 package com.nfsdb.journal;
 
 import com.nfsdb.journal.logging.Logger;
-import com.nfsdb.journal.test.model.Band;
+import com.nfsdb.journal.model.Band;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestUtils;
 import org.junit.Assert;

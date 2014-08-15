@@ -16,11 +16,11 @@
 
 package org.nfsdb.examples.append;
 
-import com.nfsdb.journal.JournalKey;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.PartitionType;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
+import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.utils.Files;
 import org.nfsdb.examples.model.Quote;
 
@@ -44,13 +44,19 @@ public class PartitionByDayAppend {
         }
 
         String journalLocation = args[0];
-        try (JournalFactory factory = new JournalFactory(journalLocation)) {
+        try (JournalFactory factory = new JournalFactory(new JournalConfigurationBuilder() {{
+            $(Quote.class)
+                    .location("quote-by-day")
+                    .partitionBy(PartitionType.DAY) // partition by day
+                    .$ts() // tell factory that Quote has "timestamp" column. If column is called differently you can pass its name
+            ;
+        }}.build(journalLocation))) {
 
             Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote-by-day"));
 
-            // default partition type is configured in nfsdb.xml and it is MONTH
+            // default partition type for Quote is MONTH (@see ModelConfiguration)
             // you can change it in runtime and also, optionally put journal in alternative location
-            try (JournalWriter<Quote> writer = factory.writer(new JournalKey<>(Quote.class, "quote-by-day", PartitionType.DAY))) {
+            try (JournalWriter<Quote> writer = factory.writer(Quote.class)) {
 
                 final int count = 1000000;
                 final String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};

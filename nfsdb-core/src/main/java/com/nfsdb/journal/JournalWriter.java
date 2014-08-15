@@ -22,18 +22,15 @@ import com.nfsdb.journal.concurrent.PartitionCleaner;
 import com.nfsdb.journal.concurrent.TimerCache;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
-import com.nfsdb.journal.factory.JournalConfiguration;
-import com.nfsdb.journal.factory.JournalMetadata;
+import com.nfsdb.journal.factory.configuration.Constants;
+import com.nfsdb.journal.factory.configuration.JournalMetadata;
 import com.nfsdb.journal.iterators.ConcurrentIterator;
 import com.nfsdb.journal.iterators.MergingIterator;
 import com.nfsdb.journal.iterators.PeekingIterator;
 import com.nfsdb.journal.locks.Lock;
 import com.nfsdb.journal.locks.LockManager;
 import com.nfsdb.journal.logging.Logger;
-import com.nfsdb.journal.tx.Tx;
-import com.nfsdb.journal.tx.TxFuture;
-import com.nfsdb.journal.tx.TxListener;
-import com.nfsdb.journal.tx.TxLog;
+import com.nfsdb.journal.tx.*;
 import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Files;
 import com.nfsdb.journal.utils.PeekingListIterator;
@@ -56,6 +53,7 @@ public class JournalWriter<T> extends Journal<T> {
     private final PeekingListIterator<T> peekingListIterator = new PeekingListIterator<>();
     private Lock writeLock;
     private TxListener txListener;
+    private TxAsyncListener txAsyncListener;
     private boolean txActive = false;
     private int txPartitionIndex = -1;
     private long appendTimestampLo = -1;
@@ -69,7 +67,7 @@ public class JournalWriter<T> extends Journal<T> {
 
     public JournalWriter(JournalMetadata<T> metadata, JournalKey<T> key, TimerCache timerCache) throws JournalException {
         super(metadata, key, timerCache);
-        this.lagMillis = TimeUnit.HOURS.toMillis(getMetadata().getLagHours());
+        this.lagMillis = TimeUnit.HOURS.toMillis(getMetadata().getLag());
         this.lagSwellMillis = lagMillis * 3;
         this.checkOrder = key.isOrdered() && getTimestampOffset() != -1;
     }
@@ -99,24 +97,12 @@ public class JournalWriter<T> extends Journal<T> {
         TxFuture future = null;
         if (txActive) {
             commit(Tx.TX_NORMAL);
-            if (txListener != null) {
-                future = txListener.notifyAsync();
+            if (txAsyncListener != null) {
+                future = txAsyncListener.onCommitAsync();
             }
             txActive = false;
         }
         return future;
-    }
-
-    public boolean commitAndWait(long timeout, TimeUnit unit) throws JournalException {
-        boolean result = true;
-        if (txActive) {
-            commit(Tx.TX_NORMAL);
-            if (txListener != null) {
-                result = txListener.notifySync(timeout, unit);
-            }
-            txActive = false;
-        }
-        return result;
     }
 
     public void rollback() throws JournalException {
@@ -166,6 +152,10 @@ public class JournalWriter<T> extends Journal<T> {
 
     public void setTxListener(TxListener txListener) {
         this.txListener = txListener;
+    }
+
+    public void setTxAsyncListener(TxAsyncListener txAsyncListener) {
+        this.txAsyncListener = txAsyncListener;
     }
 
     public Partition<T> getPartitionForTimestamp(long timestamp) {
@@ -226,7 +216,7 @@ public class JournalWriter<T> extends Journal<T> {
 
         File[] files = getLocation().listFiles(new FileFilter() {
             public boolean accept(File f) {
-                return f.isDirectory() && f.getName().startsWith(JournalConfiguration.TEMP_DIRECTORY_PREFIX) &&
+                return f.isDirectory() && f.getName().startsWith(Constants.TEMP_DIRECTORY_PREFIX) &&
                         (lagPartitionName == null || !lagPartitionName.equals(f.getName())) &&
                         (txLagName == null || !txLagName.equals(f.getName()));
             }
@@ -640,7 +630,7 @@ public class JournalWriter<T> extends Journal<T> {
         }
         txLog.head(tx);
 
-        File meta = new File(getLocation(), JournalConfiguration.JOURNAL_META_FILE);
+        File meta = new File(getLocation(), Constants.JOURNAL_META_FILE);
         if (!meta.exists()) {
             Files.writeStringToFile(meta, getMetadata().toString());
         }
@@ -655,7 +645,7 @@ public class JournalWriter<T> extends Journal<T> {
             beginTx();
             commit();
         }
-        if (getMetadata().getLagHours() != -1) {
+        if (getMetadata().getLag() != -1) {
             this.partitionCleaner = new PartitionCleaner(this, getLocation().getName());
             this.partitionCleaner.start();
         }
@@ -667,14 +657,14 @@ public class JournalWriter<T> extends Journal<T> {
             commit(force ? Tx.TX_FORCE : Tx.TX_NORMAL);
             expireOpenFiles();
             if (txListener != null) {
-                txListener.notifyAsyncNoWait();
+                txListener.onCommit();
             }
             txActive = false;
         }
     }
 
     Partition<T> createTempPartition() throws JournalException {
-        return createTempPartition(JournalConfiguration.TEMP_DIRECTORY_PREFIX + "." + System.currentTimeMillis() + "." + UUID.randomUUID().toString());
+        return createTempPartition(Constants.TEMP_DIRECTORY_PREFIX + "." + System.currentTimeMillis() + "." + UUID.randomUUID().toString());
     }
 
     Partition<T> getAppendPartition() throws JournalException {
@@ -685,7 +675,7 @@ public class JournalWriter<T> extends Journal<T> {
             if (getMetadata().getPartitionType() != PartitionType.NONE) {
                 throw new JournalException("getAppendPartition() without timestamp on partitioned journal: %s", this);
             }
-            return createPartition(null, 0);
+            return createPartition(Dates.intervalForDate(0, getMetadata().getPartitionType()), 0);
         }
     }
 
@@ -745,7 +735,7 @@ public class JournalWriter<T> extends Journal<T> {
     private void rollbackPartitionDirs() throws JournalException {
         File[] files = getLocation().listFiles(new FileFilter() {
             public boolean accept(File f) {
-                return f.isDirectory() && !f.getName().startsWith(JournalConfiguration.TEMP_DIRECTORY_PREFIX);
+                return f.isDirectory() && !f.getName().startsWith(Constants.TEMP_DIRECTORY_PREFIX);
             }
         });
 

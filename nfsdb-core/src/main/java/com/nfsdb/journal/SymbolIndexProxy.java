@@ -17,7 +17,7 @@
 package com.nfsdb.journal;
 
 import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.factory.JournalMetadata;
+import com.nfsdb.journal.factory.configuration.JournalMetadata;
 import com.nfsdb.journal.index.KVIndex;
 import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.utils.Dates;

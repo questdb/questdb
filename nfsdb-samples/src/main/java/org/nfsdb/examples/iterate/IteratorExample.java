@@ -40,11 +40,11 @@ public class IteratorExample {
         try (JournalFactory factory = new JournalFactory(journalLocation)) {
 
             // delete existing quote journal
-            Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote"));
+            Files.delete(new File(factory.getConfiguration().getJournalBase(), Quote.class.getName()));
 
             // get some data in :)
             try (JournalWriter<Quote> w = factory.bulkWriter(Quote.class)) {
-                QuoteGenerator.generateQuoteData(w, 10000000);
+                QuoteGenerator.generateQuoteData(w, 1000000);
             }
 
             // basic iteration

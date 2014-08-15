@@ -19,6 +19,7 @@ package org.nfsdb.examples.append;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
+import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.utils.Files;
 import org.nfsdb.examples.model.Quote;
 
@@ -40,7 +41,12 @@ public class BasicRecordAppend {
             System.exit(1);
         }
         String journalLocation = args[0];
-        try (JournalFactory factory = new JournalFactory(journalLocation)) {
+        try (JournalFactory factory = new JournalFactory(new JournalConfigurationBuilder() {{
+            $(Quote.class)
+                    .location("quote")
+                    .$ts() // tell factory that Quote has "timestamp" column. If column is called differently you can pass its name
+            ;
+        }}.build(journalLocation))) {
 
             // delete existing quote journal
             Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote"));

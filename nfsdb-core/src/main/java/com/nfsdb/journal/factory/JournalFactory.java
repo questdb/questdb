@@ -20,24 +20,21 @@ import com.nfsdb.journal.JournalBulkWriter;
 import com.nfsdb.journal.JournalKey;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.PartitionType;
-import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.factory.configuration.JournalConfiguration;
+import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 
 import java.io.Closeable;
 import java.io.File;
 
 public class JournalFactory extends AbstractJournalReaderFactory implements JournalReaderFactory, JournalWriterFactory, Closeable {
 
-    public JournalFactory(String journalBase) throws JournalConfigurationException {
-        this(new File(journalBase));
+    public JournalFactory(String journalBase) {
+        this(new JournalConfigurationBuilder().build(journalBase));
     }
 
-    public JournalFactory(File journalBase) throws JournalConfigurationException {
-        this(new JournalConfiguration(journalBase).build());
-    }
-
-    public JournalFactory(String configurationFile, File journalBase) throws JournalConfigurationException {
-        this(new JournalConfiguration(configurationFile, journalBase).build());
+    public JournalFactory(File journalBase) {
+        this(new JournalConfigurationBuilder().build(journalBase));
     }
 
     public JournalFactory(JournalConfiguration configuration) {
@@ -61,12 +58,12 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
 
     @Override
     public <T> JournalWriter<T> writer(JournalKey<T> key) throws JournalException {
-        return new JournalWriter<>(getConfiguration().getMetadata(key), key, getTimerCache());
+        return new JournalWriter<>(getConfiguration().createMetadata(key), key, getTimerCache());
     }
 
     @Override
     public <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException {
-        return new JournalBulkWriter<>(getConfiguration().getMetadata(key), key, getTimerCache());
+        return new JournalBulkWriter<>(getConfiguration().createMetadata(key), key, getTimerCache());
     }
 
     @Override

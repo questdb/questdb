@@ -17,7 +17,7 @@
 package com.nfsdb.journal;
 
 import com.nfsdb.journal.factory.JournalCachingFactory;
-import com.nfsdb.journal.test.model.Quote;
+import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.utils.Files;
 import org.junit.Assert;

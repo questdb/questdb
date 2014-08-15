@@ -76,7 +76,11 @@ public class JournalServer {
 
     public void start() throws JournalNetworkException {
         for (int i = 0; i < writers.size(); i++) {
-            writers.get(i).setTxListener(new JournalEventPublisher(i, bridge));
+            JournalEventPublisher publisher = new JournalEventPublisher(i, bridge);
+            JournalWriter w = writers.get(i);
+            w.setTxListener(publisher);
+            w.setTxAsyncListener(publisher);
+
         }
         serverSocketChannel = config.openServerSocketChannel();
         InetSocketAddress address = config.getSocketAddress();
@@ -143,7 +147,7 @@ public class JournalServer {
         for (int i = 0; i < writers.size(); i++) {
             Journal journal = writers.get(i);
             JournalKey jk = journal.getKey();
-            if (jk.getClazz().equals(key.getClazz()) && (
+            if (jk.getModelClassName().equals(key.getModelClassName()) && (
                     (jk.getLocation() == null && key.getLocation() == null)
                             || (jk.getLocation() != null && jk.getLocation().equals(key.getLocation())))) {
                 return i;
