@@ -18,7 +18,6 @@ package org.nfsdb.examples.network;
 
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.exceptions.JournalNetworkException;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.net.JournalServer;
 import org.nfsdb.examples.model.Price;
@@ -26,7 +25,6 @@ import org.nfsdb.examples.model.Price;
 import java.util.concurrent.TimeUnit;
 
 public class SimpleReplicationServerMain {
-
 
     private final String location;
 
@@ -38,7 +36,7 @@ public class SimpleReplicationServerMain {
         new SimpleReplicationServerMain(args[0]).start();
     }
 
-    public void start() throws JournalException, JournalNetworkException, InterruptedException {
+    public void start() throws Exception {
         JournalFactory factory = new JournalFactory(location);
         JournalServer server = new JournalServer(factory);
 
@@ -56,7 +54,8 @@ public class SimpleReplicationServerMain {
         System.out.println(" [Done]");
     }
 
-    private void publishPrice(JournalWriter<Price> writer, int count) throws JournalException {
+    private void publishPrice(JournalWriter<Price> writer, int count)
+            throws JournalException {
         long tZero = System.currentTimeMillis();
         Price p = new Price();
         for (int i = 0; i < count; i++) {

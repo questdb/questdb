@@ -16,17 +16,13 @@
 
 package org.nfsdb.examples.network;
 
-import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.exceptions.JournalNetworkException;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.net.JournalClient;
 import com.nfsdb.journal.tx.TxListener;
 import org.nfsdb.examples.model.Price;
 
-import java.net.UnknownHostException;
-
 public class SimpleReplicationClientMain {
-    public static void main(String[] args) throws JournalException, JournalNetworkException, UnknownHostException {
+    public static void main(String[] args) throws Exception {
         JournalFactory factory = new JournalFactory(args[0]);
         JournalClient client = new JournalClient(factory);
         client.subscribe(Price.class, null, "price-copy", new TxListener() {
