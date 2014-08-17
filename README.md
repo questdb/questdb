@@ -19,7 +19,7 @@ Storing and quering data for Java developer is always pain in the neck. JDBC req
         - scale processing out to multiple servers
 
 
-##How
+##How?
 
 NFSdb provides automatic serialization for primitive types of POJOs to Memory Mapped Files. Files organised on disk in directories per class and files per attributes, providing column-based data store. String values can be indexed for fast searches and if your data has timestamp - it can be partitioned by DAY,MONTH or YEAR. Memory Mapped Files are managed by Operating System, which provides resilience in case of JVM crash and also a way of inter-process communucation as data written by one process is immediately available to all other processes.
 
