@@ -62,7 +62,7 @@ public class JournalServerAgentTest extends AbstractTest {
         ServerConfig config = new ServerConfig();
         config.setHeartbeatFrequency(300);
         server = new JournalServer(config, factory);
-        server.export(quoteWriter);
+        server.publish(quoteWriter);
         agent = new JournalServerAgent(server, new InetSocketAddress(NetworkConfig.DEFAULT_DATA_PORT));
     }
 
@@ -87,7 +87,7 @@ public class JournalServerAgentTest extends AbstractTest {
 
     @Test
     public void testJournalIndexCorrectness() throws Exception {
-        server.export(tradeWriter);
+        server.publish(tradeWriter);
         server.start();
 
         Journal<Quote> quoteClientWriter = factory.writer(Quote.class, "client");

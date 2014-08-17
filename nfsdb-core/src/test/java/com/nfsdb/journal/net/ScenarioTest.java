@@ -59,10 +59,10 @@ public class ScenarioTest extends AbstractTest {
         local = factory.reader(Quote.class, "local");
         Assert.assertEquals(0, local.size());
 
-        server.export(remote);
+        server.publish(remote);
         server.start();
 
-        client.sync(Quote.class, "remote", "local");
+        client.subscribe(Quote.class, "remote", "local");
         client.start();
 
         iteration("2013-02-10T10:03:20.000Z\tALDW\t0.32885755937534\t0.5741201360255567\t1836077773\t693649102\tFast trading\tSK\n" +
@@ -114,10 +114,10 @@ public class ScenarioTest extends AbstractTest {
         JournalServer server = new JournalServer(serverConfig, factory);
         JournalClient client = new JournalClient(ClientConfig.INSTANCE, factory);
 
-        server.export(remote);
+        server.publish(remote);
         server.start();
 
-        client.sync(Quote.class, "remote", "local");
+        client.subscribe(Quote.class, "remote", "local");
         client.start();
 
         lagIteration(randomOrigin, remote, 0, 100);

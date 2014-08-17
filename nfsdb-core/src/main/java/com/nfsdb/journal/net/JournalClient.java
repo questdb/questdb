@@ -72,18 +72,22 @@ public class JournalClient {
     private StatsCollectingReadableByteChannel statsChannel;
     private Future handlerFuture;
 
+    public JournalClient(JournalWriterFactory factory) {
+        this(new ClientConfig(), factory);
+    }
+
     public JournalClient(ClientConfig config, JournalWriterFactory factory) {
         this.config = config;
         this.factory = factory;
         this.service = Executors.newCachedThreadPool(CLIENT_THREAD_FACTORY);
     }
 
-    public <T> void sync(Class<T> clazz) throws JournalException {
-        sync(clazz, (TxListener) null);
+    public <T> void subscribe(Class<T> clazz) throws JournalException {
+        subscribe(clazz, (TxListener) null);
     }
 
     /**
-     * Configures client to sync given journal class when client is started
+     * Configures client to subscribe given journal class when client is started
      * and connected. Journals of given class at default location are opened on
      * both client and server. Optionally provided listener will be called back
      * when client journal is committed. Listener is called synchronously with
@@ -94,28 +98,28 @@ public class JournalClient {
      * @param <T>        generics to comply with Journal API.
      * @throws com.nfsdb.journal.exceptions.JournalException if local writer cannot be opened.
      */
-    public <T> void sync(Class<T> clazz, TxListener txListener) throws JournalException {
+    public <T> void subscribe(Class<T> clazz, TxListener txListener) throws JournalException {
         add(new JournalKey<>(clazz), factory.writer(clazz), txListener);
     }
 
     @SuppressWarnings("unused")
-    public <T> void sync(Class<T> clazz, String location) throws JournalException {
-        sync(clazz, location, (TxListener) null);
+    public <T> void subscribe(Class<T> clazz, String location) throws JournalException {
+        subscribe(clazz, location, (TxListener) null);
     }
 
-    public <T> void sync(Class<T> clazz, String location, TxListener txListener) throws JournalException {
+    public <T> void subscribe(Class<T> clazz, String location, TxListener txListener) throws JournalException {
         add(new JournalKey<>(clazz, location), factory.writer(clazz, location), txListener);
     }
 
-    public <T> void sync(Class<T> clazz, String remote, String local) throws JournalException {
-        sync(clazz, remote, local, null);
+    public <T> void subscribe(Class<T> clazz, String remote, String local) throws JournalException {
+        subscribe(clazz, remote, local, null);
     }
 
-    public <T> void sync(Class<T> clazz, String remote, String local, TxListener txListener) throws JournalException {
+    public <T> void subscribe(Class<T> clazz, String remote, String local, TxListener txListener) throws JournalException {
         add(new JournalKey<>(clazz, remote), factory.writer(clazz, local), txListener);
     }
 
-    public <T> void sync(Class<T> clazz, String remote, String local, int recordHint) throws JournalException {
+    public <T> void subscribe(Class<T> clazz, String remote, String local, int recordHint) throws JournalException {
         sync(clazz, remote, local, recordHint, null);
     }
 

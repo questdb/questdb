@@ -60,7 +60,9 @@ public class JournalServerAddressMulticast implements Runnable {
                 switch (data[0]) {
                     case ServerConfig.ADDRESS_REQUEST_PREFIX:
                         socket.send(packetSnd);
-                        LOGGER.info("Replying");
+                        LOGGER.info("Replying: %s", packetSnd);
+                        break;
+                    case ServerConfig.ADDRESS_RESPONSE_PREFIX:
                         break;
                     default:
                         LOGGER.warn("Unknown command: ", data[0]);
@@ -74,7 +76,7 @@ public class JournalServerAddressMulticast implements Runnable {
     public void start() throws JournalNetworkException {
         if (!isRunning()) {
             this.socket = config.openMulticastSocket();
-            this.packetRcv = new DatagramPacket(new byte[9], 9);
+            this.packetRcv = new DatagramPacket(new byte[10], 10);
 
             InetSocketAddress address = config.getSocketAddress();
             int port = address.getPort();

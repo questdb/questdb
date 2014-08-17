@@ -42,10 +42,12 @@ public class JournalConfigurationImpl implements JournalConfiguration {
     @SuppressWarnings("unchecked")
     public <T> JournalMetadata<T> createMetadata(JournalKey<T> key) {
 
+        boolean newMeta = false;
         JournalMetadata<T> meta = journalMetadata.get(key.getModelClassName());
         JournalMetadataBuilder<T> builder;
         if (meta == null) {
             builder = new JournalMetadataBuilder<>(key.getModelClass());
+            newMeta = true;
         } else {
             builder = new JournalMetadataBuilder<>(meta);
         }
@@ -76,6 +78,11 @@ public class JournalConfigurationImpl implements JournalConfiguration {
             journalLocation = new File(getJournalBase(), key.getLocation());
         } else {
             journalLocation = new File(getJournalBase(), builder.getLocation());
+        }
+
+        if (newMeta) {
+            JournalMetadata<T> m = builder.build();
+            journalMetadata.put(m.getModelClass().getName(), m);
         }
 
         builder.location(journalLocation.getAbsolutePath());

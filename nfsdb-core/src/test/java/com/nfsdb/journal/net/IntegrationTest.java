@@ -51,7 +51,7 @@ public class IntegrationTest extends AbstractTest {
     public void testSingleJournalSync() throws Exception {
         int size = 100000;
         JournalWriter<Quote> remote = factory.writer(Quote.class, "remote", 2 * size);
-        server.export(remote);
+        server.publish(remote);
         server.start();
 
         final CountDownLatch latch = new CountDownLatch(1);
@@ -78,8 +78,8 @@ public class IntegrationTest extends AbstractTest {
         int size = 10000;
         JournalWriter<Quote> remote1 = factory.writer(Quote.class, "remote1", 2 * size);
         JournalWriter<TestEntity> remote2 = factory.writer(TestEntity.class, "remote2", 2 * size);
-        server.export(remote1);
-        server.export(remote2);
+        server.publish(remote1);
+        server.publish(remote2);
         server.start();
 
         final CountDownLatch latch = new CountDownLatch(2);
@@ -122,7 +122,7 @@ public class IntegrationTest extends AbstractTest {
 
         JournalWriter<Quote> remote = factory.writer(Quote.class, "remote");
         remote.append(origin.query().all().asResultSet().subset(0, 3000));
-        server.export(remote);
+        server.publish(remote);
         server.start();
 
         try (JournalWriter<Quote> local1 = factory.writer(Quote.class, "local1")) {
@@ -135,7 +135,7 @@ public class IntegrationTest extends AbstractTest {
 
         final CountDownLatch latch = new CountDownLatch(2);
 
-        client.sync(Quote.class, "remote", "local1", new TxListener() {
+        client.subscribe(Quote.class, "remote", "local1", new TxListener() {
             @Override
             public void onCommit() {
                 latch.countDown();
@@ -144,7 +144,7 @@ public class IntegrationTest extends AbstractTest {
 
         JournalClient client2 = new JournalClient(ClientConfig.INSTANCE, factory);
 
-        client2.sync(Quote.class, "remote", "local2", new TxListener() {
+        client2.subscribe(Quote.class, "remote", "local2", new TxListener() {
             @Override
             public void onCommit() {
                 latch.countDown();
@@ -210,10 +210,10 @@ public class IntegrationTest extends AbstractTest {
     public void testWriterShutdown() throws Exception {
         int size = 10000;
         try (JournalWriter<Quote> remote = factory.writer(Quote.class, "remote", 2 * size)) {
-            server.export(remote);
+            server.publish(remote);
             server.start();
 
-            client.sync(Quote.class, "remote", "local", 2 * size);
+            client.subscribe(Quote.class, "remote", "local", 2 * size);
             client.start();
 
             TestUtils.generateQuoteData(remote, size, 0);

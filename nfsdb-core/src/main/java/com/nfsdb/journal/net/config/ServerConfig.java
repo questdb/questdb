@@ -26,6 +26,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
+import java.net.UnknownHostException;
 import java.nio.channels.ServerSocketChannel;
 import java.util.Enumeration;
 import java.util.concurrent.TimeUnit;
@@ -37,6 +38,14 @@ public class ServerConfig extends NetworkConfig {
     private static final int RING_BUFFER_SIZE = 1024;
     private int eventBufferSize = RING_BUFFER_SIZE;
     private static final Logger LOGGER = Logger.getLogger(ServerConfig.class);
+
+    public ServerConfig() {
+        try {
+            setHostname(InetAddress.getLocalHost().getHostName());
+        } catch (UnknownHostException e) {
+            // ignore error and keep NULL
+        }
+    }
 
     public long getHeartbeatFrequency() {
         return heartbeatFrequency;

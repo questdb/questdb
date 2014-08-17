@@ -54,6 +54,10 @@ public class JournalServer {
     private final JournalServerAddressMulticast multicast;
     private ServerSocketChannel serverSocketChannel;
 
+    public JournalServer(JournalReaderFactory factory) {
+        this(new ServerConfig(), factory);
+    }
+
     public JournalServer(ServerConfig config, JournalReaderFactory factory) {
         this.config = config;
         this.factory = factory;
@@ -62,7 +66,7 @@ public class JournalServer {
         this.multicast = new JournalServerAddressMulticast(config);
     }
 
-    public void export(JournalWriter journal) {
+    public void publish(JournalWriter journal) {
         writers.add(journal);
     }
 
@@ -220,6 +224,9 @@ public class JournalServer {
                         LOGGER.info("Client died: " + channel.socket().getRemoteSocketAddress());
                         LOGGER.debug(e);
                     }
+                    break;
+                } catch (Throwable e) {
+                    LOGGER.error("Exception in server process: ", e);
                     break;
                 }
             }

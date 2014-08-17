@@ -28,7 +28,7 @@ public class ClientRecoveryTest extends AbstractTest {
     @Test
     public void testClientWriterRelease() throws Exception {
         JournalClient client = new JournalClient(ClientConfig.INSTANCE, factory);
-        client.sync(Quote.class);
+        client.subscribe(Quote.class);
         try {
             client.start();
             Assert.fail("Expect client to fail");

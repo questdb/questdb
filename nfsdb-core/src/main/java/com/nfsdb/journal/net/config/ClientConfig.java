@@ -122,7 +122,7 @@ public class ClientConfig extends NetworkConfig {
         } catch (SocketException e) {
             throw new JournalNetworkException("Cannot create send packet. Should never occur", e);
         }
-        final DatagramPacket packetRcv = new DatagramPacket(new byte[9], 9);
+        final DatagramPacket packetRcv = new DatagramPacket(new byte[10], 10);
 
         Future<ServerInformation> future = executor.submit(new Callable<ServerInformation>() {
             @Override
@@ -143,7 +143,7 @@ public class ClientConfig extends NetworkConfig {
                             int offset = 6;
                             int port = data[offset] << 24 | (data[offset + 1] & 0xFF) << 16 | (data[offset + 2] & 0xFF) << 8 | (data[offset + 3] & 0xFF);
                             info.address = new InetSocketAddress(host, port);
-                            LOGGER.info("Received: %s:%d", host, port);
+                            LOGGER.debug("Received: %s:%d", host, port);
                             return info;
                     }
                 }

@@ -49,10 +49,10 @@ public class SSLTest extends AbstractTest {
         JournalClient client = new JournalClient(ClientConfig.INSTANCE, factory);
 
         JournalWriter<Quote> remote = factory.writer(Quote.class, "remote", size);
-        server.export(remote);
+        server.publish(remote);
         server.start();
 
-        client.sync(Quote.class, "remote", "local", size);
+        client.subscribe(Quote.class, "remote", "local", size);
         client.start();
 
         TestUtils.generateQuoteData(remote, size);
