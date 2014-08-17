@@ -5,29 +5,30 @@ NFSdb [![Build Status](https://secure.travis-ci.org/NFSdb/nfsdb.png?branch=maste
 
 ##What is NFSdb?
 
-NFSdb is a java library that lets you easily persist huge volumes of POJOs on disk with almost zero GC overhead and minimal latency (millions of writes in a second). With NFSdb you can also query these objecs and replicate them over the network.
+NFSdb is a java library that lets you easily persist huge volumes of POJOs on disk with almost zero GC overhead and minimal latency (millions of writes in a second). With NFSdb you can also query these objects and replicate them over the network.
 
 ##Why?
 
-Storing and quering data for Java developer is always pain in the neck. JDBC requires ORM tools, which is always a maintenance nightmare and performance hog. NoSQL databases are better but come with tricky installation and integration procedures and are not maintenance free either. We wanted to create a library that would help us to:
+Storing and querying data for Java developer is always pain in the neck. JDBC requires ORM tools, which is always a maintenance nightmare and performance hog. NoSQL databases are better but come with tricky installation and integration procedures and are not maintenance free either. We wanted to create a library that would help us to:
 
         - throw away boilerplate persistence layer.
         - scale application as data volume increases.
         - throw away caching because our database is fast enough!
         - have minimal heap footprint.
         - leverage all of the available memory without using it for heap.
-        - handle timeseries queries efficiently.
+        - handle time series queries efficiently.
         - provide out of box support for temporal data.
         - scale processing out to multiple servers
 
 
 ##How?
 
-NFSdb provides automatic serialization for primitive types of POJOs to Memory Mapped Files. Files organised on disk in directories per class and files per attributes, providing column-based data store. String values can be indexed for fast searches and if your data has timestamp - it can be partitioned by DAY,MONTH or YEAR. Memory Mapped Files are managed by Operating System, which provides resilience in case of JVM crash and also a way of inter-process communucation as data written by one process is immediately available to all other processes.
+NFSdb provides automatic serialization for primitive types of POJOs to Memory Mapped Files. Files organised on disk in directories per class and files per attributes, providing column-based data store. String values can be indexed for fast searches and if your data has timestamp - it can be partitioned by DAY, MONTH or YEAR. Memory Mapped Files are managed by Operating System, which provides resilience in case of JVM crash and also a way of inter-process communication as data written by one process is immediately available to all other processes.
 
 NFSdb also provides easy to setup data replication over TCP/IP with automatic service discovery via multicast.
 
-Here is example of fully functional data publisher/server:
+This is an example of fully functional data _publisher/server_:
+
 ```java
 public class SimpleReplicationServerMain {
 
@@ -75,7 +76,7 @@ public class SimpleReplicationServerMain {
 }
 ```
 
-And here is fully funcitonal client:
+And this is fully functional _client_:
 
 ```java
 public class SimpleReplicationClientMain {
@@ -131,10 +132,12 @@ Please visit our official web site [www.nfsdb.org] (http://nfsdb.org) for more i
 
 ## Upcoming release Change Log
 
-- NEW FEATURE:   TCP replication stack
-- BREAKING:      All strings are stored with length as 4-byte int. Journal would use more space but it reduces CPU overhead on reads and appends.
-- BREAKING:      SymbolIndex class is renamed to KVIndex. SymbolIndex.put() is replaced with KVIndex.add()
-- IMPROVEMENT:   Improved Index performance
-- IMPROVEMENT:   Improved append performance
-- IMPROVEMENT:   Revised data size calculations, Journals should now be smaller
-- BUG:           TCP replication broke for tailing null values
+- NEW FEATURE:   TCP/IP replication stack
+- 
+- IMPROVEMENT:  Improved Index performance
+- IMPROVEMENT:  Improved append performance
+- IMPROVEMENT:  Revised data size calculations, Journals should now be smaller
+- 
+- BREAKING:     All strings are stored with length as 4-byte int. Journal would use more space but it reduces CPU overhead on reads and appends.
+- BREAKING:     SymbolIndex class is renamed to KVIndex. SymbolIndex.put() is replaced with KVIndex.add()
+- BREAKING:     nfsdb.xml is no longer used as configuration mechanism
