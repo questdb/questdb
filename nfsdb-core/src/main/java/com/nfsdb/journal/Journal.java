@@ -49,7 +49,6 @@ import java.io.FileFilter;
 import java.lang.reflect.Array;
 import java.nio.ByteBuffer;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 
 public class Journal<T> implements Iterable<T>, Closeable {
 
@@ -260,10 +259,10 @@ public class Journal<T> implements Iterable<T>, Closeable {
     public void expireOpenFiles() {
         long ttl = getMetadata().getOpenFileTTL();
         if (ttl > 0) {
-            long expiry = System.currentTimeMillis() - TimeUnit.SECONDS.toMillis(getMetadata().getOpenFileTTL());
+            long delta = System.currentTimeMillis() - ttl;
             for (int i = 0, partitionsSize = partitions.size(); i < partitionsSize; i++) {
                 Partition<T> partition = partitions.get(i);
-                if (expiry > partition.getLastAccessed() && partition.isOpen()) {
+                if (delta > partition.getLastAccessed() && partition.isOpen()) {
                     partition.close();
                 } else {
                     partition.expireOpenIndices();

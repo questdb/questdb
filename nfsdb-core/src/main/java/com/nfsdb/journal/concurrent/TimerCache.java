@@ -43,7 +43,7 @@ public class TimerCache {
         return this;
     }
 
-    public long getMillis() {
+    public long getCachedMillis() {
         return millis;
     }
 }

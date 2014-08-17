@@ -655,13 +655,18 @@ public class JournalWriter<T> extends Journal<T> {
     private void commit(boolean force) throws JournalException {
         if (txActive) {
             commit(force ? Tx.TX_FORCE : Tx.TX_NORMAL);
+            notifyTxListener();
             expireOpenFiles();
-            if (txListener != null) {
-                txListener.onCommit();
-            }
             txActive = false;
         }
     }
+
+    private void notifyTxListener() {
+        if (txListener != null) {
+            txListener.onCommit();
+        }
+    }
+
 
     Partition<T> createTempPartition() throws JournalException {
         return createTempPartition(Constants.TEMP_DIRECTORY_PREFIX + "." + System.currentTimeMillis() + "." + UUID.randomUUID().toString());

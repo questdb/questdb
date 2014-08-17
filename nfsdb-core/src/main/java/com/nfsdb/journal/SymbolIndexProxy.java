@@ -66,7 +66,7 @@ class SymbolIndexProxy<T> implements Closeable {
     }
 
     KVIndex getIndex() throws JournalException {
-        lastAccessed = partition.getJournal().getTimerCache().getMillis();
+        lastAccessed = partition.getJournal().getTimerCache().getCachedMillis();
         if (index == null) {
             JournalMetadata<T> meta = partition.getJournal().getMetadata();
             index = new KVIndex(

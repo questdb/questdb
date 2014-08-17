@@ -226,62 +226,71 @@ public class JournalClient {
         public void run() {
             JournalDeltaConsumer deltaConsumer = null;
             boolean loop = true;
-            while (loop) {
-                try {
-                    commandConsumer.read(channel);
-                    if (commandConsumer.isComplete()) {
-                        switch (commandConsumer.getValue()) {
-                            case JOURNAL_DELTA_CMD:
-                                statsChannel.setDelegate(channel);
-                                intResponseConsumer.read(statsChannel);
-                                if (intResponseConsumer.isComplete()) {
-                                    int index = intResponseConsumer.getValue();
-                                    deltaConsumer = deltaConsumers.get(index);
-                                    deltaConsumer.read(statsChannel);
-                                    statusSentList.set(index, (byte) 0);
-                                }
-                                statsChannel.logStats();
-                                break;
-                            case SERVER_READY_CMD:
-                                if (isRunning()) {
-                                    sendState();
-                                } else {
-                                    sendDisconnect();
-                                    loop = false;
-                                }
-                                break;
-                            case SERVER_HEARTBEAT:
-                                if (isRunning()) {
-                                    sendReady();
-                                } else {
-                                    sendDisconnect();
-                                    loop = false;
-                                }
-                                break;
-                            default:
-                                LOGGER.warn("Unknown command: ", commandConsumer.getValue());
+            try {
+                while (loop) {
+                    try {
+                        commandConsumer.read(channel);
+                        if (commandConsumer.isComplete()) {
+                            switch (commandConsumer.getValue()) {
+                                case JOURNAL_DELTA_CMD:
+                                    statsChannel.setDelegate(channel);
+                                    intResponseConsumer.read(statsChannel);
+                                    if (intResponseConsumer.isComplete()) {
+                                        int index = intResponseConsumer.getValue();
+                                        deltaConsumer = deltaConsumers.get(index);
+                                        deltaConsumer.read(statsChannel);
+                                        statusSentList.set(index, (byte) 0);
+                                    }
+                                    statsChannel.logStats();
+                                    break;
+                                case SERVER_READY_CMD:
+                                    if (isRunning()) {
+                                        sendState();
+                                    } else {
+                                        sendDisconnect();
+                                        loop = false;
+                                    }
+                                    break;
+                                case SERVER_HEARTBEAT:
+                                    if (isRunning()) {
+                                        sendReady();
+                                    } else {
+                                        sendDisconnect();
+                                        loop = false;
+                                    }
+                                    break;
+                                default:
+                                    LOGGER.warn("Unknown command: ", commandConsumer.getValue());
+                            }
+                            commandConsumer.reset();
+                            intResponseConsumer.reset();
+                            if (deltaConsumer != null) {
+                                deltaConsumer.reset();
+                            }
                         }
-                        commandConsumer.reset();
-                        intResponseConsumer.reset();
-                        if (deltaConsumer != null) {
-                            deltaConsumer.reset();
-                        }
-                    }
 
-                } catch (JournalDisconnectedChannelException e) {
-                    running.set(false);
-                    break;
-                } catch (JournalNetworkException e) {
-                    running.set(false);
-                    LOGGER.error("Network error", e);
-                    break;
+                    } catch (JournalDisconnectedChannelException e) {
+                        running.set(false);
+                        break;
+                    } catch (JournalNetworkException e) {
+                        running.set(false);
+                        LOGGER.error("Network error", e);
+                        break;
+                    } catch (Throwable e) {
+                        LOGGER.error("Unhandled exception in client", e);
+                        if (e instanceof Error) {
+                            throw e;
+                        }
+                        break;
+                    }
                 }
+            } finally {
+                LOGGER.info("Client disconnecting");
+                counter.decrementAndGet();
+                // set future to null to prevent deadlock
+                handlerFuture = null;
+                service.shutdown();
             }
-            LOGGER.info("Client disconnecting");
-            counter.decrementAndGet();
-            // set future to null to prevent deadlock
-            handlerFuture = null;
-            service.shutdown();
         }
     }
 }

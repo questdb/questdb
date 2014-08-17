@@ -671,7 +671,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
     }
 
     Partition<T> access() {
-        this.lastAccessed = getJournal().getTimerCache().getMillis();
+        this.lastAccessed = getJournal().getTimerCache().getCachedMillis();
         return this;
     }
 
@@ -703,7 +703,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
     }
 
     void expireOpenIndices() {
-        long expiry = System.currentTimeMillis() - TimeUnit.SECONDS.toMillis(journal.getMetadata().getOpenFileTTL());
+        long expiry = System.currentTimeMillis() - journal.getMetadata().getOpenFileTTL();
         for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
             SymbolIndexProxy<T> proxy = indexProxies.get(i);
             if (expiry > proxy.getLastAccessed()) {

@@ -44,7 +44,7 @@ public class JournalMetadataBuilder<T> {
     private int recordCountHint = 100000;
     private int txCountHint = -1;
     private String key;
-    private long openFileTTL = -1;
+    private long openFileTTL = TimeUnit.MINUTES.toMillis(3);
     private int lag = -1;
     private NullsAdaptorFactory<T> nullsFactory;
 

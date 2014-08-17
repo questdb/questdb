@@ -211,27 +211,33 @@ public class JournalServer {
 
         @Override
         public void run() {
-            while (true) {
-                if (!running.get()) {
-                    break;
-                }
-                try {
-                    agent.process(channel);
-                } catch (JournalDisconnectedChannelException e) {
-                    break;
-                } catch (JournalNetworkException e) {
-                    if (running.get()) {
-                        LOGGER.info("Client died: " + channel.socket().getRemoteSocketAddress());
-                        LOGGER.debug(e);
+            try {
+                while (true) {
+                    if (!running.get()) {
+                        break;
                     }
-                    break;
-                } catch (Throwable e) {
-                    LOGGER.error("Exception in server process: ", e);
-                    break;
+                    try {
+                        agent.process(channel);
+                    } catch (JournalDisconnectedChannelException e) {
+                        break;
+                    } catch (JournalNetworkException e) {
+                        if (running.get()) {
+                            LOGGER.info("Client died: " + channel.socket().getRemoteSocketAddress());
+                            LOGGER.debug(e);
+                        }
+                        break;
+                    } catch (Throwable e) {
+                        LOGGER.error("Unhandled exception in server process", e);
+                        if (e instanceof Error) {
+                            throw e;
+                        }
+                        break;
+                    }
                 }
+            } finally {
+                agent.close();
+                removeChannel(channel);
             }
-            agent.close();
-            removeChannel(channel);
         }
 
         Handler(SocketChannel channel) {
