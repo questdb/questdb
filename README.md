@@ -7,19 +7,22 @@ NFSdb [![Build Status](https://secure.travis-ci.org/NFSdb/nfsdb.png?branch=maste
 
 NFSdb is a java library that lets you easily persist huge volumes of POJOs on disk with almost zero GC overhead and minimal latency (millions of writes in a second). With NFSdb you can also query these objects and replicate them over the network.
 
+---
+
 ##Why?
 
 Storing and querying data for Java developer is always pain in the neck. JDBC requires ORM tools, which is always a maintenance nightmare and performance hog. NoSQL databases are better but come with tricky installation and integration procedures and are not maintenance free either. We wanted to create a library that would help us to:
 
-        - throw away boilerplate persistence layer.
-        - scale application as data volume increases.
-        - throw away caching because our database is fast enough!
-        - have minimal heap footprint.
-        - leverage all of the available memory without using it for heap.
-        - handle time series queries efficiently.
-        - provide out of box support for temporal data.
-        - scale processing out to multiple servers
+- throw away boilerplate persistence layer.
+- scale application as data volume increases.
+- throw away caching because our database is fast enough!
+- have minimal heap footprint.
+- leverage all of the available memory without using it for heap.
+- handle time series queries efficiently.
+- provide out of box support for temporal data.
+- scale processing out to multiple servers
 
+---
 
 ##How?
 
@@ -94,6 +97,7 @@ public class SimpleReplicationClientMain {
     }
 }
 ```
+---
 
 ### More samples
 
@@ -133,11 +137,11 @@ Please visit our official web site [www.nfsdb.org] (http://nfsdb.org) for more i
 ## Upcoming release Change Log
 
 - NEW FEATURE:   TCP/IP replication stack
-- 
+
 - IMPROVEMENT:  Improved Index performance
 - IMPROVEMENT:  Improved append performance
 - IMPROVEMENT:  Revised data size calculations, Journals should now be smaller
-- 
+ 
 - BREAKING:     All strings are stored with length as 4-byte int. Journal would use more space but it reduces CPU overhead on reads and appends.
 - BREAKING:     SymbolIndex class is renamed to KVIndex. SymbolIndex.put() is replaced with KVIndex.add()
 - BREAKING:     nfsdb.xml is no longer used as configuration mechanism
