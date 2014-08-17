@@ -76,7 +76,8 @@ public class SimpleReplicationServerMain {
 And here is fully funcitonal client:
 
 ```java
-    public static void main(String[] args) throws JournalException, JournalNetworkException, UnknownHostException {
+public class SimpleReplicationClientMain {
+    public static void main(String[] args) throws Exception {
         JournalFactory factory = new JournalFactory(args[0]);
         JournalClient client = new JournalClient(factory);
         client.subscribe(Price.class, null, "price-copy", new TxListener() {
@@ -88,13 +89,12 @@ And here is fully funcitonal client:
         client.start();
         System.out.println("Client started");
     }
+}
 ```
 
 ### More samples
 
-We have more samples in our Git repository:
-
-[nfsdb-samples] (https://github.com/NFSdb/nfsdb/tree/master/nfsdb-samples) repository.
+We have more samples in our [Git repository] (https://github.com/NFSdb/nfsdb/tree/master/nfsdb-samples) repository.
 
 ### Performance
 
