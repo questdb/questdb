@@ -39,7 +39,7 @@ public class SimpleReplicationServerMain {
         new SimpleReplicationServerMain(args[0]).start();
     }
 
-    public void start() throws JournalException, JournalNetworkException, InterruptedException {
+    public void start() throws Exception {
         JournalFactory factory = new JournalFactory(location);
         JournalServer server = new JournalServer(factory);
 
@@ -57,7 +57,8 @@ public class SimpleReplicationServerMain {
         System.out.println(" [Done]");
     }
 
-    private void publishPrice(JournalWriter<Price> writer, int count) throws JournalException {
+    private void publishPrice(JournalWriter<Price> writer, int count) 
+            throws JournalException {
         long tZero = System.currentTimeMillis();
         Price p = new Price();
         for (int i = 0; i < count; i++) {
@@ -70,7 +71,6 @@ public class SimpleReplicationServerMain {
         writer.commit();
     }
 }
-
 ```
 
 And here is fully funcitonal client:
