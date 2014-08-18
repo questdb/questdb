@@ -4,7 +4,7 @@
 
 ##What is NFSdb?
 
-NFSdb is a java library that lets you easily persist huge volumes of POJOs on disk with almost zero GC overhead and minimal latency (millions of writes in a second). With NFSdb you can also query these objects and replicate them over the network.
+NFSdb is a java library that lets you easily persist huge volumes of POJOs on disk with almost zero GC overhead and minimal latency (millions of writes in a second). With NFSdb you can also query these objects and replicate them over the network. Fast. Very, very fast.
 
 ---
 
@@ -12,9 +12,10 @@ NFSdb is a java library that lets you easily persist huge volumes of POJOs on di
 
 Storing and querying data for Java developer is always pain in the neck. JDBC requires ORM tools, which is always a maintenance nightmare and performance hog. NoSQL databases are better but come with tricky installation and integration procedures and are not maintenance free either. We wanted to create a library that would help us to:
 
+- linear scalability in response to data volume increase.
 - throw away boilerplate persistence layer.
-- scale application as data volume increases.
-- throw away caching because our database is fast enough!
+- have clean, minimalistic API.
+- throw away caching because our database would be fast enough!
 - have minimal heap footprint.
 - leverage all of the available memory without using it for heap.
 - handle time series queries efficiently.
