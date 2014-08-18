@@ -30,7 +30,6 @@ public class ModelConfiguration {
                 .key("sym")
                 .$sym("sym").index().size(4).valueCountHint(15)
                 .$sym("ex").size(2).valueCountHint(1)
-                .$sym("ex").size(1).valueCountHint(1)
                 .$ts()
         ;
 
