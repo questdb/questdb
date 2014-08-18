@@ -133,15 +133,3 @@ For support queries please raise an issue on GitHub:
 https://github.com/NFSdb/nfsdb/issues
 
 Please visit our official web site [www.nfsdb.org] (http://nfsdb.org) for more information.
-
-## Upcoming release Change Log
-
-- NEW FEATURE:   TCP/IP replication stack
-
-- IMPROVEMENT:  Improved Index performance
-- IMPROVEMENT:  Improved append performance
-- IMPROVEMENT:  Revised data size calculations, Journals should now be smaller
- 
-- BREAKING:     All strings are stored with length as 4-byte int. Journal would use more space but it reduces CPU overhead on reads and appends.
-- BREAKING:     SymbolIndex class is renamed to KVIndex. SymbolIndex.put() is replaced with KVIndex.add()
-- BREAKING:     nfsdb.xml is no longer used as configuration mechanism
