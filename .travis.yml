@@ -7,4 +7,4 @@ branches:
   only:
     - master
 
-install: mvn clean deploy -DaltDeploymentRepository=central::default::https://oss.sonatype.org/content/repositories/snapshots
+install: mvn clean package
