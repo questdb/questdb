@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.index.experimental.v2;
+package com.nfsdb.journal.lang.cst;
 
 import com.nfsdb.journal.Journal;
 import org.joda.time.Interval;
@@ -36,7 +36,7 @@ public interface Q {
 
     RowSource kvSource(String indexName, KeySource keySource);
 
-    PartitionSource source(Journal journal);
+    PartitionSource source(Journal journal, boolean open);
 
     RowFilter equalsConst(String column, String value);
 
@@ -54,7 +54,7 @@ public interface Q {
 
     KeySource symbolTableSource(String sym, String... values);
 
-    KeySource hashSource(String... value);
+    KeySource hashSource(String column, String... value);
 
     /**
      * On first partition sources all keys from keySource.

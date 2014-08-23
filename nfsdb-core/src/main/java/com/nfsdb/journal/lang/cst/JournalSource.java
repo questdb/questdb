@@ -14,10 +14,9 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.index.experimental.v2;
+package com.nfsdb.journal.lang.cst;
 
-public interface KeyCursor {
-    boolean hasNext();
+import java.util.Iterator;
 
-    int next();
+public interface JournalSource extends Iterator<DataItem>, Iterable<DataItem> {
 }

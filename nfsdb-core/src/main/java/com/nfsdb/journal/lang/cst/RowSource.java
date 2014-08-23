@@ -14,8 +14,10 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.index.experimental.v2;
+package com.nfsdb.journal.lang.cst;
 
-public enum Choice {
-    PICK, PICK_AND_SKIP_PARTITION
+import com.nfsdb.journal.Partition;
+
+public interface RowSource {
+    RowCursor cursor(Partition partition);
 }

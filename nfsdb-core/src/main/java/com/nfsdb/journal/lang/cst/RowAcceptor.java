@@ -14,10 +14,8 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.index.experimental.v2;
+package com.nfsdb.journal.lang.cst;
 
-import com.nfsdb.journal.Partition;
-
-public interface RowSource {
-    RowCursor cursor(Partition partition);
+public interface RowAcceptor {
+    Choice accept(long localRowIDA, long localRowIDB);
 }

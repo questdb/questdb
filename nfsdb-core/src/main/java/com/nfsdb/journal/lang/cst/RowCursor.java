@@ -14,7 +14,10 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.index.experimental.v2;
+package com.nfsdb.journal.lang.cst;
 
-public interface JoinedSource {
+public interface RowCursor {
+    boolean hasNext();
+
+    long next();
 }

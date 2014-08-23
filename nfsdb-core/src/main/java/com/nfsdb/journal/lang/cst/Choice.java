@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.index.experimental.v2;
+package com.nfsdb.journal.lang.cst;
 
-public interface KvAcceptor {
-    Choice accept(int key, int localRowID);
+public enum Choice {
+    PICK, PICK_AND_SKIP_PARTITION, SKIP
 }

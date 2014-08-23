@@ -14,8 +14,10 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.index.experimental.v2;
+package com.nfsdb.journal.lang.cst;
 
-public interface KvFilterSource extends KeySource, KvFilter {
+import com.nfsdb.journal.Partition;
 
+public interface RowFilter {
+    RowAcceptor acceptor(Partition partitionA, Partition partitionB);
 }

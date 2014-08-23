@@ -14,12 +14,10 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.index.experimental.v2;
+package com.nfsdb.journal.lang.cst;
 
 import com.nfsdb.journal.Partition;
 
-public interface DataItem {
-    Partition getPartition();
-
-    long localRowID();
+public interface KvFilter {
+    KvAcceptor acceptor(Partition partition);
 }

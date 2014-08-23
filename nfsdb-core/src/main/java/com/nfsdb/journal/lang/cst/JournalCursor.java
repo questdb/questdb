@@ -14,12 +14,7 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.index.experimental.v2;
+package com.nfsdb.journal.lang.cst;
 
-import com.nfsdb.journal.Partition;
-
-import java.util.Iterator;
-
-public interface PartitionSource extends Iterator<Partition> {
-
+public interface JournalCursor extends RowCursor {
 }

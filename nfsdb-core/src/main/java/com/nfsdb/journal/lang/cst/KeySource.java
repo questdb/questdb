@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.index.experimental.v2;
+package com.nfsdb.journal.lang.cst;
 
-import java.util.Iterator;
+import com.nfsdb.journal.Partition;
 
-public interface JournalSource extends Iterator<DataItem>, Iterable<DataItem> {
+public interface KeySource {
+    KeyCursor cursor(Partition partition);
 }

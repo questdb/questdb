@@ -14,10 +14,7 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.index.experimental.v2;
+package com.nfsdb.journal.lang.cst;
 
-import com.nfsdb.journal.Partition;
-
-public interface KeySource {
-    KeyCursor cursor(Partition partition);
+public interface JoinedSource {
 }

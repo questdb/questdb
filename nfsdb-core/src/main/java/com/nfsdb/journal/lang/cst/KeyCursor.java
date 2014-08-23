@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.index.experimental.v2;
+package com.nfsdb.journal.lang.cst;
 
-import com.nfsdb.journal.Partition;
+public interface KeyCursor {
+    boolean hasNext();
 
-public interface RowFilter {
-    RowAcceptor acceptor(Partition partitionA, Partition partitionB);
+    int next();
 }

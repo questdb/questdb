@@ -24,7 +24,7 @@ import com.nfsdb.journal.index.StringIndexCursor;
 import com.nfsdb.journal.index.experimental.CursorFilter;
 import com.nfsdb.journal.index.experimental.FilteredCursor;
 import com.nfsdb.journal.index.experimental.filter.IntEqualsFilter;
-import com.nfsdb.journal.index.experimental.v2.Q;
+import com.nfsdb.journal.lang.cst.Q;
 import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.model.Trade;
 import com.nfsdb.journal.test.tools.JournalTestFactory;
@@ -96,28 +96,39 @@ public class CursorTest {
         q.forEachPartition(
 
                 // stream of partitions that match interval
+                // ok
                 q.interval(
                         // stream of partitions
-                        q.source(r)
+                        // ok
+                        q.source(r, false)
                         // filtering interval
                         , Dates.interval(0, 0)
                 )
 
                 // RowSource that wraps RowCursor from first RowSource param
                 // and returns rows that accepted by second RowFilter param
+                // ok
                 , q.forEachRow(
                         // union of rows of all RowSources
+                        // ok
                         q.union(
+                                // ok
                                 q.kvSource("sym", q.symbolTableSource("sym", "BP.L", "XXX"))
                                 // or
+                                // ok
                                 , q.forEachRow(
-                                        q.kvSource("mode", q.hashSource("Fast trading150"))
+                                        // ok
+                                        q.kvSource("mode", q.hashSource("mode", "Fast trading150"))
+                                        // ok
                                         , q.equalsConst("mode", "Fast trading150")
                                 )
                         )
                         // accepts row if all filters accept that row
+                        // ok
                         , q.all(
+                                // ok
                                 q.equalsConst("mode", "test")
+                                // ok
                                 , q.greaterThan("ask", 10)
                         )
                 )
@@ -132,7 +143,7 @@ public class CursorTest {
                 // stream of partitions that match interval
                 q.interval(
                         // stream of partitions
-                        q.source(r)
+                        q.source(r, false)
                         // filtering interval
                         , Dates.interval(0, 0)
                 )
@@ -163,7 +174,7 @@ public class CursorTest {
                 // stream of partitions that match interval
                 q.interval(
                         // stream of partitions
-                        q.source(r)
+                        q.source(r, false)
                         // filtering interval
                         , Dates.interval(0, 0)
                 )
@@ -195,7 +206,7 @@ public class CursorTest {
                 // stream of partitions that match interval
                 q.interval(
                         // stream of partitions
-                        q.source(r)
+                        q.source(r, false)
                         // filtering interval
                         , Dates.interval(0, 0)
                 )
@@ -223,7 +234,7 @@ public class CursorTest {
                         // stream of partitions that match interval
                         q.interval(
                                 // stream of partitions
-                                q.source(r)
+                                q.source(r, false)
                                 // filtering interval
                                 , Dates.interval(0, 0)
                         )
@@ -247,7 +258,7 @@ public class CursorTest {
                         // stream of partitions that match interval
                         , q.interval(
                                 // stream of partitions
-                                q.source(r2)
+                                q.source(r2, false)
                                 // filtering interval
                                 , Dates.interval(0, 0)
                         )

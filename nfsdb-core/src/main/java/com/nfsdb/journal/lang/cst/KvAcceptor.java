@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.index.experimental.v2;
+package com.nfsdb.journal.lang.cst;
 
-public interface JournalCursor extends RowCursor {
+public interface KvAcceptor {
+    Choice accept(int key, int localRowID);
 }
