@@ -29,8 +29,7 @@ import gnu.trove.map.hash.TObjectIntHashMap;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 public class JournalMetadataBuilder<T> {
@@ -218,12 +217,14 @@ public class JournalMetadataBuilder<T> {
             throw new JournalConfigurationException("No default constructor declared on %s", modelClass.getName());
         }
 
-        Field[] classFields = modelClass.getDeclaredFields();
+        List<Field> classFields = getAllFields(new ArrayList<Field>(), modelClass);
 
-        this.nameToIndexMap = new TObjectIntHashMap<>(classFields.length, Constants.DEFAULT_LOAD_FACTOR, -1);
+        this.nameToIndexMap = new TObjectIntHashMap<>(classFields.size(), Constants.DEFAULT_LOAD_FACTOR, -1);
         this.location = modelClass.getCanonicalName();
 
-        for (Field f : classFields) {
+        for (int i = 0; i < classFields.size(); i++) {
+            Field f = classFields.get(i);
+
             if (Modifier.isStatic(f.getModifiers())) {
                 continue;
             }
@@ -248,4 +249,11 @@ public class JournalMetadataBuilder<T> {
         }
     }
 
+    private List<Field> getAllFields(List<Field> fields, Class<?> type) {
+        Collections.addAll(fields, type.getDeclaredFields());
+        if (type.getSuperclass() != null) {
+            fields = getAllFields(fields, type.getSuperclass());
+        }
+        return fields;
+    }
 }
