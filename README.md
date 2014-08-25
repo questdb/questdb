@@ -99,7 +99,7 @@ public class SimpleReplicationClientMain {
 ```
 ---
 
-### More samples
+### More examples?
 
 We have more samples in our [Git repository] (https://github.com/NFSdb/nfsdb/tree/master/nfsdb-samples/src/main/java/org/nfsdb/examples) repository.
 
