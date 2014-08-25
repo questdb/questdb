@@ -113,14 +113,29 @@ On test rig (Intel i7-920 @ 4Ghz) NFSdb shows average read latency of 20-30ns an
 NFSdb requires minimum of Java 7 and stable release is available from maven Central:
 
 ```xml
-        <dependency>
-            <groupId>com.nfsdb</groupId>
-            <artifactId>nfsdb-core</artifactId>
-            <version>2.0.0</version>
-        </dependency>
-
+<dependency>
+    <groupId>com.nfsdb</groupId>
+    <artifactId>nfsdb-core</artifactId>
+    <version>2.0.0</version>
+</dependency>
 ```
 
+Snapshot releases are also available from Maven central. To get hold of those add these lines to pom.xml:
+
+```xml
+<repositories>
+    <repository>
+        <id>sonatype-snapshots</id>
+        <url>https://oss.sonatype.org/content/repositories/snapshots</url>
+    </repository>
+</repositories>
+
+<dependency>
+    <groupId>com.nfsdb</groupId>
+    <artifactId>nfsdb-core</artifactId>
+    <version>2.0.1-SNAPSHOT</version>
+</dependency>
+```
 
 ## License
 
