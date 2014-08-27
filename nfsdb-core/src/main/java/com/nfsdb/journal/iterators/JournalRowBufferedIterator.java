@@ -17,15 +17,14 @@
 package com.nfsdb.journal.iterators;
 
 import com.nfsdb.journal.Journal;
+import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.exceptions.JournalImmutableIteratorException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.utils.Rows;
 
-import java.util.Iterator;
 import java.util.List;
 
-public class JournalRowBufferedIterator<T> implements Iterable<JournalRow<T>>, Iterator<JournalRow<T>> {
+public class JournalRowBufferedIterator<T> extends AbstractImmutableIterator<JournalRow<T>> {
     boolean hasNext = true;
     private final List<JournalIteratorRange> ranges;
     private final Journal<T> journal;
@@ -65,16 +64,6 @@ public class JournalRowBufferedIterator<T> implements Iterable<JournalRow<T>>, I
         } catch (JournalException e) {
             throw new JournalRuntimeException("Error in iterator [" + this + "]", e);
         }
-    }
-
-    @Override
-    public void remove() {
-        throw new JournalImmutableIteratorException();
-    }
-
-    @Override
-    public Iterator<JournalRow<T>> iterator() {
-        return this;
     }
 
     @Override

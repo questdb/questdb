@@ -18,8 +18,7 @@ package com.nfsdb.journal.lang.cst;
 
 import com.nfsdb.journal.Partition;
 
-public interface DataItem {
-    Partition getPartition();
-
-    long localRowID();
+public class DataItem {
+    public Partition partition;
+    public long rowid;
 }

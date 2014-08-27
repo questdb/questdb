@@ -16,8 +16,10 @@
 
 package com.nfsdb.journal.lang.cst;
 
-import com.nfsdb.journal.Partition;
-
 public interface KeySource {
-    KeyCursor cursor(Partition partition);
+    KeyCursor cursor(PartitionSlice partition);
+
+    int size();
+
+    void reset();
 }

@@ -60,7 +60,7 @@ public abstract class AbstractResultSetBuilder<T, X> {
 
             if (interval != null && partition.getInterval() != null) {
                 if (partition.getInterval().getStartMillis() < interval.getStartMillis()) {
-                    long _lo = partition.indexOf(interval.getStartMillis(), BinarySearch.SearchType.GREATER_OR_EQUAL);
+                    long _lo = partition.indexOf(interval.getStartMillis(), BinarySearch.SearchType.NEWER_OR_SAME);
 
                     // there are no data with timestamp later then start date of interval, skip partition
                     if (_lo == -2) {
@@ -71,7 +71,7 @@ public abstract class AbstractResultSetBuilder<T, X> {
                 }
 
                 if (partition.getInterval().getEndMillis() > interval.getEndMillis()) {
-                    long _hi = partition.indexOf(interval.getEndMillis(), BinarySearch.SearchType.LESS_OR_EQUAL);
+                    long _hi = partition.indexOf(interval.getEndMillis(), BinarySearch.SearchType.OLDER_OR_SAME);
 
                     // there are no data with timestamp earlier then end date of interval, skip partition
                     if (_hi == -1) {

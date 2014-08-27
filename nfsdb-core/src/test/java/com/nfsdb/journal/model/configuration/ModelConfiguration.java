@@ -32,6 +32,7 @@ public class ModelConfiguration {
                 .key("sym")
                 .$sym("sym").index().valueCountHint(15)
                 .$sym("ex").index().valueCountHint(5)
+                .$sym("mode")
                 .$ts()
         ;
 

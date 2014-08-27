@@ -17,8 +17,8 @@
 package com.nfsdb.journal.column;
 
 import com.nfsdb.journal.JournalMode;
+import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.exceptions.JournalImmutableIteratorException;
 import com.nfsdb.journal.exceptions.JournalInvalidSymbolValueException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.index.Cursor;
@@ -31,7 +31,6 @@ import gnu.trove.map.hash.TObjectIntHashMap;
 import java.io.Closeable;
 import java.io.File;
 import java.util.ArrayList;
-import java.util.Iterator;
 
 public class SymbolTable implements Closeable {
 
@@ -153,30 +152,19 @@ public class SymbolTable implements Closeable {
 
     public Iterable<String> values() {
 
-        return new Iterable<String>() {
+        return new AbstractImmutableIterator<String>() {
+
+            private long current = 0;
+            private final long size = SymbolTable.this.size();
+
             @Override
-            public Iterator<String> iterator() {
-                return new Iterator<String>() {
+            public boolean hasNext() {
+                return current < size;
+            }
 
-                    private long current = 0;
-                    private final long size = SymbolTable.this.size();
-
-
-                    @Override
-                    public boolean hasNext() {
-                        return current < size;
-                    }
-
-                    @Override
-                    public String next() {
-                        return data.getString(current++);
-                    }
-
-                    @Override
-                    public void remove() {
-                        throw new JournalImmutableIteratorException();
-                    }
-                };
+            @Override
+            public String next() {
+                return data.getString(current++);
             }
         };
     }

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.index.experimental.p;
+package com.nfsdb.journal.lang.parser;
 
 public class Token {
     final boolean hidden;

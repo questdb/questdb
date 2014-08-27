@@ -23,30 +23,29 @@ import com.nfsdb.journal.utils.Dates;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.Random;
-
 public class JournalRecoveryTest extends AbstractTest {
 
     @Test
     public void testRecovery() throws Exception {
+        long ts;
         try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
-            w.setAutoCommit(false);
-            Assert.assertFalse(w.isAutoCommit());
-            TestUtils.generateQuoteData(w, 10000, Dates.interval("2013-01-01T00:00:00.000Z", "2013-03-30T12:55:00.000Z"));
-            Assert.assertEquals("2013-03-01T00:00:00.000Z", Dates.toString(w.getMaxTimestamp()));
+            w.setCommitOnClose(false);
+            Assert.assertFalse(w.isCommitOnClose());
+            TestUtils.generateQuoteData(w, 10000, Dates.interval("2013-01-01T00:00:00.000Z", "2013-02-28T12:55:00.000Z"));
+            ts = w.getMaxTimestamp();
             TestUtils.generateQuoteData(w, 10000, Dates.interval("2013-03-01T00:00:00.000Z", "2013-05-30T12:55:00.000Z"), false);
-            Assert.assertEquals("2013-05-01T00:00:00.000Z", Dates.toString(w.getMaxTimestamp()));
+            Assert.assertTrue(w.getMaxTimestamp() > ts);
         }
 
         try (Journal<Quote> w = factory.reader(Quote.class)) {
-            Assert.assertEquals("2013-03-01T00:00:00.000Z", Dates.toString(w.getMaxTimestamp()));
-            Assert.assertEquals(9999, w.size());
+            Assert.assertEquals(ts, w.getMaxTimestamp());
+            Assert.assertEquals(10000, w.size());
         }
 
         try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
-            w.setAutoCommit(false);
-            Assert.assertEquals("2013-03-01T00:00:00.000Z", Dates.toString(w.getMaxTimestamp()));
-            Assert.assertEquals(9999, w.size());
+            w.setCommitOnClose(false);
+            Assert.assertEquals(ts, w.getMaxTimestamp());
+            Assert.assertEquals(10000, w.size());
         }
     }
 
@@ -59,25 +58,27 @@ public class JournalRecoveryTest extends AbstractTest {
             Assert.assertEquals(100000, r.size());
         }
 
-        Random r = new Random(System.currentTimeMillis());
+        long ts;
         try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
-            w.setAutoCommit(false);
+            w.setCommitOnClose(false);
             w.append(origin.query().all().asResultSet().subset(0, 15000));
-            w.appendLag(origin.query().all().asResultSet().subset(15000, 17000).shuffle(r));
+            w.appendLag(origin.query().all().asResultSet().subset(15000, 17000));
             w.commit();
-            w.appendLag(origin.query().all().asResultSet().subset(17000, 27000).shuffle(r));
-            w.appendLag(origin.query().all().asResultSet().subset(27000, 37000).shuffle(r));
-            Assert.assertEquals("2013-02-01T00:00:00.000Z", Dates.toString(w.getMaxTimestamp()));
-            Assert.assertEquals(37000, w.size());
+            ts = w.getMaxTimestamp();
+
+            w.appendLag(origin.query().all().asResultSet().subset(16000, 27000));
+            w.appendLag(origin.query().all().asResultSet().subset(23000, 37000));
+            Assert.assertTrue(ts < w.getMaxTimestamp());
+            Assert.assertEquals(37672, w.size());
         }
 
         try (Journal<Quote> w = factory.reader(Quote.class)) {
-            Assert.assertEquals("2013-01-01T00:00:00.000Z", Dates.toString(w.getMaxTimestamp()));
+            Assert.assertEquals(ts, w.getMaxTimestamp());
             Assert.assertEquals(17000, w.size());
         }
 
         try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
-            Assert.assertEquals("2013-01-01T00:00:00.000Z", Dates.toString(w.getMaxTimestamp()));
+            Assert.assertEquals(ts, w.getMaxTimestamp());
             Assert.assertEquals(17000, w.size());
         }
     }

@@ -18,13 +18,11 @@ package com.nfsdb.journal.iterators;
 
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.Partition;
+import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.exceptions.JournalImmutableIteratorException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 
-import java.util.Iterator;
-
-public class PartitionIterator<T> implements JournalIterator<T>, PeekingIterator<T> {
+public class PartitionIterator<T> extends AbstractImmutableIterator<T> implements JournalIterator<T>, PeekingIterator<T> {
     private final long lo;
     private final long hi;
     private final Partition<T> partition;
@@ -53,11 +51,6 @@ public class PartitionIterator<T> implements JournalIterator<T>, PeekingIterator
     }
 
     @Override
-    public void remove() {
-        throw new JournalImmutableIteratorException();
-    }
-
-    @Override
     public T peekLast() {
         return get(hi);
     }
@@ -70,11 +63,6 @@ public class PartitionIterator<T> implements JournalIterator<T>, PeekingIterator
     @Override
     public Journal<T> getJournal() {
         return partition.getJournal();
-    }
-
-    @Override
-    public Iterator<T> iterator() {
-        return this;
     }
 
     private T get(long localRowID) {

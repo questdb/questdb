@@ -16,7 +16,7 @@
 
 package com.nfsdb.journal;
 
-import com.nfsdb.journal.index.experimental.p.TokenStream;
+import com.nfsdb.journal.lang.parser.TokenStream;
 import org.junit.Assert;
 import org.junit.Test;
 

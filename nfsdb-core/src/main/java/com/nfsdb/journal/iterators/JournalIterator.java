@@ -17,9 +17,8 @@
 package com.nfsdb.journal.iterators;
 
 import com.nfsdb.journal.Journal;
+import com.nfsdb.journal.collections.ImmutableIterator;
 
-import java.util.Iterator;
-
-public interface JournalIterator<T> extends Iterable<T>, Iterator<T> {
+public interface JournalIterator<T> extends ImmutableIterator<T> {
     Journal<T> getJournal();
 }

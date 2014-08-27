@@ -1,16 +1,29 @@
+/*
+ * Copyright (c) 2014. Vlad Ilyushchenko
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.nfsdb.journal.lang.cst.impl;
 
-import com.nfsdb.journal.Partition;
+import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.lang.cst.*;
-import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 
-import java.util.Iterator;
-
-public class JournalSourceImpl implements JournalSource {
+public class JournalSourceImpl extends AbstractImmutableIterator<DataItem> implements JournalSource {
     private final PartitionSource partitionSource;
     private final RowSource rowSource;
+    private final DataItem item = new DataItem();
     private RowCursor cursor;
-    private final DataItemImpl item = new DataItemImpl();
 
     public JournalSourceImpl(PartitionSource partitionSource, RowSource rowSource) {
         this.partitionSource = partitionSource;
@@ -18,17 +31,17 @@ public class JournalSourceImpl implements JournalSource {
     }
 
     @Override
-    public Iterator<DataItem> iterator() {
-        return this;
-    }
-
-    @Override
     public boolean hasNext() {
         while (cursor == null || !cursor.hasNext()) {
             if (partitionSource.hasNext()) {
-                Partition partition = partitionSource.next();
-                cursor = rowSource.cursor(partition);
-                item.partition = partition;
+                PartitionSlice slice = partitionSource.next();
+                cursor = rowSource.cursor(slice);
+
+                if (cursor == null) {
+                    return false;
+                }
+
+                item.partition = slice.partition;
             } else {
                 return false;
             }
@@ -43,7 +56,9 @@ public class JournalSourceImpl implements JournalSource {
     }
 
     @Override
-    public void remove() {
-        throw new NotImplementedException();
+    public void reset() {
+        partitionSource.reset();
+        rowSource.reset();
+        cursor = null;
     }
 }

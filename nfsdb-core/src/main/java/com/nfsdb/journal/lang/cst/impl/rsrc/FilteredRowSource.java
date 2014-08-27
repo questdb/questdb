@@ -1,6 +1,21 @@
-package com.nfsdb.journal.lang.cst.impl;
+/*
+ * Copyright (c) 2014. Vlad Ilyushchenko
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
-import com.nfsdb.journal.Partition;
+package com.nfsdb.journal.lang.cst.impl.rsrc;
+
 import com.nfsdb.journal.lang.cst.*;
 
 public class FilteredRowSource implements RowSource, RowCursor {
@@ -18,9 +33,9 @@ public class FilteredRowSource implements RowSource, RowCursor {
     }
 
     @Override
-    public RowCursor cursor(Partition partition) {
-        this.underlying = delegate.cursor(partition);
-        this.acceptor = filter.acceptor(partition, null);
+    public RowCursor cursor(PartitionSlice slice) {
+        this.underlying = delegate.cursor(slice);
+        this.acceptor = filter.acceptor(slice, null);
         this.rowid = -1;
         this.skip = false;
         return this;
@@ -37,7 +52,7 @@ public class FilteredRowSource implements RowSource, RowCursor {
             long rowid;
 
             A:
-            while(underlying.hasNext()) {
+            while (underlying.hasNext()) {
                 rowid = underlying.next();
 
                 Choice choice = acceptor.accept(rowid, -1);
@@ -63,5 +78,10 @@ public class FilteredRowSource implements RowSource, RowCursor {
         long rowid = this.rowid;
         this.rowid = -1;
         return rowid;
+    }
+
+    @Override
+    public void reset() {
+        delegate.reset();
     }
 }

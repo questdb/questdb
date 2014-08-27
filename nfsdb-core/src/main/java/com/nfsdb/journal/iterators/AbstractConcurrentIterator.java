@@ -17,15 +17,14 @@
 package com.nfsdb.journal.iterators;
 
 import com.lmax.disruptor.*;
+import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.concurrent.NamedDaemonThreadFactory;
-import com.nfsdb.journal.exceptions.JournalImmutableIteratorException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 
-import java.util.Iterator;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-public abstract class AbstractConcurrentIterator<T> implements EventFactory<AbstractConcurrentIterator.Holder<T>>, ConcurrentIterator<T> {
+public abstract class AbstractConcurrentIterator<T> extends AbstractImmutableIterator<T> implements EventFactory<AbstractConcurrentIterator.Holder<T>>, ConcurrentIterator<T> {
     RingBuffer<Holder<T>> buffer;
     SequenceBarrier barrier;
     private final ExecutorService service;
@@ -41,11 +40,6 @@ public abstract class AbstractConcurrentIterator<T> implements EventFactory<Abst
         h.object = getJournal().newObject();
         h.hasNext = true;
         return h;
-    }
-
-    @Override
-    public Iterator<T> iterator() {
-        return this;
     }
 
     @Override
@@ -85,11 +79,6 @@ public abstract class AbstractConcurrentIterator<T> implements EventFactory<Abst
     public ConcurrentIterator<T> buffer(int bufferSize) {
         this.bufferSize = bufferSize;
         return this;
-    }
-
-    @Override
-    public void remove() {
-        throw new JournalImmutableIteratorException();
     }
 
     @Override

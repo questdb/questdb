@@ -27,7 +27,7 @@ import org.junit.Test;
 public class SubclassTest {
 
     @Rule
-    public JournalTestFactory factory = new JournalTestFactory(new JournalConfigurationBuilder().build(Files.makeTempDir()));
+    public final JournalTestFactory factory = new JournalTestFactory(new JournalConfigurationBuilder().build(Files.makeTempDir()));
 
     @Test
     public void testSubclass() throws Exception {

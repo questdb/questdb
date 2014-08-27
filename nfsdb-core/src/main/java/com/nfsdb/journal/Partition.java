@@ -456,10 +456,14 @@ public class Partition<T> implements Iterable<T>, Closeable {
     }
 
     public long indexOf(long timestamp, BinarySearch.SearchType type) {
+        return indexOf(timestamp, type, 0, size() - 1);
+    }
+
+    public long indexOf(long timestamp, BinarySearch.SearchType type, long lo, long hi) {
         if (indexOfVisitor == null) {
             throw new JournalRuntimeException("There is no timestamp column in: " + this);
         }
-        return BinarySearch.indexOf(indexOfVisitor, timestamp, type);
+        return BinarySearch.indexOf(indexOfVisitor, timestamp, type, lo, hi);
     }
 
     public FixedColumn getTimestampColumn() {

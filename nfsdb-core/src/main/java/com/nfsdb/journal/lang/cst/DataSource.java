@@ -16,6 +16,8 @@
 
 package com.nfsdb.journal.lang.cst;
 
-public interface KvFilterSource extends KeySource, KvFilter {
+import com.nfsdb.journal.collections.ImmutableIterator;
 
+public interface DataSource<T> extends ImmutableIterator<T> {
+    void reset();
 }

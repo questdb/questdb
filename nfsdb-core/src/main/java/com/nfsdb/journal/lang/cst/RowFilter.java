@@ -16,8 +16,6 @@
 
 package com.nfsdb.journal.lang.cst;
 
-import com.nfsdb.journal.Partition;
-
 public interface RowFilter {
-    RowAcceptor acceptor(Partition partitionA, Partition partitionB);
+    RowAcceptor acceptor(PartitionSlice a, PartitionSlice b);
 }

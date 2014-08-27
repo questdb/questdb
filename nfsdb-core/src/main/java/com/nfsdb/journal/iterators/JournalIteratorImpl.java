@@ -17,15 +17,14 @@
 package com.nfsdb.journal.iterators;
 
 import com.nfsdb.journal.Journal;
+import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.exceptions.JournalImmutableIteratorException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.utils.Rows;
 
-import java.util.Iterator;
 import java.util.List;
 
-public class JournalIteratorImpl<T> implements JournalIterator<T>, PeekingIterator<T> {
+public class JournalIteratorImpl<T> extends AbstractImmutableIterator<T> implements JournalIterator<T>, PeekingIterator<T> {
     private final List<JournalIteratorRange> ranges;
     private final Journal<T> journal;
     private boolean hasNext = true;
@@ -85,16 +84,6 @@ public class JournalIteratorImpl<T> implements JournalIterator<T>, PeekingIterat
     @Override
     public boolean isEmpty() {
         return ranges == null || ranges.size() == 0;
-    }
-
-    @Override
-    public void remove() {
-        throw new JournalImmutableIteratorException();
-    }
-
-    @Override
-    public Iterator<T> iterator() {
-        return this;
     }
 
     @Override

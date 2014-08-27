@@ -1,87 +1,99 @@
+/*
+ * Copyright (c) 2014. Vlad Ilyushchenko
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.nfsdb.journal.lang;
 
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.journal.lang.cst.DataItem;
-import com.nfsdb.journal.lang.cst.JournalSource;
+import com.nfsdb.journal.lang.cst.DataSource;
 import com.nfsdb.journal.lang.cst.Q;
 import com.nfsdb.journal.lang.cst.impl.QImpl;
 import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.test.tools.JournalTestFactory;
-import com.nfsdb.journal.test.tools.TestUtils;
+import com.nfsdb.journal.test.tools.TestData;
 import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Files;
-import org.junit.Rule;
+import org.junit.BeforeClass;
+import org.junit.ClassRule;
 import org.junit.Test;
 
 public class CstTest {
 
-    @Rule
-    public final JournalTestFactory factory = new JournalTestFactory(
-
+    @ClassRule
+    public static final JournalTestFactory factory = new JournalTestFactory(
             new JournalConfigurationBuilder() {{
                 $(Quote.class)
                         .$sym("sym").index().valueCountHint(15)
                         .$sym("ex").index().valueCountHint(2)
-                        .$str("mode").size(60).index().buckets(5);
+                        .$str("mode").size(60).index().buckets(5)
+                        .$ts()
+                ;
 
             }}.build(Files.makeTempDir())
     );
+    private static final Q q = new QImpl();
+    private static JournalWriter<Quote> w;
+
+    @BeforeClass
+    public static void setUp() throws Exception {
+        w = factory.writer(Quote.class);
+        TestData.appendQuoteData2(w);
+    }
 
     @Test
-    public void testFilters() throws Exception {
-
-
-        JournalWriter w = factory.writer(Quote.class);
-        TestUtils.generateQuoteData(w, 10000, Dates.interval("2014-01-10T00:00:00.000Z", "2014-01-30T00:00:00.000Z"));
-
-
-        Q q = new QImpl();
-
-        // for every partition in partition stream execute RowSource
-        JournalSource src = q.forEachPartition(
-
-                // stream of partitions that match interval
-                // ok
-                q.interval(
-                        // stream of partitions
-                        // ok
-                        q.source(w, false)
-                        // filtering interval
-                        , Dates.interval("2014-01-12T00:00:00.000Z", "2014-01-13T00:00:00.000Z")
-                )
-
-                // RowSource that wraps RowCursor from first RowSource param
-                // and returns rows that accepted by second RowFilter param
-                // ok
-                , q.forEachRow(
-                        // union of rows of all RowSources
-                        // ok
-                        q.union(
-                                // ok
-                                q.kvSource("sym", q.symbolTableSource("sym", "BP.L", "XXX"))
-                                //, q.kvSource("sym", q.symbolTableSource("sym", "WTB.L", "XXX"))
-                                // or
-                                // ok
-//                                , q.forEachRow(
-//                                        // ok
-//                                        q.kvSource("mode", q.hashSource("mode", "Fast trading"))
-//                                        // ok
-//                                        , q.equalsConst("mode", "Fast trading")
-//                                )
+    public void testUnionAndFilter() throws Exception {
+        DataSource<Quote> ds =
+                q.ds(
+                        q.forEachPartition(
+                                q.interval(
+                                        q.source(w, false)
+                                        , Dates.interval("2013-03-12T00:00:00.000Z", "2013-03-13T00:00:00.000Z")
+                                )
+                                , q.forEachRow(
+                                        q.union(
+                                                q.kvSource("sym", q.symbolTableSource("sym", "BP.L", "XXX"))
+                                                , q.kvSource("sym", q.symbolTableSource("sym", "WTB.L", "XXX"))
+                                        )
+                                        , q.greaterThan("ask", 0.6)
+                                )
                         )
-                        // accepts row if all filters accept that row
-                        // ok
-                        ,
-                        q.greaterThan("ask", 0.5)
-                )
-        );
+                        , new Quote()
+                );
 
-        long t = System.nanoTime();
-        for (DataItem item : src) {
-//            System.out.println(item.getPartition().read(item.localRowID()));
-            //System.out.println(item);
+        for (Quote quote : ds) {
+            System.out.println(quote);
         }
-        System.out.println(System.nanoTime()-t);
+    }
+
+    @Test
+    public void testHead() throws Exception {
+        DataSource<Quote> ds =
+                q.ds(
+                        q.forEachPartition(
+                                q.interval(
+                                        q.source(w, false)
+                                        , Dates.interval("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z")
+                                )
+                                , q.kvSource("sym", q.symbolTableSource("sym"), 1, 0, null)
+                        ), new Quote()
+                );
+
+        for (Quote quote : ds) {
+            System.out.println(quote);
+        }
+
     }
 }

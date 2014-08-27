@@ -23,7 +23,6 @@ import com.nfsdb.journal.ResultSet;
 import com.nfsdb.journal.collections.LongArrayList;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.factory.configuration.ColumnMetadata;
 import com.nfsdb.journal.factory.configuration.JournalMetadata;
 import com.nfsdb.journal.index.KVIndex;
@@ -36,7 +35,6 @@ import com.nfsdb.journal.printer.converter.DateConverter;
 import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Unsafe;
 import gnu.trove.map.hash.TIntIntHashMap;
-import org.joda.time.DateTime;
 import org.joda.time.Interval;
 import org.junit.Assert;
 
@@ -91,7 +89,7 @@ public final class TestUtils {
         generateQuoteData(w, count, timetamp, 0);
     }
 
-    public static long generateQuoteData(JournalWriter<Quote> w, int count, long timetamp, long increment) throws JournalException {
+    public static void generateQuoteData(JournalWriter<Quote> w, int count, long timetamp, long increment) throws JournalException {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
         Quote q = new Quote();
         Random r = new Random(System.currentTimeMillis());
@@ -110,7 +108,6 @@ public final class TestUtils {
             timetamp += increment;
             w.append(q);
         }
-        return tZero;
     }
 
     public static void generateQuoteData(JournalWriter<Quote> w, int count, Interval interval) throws JournalException {
@@ -118,42 +115,27 @@ public final class TestUtils {
     }
 
     public static void generateQuoteData(JournalWriter<Quote> w, int count, Interval interval, boolean commit) throws JournalException {
-        int increment[] = new int[interval.toPeriod().getMonths() + 1];
-        DateTime start = interval.getStart();
 
-        int perMonth = count / increment.length;
+        long span = interval.getEndMillis() - interval.getStartMillis();
+        long inc = span / count;
+        long lo = interval.getStartMillis();
 
-        for (int i = 0; i < increment.length; i++) {
-            DateTime end = start.dayOfMonth().withMaximumValue();
-            if (end.getMonthOfYear() == interval.getEnd().getMonthOfYear()) {
-                end = interval.getEnd();
-            }
-
-            long delta = end.getMillis() - start.getMillis();
-            if (delta < perMonth) {
-                throw new JournalRuntimeException("Pick interval with start and end dates farther away from month edges");
-            }
-
-            increment[i] = (int) (delta / perMonth);
-
+        for (int i = 0; i < count; i++) {
             String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
             Quote q = new Quote();
             Random r = new Random(System.currentTimeMillis());
 
-            for (int k = 0; k < perMonth; k++) {
-                q.clear();
-                q.setSym(symbols[Math.abs(r.nextInt() % (symbols.length - 1))]);
-                q.setAsk(Math.abs(r.nextDouble()));
-                q.setBid(Math.abs(r.nextDouble()));
-                q.setAskSize(Math.abs(r.nextInt()));
-                q.setBidSize(Math.abs(r.nextInt()));
-                q.setEx("LXE");
-                q.setMode("Fast trading");
-                q.setTimestamp(start.getMillis());
-                w.append(q);
-                start.plusMillis(increment[i]);
-            }
-            start = end.plusDays(1);
+            q.clear();
+            q.setSym(symbols[Math.abs(r.nextInt() % (symbols.length - 1))]);
+            q.setAsk(Math.abs(r.nextDouble()));
+            q.setBid(Math.abs(r.nextDouble()));
+            q.setAskSize(Math.abs(r.nextInt()));
+            q.setBidSize(Math.abs(r.nextInt()));
+            q.setEx("LXE");
+            q.setMode("Fast trading");
+            q.setTimestamp(lo);
+            w.append(q);
+            lo += inc;
         }
         if (commit) {
             w.commit();

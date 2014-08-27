@@ -18,13 +18,11 @@ package com.nfsdb.journal.iterators;
 
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.Partition;
+import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.exceptions.JournalImmutableIteratorException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 
-import java.util.Iterator;
-
-public class PartitionBufferedIterator<T> implements JournalIterator<T>, PeekingIterator<T> {
+public class PartitionBufferedIterator<T> extends AbstractImmutableIterator<T> implements JournalIterator<T>, PeekingIterator<T> {
     private final long hi;
     private final long lo;
     private final T obj;
@@ -62,16 +60,6 @@ public class PartitionBufferedIterator<T> implements JournalIterator<T>, Peeking
     @Override
     public boolean isEmpty() {
         return cursor > hi;
-    }
-
-    @Override
-    public void remove() {
-        throw new JournalImmutableIteratorException();
-    }
-
-    @Override
-    public Iterator<T> iterator() {
-        return this;
     }
 
     @Override

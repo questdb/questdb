@@ -16,8 +16,8 @@
 
 package com.nfsdb.journal.lang.cst;
 
-import com.nfsdb.journal.Partition;
-
 public interface RowSource {
-    RowCursor cursor(Partition partition);
+    RowCursor cursor(PartitionSlice partition);
+
+    void reset();
 }

@@ -14,20 +14,20 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.index.experimental.filter;
+package com.nfsdb.journal.collections;
 
-import com.nfsdb.journal.column.VariableColumn;
+import com.nfsdb.journal.exceptions.JournalImmutableIteratorException;
 
-public class StringEqualsFilter extends AbstractColumnFilter {
+import java.util.Iterator;
 
-    private String searchTerm;
-
-    public void withValue(String searchTerm) {
-        this.searchTerm = searchTerm;
+public abstract class AbstractImmutableIterator<T> implements ImmutableIterator<T> {
+    @Override
+    public Iterator<T> iterator() {
+        return this;
     }
 
     @Override
-    public boolean accept(long value) {
-        return ((VariableColumn) column).equalsString(value, searchTerm);
+    public void remove() {
+        throw new JournalImmutableIteratorException();
     }
 }

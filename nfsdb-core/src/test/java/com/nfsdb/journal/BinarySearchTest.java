@@ -24,40 +24,40 @@ public class BinarySearchTest {
     @Test
     public void testSearchGreaterOrEquals() throws Exception {
         Assert.assertEquals(6, BinarySearch.indexOf(new ArraySeriesProvider(new long[]{1, 2, 3, 4, 5, 6, 9, 12, 17, 23}),
-                7, BinarySearch.SearchType.GREATER_OR_EQUAL));
+                7, BinarySearch.SearchType.NEWER_OR_SAME));
 
         Assert.assertEquals(5, BinarySearch.indexOf(new ArraySeriesProvider(new long[]{1, 2, 3, 4, 5, 6, 6, 6, 7, 12, 17, 23}),
-                6, BinarySearch.SearchType.GREATER_OR_EQUAL));
+                6, BinarySearch.SearchType.NEWER_OR_SAME));
 
         Assert.assertEquals(0, BinarySearch.indexOf(new ArraySeriesProvider(new long[]{2, 2, 3, 4, 5, 6, 6, 6, 7, 12, 17, 23}),
-                1, BinarySearch.SearchType.GREATER_OR_EQUAL));
+                1, BinarySearch.SearchType.NEWER_OR_SAME));
 
         Assert.assertEquals(0, BinarySearch.indexOf(new ArraySeriesProvider(new long[]{2, 2, 3, 4, 5, 6, 6, 6, 7, 12, 17, 23}),
-                2, BinarySearch.SearchType.GREATER_OR_EQUAL));
+                2, BinarySearch.SearchType.NEWER_OR_SAME));
 
         Assert.assertEquals(-2, BinarySearch.indexOf(new ArraySeriesProvider(new long[]{2, 2, 3, 4, 5, 6, 6, 6, 7, 12, 17, 23}),
-                25, BinarySearch.SearchType.GREATER_OR_EQUAL));
+                25, BinarySearch.SearchType.NEWER_OR_SAME));
 
         Assert.assertEquals(-2, BinarySearch.indexOf(new ArraySeriesProvider(new long[]{2, 2}),
-                25, BinarySearch.SearchType.GREATER_OR_EQUAL));
+                25, BinarySearch.SearchType.NEWER_OR_SAME));
     }
 
     @Test
     public void testSearchLessOrEquals() throws Exception {
         Assert.assertEquals(6, BinarySearch.indexOf(new ArraySeriesProvider(new long[]{1, 2, 3, 4, 5, 6, 9, 12, 17, 23}),
-                11, BinarySearch.SearchType.LESS_OR_EQUAL));
+                11, BinarySearch.SearchType.OLDER_OR_SAME));
 
         Assert.assertEquals(6, BinarySearch.indexOf(new ArraySeriesProvider(new long[]{1, 2, 3, 4, 9, 9, 9, 12, 17, 23}),
-                9, BinarySearch.SearchType.LESS_OR_EQUAL));
+                9, BinarySearch.SearchType.OLDER_OR_SAME));
 
         Assert.assertEquals(9, BinarySearch.indexOf(new ArraySeriesProvider(new long[]{1, 2, 3, 4, 9, 9, 9, 12, 17, 23}),
-                25, BinarySearch.SearchType.LESS_OR_EQUAL));
+                25, BinarySearch.SearchType.OLDER_OR_SAME));
 
         Assert.assertEquals(-1, BinarySearch.indexOf(new ArraySeriesProvider(new long[]{3, 3, 3, 4, 9, 9, 9, 12, 17, 23}),
-                1, BinarySearch.SearchType.LESS_OR_EQUAL));
+                1, BinarySearch.SearchType.OLDER_OR_SAME));
 
         Assert.assertEquals(-1, BinarySearch.indexOf(new ArraySeriesProvider(new long[]{3, 3}),
-                1, BinarySearch.SearchType.LESS_OR_EQUAL));
+                1, BinarySearch.SearchType.OLDER_OR_SAME));
     }
 
     private static class ArraySeriesProvider implements BinarySearch.LongTimeSeriesProvider {

@@ -16,7 +16,8 @@
 
 package com.nfsdb.journal.lang.cst;
 
-import java.util.Iterator;
+import com.nfsdb.journal.collections.ImmutableIterator;
 
-public interface JournalSource extends Iterator<DataItem>, Iterable<DataItem> {
+public interface JournalSource extends ImmutableIterator<DataItem> {
+    void reset();
 }

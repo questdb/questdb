@@ -1,14 +1,26 @@
-package com.nfsdb.journal.lang.cst.impl;
+/*
+ * Copyright (c) 2014. Vlad Ilyushchenko
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
-import com.nfsdb.journal.Partition;
+package com.nfsdb.journal.lang.cst.impl.rsrc;
+
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.index.Cursor;
 import com.nfsdb.journal.index.KVIndex;
-import com.nfsdb.journal.lang.cst.KeyCursor;
-import com.nfsdb.journal.lang.cst.KeySource;
-import com.nfsdb.journal.lang.cst.RowCursor;
-import com.nfsdb.journal.lang.cst.RowSource;
+import com.nfsdb.journal.lang.cst.*;
 
 public class KvIndexRowSource implements RowSource, RowCursor {
 
@@ -24,10 +36,11 @@ public class KvIndexRowSource implements RowSource, RowCursor {
     }
 
     @Override
-    public RowCursor cursor(Partition partition) {
+    public RowCursor cursor(PartitionSlice slice) {
         try {
-            this.index = partition.getIndexForColumn(symbol);
-            this.keyCursor = this.keySource.cursor(partition);
+            this.index = slice.partition.getIndexForColumn(symbol);
+            this.keyCursor = this.keySource.cursor(slice);
+            this.indexCursor = null;
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
@@ -51,5 +64,10 @@ public class KvIndexRowSource implements RowSource, RowCursor {
     @Override
     public long next() {
         return indexCursor.next();
+    }
+
+    @Override
+    public void reset() {
+        keySource.reset();
     }
 }

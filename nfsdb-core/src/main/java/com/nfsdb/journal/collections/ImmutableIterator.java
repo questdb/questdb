@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.lang.cst;
+package com.nfsdb.journal.collections;
 
-public interface KvAcceptor {
-    Choice accept(int key, int localRowID);
+import java.util.Iterator;
+
+public interface ImmutableIterator<T> extends Iterator<T>, Iterable<T> {
 }

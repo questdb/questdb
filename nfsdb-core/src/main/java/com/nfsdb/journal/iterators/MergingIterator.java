@@ -16,10 +16,12 @@
 
 package com.nfsdb.journal.iterators;
 
+import com.nfsdb.journal.collections.AbstractImmutableIterator;
+
 import java.util.Comparator;
 import java.util.Iterator;
 
-public class MergingIterator<T> implements Iterator<T>, Iterable<T> {
+public class MergingIterator<T> extends AbstractImmutableIterator<T> {
 
     private final Iterator<T> a;
     private final Iterator<T> b;
@@ -59,15 +61,5 @@ public class MergingIterator<T> implements Iterator<T>, Iterable<T> {
         }
 
         return result;
-    }
-
-    @Override
-    public void remove() {
-
-    }
-
-    @Override
-    public Iterator<T> iterator() {
-        return this;
     }
 }

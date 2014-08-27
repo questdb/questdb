@@ -14,15 +14,19 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.index.experimental.p;
+package com.nfsdb.journal.lang.parser;
 
+import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.utils.ByteBuffers;
 import gnu.trove.map.hash.TCharObjectHashMap;
 
 import java.nio.ByteBuffer;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
 
-public class TokenStream implements Iterator<String>, Iterable<String> {
+public class TokenStream extends AbstractImmutableIterator<String> {
     private final TCharObjectHashMap<List<Token>> symbols = new TCharObjectHashMap<>();
     private final StringBuilder s = new StringBuilder();
     private ByteBuffer buffer;
@@ -118,15 +122,5 @@ public class TokenStream implements Iterator<String>, Iterable<String> {
             }
         }
         return s.toString();
-    }
-
-    @Override
-    public void remove() {
-
-    }
-
-    @Override
-    public Iterator<String> iterator() {
-        return this;
     }
 }

@@ -58,7 +58,7 @@ public class JournalWriter<T> extends Journal<T> {
     private int txPartitionIndex = -1;
     private long appendTimestampLo = -1;
     private PartitionCleaner partitionCleaner;
-    private boolean autoCommit = true;
+    private boolean commitOnClose = true;
     // irregular partition related
     private boolean doDiscard = true;
     private boolean doJournal = true;
@@ -79,7 +79,7 @@ public class JournalWriter<T> extends Journal<T> {
             partitionCleaner = null;
         }
         try {
-            if (isAutoCommit()) {
+            if (isCommitOnClose()) {
                 commit();
                 purgeUnusedTempPartitions(txLog);
             }
@@ -462,12 +462,12 @@ public class JournalWriter<T> extends Journal<T> {
         return txActive;
     }
 
-    public boolean isAutoCommit() {
-        return autoCommit;
+    public boolean isCommitOnClose() {
+        return commitOnClose;
     }
 
-    public void setAutoCommit(boolean autoCommit) {
-        this.autoCommit = autoCommit;
+    public void setCommitOnClose(boolean commitOnClose) {
+        this.commitOnClose = commitOnClose;
     }
 
     public void purgeTempPartitions() {
@@ -552,8 +552,8 @@ public class JournalWriter<T> extends Journal<T> {
                 //
 
                 // calc boundaries of lag that intersects with data
-                long lagMid1 = lagPartition.indexOf(dataMinTimestamp, BinarySearch.SearchType.LESS_OR_EQUAL);
-                long lagMid2 = lagPartition.indexOf(dataMaxTimestamp, BinarySearch.SearchType.GREATER_OR_EQUAL);
+                long lagMid1 = lagPartition.indexOf(dataMinTimestamp, BinarySearch.SearchType.OLDER_OR_SAME);
+                long lagMid2 = lagPartition.indexOf(dataMaxTimestamp, BinarySearch.SearchType.NEWER_OR_SAME);
 
                 // copy part of lag above data
                 splitAppend(lagPartition.bufferedIterator(0, lagMid1), hard, soft, tempPartition);
@@ -576,7 +576,7 @@ public class JournalWriter<T> extends Journal<T> {
                 //
 
                 // calc overlap line
-                long split = lagPartition.indexOf(dataMaxTimestamp, BinarySearch.SearchType.GREATER_OR_EQUAL);
+                long split = lagPartition.indexOf(dataMaxTimestamp, BinarySearch.SearchType.NEWER_OR_SAME);
 
                 // merge lag with data and copy result to temp partition
                 splitAppendMerge(data, lagPartition.bufferedIterator(0, split - 1), hard, soft, tempPartition);
@@ -587,7 +587,7 @@ public class JournalWriter<T> extends Journal<T> {
                 //
                 // overlap scenario 4: top part of data overlaps with bottom part of lag
                 //
-                long split = lagPartition.indexOf(dataMinTimestamp, BinarySearch.SearchType.LESS_OR_EQUAL);
+                long split = lagPartition.indexOf(dataMinTimestamp, BinarySearch.SearchType.OLDER_OR_SAME);
 
                 // copy part of lag above overlap
                 splitAppend(lagPartition.bufferedIterator(0, split), hard, soft, tempPartition);

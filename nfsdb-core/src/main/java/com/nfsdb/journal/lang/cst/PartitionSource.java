@@ -16,10 +16,8 @@
 
 package com.nfsdb.journal.lang.cst;
 
-import com.nfsdb.journal.Partition;
+import com.nfsdb.journal.collections.ImmutableIterator;
 
-import java.util.Iterator;
-
-public interface PartitionSource extends Iterator<Partition> {
-
+public interface PartitionSource extends ImmutableIterator<PartitionSlice> {
+    void reset();
 }

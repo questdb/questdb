@@ -18,29 +18,40 @@ package com.nfsdb.journal;
 
 public class BinarySearch {
 
-    public static long indexOf(LongTimeSeriesProvider data, long searchValue, SearchType type) {
-        long startIndex = 0;
-        long endIndex = data.size() - 1;
+    public static long indexOf(LongTimeSeriesProvider data, long timestamp, SearchType type) {
+        return indexOf(data, timestamp, type, 0, data.size() - 1);
+    }
 
-        if (endIndex == -1) {
+    /**
+     * Finds index of timestamp closest to searched value.
+     *
+     * @param data      data set
+     * @param timestamp search value
+     * @param type      type of search (NEWER or OLDER)
+     * @param lo        lower bound
+     * @param hi        higher bound
+     * @return index or -2 if searching for NEWER and entire data set is OLDER then search value. Or -1 is searching for OLDER and entire data set is NEWER than search value.
+     */
+    public static long indexOf(LongTimeSeriesProvider data, long timestamp, SearchType type, long lo, long hi) {
+        if (hi == -1) {
             return -1;
         }
 
-        long result = indexOf(data, startIndex, endIndex, searchValue, type);
+        long result = indexOf(data, lo, hi, timestamp, type);
 
-        if (type == SearchType.GREATER_OR_EQUAL) {
-            while (result > startIndex) {
+        if (type == SearchType.NEWER_OR_SAME) {
+            while (result > lo) {
                 long ts = data.readLong(result - 1);
-                if (ts < searchValue) {
+                if (ts < timestamp) {
                     break;
                 } else {
                     result--;
                 }
             }
-        } else if (type == SearchType.LESS_OR_EQUAL) {
-            while (result < endIndex) {
+        } else if (type == SearchType.OLDER_OR_SAME) {
+            while (result < hi) {
                 long ts = data.readLong(result + 1);
-                if (ts > searchValue) {
+                if (ts > timestamp) {
                     break;
                 } else {
                     result++;
@@ -65,7 +76,7 @@ public class BinarySearch {
         }
 
         if (endIndex - startIndex == 1) {
-            if (type == SearchType.GREATER_OR_EQUAL) {
+            if (type == SearchType.NEWER_OR_SAME) {
                 if (maxTime >= timestamp) {
                     return endIndex;
                 } else {
@@ -90,11 +101,11 @@ public class BinarySearch {
             } else {
                 return indexOf(data, median, endIndex, timestamp, type);
             }
-        } else if (timestamp > maxTime && type == SearchType.LESS_OR_EQUAL) {
+        } else if (timestamp > maxTime && type == SearchType.OLDER_OR_SAME) {
             return endIndex;
         } else if (timestamp > maxTime) {
             return -2;
-        } else if (timestamp < minTime && type == SearchType.GREATER_OR_EQUAL) {
+        } else if (timestamp < minTime && type == SearchType.NEWER_OR_SAME) {
             return startIndex;
         } else {
             return -1;
@@ -102,7 +113,7 @@ public class BinarySearch {
     }
 
     public enum SearchType {
-        GREATER_OR_EQUAL, LESS_OR_EQUAL
+        NEWER_OR_SAME, OLDER_OR_SAME
     }
 
     public static interface LongTimeSeriesProvider {

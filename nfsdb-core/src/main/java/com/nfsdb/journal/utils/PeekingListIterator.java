@@ -16,12 +16,13 @@
 
 package com.nfsdb.journal.utils;
 
+import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.iterators.PeekingIterator;
 
 import java.util.Iterator;
 import java.util.List;
 
-public class PeekingListIterator<T> implements PeekingIterator<T> {
+public class PeekingListIterator<T> extends AbstractImmutableIterator<T> implements PeekingIterator<T> {
     private List<T> delegate;
     private Iterator<T> iterator;
 
@@ -49,11 +50,6 @@ public class PeekingListIterator<T> implements PeekingIterator<T> {
     }
 
     @Override
-    public Iterator<T> iterator() {
-        return iterator;
-    }
-
-    @Override
     public boolean hasNext() {
         return iterator.hasNext();
     }
@@ -61,10 +57,5 @@ public class PeekingListIterator<T> implements PeekingIterator<T> {
     @Override
     public T next() {
         return iterator.next();
-    }
-
-    @Override
-    public void remove() {
-        iterator.remove();
     }
 }

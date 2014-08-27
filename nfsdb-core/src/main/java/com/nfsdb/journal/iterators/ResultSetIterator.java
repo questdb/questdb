@@ -18,13 +18,11 @@ package com.nfsdb.journal.iterators;
 
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.ResultSet;
+import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.exceptions.JournalImmutableIteratorException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 
-import java.util.Iterator;
-
-public class ResultSetIterator<T> implements JournalIterator<T>, PeekingIterator<T> {
+public class ResultSetIterator<T> extends AbstractImmutableIterator<T> implements JournalIterator<T>, PeekingIterator<T> {
 
     private final ResultSet<T> rs;
     private int cursor = 0;
@@ -45,11 +43,6 @@ public class ResultSetIterator<T> implements JournalIterator<T>, PeekingIterator
         } catch (JournalException e) {
             throw new JournalRuntimeException("Journal exception", e);
         }
-    }
-
-    @Override
-    public void remove() {
-        throw new JournalImmutableIteratorException();
     }
 
     @Override
@@ -78,10 +71,5 @@ public class ResultSetIterator<T> implements JournalIterator<T>, PeekingIterator
     @Override
     public boolean isEmpty() {
         return cursor >= rs.size();
-    }
-
-    @Override
-    public Iterator<T> iterator() {
-        return this;
     }
 }

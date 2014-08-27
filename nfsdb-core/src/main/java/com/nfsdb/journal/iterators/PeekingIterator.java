@@ -16,9 +16,9 @@
 
 package com.nfsdb.journal.iterators;
 
-import java.util.Iterator;
+import com.nfsdb.journal.collections.ImmutableIterator;
 
-public interface PeekingIterator<T> extends Iterable<T>, Iterator<T> {
+public interface PeekingIterator<T> extends ImmutableIterator<T> {
     T peekLast();
 
     T peekFirst();

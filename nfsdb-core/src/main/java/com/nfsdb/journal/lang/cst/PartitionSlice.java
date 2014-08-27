@@ -18,6 +18,9 @@ package com.nfsdb.journal.lang.cst;
 
 import com.nfsdb.journal.Partition;
 
-public interface KvFilter {
-    KvAcceptor acceptor(Partition partition);
+public class PartitionSlice {
+    public Partition partition;
+    public long lo;
+    public long hi;
+    public boolean calcHi = false;
 }
