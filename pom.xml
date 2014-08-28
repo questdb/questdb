@@ -39,6 +39,6 @@
     <modules>
         <module>nfsdb-core</module>
         <module>nfsdb-thrift</module>
-        <module>nfsdb-samples</module>
+        <module>nfsdb-examples</module>
     </modules>
 </project>
