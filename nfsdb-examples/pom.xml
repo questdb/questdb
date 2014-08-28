@@ -24,10 +24,10 @@
 
     <version>2.0.1-SNAPSHOT</version>
     <groupId>com.nfsdb</groupId>
-    <artifactId>nfsdb-samples</artifactId>
+    <artifactId>nfsdb-examples</artifactId>
     <packaging>jar</packaging>
-    <name>NFSdb.Samples</name>
-    <description>NFSdb Sample Code</description>
+    <name>NFSdb.Example.Code</name>
+    <description>Code examples and usage scenarios for NFSdb</description>
 
     <url>http://www.nfsdb.org</url>
     <licenses>
