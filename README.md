@@ -101,7 +101,7 @@ public class SimpleReplicationClientMain {
 
 ### More examples?
 
-We have more samples in our [Git repository] (https://github.com/NFSdb/nfsdb/tree/master/nfsdb-samples/src/main/java/org/nfsdb/examples) repository.
+We have more samples in our [Git repository] (https://github.com/NFSdb/nfsdb/tree/master/nfsdb-examples/src/main/java/org/nfsdb/examples) repository.
 
 ### Performance
 
