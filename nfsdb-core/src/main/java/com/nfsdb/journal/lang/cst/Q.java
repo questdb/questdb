@@ -29,6 +29,10 @@ public interface Q {
 
     RowSource forEachRow(RowSource source, RowFilter rowFilter);
 
+    RowSource top(int count, RowSource rowSource);
+
+    JournalSource top(int count, JournalSource source);
+
     RowSource union(RowSource... source);
 
     RowSource mergeSorted(RowSource source1, RowSource source2);

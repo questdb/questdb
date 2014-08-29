@@ -84,6 +84,10 @@ public class JournalMetadataBuilder<T> {
         return new BinaryBuilder<>(this, getMeta(name));
     }
 
+    public IntBuilder<T> $int(String name) {
+        return new IntBuilder<>(this, getMeta(name));
+    }
+
     public JournalMetadataBuilder<T> $ts() {
         return $ts("timestamp");
     }

@@ -37,6 +37,10 @@ public abstract class AbstractMetadataBuilder<T> {
         return parent.$sym(name);
     }
 
+    public IntBuilder $int(String name) {
+        return parent.$int(name);
+    }
+
     public JournalMetadataBuilder<T> $ts(String name) {
         return parent.$ts(name);
     }

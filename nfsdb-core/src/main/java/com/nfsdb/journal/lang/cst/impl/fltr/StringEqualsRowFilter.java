@@ -36,7 +36,7 @@ public class StringEqualsRowFilter implements RowFilter, RowAcceptor {
 
     @Override
     public RowAcceptor acceptor(PartitionSlice a, PartitionSlice b) {
-        AbstractColumn col = a.partition.getAbstractColumn(b.partition.getJournal().getMetadata().getColumnIndex(column));
+        AbstractColumn col = a.partition.getAbstractColumn(a.partition.getJournal().getMetadata().getColumnIndex(column));
         if (!(col instanceof VariableColumn)) {
             throw new JournalRuntimeException("Invalid column type");
         }

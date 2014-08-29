@@ -27,10 +27,7 @@ import com.nfsdb.journal.lang.cst.impl.ksrc.SymbolKeySource;
 import com.nfsdb.journal.lang.cst.impl.psrc.IntervalPartitionSource;
 import com.nfsdb.journal.lang.cst.impl.psrc.JournalPartitionSource;
 import com.nfsdb.journal.lang.cst.impl.psrc.JournalTailPartitionSource;
-import com.nfsdb.journal.lang.cst.impl.rsrc.FilteredRowSource;
-import com.nfsdb.journal.lang.cst.impl.rsrc.KvIndexRowSource;
-import com.nfsdb.journal.lang.cst.impl.rsrc.KvIndexTailRowSource;
-import com.nfsdb.journal.lang.cst.impl.rsrc.UnionRowSource;
+import com.nfsdb.journal.lang.cst.impl.rsrc.*;
 import org.joda.time.Interval;
 
 public class QImpl implements Q {
@@ -53,6 +50,16 @@ public class QImpl implements Q {
     @Override
     public RowSource forEachRow(RowSource source, RowFilter rowFilter) {
         return new FilteredRowSource(source, rowFilter);
+    }
+
+    @Override
+    public RowSource top(int count, RowSource rowSource) {
+        return new TopRowSource(count, rowSource);
+    }
+
+    @Override
+    public JournalSource top(int count, JournalSource source) {
+        return new TopJournalSource(count, source);
     }
 
     @Override
