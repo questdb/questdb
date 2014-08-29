@@ -463,6 +463,13 @@ public class JournalTest extends AbstractTest {
         Assert.assertEquals(1, w.query().head().withKeys("ABC").asResultSet().size());
     }
 
+    @Test
+    public void testCreateNewReader() throws Exception {
+        Assert.assertEquals(0, factory.reader(Quote.class, "brand-new").size());
+        Assert.assertEquals(0, factory.bulkReader(Quote.class, "brand-new2").size());
+
+    }
+
     private static class TestTxListener implements TxListener, TxAsyncListener {
 
         private boolean notifyAsyncNoWait = false;

@@ -437,6 +437,29 @@ public class Journal<T> implements Iterable<T>, Closeable {
     }
 
     /**
+     * Creates buffered iterator for journal increment before and after #refresh() call.
+     * This is useful when you have a two threads, one writer and another reader, tailing former writer.
+     * Reader would be refreshed periodically and if there is data increment, returned iterator would
+     * traverse it.
+     *
+     * @return Iterator that traverses journal increment
+     * @since 2.0.1
+     */
+    public JournalIterator<T> incrementBuffered() {
+        return query().all().incrementBufferedIterator();
+    }
+
+    /**
+     * Same as #incrementBuffered(). The only difference that new instance of T is created on every iteration.
+     *
+     * @return Iterator that traverses journal increment
+     * @since 2.0.1
+     */
+    public JournalIterator<T> increment() {
+        return query().all().incrementIterator();
+    }
+
+    /**
      * Read an object by global row id
      *
      * @param rowID the global row id to read
@@ -504,6 +527,15 @@ public class Journal<T> implements Iterable<T>, Closeable {
     }
 
     public long incrementRowID(long rowID) throws JournalException {
+
+        if (rowID == -1) {
+            if (getPartitionCount() > 0 && getPartition(0, true).size() > 0) {
+                return 0;
+            } else {
+                return -1;
+            }
+        }
+
         int partitionIndex = Rows.toPartitionIndex(rowID);
         long localRowID = Rows.toLocalRowID(rowID);
 
@@ -511,8 +543,8 @@ public class Journal<T> implements Iterable<T>, Closeable {
         if (localRowID < p.size() - 1) {
             return Rows.toRowID(partitionIndex, localRowID + 1);
         }
-
-        while (++partitionIndex < getPartitionCount()) {
+        int count = getPartitionCount();
+        while (++partitionIndex < count) {
             p = getPartition(partitionIndex, true);
             if (p.size() > 0) {
                 return Rows.toRowID(partitionIndex, 0);

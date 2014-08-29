@@ -57,6 +57,7 @@ public class SimpleReplicationServerMain {
     private void publishPrice(JournalWriter<Price> writer, int count)
             throws JournalException {
         long tZero = System.currentTimeMillis();
+        System.out.println("sending: " + tZero);
         Price p = new Price();
         for (int i = 0; i < count; i++) {
             p.setTimestamp(tZero + i);

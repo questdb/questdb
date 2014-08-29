@@ -178,4 +178,66 @@ public class IteratorTest extends AbstractTest {
             Assert.assertEquals(e, a.getObject());
         }
     }
+
+    @Test
+    @SuppressWarnings("unused")
+    public void testIncrementIterator() throws Exception {
+        Journal<Quote> r = factory.reader(Quote.class);
+        JournalWriter<Quote> w = factory.writer(Quote.class);
+        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
+        TestUtils.generateQuoteData(origin, 10000);
+
+        int count = 0;
+        for (Quote q : r.increment()) {
+            count++;
+        }
+
+        Assert.assertEquals(0, count);
+        w.append(origin.query().all().asResultSet().subset(0, 5000));
+        w.commit();
+
+        for (Quote q : r.increment()) {
+            count++;
+        }
+        Assert.assertEquals(5000, count);
+        w.append(origin.query().all().asResultSet().subset(5000, 10000));
+        w.commit();
+
+        count = 0;
+        for (Quote q : r.increment()) {
+            count++;
+        }
+        Assert.assertEquals(5000, count);
+    }
+
+    @Test
+    @SuppressWarnings("unused")
+    public void testBufferedIncrementIterator() throws Exception {
+        Journal<Quote> r = factory.reader(Quote.class);
+        JournalWriter<Quote> w = factory.writer(Quote.class);
+        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
+        TestUtils.generateQuoteData(origin, 10000);
+
+        int count = 0;
+        for (Quote q : r.incrementBuffered()) {
+            count++;
+        }
+
+        Assert.assertEquals(0, count);
+        w.append(origin.query().all().asResultSet().subset(0, 5000));
+        w.commit();
+
+        for (Quote q : r.incrementBuffered()) {
+            count++;
+        }
+        Assert.assertEquals(5000, count);
+        w.append(origin.query().all().asResultSet().subset(5000, 10000));
+        w.commit();
+
+        count = 0;
+        for (Quote q : r.incrementBuffered()) {
+            count++;
+        }
+        Assert.assertEquals(5000, count);
+    }
 }

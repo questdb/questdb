@@ -23,7 +23,7 @@ import com.nfsdb.thrift.model.Quote;
 import java.util.Random;
 
 public class Utils {
-    public static long generateQuoteData(JournalWriter<Quote> w, int count, long timetamp, long increment) throws JournalException {
+    public static void generateQuoteData(JournalWriter<Quote> w, int count, long timetamp, long increment) throws JournalException {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
         Quote q = new Quote();
         Random r = new Random(System.currentTimeMillis());
@@ -42,6 +42,5 @@ public class Utils {
             timetamp += increment;
             w.append(q);
         }
-        return tZero;
     }
 }

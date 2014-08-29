@@ -120,10 +120,10 @@ public class JournalClient {
     }
 
     public <T> void subscribe(Class<T> clazz, String remote, String local, int recordHint) throws JournalException {
-        sync(clazz, remote, local, recordHint, null);
+        subscribe(clazz, remote, local, recordHint, null);
     }
 
-    public <T> void sync(Class<T> clazz, String remote, String local, int recordHint, TxListener txListener) throws JournalException {
+    public <T> void subscribe(Class<T> clazz, String remote, String local, int recordHint, TxListener txListener) throws JournalException {
         add(new JournalKey<>(clazz, remote), factory.writer(clazz, local, recordHint), txListener);
     }
 
@@ -274,7 +274,7 @@ public class JournalClient {
                         break;
                     } catch (JournalNetworkException e) {
                         running.set(false);
-                        LOGGER.error("Network error", e);
+                        LOGGER.error("Network error. Server died?", e);
                         break;
                     } catch (Throwable e) {
                         LOGGER.error("Unhandled exception in client", e);

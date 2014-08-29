@@ -93,7 +93,6 @@ public final class TestUtils {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
         Quote q = new Quote();
         Random r = new Random(System.currentTimeMillis());
-        long tZero = System.nanoTime();
 
         for (int i = 0; i < count; i++) {
             q.clear();

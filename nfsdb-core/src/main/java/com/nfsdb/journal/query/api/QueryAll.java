@@ -49,5 +49,9 @@ public interface QueryAll<T> extends Iterable<T> {
 
     JournalIterator<T> bufferedIterator(long rowid);
 
+    JournalIterator<T> incrementBufferedIterator();
+
+    JournalIterator<T> incrementIterator();
+
     ConcurrentIterator<T> concurrentIterator(long rowid);
 }

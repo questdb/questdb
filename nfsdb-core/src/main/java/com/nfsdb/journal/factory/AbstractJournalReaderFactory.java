@@ -19,11 +19,14 @@ package com.nfsdb.journal.factory;
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalBulkReader;
 import com.nfsdb.journal.JournalKey;
+import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.concurrent.TimerCache;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.configuration.JournalConfiguration;
+import com.nfsdb.journal.factory.configuration.JournalMetadata;
 
 import java.io.Closeable;
+import java.io.File;
 
 public abstract class AbstractJournalReaderFactory implements JournalReaderFactory, Closeable {
 
@@ -42,7 +45,7 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
 
     @Override
     public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        return new Journal<>(configuration.createMetadata(key), key, timerCache);
+        return new Journal<>(getOrCreateMetadata(key), key, timerCache);
     }
 
     @Override
@@ -57,7 +60,7 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
 
     @Override
     public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
-        return new JournalBulkReader<>(configuration.createMetadata(key), key, timerCache);
+        return new JournalBulkReader<>(getOrCreateMetadata(key), key, timerCache);
     }
 
     public JournalConfiguration getConfiguration() {
@@ -79,6 +82,15 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
 
     protected TimerCache getTimerCache() {
         return timerCache;
+    }
+
+    private <T> JournalMetadata<T> getOrCreateMetadata(JournalKey<T> key) throws JournalException {
+        JournalMetadata<T> metadata = configuration.createMetadata(key);
+        File location = new File(metadata.getLocation());
+        if (!location.exists()) {
+            new JournalWriter<>(metadata, key, timerCache).close();
+        }
+        return metadata;
     }
 
 }

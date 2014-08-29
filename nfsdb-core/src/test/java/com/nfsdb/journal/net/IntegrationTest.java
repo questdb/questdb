@@ -55,7 +55,7 @@ public class IntegrationTest extends AbstractTest {
         server.start();
 
         final CountDownLatch latch = new CountDownLatch(1);
-        client.sync(Quote.class, "remote", "local", 2 * size, new TxListener() {
+        client.subscribe(Quote.class, "remote", "local", 2 * size, new TxListener() {
             @Override
             public void onCommit() {
                 latch.countDown();
@@ -83,14 +83,14 @@ public class IntegrationTest extends AbstractTest {
         server.start();
 
         final CountDownLatch latch = new CountDownLatch(2);
-        client.sync(Quote.class, "remote1", "local1", 2 * size, new TxListener() {
+        client.subscribe(Quote.class, "remote1", "local1", 2 * size, new TxListener() {
             @Override
             public void onCommit() {
                 latch.countDown();
             }
         });
 
-        client.sync(TestEntity.class, "remote2", "local2", 2 * size, new TxListener() {
+        client.subscribe(TestEntity.class, "remote2", "local2", 2 * size, new TxListener() {
             @Override
             public void onCommit() {
                 latch.countDown();

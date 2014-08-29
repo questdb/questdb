@@ -109,13 +109,35 @@ public class QueryAllImpl<T> implements QueryAll<T> {
     }
 
     @Override
-    public JournalIterator<T> iterator(long loRowID) {
-        return new JournalIteratorImpl<>(journal, createRanges(loRowID));
+    public JournalIterator<T> iterator(long rowid) {
+        return new JournalIteratorImpl<>(journal, createRanges(rowid));
     }
 
     @Override
     public JournalIterator<T> bufferedIterator(long rowid) {
         return new JournalBufferedIterator<>(journal, createRanges(rowid));
+    }
+
+    @Override
+    public JournalIterator<T> incrementBufferedIterator() {
+        try {
+            long lo = journal.getMaxRowID();
+            journal.refresh();
+            return new JournalBufferedIterator<>(journal, createRanges(journal.incrementRowID(lo)));
+        } catch (JournalException e) {
+            throw new JournalRuntimeException(e);
+        }
+    }
+
+    @Override
+    public JournalIterator<T> incrementIterator() {
+        try {
+            long lo = journal.getMaxRowID();
+            journal.refresh();
+            return new JournalIteratorImpl<>(journal, createRanges(journal.incrementRowID(lo)));
+        } catch (JournalException e) {
+            throw new JournalRuntimeException(e);
+        }
     }
 
     @Override
@@ -161,7 +183,7 @@ public class QueryAllImpl<T> implements QueryAll<T> {
         long loLocalRowID = Rows.toLocalRowID(lo);
 
         try {
-            for (int i = loPartitionID; i < journal.getPartitionCount(); i++) {
+            for (int i = loPartitionID, count = journal.getPartitionCount(); i < count; i++) {
                 long localRowID = 0;
                 if (i == loPartitionID) {
                     localRowID = loLocalRowID;

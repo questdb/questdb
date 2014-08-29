@@ -16,22 +16,40 @@
 
 package org.nfsdb.examples.network;
 
+import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.net.JournalClient;
 import com.nfsdb.journal.tx.TxListener;
 import org.nfsdb.examples.model.Price;
 
+/**
+ * Single journal replication client example.
+ *
+ * @since 2.0.1
+ */
 public class SimpleReplicationClientMain {
     public static void main(String[] args) throws Exception {
         JournalFactory factory = new JournalFactory(args[0]);
-        JournalClient client = new JournalClient(factory);
+        final JournalClient client = new JournalClient(factory);
+
+        final Journal<Price> reader = factory.bulkReader(Price.class, "price-copy");
+
         client.subscribe(Price.class, null, "price-copy", new TxListener() {
             @Override
             public void onCommit() {
-                System.out.println("commit received");
+                int count = 0;
+                long t = 0;
+                for (Price p : reader.incrementBuffered()) {
+                    if (count == 0) {
+                        t = p.getTimestamp();
+                    }
+                    count++;
+                }
+                System.out.println("took: " + (System.currentTimeMillis() - t) + ", count=" + count);
             }
         });
         client.start();
+
         System.out.println("Client started");
     }
 }
