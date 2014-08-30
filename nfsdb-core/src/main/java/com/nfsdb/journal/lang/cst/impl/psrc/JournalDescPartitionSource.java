@@ -23,7 +23,7 @@ import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.lang.cst.PartitionSlice;
 import com.nfsdb.journal.lang.cst.PartitionSource;
 
-public class JournalPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource {
+public class JournalDescPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource {
 
     private final Journal journal;
     private final boolean open;
@@ -31,7 +31,7 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
     private int partitionCount;
     private int partitionIndex;
 
-    public JournalPartitionSource(Journal journal, boolean open) {
+    public JournalDescPartitionSource(Journal journal, boolean open) {
         this.journal = journal;
         this.open = open;
         reset();
@@ -39,13 +39,13 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
 
     @Override
     public boolean hasNext() {
-        return partitionIndex < partitionCount;
+        return partitionIndex >= 0;
     }
 
     @Override
     public PartitionSlice next() {
         try {
-            slice.partition = journal.getPartition(partitionIndex++, open);
+            slice.partition = journal.getPartition(partitionIndex--, open);
             slice.lo = 0;
             slice.calcHi = true;
             return slice;
@@ -57,6 +57,6 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
     @Override
     public void reset() {
         partitionCount = journal.getPartitionCount();
-        partitionIndex = 0;
+        partitionIndex = partitionCount - 1;
     }
 }

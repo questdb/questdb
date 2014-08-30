@@ -93,6 +93,11 @@ public class QImpl implements Q {
     }
 
     @Override
+    public PartitionSource sourceDesc(Journal journal, boolean open) {
+        return new JournalPartitionSource(journal, open);
+    }
+
+    @Override
     public PartitionSource source(Journal journal, boolean open, long rowid) {
         return new JournalTailPartitionSource(journal, open, rowid);
     }

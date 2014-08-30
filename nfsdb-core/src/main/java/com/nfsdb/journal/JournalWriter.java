@@ -333,17 +333,6 @@ public class JournalWriter<T> extends Journal<T> {
 
                 appendPartition = getAppendPartition(timestamp);
 
-                switch (getMode()) {
-                    case BULK_APPEND:
-                        for (int i = appendPartition.getPartitionIndex() - 1; i >= 0; i--) {
-                            Partition<T> partition = partitions.get(i);
-                            if (partition == null || !partition.isOpen()) {
-                                break;
-                            }
-                            partition.close();
-                        }
-
-                }
                 Interval interval = appendPartition.getInterval();
                 if (interval == null) {
                     appendTimestampHi = Long.MAX_VALUE;

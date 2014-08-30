@@ -18,6 +18,7 @@ package com.nfsdb.journal.lang.cst.impl.fltr;
 
 import com.nfsdb.journal.column.AbstractColumn;
 import com.nfsdb.journal.column.VariableColumn;
+import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.lang.cst.Choice;
 import com.nfsdb.journal.lang.cst.PartitionSlice;
@@ -36,13 +37,18 @@ public class StringEqualsRowFilter implements RowFilter, RowAcceptor {
 
     @Override
     public RowAcceptor acceptor(PartitionSlice a, PartitionSlice b) {
-        AbstractColumn col = a.partition.getAbstractColumn(a.partition.getJournal().getMetadata().getColumnIndex(column));
-        if (!(col instanceof VariableColumn)) {
-            throw new JournalRuntimeException("Invalid column type");
-        }
-        columnRef = (VariableColumn) col;
+        try {
+            a.partition.open();
+            AbstractColumn col = a.partition.getAbstractColumn(a.partition.getJournal().getMetadata().getColumnIndex(column));
+            if (!(col instanceof VariableColumn)) {
+                throw new JournalRuntimeException("Invalid column type");
+            }
+            columnRef = (VariableColumn) col;
 
-        return this;
+            return this;
+        } catch (JournalException e) {
+            throw new JournalRuntimeException(e);
+        }
     }
 
     @Override

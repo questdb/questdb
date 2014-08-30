@@ -45,6 +45,8 @@ public interface Q {
 
     PartitionSource source(Journal journal, boolean open);
 
+    PartitionSource sourceDesc(Journal journal, boolean open);
+
     PartitionSource source(Journal journal, boolean open, long rowid);
 
     RowFilter equalsConst(String column, String value);

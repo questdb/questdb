@@ -65,26 +65,6 @@ public final class TestUtils {
         w.commit();
     }
 
-    public static void generateQuoteDataRandomMode(JournalWriter<Quote> w, int count) throws JournalException {
-        String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
-        long timestamps[] = {Dates.toMillis("2013-09-04T10:00:00.000Z"), Dates.toMillis("2013-10-04T10:00:00.000Z"), Dates.toMillis("2013-11-04T10:00:00.000Z")};
-        Quote q = new Quote();
-        Random r = new Random(System.currentTimeMillis());
-        for (int i = 0; i < count; i++) {
-            q.clear();
-            q.setSym(symbols[Math.abs(r.nextInt() % (symbols.length))]);
-            q.setAsk(Math.abs(r.nextDouble()));
-            q.setBid(Math.abs(r.nextDouble()));
-            q.setAskSize(Math.abs(r.nextInt()));
-            q.setBidSize(Math.abs(r.nextInt()));
-            q.setEx("LXE");
-            q.setMode("Fast trading" + i % ((count / 10000)));
-            q.setTimestamp(timestamps[i * timestamps.length / count]);
-            w.append(q);
-        }
-        w.commit();
-    }
-
     public static void generateQuoteData(JournalWriter<Quote> w, int count, long timetamp) throws JournalException {
         generateQuoteData(w, count, timetamp, 0);
     }
