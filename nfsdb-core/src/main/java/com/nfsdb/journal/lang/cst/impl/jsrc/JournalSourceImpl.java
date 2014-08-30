@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.lang.cst.impl;
+package com.nfsdb.journal.lang.cst.impl.jsrc;
 
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.lang.cst.*;
@@ -56,9 +56,10 @@ public class JournalSourceImpl extends AbstractImmutableIterator<DataItem> imple
     }
 
     @Override
-    public void reset() {
+    public JournalSource reset() {
         partitionSource.reset();
         rowSource.reset();
         cursor = null;
+        return this;
     }
 }

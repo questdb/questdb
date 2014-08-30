@@ -17,7 +17,11 @@
 package com.nfsdb.journal.lang.cst;
 
 import com.nfsdb.journal.Journal;
+import com.nfsdb.journal.lang.cst.impl.ref.IntRef;
+import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 import org.joda.time.Interval;
+
+import java.util.List;
 
 public interface Q {
 
@@ -39,17 +43,23 @@ public interface Q {
 
     RowSource join(RowSource source1, RowSource source2);
 
-    RowSource kvSource(String indexName, KeySource keySource);
+    RowSource kvSource(StringRef indexName, KeySource keySource);
 
-    RowSource kvSource(String indexName, KeySource keySource, int count, int tail, RowFilter filter);
+    RowSource headEquals(StringRef column, StringRef value);
+
+    RowSource headEquals(StringRef column, IntRef value);
+
+    RowSource kvSource(StringRef indexName, KeySource keySource, int count, int tail, RowFilter filter);
 
     PartitionSource source(Journal journal, boolean open);
 
     PartitionSource sourceDesc(Journal journal, boolean open);
 
+    PartitionSource sourceDesc(Journal journal);
+
     PartitionSource source(Journal journal, boolean open, long rowid);
 
-    RowFilter equalsConst(String column, String value);
+    RowFilter equalsConst(StringRef column, StringRef value);
 
     RowFilter equals(String columnA, String columnB);
 
@@ -63,11 +73,13 @@ public interface Q {
 
     RowFilter not(RowFilter rowFilter);
 
-    KeySource symbolTableSource(String sym, String... values);
+    KeySource symbolTableSource(StringRef sym, List<String> values);
 
-    KeySource symbolTableSource(String sym);
+    KeySource symbolTableSource(StringRef sym);
 
-    KeySource hashSource(String column, String... value);
+    KeySource hashSource(StringRef column, List<String> values);
+
+    KeySource hashSource(StringRef column, StringRef value);
 
     JoinedSource join(String column, JournalSource masterSource, JournalSourceLookup lookupSource, RowFilter filter);
 

@@ -20,10 +20,11 @@ import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.index.KVIndex;
 import com.nfsdb.journal.lang.cst.*;
+import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 
 public class KvIndexTailRowSource implements RowSource, RowCursor {
 
-    private final String column;
+    private final StringRef column;
     private final KeySource keySource;
     private final int count;
     private final int tailOffset;
@@ -42,7 +43,7 @@ public class KvIndexTailRowSource implements RowSource, RowCursor {
     private int keyCount = -1;
     private RowAcceptor rowAcceptor;
 
-    public KvIndexTailRowSource(String column, KeySource keySource, int count, int tailOffset, RowFilter filter) {
+    public KvIndexTailRowSource(StringRef column, KeySource keySource, int count, int tailOffset, RowFilter filter) {
         this.column = column;
         this.keySource = keySource;
         this.count = count;
@@ -76,7 +77,7 @@ public class KvIndexTailRowSource implements RowSource, RowCursor {
         rowAcceptor = filter != null ? filter.acceptor(slice, null) : null;
 
         try {
-            this.index = slice.partition.getIndexForColumn(column);
+            this.index = slice.partition.getIndexForColumn(column.value);
             this.lo = slice.lo;
             this.hi = slice.calcHi ? slice.partition.size() - 1 : slice.hi;
             this.keyIndex = 0;
@@ -135,5 +136,6 @@ public class KvIndexTailRowSource implements RowSource, RowCursor {
     public void reset() {
         keyCount = -1;
         keySource.reset();
+        indexCursor = null;
     }
 }

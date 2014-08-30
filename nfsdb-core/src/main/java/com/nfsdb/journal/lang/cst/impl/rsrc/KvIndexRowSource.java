@@ -21,16 +21,17 @@ import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.index.Cursor;
 import com.nfsdb.journal.index.KVIndex;
 import com.nfsdb.journal.lang.cst.*;
+import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 
 public class KvIndexRowSource implements RowSource, RowCursor {
 
-    private final String symbol;
+    private final StringRef symbol;
     private final KeySource keySource;
     private KVIndex index;
     private Cursor indexCursor;
     private KeyCursor keyCursor;
 
-    public KvIndexRowSource(String symbol, KeySource keySource) {
+    public KvIndexRowSource(StringRef symbol, KeySource keySource) {
         this.symbol = symbol;
         this.keySource = keySource;
     }
@@ -38,7 +39,7 @@ public class KvIndexRowSource implements RowSource, RowCursor {
     @Override
     public RowCursor cursor(PartitionSlice slice) {
         try {
-            this.index = slice.partition.getIndexForColumn(symbol);
+            this.index = slice.partition.getIndexForColumn(symbol.value);
             this.keyCursor = this.keySource.cursor(slice);
             this.indexCursor = null;
         } catch (JournalException e) {

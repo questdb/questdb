@@ -355,9 +355,20 @@ public class Partition<T> implements Iterable<T>, Closeable {
                     break;
                 case INT:
                     if (checkNulls && nulls.get(i)) {
-                        ((FixedColumn) columns[i]).putNull();
+                        if (meta.meta.indexed) {
+                            appendKeyCache[i] = SymbolTable.VALUE_IS_NULL;
+                            appendSizeCache[i] = ((FixedColumn) columns[i]).putNull();
+                        } else {
+                            ((FixedColumn) columns[i]).putNull();
+                        }
                     } else {
-                        ((FixedColumn) columns[i]).putInt(u.getInt(obj, meta.meta.offset));
+                        int v = u.getInt(obj, meta.meta.offset);
+                        if (meta.meta.indexed) {
+                            appendKeyCache[i] = v % meta.meta.distinctCountHint;
+                            appendSizeCache[i] = ((FixedColumn) columns[i]).putInt(v);
+                        } else {
+                            ((FixedColumn) columns[i]).putInt(u.getInt(obj, meta.meta.offset));
+                        }
                     }
                     break;
                 case LONG:

@@ -17,21 +17,22 @@
 package com.nfsdb.journal.lang.cst.impl.fltr;
 
 import com.nfsdb.journal.column.AbstractColumn;
-import com.nfsdb.journal.column.VariableColumn;
+import com.nfsdb.journal.column.FixedColumn;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.lang.cst.Choice;
 import com.nfsdb.journal.lang.cst.PartitionSlice;
 import com.nfsdb.journal.lang.cst.RowAcceptor;
 import com.nfsdb.journal.lang.cst.RowFilter;
+import com.nfsdb.journal.lang.cst.impl.ref.IntRef;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 
-public class StringEqualsRowFilter implements RowFilter, RowAcceptor {
+public class IntEqualsRowFilter implements RowFilter, RowAcceptor {
     private final StringRef column;
-    private final StringRef value;
-    private VariableColumn columnRef;
+    private final IntRef value;
+    private FixedColumn columnRef;
 
-    public StringEqualsRowFilter(StringRef column, StringRef value) {
+    public IntEqualsRowFilter(StringRef column, IntRef value) {
         this.column = column;
         this.value = value;
     }
@@ -41,10 +42,10 @@ public class StringEqualsRowFilter implements RowFilter, RowAcceptor {
         try {
             a.partition.open();
             AbstractColumn col = a.partition.getAbstractColumn(a.partition.getJournal().getMetadata().getColumnIndex(column.value));
-            if (!(col instanceof VariableColumn)) {
+            if (!(col instanceof FixedColumn)) {
                 throw new JournalRuntimeException("Invalid column type");
             }
-            columnRef = (VariableColumn) col;
+            columnRef = (FixedColumn) col;
 
             return this;
         } catch (JournalException e) {
@@ -54,6 +55,6 @@ public class StringEqualsRowFilter implements RowFilter, RowAcceptor {
 
     @Override
     public Choice accept(long localRowIDA, long localRowIDB) {
-        return columnRef.equalsString(localRowIDA, value.value) ? Choice.PICK : Choice.SKIP;
+        return columnRef.getInt(localRowIDA) == value.value ? Choice.PICK : Choice.SKIP;
     }
 }

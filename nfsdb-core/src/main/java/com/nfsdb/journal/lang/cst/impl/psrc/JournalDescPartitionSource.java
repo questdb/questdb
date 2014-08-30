@@ -28,7 +28,6 @@ public class JournalDescPartitionSource extends AbstractImmutableIterator<Partit
     private final Journal journal;
     private final boolean open;
     private final PartitionSlice slice = new PartitionSlice();
-    private int partitionCount;
     private int partitionIndex;
 
     public JournalDescPartitionSource(Journal journal, boolean open) {
@@ -56,7 +55,6 @@ public class JournalDescPartitionSource extends AbstractImmutableIterator<Partit
 
     @Override
     public void reset() {
-        partitionCount = journal.getPartitionCount();
-        partitionIndex = partitionCount - 1;
+        partitionIndex = journal.getPartitionCount() - 1;
     }
 }

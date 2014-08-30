@@ -14,10 +14,15 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.lang.cst;
+package com.nfsdb.journal.lang.cst.impl.ref;
 
-import com.nfsdb.journal.collections.ImmutableIterator;
+public class StringRef {
+    public String value;
 
-public interface JournalSource extends ImmutableIterator<DataItem> {
-    JournalSource reset();
+    public StringRef() {
+    }
+
+    public StringRef(String value) {
+        this.value = value;
+    }
 }

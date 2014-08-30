@@ -14,37 +14,41 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.lang.cst.impl;
+package com.nfsdb.journal.lang.cst.impl.jsrc;
 
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.lang.cst.DataItem;
-import com.nfsdb.journal.lang.cst.DataSource;
 import com.nfsdb.journal.lang.cst.JournalSource;
 
-public class DataSourceImpl<T> extends AbstractImmutableIterator<T> implements DataSource<T> {
-    private final JournalSource journalSource;
-    private final T container;
+public class TopJournalSource extends AbstractImmutableIterator<DataItem> implements JournalSource {
 
-    public DataSourceImpl(JournalSource journalSource, T container) {
-        this.journalSource = journalSource;
-        this.container = container;
+    private final JournalSource delegate;
+    private final int count;
+    private int remaining;
+
+
+    public TopJournalSource(int count, JournalSource delegate) {
+        this.delegate = delegate;
+        this.count = count;
+        this.remaining = count;
+    }
+
+
+    @Override
+    public JournalSource reset() {
+        delegate.reset();
+        this.remaining = count;
+        return this;
     }
 
     @Override
     public boolean hasNext() {
-        return journalSource.hasNext();
-    }
-
-    @SuppressWarnings("unchecked")
-    @Override
-    public T next() {
-        DataItem item = journalSource.next();
-        item.partition.read(item.rowid, container);
-        return container;
+        return remaining > 0 && delegate.hasNext();
     }
 
     @Override
-    public void reset() {
-        journalSource.reset();
+    public DataItem next() {
+        remaining--;
+        return delegate.next();
     }
 }

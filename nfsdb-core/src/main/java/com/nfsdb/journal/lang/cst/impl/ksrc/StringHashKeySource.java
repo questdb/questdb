@@ -19,15 +19,18 @@ package com.nfsdb.journal.lang.cst.impl.ksrc;
 import com.nfsdb.journal.lang.cst.KeyCursor;
 import com.nfsdb.journal.lang.cst.KeySource;
 import com.nfsdb.journal.lang.cst.PartitionSlice;
+import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 import com.nfsdb.journal.utils.Checksum;
 
+import java.util.List;
+
 public class StringHashKeySource implements KeySource, KeyCursor {
-    private final String column;
-    private final String[] values;
+    private final StringRef column;
+    private final List<String> values;
     private int bucketCount = -1;
     private int valueIndex;
 
-    public StringHashKeySource(String column, String[] values) {
+    public StringHashKeySource(StringRef column, List<String> values) {
         this.column = column;
         this.values = values;
     }
@@ -35,7 +38,7 @@ public class StringHashKeySource implements KeySource, KeyCursor {
     @Override
     public KeyCursor cursor(PartitionSlice slice) {
         if (bucketCount == -1) {
-            bucketCount = slice.partition.getJournal().getMetadata().getColumnMetadata(column).distinctCountHint;
+            bucketCount = slice.partition.getJournal().getMetadata().getColumnMetadata(column.value).distinctCountHint;
         }
         this.valueIndex = 0;
         return this;
@@ -43,17 +46,17 @@ public class StringHashKeySource implements KeySource, KeyCursor {
 
     @Override
     public boolean hasNext() {
-        return valueIndex < values.length;
+        return valueIndex < values.size();
     }
 
     @Override
     public int next() {
-        return Checksum.hash(values[valueIndex++], bucketCount);
+        return Checksum.hash(values.get(valueIndex++), bucketCount);
     }
 
     @Override
     public int size() {
-        return values.length;
+        return values.size();
     }
 
     @Override

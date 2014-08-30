@@ -102,9 +102,11 @@ public class FixedColumn extends AbstractColumn {
         bb.putShort(bb.position(), value);
     }
 
-    public void putNull() {
-        getBuffer();
-        preCommit(getOffset() + width);
+    public long putNull() {
+        long appendOffset = mappedFile.getAppendOffset();
+        mappedFile.getBuffer(appendOffset, width);
+        preCommit(appendOffset + width);
+        return appendOffset;
     }
 
     @Override

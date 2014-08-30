@@ -19,5 +19,7 @@ package com.nfsdb.journal.lang.cst;
 import com.nfsdb.journal.collections.ImmutableIterator;
 
 public interface DataSource<T> extends ImmutableIterator<T> {
-    void reset();
+    DataSource<T> $new();
+
+    T head();
 }

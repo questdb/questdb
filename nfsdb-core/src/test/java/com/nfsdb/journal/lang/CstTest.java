@@ -21,6 +21,7 @@ import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.lang.cst.DataSource;
 import com.nfsdb.journal.lang.cst.Q;
 import com.nfsdb.journal.lang.cst.impl.QImpl;
+import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.test.tools.JournalTestFactory;
 import com.nfsdb.journal.test.tools.TestData;
@@ -29,6 +30,8 @@ import com.nfsdb.journal.utils.Files;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Test;
+
+import java.util.ArrayList;
 
 public class CstTest {
 
@@ -55,6 +58,10 @@ public class CstTest {
 
     @Test
     public void testUnionAndFilter() throws Exception {
+        StringRef sym = new StringRef();
+        sym.value = "sym";
+
+
         DataSource<Quote> ds =
                 q.ds(
                         q.forEachPartition(
@@ -64,8 +71,19 @@ public class CstTest {
                                 )
                                 , q.forEachRow(
                                         q.union(
-                                                q.kvSource("sym", q.symbolTableSource("sym", "BP.L", "XXX"))
-                                                , q.kvSource("sym", q.symbolTableSource("sym", "WTB.L", "XXX"))
+                                                q.kvSource(sym
+                                                        , q.symbolTableSource(sym, new ArrayList<String>() {{
+                                                                    add("BP.L");
+                                                                    add("XXX");
+                                                                }}
+                                                        )
+                                                )
+                                                , q.kvSource(sym
+                                                        , q.symbolTableSource(sym, new ArrayList<String>() {{
+                                                                    add("WTB.L");
+                                                                }}
+                                                        )
+                                                )
                                         )
                                         , q.greaterThan("ask", 0.6)
                                 )
@@ -80,6 +98,9 @@ public class CstTest {
 
     @Test
     public void testHead() throws Exception {
+        StringRef sym = new StringRef();
+        sym.value = "sym";
+
         DataSource<Quote> ds =
                 q.ds(
                         q.forEachPartition(
@@ -87,13 +108,12 @@ public class CstTest {
                                         q.source(w, false)
                                         , Dates.interval("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z")
                                 )
-                                , q.kvSource("sym", q.symbolTableSource("sym"), 1, 0, null)
+                                , q.kvSource(sym, q.symbolTableSource(sym), 1, 0, null)
                         ), new Quote()
                 );
 
         for (Quote quote : ds) {
             System.out.println(quote);
         }
-
     }
 }

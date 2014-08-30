@@ -35,7 +35,7 @@ public class Trade2 implements org.apache.thrift.TBase<Trade2, Trade2._Fields>, 
     public static final Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
 
     static {
-        Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
+        Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new EnumMap<>(_Fields.class);
         tmpMap.put(_Fields.TIMESTAMP, new org.apache.thrift.meta_data.FieldMetaData("timestamp", org.apache.thrift.TFieldRequirementType.REQUIRED,
                 new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.I64)));
         tmpMap.put(_Fields.SYM, new org.apache.thrift.meta_data.FieldMetaData("sym", org.apache.thrift.TFieldRequirementType.REQUIRED,
@@ -332,7 +332,7 @@ public class Trade2 implements org.apache.thrift.TBase<Trade2, Trade2._Fields>, 
     private static final org.apache.thrift.protocol.TField STOP97_FIELD_DESC = new org.apache.thrift.protocol.TField("stop97", org.apache.thrift.protocol.TType.I32, (short) 97);
     private static final org.apache.thrift.protocol.TField STOP98_FIELD_DESC = new org.apache.thrift.protocol.TField("stop98", org.apache.thrift.protocol.TType.I32, (short) 98);
     private static final org.apache.thrift.protocol.TField STOP99_FIELD_DESC = new org.apache.thrift.protocol.TField("stop99", org.apache.thrift.protocol.TType.I32, (short) 99);
-    private static final Map<Class<? extends IScheme>, SchemeFactory> schemes = new HashMap<Class<? extends IScheme>, SchemeFactory>();
+    private static final Map<Class<? extends IScheme>, SchemeFactory> schemes = new HashMap<>();
 
     static {
         schemes.put(StandardScheme.class, new Trade2StandardSchemeFactory());
@@ -4350,19 +4350,19 @@ public class Trade2 implements org.apache.thrift.TBase<Trade2, Trade2._Fields>, 
     public Object getFieldValue(_Fields field) {
         switch (field) {
             case TIMESTAMP:
-                return Long.valueOf(getTimestamp());
+                return getTimestamp();
 
             case SYM:
                 return getSym();
 
             case PRICE:
-                return Double.valueOf(getPrice());
+                return getPrice();
 
             case SIZE:
-                return Integer.valueOf(getSize());
+                return getSize();
 
             case STOP:
-                return Integer.valueOf(getStop());
+                return getStop();
 
             case COND:
                 return getCond();
@@ -4371,274 +4371,274 @@ public class Trade2 implements org.apache.thrift.TBase<Trade2, Trade2._Fields>, 
                 return getEx();
 
             case STOP1:
-                return Integer.valueOf(getStop1());
+                return getStop1();
 
             case STOP2:
-                return Integer.valueOf(getStop2());
+                return getStop2();
 
             case STOP3:
-                return Integer.valueOf(getStop3());
+                return getStop3();
 
             case STOP4:
-                return Integer.valueOf(getStop4());
+                return getStop4();
 
             case STOP5:
-                return Integer.valueOf(getStop5());
+                return getStop5();
 
             case STOP6:
-                return Integer.valueOf(getStop6());
+                return getStop6();
 
             case STOP7:
-                return Integer.valueOf(getStop7());
+                return getStop7();
 
             case STOP8:
-                return Integer.valueOf(getStop8());
+                return getStop8();
 
             case STOP9:
-                return Integer.valueOf(getStop9());
+                return getStop9();
 
             case STOP10:
-                return Integer.valueOf(getStop10());
+                return getStop10();
 
             case STOP11:
-                return Integer.valueOf(getStop11());
+                return getStop11();
 
             case STOP12:
-                return Integer.valueOf(getStop12());
+                return getStop12();
 
             case STOP13:
-                return Integer.valueOf(getStop13());
+                return getStop13();
 
             case STOP14:
-                return Integer.valueOf(getStop14());
+                return getStop14();
 
             case STOP15:
-                return Integer.valueOf(getStop15());
+                return getStop15();
 
             case STOP16:
-                return Integer.valueOf(getStop16());
+                return getStop16();
 
             case STOP17:
-                return Integer.valueOf(getStop17());
+                return getStop17();
 
             case STOP18:
-                return Integer.valueOf(getStop18());
+                return getStop18();
 
             case STOP19:
-                return Integer.valueOf(getStop19());
+                return getStop19();
 
             case STOP20:
-                return Integer.valueOf(getStop20());
+                return getStop20();
 
             case STOP21:
-                return Integer.valueOf(getStop21());
+                return getStop21();
 
             case STOP22:
-                return Integer.valueOf(getStop22());
+                return getStop22();
 
             case STOP23:
-                return Integer.valueOf(getStop23());
+                return getStop23();
 
             case STOP24:
-                return Integer.valueOf(getStop24());
+                return getStop24();
 
             case STOP25:
-                return Integer.valueOf(getStop25());
+                return getStop25();
 
             case STOP35:
-                return Integer.valueOf(getStop35());
+                return getStop35();
 
             case STOP36:
-                return Integer.valueOf(getStop36());
+                return getStop36();
 
             case STOP37:
-                return Integer.valueOf(getStop37());
+                return getStop37();
 
             case STOP38:
-                return Integer.valueOf(getStop38());
+                return getStop38();
 
             case STOP39:
-                return Integer.valueOf(getStop39());
+                return getStop39();
 
             case STOP40:
-                return Integer.valueOf(getStop40());
+                return getStop40();
 
             case STOP41:
-                return Integer.valueOf(getStop41());
+                return getStop41();
 
             case STOP42:
-                return Integer.valueOf(getStop42());
+                return getStop42();
 
             case STOP43:
-                return Integer.valueOf(getStop43());
+                return getStop43();
 
             case STOP44:
-                return Integer.valueOf(getStop44());
+                return getStop44();
 
             case STOP45:
-                return Integer.valueOf(getStop45());
+                return getStop45();
 
             case STOP46:
-                return Integer.valueOf(getStop46());
+                return getStop46();
 
             case STOP47:
-                return Integer.valueOf(getStop47());
+                return getStop47();
 
             case STOP48:
-                return Integer.valueOf(getStop48());
+                return getStop48();
 
             case STOP49:
-                return Integer.valueOf(getStop49());
+                return getStop49();
 
             case STOP50:
-                return Integer.valueOf(getStop50());
+                return getStop50();
 
             case STOP51:
-                return Integer.valueOf(getStop51());
+                return getStop51();
 
             case STOP52:
-                return Integer.valueOf(getStop52());
+                return getStop52();
 
             case STOP53:
-                return Integer.valueOf(getStop53());
+                return getStop53();
 
             case STOP54:
-                return Integer.valueOf(getStop54());
+                return getStop54();
 
             case STOP55:
-                return Integer.valueOf(getStop55());
+                return getStop55();
 
             case STOP56:
-                return Integer.valueOf(getStop56());
+                return getStop56();
 
             case STOP57:
-                return Integer.valueOf(getStop57());
+                return getStop57();
 
             case STOP58:
-                return Integer.valueOf(getStop58());
+                return getStop58();
 
             case STOP59:
-                return Integer.valueOf(getStop59());
+                return getStop59();
 
             case STOP60:
-                return Integer.valueOf(getStop60());
+                return getStop60();
 
             case STOP61:
-                return Integer.valueOf(getStop61());
+                return getStop61();
 
             case STOP62:
-                return Integer.valueOf(getStop62());
+                return getStop62();
 
             case STOP63:
-                return Integer.valueOf(getStop63());
+                return getStop63();
 
             case STOP64:
-                return Integer.valueOf(getStop64());
+                return getStop64();
 
             case STOP65:
-                return Integer.valueOf(getStop65());
+                return getStop65();
 
             case STOP66:
-                return Integer.valueOf(getStop66());
+                return getStop66();
 
             case STOP67:
-                return Integer.valueOf(getStop67());
+                return getStop67();
 
             case STOP68:
-                return Integer.valueOf(getStop68());
+                return getStop68();
 
             case STOP69:
-                return Integer.valueOf(getStop69());
+                return getStop69();
 
             case STOP70:
-                return Integer.valueOf(getStop70());
+                return getStop70();
 
             case STOP71:
-                return Integer.valueOf(getStop71());
+                return getStop71();
 
             case STOP72:
-                return Integer.valueOf(getStop72());
+                return getStop72();
 
             case STOP73:
-                return Integer.valueOf(getStop73());
+                return getStop73();
 
             case STOP74:
-                return Integer.valueOf(getStop74());
+                return getStop74();
 
             case STOP75:
-                return Integer.valueOf(getStop75());
+                return getStop75();
 
             case STOP76:
-                return Integer.valueOf(getStop76());
+                return getStop76();
 
             case STOP77:
-                return Integer.valueOf(getStop77());
+                return getStop77();
 
             case STOP78:
-                return Integer.valueOf(getStop78());
+                return getStop78();
 
             case STOP79:
-                return Integer.valueOf(getStop79());
+                return getStop79();
 
             case STOP80:
-                return Integer.valueOf(getStop80());
+                return getStop80();
 
             case STOP81:
-                return Integer.valueOf(getStop81());
+                return getStop81();
 
             case STOP82:
-                return Integer.valueOf(getStop82());
+                return getStop82();
 
             case STOP83:
-                return Integer.valueOf(getStop83());
+                return getStop83();
 
             case STOP84:
-                return Integer.valueOf(getStop84());
+                return getStop84();
 
             case STOP85:
-                return Integer.valueOf(getStop85());
+                return getStop85();
 
             case STOP86:
-                return Integer.valueOf(getStop86());
+                return getStop86();
 
             case STOP87:
-                return Integer.valueOf(getStop87());
+                return getStop87();
 
             case STOP88:
-                return Integer.valueOf(getStop88());
+                return getStop88();
 
             case STOP89:
-                return Integer.valueOf(getStop89());
+                return getStop89();
 
             case STOP90:
-                return Integer.valueOf(getStop90());
+                return getStop90();
 
             case STOP91:
-                return Integer.valueOf(getStop91());
+                return getStop91();
 
             case STOP92:
-                return Integer.valueOf(getStop92());
+                return getStop92();
 
             case STOP93:
-                return Integer.valueOf(getStop93());
+                return getStop93();
 
             case STOP94:
-                return Integer.valueOf(getStop94());
+                return getStop94();
 
             case STOP95:
-                return Integer.valueOf(getStop95());
+                return getStop95();
 
             case STOP96:
-                return Integer.valueOf(getStop96());
+                return getStop96();
 
             case STOP97:
-                return Integer.valueOf(getStop97());
+                return getStop97();
 
             case STOP98:
-                return Integer.valueOf(getStop98());
+                return getStop98();
 
             case STOP99:
-                return Integer.valueOf(getStop99());
+                return getStop99();
 
         }
         throw new IllegalStateException();
@@ -4853,11 +4853,7 @@ public class Trade2 implements org.apache.thrift.TBase<Trade2, Trade2._Fields>, 
 
     @Override
     public boolean equals(Object that) {
-        if (that == null)
-            return false;
-        if (that instanceof Trade2)
-            return this.equals((Trade2) that);
-        return false;
+        return that != null && that instanceof Trade2 && this.equals((Trade2) that);
     }
 
     public boolean equals(Trade2 that) {
@@ -4873,8 +4869,8 @@ public class Trade2 implements org.apache.thrift.TBase<Trade2, Trade2._Fields>, 
                 return false;
         }
 
-        boolean this_present_sym = true && this.isSetSym();
-        boolean that_present_sym = true && that.isSetSym();
+        boolean this_present_sym = this.isSetSym();
+        boolean that_present_sym = that.isSetSym();
         if (this_present_sym || that_present_sym) {
             if (!(this_present_sym && that_present_sym))
                 return false;
@@ -4909,8 +4905,8 @@ public class Trade2 implements org.apache.thrift.TBase<Trade2, Trade2._Fields>, 
                 return false;
         }
 
-        boolean this_present_cond = true && this.isSetCond();
-        boolean that_present_cond = true && that.isSetCond();
+        boolean this_present_cond = this.isSetCond();
+        boolean that_present_cond = that.isSetCond();
         if (this_present_cond || that_present_cond) {
             if (!(this_present_cond && that_present_cond))
                 return false;
@@ -4918,8 +4914,8 @@ public class Trade2 implements org.apache.thrift.TBase<Trade2, Trade2._Fields>, 
                 return false;
         }
 
-        boolean this_present_ex = true && this.isSetEx();
-        boolean that_present_ex = true && that.isSetEx();
+        boolean this_present_ex = this.isSetEx();
+        boolean that_present_ex = that.isSetEx();
         if (this_present_ex || that_present_ex) {
             if (!(this_present_ex && that_present_ex))
                 return false;
@@ -5744,490 +5740,302 @@ public class Trade2 implements org.apache.thrift.TBase<Trade2, Trade2._Fields>, 
     public int hashCode() {
         HashCodeBuilder builder = new HashCodeBuilder();
 
-        boolean present_timestamp = true;
-        builder.append(present_timestamp);
-        if (present_timestamp)
-            builder.append(timestamp);
+        builder.append(true);
+        builder.append(timestamp);
 
-        boolean present_sym = true && (isSetSym());
+        boolean present_sym = (isSetSym());
         builder.append(present_sym);
         if (present_sym)
             builder.append(sym);
 
-        boolean present_price = true;
-        builder.append(present_price);
-        if (present_price)
-            builder.append(price);
+        builder.append(true);
+        builder.append(price);
 
-        boolean present_size = true;
-        builder.append(present_size);
-        if (present_size)
-            builder.append(size);
+        builder.append(true);
+        builder.append(size);
 
-        boolean present_stop = true;
-        builder.append(present_stop);
-        if (present_stop)
-            builder.append(stop);
+        builder.append(true);
+        builder.append(stop);
 
-        boolean present_cond = true && (isSetCond());
+        boolean present_cond = (isSetCond());
         builder.append(present_cond);
         if (present_cond)
             builder.append(cond);
 
-        boolean present_ex = true && (isSetEx());
+        boolean present_ex = (isSetEx());
         builder.append(present_ex);
         if (present_ex)
             builder.append(ex);
 
-        boolean present_stop1 = true;
-        builder.append(present_stop1);
-        if (present_stop1)
-            builder.append(stop1);
-
-        boolean present_stop2 = true;
-        builder.append(present_stop2);
-        if (present_stop2)
-            builder.append(stop2);
-
-        boolean present_stop3 = true;
-        builder.append(present_stop3);
-        if (present_stop3)
-            builder.append(stop3);
-
-        boolean present_stop4 = true;
-        builder.append(present_stop4);
-        if (present_stop4)
-            builder.append(stop4);
-
-        boolean present_stop5 = true;
-        builder.append(present_stop5);
-        if (present_stop5)
-            builder.append(stop5);
-
-        boolean present_stop6 = true;
-        builder.append(present_stop6);
-        if (present_stop6)
-            builder.append(stop6);
-
-        boolean present_stop7 = true;
-        builder.append(present_stop7);
-        if (present_stop7)
-            builder.append(stop7);
-
-        boolean present_stop8 = true;
-        builder.append(present_stop8);
-        if (present_stop8)
-            builder.append(stop8);
-
-        boolean present_stop9 = true;
-        builder.append(present_stop9);
-        if (present_stop9)
-            builder.append(stop9);
-
-        boolean present_stop10 = true;
-        builder.append(present_stop10);
-        if (present_stop10)
-            builder.append(stop10);
-
-        boolean present_stop11 = true;
-        builder.append(present_stop11);
-        if (present_stop11)
-            builder.append(stop11);
-
-        boolean present_stop12 = true;
-        builder.append(present_stop12);
-        if (present_stop12)
-            builder.append(stop12);
-
-        boolean present_stop13 = true;
-        builder.append(present_stop13);
-        if (present_stop13)
-            builder.append(stop13);
-
-        boolean present_stop14 = true;
-        builder.append(present_stop14);
-        if (present_stop14)
-            builder.append(stop14);
-
-        boolean present_stop15 = true;
-        builder.append(present_stop15);
-        if (present_stop15)
-            builder.append(stop15);
-
-        boolean present_stop16 = true;
-        builder.append(present_stop16);
-        if (present_stop16)
-            builder.append(stop16);
-
-        boolean present_stop17 = true;
-        builder.append(present_stop17);
-        if (present_stop17)
-            builder.append(stop17);
-
-        boolean present_stop18 = true;
-        builder.append(present_stop18);
-        if (present_stop18)
-            builder.append(stop18);
-
-        boolean present_stop19 = true;
-        builder.append(present_stop19);
-        if (present_stop19)
-            builder.append(stop19);
-
-        boolean present_stop20 = true;
-        builder.append(present_stop20);
-        if (present_stop20)
-            builder.append(stop20);
-
-        boolean present_stop21 = true;
-        builder.append(present_stop21);
-        if (present_stop21)
-            builder.append(stop21);
-
-        boolean present_stop22 = true;
-        builder.append(present_stop22);
-        if (present_stop22)
-            builder.append(stop22);
-
-        boolean present_stop23 = true;
-        builder.append(present_stop23);
-        if (present_stop23)
-            builder.append(stop23);
-
-        boolean present_stop24 = true;
-        builder.append(present_stop24);
-        if (present_stop24)
-            builder.append(stop24);
-
-        boolean present_stop25 = true;
-        builder.append(present_stop25);
-        if (present_stop25)
-            builder.append(stop25);
-
-        boolean present_stop35 = true;
-        builder.append(present_stop35);
-        if (present_stop35)
-            builder.append(stop35);
-
-        boolean present_stop36 = true;
-        builder.append(present_stop36);
-        if (present_stop36)
-            builder.append(stop36);
-
-        boolean present_stop37 = true;
-        builder.append(present_stop37);
-        if (present_stop37)
-            builder.append(stop37);
-
-        boolean present_stop38 = true;
-        builder.append(present_stop38);
-        if (present_stop38)
-            builder.append(stop38);
-
-        boolean present_stop39 = true;
-        builder.append(present_stop39);
-        if (present_stop39)
-            builder.append(stop39);
-
-        boolean present_stop40 = true;
-        builder.append(present_stop40);
-        if (present_stop40)
-            builder.append(stop40);
-
-        boolean present_stop41 = true;
-        builder.append(present_stop41);
-        if (present_stop41)
-            builder.append(stop41);
-
-        boolean present_stop42 = true;
-        builder.append(present_stop42);
-        if (present_stop42)
-            builder.append(stop42);
-
-        boolean present_stop43 = true;
-        builder.append(present_stop43);
-        if (present_stop43)
-            builder.append(stop43);
-
-        boolean present_stop44 = true;
-        builder.append(present_stop44);
-        if (present_stop44)
-            builder.append(stop44);
-
-        boolean present_stop45 = true;
-        builder.append(present_stop45);
-        if (present_stop45)
-            builder.append(stop45);
-
-        boolean present_stop46 = true;
-        builder.append(present_stop46);
-        if (present_stop46)
-            builder.append(stop46);
-
-        boolean present_stop47 = true;
-        builder.append(present_stop47);
-        if (present_stop47)
-            builder.append(stop47);
-
-        boolean present_stop48 = true;
-        builder.append(present_stop48);
-        if (present_stop48)
-            builder.append(stop48);
-
-        boolean present_stop49 = true;
-        builder.append(present_stop49);
-        if (present_stop49)
-            builder.append(stop49);
-
-        boolean present_stop50 = true;
-        builder.append(present_stop50);
-        if (present_stop50)
-            builder.append(stop50);
-
-        boolean present_stop51 = true;
-        builder.append(present_stop51);
-        if (present_stop51)
-            builder.append(stop51);
-
-        boolean present_stop52 = true;
-        builder.append(present_stop52);
-        if (present_stop52)
-            builder.append(stop52);
-
-        boolean present_stop53 = true;
-        builder.append(present_stop53);
-        if (present_stop53)
-            builder.append(stop53);
-
-        boolean present_stop54 = true;
-        builder.append(present_stop54);
-        if (present_stop54)
-            builder.append(stop54);
-
-        boolean present_stop55 = true;
-        builder.append(present_stop55);
-        if (present_stop55)
-            builder.append(stop55);
-
-        boolean present_stop56 = true;
-        builder.append(present_stop56);
-        if (present_stop56)
-            builder.append(stop56);
-
-        boolean present_stop57 = true;
-        builder.append(present_stop57);
-        if (present_stop57)
-            builder.append(stop57);
-
-        boolean present_stop58 = true;
-        builder.append(present_stop58);
-        if (present_stop58)
-            builder.append(stop58);
-
-        boolean present_stop59 = true;
-        builder.append(present_stop59);
-        if (present_stop59)
-            builder.append(stop59);
-
-        boolean present_stop60 = true;
-        builder.append(present_stop60);
-        if (present_stop60)
-            builder.append(stop60);
-
-        boolean present_stop61 = true;
-        builder.append(present_stop61);
-        if (present_stop61)
-            builder.append(stop61);
-
-        boolean present_stop62 = true;
-        builder.append(present_stop62);
-        if (present_stop62)
-            builder.append(stop62);
-
-        boolean present_stop63 = true;
-        builder.append(present_stop63);
-        if (present_stop63)
-            builder.append(stop63);
-
-        boolean present_stop64 = true;
-        builder.append(present_stop64);
-        if (present_stop64)
-            builder.append(stop64);
-
-        boolean present_stop65 = true;
-        builder.append(present_stop65);
-        if (present_stop65)
-            builder.append(stop65);
-
-        boolean present_stop66 = true;
-        builder.append(present_stop66);
-        if (present_stop66)
-            builder.append(stop66);
-
-        boolean present_stop67 = true;
-        builder.append(present_stop67);
-        if (present_stop67)
-            builder.append(stop67);
-
-        boolean present_stop68 = true;
-        builder.append(present_stop68);
-        if (present_stop68)
-            builder.append(stop68);
-
-        boolean present_stop69 = true;
-        builder.append(present_stop69);
-        if (present_stop69)
-            builder.append(stop69);
-
-        boolean present_stop70 = true;
-        builder.append(present_stop70);
-        if (present_stop70)
-            builder.append(stop70);
-
-        boolean present_stop71 = true;
-        builder.append(present_stop71);
-        if (present_stop71)
-            builder.append(stop71);
-
-        boolean present_stop72 = true;
-        builder.append(present_stop72);
-        if (present_stop72)
-            builder.append(stop72);
-
-        boolean present_stop73 = true;
-        builder.append(present_stop73);
-        if (present_stop73)
-            builder.append(stop73);
-
-        boolean present_stop74 = true;
-        builder.append(present_stop74);
-        if (present_stop74)
-            builder.append(stop74);
-
-        boolean present_stop75 = true;
-        builder.append(present_stop75);
-        if (present_stop75)
-            builder.append(stop75);
-
-        boolean present_stop76 = true;
-        builder.append(present_stop76);
-        if (present_stop76)
-            builder.append(stop76);
-
-        boolean present_stop77 = true;
-        builder.append(present_stop77);
-        if (present_stop77)
-            builder.append(stop77);
-
-        boolean present_stop78 = true;
-        builder.append(present_stop78);
-        if (present_stop78)
-            builder.append(stop78);
-
-        boolean present_stop79 = true;
-        builder.append(present_stop79);
-        if (present_stop79)
-            builder.append(stop79);
-
-        boolean present_stop80 = true;
-        builder.append(present_stop80);
-        if (present_stop80)
-            builder.append(stop80);
-
-        boolean present_stop81 = true;
-        builder.append(present_stop81);
-        if (present_stop81)
-            builder.append(stop81);
-
-        boolean present_stop82 = true;
-        builder.append(present_stop82);
-        if (present_stop82)
-            builder.append(stop82);
-
-        boolean present_stop83 = true;
-        builder.append(present_stop83);
-        if (present_stop83)
-            builder.append(stop83);
-
-        boolean present_stop84 = true;
-        builder.append(present_stop84);
-        if (present_stop84)
-            builder.append(stop84);
-
-        boolean present_stop85 = true;
-        builder.append(present_stop85);
-        if (present_stop85)
-            builder.append(stop85);
-
-        boolean present_stop86 = true;
-        builder.append(present_stop86);
-        if (present_stop86)
-            builder.append(stop86);
-
-        boolean present_stop87 = true;
-        builder.append(present_stop87);
-        if (present_stop87)
-            builder.append(stop87);
-
-        boolean present_stop88 = true;
-        builder.append(present_stop88);
-        if (present_stop88)
-            builder.append(stop88);
-
-        boolean present_stop89 = true;
-        builder.append(present_stop89);
-        if (present_stop89)
-            builder.append(stop89);
-
-        boolean present_stop90 = true;
-        builder.append(present_stop90);
-        if (present_stop90)
-            builder.append(stop90);
-
-        boolean present_stop91 = true;
-        builder.append(present_stop91);
-        if (present_stop91)
-            builder.append(stop91);
-
-        boolean present_stop92 = true;
-        builder.append(present_stop92);
-        if (present_stop92)
-            builder.append(stop92);
-
-        boolean present_stop93 = true;
-        builder.append(present_stop93);
-        if (present_stop93)
-            builder.append(stop93);
-
-        boolean present_stop94 = true;
-        builder.append(present_stop94);
-        if (present_stop94)
-            builder.append(stop94);
-
-        boolean present_stop95 = true;
-        builder.append(present_stop95);
-        if (present_stop95)
-            builder.append(stop95);
-
-        boolean present_stop96 = true;
-        builder.append(present_stop96);
-        if (present_stop96)
-            builder.append(stop96);
-
-        boolean present_stop97 = true;
-        builder.append(present_stop97);
-        if (present_stop97)
-            builder.append(stop97);
-
-        boolean present_stop98 = true;
-        builder.append(present_stop98);
-        if (present_stop98)
-            builder.append(stop98);
-
-        boolean present_stop99 = true;
-        builder.append(present_stop99);
-        if (present_stop99)
-            builder.append(stop99);
+        builder.append(true);
+        builder.append(stop1);
+
+        builder.append(true);
+        builder.append(stop2);
+
+        builder.append(true);
+        builder.append(stop3);
+
+        builder.append(true);
+        builder.append(stop4);
+
+        builder.append(true);
+        builder.append(stop5);
+
+        builder.append(true);
+        builder.append(stop6);
+
+        builder.append(true);
+        builder.append(stop7);
+
+        builder.append(true);
+        builder.append(stop8);
+
+        builder.append(true);
+        builder.append(stop9);
+
+        builder.append(true);
+        builder.append(stop10);
+
+        builder.append(true);
+        builder.append(stop11);
+
+        builder.append(true);
+        builder.append(stop12);
+
+        builder.append(true);
+        builder.append(stop13);
+
+        builder.append(true);
+        builder.append(stop14);
+
+        builder.append(true);
+        builder.append(stop15);
+
+        builder.append(true);
+        builder.append(stop16);
+
+        builder.append(true);
+        builder.append(stop17);
+
+        builder.append(true);
+        builder.append(stop18);
+
+        builder.append(true);
+        builder.append(stop19);
+
+        builder.append(true);
+        builder.append(stop20);
+
+        builder.append(true);
+        builder.append(stop21);
+
+        builder.append(true);
+        builder.append(stop22);
+
+        builder.append(true);
+        builder.append(stop23);
+
+        builder.append(true);
+        builder.append(stop24);
+
+        builder.append(true);
+        builder.append(stop25);
+
+        builder.append(true);
+        builder.append(stop35);
+
+        builder.append(true);
+        builder.append(stop36);
+
+        builder.append(true);
+        builder.append(stop37);
+
+        builder.append(true);
+        builder.append(stop38);
+
+        builder.append(true);
+        builder.append(stop39);
+
+        builder.append(true);
+        builder.append(stop40);
+
+        builder.append(true);
+        builder.append(stop41);
+
+        builder.append(true);
+        builder.append(stop42);
+
+        builder.append(true);
+        builder.append(stop43);
+
+        builder.append(true);
+        builder.append(stop44);
+
+        builder.append(true);
+        builder.append(stop45);
+
+        builder.append(true);
+        builder.append(stop46);
+
+        builder.append(true);
+        builder.append(stop47);
+
+        builder.append(true);
+        builder.append(stop48);
+
+        builder.append(true);
+        builder.append(stop49);
+
+        builder.append(true);
+        builder.append(stop50);
+
+        builder.append(true);
+        builder.append(stop51);
+
+        builder.append(true);
+        builder.append(stop52);
+
+        builder.append(true);
+        builder.append(stop53);
+
+        builder.append(true);
+        builder.append(stop54);
+
+        builder.append(true);
+        builder.append(stop55);
+
+        builder.append(true);
+        builder.append(stop56);
+
+        builder.append(true);
+        builder.append(stop57);
+
+        builder.append(true);
+        builder.append(stop58);
+
+        builder.append(true);
+        builder.append(stop59);
+
+        builder.append(true);
+        builder.append(stop60);
+
+        builder.append(true);
+        builder.append(stop61);
+
+        builder.append(true);
+        builder.append(stop62);
+
+        builder.append(true);
+        builder.append(stop63);
+
+        builder.append(true);
+        builder.append(stop64);
+
+        builder.append(true);
+        builder.append(stop65);
+
+        builder.append(true);
+        builder.append(stop66);
+
+        builder.append(true);
+        builder.append(stop67);
+
+        builder.append(true);
+        builder.append(stop68);
+
+        builder.append(true);
+        builder.append(stop69);
+
+        builder.append(true);
+        builder.append(stop70);
+
+        builder.append(true);
+        builder.append(stop71);
+
+        builder.append(true);
+        builder.append(stop72);
+
+        builder.append(true);
+        builder.append(stop73);
+
+        builder.append(true);
+        builder.append(stop74);
+
+        builder.append(true);
+        builder.append(stop75);
+
+        builder.append(true);
+        builder.append(stop76);
+
+        builder.append(true);
+        builder.append(stop77);
+
+        builder.append(true);
+        builder.append(stop78);
+
+        builder.append(true);
+        builder.append(stop79);
+
+        builder.append(true);
+        builder.append(stop80);
+
+        builder.append(true);
+        builder.append(stop81);
+
+        builder.append(true);
+        builder.append(stop82);
+
+        builder.append(true);
+        builder.append(stop83);
+
+        builder.append(true);
+        builder.append(stop84);
+
+        builder.append(true);
+        builder.append(stop85);
+
+        builder.append(true);
+        builder.append(stop86);
+
+        builder.append(true);
+        builder.append(stop87);
+
+        builder.append(true);
+        builder.append(stop88);
+
+        builder.append(true);
+        builder.append(stop89);
+
+        builder.append(true);
+        builder.append(stop90);
+
+        builder.append(true);
+        builder.append(stop91);
+
+        builder.append(true);
+        builder.append(stop92);
+
+        builder.append(true);
+        builder.append(stop93);
+
+        builder.append(true);
+        builder.append(stop94);
+
+        builder.append(true);
+        builder.append(stop95);
+
+        builder.append(true);
+        builder.append(stop96);
+
+        builder.append(true);
+        builder.append(stop97);
+
+        builder.append(true);
+        builder.append(stop98);
+
+        builder.append(true);
+        builder.append(stop99);
 
         return builder.toHashCode();
     }
@@ -6237,975 +6045,974 @@ public class Trade2 implements org.apache.thrift.TBase<Trade2, Trade2._Fields>, 
             return getClass().getName().compareTo(other.getClass().getName());
         }
 
-        int lastComparison = 0;
-        Trade2 typedOther = (Trade2) other;
+        int lastComparison;
 
-        lastComparison = Boolean.valueOf(isSetTimestamp()).compareTo(typedOther.isSetTimestamp());
+        lastComparison = Boolean.valueOf(isSetTimestamp()).compareTo(other.isSetTimestamp());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetTimestamp()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.timestamp, typedOther.timestamp);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.timestamp, other.timestamp);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetSym()).compareTo(typedOther.isSetSym());
+        lastComparison = Boolean.valueOf(isSetSym()).compareTo(other.isSetSym());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetSym()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.sym, typedOther.sym);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.sym, other.sym);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetPrice()).compareTo(typedOther.isSetPrice());
+        lastComparison = Boolean.valueOf(isSetPrice()).compareTo(other.isSetPrice());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetPrice()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.price, typedOther.price);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.price, other.price);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetSize()).compareTo(typedOther.isSetSize());
+        lastComparison = Boolean.valueOf(isSetSize()).compareTo(other.isSetSize());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetSize()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.size, typedOther.size);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.size, other.size);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop()).compareTo(typedOther.isSetStop());
+        lastComparison = Boolean.valueOf(isSetStop()).compareTo(other.isSetStop());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop, typedOther.stop);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop, other.stop);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetCond()).compareTo(typedOther.isSetCond());
+        lastComparison = Boolean.valueOf(isSetCond()).compareTo(other.isSetCond());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetCond()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.cond, typedOther.cond);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.cond, other.cond);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetEx()).compareTo(typedOther.isSetEx());
+        lastComparison = Boolean.valueOf(isSetEx()).compareTo(other.isSetEx());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetEx()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.ex, typedOther.ex);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.ex, other.ex);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop1()).compareTo(typedOther.isSetStop1());
+        lastComparison = Boolean.valueOf(isSetStop1()).compareTo(other.isSetStop1());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop1()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop1, typedOther.stop1);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop1, other.stop1);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop2()).compareTo(typedOther.isSetStop2());
+        lastComparison = Boolean.valueOf(isSetStop2()).compareTo(other.isSetStop2());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop2()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop2, typedOther.stop2);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop2, other.stop2);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop3()).compareTo(typedOther.isSetStop3());
+        lastComparison = Boolean.valueOf(isSetStop3()).compareTo(other.isSetStop3());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop3()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop3, typedOther.stop3);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop3, other.stop3);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop4()).compareTo(typedOther.isSetStop4());
+        lastComparison = Boolean.valueOf(isSetStop4()).compareTo(other.isSetStop4());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop4()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop4, typedOther.stop4);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop4, other.stop4);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop5()).compareTo(typedOther.isSetStop5());
+        lastComparison = Boolean.valueOf(isSetStop5()).compareTo(other.isSetStop5());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop5()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop5, typedOther.stop5);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop5, other.stop5);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop6()).compareTo(typedOther.isSetStop6());
+        lastComparison = Boolean.valueOf(isSetStop6()).compareTo(other.isSetStop6());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop6()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop6, typedOther.stop6);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop6, other.stop6);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop7()).compareTo(typedOther.isSetStop7());
+        lastComparison = Boolean.valueOf(isSetStop7()).compareTo(other.isSetStop7());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop7()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop7, typedOther.stop7);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop7, other.stop7);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop8()).compareTo(typedOther.isSetStop8());
+        lastComparison = Boolean.valueOf(isSetStop8()).compareTo(other.isSetStop8());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop8()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop8, typedOther.stop8);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop8, other.stop8);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop9()).compareTo(typedOther.isSetStop9());
+        lastComparison = Boolean.valueOf(isSetStop9()).compareTo(other.isSetStop9());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop9()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop9, typedOther.stop9);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop9, other.stop9);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop10()).compareTo(typedOther.isSetStop10());
+        lastComparison = Boolean.valueOf(isSetStop10()).compareTo(other.isSetStop10());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop10()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop10, typedOther.stop10);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop10, other.stop10);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop11()).compareTo(typedOther.isSetStop11());
+        lastComparison = Boolean.valueOf(isSetStop11()).compareTo(other.isSetStop11());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop11()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop11, typedOther.stop11);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop11, other.stop11);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop12()).compareTo(typedOther.isSetStop12());
+        lastComparison = Boolean.valueOf(isSetStop12()).compareTo(other.isSetStop12());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop12()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop12, typedOther.stop12);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop12, other.stop12);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop13()).compareTo(typedOther.isSetStop13());
+        lastComparison = Boolean.valueOf(isSetStop13()).compareTo(other.isSetStop13());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop13()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop13, typedOther.stop13);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop13, other.stop13);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop14()).compareTo(typedOther.isSetStop14());
+        lastComparison = Boolean.valueOf(isSetStop14()).compareTo(other.isSetStop14());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop14()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop14, typedOther.stop14);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop14, other.stop14);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop15()).compareTo(typedOther.isSetStop15());
+        lastComparison = Boolean.valueOf(isSetStop15()).compareTo(other.isSetStop15());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop15()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop15, typedOther.stop15);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop15, other.stop15);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop16()).compareTo(typedOther.isSetStop16());
+        lastComparison = Boolean.valueOf(isSetStop16()).compareTo(other.isSetStop16());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop16()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop16, typedOther.stop16);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop16, other.stop16);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop17()).compareTo(typedOther.isSetStop17());
+        lastComparison = Boolean.valueOf(isSetStop17()).compareTo(other.isSetStop17());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop17()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop17, typedOther.stop17);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop17, other.stop17);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop18()).compareTo(typedOther.isSetStop18());
+        lastComparison = Boolean.valueOf(isSetStop18()).compareTo(other.isSetStop18());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop18()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop18, typedOther.stop18);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop18, other.stop18);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop19()).compareTo(typedOther.isSetStop19());
+        lastComparison = Boolean.valueOf(isSetStop19()).compareTo(other.isSetStop19());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop19()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop19, typedOther.stop19);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop19, other.stop19);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop20()).compareTo(typedOther.isSetStop20());
+        lastComparison = Boolean.valueOf(isSetStop20()).compareTo(other.isSetStop20());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop20()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop20, typedOther.stop20);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop20, other.stop20);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop21()).compareTo(typedOther.isSetStop21());
+        lastComparison = Boolean.valueOf(isSetStop21()).compareTo(other.isSetStop21());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop21()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop21, typedOther.stop21);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop21, other.stop21);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop22()).compareTo(typedOther.isSetStop22());
+        lastComparison = Boolean.valueOf(isSetStop22()).compareTo(other.isSetStop22());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop22()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop22, typedOther.stop22);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop22, other.stop22);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop23()).compareTo(typedOther.isSetStop23());
+        lastComparison = Boolean.valueOf(isSetStop23()).compareTo(other.isSetStop23());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop23()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop23, typedOther.stop23);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop23, other.stop23);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop24()).compareTo(typedOther.isSetStop24());
+        lastComparison = Boolean.valueOf(isSetStop24()).compareTo(other.isSetStop24());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop24()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop24, typedOther.stop24);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop24, other.stop24);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop25()).compareTo(typedOther.isSetStop25());
+        lastComparison = Boolean.valueOf(isSetStop25()).compareTo(other.isSetStop25());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop25()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop25, typedOther.stop25);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop25, other.stop25);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop35()).compareTo(typedOther.isSetStop35());
+        lastComparison = Boolean.valueOf(isSetStop35()).compareTo(other.isSetStop35());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop35()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop35, typedOther.stop35);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop35, other.stop35);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop36()).compareTo(typedOther.isSetStop36());
+        lastComparison = Boolean.valueOf(isSetStop36()).compareTo(other.isSetStop36());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop36()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop36, typedOther.stop36);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop36, other.stop36);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop37()).compareTo(typedOther.isSetStop37());
+        lastComparison = Boolean.valueOf(isSetStop37()).compareTo(other.isSetStop37());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop37()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop37, typedOther.stop37);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop37, other.stop37);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop38()).compareTo(typedOther.isSetStop38());
+        lastComparison = Boolean.valueOf(isSetStop38()).compareTo(other.isSetStop38());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop38()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop38, typedOther.stop38);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop38, other.stop38);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop39()).compareTo(typedOther.isSetStop39());
+        lastComparison = Boolean.valueOf(isSetStop39()).compareTo(other.isSetStop39());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop39()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop39, typedOther.stop39);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop39, other.stop39);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop40()).compareTo(typedOther.isSetStop40());
+        lastComparison = Boolean.valueOf(isSetStop40()).compareTo(other.isSetStop40());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop40()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop40, typedOther.stop40);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop40, other.stop40);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop41()).compareTo(typedOther.isSetStop41());
+        lastComparison = Boolean.valueOf(isSetStop41()).compareTo(other.isSetStop41());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop41()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop41, typedOther.stop41);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop41, other.stop41);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop42()).compareTo(typedOther.isSetStop42());
+        lastComparison = Boolean.valueOf(isSetStop42()).compareTo(other.isSetStop42());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop42()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop42, typedOther.stop42);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop42, other.stop42);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop43()).compareTo(typedOther.isSetStop43());
+        lastComparison = Boolean.valueOf(isSetStop43()).compareTo(other.isSetStop43());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop43()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop43, typedOther.stop43);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop43, other.stop43);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop44()).compareTo(typedOther.isSetStop44());
+        lastComparison = Boolean.valueOf(isSetStop44()).compareTo(other.isSetStop44());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop44()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop44, typedOther.stop44);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop44, other.stop44);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop45()).compareTo(typedOther.isSetStop45());
+        lastComparison = Boolean.valueOf(isSetStop45()).compareTo(other.isSetStop45());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop45()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop45, typedOther.stop45);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop45, other.stop45);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop46()).compareTo(typedOther.isSetStop46());
+        lastComparison = Boolean.valueOf(isSetStop46()).compareTo(other.isSetStop46());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop46()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop46, typedOther.stop46);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop46, other.stop46);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop47()).compareTo(typedOther.isSetStop47());
+        lastComparison = Boolean.valueOf(isSetStop47()).compareTo(other.isSetStop47());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop47()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop47, typedOther.stop47);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop47, other.stop47);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop48()).compareTo(typedOther.isSetStop48());
+        lastComparison = Boolean.valueOf(isSetStop48()).compareTo(other.isSetStop48());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop48()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop48, typedOther.stop48);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop48, other.stop48);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop49()).compareTo(typedOther.isSetStop49());
+        lastComparison = Boolean.valueOf(isSetStop49()).compareTo(other.isSetStop49());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop49()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop49, typedOther.stop49);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop49, other.stop49);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop50()).compareTo(typedOther.isSetStop50());
+        lastComparison = Boolean.valueOf(isSetStop50()).compareTo(other.isSetStop50());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop50()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop50, typedOther.stop50);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop50, other.stop50);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop51()).compareTo(typedOther.isSetStop51());
+        lastComparison = Boolean.valueOf(isSetStop51()).compareTo(other.isSetStop51());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop51()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop51, typedOther.stop51);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop51, other.stop51);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop52()).compareTo(typedOther.isSetStop52());
+        lastComparison = Boolean.valueOf(isSetStop52()).compareTo(other.isSetStop52());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop52()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop52, typedOther.stop52);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop52, other.stop52);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop53()).compareTo(typedOther.isSetStop53());
+        lastComparison = Boolean.valueOf(isSetStop53()).compareTo(other.isSetStop53());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop53()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop53, typedOther.stop53);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop53, other.stop53);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop54()).compareTo(typedOther.isSetStop54());
+        lastComparison = Boolean.valueOf(isSetStop54()).compareTo(other.isSetStop54());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop54()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop54, typedOther.stop54);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop54, other.stop54);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop55()).compareTo(typedOther.isSetStop55());
+        lastComparison = Boolean.valueOf(isSetStop55()).compareTo(other.isSetStop55());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop55()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop55, typedOther.stop55);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop55, other.stop55);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop56()).compareTo(typedOther.isSetStop56());
+        lastComparison = Boolean.valueOf(isSetStop56()).compareTo(other.isSetStop56());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop56()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop56, typedOther.stop56);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop56, other.stop56);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop57()).compareTo(typedOther.isSetStop57());
+        lastComparison = Boolean.valueOf(isSetStop57()).compareTo(other.isSetStop57());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop57()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop57, typedOther.stop57);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop57, other.stop57);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop58()).compareTo(typedOther.isSetStop58());
+        lastComparison = Boolean.valueOf(isSetStop58()).compareTo(other.isSetStop58());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop58()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop58, typedOther.stop58);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop58, other.stop58);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop59()).compareTo(typedOther.isSetStop59());
+        lastComparison = Boolean.valueOf(isSetStop59()).compareTo(other.isSetStop59());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop59()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop59, typedOther.stop59);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop59, other.stop59);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop60()).compareTo(typedOther.isSetStop60());
+        lastComparison = Boolean.valueOf(isSetStop60()).compareTo(other.isSetStop60());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop60()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop60, typedOther.stop60);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop60, other.stop60);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop61()).compareTo(typedOther.isSetStop61());
+        lastComparison = Boolean.valueOf(isSetStop61()).compareTo(other.isSetStop61());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop61()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop61, typedOther.stop61);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop61, other.stop61);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop62()).compareTo(typedOther.isSetStop62());
+        lastComparison = Boolean.valueOf(isSetStop62()).compareTo(other.isSetStop62());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop62()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop62, typedOther.stop62);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop62, other.stop62);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop63()).compareTo(typedOther.isSetStop63());
+        lastComparison = Boolean.valueOf(isSetStop63()).compareTo(other.isSetStop63());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop63()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop63, typedOther.stop63);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop63, other.stop63);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop64()).compareTo(typedOther.isSetStop64());
+        lastComparison = Boolean.valueOf(isSetStop64()).compareTo(other.isSetStop64());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop64()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop64, typedOther.stop64);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop64, other.stop64);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop65()).compareTo(typedOther.isSetStop65());
+        lastComparison = Boolean.valueOf(isSetStop65()).compareTo(other.isSetStop65());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop65()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop65, typedOther.stop65);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop65, other.stop65);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop66()).compareTo(typedOther.isSetStop66());
+        lastComparison = Boolean.valueOf(isSetStop66()).compareTo(other.isSetStop66());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop66()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop66, typedOther.stop66);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop66, other.stop66);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop67()).compareTo(typedOther.isSetStop67());
+        lastComparison = Boolean.valueOf(isSetStop67()).compareTo(other.isSetStop67());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop67()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop67, typedOther.stop67);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop67, other.stop67);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop68()).compareTo(typedOther.isSetStop68());
+        lastComparison = Boolean.valueOf(isSetStop68()).compareTo(other.isSetStop68());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop68()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop68, typedOther.stop68);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop68, other.stop68);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop69()).compareTo(typedOther.isSetStop69());
+        lastComparison = Boolean.valueOf(isSetStop69()).compareTo(other.isSetStop69());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop69()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop69, typedOther.stop69);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop69, other.stop69);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop70()).compareTo(typedOther.isSetStop70());
+        lastComparison = Boolean.valueOf(isSetStop70()).compareTo(other.isSetStop70());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop70()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop70, typedOther.stop70);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop70, other.stop70);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop71()).compareTo(typedOther.isSetStop71());
+        lastComparison = Boolean.valueOf(isSetStop71()).compareTo(other.isSetStop71());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop71()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop71, typedOther.stop71);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop71, other.stop71);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop72()).compareTo(typedOther.isSetStop72());
+        lastComparison = Boolean.valueOf(isSetStop72()).compareTo(other.isSetStop72());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop72()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop72, typedOther.stop72);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop72, other.stop72);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop73()).compareTo(typedOther.isSetStop73());
+        lastComparison = Boolean.valueOf(isSetStop73()).compareTo(other.isSetStop73());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop73()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop73, typedOther.stop73);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop73, other.stop73);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop74()).compareTo(typedOther.isSetStop74());
+        lastComparison = Boolean.valueOf(isSetStop74()).compareTo(other.isSetStop74());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop74()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop74, typedOther.stop74);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop74, other.stop74);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop75()).compareTo(typedOther.isSetStop75());
+        lastComparison = Boolean.valueOf(isSetStop75()).compareTo(other.isSetStop75());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop75()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop75, typedOther.stop75);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop75, other.stop75);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop76()).compareTo(typedOther.isSetStop76());
+        lastComparison = Boolean.valueOf(isSetStop76()).compareTo(other.isSetStop76());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop76()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop76, typedOther.stop76);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop76, other.stop76);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop77()).compareTo(typedOther.isSetStop77());
+        lastComparison = Boolean.valueOf(isSetStop77()).compareTo(other.isSetStop77());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop77()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop77, typedOther.stop77);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop77, other.stop77);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop78()).compareTo(typedOther.isSetStop78());
+        lastComparison = Boolean.valueOf(isSetStop78()).compareTo(other.isSetStop78());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop78()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop78, typedOther.stop78);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop78, other.stop78);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop79()).compareTo(typedOther.isSetStop79());
+        lastComparison = Boolean.valueOf(isSetStop79()).compareTo(other.isSetStop79());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop79()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop79, typedOther.stop79);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop79, other.stop79);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop80()).compareTo(typedOther.isSetStop80());
+        lastComparison = Boolean.valueOf(isSetStop80()).compareTo(other.isSetStop80());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop80()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop80, typedOther.stop80);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop80, other.stop80);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop81()).compareTo(typedOther.isSetStop81());
+        lastComparison = Boolean.valueOf(isSetStop81()).compareTo(other.isSetStop81());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop81()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop81, typedOther.stop81);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop81, other.stop81);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop82()).compareTo(typedOther.isSetStop82());
+        lastComparison = Boolean.valueOf(isSetStop82()).compareTo(other.isSetStop82());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop82()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop82, typedOther.stop82);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop82, other.stop82);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop83()).compareTo(typedOther.isSetStop83());
+        lastComparison = Boolean.valueOf(isSetStop83()).compareTo(other.isSetStop83());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop83()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop83, typedOther.stop83);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop83, other.stop83);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop84()).compareTo(typedOther.isSetStop84());
+        lastComparison = Boolean.valueOf(isSetStop84()).compareTo(other.isSetStop84());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop84()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop84, typedOther.stop84);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop84, other.stop84);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop85()).compareTo(typedOther.isSetStop85());
+        lastComparison = Boolean.valueOf(isSetStop85()).compareTo(other.isSetStop85());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop85()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop85, typedOther.stop85);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop85, other.stop85);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop86()).compareTo(typedOther.isSetStop86());
+        lastComparison = Boolean.valueOf(isSetStop86()).compareTo(other.isSetStop86());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop86()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop86, typedOther.stop86);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop86, other.stop86);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop87()).compareTo(typedOther.isSetStop87());
+        lastComparison = Boolean.valueOf(isSetStop87()).compareTo(other.isSetStop87());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop87()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop87, typedOther.stop87);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop87, other.stop87);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop88()).compareTo(typedOther.isSetStop88());
+        lastComparison = Boolean.valueOf(isSetStop88()).compareTo(other.isSetStop88());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop88()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop88, typedOther.stop88);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop88, other.stop88);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop89()).compareTo(typedOther.isSetStop89());
+        lastComparison = Boolean.valueOf(isSetStop89()).compareTo(other.isSetStop89());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop89()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop89, typedOther.stop89);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop89, other.stop89);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop90()).compareTo(typedOther.isSetStop90());
+        lastComparison = Boolean.valueOf(isSetStop90()).compareTo(other.isSetStop90());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop90()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop90, typedOther.stop90);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop90, other.stop90);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop91()).compareTo(typedOther.isSetStop91());
+        lastComparison = Boolean.valueOf(isSetStop91()).compareTo(other.isSetStop91());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop91()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop91, typedOther.stop91);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop91, other.stop91);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop92()).compareTo(typedOther.isSetStop92());
+        lastComparison = Boolean.valueOf(isSetStop92()).compareTo(other.isSetStop92());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop92()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop92, typedOther.stop92);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop92, other.stop92);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop93()).compareTo(typedOther.isSetStop93());
+        lastComparison = Boolean.valueOf(isSetStop93()).compareTo(other.isSetStop93());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop93()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop93, typedOther.stop93);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop93, other.stop93);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop94()).compareTo(typedOther.isSetStop94());
+        lastComparison = Boolean.valueOf(isSetStop94()).compareTo(other.isSetStop94());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop94()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop94, typedOther.stop94);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop94, other.stop94);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop95()).compareTo(typedOther.isSetStop95());
+        lastComparison = Boolean.valueOf(isSetStop95()).compareTo(other.isSetStop95());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop95()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop95, typedOther.stop95);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop95, other.stop95);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop96()).compareTo(typedOther.isSetStop96());
+        lastComparison = Boolean.valueOf(isSetStop96()).compareTo(other.isSetStop96());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop96()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop96, typedOther.stop96);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop96, other.stop96);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop97()).compareTo(typedOther.isSetStop97());
+        lastComparison = Boolean.valueOf(isSetStop97()).compareTo(other.isSetStop97());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop97()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop97, typedOther.stop97);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop97, other.stop97);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop98()).compareTo(typedOther.isSetStop98());
+        lastComparison = Boolean.valueOf(isSetStop98()).compareTo(other.isSetStop98());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop98()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop98, typedOther.stop98);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop98, other.stop98);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetStop99()).compareTo(typedOther.isSetStop99());
+        lastComparison = Boolean.valueOf(isSetStop99()).compareTo(other.isSetStop99());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetStop99()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop99, typedOther.stop99);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.stop99, other.stop99);
             if (lastComparison != 0) {
                 return lastComparison;
             }
@@ -7228,407 +7035,309 @@ public class Trade2 implements org.apache.thrift.TBase<Trade2, Trade2._Fields>, 
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder("Trade2(");
-        boolean first = true;
 
         sb.append("timestamp:");
         sb.append(this.timestamp);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("sym:");
         if (this.sym == null) {
             sb.append("null");
         } else {
             sb.append(this.sym);
         }
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("price:");
         sb.append(this.price);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("size:");
         sb.append(this.size);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop:");
         sb.append(this.stop);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("cond:");
         if (this.cond == null) {
             sb.append("null");
         } else {
             sb.append(this.cond);
         }
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("ex:");
         if (this.ex == null) {
             sb.append("null");
         } else {
             sb.append(this.ex);
         }
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop1:");
         sb.append(this.stop1);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop2:");
         sb.append(this.stop2);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop3:");
         sb.append(this.stop3);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop4:");
         sb.append(this.stop4);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop5:");
         sb.append(this.stop5);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop6:");
         sb.append(this.stop6);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop7:");
         sb.append(this.stop7);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop8:");
         sb.append(this.stop8);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop9:");
         sb.append(this.stop9);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop10:");
         sb.append(this.stop10);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop11:");
         sb.append(this.stop11);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop12:");
         sb.append(this.stop12);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop13:");
         sb.append(this.stop13);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop14:");
         sb.append(this.stop14);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop15:");
         sb.append(this.stop15);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop16:");
         sb.append(this.stop16);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop17:");
         sb.append(this.stop17);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop18:");
         sb.append(this.stop18);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop19:");
         sb.append(this.stop19);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop20:");
         sb.append(this.stop20);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop21:");
         sb.append(this.stop21);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop22:");
         sb.append(this.stop22);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop23:");
         sb.append(this.stop23);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop24:");
         sb.append(this.stop24);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop25:");
         sb.append(this.stop25);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop35:");
         sb.append(this.stop35);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop36:");
         sb.append(this.stop36);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop37:");
         sb.append(this.stop37);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop38:");
         sb.append(this.stop38);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop39:");
         sb.append(this.stop39);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop40:");
         sb.append(this.stop40);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop41:");
         sb.append(this.stop41);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop42:");
         sb.append(this.stop42);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop43:");
         sb.append(this.stop43);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop44:");
         sb.append(this.stop44);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop45:");
         sb.append(this.stop45);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop46:");
         sb.append(this.stop46);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop47:");
         sb.append(this.stop47);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop48:");
         sb.append(this.stop48);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop49:");
         sb.append(this.stop49);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop50:");
         sb.append(this.stop50);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop51:");
         sb.append(this.stop51);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop52:");
         sb.append(this.stop52);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop53:");
         sb.append(this.stop53);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop54:");
         sb.append(this.stop54);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop55:");
         sb.append(this.stop55);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop56:");
         sb.append(this.stop56);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop57:");
         sb.append(this.stop57);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop58:");
         sb.append(this.stop58);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop59:");
         sb.append(this.stop59);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop60:");
         sb.append(this.stop60);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop61:");
         sb.append(this.stop61);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop62:");
         sb.append(this.stop62);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop63:");
         sb.append(this.stop63);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop64:");
         sb.append(this.stop64);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop65:");
         sb.append(this.stop65);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop66:");
         sb.append(this.stop66);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop67:");
         sb.append(this.stop67);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop68:");
         sb.append(this.stop68);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop69:");
         sb.append(this.stop69);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop70:");
         sb.append(this.stop70);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop71:");
         sb.append(this.stop71);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop72:");
         sb.append(this.stop72);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop73:");
         sb.append(this.stop73);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop74:");
         sb.append(this.stop74);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop75:");
         sb.append(this.stop75);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop76:");
         sb.append(this.stop76);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop77:");
         sb.append(this.stop77);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop78:");
         sb.append(this.stop78);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop79:");
         sb.append(this.stop79);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop80:");
         sb.append(this.stop80);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop81:");
         sb.append(this.stop81);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop82:");
         sb.append(this.stop82);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop83:");
         sb.append(this.stop83);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop84:");
         sb.append(this.stop84);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop85:");
         sb.append(this.stop85);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop86:");
         sb.append(this.stop86);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop87:");
         sb.append(this.stop87);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop88:");
         sb.append(this.stop88);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop89:");
         sb.append(this.stop89);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop90:");
         sb.append(this.stop90);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop91:");
         sb.append(this.stop91);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop92:");
         sb.append(this.stop92);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop93:");
         sb.append(this.stop93);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop94:");
         sb.append(this.stop94);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop95:");
         sb.append(this.stop95);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop96:");
         sb.append(this.stop96);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop97:");
         sb.append(this.stop97);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop98:");
         sb.append(this.stop98);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("stop99:");
         sb.append(this.stop99);
-        first = false;
         sb.append(")");
         return sb.toString();
     }
@@ -7749,7 +7458,7 @@ public class Trade2 implements org.apache.thrift.TBase<Trade2, Trade2._Fields>, 
         }
     }
 
-    private void readObject(java.io.ObjectInputStream in) throws java.io.IOException, ClassNotFoundException {
+    private void readObject(java.io.ObjectInputStream in) throws java.io.IOException {
         try {
             // it doesn't seem like you should have to do this, but java serialization is wacky, and doesn't call the default constructor.
             __isset_bit_vector = new BitSet(1);
@@ -7861,7 +7570,7 @@ public class Trade2 implements org.apache.thrift.TBase<Trade2, Trade2._Fields>, 
         STOP98((short) 98, "stop98"),
         STOP99((short) 99, "stop99");
 
-        private static final Map<String, _Fields> byName = new HashMap<String, _Fields>();
+        private static final Map<String, _Fields> byName = new HashMap<>();
 
         static {
             for (_Fields field : EnumSet.allOf(_Fields.class)) {

@@ -20,29 +20,34 @@ import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.lang.cst.KeyCursor;
 import com.nfsdb.journal.lang.cst.KeySource;
 import com.nfsdb.journal.lang.cst.PartitionSlice;
+import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
+
+import java.util.List;
 
 public class PartialSymbolKeySource implements KeySource, KeyCursor {
 
-    private final String symbol;
-    private final String[] values;
-    private final int[] keys;
+    private final StringRef symbol;
+    private final List<String> values;
+    private int[] keys;
     private SymbolTable symbolTable;
     private int keyIndex;
     private int keyCount;
 
-    public PartialSymbolKeySource(String symbol, String[] values) {
+    public PartialSymbolKeySource(StringRef symbol, List<String> values) {
         this.symbol = symbol;
         this.values = values;
-        this.keys = new int[values.length];
     }
 
     @Override
     public KeyCursor cursor(PartitionSlice slice) {
         if (this.symbolTable == null) {
-            this.symbolTable = slice.partition.getJournal().getSymbolTable(symbol);
+            if (this.keys == null || this.keys.length < values.size()) {
+                this.keys = new int[values.size()];
+            }
+            this.symbolTable = slice.partition.getJournal().getSymbolTable(symbol.value);
             int keyCount = 0;
-            for (int i = 0; i < values.length; i++) {
-                int key = symbolTable.getQuick(values[i]);
+            for (int i = 0; i < values.size(); i++) {
+                int key = symbolTable.getQuick(values.get(i));
                 if (key >= 0) {
                     keys[keyCount++] = key;
                 }

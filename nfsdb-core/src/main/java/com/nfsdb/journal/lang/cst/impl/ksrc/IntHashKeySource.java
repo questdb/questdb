@@ -16,51 +16,49 @@
 
 package com.nfsdb.journal.lang.cst.impl.ksrc;
 
-import com.nfsdb.journal.column.SymbolTable;
+import com.nfsdb.journal.collections.IntArrayList;
 import com.nfsdb.journal.lang.cst.KeyCursor;
 import com.nfsdb.journal.lang.cst.KeySource;
 import com.nfsdb.journal.lang.cst.PartitionSlice;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 
-public class SymbolKeySource implements KeySource, KeyCursor {
+public class IntHashKeySource implements KeySource, KeyCursor {
+    private final StringRef column;
+    private final IntArrayList values;
+    private int bucketCount = -1;
+    private int valueIndex;
 
-    private final StringRef symbol;
-    private SymbolTable symbolTable;
-    private int keyIndex;
-    private int keyCount;
-
-    public SymbolKeySource(StringRef symbol) {
-        this.symbol = symbol;
+    public IntHashKeySource(StringRef column, IntArrayList values) {
+        this.column = column;
+        this.values = values;
     }
 
     @Override
     public KeyCursor cursor(PartitionSlice slice) {
-        if (this.symbolTable == null) {
-            this.symbolTable = slice.partition.getJournal().getSymbolTable(symbol.value);
-            this.keyCount = symbolTable.size();
+        if (bucketCount == -1) {
+            bucketCount = slice.partition.getJournal().getMetadata().getColumnMetadata(column.value).distinctCountHint;
         }
-        this.keyIndex = 0;
+        this.valueIndex = 0;
         return this;
     }
 
     @Override
     public boolean hasNext() {
-        return keyIndex < keyCount;
+        return valueIndex < values.size();
     }
 
     @Override
     public int next() {
-        return keyIndex++;
+        return values.get(valueIndex++) % bucketCount;
     }
 
     @Override
     public int size() {
-        return keyCount;
+        return values.size();
     }
 
     @Override
     public void reset() {
-        symbolTable = null;
-        keyIndex = 0;
+        bucketCount = -1;
     }
 }

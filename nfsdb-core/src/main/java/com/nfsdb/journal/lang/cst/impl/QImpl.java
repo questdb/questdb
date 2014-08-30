@@ -17,18 +17,26 @@
 package com.nfsdb.journal.lang.cst.impl;
 
 import com.nfsdb.journal.Journal;
+import com.nfsdb.journal.collections.IntArrayList;
 import com.nfsdb.journal.lang.cst.*;
+import com.nfsdb.journal.lang.cst.impl.dsrc.DataSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.fltr.AllRowFilter;
 import com.nfsdb.journal.lang.cst.impl.fltr.DoubleGreaterThanRowFilter;
+import com.nfsdb.journal.lang.cst.impl.fltr.IntEqualsRowFilter;
 import com.nfsdb.journal.lang.cst.impl.fltr.StringEqualsRowFilter;
-import com.nfsdb.journal.lang.cst.impl.ksrc.PartialSymbolKeySource;
-import com.nfsdb.journal.lang.cst.impl.ksrc.StringHashKeySource;
-import com.nfsdb.journal.lang.cst.impl.ksrc.SymbolKeySource;
+import com.nfsdb.journal.lang.cst.impl.jsrc.JournalSourceImpl;
+import com.nfsdb.journal.lang.cst.impl.jsrc.TopJournalSource;
+import com.nfsdb.journal.lang.cst.impl.ksrc.*;
 import com.nfsdb.journal.lang.cst.impl.psrc.IntervalPartitionSource;
+import com.nfsdb.journal.lang.cst.impl.psrc.JournalDescPartitionSource;
 import com.nfsdb.journal.lang.cst.impl.psrc.JournalPartitionSource;
 import com.nfsdb.journal.lang.cst.impl.psrc.JournalTailPartitionSource;
+import com.nfsdb.journal.lang.cst.impl.ref.IntRef;
+import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 import com.nfsdb.journal.lang.cst.impl.rsrc.*;
 import org.joda.time.Interval;
+
+import java.util.List;
 
 public class QImpl implements Q {
 
@@ -78,12 +86,21 @@ public class QImpl implements Q {
     }
 
     @Override
-    public RowSource kvSource(String indexName, KeySource keySource) {
+    public RowSource kvSource(StringRef indexName, KeySource keySource) {
         return new KvIndexRowSource(indexName, keySource);
     }
 
     @Override
-    public RowSource kvSource(String indexName, KeySource keySource, int count, int tail, RowFilter filter) {
+    public RowSource headEquals(StringRef column, StringRef value) {
+        return kvSource(column, hashSource(column, value), 1, 0, equalsConst(column, value));
+    }
+
+    public RowSource headEquals(StringRef column, IntRef value) {
+        return kvSource(column, new SingleIntHashKeySource(column, value), 1, 0, new IntEqualsRowFilter(column, value));
+    }
+
+    @Override
+    public RowSource kvSource(StringRef indexName, KeySource keySource, int count, int tail, RowFilter filter) {
         return new KvIndexTailRowSource(indexName, keySource, count, tail, filter);
     }
 
@@ -94,7 +111,12 @@ public class QImpl implements Q {
 
     @Override
     public PartitionSource sourceDesc(Journal journal, boolean open) {
-        return new JournalPartitionSource(journal, open);
+        return new JournalDescPartitionSource(journal, open);
+    }
+
+    @Override
+    public PartitionSource sourceDesc(Journal journal) {
+        return new JournalDescPartitionSource(journal, false);
     }
 
     @Override
@@ -103,7 +125,7 @@ public class QImpl implements Q {
     }
 
     @Override
-    public RowFilter equalsConst(String column, String value) {
+    public RowFilter equalsConst(StringRef column, StringRef value) {
         return new StringEqualsRowFilter(column, value);
     }
 
@@ -138,18 +160,27 @@ public class QImpl implements Q {
     }
 
     @Override
-    public KeySource symbolTableSource(String sym, String... values) {
+    public KeySource symbolTableSource(StringRef sym, List<String> values) {
         return new PartialSymbolKeySource(sym, values);
     }
 
     @Override
-    public KeySource symbolTableSource(String sym) {
+    public KeySource symbolTableSource(StringRef sym) {
         return new SymbolKeySource(sym);
     }
 
     @Override
-    public KeySource hashSource(String column, String... value) {
+    public KeySource hashSource(StringRef column, List<String> value) {
         return new StringHashKeySource(column, value);
+    }
+
+    @Override
+    public KeySource hashSource(StringRef column, StringRef value) {
+        return new SingleStringHashKeySource(column, value);
+    }
+
+    public KeySource hashSource(StringRef column, IntArrayList values) {
+        return new IntHashKeySource(column, values);
     }
 
     @Override

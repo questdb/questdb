@@ -30,13 +30,16 @@ import org.apache.thrift.scheme.SchemeFactory;
 import org.apache.thrift.scheme.StandardScheme;
 import org.apache.thrift.scheme.TupleScheme;
 
-import java.util.*;
+import java.util.Collections;
+import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.Map;
 
 public class Quote implements org.apache.thrift.TBase<Quote, Quote._Fields>, java.io.Serializable, Cloneable {
     public static final Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
 
     static {
-        Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
+        Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new EnumMap<>(_Fields.class);
         tmpMap.put(_Fields.TIMESTAMP, new org.apache.thrift.meta_data.FieldMetaData("timestamp", org.apache.thrift.TFieldRequirementType.REQUIRED,
                 new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.I64)));
         tmpMap.put(_Fields.SYM, new org.apache.thrift.meta_data.FieldMetaData("sym", org.apache.thrift.TFieldRequirementType.REQUIRED,
@@ -66,7 +69,7 @@ public class Quote implements org.apache.thrift.TBase<Quote, Quote._Fields>, jav
     private static final org.apache.thrift.protocol.TField ASK_SIZE_FIELD_DESC = new org.apache.thrift.protocol.TField("askSize", org.apache.thrift.protocol.TType.I32, (short) 6);
     private static final org.apache.thrift.protocol.TField MODE_FIELD_DESC = new org.apache.thrift.protocol.TField("mode", org.apache.thrift.protocol.TType.STRING, (short) 7);
     private static final org.apache.thrift.protocol.TField EX_FIELD_DESC = new org.apache.thrift.protocol.TField("ex", org.apache.thrift.protocol.TType.STRING, (short) 8);
-    private static final Map<Class<? extends IScheme>, SchemeFactory> schemes = new HashMap<Class<? extends IScheme>, SchemeFactory>();
+    private static final Map<Class<? extends IScheme>, SchemeFactory> schemes = new HashMap<>();
 
     static {
         schemes.put(StandardScheme.class, new QuoteStandardSchemeFactory());
@@ -90,31 +93,6 @@ public class Quote implements org.apache.thrift.TBase<Quote, Quote._Fields>, jav
     private byte __isset_bitfield = 0;
 
     public Quote() {
-    }
-
-    public Quote(
-            long timestamp,
-            String sym,
-            double bid,
-            double ask,
-            int bidSize,
-            int askSize,
-            String mode,
-            String ex) {
-        this();
-        this.timestamp = timestamp;
-        setTimestampIsSet(true);
-        this.sym = sym;
-        this.bid = bid;
-        setBidIsSet(true);
-        this.ask = ask;
-        setAskIsSet(true);
-        this.bidSize = bidSize;
-        setBidSizeIsSet(true);
-        this.askSize = askSize;
-        setAskSizeIsSet(true);
-        this.mode = mode;
-        this.ex = ex;
     }
 
     /**
@@ -434,22 +412,22 @@ public class Quote implements org.apache.thrift.TBase<Quote, Quote._Fields>, jav
     public Object getFieldValue(_Fields field) {
         switch (field) {
             case TIMESTAMP:
-                return Long.valueOf(getTimestamp());
+                return getTimestamp();
 
             case SYM:
                 return getSym();
 
             case BID:
-                return Double.valueOf(getBid());
+                return getBid();
 
             case ASK:
-                return Double.valueOf(getAsk());
+                return getAsk();
 
             case BID_SIZE:
-                return Integer.valueOf(getBidSize());
+                return getBidSize();
 
             case ASK_SIZE:
-                return Integer.valueOf(getAskSize());
+                return getAskSize();
 
             case MODE:
                 return getMode();
@@ -492,28 +470,18 @@ public class Quote implements org.apache.thrift.TBase<Quote, Quote._Fields>, jav
 
     @Override
     public boolean equals(Object that) {
-        if (that == null)
-            return false;
-        if (that instanceof Quote)
-            return this.equals((Quote) that);
-        return false;
+        return that != null && that instanceof Quote && this.equals((Quote) that);
     }
 
     public boolean equals(Quote that) {
         if (that == null)
             return false;
 
-        boolean this_present_timestamp = true;
-        boolean that_present_timestamp = true;
-        if (this_present_timestamp || that_present_timestamp) {
-            if (!(this_present_timestamp && that_present_timestamp))
-                return false;
-            if (this.timestamp != that.timestamp)
-                return false;
-        }
+        if (this.timestamp != that.timestamp)
+            return false;
 
-        boolean this_present_sym = true && this.isSetSym();
-        boolean that_present_sym = true && that.isSetSym();
+        boolean this_present_sym = this.isSetSym();
+        boolean that_present_sym = that.isSetSym();
         if (this_present_sym || that_present_sym) {
             if (!(this_present_sym && that_present_sym))
                 return false;
@@ -521,44 +489,20 @@ public class Quote implements org.apache.thrift.TBase<Quote, Quote._Fields>, jav
                 return false;
         }
 
-        boolean this_present_bid = true;
-        boolean that_present_bid = true;
-        if (this_present_bid || that_present_bid) {
-            if (!(this_present_bid && that_present_bid))
-                return false;
-            if (this.bid != that.bid)
-                return false;
-        }
+        if (this.bid != that.bid)
+            return false;
 
-        boolean this_present_ask = true;
-        boolean that_present_ask = true;
-        if (this_present_ask || that_present_ask) {
-            if (!(this_present_ask && that_present_ask))
-                return false;
-            if (this.ask != that.ask)
-                return false;
-        }
+        if (this.ask != that.ask)
+            return false;
 
-        boolean this_present_bidSize = true;
-        boolean that_present_bidSize = true;
-        if (this_present_bidSize || that_present_bidSize) {
-            if (!(this_present_bidSize && that_present_bidSize))
-                return false;
-            if (this.bidSize != that.bidSize)
-                return false;
-        }
+        if (this.bidSize != that.bidSize)
+            return false;
 
-        boolean this_present_askSize = true;
-        boolean that_present_askSize = true;
-        if (this_present_askSize || that_present_askSize) {
-            if (!(this_present_askSize && that_present_askSize))
-                return false;
-            if (this.askSize != that.askSize)
-                return false;
-        }
+        if (this.askSize != that.askSize)
+            return false;
 
-        boolean this_present_mode = true && this.isSetMode();
-        boolean that_present_mode = true && that.isSetMode();
+        boolean this_present_mode = this.isSetMode();
+        boolean that_present_mode = that.isSetMode();
         if (this_present_mode || that_present_mode) {
             if (!(this_present_mode && that_present_mode))
                 return false;
@@ -566,8 +510,8 @@ public class Quote implements org.apache.thrift.TBase<Quote, Quote._Fields>, jav
                 return false;
         }
 
-        boolean this_present_ex = true && this.isSetEx();
-        boolean that_present_ex = true && that.isSetEx();
+        boolean this_present_ex = this.isSetEx();
+        boolean that_present_ex = that.isSetEx();
         if (this_present_ex || that_present_ex) {
             if (!(this_present_ex && that_present_ex))
                 return false;
@@ -582,42 +526,32 @@ public class Quote implements org.apache.thrift.TBase<Quote, Quote._Fields>, jav
     public int hashCode() {
         HashCodeBuilder builder = new HashCodeBuilder();
 
-        boolean present_timestamp = true;
-        builder.append(present_timestamp);
-        if (present_timestamp)
-            builder.append(timestamp);
+        builder.append(true);
+        builder.append(timestamp);
 
-        boolean present_sym = true && (isSetSym());
+        boolean present_sym = (isSetSym());
         builder.append(present_sym);
         if (present_sym)
             builder.append(sym);
 
-        boolean present_bid = true;
-        builder.append(present_bid);
-        if (present_bid)
-            builder.append(bid);
+        builder.append(true);
+        builder.append(bid);
 
-        boolean present_ask = true;
-        builder.append(present_ask);
-        if (present_ask)
-            builder.append(ask);
+        builder.append(true);
+        builder.append(ask);
 
-        boolean present_bidSize = true;
-        builder.append(present_bidSize);
-        if (present_bidSize)
-            builder.append(bidSize);
+        builder.append(true);
+        builder.append(bidSize);
 
-        boolean present_askSize = true;
-        builder.append(present_askSize);
-        if (present_askSize)
-            builder.append(askSize);
+        builder.append(true);
+        builder.append(askSize);
 
-        boolean present_mode = true && (isSetMode());
+        boolean present_mode = (isSetMode());
         builder.append(present_mode);
         if (present_mode)
             builder.append(mode);
 
-        boolean present_ex = true && (isSetEx());
+        boolean present_ex = (isSetEx());
         builder.append(present_ex);
         if (present_ex)
             builder.append(ex);
@@ -630,85 +564,84 @@ public class Quote implements org.apache.thrift.TBase<Quote, Quote._Fields>, jav
             return getClass().getName().compareTo(other.getClass().getName());
         }
 
-        int lastComparison = 0;
-        Quote typedOther = (Quote) other;
+        int lastComparison;
 
-        lastComparison = Boolean.valueOf(isSetTimestamp()).compareTo(typedOther.isSetTimestamp());
+        lastComparison = Boolean.valueOf(isSetTimestamp()).compareTo(other.isSetTimestamp());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetTimestamp()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.timestamp, typedOther.timestamp);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.timestamp, other.timestamp);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetSym()).compareTo(typedOther.isSetSym());
+        lastComparison = Boolean.valueOf(isSetSym()).compareTo(other.isSetSym());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetSym()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.sym, typedOther.sym);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.sym, other.sym);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetBid()).compareTo(typedOther.isSetBid());
+        lastComparison = Boolean.valueOf(isSetBid()).compareTo(other.isSetBid());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetBid()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.bid, typedOther.bid);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.bid, other.bid);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetAsk()).compareTo(typedOther.isSetAsk());
+        lastComparison = Boolean.valueOf(isSetAsk()).compareTo(other.isSetAsk());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetAsk()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.ask, typedOther.ask);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.ask, other.ask);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetBidSize()).compareTo(typedOther.isSetBidSize());
+        lastComparison = Boolean.valueOf(isSetBidSize()).compareTo(other.isSetBidSize());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetBidSize()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.bidSize, typedOther.bidSize);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.bidSize, other.bidSize);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetAskSize()).compareTo(typedOther.isSetAskSize());
+        lastComparison = Boolean.valueOf(isSetAskSize()).compareTo(other.isSetAskSize());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetAskSize()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.askSize, typedOther.askSize);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.askSize, other.askSize);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetMode()).compareTo(typedOther.isSetMode());
+        lastComparison = Boolean.valueOf(isSetMode()).compareTo(other.isSetMode());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetMode()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.mode, typedOther.mode);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.mode, other.mode);
             if (lastComparison != 0) {
                 return lastComparison;
             }
         }
-        lastComparison = Boolean.valueOf(isSetEx()).compareTo(typedOther.isSetEx());
+        lastComparison = Boolean.valueOf(isSetEx()).compareTo(other.isSetEx());
         if (lastComparison != 0) {
             return lastComparison;
         }
         if (isSetEx()) {
-            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.ex, typedOther.ex);
+            lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.ex, other.ex);
             if (lastComparison != 0) {
                 return lastComparison;
             }
@@ -731,51 +664,41 @@ public class Quote implements org.apache.thrift.TBase<Quote, Quote._Fields>, jav
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder("Quote(");
-        boolean first = true;
-
         sb.append("timestamp:");
         sb.append(this.timestamp);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("sym:");
         if (this.sym == null) {
             sb.append("null");
         } else {
             sb.append(this.sym);
         }
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("bid:");
         sb.append(this.bid);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("ask:");
         sb.append(this.ask);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("bidSize:");
         sb.append(this.bidSize);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("askSize:");
         sb.append(this.askSize);
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("mode:");
         if (this.mode == null) {
             sb.append("null");
         } else {
             sb.append(this.mode);
         }
-        first = false;
-        if (!first) sb.append(", ");
+        sb.append(", ");
         sb.append("ex:");
         if (this.ex == null) {
             sb.append("null");
         } else {
             sb.append(this.ex);
         }
-        first = false;
         sb.append(")");
         return sb.toString();
     }
@@ -807,7 +730,7 @@ public class Quote implements org.apache.thrift.TBase<Quote, Quote._Fields>, jav
         }
     }
 
-    private void readObject(java.io.ObjectInputStream in) throws java.io.IOException, ClassNotFoundException {
+    private void readObject(java.io.ObjectInputStream in) throws java.io.IOException {
         try {
             // it doesn't seem like you should have to do this, but java serialization is wacky, and doesn't call the default constructor.
             __isset_bitfield = 0;
@@ -829,14 +752,6 @@ public class Quote implements org.apache.thrift.TBase<Quote, Quote._Fields>, jav
         ASK_SIZE((short) 6, "askSize"),
         MODE((short) 7, "mode"),
         EX((short) 8, "ex");
-
-        private static final Map<String, _Fields> byName = new HashMap<String, _Fields>();
-
-        static {
-            for (_Fields field : EnumSet.allOf(_Fields.class)) {
-                byName.put(field.getFieldName(), field);
-            }
-        }
 
         private final short _thriftId;
         private final String _fieldName;
@@ -875,13 +790,6 @@ public class Quote implements org.apache.thrift.TBase<Quote, Quote._Fields>, jav
             _Fields fields = findByThriftId(fieldId);
             if (fields == null) throw new IllegalArgumentException("Field " + fieldId + " doesn't exist!");
             return fields;
-        }
-
-        /**
-         * Find the _Fields constant that matches name, or null if its not found.
-         */
-        public static _Fields findByName(String name) {
-            return byName.get(name);
         }
 
         public short getThriftFieldId() {
