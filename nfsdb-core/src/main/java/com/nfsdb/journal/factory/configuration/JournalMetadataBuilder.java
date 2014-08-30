@@ -160,7 +160,8 @@ public class JournalMetadataBuilder<T> {
 
 
             if (meta.indexed && meta.distinctCountHint <= 1) {
-                throw new JournalConfigurationException("hintDistinctCount for " + modelClass.getName() + "." + meta.name + " must be > 1 for index to make sense. Either review hintDistinctCount or set indexed=\"false\"");
+                meta.distinctCountHint = Math.max(2, (int) (recordCountHint * 0.01));
+//                throw new JournalConfigurationException("hintDistinctCount for " + modelClass.getName() + "." + meta.name + " must be > 1 for index to make sense. Either review hintDistinctCount or set indexed=\"false\"");
             }
 
             if (meta.size == 0 && meta.avgSize == 0) {
@@ -169,7 +170,7 @@ public class JournalMetadataBuilder<T> {
 
             // distinctCount
             if (meta.distinctCountHint <= 0) {
-                meta.distinctCountHint = (int) (recordCountHint * 0.5); //50% ?? (rubbish)
+                meta.distinctCountHint = (int) (recordCountHint * 0.2); //20%
             }
 
             switch (meta.type) {
