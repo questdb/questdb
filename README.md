@@ -82,7 +82,7 @@ public class SimpleReplicationServerMain {
 }
 ```
 
-And this is fully functional _client_:
+And this is fully functional _client_ measuring transaction latency:
 
 ```java
 public class SimpleReplicationClientMain {
