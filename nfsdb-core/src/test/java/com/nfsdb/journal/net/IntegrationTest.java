@@ -202,6 +202,7 @@ public class IntegrationTest extends AbstractTest {
         Thread.sleep(100);
         client.halt();
         Assert.assertFalse(client.isRunning());
+        Thread.sleep(100);
         Assert.assertEquals(0, server.getConnectedClients());
         server.halt();
     }
