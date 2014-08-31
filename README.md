@@ -17,7 +17,6 @@
 
 NFSdb is a java library that lets you easily persist huge volumes of POJOs on disk with almost zero GC overhead and minimal latency (millions of writes in a second). With NFSdb you can also query these objects and replicate them over the network. Fast. Very, very fast.
 
-[top](#overview)
 ---
 
 ##Why?
@@ -34,7 +33,8 @@ Storing and querying data for Java developer is always pain in the neck. JDBC re
 - provide out of box support for temporal data.
 - scale processing out to multiple servers
 
-[top](#overview)
+[to top](#overview)
+
 ---
 
 ##How?
@@ -123,14 +123,16 @@ public class SimpleReplicationClientMain {
     }
 }
 ```
-[top](#overview)
+[to top](#overview)
+
 ---
 
 ### More examples?
 
 We have growing collection of examples in our [git repository] (https://github.com/NFSdb/nfsdb/tree/master/nfsdb-examples/src/main/java/org/nfsdb/examples).
 
-[top](#overview)
+[to top](#overview)
+
 ---
 
 ### Performance
@@ -139,7 +141,8 @@ On test rig (Intel i7-920 @ 4Ghz) NFSdb shows average read latency of 20-30ns an
 
 Above example takes ~500ms to fully consume 1 million objects on localhost.
 
-[top](#overview)
+[to top](#overview)
+
 ---
 
 ##Maven
@@ -172,18 +175,20 @@ Snapshot releases are also available from Maven central. To get hold of those ad
 </dependency>
 ```
 
-[top](#overview)
+[to top](#overview)
+
 ---
 
 ## License
 
 NFSdb is available under [Apache 2.0 License] (http://www.apache.org/licenses/LICENSE-2.0.txt)
 
-[top](#overview)
+[to top](#overview)
+
 ---
 
 ## Support
 
 We actively respond to all [issues](https://github.com/NFSdb/nfsdb/issues) raised via GitHub. Please do not hesitate to ask questions or request features.
 
-[top](#overview)
+[to top](#overview)
