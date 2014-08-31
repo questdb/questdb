@@ -139,7 +139,7 @@ We have growing collection of examples in our [git repository] (https://github.c
 
 On test rig (Intel i7-920 @ 4Ghz) NFSdb shows average read latency of 20-30ns and write latency of 60ns per column of data. Read and write do not have any GC overhead (excluding reading strings - they are immutable).
 
-Above example takes ~500ms to fully consume 1 million objects on localhost.
+Above example takes ~500ms to produce and fully consume 1 million objects on localhost.
 
 [to top](#overview)
 
