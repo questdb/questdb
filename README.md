@@ -1,6 +1,9 @@
 [![Build Status](https://secure.travis-ci.org/NFSdb/nfsdb.png?branch=master)](http://travis-ci.org/NFSdb/nfsdb)
 ---
 
+## Latest release
+
+[2.0.1 (DRAX)] (https://github.com/NFSdb/nfsdb/releases/tag/2.0.1)
 
 ##What is NFSdb?
 
