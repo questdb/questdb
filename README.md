@@ -1,9 +1,16 @@
+## Overview
+
+* [What is NFSDb?](#what-is-nfsdb)
+* [Why?](#why)
+* [How?](#how)
+* [Examples](#more-examples)
+* [Maven](#maven)
+* [Performance](#Performance)
+* [License](#license)
+* [Support](#support) 
+
+
 [![Build Status](https://secure.travis-ci.org/NFSdb/nfsdb.png?branch=master)](http://travis-ci.org/NFSdb/nfsdb)
----
-
-## Latest release
-
-[2.0.1 (DRAX)] (https://github.com/NFSdb/nfsdb/releases/tag/2.0.1)
 
 ##What is NFSdb?
 
@@ -117,16 +124,17 @@ public class SimpleReplicationClientMain {
 
 ### More examples?
 
-We have more samples in our [Git repository] (https://github.com/NFSdb/nfsdb/tree/master/nfsdb-examples/src/main/java/org/nfsdb/examples) repository.
+We have growing collection of examples in our [git repository] (https://github.com/NFSdb/nfsdb/tree/master/nfsdb-examples/src/main/java/org/nfsdb/examples).
 
 ### Performance
 
-On test rig (Intel i7-920 @ 4Ghz) NFSdb shows average read latency of 20-30ns and write latency of 60ns per column of data. Read and write do not have any GC overhead.
+On test rig (Intel i7-920 @ 4Ghz) NFSdb shows average read latency of 20-30ns and write latency of 60ns per column of data. Read and write do not have any GC overhead (excluding reading strings - they are immutable).
 
+Above example takes ~500ms to fully consume 1 million objects on localhost.
 
 ##Maven
 
-NFSdb requires minimum of Java 7 and stable release is available from maven Central:
+NFSdb requires minimum of Java 7 and stable release is available from maven Central
 
 ```xml
 <dependency>
@@ -135,6 +143,7 @@ NFSdb requires minimum of Java 7 and stable release is available from maven Cent
     <version>2.0.1</version>
 </dependency>
 ```
+Check out [release notes](https://github.com/NFSdb/nfsdb/releases/tag/2.0.1) for details of the release.
 
 Snapshot releases are also available from Maven central. To get hold of those add these lines to pom.xml:
 
@@ -159,8 +168,4 @@ NFSdb is available under [Apache 2.0 License] (http://www.apache.org/licenses/LI
 
 ## Support
 
-For support queries please raise an issue on GitHub:
-
-https://github.com/NFSdb/nfsdb/issues
-
-Please visit our official web site [www.nfsdb.org] (http://nfsdb.org) for more information.
+We actively respond to all [issues](https://github.com/NFSdb/nfsdb/issues) raised via GitHub. Please do not hesitate to ask questions or request features.
