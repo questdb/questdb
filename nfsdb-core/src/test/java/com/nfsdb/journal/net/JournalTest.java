@@ -104,7 +104,7 @@ public class JournalTest extends AbstractJournalTest {
     @Test
     public void testLagConsumerSmallerThanProducer() throws Exception {
         master.append(origin.query().all().asResultSet().subset(0, 350));
-        master.appendLag(origin.query().all().asResultSet().subset(350, 600));
+        master.mergeAppend(origin.query().all().asResultSet().subset(350, 600));
         master.commit();
         executeSequence(true);
     }
@@ -112,14 +112,14 @@ public class JournalTest extends AbstractJournalTest {
     @Test
     public void testLagReplace() throws Exception {
         master.append(origin.query().all().asResultSet().subset(0, 350));
-        master.appendLag(origin.query().all().asResultSet().subset(350, 600));
+        master.mergeAppend(origin.query().all().asResultSet().subset(350, 600));
         master.commit();
 
         slave.append(origin.query().all().asResultSet().subset(0, 350));
-        slave.appendLag(origin.query().all().asResultSet().subset(350, 600));
+        slave.mergeAppend(origin.query().all().asResultSet().subset(350, 600));
         slave.commit();
 
-        master.appendLag(origin.query().all().asResultSet().subset(600, 1000));
+        master.mergeAppend(origin.query().all().asResultSet().subset(600, 1000));
         master.commit();
         executeSequence(true);
     }

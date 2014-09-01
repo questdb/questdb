@@ -37,13 +37,13 @@ public class JournalLagTest extends AbstractJournalTest {
     @Test
     public void testLagOnlyPropagation() throws Exception {
         master.append(origin.query().all().asResultSet().subset(0, 500));
-        master.appendLag(origin.query().all().asResultSet().subset(500, 600));
+        master.mergeAppend(origin.query().all().asResultSet().subset(500, 600));
         master.commit();
         String lagName = master.getIrregularPartition().getName();
 
         executeSequence(true);
 
-        master.appendLag(origin.query().all().asResultSet().subset(600, 700));
+        master.mergeAppend(origin.query().all().asResultSet().subset(600, 700));
         master.commit();
         Assert.assertEquals(lagName, master.getIrregularPartition().getName());
 
@@ -53,7 +53,7 @@ public class JournalLagTest extends AbstractJournalTest {
     @Test
     public void testLagDetach() throws Exception {
         master.append(origin.query().all().asResultSet().subset(0, 500));
-        master.appendLag(origin.query().all().asResultSet().subset(500, 600));
+        master.mergeAppend(origin.query().all().asResultSet().subset(500, 600));
         master.commit();
 
         executeSequence(true);

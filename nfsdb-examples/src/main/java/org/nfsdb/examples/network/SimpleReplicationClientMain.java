@@ -41,11 +41,11 @@ public class SimpleReplicationClientMain {
                 long t = 0;
                 for (Price p : reader.incrementBuffered()) {
                     if (count == 0) {
-                        t = p.getTimestamp();
+                        t = p.getNanos();
                     }
                     count++;
                 }
-                System.out.println("took: " + (System.currentTimeMillis() - t) + ", count=" + count);
+                System.out.println("took: " + (System.nanoTime() - t) + ", count=" + count);
             }
         });
         client.start();

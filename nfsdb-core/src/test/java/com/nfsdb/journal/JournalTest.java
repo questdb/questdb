@@ -306,15 +306,15 @@ public class JournalTest extends AbstractTest {
         JournalWriter<Quote> w = factory.writer(Quote.class);
         w.append(origin.query().all().asResultSet().subset(0, 100000));
         w.commit();
-        w.appendLag(origin.query().all().asResultSet().subset(100000, 120000));
+        w.mergeAppend(origin.query().all().asResultSet().subset(100000, 120000));
         w.commit();
 
         Journal<Quote> r = factory.reader(Quote.class);
         TestUtils.assertEquals(w, r);
-        w.appendLag(origin.query().all().asResultSet().subset(120000, 150000));
+        w.mergeAppend(origin.query().all().asResultSet().subset(120000, 150000));
         w.rollback();
         TestUtils.assertEquals(w, r);
-        w.appendLag(origin.query().all().asResultSet().subset(120000, 150000));
+        w.mergeAppend(origin.query().all().asResultSet().subset(120000, 150000));
         w.commit();
 
         r.refresh();
@@ -338,7 +338,7 @@ public class JournalTest extends AbstractTest {
         try {
             for (int i = 0; i < originRs.size(); ) {
                 int d = Math.min(i + blockSize, originRs.size());
-                w.appendLag(originRs.subset(i, d));
+                w.mergeAppend(originRs.subset(i, d));
 
                 if (rnd.nextBoolean()) {
                     w.commit();

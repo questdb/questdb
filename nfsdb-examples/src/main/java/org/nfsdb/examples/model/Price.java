@@ -21,6 +21,7 @@ public class Price {
     private long timestamp;
     private String sym;
     private double price;
+    private long nanos;
 
     public long getTimestamp() {
         return timestamp;
@@ -44,5 +45,13 @@ public class Price {
 
     public void setPrice(double price) {
         this.price = price;
+    }
+
+    public long getNanos() {
+        return nanos;
+    }
+
+    public void setNanos(long nanos) {
+        this.nanos = nanos;
     }
 }

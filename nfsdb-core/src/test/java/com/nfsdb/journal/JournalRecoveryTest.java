@@ -62,12 +62,12 @@ public class JournalRecoveryTest extends AbstractTest {
         try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
             w.setCommitOnClose(false);
             w.append(origin.query().all().asResultSet().subset(0, 15000));
-            w.appendLag(origin.query().all().asResultSet().subset(15000, 17000));
+            w.mergeAppend(origin.query().all().asResultSet().subset(15000, 17000));
             w.commit();
             ts = w.getMaxTimestamp();
 
-            w.appendLag(origin.query().all().asResultSet().subset(16000, 27000));
-            w.appendLag(origin.query().all().asResultSet().subset(23000, 37000));
+            w.mergeAppend(origin.query().all().asResultSet().subset(16000, 27000));
+            w.mergeAppend(origin.query().all().asResultSet().subset(23000, 37000));
             Assert.assertTrue(ts < w.getMaxTimestamp());
             Assert.assertEquals(37672, w.size());
         }

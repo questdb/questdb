@@ -38,6 +38,16 @@ public class ScenarioTest extends AbstractTest {
         setHostname("localhost");
     }};
 
+    private static void iteration(String expected, Journal<Quote> origin, JournalWriter<Quote> remote, Journal<Quote> local, int lo, int hi) throws Exception {
+        remote.append(origin.query().all().asResultSet().subset(lo, hi));
+        remote.commit();
+
+        Thread.sleep(100);
+
+        local.refresh();
+        TestUtils.assertEquals(expected, local.query().head().withKeys().asResultSet());
+    }
+
     @Test
     public void testSingleJournalTrickle() throws Exception {
         JournalServer server = new JournalServer(serverConfig, factory);
@@ -135,18 +145,8 @@ public class ScenarioTest extends AbstractTest {
         assertEquals(remoteReader, local);
     }
 
-    private static void iteration(String expected, Journal<Quote> origin, JournalWriter<Quote> remote, Journal<Quote> local, int lo, int hi) throws Exception {
-        remote.append(origin.query().all().asResultSet().subset(lo, hi));
-        remote.commit();
-
-        Thread.sleep(100);
-
-        local.refresh();
-        TestUtils.assertEquals(expected, local.query().head().withKeys().asResultSet());
-    }
-
     private void lagIteration(final Journal<Quote> origin, final JournalWriter<Quote> remote, final int lo, final int hi) throws JournalException {
-        remote.appendLag(new ArrayList<Quote>() {{
+        remote.mergeAppend(new ArrayList<Quote>() {{
             for (Quote q : origin.query().all().asResultSet().subset(lo, hi).sort("timestamp")) {
                 add(q);
             }

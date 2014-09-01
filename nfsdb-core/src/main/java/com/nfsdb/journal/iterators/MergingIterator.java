@@ -20,24 +20,44 @@ import com.nfsdb.journal.collections.AbstractImmutableIterator;
 
 import java.util.Comparator;
 import java.util.Iterator;
+import java.util.List;
 
 public class MergingIterator<T> extends AbstractImmutableIterator<T> {
 
-    private final Iterator<T> a;
-    private final Iterator<T> b;
-    private final Comparator<T> comparator;
+    protected Iterator<T> a;
+    protected Iterator<T> b;
+    protected Comparator<T> comparator;
     private T nextA;
     private T nextB;
-
-    public MergingIterator(Iterator<T> a, Iterator<T> b, Comparator<T> comparator) {
-        this.a = a;
-        this.b = b;
-        this.comparator = comparator;
-    }
 
     @Override
     public boolean hasNext() {
         return nextA != null || a.hasNext() || nextB != null || b.hasNext();
+    }
+
+    public MergingIterator<T> $new(Iterator<T> a, Iterator<T> b, Comparator<T> comparator) {
+        this.a = a;
+        this.b = b;
+        this.comparator = comparator;
+        this.nextA = null;
+        this.nextB = null;
+        return this;
+    }
+
+    public Iterator<T> $merging(List<Iterator<T>> iterators) {
+        return $merging(iterators, 0);
+    }
+
+    public Iterator<T> $merging(List<Iterator<T>> iterators, int index) {
+        if (iterators == null || iterators.size() == 0) {
+            throw new IllegalArgumentException();
+        }
+
+        if (iterators.size() - index == 1) {
+            return iterators.get(index);
+        }
+
+        return new MergingIterator<T>().$merging(iterators, ++index);
     }
 
     @Override

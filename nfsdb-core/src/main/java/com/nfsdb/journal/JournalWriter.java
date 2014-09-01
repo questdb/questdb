@@ -51,6 +51,7 @@ public class JournalWriter<T> extends Journal<T> {
     private final long lagSwellMillis;
     private final boolean checkOrder;
     private final PeekingListIterator<T> peekingListIterator = new PeekingListIterator<>();
+    private final MergingIterator<T> mergingIterator = new MergingIterator<>();
     private Lock writeLock;
     private TxListener txListener;
     private TxAsyncListener txAsyncListener;
@@ -468,16 +469,16 @@ public class JournalWriter<T> extends Journal<T> {
         return JournalMode.APPEND;
     }
 
-    public void appendLag(List<T> list) throws JournalException {
+    public void mergeAppend(List<T> list) throws JournalException {
         this.peekingListIterator.setDelegate(list);
-        appendLag(this.peekingListIterator);
+        mergeAppend(this.peekingListIterator);
     }
 
-    public void appendLag(ResultSet<T> resultSet) throws JournalException {
-        appendLag(resultSet.bufferedIterator());
+    public void mergeAppend(ResultSet<T> resultSet) throws JournalException {
+        mergeAppend(resultSet.bufferedIterator());
     }
 
-    public void appendLag(PeekingIterator<T> data) throws JournalException {
+    public void mergeAppend(PeekingIterator<T> data) throws JournalException {
 
         if (lagMillis == 0) {
             throw new JournalException("This journal is not configured to have lag partition");
@@ -782,8 +783,7 @@ public class JournalWriter<T> extends Journal<T> {
         purgeTempPartitions();
     }
 
-    // TODO: reuse merging iterator
     private void splitAppendMerge(Iterator<T> a, Iterator<T> b, long hard, long soft, Partition<T> temp) throws JournalException {
-        splitAppend(new MergingIterator<>(a, b, getTimestampComparator()), hard, soft, temp);
+        splitAppend(mergingIterator.$new(a, b, getTimestampComparator()), hard, soft, temp);
     }
 }

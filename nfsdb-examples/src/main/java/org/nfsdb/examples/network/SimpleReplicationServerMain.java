@@ -47,7 +47,7 @@ public class SimpleReplicationServerMain {
 
         System.out.print("Publishing: ");
         for (int i = 0; i < 10; i++) {
-            publishPrice(writer, 1000000);
+            publishPrice(writer, i < 3 ? 1000000 : 100);
             Thread.sleep(TimeUnit.SECONDS.toMillis(2));
             System.out.print(".");
         }
@@ -61,6 +61,7 @@ public class SimpleReplicationServerMain {
         Price p = new Price();
         for (int i = 0; i < count; i++) {
             p.setTimestamp(tZero + i);
+            p.setNanos(System.nanoTime());
             p.setSym(String.valueOf(i % 20));
             p.setPrice(i * 1.04598 + i);
             writer.append(p);

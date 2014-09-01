@@ -96,7 +96,7 @@ public class IteratorTest extends AbstractTest {
             add(10);
         }};
 
-        MergingIterator<Integer> iterator = new MergingIterator<>(listA.iterator(), listB.iterator(), new Comparator<Integer>() {
+        MergingIterator<Integer> iterator = new MergingIterator<Integer>().$new(listA.iterator(), listB.iterator(), new Comparator<Integer>() {
             @Override
             public int compare(Integer o1, Integer o2) {
                 return o1.compareTo(o2);

@@ -76,7 +76,7 @@ public class JournalRefreshTest extends AbstractTest {
         List<Quote> data = new ArrayList<>();
         data.add(new Quote().setSym("IMO-5").setTimestamp(Dates.utc(2013, 3, 10, 15, 0).getMillis()));
         data.add(new Quote().setSym("IMO-6").setTimestamp(Dates.utc(2013, 3, 10, 16, 0).getMillis()));
-        rw.appendLag(data);
+        rw.mergeAppend(data);
 
         rw.commit();
 
@@ -165,7 +165,7 @@ public class JournalRefreshTest extends AbstractTest {
         reader.refresh();
         Assert.assertEquals(rw.size(), reader.size());
 
-        rw.appendLag(origin.query().all().asResultSet().subset(500, 600));
+        rw.mergeAppend(origin.query().all().asResultSet().subset(500, 600));
         rw.commit();
         reader.refresh();
         Assert.assertEquals(rw.size(), reader.size());

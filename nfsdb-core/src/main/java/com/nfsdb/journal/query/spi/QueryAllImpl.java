@@ -80,7 +80,7 @@ public class QueryAllImpl<T> implements QueryAll<T> {
     }
 
     @Override
-    public JournalIterator<T> bufferedIterator() {
+    public JournalPeekingIterator<T> bufferedIterator() {
         return new JournalBufferedIterator<>(journal, createRanges());
     }
 
@@ -99,7 +99,7 @@ public class QueryAllImpl<T> implements QueryAll<T> {
     }
 
     @Override
-    public JournalIterator<T> bufferedIterator(Interval interval) {
+    public JournalPeekingIterator<T> bufferedIterator(Interval interval) {
         return new JournalBufferedIterator<>(journal, createRanges(interval));
     }
 
@@ -109,17 +109,17 @@ public class QueryAllImpl<T> implements QueryAll<T> {
     }
 
     @Override
-    public JournalIterator<T> iterator(long rowid) {
+    public JournalPeekingIterator<T> iterator(long rowid) {
         return new JournalIteratorImpl<>(journal, createRanges(rowid));
     }
 
     @Override
-    public JournalIterator<T> bufferedIterator(long rowid) {
+    public JournalPeekingIterator<T> bufferedIterator(long rowid) {
         return new JournalBufferedIterator<>(journal, createRanges(rowid));
     }
 
     @Override
-    public JournalIterator<T> incrementBufferedIterator() {
+    public JournalPeekingIterator<T> incrementBufferedIterator() {
         try {
             long lo = journal.getMaxRowID();
             journal.refresh();
@@ -130,7 +130,7 @@ public class QueryAllImpl<T> implements QueryAll<T> {
     }
 
     @Override
-    public JournalIterator<T> incrementIterator() {
+    public JournalPeekingIterator<T> incrementIterator() {
         try {
             long lo = journal.getMaxRowID();
             journal.refresh();

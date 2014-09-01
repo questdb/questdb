@@ -20,6 +20,7 @@ import com.nfsdb.journal.OrderedResultSet;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.iterators.ConcurrentIterator;
 import com.nfsdb.journal.iterators.JournalIterator;
+import com.nfsdb.journal.iterators.JournalPeekingIterator;
 import com.nfsdb.journal.iterators.JournalRowBufferedIterator;
 import org.joda.time.Interval;
 
@@ -29,7 +30,7 @@ public interface QueryAll<T> extends Iterable<T> {
 
     long size();
 
-    JournalIterator<T> bufferedIterator();
+    JournalPeekingIterator<T> bufferedIterator();
 
     JournalRowBufferedIterator<T> bufferedRowIterator();
 
@@ -41,17 +42,17 @@ public interface QueryAll<T> extends Iterable<T> {
 
     QueryAllBuilder<T> withSymValues(String symbol, String... value);
 
-    JournalIterator<T> bufferedIterator(Interval interval);
+    JournalPeekingIterator<T> bufferedIterator(Interval interval);
 
     ConcurrentIterator<T> concurrentIterator(Interval interval);
 
-    JournalIterator<T> iterator(long loRowID);
+    JournalPeekingIterator<T> iterator(long loRowID);
 
-    JournalIterator<T> bufferedIterator(long rowid);
+    JournalPeekingIterator<T> bufferedIterator(long rowid);
 
-    JournalIterator<T> incrementBufferedIterator();
+    JournalPeekingIterator<T> incrementBufferedIterator();
 
-    JournalIterator<T> incrementIterator();
+    JournalPeekingIterator<T> incrementIterator();
 
     ConcurrentIterator<T> concurrentIterator(long rowid);
 }

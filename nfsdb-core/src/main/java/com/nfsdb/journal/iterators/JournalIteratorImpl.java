@@ -24,7 +24,7 @@ import com.nfsdb.journal.utils.Rows;
 
 import java.util.List;
 
-public class JournalIteratorImpl<T> extends AbstractImmutableIterator<T> implements JournalIterator<T>, PeekingIterator<T> {
+public class JournalIteratorImpl<T> extends AbstractImmutableIterator<T> implements JournalPeekingIterator<T> {
     private final List<JournalIteratorRange> ranges;
     private final Journal<T> journal;
     private boolean hasNext = true;

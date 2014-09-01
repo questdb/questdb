@@ -31,7 +31,7 @@ import java.util.Collections;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
-public class AppendUnorderedToLag {
+public class MergeAppendUnordered {
 
 
     /**
@@ -44,7 +44,7 @@ public class AppendUnorderedToLag {
     public static void main(String[] args) throws JournalException {
 
         if (args.length != 1) {
-            System.out.println("Usage: " + AppendUnorderedToLag.class.getName() + " <path>");
+            System.out.println("Usage: " + MergeAppendUnordered.class.getName() + " <path>");
             System.exit(1);
         }
 
@@ -103,7 +103,7 @@ public class AppendUnorderedToLag {
                     Collections.sort(batch, writer.getTimestampComparator());
 
                     // append batch and have journal merge data
-                    writer.appendLag(batch);
+                    writer.mergeAppend(batch);
                 }
 
                 // commit is necessary
