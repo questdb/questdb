@@ -17,6 +17,7 @@
 package com.nfsdb.journal.iterators;
 
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
+import com.nfsdb.journal.collections.ImmutableIterator;
 
 import java.util.Comparator;
 import java.util.Iterator;
@@ -27,8 +28,12 @@ public class MergingIterator<T> extends AbstractImmutableIterator<T> {
     protected Iterator<T> a;
     protected Iterator<T> b;
     protected Comparator<T> comparator;
-    private T nextA;
-    private T nextB;
+    protected T nextA;
+    protected T nextB;
+
+    public static <T, X extends ImmutableIterator<T>> ImmutableIterator<T> merge(List<X> iterators, Comparator<T> comparator) {
+        return merge(iterators, comparator, 0);
+    }
 
     @Override
     public boolean hasNext() {
@@ -42,22 +47,6 @@ public class MergingIterator<T> extends AbstractImmutableIterator<T> {
         this.nextA = null;
         this.nextB = null;
         return this;
-    }
-
-    public Iterator<T> $merging(List<Iterator<T>> iterators) {
-        return $merging(iterators, 0);
-    }
-
-    public Iterator<T> $merging(List<Iterator<T>> iterators, int index) {
-        if (iterators == null || iterators.size() == 0) {
-            throw new IllegalArgumentException();
-        }
-
-        if (iterators.size() - index == 1) {
-            return iterators.get(index);
-        }
-
-        return new MergingIterator<T>().$merging(iterators, ++index);
     }
 
     @Override
@@ -81,5 +70,17 @@ public class MergingIterator<T> extends AbstractImmutableIterator<T> {
         }
 
         return result;
+    }
+
+    private static <T, X extends ImmutableIterator<T>> ImmutableIterator<T> merge(List<X> iterators, Comparator<T> comparator, int index) {
+        if (iterators == null || iterators.size() == 0) {
+            throw new IllegalArgumentException();
+        }
+
+        if (iterators.size() - index == 1) {
+            return iterators.get(index);
+        }
+
+        return new MergingIterator<T>().$new(iterators.get(index), merge(iterators, comparator, ++index), comparator);
     }
 }

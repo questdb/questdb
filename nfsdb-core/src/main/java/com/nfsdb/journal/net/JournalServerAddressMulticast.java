@@ -25,7 +25,6 @@ import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.InetSocketAddress;
 import java.net.MulticastSocket;
-import java.net.SocketException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -92,7 +91,7 @@ public class JournalServerAddressMulticast implements Runnable {
 
             try {
                 this.packetSnd = new DatagramPacket(snd, snd.length, config.getMulticastSocketAddress());
-            } catch (SocketException e) {
+            } catch (Exception e) {
                 throw new JournalNetworkException("Cannot create send packet. Should never occur", e);
             }
 

@@ -17,6 +17,7 @@
 package com.nfsdb.journal;
 
 import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.iterators.*;
 import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.test.tools.AbstractTest;
@@ -29,8 +30,21 @@ import org.junit.Test;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class IteratorTest extends AbstractTest {
+
+    private final Comparator<Quote> comparator = new Comparator<Quote>() {
+        @Override
+        public int compare(Quote o1, Quote o2) {
+            long x = o1.getTimestamp();
+            long y = o2.getTimestamp();
+            return (x < y) ? -1 : ((x == y) ? 0 : 1);
+        }
+    };
 
     @Test
     public void testJournalIterator() throws JournalException {
@@ -239,5 +253,129 @@ public class IteratorTest extends AbstractTest {
             count++;
         }
         Assert.assertEquals(5000, count);
+    }
+
+    @Test
+    public void testMergePeeking() throws Exception {
+        populateQuotes();
+        List<Journal<Quote>> journals = new ArrayList<Journal<Quote>>() {{
+            add(factory.reader(Quote.class, "quote-0"));
+            add(factory.reader(Quote.class, "quote-1"));
+            add(factory.reader(Quote.class, "quote-2"));
+            add(factory.reader(Quote.class, "quote-3"));
+            add(factory.reader(Quote.class, "quote-4"));
+        }};
+
+        List<JournalPeekingIterator<Quote>> list = new ArrayList<>();
+        for (int i = 0; i < journals.size(); i++) {
+            list.add(journals.get(i).bufferedIterator());
+        }
+
+        long ts = 0;
+        for (Quote q : MergingPeekingIterator.mergePeek(list, comparator)) {
+            Assert.assertTrue(ts <= q.getTimestamp());
+            ts = q.getTimestamp();
+        }
+    }
+
+    @Test
+    public void testMerge() throws Exception {
+        populateQuotes();
+        List<Journal<Quote>> journals = new ArrayList<Journal<Quote>>() {{
+            add(factory.reader(Quote.class, "quote-0"));
+            add(factory.reader(Quote.class, "quote-1"));
+            add(factory.reader(Quote.class, "quote-2"));
+            add(factory.reader(Quote.class, "quote-3"));
+            add(factory.reader(Quote.class, "quote-4"));
+        }};
+
+        List<JournalIterator<Quote>> list = new ArrayList<>();
+        for (int i = 0; i < journals.size(); i++) {
+            list.add(journals.get(i).bufferedIterator());
+        }
+
+        long ts = 0;
+        for (Quote q : MergingIterator.merge(list, comparator)) {
+            Assert.assertTrue(ts <= q.getTimestamp());
+            ts = q.getTimestamp();
+        }
+    }
+
+    @Test
+    public void testMergeAppend() throws Exception {
+        populateQuotes();
+        List<Journal<Quote>> journals = new ArrayList<Journal<Quote>>() {{
+            add(factory.reader(Quote.class, "quote-0"));
+            add(factory.reader(Quote.class, "quote-1"));
+            add(factory.reader(Quote.class, "quote-2"));
+            add(factory.reader(Quote.class, "quote-3"));
+            add(factory.reader(Quote.class, "quote-4"));
+        }};
+
+        JournalWriter<Quote> writer = factory.writer(Quote.class, "quote-merge");
+        writer.mergeAppend(journals.get(3).bufferedIterator());
+        writer.commit();
+
+
+        List<JournalPeekingIterator<Quote>> list = new ArrayList<>();
+        for (int i = 0; i < journals.size(); i++) {
+            list.add(journals.get(i).bufferedIterator());
+        }
+        writer.mergeAppend(MergingPeekingIterator.mergePeek(list, comparator));
+        writer.commit();
+        Assert.assertEquals(60000, writer.size());
+        TestUtils.assertOrder(writer.bufferedIterator());
+    }
+
+    private void populateQuotes() throws InterruptedException {
+        int count = 5;
+        CyclicBarrier cyclicBarrier = new CyclicBarrier(count);
+        CountDownLatch countDownLatch = new CountDownLatch(count);
+        ExecutorService service = Executors.newCachedThreadPool();
+        try {
+            for (int i = 0; i < count; i++) {
+                service.submit(new Generator(factory, cyclicBarrier, i, countDownLatch));
+            }
+            countDownLatch.await();
+        } finally {
+            service.shutdown();
+        }
+    }
+
+    private static class Generator implements Runnable {
+        private final JournalFactory factory;
+        private final CyclicBarrier barrier;
+        private final CountDownLatch latch;
+        private final int index;
+
+        @Override
+        public void run() {
+            try {
+                try (JournalWriter<Quote> w = factory.writer(Quote.class, "quote-" + index)) {
+                    barrier.await();
+
+                    Quote p = new Quote();
+
+                    long t = System.currentTimeMillis();
+                    for (int i = 0; i < 10000; i++) {
+                        p.setTimestamp(t + i);
+                        p.setSym(String.valueOf(i % 20));
+                        p.setAsk(i * 1.04598 + i);
+                        w.append(p);
+                    }
+                    w.commit();
+                    latch.countDown();
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+
+        private Generator(JournalFactory factory, CyclicBarrier barrier, int index, CountDownLatch latch) {
+            this.factory = factory;
+            this.barrier = barrier;
+            this.index = index;
+            this.latch = latch;
+        }
     }
 }

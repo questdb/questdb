@@ -28,7 +28,6 @@ import com.nfsdb.journal.factory.NullsAdaptor;
 import com.nfsdb.journal.factory.configuration.Constants;
 import com.nfsdb.journal.factory.configuration.JournalMetadata;
 import com.nfsdb.journal.iterators.ConcurrentIterator;
-import com.nfsdb.journal.iterators.JournalIterator;
 import com.nfsdb.journal.iterators.JournalPeekingIterator;
 import com.nfsdb.journal.iterators.JournalRowBufferedIterator;
 import com.nfsdb.journal.locks.Lock;
@@ -58,6 +57,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
     protected final List<Partition<T>> partitions = new ArrayList<>();
     // empty container for current transaction
     protected final Tx tx = new Tx();
+    protected TxLog txLog;
     private final JournalMetadata<T> metadata;
     private final File location;
     private final Map<String, SymbolTable> symbolTableMap = new HashMap<>();
@@ -76,7 +76,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
     };
     private final NullsAdaptor<T> nullsAdaptor;
     private final BitSet inactiveColumns;
-    protected TxLog txLog;
     private boolean open;
     private ColumnMetadata columnMetadata[];
     private Partition<T> irregularPartition;
@@ -425,7 +424,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         return query;
     }
 
-    public JournalIterator<T> bufferedIterator() {
+    public JournalPeekingIterator<T> bufferedIterator() {
         return query().all().bufferedIterator();
     }
 
@@ -446,7 +445,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      * @return Iterator that traverses journal increment
      * @since 2.0.1
      */
-    public JournalIterator<T> incrementBuffered() {
+    public JournalPeekingIterator<T> incrementBuffered() {
         return query().all().incrementBufferedIterator();
     }
 

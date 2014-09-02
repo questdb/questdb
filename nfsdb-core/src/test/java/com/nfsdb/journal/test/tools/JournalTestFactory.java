@@ -53,7 +53,7 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
                     throwable = e;
                 } finally {
                     for (Journal journal : journals) {
-                        if (journal.isOpen()) {
+                        if (journal != null && journal.isOpen()) {
                             journal.setCloseListener(null);
                             journal.close();
                         }

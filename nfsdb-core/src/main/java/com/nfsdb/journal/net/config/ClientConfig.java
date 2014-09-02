@@ -24,7 +24,6 @@ import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.InetSocketAddress;
 import java.net.MulticastSocket;
-import java.net.SocketException;
 import java.nio.channels.SocketChannel;
 import java.nio.channels.UnresolvedAddressException;
 import java.util.concurrent.*;
@@ -119,7 +118,7 @@ public class ClientConfig extends NetworkConfig {
         final DatagramPacket packetSnd;
         try {
             packetSnd = new DatagramPacket(new byte[]{ADDRESS_REQUEST_PREFIX}, 1, getMulticastSocketAddress());
-        } catch (SocketException e) {
+        } catch (Exception e) {
             throw new JournalNetworkException("Cannot create send packet. Should never occur", e);
         }
         final DatagramPacket packetRcv = new DatagramPacket(new byte[10], 10);

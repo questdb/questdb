@@ -161,7 +161,6 @@ public class JournalMetadataBuilder<T> {
 
             if (meta.indexed && meta.distinctCountHint <= 1) {
                 meta.distinctCountHint = Math.max(2, (int) (recordCountHint * 0.01));
-//                throw new JournalConfigurationException("hintDistinctCount for " + modelClass.getName() + "." + meta.name + " must be > 1 for index to make sense. Either review hintDistinctCount or set indexed=\"false\"");
             }
 
             if (meta.size == 0 && meta.avgSize == 0) {
