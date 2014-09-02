@@ -16,15 +16,15 @@
 
 package com.nfsdb.journal.iterators.clock;
 
-public final class MilliClock implements Clock {
+public final class NanoClock implements Clock {
 
-    public static final Clock INSTANCE = new MilliClock();
+    public static final Clock INSTANCE = new NanoClock();
 
     @Override
     public long getTicks() {
-        return System.currentTimeMillis();
+        return System.nanoTime();
     }
 
-    private MilliClock() {
+    private NanoClock() {
     }
 }

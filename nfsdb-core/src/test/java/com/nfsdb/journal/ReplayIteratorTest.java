@@ -30,7 +30,7 @@ public class ReplayIteratorTest {
     @Test
     public void testReplay() throws Exception {
 
-        Clock clock = new MilliClock();
+        Clock clock = MilliClock.INSTANCE;
 
         final long t = clock.getTicks();
 
