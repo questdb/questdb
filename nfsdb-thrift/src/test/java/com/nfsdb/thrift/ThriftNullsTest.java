@@ -27,6 +27,7 @@ import org.apache.thrift.TBase;
 import org.apache.thrift.TException;
 import org.apache.thrift.TFieldIdEnum;
 import org.apache.thrift.protocol.TProtocol;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -225,7 +226,7 @@ public class ThriftNullsTest {
 
 
         @Override
-        public int compareTo(Object o) {
+        public int compareTo(@NotNull Object o) {
             return this == o ? 0 : -1;
         }
     }

@@ -14,26 +14,11 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.concurrent;
+package com.nfsdb.journal.iterators.clock;
 
-import org.jetbrains.annotations.NotNull;
-
-import java.util.concurrent.ThreadFactory;
-
-public class NamedDaemonThreadFactory implements ThreadFactory {
-    private final String name;
-    private final boolean daemon;
-    private int count = 0;
-
-    public NamedDaemonThreadFactory(String name, boolean daemon) {
-        this.name = name;
-        this.daemon = daemon;
-    }
-
+public class MilliClock implements Clock {
     @Override
-    public Thread newThread(@NotNull Runnable r) {
-        Thread th = new Thread(r, name + "-" + (count++));
-        th.setDaemon(daemon);
-        return th;
+    public long getTicks() {
+        return System.currentTimeMillis();
     }
 }
