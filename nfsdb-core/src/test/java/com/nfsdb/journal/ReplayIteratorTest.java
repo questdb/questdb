@@ -20,13 +20,16 @@ import com.nfsdb.journal.iterators.ReplayIterator;
 import com.nfsdb.journal.iterators.TimeSource;
 import com.nfsdb.journal.iterators.clock.Clock;
 import com.nfsdb.journal.iterators.clock.MilliClock;
+import com.nfsdb.journal.model.Quote;
+import com.nfsdb.journal.test.tools.AbstractTest;
+import com.nfsdb.journal.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.List;
 
-public class ReplayIteratorTest {
+public class ReplayIteratorTest extends AbstractTest {
     @Test
     public void testReplay() throws Exception {
 
@@ -77,6 +80,24 @@ public class ReplayIteratorTest {
         }
 
         return result;
+    }
+
+    @Test
+    public void testJournalReplay() throws Exception {
+        JournalWriter<Quote> w = factory.writer(Quote.class);
+        TestUtils.generateQuoteData(w, 1000);
+
+        ReplayIterator<Quote> replay = new ReplayIterator<>(w, 0.00000001f);
+        TestUtils.assertEquals(w.bufferedIterator(), replay);
+    }
+
+    @Test
+    public void testJournalIteratorReplay() throws Exception {
+        JournalWriter<Quote> w = factory.writer(Quote.class);
+        TestUtils.generateQuoteData(w, 1000);
+
+        ReplayIterator<Quote> replay = new ReplayIterator<>(w.bufferedIterator(), 0.00000001f);
+        TestUtils.assertEquals(w.bufferedIterator(), replay);
     }
 
     private static class Entity {

@@ -16,8 +16,11 @@
 
 package com.nfsdb.journal.iterators;
 
+import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.iterators.clock.Clock;
+import com.nfsdb.journal.iterators.clock.MilliClock;
+import com.nfsdb.journal.utils.Unsafe;
 
 import java.util.Iterator;
 
@@ -29,6 +32,25 @@ public class ReplayIterator<T> extends AbstractImmutableIterator<T> {
     private final TimeSource<T> timeSource;
     private long lastObjTicks;
     private long lastTicks;
+
+    @SuppressWarnings("unchecked")
+    public ReplayIterator(final Journal journal, float speed) {
+        this((JournalIterator<T>) journal.iterator(), speed);
+    }
+
+    public ReplayIterator(final JournalIterator<T> underlying, float speed) {
+        this.underlying = underlying;
+        this.clock = MilliClock.INSTANCE;
+        this.speed = speed;
+        this.timeSource = new TimeSource<T>() {
+            private final long timestampOffset = underlying.getJournal().getMetadata().getTimestampColumnMetadata().offset;
+
+            @Override
+            public long getTicks(T object) {
+                return Unsafe.getUnsafe().getLong(object, timestampOffset);
+            }
+        };
+    }
 
     public ReplayIterator(Iterable<T> underlying, Clock clock, float speed, TimeSource<T> timeSource) {
         this(underlying.iterator(), clock, speed, timeSource);
