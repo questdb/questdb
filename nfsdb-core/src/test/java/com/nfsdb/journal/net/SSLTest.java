@@ -23,6 +23,7 @@ import com.nfsdb.journal.net.config.ClientConfig;
 import com.nfsdb.journal.net.config.ServerConfig;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestUtils;
+import com.nfsdb.journal.tx.TxListener;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -38,26 +39,40 @@ public class SSLTest extends AbstractTest {
         int size = 100000;
 
         JournalServer server = new JournalServer(new ServerConfig() {{
-            setIfName("lo");
+            setHostname("localhost");
             setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
+            getSslConfig().setSecure(true);
             try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                 getSslConfig().setKeyStore(is, "changeit");
             }
-            getSslConfig().setSecure(true);
         }}, factory);
 
-        JournalClient client = new JournalClient(ClientConfig.INSTANCE, factory);
+        JournalClient client = new JournalClient(new ClientConfig() {{
+            getSslConfig().setSecure(true);
+            try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
+                getSslConfig().setTrustStore("JKS", is, "changeit");
+            }
+        }}, factory);
 
-        JournalWriter<Quote> remote = factory.writer(Quote.class, "remote", size);
+        JournalWriter<Quote> remote = factory.writer(Quote.class, "remote");
         server.publish(remote);
         server.start();
 
-        client.subscribe(Quote.class, "remote", "local", size);
+        client.subscribe(Quote.class, "remote", "local", new TxListener() {
+            @Override
+            public void onCommit() {
+                System.out.println("got commit");
+            }
+        });
         client.start();
 
         TestUtils.generateQuoteData(remote, size);
 
+        System.out.println("done");
+        Thread.sleep(3000);
+
         client.halt();
+        System.out.println("here");
         server.halt();
         Journal<Quote> local = factory.reader(Quote.class, "local");
         TestUtils.assertDataEquals(remote, local);

@@ -74,7 +74,7 @@ public class ClientConfig extends NetworkConfig {
     public SocketChannel openSocketChannel() throws JournalNetworkException {
         String host = getHostname();
         InetSocketAddress address;
-        ServerInformation serverInformation = null;
+        ServerInformation serverInformation;
 
         if (host == null) {
             serverInformation = lookupServerInformation();
@@ -83,13 +83,7 @@ public class ClientConfig extends NetworkConfig {
             address = new InetSocketAddress(host, getPort());
         }
         try {
-            SocketChannel channel;
-            if (!getSslConfig().isSecure() && (serverInformation == null || !serverInformation.ssl)) {
-                channel = SocketChannel.open(address);
-            } else {
-                channel = getSslConfig().getSslContext().getSocketFactory().createSocket(address.getHostName(), address.getPort()).getChannel();
-            }
-
+            SocketChannel channel = SocketChannel.open(address);
             channel.socket().setSoTimeout(getSoTimeout());
             channel.socket().setTcpNoDelay(isTcpNoDelay());
             channel.socket().setKeepAlive(getKeepAlive());

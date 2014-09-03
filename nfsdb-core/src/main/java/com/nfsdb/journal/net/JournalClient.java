@@ -27,6 +27,7 @@ import com.nfsdb.journal.factory.JournalWriterFactory;
 import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.net.comsumer.JournalDeltaConsumer;
 import com.nfsdb.journal.net.config.ClientConfig;
+import com.nfsdb.journal.net.config.SslConfig;
 import com.nfsdb.journal.net.model.Command;
 import com.nfsdb.journal.net.model.IndexedJournal;
 import com.nfsdb.journal.net.model.IndexedJournalKey;
@@ -40,6 +41,7 @@ import com.nfsdb.journal.tx.TxListener;
 import gnu.trove.list.array.TByteArrayList;
 
 import java.io.IOException;
+import java.nio.channels.ByteChannel;
 import java.nio.channels.SocketChannel;
 import java.util.ArrayList;
 import java.util.List;
@@ -68,7 +70,7 @@ public class JournalClient {
     private final ClientConfig config;
     private final ExecutorService service;
     private final AtomicBoolean running = new AtomicBoolean(false);
-    private SocketChannel channel;
+    private ByteChannel channel;
     private StatsCollectingReadableByteChannel statsChannel;
     private Future handlerFuture;
 
@@ -129,12 +131,20 @@ public class JournalClient {
 
     public void start() throws JournalNetworkException {
         if (!isRunning()) {
-            channel = config.openSocketChannel();
+            SocketChannel channel = config.openSocketChannel();
             try {
                 statsChannel = new StatsCollectingReadableByteChannel(channel.getRemoteAddress());
             } catch (IOException e) {
                 throw new JournalNetworkException("Cannot get remote address", e);
             }
+
+            SslConfig sslConfig = config.getSslConfig();
+            if (sslConfig.isSecure()) {
+                this.channel = new SSLByteChannel(sslConfig.getSslContext(), channel, true);
+            } else {
+                this.channel = channel;
+            }
+
             sendKeys();
             sendState();
             running.set(true);

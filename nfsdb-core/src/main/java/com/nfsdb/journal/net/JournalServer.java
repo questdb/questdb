@@ -26,6 +26,7 @@ import com.nfsdb.journal.factory.JournalReaderFactory;
 import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.net.bridge.JournalEventBridge;
 import com.nfsdb.journal.net.config.ServerConfig;
+import com.nfsdb.journal.net.config.SslConfig;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -50,7 +51,7 @@ public class JournalServer {
     private final ServerConfig config;
     private final ExecutorService service;
     private final AtomicBoolean running = new AtomicBoolean(false);
-    private final ArrayList<SocketChannel> channels = new ArrayList<>();
+    private final ArrayList<SocketChannelHolder> channels = new ArrayList<>();
     private final JournalServerAddressMulticast multicast;
     private ServerSocketChannel serverSocketChannel;
 
@@ -64,6 +65,23 @@ public class JournalServer {
         this.service = Executors.newCachedThreadPool(AGENT_THREAD_FACTORY);
         this.bridge = new JournalEventBridge(config.getHeartbeatFrequency(), TimeUnit.MILLISECONDS, config.getEventBufferSize());
         this.multicast = new JournalServerAddressMulticast(config);
+    }
+
+    private static void closeChannel(SocketChannelHolder holder, boolean force) {
+        if (holder != null) {
+            try {
+                if (holder.socketAddress != null) {
+                    if (force) {
+                        LOGGER.info("Client forced out: %s", holder.socketAddress);
+                    } else {
+                        LOGGER.info("Client disconnected: %s", holder.socketAddress);
+                    }
+                }
+                holder.byteChannel.close();
+            } catch (IOException e) {
+                LOGGER.error("Cannot close channel: %s", holder.byteChannel);
+            }
+        }
     }
 
     public void publish(JournalWriter journal) {
@@ -130,23 +148,6 @@ public class JournalServer {
         return channels.size();
     }
 
-    private static void closeChannel(SocketChannel channel, boolean force) {
-        if (channel != null) {
-            try {
-                if (channel.socket().getRemoteSocketAddress() != null) {
-                    if (force) {
-                        LOGGER.info("Client forced out: %s", channel.socket().getRemoteSocketAddress());
-                    } else {
-                        LOGGER.info("Client disconnected: %s", channel.socket().getRemoteSocketAddress());
-                    }
-                }
-                channel.close();
-            } catch (IOException e) {
-                LOGGER.error("Cannot close channel: %s", channel);
-            }
-        }
-    }
-
     int getWriterIndex(JournalKey key) {
         for (int i = 0; i < writers.size(); i++) {
             Journal journal = writers.get(i);
@@ -164,18 +165,18 @@ public class JournalServer {
         return writers.size() - 1;
     }
 
-    private synchronized void addChannel(SocketChannel channel) {
-        channels.add(channel);
+    private synchronized void addChannel(SocketChannelHolder holder) {
+        channels.add(holder);
     }
 
-    private synchronized void removeChannel(SocketChannel channel) {
-        channels.remove(channel);
-        closeChannel(channel, false);
+    private synchronized void removeChannel(SocketChannelHolder holder) {
+        channels.remove(holder);
+        closeChannel(holder, false);
     }
 
     private synchronized void closeChannels() {
-        for (SocketChannel channel : channels) {
-            closeChannel(channel, true);
+        for (SocketChannelHolder h : channels) {
+            closeChannel(h, true);
         }
     }
 
@@ -189,13 +190,22 @@ public class JournalServer {
                     }
                     SocketChannel channel = serverSocketChannel.accept();
                     if (channel != null) {
-                        addChannel(channel);
+                        SocketChannelHolder holder;
+
+                        SslConfig sslConfig = config.getSslConfig();
                         channel.socket().setSoTimeout(config.getSoTimeout());
-                        LOGGER.info("Connected: %s", channel.getRemoteAddress());
-                        service.submit(new Handler(channel));
+
+                        if (sslConfig.isSecure()) {
+                            holder = new SocketChannelHolder(new SSLByteChannel(sslConfig.getSslContext(), channel, false), channel.getRemoteAddress());
+                        } else {
+                            holder = new SocketChannelHolder(channel, channel.getRemoteAddress());
+                        }
+                        addChannel(holder);
+                        service.submit(new Handler(holder));
+                        LOGGER.info("Connected: %s", holder.socketAddress);
                     }
                 }
-            } catch (IOException e) {
+            } catch (IOException | JournalNetworkException e) {
                 if (running.get()) {
                     LOGGER.error("Acceptor dying", e);
                 }
@@ -207,7 +217,12 @@ public class JournalServer {
     class Handler implements Runnable {
 
         private final JournalServerAgent agent;
-        private final SocketChannel channel;
+        private final SocketChannelHolder holder;
+
+        Handler(SocketChannelHolder holder) {
+            this.holder = holder;
+            this.agent = new JournalServerAgent(JournalServer.this, holder.socketAddress);
+        }
 
         @Override
         public void run() {
@@ -217,13 +232,17 @@ public class JournalServer {
                         break;
                     }
                     try {
-                        agent.process(channel);
+                        agent.process(holder.byteChannel);
                     } catch (JournalDisconnectedChannelException e) {
                         break;
                     } catch (JournalNetworkException e) {
                         if (running.get()) {
-                            LOGGER.info("Client died: " + channel.socket().getRemoteSocketAddress());
-                            LOGGER.debug(e);
+                            LOGGER.info("Client died: " + holder.socketAddress);
+                            if (LOGGER.isDebugEnabled()) {
+                                LOGGER.debug(e);
+                            } else {
+                                LOGGER.info(e.getMessage());
+                            }
                         }
                         break;
                     } catch (Throwable e) {
@@ -236,13 +255,8 @@ public class JournalServer {
                 }
             } finally {
                 agent.close();
-                removeChannel(channel);
+                removeChannel(holder);
             }
-        }
-
-        Handler(SocketChannel channel) {
-            this.channel = channel;
-            this.agent = new JournalServerAgent(JournalServer.this, channel.socket().getRemoteSocketAddress());
         }
     }
 }

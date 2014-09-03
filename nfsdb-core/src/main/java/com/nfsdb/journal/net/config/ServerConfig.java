@@ -19,9 +19,6 @@ package com.nfsdb.journal.net.config;
 import com.nfsdb.journal.exceptions.JournalNetworkException;
 import com.nfsdb.journal.logging.Logger;
 
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLServerSocket;
-import javax.net.ssl.SSLServerSocketFactory;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -88,17 +85,8 @@ public class ServerConfig extends NetworkConfig {
         try {
             ServerSocketChannel channel;
             InetSocketAddress address = getSocketAddress();
-            if (!getSslConfig().isSecure()) {
-                channel = ServerSocketChannel.open();
-                channel.socket().bind(address);
-            } else {
-                SSLContext sslContext = getSslConfig().getSslContext();
-                SSLServerSocketFactory factory = sslContext.getServerSocketFactory();
-                SSLServerSocket socket = (SSLServerSocket) factory.createServerSocket();
-                socket.setNeedClientAuth(getSslConfig().isRequireClientAuth());
-                socket.bind(address);
-                channel = socket.getChannel();
-            }
+            channel = ServerSocketChannel.open();
+            channel.socket().bind(address);
             channel.socket().setSoTimeout(getSoTimeout());
             channel.socket().setReceiveBufferSize(getSoRcvBuf());
             channel.socket().setReuseAddress(isReuseAddress());

@@ -45,6 +45,10 @@ public class SslConfig {
     }
 
     public void setKeyStore(String type, InputStream stream, String password, String alias, String aliasPassword) throws KeyStoreException, CertificateException, NoSuchAlgorithmException, IOException, UnrecoverableKeyException {
+        if (stream == null) {
+            throw new KeyStoreException("NULL key store");
+        }
+
         KeyStore ksKeys = KeyStore.getInstance(type);
         ksKeys.load(stream, password == null ? null : password.toCharArray());
 
