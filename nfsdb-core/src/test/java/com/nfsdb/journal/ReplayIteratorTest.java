@@ -17,7 +17,7 @@
 package com.nfsdb.journal;
 
 import com.nfsdb.journal.iterators.ReplayIterator;
-import com.nfsdb.journal.iterators.TickSource;
+import com.nfsdb.journal.iterators.TimeSource;
 import com.nfsdb.journal.iterators.clock.Clock;
 import com.nfsdb.journal.iterators.clock.MilliClock;
 import org.junit.Assert;
@@ -44,7 +44,7 @@ public class ReplayIteratorTest {
 
         long expected[] = deltas(entities);
 
-        ReplayIterator<Entity> replay = new ReplayIterator<>(entities.iterator(), clock, 1f, new TickSource<Entity>() {
+        ReplayIterator<Entity> replay = new ReplayIterator<>(entities.iterator(), clock, 1f, new TimeSource<Entity>() {
             @Override
             public long getTicks(Entity object) {
                 return object.timestamp;

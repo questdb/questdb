@@ -26,19 +26,19 @@ public class ReplayIterator<T> extends AbstractImmutableIterator<T> {
     private final Iterator<T> underlying;
     private final Clock clock;
     private final float speed;
-    private final TickSource<T> tickSource;
+    private final TimeSource<T> timeSource;
     private long lastObjTicks;
     private long lastTicks;
 
-    public ReplayIterator(Iterable<T> underlying, Clock clock, float speed, TickSource<T> tickSource) {
-        this(underlying.iterator(), clock, speed, tickSource);
+    public ReplayIterator(Iterable<T> underlying, Clock clock, float speed, TimeSource<T> timeSource) {
+        this(underlying.iterator(), clock, speed, timeSource);
     }
 
-    public ReplayIterator(Iterator<T> underlying, Clock clock, float speed, TickSource<T> tickSource) {
+    public ReplayIterator(Iterator<T> underlying, Clock clock, float speed, TimeSource<T> timeSource) {
         this.underlying = underlying;
         this.clock = clock;
         this.speed = speed;
-        this.tickSource = tickSource;
+        this.timeSource = timeSource;
     }
 
     @Override
@@ -50,7 +50,7 @@ public class ReplayIterator<T> extends AbstractImmutableIterator<T> {
     @Override
     public T next() {
         T o = underlying.next();
-        long t = tickSource.getTicks(o);
+        long t = timeSource.getTicks(o);
         if (lastObjTicks == 0) {
             lastObjTicks = t;
             lastTicks = clock.getTicks();

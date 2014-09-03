@@ -16,6 +16,6 @@
 
 package com.nfsdb.journal.iterators;
 
-public interface TickSource<T> {
+public interface TimeSource<T> {
     long getTicks(T object);
 }
