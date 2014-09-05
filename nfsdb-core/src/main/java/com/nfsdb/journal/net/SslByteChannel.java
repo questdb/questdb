@@ -30,6 +30,7 @@ public class SslByteChannel implements ByteChannel {
 
     private static final Logger LOGGER = Logger.getLogger(SslByteChannel.class);
 
+
     private final ByteChannel underlying;
     private final SSLEngine engine;
     private final ByteBuffer inBuf;
