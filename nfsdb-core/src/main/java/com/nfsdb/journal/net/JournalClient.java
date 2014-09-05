@@ -140,7 +140,7 @@ public class JournalClient {
 
             SslConfig sslConfig = config.getSslConfig();
             if (sslConfig.isSecure()) {
-                this.channel = new SslByteChannel(channel, sslConfig);
+                this.channel = new SecureByteChannel(channel, sslConfig);
             } else {
                 this.channel = channel;
             }

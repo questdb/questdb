@@ -21,21 +21,27 @@ import com.nfsdb.journal.exceptions.JournalNetworkException;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
+import javax.net.ssl.X509TrustManager;
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.*;
 import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.List;
 
 public class SslConfig {
+    private static final X509TrustManager[] allowAllTrustManagers = new X509TrustManager[]{
+            new AllowAllTrustManager()
+    };
     private boolean secure = false;
     private boolean requireClientAuth = false;
     private SSLContext sslContext;
     private KeyManagerFactory keyManagerFactory;
     private TrustManagerFactory trustManagerFactory;
     private boolean client = false;
+    private boolean trustAll = false;
 
     public void setKeyStore(InputStream stream, String password) throws UnrecoverableKeyException, CertificateException, NoSuchAlgorithmException, KeyStoreException, IOException {
         this.setKeyStore("JKS", stream, password);
@@ -69,6 +75,10 @@ public class SslConfig {
         }
         keyManagerFactory = KeyManagerFactory.getInstance("SunX509");
         keyManagerFactory.init(ksKeys, aliasPassword == null ? null : aliasPassword.toCharArray());
+    }
+
+    public void setTrustStore(InputStream stream, String password) throws KeyStoreException, CertificateException, NoSuchAlgorithmException, IOException {
+        setTrustStore("JKS", stream, password);
     }
 
     public void setTrustStore(String type, InputStream stream, String password) throws KeyStoreException, CertificateException, NoSuchAlgorithmException, IOException {
@@ -109,17 +119,40 @@ public class SslConfig {
         this.client = client;
     }
 
+    public boolean isTrustAll() {
+        return trustAll;
+    }
+
+    public void setTrustAll(boolean trustAll) {
+        this.trustAll = trustAll;
+    }
+
     private SSLContext createSSLContext() throws JournalNetworkException {
         try {
             SSLContext sslContext = SSLContext.getInstance("TLS");
             SecureRandom sr = new SecureRandom();
             sr.nextInt();
             sslContext.init(keyManagerFactory != null ? keyManagerFactory.getKeyManagers() : null
-                    , trustManagerFactory != null ? trustManagerFactory.getTrustManagers() : null, sr);
+                    , trustManagerFactory != null ? trustManagerFactory.getTrustManagers() : (trustAll ? allowAllTrustManagers : null), sr);
 
             return sslContext;
         } catch (Exception e) {
             throw new JournalNetworkException(e);
+        }
+    }
+
+    private final static class AllowAllTrustManager implements X509TrustManager {
+        @Override
+        public void checkClientTrusted(X509Certificate[] x509Certificates, String s) throws CertificateException {
+        }
+
+        @Override
+        public void checkServerTrusted(X509Certificate[] x509Certificates, String s) throws CertificateException {
+        }
+
+        @Override
+        public X509Certificate[] getAcceptedIssuers() {
+            return new X509Certificate[0];
         }
     }
 }

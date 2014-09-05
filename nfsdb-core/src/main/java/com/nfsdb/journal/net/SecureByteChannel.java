@@ -26,10 +26,9 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.ByteChannel;
 
-public class SslByteChannel implements ByteChannel {
+public class SecureByteChannel implements ByteChannel {
 
-    private static final Logger LOGGER = Logger.getLogger(SslByteChannel.class);
-
+    private static final Logger LOGGER = Logger.getLogger(SecureByteChannel.class);
 
     private final ByteChannel underlying;
     private final SSLEngine engine;
@@ -39,17 +38,15 @@ public class SslByteChannel implements ByteChannel {
     private boolean inData = false;
     private SSLEngineResult.HandshakeStatus handshakeStatus = SSLEngineResult.HandshakeStatus.NEED_WRAP;
     private ByteBuffer swapBuf;
-    private boolean client;
     private boolean fillInBuf = true;
 
-    public SslByteChannel(ByteChannel underlying, SslConfig sslConfig) throws JournalNetworkException {
+    public SecureByteChannel(ByteChannel underlying, SslConfig sslConfig) throws JournalNetworkException {
         this.underlying = underlying;
         SSLContext sslc = sslConfig.getSslContext();
         this.engine = sslc.createSSLEngine();
         this.engine.setEnableSessionCreation(true);
         this.engine.setUseClientMode(sslConfig.isClient());
         this.engine.setNeedClientAuth(sslConfig.isRequireClientAuth());
-        this.client = sslConfig.isClient();
 
         SSLSession session = engine.getSession();
         this.sslDataLimit = session.getApplicationBufferSize();
@@ -137,10 +134,16 @@ public class SslByteChannel implements ByteChannel {
     @Override
     public void close() throws IOException {
         underlying.close();
-        if (client) {
+        if (engine.isOutboundDone()) {
             engine.closeOutbound();
-        } else {
-            engine.closeInbound();
+        }
+
+        while (!engine.isInboundDone()) {
+            try {
+                engine.closeInbound();
+            } catch (SSLException e) {
+                // ignore
+            }
         }
     }
 
@@ -153,46 +156,65 @@ public class SslByteChannel implements ByteChannel {
         engine.beginHandshake();
 
         while (handshakeStatus != SSLEngineResult.HandshakeStatus.FINISHED) {
-            try {
-                switch (handshakeStatus) {
-                    case NOT_HANDSHAKING:
-                        throw new IOException("Not handshaking");
-                    case NEED_WRAP:
-                        outBuf.clear();
-                        swapBuf.clear();
+            switch (handshakeStatus) {
+                case NOT_HANDSHAKING:
+                    throw new IOException("Not handshaking");
+                case NEED_WRAP:
+                    outBuf.clear();
+                    swapBuf.clear();
+                    try {
                         handshakeStatus = engine.wrap(swapBuf, outBuf).getHandshakeStatus();
-                        outBuf.flip();
-                        underlying.write(outBuf);
-                        break;
-                    case NEED_UNWRAP:
-                        if (!inData || !inBuf.hasRemaining()) {
-                            inBuf.clear();
-                            underlying.read(inBuf);
-                            inBuf.flip();
-                            inData = true;
-                        }
+                    } catch (SSLException e) {
+                        LOGGER.error("Server handshake failed: %s", e.getMessage());
+                        closureOnException();
+                        throw e;
+                    }
+                    outBuf.flip();
+                    underlying.write(outBuf);
+                    break;
+                case NEED_UNWRAP:
+                    if (!inData || !inBuf.hasRemaining()) {
+                        inBuf.clear();
+                        underlying.read(inBuf);
+                        inBuf.flip();
+                        inData = true;
+                    }
+                    try {
                         handshakeStatus = engine.unwrap(inBuf, swapBuf).getHandshakeStatus();
-                        break;
-                    case NEED_TASK:
-                        Runnable task;
-                        while ((task = engine.getDelegatedTask()) != null) {
-                            task.run();
-                        }
-                        handshakeStatus = engine.getHandshakeStatus();
-                        break;
-                }
-            } catch (SSLException e) {
-                if (e instanceof SSLHandshakeException) {
-                    LOGGER.error("Handshake failed: %s", e.getMessage());
-                    // this is server side error, continue talking to client
-                    continue;
-                }
-                throw e;
+                    } catch (SSLException e) {
+                        LOGGER.error("Client handshake failed: %s", e.getMessage());
+                        throw e;
+                    }
+                    break;
+                case NEED_TASK:
+                    Runnable task;
+                    while ((task = engine.getDelegatedTask()) != null) {
+                        task.run();
+                    }
+                    handshakeStatus = engine.getHandshakeStatus();
+                    break;
             }
         }
+
         inBuf.clear();
         // make sure swapBuf starts by having remaining() == false
         swapBuf.position(swapBuf.limit());
+    }
+
+    private void closureOnException() throws IOException {
+        swapBuf.position(0);
+        swapBuf.limit(0);
+        SSLEngineResult sslEngineResult;
+        do {
+            outBuf.clear();
+            sslEngineResult = engine.wrap(swapBuf, outBuf);
+            outBuf.flip();
+            underlying.write(outBuf);
+            if (sslEngineResult.getStatus() == SSLEngineResult.Status.CLOSED) {
+                break;
+            }
+        } while (sslEngineResult.getStatus() != SSLEngineResult.Status.CLOSED && !engine.isInboundDone());
+        engine.closeOutbound();
     }
 
     private boolean unwrap(ByteBuffer dst) throws IOException {

@@ -196,7 +196,7 @@ public class JournalServer {
                         channel.socket().setSoTimeout(config.getSoTimeout());
 
                         if (sslConfig.isSecure()) {
-                            holder = new SocketChannelHolder(new SslByteChannel(channel, sslConfig), channel.getRemoteAddress());
+                            holder = new SocketChannelHolder(new SecureByteChannel(channel, sslConfig), channel.getRemoteAddress());
                         } else {
                             holder = new SocketChannelHolder(channel, channel.getRemoteAddress());
                         }
