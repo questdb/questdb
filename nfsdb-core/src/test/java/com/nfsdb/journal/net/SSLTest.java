@@ -18,6 +18,7 @@ package com.nfsdb.journal.net;
 
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
+import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.net.config.ClientConfig;
 import com.nfsdb.journal.net.config.ServerConfig;
@@ -31,8 +32,12 @@ import java.util.concurrent.TimeUnit;
 
 public class SSLTest extends AbstractTest {
 
+    private static final Logger LOGGER = Logger.getLogger(SSLTest.class);
+
     @Test
     public void testSingleKeySSL() throws Exception {
+
+        LOGGER.info("testSingleKeySSL()");
 
         int size = 1000000;
 
@@ -66,10 +71,13 @@ public class SSLTest extends AbstractTest {
         server.halt();
         Journal<Quote> local = factory.reader(Quote.class, "local");
         TestUtils.assertDataEquals(remote, local);
+        LOGGER.info("-------------");
     }
 
     @Test
     public void testAuthBothCertsMissing() throws Exception {
+
+        LOGGER.info("testAuthBothCertsMissing()");
 
         JournalServer server = new JournalServer(new ServerConfig() {{
             setHostname("localhost");
@@ -104,10 +112,13 @@ public class SSLTest extends AbstractTest {
 
         Assert.assertEquals(0, server.getConnectedClients());
         server.halt();
+        LOGGER.info("-------------");
     }
 
     @Test
     public void testClientAuth() throws Exception {
+
+        LOGGER.info("testClientAuth()");
 
         int size = 1000000;
 
@@ -148,10 +159,13 @@ public class SSLTest extends AbstractTest {
         server.halt();
         Journal<Quote> local = factory.reader(Quote.class, "local");
         TestUtils.assertDataEquals(remote, local);
+        LOGGER.info("-------------");
     }
 
     @Test
     public void testServerTrustMissing() throws Exception {
+
+        LOGGER.info("testServerTrustMissing()");
 
         JournalServer server = new JournalServer(new ServerConfig() {{
             setHostname("localhost");
@@ -189,11 +203,14 @@ public class SSLTest extends AbstractTest {
 
         Assert.assertEquals(0, server.getConnectedClients());
         server.halt();
+        LOGGER.info("-------------");
     }
 
 
     @Test
     public void testNonAuthClientTrustMissing() throws Exception {
+
+        LOGGER.info("testNonAuthClientTrustMissing()");
 
         JournalServer server = new JournalServer(new ServerConfig() {{
             setHostname("localhost");
@@ -224,10 +241,13 @@ public class SSLTest extends AbstractTest {
         Thread.sleep(500);
         Assert.assertEquals(0, server.getConnectedClients());
         server.halt();
+        LOGGER.info("-------------");
     }
 
     @Test
     public void testNoCertTrustAllSSL() throws Exception {
+
+        LOGGER.info("testNoCertTrustAllSSL()");
 
         int size = 1000000;
 
@@ -259,6 +279,6 @@ public class SSLTest extends AbstractTest {
         server.halt();
         Journal<Quote> local = factory.reader(Quote.class, "local");
         TestUtils.assertDataEquals(remote, local);
+        LOGGER.info("-------------");
     }
-
 }
