@@ -67,23 +67,6 @@ public class JournalServer {
         this.multicast = new JournalServerAddressMulticast(config);
     }
 
-    private static void closeChannel(SocketChannelHolder holder, boolean force) {
-        if (holder != null) {
-            try {
-                if (holder.socketAddress != null) {
-                    if (force) {
-                        LOGGER.info("Client forced out: %s", holder.socketAddress);
-                    } else {
-                        LOGGER.info("Client disconnected: %s", holder.socketAddress);
-                    }
-                }
-                holder.byteChannel.close();
-            } catch (IOException e) {
-                LOGGER.error("Cannot close channel: %s", holder.byteChannel);
-            }
-        }
-    }
-
     public void publish(JournalWriter journal) {
         writers.add(journal);
     }
@@ -148,6 +131,23 @@ public class JournalServer {
         return channels.size();
     }
 
+    private static void closeChannel(SocketChannelHolder holder, boolean force) {
+        if (holder != null) {
+            try {
+                if (holder.socketAddress != null) {
+                    if (force) {
+                        LOGGER.info("Client forced out: %s", holder.socketAddress);
+                    } else {
+                        LOGGER.info("Client disconnected: %s", holder.socketAddress);
+                    }
+                }
+                holder.byteChannel.close();
+            } catch (IOException e) {
+                LOGGER.error("Cannot close channel [%s]: %s", holder.byteChannel, e.getMessage());
+            }
+        }
+    }
+
     int getWriterIndex(JournalKey key) {
         for (int i = 0; i < writers.size(); i++) {
             Journal journal = writers.get(i);
@@ -196,7 +196,7 @@ public class JournalServer {
                         channel.socket().setSoTimeout(config.getSoTimeout());
 
                         if (sslConfig.isSecure()) {
-                            holder = new SocketChannelHolder(new SSLByteChannel(sslConfig.getSslContext(), channel, false), channel.getRemoteAddress());
+                            holder = new SocketChannelHolder(new SslByteChannel(channel, sslConfig), channel.getRemoteAddress());
                         } else {
                             holder = new SocketChannelHolder(channel, channel.getRemoteAddress());
                         }
@@ -218,11 +218,6 @@ public class JournalServer {
 
         private final JournalServerAgent agent;
         private final SocketChannelHolder holder;
-
-        Handler(SocketChannelHolder holder) {
-            this.holder = holder;
-            this.agent = new JournalServerAgent(JournalServer.this, holder.socketAddress);
-        }
 
         @Override
         public void run() {
@@ -257,6 +252,11 @@ public class JournalServer {
                 agent.close();
                 removeChannel(holder);
             }
+        }
+
+        Handler(SocketChannelHolder holder) {
+            this.holder = holder;
+            this.agent = new JournalServerAgent(JournalServer.this, holder.socketAddress);
         }
     }
 }

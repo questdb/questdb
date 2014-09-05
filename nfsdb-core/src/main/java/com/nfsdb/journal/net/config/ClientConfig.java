@@ -39,6 +39,10 @@ public class ClientConfig extends NetworkConfig {
     private boolean tcpNoDelay = true;
     private int linger = -1;
 
+    public ClientConfig() {
+        getSslConfig().setClient(true);
+    }
+
     public int getSoSndBuf() {
         return soSndBuf;
     }

@@ -23,7 +23,7 @@ import com.nfsdb.journal.net.config.ClientConfig;
 import com.nfsdb.journal.net.config.ServerConfig;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestUtils;
-import com.nfsdb.journal.tx.TxListener;
+import junit.framework.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -33,10 +33,9 @@ import java.util.concurrent.TimeUnit;
 public class SSLTest extends AbstractTest {
 
     @Test
-    @Ignore
     public void testSingleKeySSL() throws Exception {
 
-        int size = 100000;
+        int size = 1000000;
 
         JournalServer server = new JournalServer(new ServerConfig() {{
             setHostname("localhost");
@@ -58,21 +57,94 @@ public class SSLTest extends AbstractTest {
         server.publish(remote);
         server.start();
 
-        client.subscribe(Quote.class, "remote", "local", new TxListener() {
-            @Override
-            public void onCommit() {
-                System.out.println("got commit");
-            }
-        });
+        client.subscribe(Quote.class, "remote", "local");
         client.start();
 
         TestUtils.generateQuoteData(remote, size);
-
-        System.out.println("done");
-        Thread.sleep(3000);
+        Thread.sleep(1000);
 
         client.halt();
-        System.out.println("here");
+        server.halt();
+        Journal<Quote> local = factory.reader(Quote.class, "local");
+        TestUtils.assertDataEquals(remote, local);
+    }
+
+    @Test
+    @Ignore
+    public void testClientAuthBothCertsMissing() throws Exception {
+
+        JournalServer server = new JournalServer(new ServerConfig() {{
+            setHostname("localhost");
+            setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
+            getSslConfig().setSecure(true);
+            getSslConfig().setRequireClientAuth(true);
+            try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
+                getSslConfig().setKeyStore(is, "changeit");
+            }
+        }}, factory);
+
+        JournalClient client = new JournalClient(new ClientConfig() {{
+            getSslConfig().setSecure(true);
+            try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
+                getSslConfig().setTrustStore("JKS", is, "changeit");
+            }
+        }}, factory);
+
+        JournalWriter<Quote> remote = factory.writer(Quote.class, "remote");
+        server.publish(remote);
+        server.start();
+
+        client.subscribe(Quote.class, "remote", "local");
+        try {
+            client.start();
+            Assert.fail("Expect client not to start");
+        } catch (Exception e) {
+            // expect this
+        }
+
+        System.out.println(server.getConnectedClients());
+        server.halt();
+    }
+
+    @Test
+    public void testClientAuth() throws Exception {
+
+        int size = 1000000;
+
+        JournalServer server = new JournalServer(new ServerConfig() {{
+            setHostname("localhost");
+            setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
+            getSslConfig().setSecure(true);
+            getSslConfig().setRequireClientAuth(true);
+            try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
+                getSslConfig().setKeyStore(is, "changeit");
+            }
+            try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
+                getSslConfig().setTrustStore("JKS", is, "changeit");
+            }
+        }}, factory);
+
+        JournalClient client = new JournalClient(new ClientConfig() {{
+            getSslConfig().setSecure(true);
+            try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
+                getSslConfig().setKeyStore(is, "changeit");
+            }
+            try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
+                getSslConfig().setTrustStore("JKS", is, "changeit");
+            }
+        }}, factory);
+
+        JournalWriter<Quote> remote = factory.writer(Quote.class, "remote");
+        server.publish(remote);
+        server.start();
+
+        client.subscribe(Quote.class, "remote", "local");
+        client.start();
+
+        TestUtils.generateQuoteData(remote, size);
+        Thread.sleep(1000);
+
+        client.halt();
         server.halt();
         Journal<Quote> local = factory.reader(Quote.class, "local");
         TestUtils.assertDataEquals(remote, local);

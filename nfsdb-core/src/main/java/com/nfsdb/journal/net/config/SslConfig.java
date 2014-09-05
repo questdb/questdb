@@ -35,6 +35,7 @@ public class SslConfig {
     private SSLContext sslContext;
     private KeyManagerFactory keyManagerFactory;
     private TrustManagerFactory trustManagerFactory;
+    private boolean client = false;
 
     public void setKeyStore(InputStream stream, String password) throws UnrecoverableKeyException, CertificateException, NoSuchAlgorithmException, KeyStoreException, IOException {
         this.setKeyStore("JKS", stream, password);
@@ -92,16 +93,20 @@ public class SslConfig {
         return sslContext;
     }
 
-    public void setSslContext(SSLContext sslContext) {
-        this.sslContext = sslContext;
-    }
-
     public boolean isSecure() {
         return secure;
     }
 
     public void setSecure(boolean secure) {
         this.secure = secure;
+    }
+
+    public boolean isClient() {
+        return client;
+    }
+
+    public void setClient(boolean client) {
+        this.client = client;
     }
 
     private SSLContext createSSLContext() throws JournalNetworkException {
