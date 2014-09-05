@@ -221,7 +221,7 @@ public class SSLTest extends AbstractTest {
         } finally {
             client.halt();
         }
-
+        Thread.sleep(500);
         Assert.assertEquals(0, server.getConnectedClients());
         server.halt();
     }
