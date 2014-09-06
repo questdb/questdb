@@ -36,7 +36,7 @@ public class SSLTest {
 
     private static final Logger LOGGER = Logger.getLogger(SSLTest.class);
     public JournalTestFactory factory = new JournalTestFactory(new JournalConfigurationBuilder() {{
-        $(Quote.class).recordCountHint(1000000)
+        $(Quote.class).recordCountHint(2000)
                 .$sym("sym").valueCountHint(20)
                 .$sym("mode")
                 .$sym("ex")
@@ -50,7 +50,7 @@ public class SSLTest {
 
         LOGGER.info("testSingleKeySSL()");
 
-        int size = 50000;
+        int size = 1000;
 
         JournalServer server = new JournalServer(new ServerConfig() {{
             setHostname("localhost");
@@ -62,7 +62,6 @@ public class SSLTest {
         }}, factory);
 
         JournalClient client = new JournalClient(new ClientConfig() {{
-//            setTcpNoDelay(true);
             getSslConfig().setSecure(true);
             try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                 getSslConfig().setTrustStore(is, "changeit");
