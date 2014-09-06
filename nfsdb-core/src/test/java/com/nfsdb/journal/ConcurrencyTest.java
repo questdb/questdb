@@ -20,9 +20,11 @@ package com.nfsdb.journal;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalPool;
 import com.nfsdb.journal.factory.JournalReaderFactory;
+import com.nfsdb.journal.factory.configuration.JournalConfiguration;
 import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestUtils;
+import com.nfsdb.journal.utils.Files;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -34,45 +36,51 @@ public class ConcurrencyTest extends AbstractTest {
 
     @Test
     public void testNonPartitionedReads() throws Exception {
-        final JournalPool pool = new JournalPool(factory.getConfiguration(), 10);
-        final int threadCount = 5;
-        final int recordCount = 1000;
+        JournalConfiguration configuration = factory.getConfiguration();
+        try {
+            final JournalPool pool = new JournalPool(configuration, 10);
+            final int threadCount = 5;
+            final int recordCount = 1000;
 
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-        TestUtils.generateQuoteData(w, recordCount);
+            JournalWriter<Quote> w = factory.writer(Quote.class);
+            TestUtils.generateQuoteData(w, recordCount);
 
-        ExecutorService service = Executors.newCachedThreadPool();
+            ExecutorService service = Executors.newCachedThreadPool();
 
-        final CyclicBarrier barrier = new CyclicBarrier(threadCount);
-        final CountDownLatch latch = new CountDownLatch(threadCount);
+            final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+            final CountDownLatch latch = new CountDownLatch(threadCount);
 
-        final List<Exception> exceptions = new ArrayList<>();
+            final List<Exception> exceptions = new ArrayList<>();
 
-        for (int i = 0; i < threadCount; i++) {
-            service.submit(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        barrier.await();
-                        for (int i = 0; i < 10; i++) {
-                            try (JournalReaderFactory rf = pool.get()) {
-                                try (Journal<Quote> r = rf.reader(Quote.class)) {
-                                    Assert.assertEquals(recordCount, r.query().all().asResultSet().read().length);
+            for (int i = 0; i < threadCount; i++) {
+                service.submit(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            barrier.await();
+                            for (int i = 0; i < 10; i++) {
+                                try (JournalReaderFactory rf = pool.get()) {
+                                    try (Journal<Quote> r = rf.reader(Quote.class)) {
+                                        Assert.assertEquals(recordCount, r.query().all().asResultSet().read().length);
+                                    }
+                                } catch (InterruptedException | JournalException e) {
+                                    exceptions.add(e);
+                                    break;
                                 }
-                            } catch (InterruptedException | JournalException e) {
-                                exceptions.add(e);
-                                break;
                             }
+                            latch.countDown();
+                        } catch (InterruptedException | BrokenBarrierException e) {
+                            exceptions.add(e);
                         }
-                        latch.countDown();
-                    } catch (InterruptedException | BrokenBarrierException e) {
-                        exceptions.add(e);
                     }
-                }
-            });
-        }
+                });
+            }
 
-        latch.await();
-        Assert.assertEquals(0, exceptions.size());
+            latch.await();
+            Assert.assertEquals(0, exceptions.size());
+            pool.close();
+        } finally {
+            Files.delete(configuration.getJournalBase());
+        }
     }
 }
