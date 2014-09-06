@@ -14,23 +14,45 @@
  * limitations under the License.
  */
 
-package org.nfsdb.examples.network;
+package org.nfsdb.examples.network.ssl;
 
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.net.JournalClient;
+import com.nfsdb.journal.net.config.ClientConfig;
 import com.nfsdb.journal.tx.TxListener;
 import org.nfsdb.examples.model.Price;
+
+import java.io.InputStream;
 
 /**
  * Single journal replication client example.
  *
  * @since 2.0.1
  */
-public class SimpleReplicationClientMain {
+public class SslReplicationClientMain {
     public static void main(String[] args) throws Exception {
         JournalFactory factory = new JournalFactory(args[0]);
-        final JournalClient client = new JournalClient(factory);
+        final JournalClient client = new JournalClient(
+                new ClientConfig() {{
+                    getSslConfig().setSecure(true);
+
+                    // client has to have server Cert in trust store
+                    // unless Cert is issued by recognised authority
+                    // for purpose of this demo our Cert is self-signed
+
+                    // it is possible to trust "all" server certs,
+                    // which eliminates need for trust store maintenance
+                    // to do that uncomment the following line:
+
+                    //getSslConfig().setTrustAll(true);
+
+                    try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
+                        getSslConfig().setTrustStore(is, "changeit");
+                    }
+                }}
+                , factory
+        );
 
         final Journal<Price> reader = factory.bulkReader(Price.class, "price-copy");
 

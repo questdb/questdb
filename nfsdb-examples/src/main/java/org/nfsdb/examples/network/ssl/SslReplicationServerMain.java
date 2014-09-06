@@ -14,31 +14,41 @@
  * limitations under the License.
  */
 
-package org.nfsdb.examples.network;
+package org.nfsdb.examples.network.ssl;
 
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.net.JournalServer;
+import com.nfsdb.journal.net.config.ServerConfig;
 import org.nfsdb.examples.model.Price;
 
+import java.io.InputStream;
 import java.util.concurrent.TimeUnit;
 
-public class SimpleReplicationServerMain {
+public class SslReplicationServerMain {
 
     private final String location;
 
-    public SimpleReplicationServerMain(String location) {
+    public SslReplicationServerMain(String location) {
         this.location = location;
     }
 
     public static void main(String[] args) throws Exception {
-        new SimpleReplicationServerMain(args[0]).start();
+        new SslReplicationServerMain(args[0]).start();
     }
 
     public void start() throws Exception {
         JournalFactory factory = new JournalFactory(location);
-        JournalServer server = new JournalServer(factory);
+
+        JournalServer server = new JournalServer(
+                new ServerConfig() {{
+                    getSslConfig().setSecure(true);
+                    try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
+                        getSslConfig().setKeyStore(is, "changeit");
+                    }
+                }}
+                , factory);
 
         JournalWriter<Price> writer = factory.writer(Price.class);
         server.publish(writer);
