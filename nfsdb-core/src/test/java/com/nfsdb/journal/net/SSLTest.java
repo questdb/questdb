@@ -18,32 +18,43 @@ package com.nfsdb.journal.net;
 
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
+import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.net.config.ClientConfig;
 import com.nfsdb.journal.net.config.ServerConfig;
-import com.nfsdb.journal.test.tools.AbstractTest;
+import com.nfsdb.journal.test.tools.JournalTestFactory;
 import com.nfsdb.journal.test.tools.TestUtils;
+import com.nfsdb.journal.utils.Files;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.InputStream;
 import java.util.concurrent.TimeUnit;
 
-public class SSLTest extends AbstractTest {
+public class SSLTest {
 
     private static final Logger LOGGER = Logger.getLogger(SSLTest.class);
+    public JournalTestFactory factory = new JournalTestFactory(new JournalConfigurationBuilder() {{
+        $(Quote.class).recordCountHint(1000000)
+                .$sym("sym").valueCountHint(20)
+                .$sym("mode")
+                .$sym("ex")
+        ;
+
+
+    }}.build(Files.makeTempDir()));
 
     @Test
     public void testSingleKeySSL() throws Exception {
 
         LOGGER.info("testSingleKeySSL()");
 
-        int size = 1000000;
+        int size = 50000;
 
         JournalServer server = new JournalServer(new ServerConfig() {{
             setHostname("localhost");
-            setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
+            setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(50));
             getSslConfig().setSecure(true);
             try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                 getSslConfig().setKeyStore(is, "changeit");
@@ -51,6 +62,7 @@ public class SSLTest extends AbstractTest {
         }}, factory);
 
         JournalClient client = new JournalClient(new ClientConfig() {{
+            setTcpNoDelay(true);
             getSslConfig().setSecure(true);
             try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                 getSslConfig().setTrustStore(is, "changeit");
