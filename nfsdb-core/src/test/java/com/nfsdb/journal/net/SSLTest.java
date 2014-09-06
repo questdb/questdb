@@ -165,7 +165,7 @@ public class SSLTest {
         client.start();
 
         TestUtils.generateQuoteData(remote, size);
-        Thread.sleep(500);
+        Thread.sleep(3000);
 
         client.halt();
         server.halt();
@@ -250,7 +250,7 @@ public class SSLTest {
         } finally {
             client.halt();
         }
-        Thread.sleep(500);
+        Thread.sleep(3000);
         Assert.assertEquals(0, server.getConnectedClients());
         server.halt();
         LOGGER.info("-------------");
@@ -285,7 +285,7 @@ public class SSLTest {
         client.start();
 
         TestUtils.generateQuoteData(remote, size);
-        Thread.sleep(500);
+        Thread.sleep(3000);
 
         client.halt();
         server.halt();
