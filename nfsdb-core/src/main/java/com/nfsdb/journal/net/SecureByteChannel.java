@@ -35,6 +35,7 @@ public class SecureByteChannel implements ByteChannel {
     private final ByteBuffer inBuf;
     private final ByteBuffer outBuf;
     private final int sslDataLimit;
+    private final boolean client;
     private boolean inData = false;
     private SSLEngineResult.HandshakeStatus handshakeStatus = SSLEngineResult.HandshakeStatus.NEED_WRAP;
     private ByteBuffer swapBuf;
@@ -47,7 +48,7 @@ public class SecureByteChannel implements ByteChannel {
         this.engine.setEnableSessionCreation(true);
         this.engine.setUseClientMode(sslConfig.isClient());
         this.engine.setNeedClientAuth(sslConfig.isRequireClientAuth());
-
+        this.client = sslConfig.isClient();
         SSLSession session = engine.getSession();
         this.sslDataLimit = session.getApplicationBufferSize();
         inBuf = ByteBuffer.allocateDirect(session.getPacketBufferSize());
@@ -171,6 +172,7 @@ public class SecureByteChannel implements ByteChannel {
                     }
                     outBuf.flip();
                     underlying.write(outBuf);
+                    LOGGER.info("WRAP: %s", client ? "CLIENT" : "SERVER");
                     break;
                 case NEED_UNWRAP:
                     if (!inData || !inBuf.hasRemaining()) {
@@ -185,6 +187,7 @@ public class SecureByteChannel implements ByteChannel {
                         LOGGER.error("Client handshake failed: %s", e.getMessage());
                         throw e;
                     }
+                    LOGGER.info("UNWRAP: %s", client ? "CLIENT" : "SERVER");
                     break;
                 case NEED_TASK:
                     Runnable task;
@@ -192,6 +195,7 @@ public class SecureByteChannel implements ByteChannel {
                         task.run();
                     }
                     handshakeStatus = engine.getHandshakeStatus();
+                    LOGGER.info("TASK: %s", client ? "CLIENT" : "SERVER");
                     break;
             }
         }
@@ -199,6 +203,8 @@ public class SecureByteChannel implements ByteChannel {
         inBuf.clear();
         // make sure swapBuf starts by having remaining() == false
         swapBuf.position(swapBuf.limit());
+
+        LOGGER.info("Handshake complete: %s", client ? "CLIENT" : "SERVER");
     }
 
     private void closureOnException() throws IOException {
@@ -222,13 +228,16 @@ public class SecureByteChannel implements ByteChannel {
             SSLEngineResult.Status status = engine.unwrap(inBuf, dst).getStatus();
             switch (status) {
                 case BUFFER_UNDERFLOW:
+                    LOGGER.info("UNDERFL: %s", client ? "CLIENT" : "SERVER");
                     inBuf.compact();
                     underlying.read(inBuf);
                     inBuf.flip();
                     break;
                 case BUFFER_OVERFLOW:
+                    LOGGER.info("OVERFL: %s", client ? "CLIENT" : "SERVER");
                     return false;
                 case OK:
+                    LOGGER.info("OK: %s", client ? "CLIENT" : "SERVER");
                     break;
                 case CLOSED:
                     throw new IOException("Did not expect CLOSED");
