@@ -182,12 +182,13 @@ public class SecureByteChannel implements ByteChannel {
                         inData = true;
                     }
                     try {
-                        handshakeStatus = engine.unwrap(inBuf, swapBuf).getHandshakeStatus();
+                        SSLEngineResult res = engine.unwrap(inBuf, swapBuf);
+                        handshakeStatus = res.getHandshakeStatus();
+                        LOGGER.info("UNWRAP: %s, %d, %s", client ? "CLIENT" : "SERVER", inBuf.remaining(), res.getStatus());
                     } catch (SSLException e) {
                         LOGGER.error("Client handshake failed: %s", e.getMessage());
                         throw e;
                     }
-                    LOGGER.info("UNWRAP: %s", client ? "CLIENT" : "SERVER");
                     break;
                 case NEED_TASK:
                     Runnable task;
