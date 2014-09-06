@@ -175,15 +175,35 @@ public class SecureByteChannel implements ByteChannel {
                     LOGGER.info("WRAP: %s", client ? "CLIENT" : "SERVER");
                     break;
                 case NEED_UNWRAP:
+
                     if (!inData || !inBuf.hasRemaining()) {
                         inBuf.clear();
                         underlying.read(inBuf);
                         inBuf.flip();
                         inData = true;
                     }
+
                     try {
+
                         SSLEngineResult res = engine.unwrap(inBuf, swapBuf);
+
                         handshakeStatus = res.getHandshakeStatus();
+                        switch (res.getStatus()) {
+                            case BUFFER_UNDERFLOW:
+                                LOGGER.info("HSH UNDERFL: %s", client ? "CLIENT" : "SERVER");
+                                inBuf.compact();
+                                underlying.read(inBuf);
+                                inBuf.flip();
+                                break;
+                            case BUFFER_OVERFLOW:
+                                throw new IOException("Did not expect OVERFLOW here");
+                            case OK:
+                                LOGGER.info("HSH OK: %s", client ? "CLIENT" : "SERVER");
+                                break;
+                            case CLOSED:
+                                throw new IOException("Did not expect CLOSED");
+                        }
+
                         LOGGER.info("UNWRAP: %s, %d, %s", client ? "CLIENT" : "SERVER", inBuf.remaining(), res.getStatus());
                     } catch (SSLException e) {
                         LOGGER.error("Client handshake failed: %s", e.getMessage());
