@@ -27,6 +27,7 @@ import com.nfsdb.journal.test.tools.JournalTestFactory;
 import com.nfsdb.journal.test.tools.TestUtils;
 import com.nfsdb.journal.utils.Files;
 import org.junit.Assert;
+import org.junit.Rule;
 import org.junit.Test;
 
 import java.io.InputStream;
@@ -35,6 +36,8 @@ import java.util.concurrent.TimeUnit;
 public class SSLTest {
 
     private static final Logger LOGGER = Logger.getLogger(SSLTest.class);
+
+    @Rule
     public JournalTestFactory factory = new JournalTestFactory(new JournalConfigurationBuilder() {{
         $(Quote.class).recordCountHint(2000)
                 .$sym("sym").valueCountHint(20)
@@ -63,6 +66,7 @@ public class SSLTest {
 
         JournalClient client = new JournalClient(new ClientConfig() {{
             getSslConfig().setSecure(true);
+            setTcpNoDelay(false);
             try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                 getSslConfig().setTrustStore(is, "changeit");
             }

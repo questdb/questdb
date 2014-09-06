@@ -58,7 +58,11 @@ public class SecureByteChannel implements ByteChannel {
 
     @Override
     public int read(ByteBuffer dst) throws IOException {
-        handshake();
+
+        if (handshakeStatus != SSLEngineResult.HandshakeStatus.FINISHED) {
+            handshake();
+        }
+
         int p = dst.position();
 
         while (true) {
@@ -108,7 +112,9 @@ public class SecureByteChannel implements ByteChannel {
 
     @Override
     public int write(ByteBuffer src) throws IOException {
-        handshake();
+        if (handshakeStatus != SSLEngineResult.HandshakeStatus.FINISHED) {
+            handshake();
+        }
 
         int count = src.remaining();
         while (src.hasRemaining()) {
@@ -166,7 +172,7 @@ public class SecureByteChannel implements ByteChannel {
                     try {
                         handshakeStatus = engine.wrap(swapBuf, outBuf).getHandshakeStatus();
                     } catch (SSLException e) {
-                        LOGGER.error("Server handshake failed: %s", e.getMessage());
+                        LOGGER.error("Server SSL handshake failed: %s", e.getMessage());
                         closureOnException();
                         throw e;
                     }
@@ -205,7 +211,7 @@ public class SecureByteChannel implements ByteChannel {
 
 //                        LOGGER.info("UNWRAP: %s, %d, %s", client ? "CLIENT" : "SERVER", inBuf.remaining(), res.getStatus());
                     } catch (SSLException e) {
-                        LOGGER.error("Client handshake failed: %s", e.getMessage());
+                        LOGGER.error("Client SSL handshake failed: %s", e.getMessage());
                         throw e;
                     }
                     break;
@@ -224,7 +230,7 @@ public class SecureByteChannel implements ByteChannel {
         // make sure swapBuf starts by having remaining() == false
         swapBuf.position(swapBuf.limit());
 
-        LOGGER.info("Handshake complete: %s", client ? "CLIENT" : "SERVER");
+        LOGGER.info("Handshake SSL complete: %s", client ? "CLIENT" : "SERVER");
     }
 
     private void closureOnException() throws IOException {
