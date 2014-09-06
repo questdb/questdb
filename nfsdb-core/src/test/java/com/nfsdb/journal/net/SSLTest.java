@@ -213,6 +213,8 @@ public class SSLTest {
             client.halt();
         }
 
+        Thread.sleep(3000);
+
         Assert.assertEquals(0, server.getConnectedClients());
         server.halt();
         LOGGER.info("-------------");
