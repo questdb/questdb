@@ -121,6 +121,7 @@ public class SSLTest {
             client.halt();
         }
 
+        Thread.sleep(500);
         Assert.assertEquals(0, server.getConnectedClients());
         server.halt();
         LOGGER.info("-------------");
@@ -260,7 +261,7 @@ public class SSLTest {
 
         LOGGER.info("testNoCertTrustAllSSL()");
 
-        int size = 1000000;
+        int size = 2000;
 
         JournalServer server = new JournalServer(new ServerConfig() {{
             setHostname("localhost");
