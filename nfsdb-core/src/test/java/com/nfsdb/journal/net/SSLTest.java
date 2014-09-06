@@ -132,7 +132,7 @@ public class SSLTest {
 
         LOGGER.info("testClientAuth()");
 
-        int size = 1000000;
+        int size = 2000;
 
         JournalServer server = new JournalServer(new ServerConfig() {{
             setHostname("localhost");
@@ -165,7 +165,7 @@ public class SSLTest {
         client.start();
 
         TestUtils.generateQuoteData(remote, size);
-        Thread.sleep(1000);
+        Thread.sleep(500);
 
         client.halt();
         server.halt();
