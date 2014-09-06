@@ -54,7 +54,7 @@ public class SSLTest {
 
         JournalServer server = new JournalServer(new ServerConfig() {{
             setHostname("localhost");
-            setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(50));
+            setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
             getSslConfig().setSecure(true);
             try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                 getSslConfig().setKeyStore(is, "changeit");
@@ -62,7 +62,7 @@ public class SSLTest {
         }}, factory);
 
         JournalClient client = new JournalClient(new ClientConfig() {{
-            setTcpNoDelay(true);
+//            setTcpNoDelay(true);
             getSslConfig().setSecure(true);
             try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                 getSslConfig().setTrustStore(is, "changeit");
