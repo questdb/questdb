@@ -52,40 +52,19 @@ public class SslConfig {
     }
 
     public void setKeyStore(String type, InputStream stream, String password, String alias, String aliasPassword) throws KeyStoreException, CertificateException, NoSuchAlgorithmException, IOException, UnrecoverableKeyException {
-        if (stream == null) {
-            throw new KeyStoreException("NULL key store");
-        }
-
-        KeyStore ksKeys = KeyStore.getInstance(type);
-        ksKeys.load(stream, password == null ? null : password.toCharArray());
-
-        // delete aliases other than the one we need
-
-        if (alias != null) {
-            List<String> aliases = new ArrayList<>();
-            for (Enumeration<String> e = ksKeys.aliases(); e.hasMoreElements(); ) {
-                aliases.add(e.nextElement());
-            }
-
-            for (String s : aliases) {
-                if (!s.equals(alias)) {
-                    ksKeys.deleteEntry(s);
-                }
-            }
-        }
+        KeyStore keyStore = loadKeyStore(type, stream, password, alias);
         keyManagerFactory = KeyManagerFactory.getInstance("SunX509");
-        keyManagerFactory.init(ksKeys, aliasPassword == null ? null : aliasPassword.toCharArray());
+        keyManagerFactory.init(keyStore, aliasPassword == null ? null : aliasPassword.toCharArray());
     }
 
     public void setTrustStore(InputStream stream, String password) throws KeyStoreException, CertificateException, NoSuchAlgorithmException, IOException {
-        setTrustStore("JKS", stream, password);
+        setTrustStore("JKS", stream, password, null);
     }
 
-    public void setTrustStore(String type, InputStream stream, String password) throws KeyStoreException, CertificateException, NoSuchAlgorithmException, IOException {
-        KeyStore ksTrust = KeyStore.getInstance(type);
-        ksTrust.load(stream, password == null ? null : password.toCharArray());
+    public void setTrustStore(String type, InputStream stream, String password, String alias) throws KeyStoreException, CertificateException, NoSuchAlgorithmException, IOException {
+        KeyStore keyStore = loadKeyStore(type, stream, password, alias);
         trustManagerFactory = TrustManagerFactory.getInstance("SunX509");
-        trustManagerFactory.init(ksTrust);
+        trustManagerFactory.init(keyStore);
     }
 
     public boolean isRequireClientAuth() {
@@ -127,6 +106,32 @@ public class SslConfig {
         this.trustAll = trustAll;
     }
 
+    private KeyStore loadKeyStore(String type, InputStream stream, String password, String alias) throws KeyStoreException, CertificateException, NoSuchAlgorithmException, IOException {
+        if (stream == null) {
+            throw new KeyStoreException("NULL key store");
+        }
+
+        KeyStore keyStore = KeyStore.getInstance(type);
+        keyStore.load(stream, password == null ? null : password.toCharArray());
+
+        // delete aliases other than the one we need
+
+        if (alias != null) {
+            List<String> aliases = new ArrayList<>();
+            for (Enumeration<String> e = keyStore.aliases(); e.hasMoreElements(); ) {
+                aliases.add(e.nextElement());
+            }
+
+            for (String s : aliases) {
+                if (!s.equals(alias)) {
+                    keyStore.deleteEntry(s);
+                }
+            }
+        }
+
+        return keyStore;
+    }
+
     private SSLContext createSSLContext() throws JournalNetworkException {
         try {
             SSLContext sslContext = SSLContext.getInstance("TLS");
@@ -134,7 +139,6 @@ public class SslConfig {
             sr.nextInt();
             sslContext.init(keyManagerFactory != null ? keyManagerFactory.getKeyManagers() : null
                     , trustManagerFactory != null ? trustManagerFactory.getTrustManagers() : (trustAll ? allowAllTrustManagers : null), sr);
-
             return sslContext;
         } catch (Exception e) {
             throw new JournalNetworkException(e);

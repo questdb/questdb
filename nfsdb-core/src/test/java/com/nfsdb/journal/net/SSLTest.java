@@ -107,7 +107,7 @@ public class SSLTest {
         JournalClient client = new JournalClient(new ClientConfig() {{
             getSslConfig().setSecure(true);
             try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
-                getSslConfig().setTrustStore("JKS", is, "changeit");
+                getSslConfig().setTrustStore(is, "changeit");
             }
         }}, factory);
 
