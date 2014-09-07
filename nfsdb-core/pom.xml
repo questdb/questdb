@@ -161,13 +161,13 @@
         <dependency>
             <groupId>joda-time</groupId>
             <artifactId>joda-time</artifactId>
-            <version>2.3</version>
+            <version>2.4</version>
         </dependency>
 
         <dependency>
             <groupId>com.lmax</groupId>
             <artifactId>disruptor</artifactId>
-            <version>3.2.1</version>
+            <version>3.3.0</version>
         </dependency>
 
         <!-- test dependencies -->
