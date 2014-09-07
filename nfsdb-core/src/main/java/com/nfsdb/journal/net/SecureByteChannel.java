@@ -53,7 +53,7 @@ public class SecureByteChannel implements ByteChannel {
         this.sslDataLimit = session.getApplicationBufferSize();
         inBuf = ByteBuffer.allocateDirect(session.getPacketBufferSize());
         outBuf = ByteBuffer.allocateDirect(session.getPacketBufferSize());
-        swapBuf = ByteBuffer.allocate(sslDataLimit * 2);
+        swapBuf = ByteBuffer.allocateDirect(sslDataLimit * 2);
     }
 
     @Override
@@ -141,6 +141,9 @@ public class SecureByteChannel implements ByteChannel {
     @Override
     public void close() throws IOException {
         underlying.close();
+        ByteBuffers.release(inBuf);
+        ByteBuffers.release(outBuf);
+        ByteBuffers.release(swapBuf);
         if (engine.isOutboundDone()) {
             engine.closeOutbound();
         }
