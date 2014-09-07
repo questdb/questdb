@@ -21,6 +21,7 @@ import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.utils.Files;
+import org.nfsdb.examples.model.ModelConfiguration;
 import org.nfsdb.examples.model.Quote;
 
 import java.io.File;
@@ -50,7 +51,7 @@ public class ConcurrentAppend {
         final RingBuffer<Quote> ringBuffer = RingBuffer.createSingleProducer(new QuoteFactory(), 1024 * 64, new YieldingWaitStrategy());
         final SequenceBarrier sequenceBarrier = ringBuffer.newBarrier();
 
-        try (JournalFactory factory = new JournalFactory(args[0])) {
+        try (JournalFactory factory = new JournalFactory(ModelConfiguration.CONFIG.build(args[0]))) {
 
             Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote_1"));
             Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote_2"));
