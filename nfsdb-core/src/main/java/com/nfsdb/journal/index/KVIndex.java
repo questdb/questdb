@@ -52,6 +52,7 @@ public class KVIndex implements Closeable {
         Arrays.fill(ZERO_BYTE_ARRAY, (byte) 0);
     }
 
+    private final IndexCursor cachedCursor = new IndexCursor();
     MappedFileImpl kData;
     // storage for rows
     // block structure is [ rowid1, rowid2 ..., rowidn, prevBlockOffset]
@@ -60,7 +61,6 @@ public class KVIndex implements Closeable {
     int rowBlockLen;
     long firstEntryOffset;
     long keyBlockSize;
-    private final IndexCursor cachedCursor = new IndexCursor();
     private long keyBlockAddressOffset;
     private long keyBlockSizeOffset;
     private long maxValue;
@@ -521,7 +521,7 @@ public class KVIndex implements Closeable {
                 return this;
             }
 
-            this.remainingBlockCount = (int) (this.size / rowBlockLen) + 1;
+            this.remainingBlockCount = (int) (this.size / rowBlockLen);
             this.remainingRowCount = (int) (this.size % rowBlockLen);
 
             if (remainingRowCount == 0) {
@@ -540,18 +540,16 @@ public class KVIndex implements Closeable {
         }
 
         public long next() {
-            if (remainingRowCount == 0) {
+            if (remainingRowCount > 0) return this.buffer.getLong(this.bufPos + --this.remainingRowCount * 8);
+            else {
+                remainingBlockCount--;
+                this.rowBlockOffset = this.buffer.getLong(this.bufPos + rowBlockLen * 8);
                 this.buffer = rData.getBuffer(rowBlockOffset - rowBlockSize, rowBlockSize);
                 this.bufPos = buffer.position();
                 this.remainingRowCount = rowBlockLen;
-            }
 
-            long result = this.buffer.getLong(this.bufPos + --this.remainingRowCount * 8);
-
-            if (remainingRowCount == 0 && --this.remainingBlockCount > 0) {
-                this.rowBlockOffset = this.buffer.getLong(this.bufPos + rowBlockLen * 8);
+                return this.buffer.getLong(this.bufPos + --this.remainingRowCount * 8);
             }
-            return result;
         }
 
         public long size() {

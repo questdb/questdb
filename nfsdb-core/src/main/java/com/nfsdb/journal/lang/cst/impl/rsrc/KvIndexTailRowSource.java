@@ -89,6 +89,24 @@ public class KvIndexTailRowSource implements RowSource, RowCursor {
 
     @Override
     public boolean hasNext() {
+
+        int cnt;
+        int o;
+        if (indexCursor != null && (cnt = remainingCounts[keyIndex]) > 0 && indexCursor.hasNext()) {
+            localRowID = indexCursor.next();
+            if (localRowID >= lo && localRowID <= hi && (rowAcceptor == null || rowAcceptor.accept(localRowID, -1) == Choice.PICK)) {
+                if ((o = remainingOffsets[keyIndex]) == 0) {
+                    remainingCounts[keyIndex] = cnt - 1;
+                    return true;
+                } else {
+                    remainingOffsets[keyIndex] = o - 1;
+                }
+            }
+        }
+        return hasNextKey();
+    }
+
+    private boolean hasNextKey() {
         while (this.keyIndex < keyCount) {
 
             // running first time for keyIndex?
@@ -100,9 +118,7 @@ public class KvIndexTailRowSource implements RowSource, RowCursor {
             int cnt = remainingCounts[keyIndex];
             if (cnt > 0) {
                 while (indexCursor.hasNext()) {
-                    this.localRowID = indexCursor.next();
-
-                    if (localRowID < lo) {
+                    if ((localRowID = indexCursor.next()) < lo) {
                         break;
                     }
                     // this is a good rowid
@@ -125,6 +141,7 @@ public class KvIndexTailRowSource implements RowSource, RowCursor {
         }
 
         return false;
+
     }
 
     @Override

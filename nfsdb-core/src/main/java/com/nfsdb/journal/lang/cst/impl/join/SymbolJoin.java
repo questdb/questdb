@@ -60,41 +60,44 @@ public class SymbolJoin extends AbstractImmutableIterator<JoinedData> implements
     public JoinedData next() {
 
         if (!nextSlave) {
-            DataItem m = masterSource.next();
-            if (lastPartition != m.partition) {
-                lastPartition = m.partition;
-                column = (FixedColumn) m.partition.getAbstractColumn(columnIndex);
-            }
-            joinedData.m = m;
-
-            if (initMap) {
-                int sz = masterTab.size();
-                if (map == null || map.length < sz) {
-                    map = new int[sz];
-                }
-                Arrays.fill(map, -1);
-                initMap = false;
-            }
-
-            int masterKey = column.getInt(joinedData.m.rowid);
-            int slaveKey = map[masterKey];
-
-            if (slaveKey == -1) {
-                slaveKey = slaveTab.getQuick(masterTab.value(masterKey));
-                map[masterKey] = slaveKey;
-            }
-
-            keyRef.value = slaveKey;
-            slaveSource.reset();
+            nextMaster();
         }
 
-        nextSlave = slaveSource.hasNext();
-        if (nextSlave) {
+        if (nextSlave = slaveSource.hasNext()) {
             joinedData.s = slaveSource.next();
         } else {
             joinedData.s = null;
         }
 
         return joinedData;
+    }
+
+    private void nextMaster() {
+        DataItem m = masterSource.next();
+        if (lastPartition != m.partition) {
+            lastPartition = m.partition;
+            column = (FixedColumn) m.partition.getAbstractColumn(columnIndex);
+        }
+        joinedData.m = m;
+
+        if (initMap) {
+            int sz = masterTab.size();
+            if (map == null || map.length < sz) {
+                map = new int[sz];
+            }
+            Arrays.fill(map, -1);
+            initMap = false;
+        }
+
+        int masterKey = column.getInt(joinedData.m.rowid);
+        int slaveKey = map[masterKey];
+
+        if (slaveKey == -1) {
+            slaveKey = slaveTab.getQuick(masterTab.value(masterKey));
+            map[masterKey] = slaveKey;
+        }
+
+        keyRef.value = slaveKey;
+        slaveSource.reset();
     }
 }
