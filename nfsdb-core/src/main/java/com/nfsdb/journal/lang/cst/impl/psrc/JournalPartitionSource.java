@@ -59,4 +59,9 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
         partitionCount = journal.getPartitionCount();
         partitionIndex = 0;
     }
+
+    @Override
+    public Journal getJournal() {
+        return journal;
+    }
 }

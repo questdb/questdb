@@ -16,5 +16,8 @@
 
 package com.nfsdb.journal.lang.cst;
 
-public interface JoinedSource {
+import com.nfsdb.journal.collections.ImmutableIterator;
+
+public interface JoinedSource extends ImmutableIterator<JoinedData> {
+    void reset();
 }

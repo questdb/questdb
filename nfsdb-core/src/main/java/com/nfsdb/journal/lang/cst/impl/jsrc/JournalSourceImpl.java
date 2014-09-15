@@ -16,6 +16,7 @@
 
 package com.nfsdb.journal.lang.cst.impl.jsrc;
 
+import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.lang.cst.*;
 
@@ -61,5 +62,10 @@ public class JournalSourceImpl extends AbstractImmutableIterator<DataItem> imple
         rowSource.reset();
         cursor = null;
         return this;
+    }
+
+    @Override
+    public Journal getJournal() {
+        return partitionSource.getJournal();
     }
 }

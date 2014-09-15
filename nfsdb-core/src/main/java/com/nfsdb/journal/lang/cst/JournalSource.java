@@ -16,8 +16,11 @@
 
 package com.nfsdb.journal.lang.cst;
 
+import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.collections.ImmutableIterator;
 
 public interface JournalSource extends ImmutableIterator<DataItem> {
     JournalSource reset();
+
+    Journal getJournal();
 }

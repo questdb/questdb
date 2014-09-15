@@ -57,4 +57,9 @@ public class JournalDescPartitionSource extends AbstractImmutableIterator<Partit
     public void reset() {
         partitionIndex = journal.getPartitionCount() - 1;
     }
+
+    @Override
+    public Journal getJournal() {
+        return journal;
+    }
 }

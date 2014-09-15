@@ -49,6 +49,8 @@ public interface Q {
 
     RowSource headEquals(StringRef column, IntRef value);
 
+    RowSource all();
+
     RowSource kvSource(StringRef indexName, KeySource keySource, int count, int tail, RowFilter filter);
 
     PartitionSource source(Journal journal, boolean open);
@@ -60,6 +62,8 @@ public interface Q {
     PartitionSource source(Journal journal, boolean open, long rowid);
 
     RowFilter equalsConst(StringRef column, StringRef value);
+
+    RowFilter equalsSymbol(StringRef column, StringRef value);
 
     RowFilter equals(String columnA, String columnB);
 
@@ -75,13 +79,15 @@ public interface Q {
 
     KeySource symbolTableSource(StringRef sym, List<String> values);
 
+    KeySource singleKeySource(IntRef key);
+
     KeySource symbolTableSource(StringRef sym);
 
     KeySource hashSource(StringRef column, List<String> values);
 
     KeySource hashSource(StringRef column, StringRef value);
 
-    JoinedSource join(String column, JournalSource masterSource, JournalSourceLookup lookupSource, RowFilter filter);
+    JoinedSource join(JournalSource masterSource, StringRef masterSymbol, JournalSource slaveSource, StringRef slaveSymbol, IntRef keyRef, RowFilter filter);
 
     JournalSourceLookup lastNKeyLookup(String column, int n, PartitionSource partitionSource);
 }

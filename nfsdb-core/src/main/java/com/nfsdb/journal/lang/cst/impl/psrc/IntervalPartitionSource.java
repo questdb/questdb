@@ -17,6 +17,7 @@
 package com.nfsdb.journal.lang.cst.impl.psrc;
 
 import com.nfsdb.journal.BinarySearch;
+import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.Partition;
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.exceptions.JournalException;
@@ -86,5 +87,10 @@ public class IntervalPartitionSource extends AbstractImmutableIterator<Partition
     public void reset() {
         delegate.reset();
         calNextSlice = true;
+    }
+
+    @Override
+    public Journal getJournal() {
+        return delegate.getJournal();
     }
 }

@@ -79,7 +79,7 @@ public class KvIndexTailRowSource implements RowSource, RowCursor {
         try {
             this.index = slice.partition.getIndexForColumn(column.value);
             this.lo = slice.lo;
-            this.hi = slice.calcHi ? slice.partition.size() - 1 : slice.hi;
+            this.hi = slice.calcHi ? slice.partition.open().size() - 1 : slice.hi;
             this.keyIndex = 0;
             return this;
         } catch (JournalException e) {

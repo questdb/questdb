@@ -16,6 +16,7 @@
 
 package com.nfsdb.journal.lang.cst.impl.jsrc;
 
+import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.lang.cst.DataItem;
 import com.nfsdb.journal.lang.cst.JournalSource;
@@ -50,5 +51,10 @@ public class TopJournalSource extends AbstractImmutableIterator<DataItem> implem
     public DataItem next() {
         remaining--;
         return delegate.next();
+    }
+
+    @Override
+    public Journal getJournal() {
+        return delegate.getJournal();
     }
 }

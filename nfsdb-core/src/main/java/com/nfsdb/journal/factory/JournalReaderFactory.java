@@ -36,6 +36,8 @@ public interface JournalReaderFactory extends Closeable {
 
     <T> JournalBulkReader<T> bulkReader(Class<T> clazz, String location) throws JournalException;
 
+    <T> Journal<T> reader(Class<T> clazz, String location, int recordHint) throws JournalException;
+
     <T> JournalBulkReader<T> bulkReader(Class<T> clazz) throws JournalException;
 
     <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException;

@@ -20,10 +20,8 @@ import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.collections.IntArrayList;
 import com.nfsdb.journal.lang.cst.*;
 import com.nfsdb.journal.lang.cst.impl.dsrc.DataSourceImpl;
-import com.nfsdb.journal.lang.cst.impl.fltr.AllRowFilter;
-import com.nfsdb.journal.lang.cst.impl.fltr.DoubleGreaterThanRowFilter;
-import com.nfsdb.journal.lang.cst.impl.fltr.IntEqualsRowFilter;
-import com.nfsdb.journal.lang.cst.impl.fltr.StringEqualsRowFilter;
+import com.nfsdb.journal.lang.cst.impl.fltr.*;
+import com.nfsdb.journal.lang.cst.impl.join.SymbolJoin;
 import com.nfsdb.journal.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.jsrc.TopJournalSource;
 import com.nfsdb.journal.lang.cst.impl.ksrc.*;
@@ -100,6 +98,11 @@ public class QImpl implements Q {
     }
 
     @Override
+    public RowSource all() {
+        return new AllRowSource();
+    }
+
+    @Override
     public RowSource kvSource(StringRef indexName, KeySource keySource, int count, int tail, RowFilter filter) {
         return new KvIndexTailRowSource(indexName, keySource, count, tail, filter);
     }
@@ -127,6 +130,11 @@ public class QImpl implements Q {
     @Override
     public RowFilter equalsConst(StringRef column, StringRef value) {
         return new StringEqualsRowFilter(column, value);
+    }
+
+    @Override
+    public RowFilter equalsSymbol(StringRef column, StringRef value) {
+        return new SymbolEqualsRowFilter(column, value);
     }
 
     @Override
@@ -165,6 +173,11 @@ public class QImpl implements Q {
     }
 
     @Override
+    public KeySource singleKeySource(IntRef key) {
+        return new SingleKeySource(key);
+    }
+
+    @Override
     public KeySource symbolTableSource(StringRef sym) {
         return new SymbolKeySource(sym);
     }
@@ -184,8 +197,8 @@ public class QImpl implements Q {
     }
 
     @Override
-    public JoinedSource join(String column, JournalSource masterSource, JournalSourceLookup lookupSource, RowFilter filter) {
-        return null;
+    public JoinedSource join(JournalSource masterSource, StringRef masterSymbol, JournalSource slaveSource, StringRef slaveSymbol, IntRef keyRef, RowFilter filter) {
+        return new SymbolJoin(masterSource, masterSymbol, slaveSource, slaveSymbol, keyRef);
     }
 
     @Override

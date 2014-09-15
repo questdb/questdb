@@ -64,4 +64,9 @@ public class JournalTailPartitionSource extends AbstractImmutableIterator<Partit
             throw new JournalRuntimeException(e);
         }
     }
+
+    @Override
+    public Journal getJournal() {
+        return journal;
+    }
 }

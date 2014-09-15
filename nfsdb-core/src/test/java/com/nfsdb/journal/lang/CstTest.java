@@ -16,15 +16,20 @@
 
 package com.nfsdb.journal.lang;
 
+import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
+import com.nfsdb.journal.Partition;
+import com.nfsdb.journal.column.FixedColumn;
+import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.journal.lang.cst.DataSource;
-import com.nfsdb.journal.lang.cst.Q;
+import com.nfsdb.journal.lang.cst.*;
 import com.nfsdb.journal.lang.cst.impl.QImpl;
+import com.nfsdb.journal.lang.cst.impl.ref.IntRef;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.test.tools.JournalTestFactory;
 import com.nfsdb.journal.test.tools.TestData;
+import com.nfsdb.journal.test.tools.TestUtils;
 import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Files;
 import org.junit.BeforeClass;
@@ -32,6 +37,7 @@ import org.junit.ClassRule;
 import org.junit.Test;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 
 public class CstTest {
 
@@ -40,8 +46,8 @@ public class CstTest {
             new JournalConfigurationBuilder() {{
                 $(Quote.class)
                         .$sym("sym").index().valueCountHint(15)
-                        .$sym("ex").index().valueCountHint(2)
-                        .$str("mode").size(60).index().buckets(5)
+                        .$sym("ex").index().valueCountHint(10)
+                        .$str("mode")
                         .$ts()
                 ;
 
@@ -98,8 +104,7 @@ public class CstTest {
 
     @Test
     public void testHead() throws Exception {
-        StringRef sym = new StringRef();
-        sym.value = "sym";
+        StringRef sym = new StringRef("sym");
 
         DataSource<Quote> ds =
                 q.ds(
@@ -115,5 +120,146 @@ public class CstTest {
         for (Quote quote : ds) {
             System.out.println(quote);
         }
+    }
+
+    @Test
+    public void testHeadFiltered() throws Exception {
+        StringRef sym = new StringRef("sym");
+        StringRef ex = new StringRef("ex");
+        StringRef exValue = new StringRef("SK");
+
+        DataSource<Quote> ds =
+                q.ds(
+                        q.forEachPartition(
+                                q.interval(
+                                        q.source(w, false)
+                                        , Dates.interval("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z")
+                                )
+                                , q.kvSource(sym, q.symbolTableSource(sym), 1, 0, q.equalsSymbol(ex, exValue))
+                        ), new Quote()
+                );
+
+        for (Quote quote : ds) {
+            System.out.println(quote);
+        }
+    }
+
+    @Test
+    public void testLookup() throws Exception {
+        int c = 10000;
+        String joinColumn = "sym";
+        JournalWriter<Quote> w = factory.writer(Quote.class, "q1", c);
+        TestUtils.generateQuoteData(w, c);
+        w.close();
+
+        Journal<Quote> master = factory.reader(Quote.class, "q1", c);
+        Journal<Quote> slave = factory.reader(Quote.class, "q1", c);
+        SymbolTable masterTab = master.getSymbolTable(joinColumn);
+
+
+        //////////////////
+
+        IntRef key = new IntRef();
+        StringRef sym = new StringRef(joinColumn);
+        JournalSource src = q.forEachPartition(
+                q.source(slave, false)
+                , q.kvSource(sym
+                        , q.singleKeySource(key)
+                        , 1000, 0, null
+                )
+        );
+        SymbolTable slaveTab = src.getJournal().getSymbolTable(joinColumn);
+        ////////////////////
+
+        int map[] = new int[masterTab.size()];
+
+
+        Partition last = null;
+        FixedColumn col = null;
+        int colIndex = -1;
+
+        long t = System.nanoTime();
+        for (int i = 0; i < 1; i++) {
+
+            Arrays.fill(map, -1);
+
+            for (DataItem d : q.forEachPartition(q.source(master, false), q.all())) {
+
+                if (last != d.partition) {
+                    last = d.partition;
+                    if (colIndex == -1) {
+                        colIndex = d.partition.getJournal().getMetadata().getColumnIndex(joinColumn);
+                    }
+                    col = (FixedColumn) d.partition.getAbstractColumn(colIndex);
+                }
+
+                assert col != null;
+
+                int masterKey = col.getInt(d.rowid);
+                int slaveKey = map[masterKey];
+
+                if (slaveKey == -1) {
+                    slaveKey = slaveTab.getQuick(masterTab.value(masterKey));
+                    map[masterKey] = slaveKey;
+                }
+
+                key.value = slaveKey;
+                src.reset();
+                int count = 0;
+                for (DataItem di : src) {
+                    count++;
+                }
+//                System.out.println(count);
+            }
+        }
+        System.out.println(System.nanoTime() - t);
+    }
+
+    @Test
+    public void testJoin() throws Exception {
+
+        int c = 10000;
+        JournalWriter<Quote> w = factory.writer(Quote.class, "q", c);
+        TestUtils.generateQuoteData(w, c);
+        w.close();
+
+        Journal<Quote> master = factory.reader(Quote.class, "q", c);
+        Journal<Quote> slave = factory.reader(Quote.class, "q", c);
+
+        StringRef sym = new StringRef("sym");
+        IntRef key = new IntRef();
+        JoinedSource src = q.join(
+                q.forEachPartition(
+                        q.source(master, false)
+                        , q.all()
+                )
+                , sym
+                , q.forEachPartition(
+                        q.source(slave, false)
+                        , q.kvSource(sym
+                                , q.singleKeySource(key)
+                                , 1000, 0, null
+                        )
+                )
+                , sym
+                , key
+                , null
+        );
+
+        long count = 0;
+        long t = 0;
+        for (int i = -2; i < 2; i++) {
+            if (i == 0) {
+                t = System.nanoTime();
+                count = 0;
+            }
+            src.reset();
+            for (JoinedData d : src) {
+                count++;
+            }
+        }
+        System.out.println(count);
+        System.out.println(System.nanoTime() - t);
+
     }
 }

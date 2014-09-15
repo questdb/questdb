@@ -16,10 +16,7 @@
 
 package com.nfsdb.journal.factory;
 
-import com.nfsdb.journal.Journal;
-import com.nfsdb.journal.JournalBulkReader;
-import com.nfsdb.journal.JournalKey;
-import com.nfsdb.journal.JournalWriter;
+import com.nfsdb.journal.*;
 import com.nfsdb.journal.concurrent.TimerCache;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.configuration.JournalConfiguration;
@@ -51,6 +48,11 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
     @Override
     public <T> JournalBulkReader<T> bulkReader(Class<T> clazz, String location) throws JournalException {
         return bulkReader(new JournalKey<>(clazz, location));
+    }
+
+    @Override
+    public <T> Journal<T> reader(Class<T> clazz, String location, int recordHint) throws JournalException {
+        return reader(new JournalKey<>(clazz, location, PartitionType.DEFAULT, recordHint));
     }
 
     @Override

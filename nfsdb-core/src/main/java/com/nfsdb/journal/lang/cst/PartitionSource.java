@@ -16,8 +16,11 @@
 
 package com.nfsdb.journal.lang.cst;
 
+import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.collections.ImmutableIterator;
 
 public interface PartitionSource extends ImmutableIterator<PartitionSlice> {
     void reset();
+
+    Journal getJournal();
 }
