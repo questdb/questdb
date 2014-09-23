@@ -248,7 +248,7 @@ public class CstTest {
 
         long count = 0;
         long t = 0;
-        for (int i = -2; i < 2; i++) {
+        for (int i = -2; i < 10; i++) {
             if (i == 0) {
                 t = System.nanoTime();
                 count = 0;

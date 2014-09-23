@@ -16,95 +16,81 @@
 
 package com.nfsdb.journal.column;
 
-import java.nio.ByteBuffer;
+import com.nfsdb.journal.utils.Unsafe;
 
 public class FixedColumn extends AbstractColumn {
-    private final int width;
+    protected final int width;
 
     public FixedColumn(MappedFile mappedFile, int width) {
         super(mappedFile);
         this.width = width;
     }
 
-    public ByteBuffer getBuffer(long localRowID) {
-        return getBuffer(getOffset(localRowID), width);
-    }
-
     public boolean getBool(long localRowID) {
-        ByteBuffer bb = getBuffer(getOffset(localRowID), width);
-        return bb.get(bb.position()) == 1;
+        return Unsafe.getUnsafe().getByte(mappedFile.getAddress(getOffset(localRowID), 1)) == 1;
     }
 
     public byte getByte(long localRowID) {
-        ByteBuffer bb = getBuffer(getOffset(localRowID), width);
-        return bb.get(bb.position());
+        return Unsafe.getUnsafe().getByte(mappedFile.getAddress(getOffset(localRowID), 1));
     }
 
     public double getDouble(long localRowID) {
-        ByteBuffer bb = getBuffer(getOffset(localRowID), width);
-        return bb.getDouble(bb.position());
+        return Unsafe.getUnsafe().getDouble(mappedFile.getAddress(getOffset(localRowID), 8));
     }
 
     public float getFloat(long localRowID) {
-        ByteBuffer bb = getBuffer(getOffset(localRowID), width);
-        return bb.getFloat(bb.position());
+        return Unsafe.getUnsafe().getFloat(mappedFile.getAddress(getOffset(localRowID), 4));
     }
 
     public int getInt(long localRowID) {
-        ByteBuffer bb = getBuffer(getOffset(localRowID), width);
-        return bb.getInt(bb.position());
+        return Unsafe.getUnsafe().getInt(mappedFile.getAddress(getOffset(localRowID), 4));
     }
 
     public long getLong(long localRowID) {
-        ByteBuffer bb = getBuffer(getOffset(localRowID), width);
-        return bb.getLong(bb.position());
+        return Unsafe.getUnsafe().getLong(mappedFile.getAddress(getOffset(localRowID), 8));
     }
 
     public short getShort(long localRowID) {
-        ByteBuffer bb = getBuffer(getOffset(localRowID), width);
-        return bb.getShort(bb.position());
+        return Unsafe.getUnsafe().getShort(mappedFile.getAddress(getOffset(localRowID), 2));
     }
 
     public void putBool(boolean value) {
-        ByteBuffer bb = getBuffer();
-        bb.put(bb.position(), (byte) (value ? 1 : 0));
+        Unsafe.getUnsafe().putByte(getAddress(), (byte) (value ? 1 : 0));
     }
 
     public void putByte(byte b) {
-        ByteBuffer bb = getBuffer();
-        bb.put(bb.position(), b);
+        Unsafe.getUnsafe().putByte(getAddress(), b);
+    }
+
+    public void copy(Object obj, long offset, long len) {
+        Unsafe.getUnsafe().copyMemory(obj, offset, null, getAddress(), len);
     }
 
     public void putDouble(double value) {
-        ByteBuffer bb = getBuffer();
-        bb.putDouble(bb.position(), value);
+        Unsafe.getUnsafe().putDouble(getAddress(), value);
     }
 
     public void putFloat(float value) {
-        ByteBuffer bb = getBuffer();
-        bb.putFloat(bb.position(), value);
+        Unsafe.getUnsafe().putFloat(getAddress(), value);
     }
 
     public long putInt(int value) {
-        ByteBuffer bb = getBuffer();
-        bb.putInt(bb.position(), value);
+        Unsafe.getUnsafe().putInt(getAddress(), value);
         return txAppendOffset / width - 1;
     }
 
     public long putLong(long value) {
-        ByteBuffer bb = getBuffer();
-        bb.putLong(bb.position(), value);
+        Unsafe.getUnsafe().putLong(getAddress(), value);
         return txAppendOffset / width - 1;
     }
 
     public void putShort(short value) {
-        ByteBuffer bb = getBuffer();
-        bb.putShort(bb.position(), value);
+        Unsafe.getUnsafe().putShort(getAddress(), value);
     }
 
     public long putNull() {
         long appendOffset = mappedFile.getAppendOffset();
-        mappedFile.getBuffer(appendOffset, width);
+        mappedFile.getAddress(appendOffset, width);
         preCommit(appendOffset + width);
         return appendOffset;
     }
@@ -127,9 +113,9 @@ public class FixedColumn extends AbstractColumn {
         preCommit(size * width);
     }
 
-    ByteBuffer getBuffer() {
+    long getAddress() {
         long appendOffset = mappedFile.getAppendOffset();
         preCommit(appendOffset + width);
-        return mappedFile.getBuffer(appendOffset, width);
+        return mappedFile.getAddress(appendOffset, width);
     }
 }

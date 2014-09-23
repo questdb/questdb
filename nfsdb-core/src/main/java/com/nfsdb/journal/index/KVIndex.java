@@ -24,11 +24,11 @@ import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.utils.ByteBuffers;
 import com.nfsdb.journal.utils.Files;
+import com.nfsdb.journal.utils.Unsafe;
 
 import java.io.Closeable;
 import java.io.File;
 import java.nio.ByteBuffer;
-import java.util.Arrays;
 
 public class KVIndex implements Closeable {
 
@@ -46,13 +46,7 @@ public class KVIndex implements Closeable {
     */
 
     public static final int ENTRY_SIZE = 16;
-    static final byte[] ZERO_BYTE_ARRAY = new byte[1024 * 1024];
 
-    static {
-        Arrays.fill(ZERO_BYTE_ARRAY, (byte) 0);
-    }
-
-    private final IndexCursor cachedCursor = new IndexCursor();
     MappedFileImpl kData;
     // storage for rows
     // block structure is [ rowid1, rowid2 ..., rowidn, prevBlockOffset]
@@ -61,6 +55,7 @@ public class KVIndex implements Closeable {
     int rowBlockLen;
     long firstEntryOffset;
     long keyBlockSize;
+    private final IndexCursor cachedCursor = new IndexCursor();
     private long keyBlockAddressOffset;
     private long keyBlockSizeOffset;
     private long maxValue;
@@ -122,31 +117,31 @@ public class KVIndex implements Closeable {
             // to mitigate that as soon as we see an attempt to extend key block past ENTRY_SIZE we need to
             // fill created gap with zeroes.
             if (keyBlockSize - oldSize > ENTRY_SIZE) {
-                ByteBuffer buf = kData.getBuffer(firstEntryOffset + oldSize, (int) (keyBlockSize - oldSize - ENTRY_SIZE));
-                int remaining;
-                while ((remaining = buf.remaining()) > 0) {
-                    buf.put(ZERO_BYTE_ARRAY, 0, Math.min(ZERO_BYTE_ARRAY.length, remaining));
-                }
+                Unsafe.getUnsafe().setMemory(
+                        kData.getAddress(
+                                firstEntryOffset + oldSize
+                                , (int) (keyBlockSize - oldSize - ENTRY_SIZE)
+                        )
+                        , keyBlockSize - oldSize - ENTRY_SIZE
+                        , (byte) 0
+                );
             }
         }
 
-        ByteBuffer buf = kData.getBuffer(keyOffset, ENTRY_SIZE);
-        int pos = buf.position();
-        rowBlockOffset = buf.getLong(pos);
-        rowCount = buf.getLong(pos + 8);
+        long address = kData.getAddress(keyOffset, ENTRY_SIZE);
+        rowBlockOffset = Unsafe.getUnsafe().getLong(address);
+        rowCount = Unsafe.getUnsafe().getLong(address + 8);
 
         int cellIndex = (int) (rowCount % rowBlockLen);
         if (rowBlockOffset == 0 || cellIndex == 0) {
             long prevBlockOffset = rowBlockOffset;
             rowBlockOffset = rData.getAppendOffset() + rowBlockSize;
             rData.setAppendOffset(rowBlockOffset);
-            ByteBuffer bb = rData.getBuffer(rowBlockOffset - 8, 8);
-            bb.putLong(bb.position(), prevBlockOffset);
-            buf.putLong(pos, rowBlockOffset);
+            Unsafe.getUnsafe().putLong(rData.getAddress(rowBlockOffset - 8, 8), prevBlockOffset);
+            Unsafe.getUnsafe().putLong(address, rowBlockOffset);
         }
-        ByteBuffer bb = rData.getBuffer(rowBlockOffset - rowBlockSize + 8 * cellIndex, 8);
-        bb.putLong(bb.position(), value);
-        buf.putLong(pos + 8, rowCount + 1);
+        Unsafe.getUnsafe().putLong(rData.getAddress(rowBlockOffset - rowBlockSize + 8 * cellIndex, 8), value);
+        Unsafe.getUnsafe().putLong(address + 8, rowCount + 1);
 
         if (maxValue <= value) {
             maxValue = value + 1;
@@ -200,10 +195,9 @@ public class KVIndex implements Closeable {
      */
     public long getValueQuick(int key, int i) {
 
-        ByteBuffer buf = keyBufferOrError(key);
-        int pos = buf.position();
-        long rowBlockOffset = buf.getLong(pos);
-        long rowCount = buf.getLong(pos + 8);
+        long address = keyAddressOrError(key);
+        long rowBlockOffset = Unsafe.getUnsafe().getLong(address);
+        long rowCount = Unsafe.getUnsafe().getLong(address + 8);
 
         if (i >= rowCount) {
             throw new JournalRuntimeException("Index out of bounds: %d, max: %d", i, rowCount - 1);
@@ -259,8 +253,7 @@ public class KVIndex implements Closeable {
         if (keyOffset >= firstEntryOffset + keyBlockSize) {
             return 0;
         } else {
-            ByteBuffer buf = kData.getBuffer(keyOffset + 8, 8);
-            return (int) buf.getLong(buf.position());
+            return (int) getLong(kData, keyOffset + 8);
         }
     }
 
@@ -274,10 +267,9 @@ public class KVIndex implements Closeable {
      */
     @SuppressWarnings("unused")
     public long lastValue(int key) {
-        ByteBuffer buf = keyBufferOrError(key);
-        int pos = buf.position();
-        long rowBlockOffset = buf.getLong(pos);
-        long rowCount = buf.getLong(pos + 8);
+        long address = keyAddressOrError(key);
+        long rowBlockOffset = Unsafe.getUnsafe().getLong(address);
+        long rowCount = Unsafe.getUnsafe().getLong(address + 8);
         int cellIndex = (int) ((rowCount - 1) % rowBlockLen);
         return getLong(rData, rowBlockOffset - rowBlockSize + 8 * cellIndex);
     }
@@ -434,13 +426,11 @@ public class KVIndex implements Closeable {
     }
 
     private long getLong(MappedFileImpl storage, long offset) {
-        ByteBuffer bb = storage.getBuffer(offset, 8);
-        return bb.getLong(bb.position());
+        return Unsafe.getUnsafe().getLong(storage.getAddress(offset, 8));
     }
 
     private void putLong(MappedFileImpl storage, long offset, long value) {
-        ByteBuffer bb = storage.getBuffer(offset, 8);
-        bb.putLong(bb.position(), value);
+        Unsafe.getUnsafe().putLong(storage.getAddress(offset, 8), value);
     }
 
     private void tx() {
@@ -484,12 +474,12 @@ public class KVIndex implements Closeable {
         return firstEntryOffset + (key + 1) * ENTRY_SIZE;
     }
 
-    private ByteBuffer keyBufferOrError(int key) {
+    private long keyAddressOrError(int key) {
         long keyOffset = getKeyOffset(key);
         if (keyOffset >= firstEntryOffset + keyBlockSize) {
             throw new JournalRuntimeException("Key doesn't exist: %d", key);
         }
-        return kData.getBuffer(keyOffset, ENTRY_SIZE);
+        return kData.getAddress(keyOffset, ENTRY_SIZE);
     }
 
     public class IndexCursor implements Cursor {
@@ -540,14 +530,14 @@ public class KVIndex implements Closeable {
         }
 
         public long next() {
-            if (remainingRowCount > 0) return this.buffer.getLong(this.bufPos + --this.remainingRowCount * 8);
-            else {
+            if (remainingRowCount > 0) {
+                return this.buffer.getLong(this.bufPos + --this.remainingRowCount * 8);
+            } else {
                 remainingBlockCount--;
                 this.rowBlockOffset = this.buffer.getLong(this.bufPos + rowBlockLen * 8);
                 this.buffer = rData.getBuffer(rowBlockOffset - rowBlockSize, rowBlockSize);
                 this.bufPos = buffer.position();
                 this.remainingRowCount = rowBlockLen;
-
                 return this.buffer.getLong(this.bufPos + --this.remainingRowCount * 8);
             }
         }

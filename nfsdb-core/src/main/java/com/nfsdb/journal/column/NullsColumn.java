@@ -17,8 +17,8 @@
 package com.nfsdb.journal.column;
 
 import com.nfsdb.journal.utils.BitSetAccessor;
+import com.nfsdb.journal.utils.Unsafe;
 
-import java.nio.ByteBuffer;
 import java.util.BitSet;
 
 public class NullsColumn extends FixedColumn {
@@ -44,16 +44,16 @@ public class NullsColumn extends FixedColumn {
     }
 
     public void putBitSet(BitSet bitSet) {
-        ByteBuffer bb = getBuffer();
+        long address = getAddress();
         long[] words = BitSetAccessor.getWords(bitSet);
         for (int i = 0; i < wordCount; i++) {
-            bb.putLong(words[i]);
+            Unsafe.getUnsafe().putLong(address, words[i]);
+            address += 8;
         }
         cachedRowID = -1;
     }
 
     private void getBitSet(long localRowID, BitSet bs) {
-        ByteBuffer bb = getBuffer(localRowID);
         long words[] = BitSetAccessor.getWords(bs);
         if (words == null || words.length < wordCount) {
             words = new long[wordCount];
@@ -61,8 +61,10 @@ public class NullsColumn extends FixedColumn {
         }
         BitSetAccessor.setWordsInUse(bs, wordCount);
 
+        long address = mappedFile.getAddress(getOffset(localRowID), width);
         for (int j = 0; j < wordCount; j++) {
-            words[j] = bb.getLong();
+            words[j] = Unsafe.getUnsafe().getLong(address);
+            address += 8;
         }
     }
 }

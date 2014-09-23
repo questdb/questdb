@@ -38,7 +38,7 @@ public class SSLTest {
     private static final Logger LOGGER = Logger.getLogger(SSLTest.class);
 
     @Rule
-    public JournalTestFactory factory = new JournalTestFactory(new JournalConfigurationBuilder() {{
+    public final JournalTestFactory factory = new JournalTestFactory(new JournalConfigurationBuilder() {{
         $(Quote.class).recordCountHint(2000)
                 .$sym("sym").valueCountHint(20)
                 .$sym("mode")

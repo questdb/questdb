@@ -24,6 +24,8 @@ import java.nio.MappedByteBuffer;
 public interface MappedFile extends Closeable {
     public MappedByteBuffer getBuffer(long offset, int size);
 
+    long getAddress(long offset, int size);
+
     void close();
 
     long getAppendOffset();

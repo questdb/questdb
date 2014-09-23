@@ -24,6 +24,7 @@ import com.nfsdb.journal.utils.ByteBuffers;
 import javax.net.ssl.*;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.channels.ByteChannel;
 
 public class SecureByteChannel implements ByteChannel {
@@ -51,9 +52,9 @@ public class SecureByteChannel implements ByteChannel {
         this.client = sslConfig.isClient();
         SSLSession session = engine.getSession();
         this.sslDataLimit = session.getApplicationBufferSize();
-        inBuf = ByteBuffer.allocateDirect(session.getPacketBufferSize());
-        outBuf = ByteBuffer.allocateDirect(session.getPacketBufferSize());
-        swapBuf = ByteBuffer.allocateDirect(sslDataLimit * 2);
+        inBuf = ByteBuffer.allocateDirect(session.getPacketBufferSize()).order(ByteOrder.LITTLE_ENDIAN);
+        outBuf = ByteBuffer.allocateDirect(session.getPacketBufferSize()).order(ByteOrder.LITTLE_ENDIAN);
+        swapBuf = ByteBuffer.allocateDirect(sslDataLimit * 2).order(ByteOrder.LITTLE_ENDIAN);
     }
 
     @Override

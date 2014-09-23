@@ -19,6 +19,7 @@ package com.nfsdb.journal.column;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.utils.ByteBuffers;
+import com.nfsdb.journal.utils.Unsafe;
 
 import java.nio.ByteBuffer;
 
@@ -75,45 +76,30 @@ public class VariableColumn extends AbstractColumn {
 
     public String getString(long localRowID) {
         // read delegate buffer which lets us read "null" flag and string length.
-        ByteBuffer bb = getBufferInternal(localRowID, 4);
-        int len = bb.getInt();
+        long address = getAddrInternal(localRowID, 4);
+        int len = Unsafe.getUnsafe().getInt(address);
 
         if (len == -1) {
             return null;
         }
-
-        // check if buffer can have actual string (char=2*byte)
-        if (bb.remaining() < len * 2) {
-            bb = getBufferInternal(localRowID, len * 2 + 4);
-            bb.position(bb.position() + 4);
-        }
-
-        return asString(bb, len);
+        return asString(mappedFile.getAddress(indexColumn.getLong(localRowID), len * 2 + 4) + 4, len);
     }
 
     public boolean equalsString(long localRowID, String value) {
         // read delegate buffer which lets us read "null" flag and string length.
-        ByteBuffer buf = getBufferInternal(localRowID, 4);
-        int len = buf.getInt();
+        long address = getAddrInternal(localRowID, 4);
+        int len = Unsafe.getUnsafe().getInt(address);
 
         if (len != value.length()) {
             return false;
         }
 
-        int p;
-        // check if buffer can have actual string (char=2*byte)
-        if (buf.remaining() < len * 2) {
-            buf = getBufferInternal(localRowID, len * 2 + 4);
-            p = buf.position() + 4;
-        } else {
-            p = buf.position();
-        }
-
+        address = getAddrInternal(localRowID, len * 2 + 4) + 4;
         for (int i = 0; i < len; i++) {
-            if (buf.getChar(p) != value.charAt(i)) {
+            if (Unsafe.getUnsafe().getChar(address) != value.charAt(i)) {
                 return false;
             }
-            p += 2;
+            address += 2;
         }
 
         return true;
@@ -123,10 +109,16 @@ public class VariableColumn extends AbstractColumn {
         if (value == null) {
             return putNull();
         } else {
-            int len = value.length() * 2 + 4;
+            int l;
+            int len = (l = value.length()) * 2 + 4;
             long offset = getOffset();
-            ByteBuffer bb = getBuffer(offset, len);
-            ByteBuffers.putStringDW(bb, value);
+            long address = mappedFile.getAddress(offset, len);
+            Unsafe.getUnsafe().putInt(address, l);
+            address += 4;
+            for (int i = 0; i < l; i++) {
+                Unsafe.getUnsafe().putChar(address, value.charAt(i));
+                address += 2;
+            }
             return commitAppend(offset, len);
         }
     }
@@ -181,19 +173,17 @@ public class VariableColumn extends AbstractColumn {
 
     public long putNull() {
         long offset = getOffset();
-        ByteBuffer bb = getBuffer(offset, 4);
-        bb.putInt(bb.position(), -1);
+        Unsafe.getUnsafe().putInt(mappedFile.getAddress(offset, 4), -1);
         return commitAppend(offset, 4);
     }
 
-    private String asString(ByteBuffer bb, int len) {
+    private String asString(long address, int len) {
         if (buffer.length < len) {
             buffer = new char[len];
         }
-        int p = bb.position();
         for (int i = 0; i < len; i++) {
-            buffer[i] = bb.getChar(p);
-            p += 2;
+            buffer[i] = Unsafe.getUnsafe().getChar(address);
+            address += 2;
         }
         return new String(buffer, 0, len);
     }
@@ -209,6 +199,20 @@ public class VariableColumn extends AbstractColumn {
             return getBuffer(getOffset(), recordLength);
         } else {
             return getBuffer(getOffset(localRowID), recordLength);
+        }
+    }
+
+    private long getAddrInternal(long localRowID, int recordLength) {
+        long max = indexColumn.size();
+
+        if (localRowID > max) {
+            throw new JournalRuntimeException("localRowID is out of bounds. %d > %d", localRowID, max);
+        }
+
+        if (localRowID == max) {
+            return mappedFile.getAddress(getOffset(), recordLength);
+        } else {
+            return mappedFile.getAddress(indexColumn.getLong(localRowID), recordLength);
         }
     }
 

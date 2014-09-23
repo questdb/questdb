@@ -245,7 +245,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
     public void read(long localRowID, T obj) {
 
-        sun.misc.Unsafe u = Unsafe.getUnsafe();
         BitSet nulls = nullsColumn.getBitSet(localRowID);
         nulls.or(journal.getInactiveColumns());
         for (int i = 0; i < columnCount; i++) {
@@ -257,34 +256,34 @@ public class Partition<T> implements Iterable<T>, Closeable {
             Journal.ColumnMetadata m = journal.getColumnMetadata(i);
             switch (m.meta.type) {
                 case BOOLEAN:
-                    u.putBoolean(obj, m.meta.offset, ((FixedColumn) columns[i]).getBool(localRowID));
+                    Unsafe.getUnsafe().putBoolean(obj, m.meta.offset, ((FixedColumn) columns[i]).getBool(localRowID));
                     break;
                 case BYTE:
-                    u.putByte(obj, m.meta.offset, ((FixedColumn) columns[i]).getByte(localRowID));
+                    Unsafe.getUnsafe().putByte(obj, m.meta.offset, ((FixedColumn) columns[i]).getByte(localRowID));
                     break;
                 case DOUBLE:
-                    u.putDouble(obj, m.meta.offset, ((FixedColumn) columns[i]).getDouble(localRowID));
+                    Unsafe.getUnsafe().putDouble(obj, m.meta.offset, ((FixedColumn) columns[i]).getDouble(localRowID));
                     break;
                 case INT:
-                    u.putInt(obj, m.meta.offset, ((FixedColumn) columns[i]).getInt(localRowID));
+                    Unsafe.getUnsafe().putInt(obj, m.meta.offset, ((FixedColumn) columns[i]).getInt(localRowID));
                     break;
                 case LONG:
-                    u.putLong(obj, m.meta.offset, ((FixedColumn) columns[i]).getLong(localRowID));
+                    Unsafe.getUnsafe().putLong(obj, m.meta.offset, ((FixedColumn) columns[i]).getLong(localRowID));
                     break;
                 case SHORT:
-                    u.putShort(obj, m.meta.offset, ((FixedColumn) columns[i]).getShort(localRowID));
+                    Unsafe.getUnsafe().putShort(obj, m.meta.offset, ((FixedColumn) columns[i]).getShort(localRowID));
                     break;
                 case STRING:
                     String s = ((VariableColumn) columns[i]).getString(localRowID);
                     if (s != null) {
-                        u.putObject(obj, m.meta.offset, s);
+                        Unsafe.getUnsafe().putObject(obj, m.meta.offset, s);
                     }
                     break;
                 case SYMBOL:
                     int symbolIndex = ((FixedColumn) columns[i]).getInt(localRowID);
                     // check if symbol was null
                     if (symbolIndex > SymbolTable.VALUE_IS_NULL) {
-                        u.putObject(obj, m.meta.offset, m.symbolTable.value(symbolIndex));
+                        Unsafe.getUnsafe().putObject(obj, m.meta.offset, m.symbolTable.value(symbolIndex));
                     }
                     break;
                 case BINARY:
@@ -292,7 +291,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
                     ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, m.meta.offset);
                     if (buf == null || buf.capacity() < size) {
                         buf = ByteBuffer.allocate(size);
-                        u.putObject(obj, m.meta.offset, buf);
+                        Unsafe.getUnsafe().putObject(obj, m.meta.offset, buf);
                     }
 
                     if (buf.remaining() < size) {
@@ -318,116 +317,45 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
 
     public void append(T obj) throws JournalException {
-        boolean checkNulls = false;
-        sun.misc.Unsafe u = Unsafe.getUnsafe();
-        nulls.clear();
-
-
-        if (nullsAdaptor != null) {
+        boolean checkNulls;
+        if (checkNulls = (nullsAdaptor != null)) {
             nullsAdaptor.getNulls(obj, nulls);
             checkNulls = true;
         }
 
-        int key;
         for (int i = 0; i < columnCount; i++) {
             Journal.ColumnMetadata meta = journal.getColumnMetadata(i);
+
+            if (checkNulls && setNulls(i, meta)) continue;
+
             switch (meta.meta.type) {
                 case BOOLEAN:
-                    if (checkNulls && nulls.get(i)) {
-                        ((FixedColumn) columns[i]).putNull();
-                    } else {
-                        ((FixedColumn) columns[i]).putBool(u.getBoolean(obj, meta.meta.offset));
-                    }
+                    ((FixedColumn) columns[i]).putBool(Unsafe.getUnsafe().getBoolean(obj, meta.meta.offset));
                     break;
                 case BYTE:
-                    if (checkNulls && nulls.get(i)) {
-                        ((FixedColumn) columns[i]).putNull();
-                    } else {
-                        ((FixedColumn) columns[i]).putByte(u.getByte(obj, meta.meta.offset));
-                    }
-                    break;
                 case DOUBLE:
-                    if (checkNulls && nulls.get(i)) {
-                        ((FixedColumn) columns[i]).putNull();
-                    } else {
-                        ((FixedColumn) columns[i]).putDouble(u.getDouble(obj, meta.meta.offset));
-                    }
+                case LONG:
+                case SHORT:
+                    ((FixedColumn) columns[i]).copy(obj, meta.meta.offset, meta.meta.size);
                     break;
                 case INT:
-                    if (checkNulls && nulls.get(i)) {
-                        if (meta.meta.indexed) {
-                            appendKeyCache[i] = SymbolTable.VALUE_IS_NULL;
-                            appendSizeCache[i] = ((FixedColumn) columns[i]).putNull();
-                        } else {
-                            ((FixedColumn) columns[i]).putNull();
-                        }
+                    int v = Unsafe.getUnsafe().getInt(obj, meta.meta.offset);
+                    if (meta.meta.indexed) {
+                        appendKeyCache[i] = v % meta.meta.distinctCountHint;
+                        appendSizeCache[i] = ((FixedColumn) columns[i]).putInt(v);
                     } else {
-                        int v = u.getInt(obj, meta.meta.offset);
-                        if (meta.meta.indexed) {
-                            appendKeyCache[i] = v % meta.meta.distinctCountHint;
-                            appendSizeCache[i] = ((FixedColumn) columns[i]).putInt(v);
-                        } else {
-                            ((FixedColumn) columns[i]).putInt(u.getInt(obj, meta.meta.offset));
-                        }
-                    }
-                    break;
-                case LONG:
-                    if (checkNulls && nulls.get(i)) {
-                        ((FixedColumn) columns[i]).putNull();
-                    } else {
-                        ((FixedColumn) columns[i]).putLong(u.getLong(obj, meta.meta.offset));
-                    }
-                    break;
-                case SHORT:
-                    if (checkNulls && nulls.get(i)) {
-                        ((FixedColumn) columns[i]).putNull();
-                    } else {
-                        ((FixedColumn) columns[i]).putShort(u.getShort(obj, meta.meta.offset));
+                        ((FixedColumn) columns[i]).putInt(v);
                     }
                     break;
                 case STRING:
-                    String s = (String) u.getObject(obj, meta.meta.offset);
-                    if (s == null) {
-                        nulls.set(i);
-                        if (meta.meta.indexed) {
-                            appendKeyCache[i] = SymbolTable.VALUE_IS_NULL;
-                            appendSizeCache[i] = ((VariableColumn) columns[i]).putNull();
-                        } else {
-                            ((VariableColumn) columns[i]).putNull();
-                        }
-                    } else {
-                        if (meta.meta.indexed) {
-                            appendKeyCache[i] = Checksum.hash(s, meta.meta.distinctCountHint);
-                            appendSizeCache[i] = ((VariableColumn) columns[i]).putString(s);
-                        } else {
-                            ((VariableColumn) columns[i]).putString(s);
-                        }
-                    }
+                    appendStr(obj, i, meta);
                     break;
                 case SYMBOL:
-                    String sym = (String) u.getObject(obj, meta.meta.offset);
-                    if (sym == null) {
-                        nulls.set(i);
-                        key = SymbolTable.VALUE_IS_NULL;
-                    } else {
-                        key = meta.symbolTable.put(sym);
-                    }
-                    if (meta.meta.indexed) {
-                        appendKeyCache[i] = key;
-                        appendSizeCache[i] = ((FixedColumn) columns[i]).putInt(key);
-                    } else {
-                        appendKeyCache[i] = -3;
-                        ((FixedColumn) columns[i]).putInt(key);
-                    }
+                    appendSym(obj, i, meta);
                     break;
                 case BINARY:
-                    ByteBuffer buf = (ByteBuffer) u.getObject(obj, meta.meta.offset);
-                    if (buf == null || buf.remaining() == 0) {
-                        nulls.set(i);
-                        ((VariableColumn) columns[i]).putNull();
-                    } else {
-                        ((VariableColumn) columns[i]).putBuffer(buf);
-                    }
+                    appendBin(obj, i, meta);
+                    break;
             }
         }
         nullsColumn.putBitSet(nulls);
@@ -634,6 +562,79 @@ public class Partition<T> implements Iterable<T>, Closeable {
                 throw new JournalRuntimeException(e);
             }
         }
+    }
+
+    private void appendBin(T obj, int i, Journal.ColumnMetadata meta) {
+        ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, meta.meta.offset);
+        if (buf == null || buf.remaining() == 0) {
+            nulls.set(i);
+            ((VariableColumn) columns[i]).putNull();
+        } else {
+            nulls.clear(i);
+            ((VariableColumn) columns[i]).putBuffer(buf);
+        }
+    }
+
+    private void appendSym(T obj, int i, Journal.ColumnMetadata meta) {
+        int key;
+        String sym = (String) Unsafe.getUnsafe().getObject(obj, meta.meta.offset);
+        if (sym == null) {
+            nulls.set(i);
+            key = SymbolTable.VALUE_IS_NULL;
+        } else {
+            nulls.clear(i);
+            key = meta.symbolTable.put(sym);
+        }
+        if (meta.meta.indexed) {
+            appendKeyCache[i] = key;
+            appendSizeCache[i] = ((FixedColumn) columns[i]).putInt(key);
+        } else {
+            appendKeyCache[i] = -3;
+            ((FixedColumn) columns[i]).putInt(key);
+        }
+    }
+
+    private void appendStr(T obj, int i, Journal.ColumnMetadata meta) {
+        String s = (String) Unsafe.getUnsafe().getObject(obj, meta.meta.offset);
+        if (s == null) {
+            nulls.set(i);
+            if (meta.meta.indexed) {
+                appendKeyCache[i] = SymbolTable.VALUE_IS_NULL;
+                appendSizeCache[i] = ((VariableColumn) columns[i]).putNull();
+            } else {
+                ((VariableColumn) columns[i]).putNull();
+            }
+        } else {
+            nulls.clear(i);
+            long offset = ((VariableColumn) columns[i]).putString(s);
+            if (meta.meta.indexed) {
+                appendKeyCache[i] = Checksum.hash(s, meta.meta.distinctCountHint);
+                appendSizeCache[i] = offset;
+            }
+        }
+    }
+
+    private boolean setNulls(int i, Journal.ColumnMetadata meta) {
+        if (nulls.get(i)) {
+            switch (meta.meta.type) {
+                case BOOLEAN:
+                case BYTE:
+                case DOUBLE:
+                case LONG:
+                case SHORT:
+                    ((FixedColumn) columns[i]).putNull();
+                    return true;
+                case INT:
+                    if (meta.meta.indexed) {
+                        appendKeyCache[i] = SymbolTable.VALUE_IS_NULL;
+                        appendSizeCache[i] = ((FixedColumn) columns[i]).putNull();
+                    } else {
+                        ((FixedColumn) columns[i]).putNull();
+                    }
+                    return true;
+            }
+        }
+        return false;
     }
 
     private FixedColumn getFixedColumnOrNull(long localRowID, int columnIndex) {

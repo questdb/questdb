@@ -24,6 +24,8 @@ import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.utils.ByteBuffers;
 import com.nfsdb.journal.utils.Files;
 import com.nfsdb.journal.utils.Lists;
+import com.nfsdb.journal.utils.Unsafe;
+import sun.nio.ch.DirectBuffer;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -52,6 +54,8 @@ public class MappedFileImpl implements MappedFile {
     private long cachedBufferLo = -1;
     private long cachedBufferHi = -1;
     private long cachedAppendOffset = -1;
+    private long cachedAddress;
+    private long offsetDirectAddr;
 
     public MappedFileImpl(File file, int bitHint, JournalMode mode) throws JournalException {
         this.file = file;
@@ -73,8 +77,20 @@ public class MappedFileImpl implements MappedFile {
             cachedBuffer = getBufferInternal(offset, size);
             cachedBufferLo = offset - cachedBuffer.position();
             cachedBufferHi = cachedBufferLo + cachedBuffer.limit();
+            cachedAddress = ((DirectBuffer) cachedBuffer).address();
         }
         return cachedBuffer;
+    }
+
+    public long getAddress(long offset, int size) {
+        if (offset >= cachedBufferLo && offset + size <= cachedBufferHi) {
+            return cachedAddress + offset - cachedBufferLo;
+        } else {
+            cachedBuffer = getBufferInternal(offset, size);
+            cachedBufferLo = offset - cachedBuffer.position();
+            cachedBufferHi = cachedBufferLo + cachedBuffer.limit();
+            return (cachedAddress = ((DirectBuffer) cachedBuffer).address()) + cachedBuffer.position();
+        }
     }
 
     public void delete() {
@@ -102,8 +118,7 @@ public class MappedFileImpl implements MappedFile {
 
         if (mode == JournalMode.READ || mode == JournalMode.BULK_READ || cachedAppendOffset == -1L) {
             if (offsetBuffer != null) {
-                cachedAppendOffset = offsetBuffer.getLong(0);
-                return cachedAppendOffset;
+                return cachedAppendOffset = Unsafe.getUnsafe().getLong(offsetDirectAddr);
             }
             return -1L;
         } else {
@@ -112,8 +127,7 @@ public class MappedFileImpl implements MappedFile {
     }
 
     public void setAppendOffset(long offset) {
-        cachedAppendOffset = offset;
-        offsetBuffer.putLong(0, offset);
+        Unsafe.getUnsafe().putLong(offsetDirectAddr, cachedAppendOffset = offset);
     }
 
     @Override
@@ -273,6 +287,7 @@ public class MappedFileImpl implements MappedFile {
                 this.offsetBuffer = channel.map(FileChannel.MapMode.READ_WRITE, 0, 8);
             }
             offsetBuffer.order(ByteOrder.LITTLE_ENDIAN);
+            offsetDirectAddr = ((DirectBuffer) offsetBuffer).address();
         } catch (FileNotFoundException e) {
             throw new JournalNoSuchFileException(e);
         } catch (IOException e) {
