@@ -87,7 +87,7 @@ public interface Q {
 
     KeySource hashSource(StringRef column, StringRef value);
 
-    JoinedSource join(JournalSource masterSource, StringRef masterSymbol, JournalSource slaveSource, StringRef slaveSymbol, IntRef keyRef, RowFilter filter);
+    JoinedSource join(JournalSource masterSource, StringRef masterSymbol, IntRef keyRef, JournalSource slaveSource, StringRef slaveSymbol, RowFilter filter);
 
     JournalSourceLookup lastNKeyLookup(String column, int n, PartitionSource partitionSource);
 }

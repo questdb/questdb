@@ -17,7 +17,7 @@
 package com.nfsdb.journal.lang.cst;
 
 public interface KeySource {
-    KeyCursor cursor(PartitionSlice partition);
+    KeyCursor cursor(PartitionSlice slice);
 
     int size();
 

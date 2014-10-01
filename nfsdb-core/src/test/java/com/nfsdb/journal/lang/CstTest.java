@@ -24,8 +24,15 @@ import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.lang.cst.*;
 import com.nfsdb.journal.lang.cst.impl.QImpl;
+import com.nfsdb.journal.lang.cst.impl.dfrn.DataFrame;
+import com.nfsdb.journal.lang.cst.impl.dfrn.DataFrameSource;
+import com.nfsdb.journal.lang.cst.impl.dfrn.MapHeadDataFrameSource;
+import com.nfsdb.journal.lang.cst.impl.ksrc.SingleKeySource;
 import com.nfsdb.journal.lang.cst.impl.ref.IntRef;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
+import com.nfsdb.journal.lang.cst.impl.rsrc.KvIndexTopRowSource;
+import com.nfsdb.journal.model.Album;
+import com.nfsdb.journal.model.Band;
 import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.test.tools.JournalTestFactory;
 import com.nfsdb.journal.test.tools.TestData;
@@ -51,6 +58,16 @@ public class CstTest {
                         .$ts()
                 ;
 
+                $(Band.class).recordCountHint(10000)
+                        .$sym("name").index().valueCountHint(10000)
+                        .$sym("type").index().valueCountHint(5)
+                ;
+
+                $(Album.class).recordCountHint(100000)
+                        .$sym("band").index().valueCountHint(10000)
+                        .$sym("name").index().valueCountHint(100000)
+                        .$ts("releaseDate")
+                ;
             }}.build(Files.makeTempDir())
     );
     private static final Q q = new QImpl();
@@ -216,9 +233,57 @@ public class CstTest {
     }
 
     @Test
-    public void testJoin() throws Exception {
+    public void testJoinN() throws Exception {
 
         int c = 10000;
+        JournalWriter<Quote> w = factory.writer(Quote.class, "q2", c);
+        TestUtils.generateQuoteData(w, c);
+        w.close();
+
+        Journal<Quote> master = factory.reader(Quote.class, "q2", c);
+        Journal<Quote> slave = factory.reader(Quote.class, "q2", c);
+
+        StringRef sym = new StringRef("sym");
+        IntRef key = new IntRef();
+        JoinedSource src = q.join(
+                q.forEachPartition(
+                        q.source(master, false)
+                        , q.all()
+                )
+                , sym
+                , key
+                , q.forEachPartition(
+                        q.source(slave, false)
+                        , q.kvSource(sym
+                                , q.singleKeySource(key)
+                                , 1000, 0, null
+                        )
+                )
+                , sym
+                , null
+        );
+
+        long count = 0;
+        long t = 0;
+        for (int i = -2; i < 20; i++) {
+            if (i == 0) {
+                t = System.nanoTime();
+                count = 0;
+            }
+            src.reset();
+            for (DataItem d : src) {
+                count++;
+            }
+        }
+        System.out.println(count);
+        System.out.println(System.nanoTime() - t);
+
+    }
+
+    @Test
+    public void testJoinHead() throws Exception {
+
+        int c = 1000000;
         JournalWriter<Quote> w = factory.writer(Quote.class, "q", c);
         TestUtils.generateQuoteData(w, c);
         w.close();
@@ -234,32 +299,64 @@ public class CstTest {
                         , q.all()
                 )
                 , sym
+                , key
                 , q.forEachPartition(
                         q.source(slave, false)
-                        , q.kvSource(sym
-                                , q.singleKeySource(key)
-                                , 1000, 0, null
-                        )
+                        , new KvIndexTopRowSource(sym, new SingleKeySource(key), null)
+
                 )
                 , sym
-                , key
                 , null
         );
 
         long count = 0;
         long t = 0;
-        for (int i = -2; i < 10; i++) {
+        for (int i = -20; i < 20; i++) {
             if (i == 0) {
                 t = System.nanoTime();
                 count = 0;
             }
             src.reset();
-            for (JoinedData d : src) {
+            for (DataItem d : src) {
                 count++;
             }
         }
         System.out.println(count);
         System.out.println(System.nanoTime() - t);
+    }
+
+    @Test
+    public void testOuterJoin() throws Exception {
+        JournalWriter<Band> w = factory.writer(Band.class);
+        JournalWriter<Album> wa = factory.writer(Album.class);
+
+        LangTestUtils.generateBands(w, 12000);
+        LangTestUtils.generateAlbums(wa, 10000);
+    }
+
+    @Test
+    public void testMapHeadFrame() throws Exception {
+
+        StringRef sym = new StringRef("sym");
+        StringRef ex = new StringRef("ex");
+        DataFrameSource src = new MapHeadDataFrameSource(
+                q.forEachPartition(
+                        q.interval(
+                                q.source(w, false)
+                                , Dates.interval("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z")
+                        )
+                        , q.kvSource(sym, q.symbolTableSource(sym), 1, 0, null)
+                )
+                , ex
+        );
+
+        DataFrame frame = src.getFrame();
+
+        RowCursor c = frame.cursor(2);
+
+        while (c.hasNext()) {
+            System.out.println(c.next());
+        }
 
     }
 }

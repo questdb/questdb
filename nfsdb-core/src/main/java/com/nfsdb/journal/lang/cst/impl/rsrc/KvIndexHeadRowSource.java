@@ -22,7 +22,7 @@ import com.nfsdb.journal.index.KVIndex;
 import com.nfsdb.journal.lang.cst.*;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 
-public class KvIndexTailRowSource implements RowSource, RowCursor {
+public class KvIndexHeadRowSource implements RowSource, RowCursor {
 
     private final StringRef column;
     private final KeySource keySource;
@@ -43,7 +43,7 @@ public class KvIndexTailRowSource implements RowSource, RowCursor {
     private int keyCount = -1;
     private RowAcceptor rowAcceptor;
 
-    public KvIndexTailRowSource(StringRef column, KeySource keySource, int count, int tailOffset, RowFilter filter) {
+    public KvIndexHeadRowSource(StringRef column, KeySource keySource, int count, int tailOffset, RowFilter filter) {
         this.column = column;
         this.keySource = keySource;
         this.count = count;
@@ -102,6 +102,8 @@ public class KvIndexTailRowSource implements RowSource, RowCursor {
                     remainingOffsets[keyIndex] = o - 1;
                 }
             }
+//        } else if (indexCursor != null && cnt == 0 && keyIndex == keyCount - 1) {
+//            return false;
         }
         return hasNextKey();
     }

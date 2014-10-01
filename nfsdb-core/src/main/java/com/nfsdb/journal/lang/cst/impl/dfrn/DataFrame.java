@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.lang.cst;
+package com.nfsdb.journal.lang.cst.impl.dfrn;
 
-import com.nfsdb.journal.collections.ImmutableIterator;
+import com.nfsdb.journal.lang.cst.RowCursor;
 
-public interface JoinedSource extends ImmutableIterator<DataItem> {
-    void reset();
+public interface DataFrame {
+    RowCursor cursor(int key);
 }

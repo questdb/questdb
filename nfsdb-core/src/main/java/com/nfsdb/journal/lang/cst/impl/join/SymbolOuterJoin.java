@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2014. Vlad Ilyushchenko
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.nfsdb.journal.lang.cst.impl.join;
 
 import com.nfsdb.journal.Partition;
@@ -5,7 +21,6 @@ import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.column.FixedColumn;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.lang.cst.DataItem;
-import com.nfsdb.journal.lang.cst.JoinedData;
 import com.nfsdb.journal.lang.cst.JoinedSource;
 import com.nfsdb.journal.lang.cst.JournalSource;
 import com.nfsdb.journal.lang.cst.impl.ref.IntRef;
@@ -13,13 +28,13 @@ import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 
 import java.util.Arrays;
 
-public class SymbolJoin extends AbstractImmutableIterator<JoinedData> implements JoinedSource {
+public class SymbolOuterJoin extends AbstractImmutableIterator<DataItem> implements JoinedSource {
     private final JournalSource masterSource;
     private final JournalSource slaveSource;
     private final IntRef keyRef;
-    private final JoinedData joinedData = new JoinedData();
     private final StringRef masterSymbol;
     private final StringRef slaveSymbol;
+    private DataItem joinedData;
     private int columnIndex;
     private SymbolTable masterTab;
     private SymbolTable slaveTab;
@@ -29,7 +44,7 @@ public class SymbolJoin extends AbstractImmutableIterator<JoinedData> implements
     private boolean initMap = true;
     private int[] map;
 
-    public SymbolJoin(JournalSource masterSource, StringRef masterSymbol, JournalSource slaveSource, StringRef slaveSymbol, IntRef keyRef) {
+    public SymbolOuterJoin(JournalSource masterSource, StringRef masterSymbol, IntRef keyRef, JournalSource slaveSource, StringRef slaveSymbol) {
         this.masterSource = masterSource;
         this.slaveSource = slaveSource;
         this.keyRef = keyRef;
@@ -57,16 +72,18 @@ public class SymbolJoin extends AbstractImmutableIterator<JoinedData> implements
     }
 
     @Override
-    public JoinedData next() {
+    public DataItem next() {
 
         if (!nextSlave) {
             nextMaster();
         }
 
-        if (nextSlave = slaveSource.hasNext()) {
-            joinedData.s = slaveSource.next();
+        if (nextSlave || slaveSource.hasNext()) {
+            joinedData.slave = slaveSource.next();
+            nextSlave = slaveSource.hasNext();
         } else {
-            joinedData.s = null;
+            joinedData.slave = null;
+            nextSlave = false;
         }
 
         return joinedData;
@@ -78,7 +95,7 @@ public class SymbolJoin extends AbstractImmutableIterator<JoinedData> implements
             lastPartition = m.partition;
             column = (FixedColumn) m.partition.getAbstractColumn(columnIndex);
         }
-        joinedData.m = m;
+        joinedData = m;
 
         if (initMap) {
             int sz = masterTab.size();
@@ -89,12 +106,11 @@ public class SymbolJoin extends AbstractImmutableIterator<JoinedData> implements
             initMap = false;
         }
 
-        int masterKey = column.getInt(joinedData.m.rowid);
+        int masterKey = column.getInt(m.rowid);
         int slaveKey = map[masterKey];
 
         if (slaveKey == -1) {
-            slaveKey = slaveTab.getQuick(masterTab.value(masterKey));
-            map[masterKey] = slaveKey;
+            map[masterKey] = slaveKey = slaveTab.getQuick(masterTab.value(masterKey));
         }
 
         keyRef.value = slaveKey;

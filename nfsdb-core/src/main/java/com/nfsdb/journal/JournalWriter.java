@@ -329,26 +329,7 @@ public class JournalWriter<T> extends Journal<T> {
             long timestamp = getTimestamp(obj);
 
             if (timestamp > appendTimestampHi) {
-
-                boolean computeTimestampLo = appendPartition == null;
-
-                appendPartition = getAppendPartition(timestamp);
-
-                Interval interval = appendPartition.getInterval();
-                if (interval == null) {
-                    appendTimestampHi = Long.MAX_VALUE;
-                } else {
-                    appendTimestampHi = appendPartition.getInterval().getEndMillis();
-                }
-
-                if (computeTimestampLo) {
-                    FixedColumn column = appendPartition.getTimestampColumn();
-                    if (column.size() > 0) {
-                        appendTimestampLo = column.getLong(column.size() - 1);
-                    }
-                } else {
-                    appendTimestampLo = appendPartition.getInterval().getStartMillis();
-                }
+                switchAppendPartition(timestamp);
             }
 
             if (timestamp < appendTimestampLo) {
@@ -366,6 +347,29 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
+    private void switchAppendPartition(long timestamp) throws JournalException {
+        boolean computeTimestampLo = appendPartition == null;
+
+        appendPartition = getAppendPartition(timestamp);
+
+        Interval interval = appendPartition.getInterval();
+        if (interval == null) {
+            appendTimestampHi = Long.MAX_VALUE;
+        } else {
+            appendTimestampHi = interval.getEndMillis();
+        }
+
+        if (computeTimestampLo) {
+            FixedColumn column = appendPartition.getTimestampColumn();
+            long sz;
+            if ((sz = column.size()) > 0) {
+                appendTimestampLo = column.getLong(sz - 1);
+            }
+        } else {
+            appendTimestampLo = appendPartition.getInterval().getStartMillis();
+        }
+    }
+
     /**
      * Max timestamp in journal for append operation. Objects with timestamp older then
      * this will always be rejected.
@@ -380,8 +384,9 @@ public class JournalWriter<T> extends Journal<T> {
             }
 
             FixedColumn column = lastNonEmptyNonLag().getTimestampColumn();
-            if (column.size() > 0) {
-                appendTimestampLo = column.getLong(column.size() - 1);
+            long sz;
+            if ((sz = column.size()) > 0) {
+                appendTimestampLo = column.getLong(sz - 1);
             } else {
                 return 0;
             }
@@ -390,7 +395,7 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     public Partition<T> getAppendPartition(long timestamp) throws JournalException {
-        int sz = nonLagPartitionCount();
+        int sz = partitions.size();
         if (sz > 0) {
             Partition<T> result = partitions.get(sz - 1);
             if (result.getInterval() == null || result.getInterval().contains(timestamp)) {

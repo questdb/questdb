@@ -73,4 +73,15 @@ public class Band {
     public Band setImage(byte[] bytes) {
         return setImage(ByteBuffer.wrap(bytes));
     }
+
+    @Override
+    public String toString() {
+        return "Band{" +
+                "timestamp=" + timestamp +
+                ", name='" + name + '\'' +
+                ", url='" + url + '\'' +
+                ", type='" + type + '\'' +
+                ", image=" + image +
+                '}';
+    }
 }

@@ -21,7 +21,7 @@ import com.nfsdb.journal.collections.IntArrayList;
 import com.nfsdb.journal.lang.cst.*;
 import com.nfsdb.journal.lang.cst.impl.dsrc.DataSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.fltr.*;
-import com.nfsdb.journal.lang.cst.impl.join.SymbolJoin;
+import com.nfsdb.journal.lang.cst.impl.join.SymbolOuterJoin;
 import com.nfsdb.journal.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.jsrc.TopJournalSource;
 import com.nfsdb.journal.lang.cst.impl.ksrc.*;
@@ -104,7 +104,7 @@ public class QImpl implements Q {
 
     @Override
     public RowSource kvSource(StringRef indexName, KeySource keySource, int count, int tail, RowFilter filter) {
-        return new KvIndexTailRowSource(indexName, keySource, count, tail, filter);
+        return new KvIndexHeadRowSource(indexName, keySource, count, tail, filter);
     }
 
     @Override
@@ -197,8 +197,8 @@ public class QImpl implements Q {
     }
 
     @Override
-    public JoinedSource join(JournalSource masterSource, StringRef masterSymbol, JournalSource slaveSource, StringRef slaveSymbol, IntRef keyRef, RowFilter filter) {
-        return new SymbolJoin(masterSource, masterSymbol, slaveSource, slaveSymbol, keyRef);
+    public JoinedSource join(JournalSource masterSource, StringRef masterSymbol, IntRef keyRef, JournalSource slaveSource, StringRef slaveSymbol, RowFilter filter) {
+        return new SymbolOuterJoin(masterSource, masterSymbol, keyRef, slaveSource, slaveSymbol);
     }
 
     @Override

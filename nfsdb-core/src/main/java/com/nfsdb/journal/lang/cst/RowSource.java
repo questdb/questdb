@@ -17,7 +17,7 @@
 package com.nfsdb.journal.lang.cst;
 
 public interface RowSource {
-    RowCursor cursor(PartitionSlice partition);
+    RowCursor cursor(PartitionSlice slice);
 
     void reset();
 }

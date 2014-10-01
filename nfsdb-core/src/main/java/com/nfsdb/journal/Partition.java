@@ -60,6 +60,26 @@ public class Partition<T> implements Iterable<T>, Closeable {
     private FixedColumn timestampColumn;
     private BinarySearch.LongTimeSeriesProvider indexOfVisitor;
 
+    Partition(Journal<T> journal, Interval interval, int partitionIndex, long txLimit, long[] indexTxAddresses) {
+        this.journal = journal;
+        this.partitionIndex = partitionIndex;
+        this.interval = interval;
+        this.txLimit = txLimit;
+        this.columnCount = journal.getMetadata().getColumnCount();
+        this.nulls = new BitSet(columnCount);
+        this.nullsAdaptor = journal.getMetadata().getNullsAdaptor();
+        this.appendKeyCache = new int[columnCount];
+        this.appendSizeCache = new long[columnCount];
+        Arrays.fill(appendKeyCache, -3);
+
+        String dateStr = Dates.dirNameForIntervalStart(interval, journal.getMetadata().getPartitionType());
+        if (dateStr.length() > 0) {
+            setPartitionDir(new File(this.journal.getLocation(), dateStr), indexTxAddresses);
+        } else {
+            setPartitionDir(this.journal.getLocation(), indexTxAddresses);
+        }
+    }
+
     public NullsColumn getNullsColumn() {
         return nullsColumn;
     }
@@ -131,8 +151,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
     public void close() {
         if (isOpen()) {
-            for (int i = 0, columnsLength = columns.length; i < columnsLength; i++) {
-                AbstractColumn ch = columns[i];
+            for (AbstractColumn ch : columns) {
                 if (ch != null) {
                     ch.close();
                 }
@@ -218,7 +237,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
         checkColumnIndex(columnIndex);
         return nullsColumn.getBitSet(Rows.toLocalRowID(localRowID)).get(columnIndex);
     }
-
 
     public AbstractColumn getAbstractColumn(int i) {
         checkColumnIndex(i);
@@ -315,7 +333,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
     }
 
-
     public void append(T obj) throws JournalException {
         boolean checkNulls;
         if (checkNulls = (nullsAdaptor != null)) {
@@ -326,12 +343,30 @@ public class Partition<T> implements Iterable<T>, Closeable {
         for (int i = 0; i < columnCount; i++) {
             Journal.ColumnMetadata meta = journal.getColumnMetadata(i);
 
-            if (checkNulls && setNulls(i, meta)) continue;
+            if (checkNulls) {
+                if (nulls.get(i)) {
+                    switch (meta.meta.type) {
+                        case BOOLEAN:
+                        case BYTE:
+                        case DOUBLE:
+                        case LONG:
+                        case SHORT:
+                            ((FixedColumn) columns[i]).putNull();
+                            continue;
+                        case INT:
+                            if (meta.meta.indexed) {
+                                appendKeyCache[i] = SymbolTable.VALUE_IS_NULL;
+                                appendSizeCache[i] = ((FixedColumn) columns[i]).putNull();
+                            } else {
+                                ((FixedColumn) columns[i]).putNull();
+                            }
+                            continue;
+                    }
+                }
+            }
 
             switch (meta.meta.type) {
                 case BOOLEAN:
-                    ((FixedColumn) columns[i]).putBool(Unsafe.getUnsafe().getBoolean(obj, meta.meta.offset));
-                    break;
                 case BYTE:
                 case DOUBLE:
                 case LONG:
@@ -361,7 +396,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
         nullsColumn.putBitSet(nulls);
         commitColumns();
 
-        for (int i = 0, len = appendKeyCache.length; i < len; i++) {
+        for (int i = 0; i < appendKeyCache.length; i++) {
             if (appendKeyCache[i] > -3) {
                 columnIndexProxies.get(i).getIndex().add(appendKeyCache[i], appendSizeCache[i]);
             }
@@ -532,8 +567,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
             throw new JournalException("Cannot compact closed partition: %s", this);
         }
 
-        for (int i = 0, columnsLength = columns.length; i < columnsLength; i++) {
-            AbstractColumn col = columns[i];
+        for (AbstractColumn col : columns) {
             if (col != null) {
                 col.compact();
             }
@@ -612,29 +646,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
                 appendSizeCache[i] = offset;
             }
         }
-    }
-
-    private boolean setNulls(int i, Journal.ColumnMetadata meta) {
-        if (nulls.get(i)) {
-            switch (meta.meta.type) {
-                case BOOLEAN:
-                case BYTE:
-                case DOUBLE:
-                case LONG:
-                case SHORT:
-                    ((FixedColumn) columns[i]).putNull();
-                    return true;
-                case INT:
-                    if (meta.meta.indexed) {
-                        appendKeyCache[i] = SymbolTable.VALUE_IS_NULL;
-                        appendSizeCache[i] = ((FixedColumn) columns[i]).putNull();
-                    } else {
-                        ((FixedColumn) columns[i]).putNull();
-                    }
-                    return true;
-            }
-        }
-        return false;
     }
 
     private FixedColumn getFixedColumnOrNull(long localRowID, int columnIndex) {
@@ -771,26 +782,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
             } else {
                 columnIndexProxies.add(null);
             }
-        }
-    }
-
-    Partition(Journal<T> journal, Interval interval, int partitionIndex, long txLimit, long[] indexTxAddresses) {
-        this.journal = journal;
-        this.partitionIndex = partitionIndex;
-        this.interval = interval;
-        this.txLimit = txLimit;
-        this.columnCount = journal.getMetadata().getColumnCount();
-        this.nulls = new BitSet(columnCount);
-        this.nullsAdaptor = journal.getMetadata().getNullsAdaptor();
-        this.appendKeyCache = new int[columnCount];
-        this.appendSizeCache = new long[columnCount];
-        Arrays.fill(appendKeyCache, -3);
-
-        String dateStr = Dates.dirNameForIntervalStart(interval, journal.getMetadata().getPartitionType());
-        if (dateStr.length() > 0) {
-            setPartitionDir(new File(this.journal.getLocation(), dateStr), indexTxAddresses);
-        } else {
-            setPartitionDir(this.journal.getLocation(), indexTxAddresses);
         }
     }
 }

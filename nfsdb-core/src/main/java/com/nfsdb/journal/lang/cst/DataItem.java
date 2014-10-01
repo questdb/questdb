@@ -19,6 +19,7 @@ package com.nfsdb.journal.lang.cst;
 import com.nfsdb.journal.Partition;
 
 public class DataItem {
-    public Partition partition;
+    public Partition<Object> partition;
     public long rowid;
+    public DataItem slave;
 }

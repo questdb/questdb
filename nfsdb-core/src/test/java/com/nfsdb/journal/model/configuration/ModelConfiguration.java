@@ -61,10 +61,15 @@ public class ModelConfiguration {
         ;
 
         $(Band.class).recordCountHint(10000)
-                .$sym("name").valueCountHint(1200)
+                .$sym("name").index().valueCountHint(1200)
                 .$sym("type").valueCountHint(10)
                 .$bin("image").size(10000)
                 .$ts()
         ;
+
+        $(Album.class)
+                .$sym("band").index()
+                .$sym("name").index().valueCountHint(1000000)
+                .$ts("releaseDate");
     }};
 }

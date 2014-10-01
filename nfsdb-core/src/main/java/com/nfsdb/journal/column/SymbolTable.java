@@ -144,8 +144,7 @@ public class SymbolTable implements Closeable {
         }
         String value = key < keyCache.size() ? keyCache.get(key) : null;
         if (value == null) {
-            value = data.getString(key);
-            cache(key, value);
+            cache(key, value = data.getString(key));
         }
         return value;
     }

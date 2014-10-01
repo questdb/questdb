@@ -33,9 +33,10 @@ public class JournalSourceImpl extends AbstractImmutableIterator<DataItem> imple
 
     @Override
     public boolean hasNext() {
-        return cursor != null && cursor.hasNext() || nextSlice();
+        return (cursor != null && cursor.hasNext()) || nextSlice();
     }
 
+    @SuppressWarnings("unchecked")
     private boolean nextSlice() {
         do {
             if (partitionSource.hasNext()) {
