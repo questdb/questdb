@@ -20,6 +20,8 @@ import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.lang.cst.DataItem;
 import com.nfsdb.journal.lang.cst.JoinedSource;
 
+import java.util.NoSuchElementException;
+
 public class InnerSkipJoin extends AbstractImmutableIterator<DataItem> implements JoinedSource {
 
     private final JoinedSource delegate;
@@ -39,12 +41,15 @@ public class InnerSkipJoin extends AbstractImmutableIterator<DataItem> implement
                 return true;
             }
         }
-
+        this.data = null;
         return false;
     }
 
     @Override
     public DataItem next() {
+        if (data == null) {
+            throw new NoSuchElementException();
+        }
         return data;
     }
 

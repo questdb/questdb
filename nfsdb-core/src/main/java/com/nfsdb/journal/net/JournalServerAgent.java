@@ -171,7 +171,7 @@ public class JournalServerAgent {
                 clientStates.set(index, r);
             }
             request.deepCopy(r);
-            r.setClientStateInvalid(true);
+            r.invalidateClientState();
             r.setClientStateSyncTime(0);
             r.setWriterUpdateReceived(false);
 
@@ -232,7 +232,7 @@ public class JournalServerAgent {
         try {
             boolean dataSent = dispatchProducer(channel, state, journalDeltaProducer, journalIndex);
             if (dataSent) {
-                state.setClientStateInvalid(true);
+                state.invalidateClientState();
             } else {
                 state.setClientStateSyncTime(time);
             }

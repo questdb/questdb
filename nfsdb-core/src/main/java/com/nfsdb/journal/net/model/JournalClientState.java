@@ -65,8 +65,8 @@ public class JournalClientState {
         return !clientStateInvalid;
     }
 
-    public void setClientStateInvalid(boolean clientStateInvalid) {
-        this.clientStateInvalid = clientStateInvalid;
+    public void invalidateClientState() {
+        this.clientStateInvalid = true;
     }
 
     public boolean noCommitNotification() {

@@ -19,12 +19,14 @@ package com.nfsdb.journal.lang.cst.impl.rsrc;
 import com.nfsdb.journal.lang.cst.PartitionSlice;
 import com.nfsdb.journal.lang.cst.RowCursor;
 import com.nfsdb.journal.lang.cst.RowSource;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class UnionRowSource implements RowSource, RowCursor {
     private final RowSource[] sources;
     private final RowCursor[] cursors;
     private int cursorIndex;
 
+    @SuppressFBWarnings(justification = "By ref parameter to avoid paranoid array copying")
     public UnionRowSource(RowSource[] sources) {
         this.sources = sources;
         this.cursors = new RowCursor[sources.length];

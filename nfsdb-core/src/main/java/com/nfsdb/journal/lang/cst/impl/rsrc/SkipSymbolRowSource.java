@@ -35,11 +35,11 @@ public class SkipSymbolRowSource implements RowSource, RowCursor {
 
     private final RowSource delegate;
     private final StringRef symbolName;
+    private final TIntSet set = new TIntHashSet();
     private FixedColumn column;
     private int columnIndex = -1;
     private RowCursor cursor;
     private long rowid;
-    private TIntSet set = new TIntHashSet();
 
     public SkipSymbolRowSource(RowSource delegate, StringRef symbolName) {
         this.delegate = delegate;

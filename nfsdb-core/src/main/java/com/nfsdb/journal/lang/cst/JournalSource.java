@@ -20,7 +20,7 @@ import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.collections.ImmutableIterator;
 
 public interface JournalSource extends ImmutableIterator<DataItem> {
-    JournalSource reset();
+    void reset();
 
     Journal getJournal();
 }

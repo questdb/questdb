@@ -36,10 +36,9 @@ public class TopJournalSource extends AbstractImmutableIterator<DataItem> implem
 
 
     @Override
-    public JournalSource reset() {
+    public void reset() {
         delegate.reset();
         this.remaining = count;
-        return this;
     }
 
     @Override

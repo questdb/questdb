@@ -36,6 +36,24 @@ public class JournalSourceImpl extends AbstractImmutableIterator<DataItem> imple
         return (cursor != null && cursor.hasNext()) || nextSlice();
     }
 
+    @Override
+    public DataItem next() {
+        item.rowid = cursor.next();
+        return item;
+    }
+
+    @Override
+    public void reset() {
+        partitionSource.reset();
+        rowSource.reset();
+        cursor = null;
+    }
+
+    @Override
+    public Journal getJournal() {
+        return partitionSource.getJournal();
+    }
+
     @SuppressWarnings("unchecked")
     private boolean nextSlice() {
         do {
@@ -54,24 +72,5 @@ public class JournalSourceImpl extends AbstractImmutableIterator<DataItem> imple
         } while (!cursor.hasNext());
 
         return true;
-    }
-
-    @Override
-    public DataItem next() {
-        item.rowid = cursor.next();
-        return item;
-    }
-
-    @Override
-    public JournalSource reset() {
-        partitionSource.reset();
-        rowSource.reset();
-        cursor = null;
-        return this;
-    }
-
-    @Override
-    public Journal getJournal() {
-        return partitionSource.getJournal();
     }
 }

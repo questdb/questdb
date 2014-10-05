@@ -21,7 +21,7 @@ import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import java.lang.reflect.Field;
 
 public final class Unsafe {
-    public static final sun.misc.Unsafe UNSAFE;
+    private static final sun.misc.Unsafe UNSAFE;
 
     public static sun.misc.Unsafe getUnsafe() {
         return UNSAFE;

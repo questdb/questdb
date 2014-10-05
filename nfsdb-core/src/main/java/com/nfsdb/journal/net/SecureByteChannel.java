@@ -17,6 +17,7 @@
 package com.nfsdb.journal.net;
 
 import com.nfsdb.journal.exceptions.JournalNetworkException;
+import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.net.config.SslConfig;
 import com.nfsdb.journal.utils.ByteBuffers;
@@ -227,6 +228,8 @@ public class SecureByteChannel implements ByteChannel {
                     handshakeStatus = engine.getHandshakeStatus();
 //                    LOGGER.info("TASK: %s", client ? "CLIENT" : "SERVER");
                     break;
+                default:
+                    throw new JournalRuntimeException("Unknown handshake status: %s", handshakeStatus);
             }
         }
 

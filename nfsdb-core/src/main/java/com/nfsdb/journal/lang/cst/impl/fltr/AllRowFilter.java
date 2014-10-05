@@ -20,12 +20,14 @@ import com.nfsdb.journal.lang.cst.Choice;
 import com.nfsdb.journal.lang.cst.PartitionSlice;
 import com.nfsdb.journal.lang.cst.RowAcceptor;
 import com.nfsdb.journal.lang.cst.RowFilter;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class AllRowFilter implements RowFilter, RowAcceptor {
 
     private final RowFilter[] filters;
     private final RowAcceptor[] acceptors;
 
+    @SuppressFBWarnings(justification = "By ref parameter to avoid paranoid array copying")
     public AllRowFilter(RowFilter[] filters) {
         this.filters = filters;
         this.acceptors = new RowAcceptor[filters.length];

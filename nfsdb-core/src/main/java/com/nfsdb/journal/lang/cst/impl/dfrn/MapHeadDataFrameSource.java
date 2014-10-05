@@ -32,7 +32,7 @@ public class MapHeadDataFrameSource implements DataFrameSource, DataFrame, RowCu
 
     private final JournalSource source;
     private final StringRef symbol;
-    private TIntObjectHashMap<TLongArrayList> frame = new TIntObjectHashMap<>();
+    private final TIntObjectHashMap<TLongArrayList> frame = new TIntObjectHashMap<>();
     private TLongArrayList series;
     private int seriesPos;
 

@@ -136,7 +136,7 @@ public class ClientConfig extends NetworkConfig {
                                     + Integer.toString(data[2] & 0xFF) + "."
                                     + Integer.toString(data[3] & 0xFF) + "."
                                     + Integer.toString(data[4] & 0xFF);
-                            info.ssl = data[5] == 1;
+                            // info.ssl = data[5] == 1;
                             int offset = 6;
                             int port = data[offset] << 24 | (data[offset + 1] & 0xFF) << 16 | (data[offset + 2] & 0xFF) << 8 | (data[offset + 3] & 0xFF);
                             info.address = new InetSocketAddress(host, port);
@@ -174,6 +174,6 @@ public class ClientConfig extends NetworkConfig {
 
     public static class ServerInformation {
         InetSocketAddress address;
-        boolean ssl;
+        //boolean ssl;
     }
 }

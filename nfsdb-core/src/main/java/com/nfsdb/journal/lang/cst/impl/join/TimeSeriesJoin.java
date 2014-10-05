@@ -24,17 +24,19 @@ import com.nfsdb.journal.lang.cst.DataItem;
 import com.nfsdb.journal.lang.cst.JoinedSource;
 import com.nfsdb.journal.lang.cst.JournalSource;
 
+import java.util.NoSuchElementException;
+
 public class TimeSeriesJoin extends AbstractImmutableIterator<DataItem> implements JoinedSource {
     private final JournalSource masterSource;
     private final JournalSource slaveSource;
     private final long depth;
     private final RingQueue<CachedDataItem> ringQueue;
+    private final int masterTimestampIndex;
+    private final int slaveTimestampIndex;
     private DataItem joinedData;
     private Partition lastMasterPartition;
     private Partition lastSlavePartition;
     private boolean nextSlave = false;
-    private int masterTimestampIndex;
-    private int slaveTimestampIndex;
     private FixedColumn masterColumn;
     private FixedColumn slaveColumn;
     private long masterTimestamp;
@@ -150,6 +152,9 @@ public class TimeSeriesJoin extends AbstractImmutableIterator<DataItem> implemen
 
     @Override
     public DataItem next() {
+        if (nextData == null) {
+            throw new NoSuchElementException();
+        }
         DataItem d = nextData;
         nextData = null;
         return d;

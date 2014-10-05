@@ -87,8 +87,8 @@ public final class ByteBuffers {
         return result;
     }
 
-    public static int copy(ByteBuffer from, ByteBuffer to) {
-        return copy(from, to, to == null ? 0 : to.remaining());
+    public static void copy(ByteBuffer from, ByteBuffer to) {
+        copy(from, to, to == null ? 0 : to.remaining());
     }
 
     /**

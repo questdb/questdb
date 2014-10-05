@@ -38,6 +38,7 @@ public class SymbolToFrameOuterJoin extends AbstractImmutableIterator<DataItem> 
     private final DataFrameSource slaveSource;
     private final StringRef masterSymbol;
     private final StringRef slaveSymbol;
+    private final DataItem dataItem = new DataItem();
     private DataItem joinedData;
     private DataFrame frame;
     private int columnIndex;
@@ -49,7 +50,6 @@ public class SymbolToFrameOuterJoin extends AbstractImmutableIterator<DataItem> 
     private boolean initMap = true;
     private int[] map;
     private RowCursor slaveCursor;
-    private DataItem dataItem = new DataItem();
 
     public SymbolToFrameOuterJoin(JournalSource masterSource, StringRef masterSymbol, DataFrameSource frameSource, StringRef slaveSymbol) {
         this.masterSource = masterSource;
