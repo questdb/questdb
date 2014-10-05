@@ -27,7 +27,8 @@ public enum ColumnType {
     SHORT(short.class, 2, true),
     STRING(String.class, 0, false),
     SYMBOL(null, 4, true),
-    BINARY(ByteBuffer.class, 0, false);
+    BINARY(ByteBuffer.class, 0, false),
+    DATE(long.class, 8, true);
 
     private final Class type;
     private final boolean primitive;

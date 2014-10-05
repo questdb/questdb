@@ -75,26 +75,24 @@ public class VariableColumn extends AbstractColumn {
     }
 
     public String getString(long localRowID) {
-        // read delegate buffer which lets us read "null" flag and string length.
-        long address = getAddrInternal(localRowID, 4);
-        int len = Unsafe.getUnsafe().getInt(address);
+        long offset = indexColumn.getLong(localRowID);
+        int len = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
 
         if (len == -1) {
             return null;
         }
-        return asString(mappedFile.getAddress(indexColumn.getLong(localRowID), len * 2 + 4) + 4, len);
+        return asString(mappedFile.getAddress(offset, len * 2 + 4) + 4, len);
     }
 
     public boolean equalsString(long localRowID, String value) {
-        // read delegate buffer which lets us read "null" flag and string length.
-        long address = getAddrInternal(localRowID, 4);
-        int len = Unsafe.getUnsafe().getInt(address);
+        long offset = indexColumn.getLong(localRowID);
+        int len = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
 
         if (len != value.length()) {
             return false;
         }
 
-        address = getAddrInternal(localRowID, len * 2 + 4) + 4;
+        long address = mappedFile.getAddress(offset, len * 2 + 4) + 4;
         for (int i = 0; i < len; i++) {
             if (Unsafe.getUnsafe().getChar(address) != value.charAt(i)) {
                 return false;
@@ -190,35 +188,14 @@ public class VariableColumn extends AbstractColumn {
 
     private ByteBuffer getBufferInternal(long localRowID, int recordLength) {
         long max = indexColumn.size();
-
         if (localRowID > max) {
             throw new JournalRuntimeException("localRowID is out of bounds. %d > %d", localRowID, max);
         }
-
-        if (localRowID == max) {
-            return getBuffer(getOffset(), recordLength);
-        } else {
-            return getBuffer(getOffset(localRowID), recordLength);
-        }
-    }
-
-    private long getAddrInternal(long localRowID, int recordLength) {
-        long max = indexColumn.size();
-
-        if (localRowID > max) {
-            throw new JournalRuntimeException("localRowID is out of bounds. %d > %d", localRowID, max);
-        }
-
-        if (localRowID == max) {
-            return mappedFile.getAddress(getOffset(), recordLength);
-        } else {
-            return mappedFile.getAddress(indexColumn.getLong(localRowID), recordLength);
-        }
+        return getBuffer(getOffset(localRowID), recordLength);
     }
 
     long commitAppend(long offset, int size) {
         preCommit(offset + size);
         return indexColumn.putLong(offset);
     }
-
 }

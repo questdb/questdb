@@ -25,11 +25,6 @@ public class Token {
         this.hidden = false;
     }
 
-    public Token(boolean hidden, String text) {
-        this.hidden = hidden;
-        this.text = text;
-    }
-
     @Override
     public String toString() {
         return "Token{" +

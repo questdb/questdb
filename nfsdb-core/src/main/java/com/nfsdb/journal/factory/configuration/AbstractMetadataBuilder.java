@@ -48,4 +48,8 @@ public abstract class AbstractMetadataBuilder<T> {
     public JournalMetadataBuilder<T> $ts() {
         return parent.$ts();
     }
+
+    public JournalMetadataBuilder<T> $date(String name) {
+        return parent.$date(name);
+    }
 }

@@ -80,30 +80,6 @@ public class JoinSymbolOnSymbolTest extends AbstractTest {
         aw = factory.writer(Album.class);
     }
 
-    private JoinedSource buildSource(Journal<Band> bw, Journal<Album> aw) {
-        Q q = new QImpl();
-        StringRef band = new StringRef("band");
-        StringRef name = new StringRef("name");
-        IntRef key = new IntRef();
-
-        return new SymbolOuterJoin(
-                q.forEachPartition(
-                        q.source(bw, false)
-                        , q.all()
-                )
-                , name
-                , key
-                ,
-                q.forEachPartition(
-                        q.source(aw, false)
-                        , q.kvSource(band
-                                , q.singleKeySource(key)
-                        )
-                )
-                , band
-        );
-    }
-
     @Test
     public void testOuterOneToOne() throws Exception {
         bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
@@ -253,7 +229,6 @@ public class JoinSymbolOnSymbolTest extends AbstractTest {
                 default:
                     Assert.fail("expected 3 rows");
             }
-//            System.out.println(a + " " + b);
         }
     }
 
@@ -338,7 +313,6 @@ public class JoinSymbolOnSymbolTest extends AbstractTest {
                 default:
                     Assert.fail("expected 4 rows");
             }
-//            System.out.println(a + " " + b);
         }
     }
 
@@ -413,7 +387,6 @@ public class JoinSymbolOnSymbolTest extends AbstractTest {
                 default:
                     Assert.fail("expected 4 rows");
             }
-//            System.out.println(a + " " + b);
         }
     }
 
@@ -486,7 +459,6 @@ public class JoinSymbolOnSymbolTest extends AbstractTest {
                 default:
                     Assert.fail("expected 3 rows");
             }
-//            System.out.println(a + " " + b);
         }
     }
 
@@ -562,8 +534,31 @@ public class JoinSymbolOnSymbolTest extends AbstractTest {
                 default:
                     Assert.fail("expected 3 rows");
             }
-//            System.out.println(a + " " + b);
         }
+    }
+
+    private JoinedSource buildSource(Journal<Band> bw, Journal<Album> aw) {
+        Q q = new QImpl();
+        StringRef band = new StringRef("band");
+        StringRef name = new StringRef("name");
+        IntRef key = new IntRef();
+
+        return new SymbolOuterJoin(
+                q.forEachPartition(
+                        q.source(bw, false)
+                        , q.all()
+                )
+                , name
+                , key
+                ,
+                q.forEachPartition(
+                        q.source(aw, false)
+                        , q.kvSource(band
+                                , q.singleKeySource(key)
+                        )
+                )
+                , band
+        );
     }
 
 }

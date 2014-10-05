@@ -48,4 +48,9 @@ public class SymbolBuilder<T> extends AbstractMetadataBuilder<T> {
         this.meta.indexed = true;
         return this;
     }
+
+    public SymbolBuilder<T> noCache() {
+        this.meta.noCache = true;
+        return this;
+    }
 }

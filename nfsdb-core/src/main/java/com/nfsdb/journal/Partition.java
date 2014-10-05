@@ -60,26 +60,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
     private FixedColumn timestampColumn;
     private BinarySearch.LongTimeSeriesProvider indexOfVisitor;
 
-    Partition(Journal<T> journal, Interval interval, int partitionIndex, long txLimit, long[] indexTxAddresses) {
-        this.journal = journal;
-        this.partitionIndex = partitionIndex;
-        this.interval = interval;
-        this.txLimit = txLimit;
-        this.columnCount = journal.getMetadata().getColumnCount();
-        this.nulls = new BitSet(columnCount);
-        this.nullsAdaptor = journal.getMetadata().getNullsAdaptor();
-        this.appendKeyCache = new int[columnCount];
-        this.appendSizeCache = new long[columnCount];
-        Arrays.fill(appendKeyCache, -3);
-
-        String dateStr = Dates.dirNameForIntervalStart(interval, journal.getMetadata().getPartitionType());
-        if (dateStr.length() > 0) {
-            setPartitionDir(new File(this.journal.getLocation(), dateStr), indexTxAddresses);
-        } else {
-            setPartitionDir(this.journal.getLocation(), indexTxAddresses);
-        }
-    }
-
     public NullsColumn getNullsColumn() {
         return nullsColumn;
     }
@@ -286,6 +266,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
                     Unsafe.getUnsafe().putInt(obj, m.meta.offset, ((FixedColumn) columns[i]).getInt(localRowID));
                     break;
                 case LONG:
+                case DATE:
                     Unsafe.getUnsafe().putLong(obj, m.meta.offset, ((FixedColumn) columns[i]).getLong(localRowID));
                     break;
                 case SHORT:
@@ -370,6 +351,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
                 case BYTE:
                 case DOUBLE:
                 case LONG:
+                case DATE:
                 case SHORT:
                     ((FixedColumn) columns[i]).copy(obj, meta.meta.offset, meta.meta.size);
                     break;
@@ -782,6 +764,26 @@ public class Partition<T> implements Iterable<T>, Closeable {
             } else {
                 columnIndexProxies.add(null);
             }
+        }
+    }
+
+    Partition(Journal<T> journal, Interval interval, int partitionIndex, long txLimit, long[] indexTxAddresses) {
+        this.journal = journal;
+        this.partitionIndex = partitionIndex;
+        this.interval = interval;
+        this.txLimit = txLimit;
+        this.columnCount = journal.getMetadata().getColumnCount();
+        this.nulls = new BitSet(columnCount);
+        this.nullsAdaptor = journal.getMetadata().getNullsAdaptor();
+        this.appendKeyCache = new int[columnCount];
+        this.appendSizeCache = new long[columnCount];
+        Arrays.fill(appendKeyCache, -3);
+
+        String dateStr = Dates.dirNameForIntervalStart(interval, journal.getMetadata().getPartitionType());
+        if (dateStr.length() > 0) {
+            setPartitionDir(new File(this.journal.getLocation(), dateStr), indexTxAddresses);
+        } else {
+            setPartitionDir(this.journal.getLocation(), indexTxAddresses);
         }
     }
 }

@@ -44,15 +44,17 @@ public class SymbolTable implements Closeable {
     private final String column;
     private final TObjectIntHashMap<String> valueCache;
     private final ArrayList<String> keyCache;
+    private final boolean noCache;
     private VariableColumn data;
     private KVIndex index;
     private int size;
 
-    public SymbolTable(int capacity, int avgStringSize, int txCountHint, File directory, String column, JournalMode mode, int size, long indexTxAddress) throws JournalException {
+    public SymbolTable(int keyCount, int avgStringSize, int txCountHint, File directory, String column, JournalMode mode, int size, long indexTxAddress, boolean noCache) throws JournalException {
         // number of hash keys stored in index
         // assume it is 20% of stated capacity
-        this.hashKeyCount = Math.max(1, (int) (capacity * CACHE_LOAD_FACTOR));
+        this.hashKeyCount = Math.max(1, (int) (keyCount * CACHE_LOAD_FACTOR));
         this.column = column;
+        this.noCache = noCache;
         JournalMode m;
 
         switch (mode) {
@@ -66,15 +68,15 @@ public class SymbolTable implements Closeable {
                 m = mode;
         }
 
-        MappedFile dataFile = new MappedFileImpl(new File(directory, column + DATA_FILE_SUFFIX), ByteBuffers.getBitHint(avgStringSize * 2 + 4, capacity), m);
-        MappedFile indexFile = new MappedFileImpl(new File(directory, column + INDEX_FILE_SUFFIX), ByteBuffers.getBitHint(8, capacity), m);
+        MappedFile dataFile = new MappedFileImpl(new File(directory, column + DATA_FILE_SUFFIX), ByteBuffers.getBitHint(avgStringSize * 2 + 4, keyCount), m);
+        MappedFile indexFile = new MappedFileImpl(new File(directory, column + INDEX_FILE_SUFFIX), ByteBuffers.getBitHint(8, keyCount), m);
 
         this.data = new VariableColumn(dataFile, indexFile);
         this.size = size;
 
-        this.index = new KVIndex(new File(directory, column + HASH_INDEX_FILE_SUFFIX), this.hashKeyCount, capacity, txCountHint, mode, indexTxAddress);
-        this.valueCache = new TObjectIntHashMap<>(capacity, CACHE_LOAD_FACTOR, VALUE_NOT_FOUND);
-        this.keyCache = new ArrayList<>(capacity);
+        this.index = new KVIndex(new File(directory, column + HASH_INDEX_FILE_SUFFIX), this.hashKeyCount, keyCount, txCountHint, mode, indexTxAddress);
+        this.valueCache = new TObjectIntHashMap<>(noCache ? 0 : keyCount, CACHE_LOAD_FACTOR, VALUE_NOT_FOUND);
+        this.keyCache = new ArrayList<>(noCache ? 0 : keyCount);
     }
 
     public void applyTx(int size, long indexTxAddress) {
@@ -87,25 +89,24 @@ public class SymbolTable implements Closeable {
     }
 
     public int put(String value) {
-
         int key = getQuick(value);
         if (key == VALUE_NOT_FOUND) {
-            data.putString(value);
+            key = (int) data.putString(value);
             data.commit();
-            key = (int) (data.size() - 1);
             index.add(hashKey(value), key);
             size++;
             cache(key, value);
         }
-
         return key;
     }
 
     public int getQuick(String value) {
-        int key = value == null ? VALUE_IS_NULL : this.valueCache.get(value);
+        if (!noCache) {
+            int key = value == null ? VALUE_IS_NULL : this.valueCache.get(value);
 
-        if (key != VALUE_NOT_FOUND) {
-            return key;
+            if (key != VALUE_NOT_FOUND) {
+                return key;
+            }
         }
 
         int hashKey = hashKey(value);
@@ -116,8 +117,8 @@ public class SymbolTable implements Closeable {
 
         Cursor cursor = index.cachedCursor(hashKey);
         while (cursor.hasNext()) {
-            key = (int) cursor.next();
-            if (data.equalsString(key, value)) {
+            int key;
+            if (data.equalsString((key = (int) cursor.next()), value)) {
                 cache(key, value);
                 return key;
             }
@@ -234,6 +235,10 @@ public class SymbolTable implements Closeable {
     }
 
     private void cache(int key, String value) {
+        if (noCache) {
+            return;
+        }
+
         valueCache.put(value, key);
         Lists.advance(keyCache, key);
         keyCache.set(key, value);

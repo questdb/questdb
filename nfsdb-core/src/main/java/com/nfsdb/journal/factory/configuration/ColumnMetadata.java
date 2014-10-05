@@ -29,20 +29,22 @@ public class ColumnMetadata {
     public int indexBitHint;
     public int distinctCountHint;
     public String sameAs;
+    public boolean noCache = false;
 
     @Override
     public String toString() {
         return "ColumnMetadata{" +
-                "name*='" + name + '\'' +
-                ", type*=" + type +
+                "name='" + name + '\'' +
+                ", type=" + type +
                 ", offset=" + offset +
-                ", size*=" + size +
+                ", size=" + size +
                 ", avgSize=" + avgSize +
-                ", indexed*=" + indexed +
+                ", indexed=" + indexed +
                 ", bitHint=" + bitHint +
                 ", indexBitHint=" + indexBitHint +
-                ", distinctCountHint*=" + distinctCountHint +
-                ", sameAs*='" + sameAs + '\'' +
+                ", distinctCountHint=" + distinctCountHint +
+                ", sameAs='" + sameAs + '\'' +
+                ", noCache=" + noCache +
                 '}';
     }
 
@@ -57,5 +59,6 @@ public class ColumnMetadata {
         this.indexBitHint = from.indexBitHint;
         this.distinctCountHint = from.distinctCountHint;
         this.sameAs = from.sameAs;
+        this.noCache = from.noCache;
     }
 }

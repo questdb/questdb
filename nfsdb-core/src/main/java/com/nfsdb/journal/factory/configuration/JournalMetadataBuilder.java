@@ -100,6 +100,11 @@ public class JournalMetadataBuilder<T> {
         return this;
     }
 
+    public JournalMetadataBuilder<T> $date(String name) {
+        getMeta(name).type = ColumnType.DATE;
+        return this;
+    }
+
     public JournalMetadataBuilder<T> location(String location) {
         this.location = location;
         return this;

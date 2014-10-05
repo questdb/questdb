@@ -86,10 +86,7 @@ public class MappedFileImpl implements MappedFile {
         if (offset >= cachedBufferLo && offset + size <= cachedBufferHi) {
             return cachedAddress + offset - cachedBufferLo;
         } else {
-            cachedBuffer = getBufferInternal(offset, size);
-            cachedBufferLo = offset - cachedBuffer.position();
-            cachedBufferHi = cachedBufferLo + cachedBuffer.limit();
-            return (cachedAddress = ((DirectBuffer) cachedBuffer).address()) + cachedBuffer.position();
+            return allocateAddress(offset, size);
         }
     }
 
@@ -115,14 +112,13 @@ public class MappedFileImpl implements MappedFile {
     }
 
     public long getAppendOffset() {
-
-        if (mode == JournalMode.READ || mode == JournalMode.BULK_READ || cachedAppendOffset == -1L) {
+        if (cachedAppendOffset != -1 && (mode == JournalMode.APPEND || mode == JournalMode.BULK_APPEND)) {
+            return cachedAppendOffset;
+        } else {
             if (offsetBuffer != null) {
                 return cachedAppendOffset = Unsafe.getUnsafe().getLong(offsetDirectAddr);
             }
             return -1L;
-        } else {
-            return cachedAppendOffset;
         }
     }
 
@@ -170,6 +166,13 @@ public class MappedFileImpl implements MappedFile {
                 }
             }
         }
+    }
+
+    private long allocateAddress(long offset, int size) {
+        cachedBuffer = getBufferInternal(offset, size);
+        cachedBufferLo = offset - cachedBuffer.position();
+        cachedBufferHi = cachedBufferLo + cachedBuffer.limit();
+        return (cachedAddress = ((DirectBuffer) cachedBuffer).address()) + cachedBuffer.position();
     }
 
     private MappedByteBuffer getBufferInternal(long offset, int size) {

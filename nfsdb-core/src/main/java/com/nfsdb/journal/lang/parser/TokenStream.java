@@ -49,12 +49,16 @@ public class TokenStream extends AbstractImmutableIterator<String> {
     }
 
     public void defineSymbol(String text) {
-        List<Token> l = symbols.get(text.charAt(0));
+        defineSymbol(new Token(text));
+    }
+
+    public void defineSymbol(Token token) {
+        List<Token> l = symbols.get(token.text.charAt(0));
         if (l == null) {
             l = new ArrayList<>();
-            symbols.put(text.charAt(0), l);
+            symbols.put(token.text.charAt(0), l);
         }
-        l.add(new Token(text));
+        l.add(token);
         Collections.sort(l, new Comparator<Token>() {
             @Override
             public int compare(Token o1, Token o2) {

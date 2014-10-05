@@ -136,7 +136,6 @@ public class JoinStringToSymbolTest {
                 default:
                     Assert.fail("expected 3 rows");
             }
-//            System.out.println(a + " " + b);
         }
     }
 

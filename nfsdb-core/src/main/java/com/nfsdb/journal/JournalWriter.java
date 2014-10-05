@@ -347,29 +347,6 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
-    private void switchAppendPartition(long timestamp) throws JournalException {
-        boolean computeTimestampLo = appendPartition == null;
-
-        appendPartition = getAppendPartition(timestamp);
-
-        Interval interval = appendPartition.getInterval();
-        if (interval == null) {
-            appendTimestampHi = Long.MAX_VALUE;
-        } else {
-            appendTimestampHi = interval.getEndMillis();
-        }
-
-        if (computeTimestampLo) {
-            FixedColumn column = appendPartition.getTimestampColumn();
-            long sz;
-            if ((sz = column.size()) > 0) {
-                appendTimestampLo = column.getLong(sz - 1);
-            }
-        } else {
-            appendTimestampLo = appendPartition.getInterval().getStartMillis();
-        }
-    }
-
     /**
      * Max timestamp in journal for append operation. Objects with timestamp older then
      * this will always be rejected.
@@ -647,6 +624,29 @@ public class JournalWriter<T> extends Journal<T> {
 
     }
 
+    private void switchAppendPartition(long timestamp) throws JournalException {
+        boolean computeTimestampLo = appendPartition == null;
+
+        appendPartition = getAppendPartition(timestamp);
+
+        Interval interval = appendPartition.getInterval();
+        if (interval == null) {
+            appendTimestampHi = Long.MAX_VALUE;
+        } else {
+            appendTimestampHi = interval.getEndMillis();
+        }
+
+        if (computeTimestampLo) {
+            FixedColumn column = appendPartition.getTimestampColumn();
+            long sz;
+            if ((sz = column.size()) > 0) {
+                appendTimestampLo = column.getLong(sz - 1);
+            }
+        } else {
+            appendTimestampLo = appendPartition.getInterval().getStartMillis();
+        }
+    }
+
     private void commit(boolean force) throws JournalException {
         if (txActive) {
             commit(force ? Tx.TX_FORCE : Tx.TX_NORMAL);
@@ -668,14 +668,18 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     Partition<T> getAppendPartition() throws JournalException {
+        if (this.appendPartition != null) {
+            return appendPartition;
+        }
+
         int count = nonLagPartitionCount();
         if (count > 0) {
-            return getPartition(count - 1, true);
+            return appendPartition = getPartition(count - 1, true);
         } else {
             if (getMetadata().getPartitionType() != PartitionType.NONE) {
                 throw new JournalException("getAppendPartition() without timestamp on partitioned journal: %s", this);
             }
-            return createPartition(Dates.intervalForDate(0, getMetadata().getPartitionType()), 0);
+            return appendPartition = createPartition(Dates.intervalForDate(0, getMetadata().getPartitionType()), 0);
         }
     }
 

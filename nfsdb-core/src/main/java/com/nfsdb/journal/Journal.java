@@ -386,6 +386,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
                         Unsafe.getUnsafe().putInt(obj, m.offset, 0);
                         break;
                     case LONG:
+                    case DATE:
                         Unsafe.getUnsafe().putLong(obj, m.offset, 0L);
                         break;
                     case STRING:
@@ -638,7 +639,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
                 int tabIndex = symbolTables.size();
                 int tabSize = tx.symbolTableSizes.length > tabIndex ? tx.symbolTableSizes[tabIndex] : 0;
                 long indexTxAddress = tx.symbolTableIndexPointers.length > tabIndex ? tx.symbolTableIndexPointers[tabIndex] : 0;
-                SymbolTable tab = new SymbolTable(meta.distinctCountHint, meta.avgSize, getMetadata().getTxCountHint(), location, meta.name, getMode(), tabSize, indexTxAddress);
+                SymbolTable tab = new SymbolTable(meta.distinctCountHint, meta.avgSize, getMetadata().getTxCountHint(), location, meta.name, getMode(), tabSize, indexTxAddress, meta.noCache);
                 symbolTables.add(tab);
                 symbolTableMap.put(meta.name, tab);
                 columnMetadata[i].symbolTable = tab;
