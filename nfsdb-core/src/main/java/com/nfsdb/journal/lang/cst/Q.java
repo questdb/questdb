@@ -17,7 +17,6 @@
 package com.nfsdb.journal.lang.cst;
 
 import com.nfsdb.journal.Journal;
-import com.nfsdb.journal.lang.cst.impl.ref.IntRef;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 import org.joda.time.Interval;
 
@@ -47,7 +46,7 @@ public interface Q {
 
     RowSource headEquals(StringRef column, StringRef value);
 
-    RowSource headEquals(StringRef column, IntRef value);
+    RowSource headEquals(StringRef column, IntVariableSource variableSource);
 
     RowSource all();
 
@@ -79,15 +78,13 @@ public interface Q {
 
     KeySource symbolTableSource(StringRef sym, List<String> values);
 
-    KeySource singleKeySource(IntRef key);
+    KeySource singleKeySource(IntVariableSource variableSource);
 
     KeySource symbolTableSource(StringRef sym);
 
     KeySource hashSource(StringRef column, List<String> values);
 
     KeySource hashSource(StringRef column, StringRef value);
-
-    JoinedSource join(JournalSource masterSource, StringRef masterSymbol, IntRef keyRef, JournalSource slaveSource, StringRef slaveSymbol, RowFilter filter);
 
     JournalSourceLookup lastNKeyLookup(String column, int n, PartitionSource partitionSource);
 }

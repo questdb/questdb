@@ -22,7 +22,7 @@ import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.lang.cst.DataSource;
 import com.nfsdb.journal.lang.cst.Q;
 import com.nfsdb.journal.lang.cst.impl.QImpl;
-import com.nfsdb.journal.lang.cst.impl.ref.IntRef;
+import com.nfsdb.journal.lang.cst.impl.ref.MutableIntVariableSource;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 import com.nfsdb.journal.test.tools.JournalTestFactory;
 import com.nfsdb.journal.utils.Dates;
@@ -83,13 +83,13 @@ public class KeyLookupTest {
         Q q = new QImpl();
 
         StringRef intCol = new StringRef("id");
-        IntRef intId = new IntRef();
+        MutableIntVariableSource intId = new MutableIntVariableSource();
 
         // statement to search for INT id value
         DataSource<Order> dsInt = q.ds(q.forEachPartition(q.sourceDesc(writer), q.headEquals(intCol, intId)), order);
 
         for (int i = 0; i < 1000; i++) {
-            intId.value = i;
+            intId.setValue(i);
             Order o = dsInt.$new().head();
             Assert.assertEquals(i, o.id);
             Assert.assertEquals("Mismatch for INT " + i, timestamp + i * inc + (i >= 500 ? 1000 * inc + 3000 : 0), o.timestamp);

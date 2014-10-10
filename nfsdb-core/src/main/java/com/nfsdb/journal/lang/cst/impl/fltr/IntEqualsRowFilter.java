@@ -20,33 +20,30 @@ import com.nfsdb.journal.column.AbstractColumn;
 import com.nfsdb.journal.column.FixedColumn;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
-import com.nfsdb.journal.lang.cst.Choice;
-import com.nfsdb.journal.lang.cst.PartitionSlice;
-import com.nfsdb.journal.lang.cst.RowAcceptor;
-import com.nfsdb.journal.lang.cst.RowFilter;
-import com.nfsdb.journal.lang.cst.impl.ref.IntRef;
+import com.nfsdb.journal.lang.cst.*;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 
 public class IntEqualsRowFilter implements RowFilter, RowAcceptor {
     private final StringRef column;
-    private final IntRef value;
+    private final IntVariableSource variableSource;
     private FixedColumn columnRef;
+    private IntVariable var;
 
-    public IntEqualsRowFilter(StringRef column, IntRef value) {
+    public IntEqualsRowFilter(StringRef column, IntVariableSource variableSource) {
         this.column = column;
-        this.value = value;
+        this.variableSource = variableSource;
     }
 
     @Override
-    public RowAcceptor acceptor(PartitionSlice a, PartitionSlice b) {
+    public RowAcceptor acceptor(PartitionSlice slice) {
         try {
-            a.partition.open();
-            AbstractColumn col = a.partition.getAbstractColumn(a.partition.getJournal().getMetadata().getColumnIndex(column.value));
+            slice.partition.open();
+            AbstractColumn col = slice.partition.getAbstractColumn(slice.partition.getJournal().getMetadata().getColumnIndex(column.value));
             if (!(col instanceof FixedColumn)) {
                 throw new JournalRuntimeException("Invalid column type");
             }
             columnRef = (FixedColumn) col;
-
+            var = variableSource.getVariable(slice);
             return this;
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
@@ -54,7 +51,7 @@ public class IntEqualsRowFilter implements RowFilter, RowAcceptor {
     }
 
     @Override
-    public Choice accept(long localRowIDA, long localRowIDB) {
-        return columnRef.getInt(localRowIDA) == value.value ? Choice.PICK : Choice.SKIP;
+    public Choice accept(long localRowID) {
+        return columnRef.getInt(localRowID) == var.getValue() ? Choice.PICK : Choice.SKIP;
     }
 }

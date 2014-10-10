@@ -23,11 +23,13 @@ import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.lang.cst.DataItem;
 import com.nfsdb.journal.lang.cst.JoinedSource;
 import com.nfsdb.journal.lang.cst.Q;
+import com.nfsdb.journal.lang.cst.StatefulJournalSource;
 import com.nfsdb.journal.lang.cst.impl.QImpl;
-import com.nfsdb.journal.lang.cst.impl.join.StringToSymbolOuterJoin;
+import com.nfsdb.journal.lang.cst.impl.join.SlaveResetOuterJoin;
+import com.nfsdb.journal.lang.cst.impl.jsrc.StatefulJournalSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.ksrc.SingleKeySource;
-import com.nfsdb.journal.lang.cst.impl.ref.IntRef;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
+import com.nfsdb.journal.lang.cst.impl.ref.StringXTabVariableSource;
 import com.nfsdb.journal.lang.cst.impl.rsrc.KvIndexTopRowSource;
 import com.nfsdb.journal.model.Album;
 import com.nfsdb.journal.model.Band;
@@ -90,27 +92,26 @@ public class JoinStringToSymbolTest {
         aw.commit();
 
         Q q = new QImpl();
-        StringRef band = new StringRef("band");
         StringRef name = new StringRef("name");
-        IntRef key = new IntRef();
-        JoinedSource src = new StringToSymbolOuterJoin(
-                q.forEachPartition(
-                        q.source(aw, false)
-                        , q.all()
+        StatefulJournalSource master;
+        JoinedSource src = new SlaveResetOuterJoin(
+                master = new StatefulJournalSourceImpl(
+                        q.forEachPartition(
+                                q.source(aw, false)
+                                , q.all()
+                        )
                 )
-                , band
-                , q.forEachPartition(
-                q.source(bw, false)
                 ,
-                new KvIndexTopRowSource(
-                        name
-                        , new SingleKeySource(key)
-                        , null
-                )
+                q.forEachPartition(
+                        q.source(bw, false)
+                        ,
+                        new KvIndexTopRowSource(
+                                name
+                                , new SingleKeySource(new StringXTabVariableSource(master, "band", "name"))
+                                , null
+                        )
 
-        )
-                , name
-                , key
+                )
         );
 
 

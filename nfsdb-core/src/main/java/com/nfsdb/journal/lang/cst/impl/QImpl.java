@@ -21,7 +21,6 @@ import com.nfsdb.journal.collections.IntArrayList;
 import com.nfsdb.journal.lang.cst.*;
 import com.nfsdb.journal.lang.cst.impl.dsrc.DataSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.fltr.*;
-import com.nfsdb.journal.lang.cst.impl.join.SymbolOuterJoin;
 import com.nfsdb.journal.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.jsrc.TopJournalSource;
 import com.nfsdb.journal.lang.cst.impl.ksrc.*;
@@ -29,7 +28,6 @@ import com.nfsdb.journal.lang.cst.impl.psrc.IntervalPartitionSource;
 import com.nfsdb.journal.lang.cst.impl.psrc.JournalDescPartitionSource;
 import com.nfsdb.journal.lang.cst.impl.psrc.JournalPartitionSource;
 import com.nfsdb.journal.lang.cst.impl.psrc.JournalTailPartitionSource;
-import com.nfsdb.journal.lang.cst.impl.ref.IntRef;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 import com.nfsdb.journal.lang.cst.impl.rsrc.*;
 import org.joda.time.Interval;
@@ -93,8 +91,8 @@ public class QImpl implements Q {
         return kvSource(column, hashSource(column, value), 1, 0, equalsConst(column, value));
     }
 
-    public RowSource headEquals(StringRef column, IntRef value) {
-        return kvSource(column, new SingleIntHashKeySource(column, value), 1, 0, new IntEqualsRowFilter(column, value));
+    public RowSource headEquals(StringRef column, IntVariableSource variableSource) {
+        return kvSource(column, new SingleIntHashKeySource(column, variableSource), 1, 0, new IntEqualsRowFilter(column, variableSource));
     }
 
     @Override
@@ -173,8 +171,8 @@ public class QImpl implements Q {
     }
 
     @Override
-    public KeySource singleKeySource(IntRef key) {
-        return new SingleKeySource(key);
+    public KeySource singleKeySource(IntVariableSource variableSource) {
+        return new SingleKeySource(variableSource);
     }
 
     @Override
@@ -194,11 +192,6 @@ public class QImpl implements Q {
 
     public KeySource hashSource(StringRef column, IntArrayList values) {
         return new IntHashKeySource(column, values);
-    }
-
-    @Override
-    public JoinedSource join(JournalSource masterSource, StringRef masterSymbol, IntRef keyRef, JournalSource slaveSource, StringRef slaveSymbol, RowFilter filter) {
-        return new SymbolOuterJoin(masterSource, masterSymbol, keyRef, slaveSource, slaveSymbol);
     }
 
     @Override

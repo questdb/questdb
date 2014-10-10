@@ -34,20 +34,20 @@ public class AllRowFilter implements RowFilter, RowAcceptor {
     }
 
     @Override
-    public RowAcceptor acceptor(PartitionSlice a, PartitionSlice b) {
+    public RowAcceptor acceptor(PartitionSlice a) {
         for (int i = 0; i < filters.length; i++) {
             RowFilter filter = filters[i];
-            acceptors[i] = filter.acceptor(a, b);
+            acceptors[i] = filter.acceptor(a);
 
         }
         return this;
     }
 
     @Override
-    public Choice accept(long localRowIDA, long localRowIDB) {
+    public Choice accept(long localRowID) {
         for (int i = 0; i < acceptors.length; i++) {
             RowAcceptor acceptor = acceptors[i];
-            Choice choice = acceptor.accept(localRowIDA, localRowIDB);
+            Choice choice = acceptor.accept(localRowID);
             if (choice != Choice.PICK) {
                 return choice;
             }

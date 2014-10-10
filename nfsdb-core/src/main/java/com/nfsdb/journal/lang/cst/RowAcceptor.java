@@ -17,5 +17,5 @@
 package com.nfsdb.journal.lang.cst;
 
 public interface RowAcceptor {
-    Choice accept(long localRowIDA, long localRowIDB);
+    Choice accept(long localRowID);
 }

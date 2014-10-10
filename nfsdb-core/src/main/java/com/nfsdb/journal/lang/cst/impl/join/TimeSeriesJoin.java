@@ -44,13 +44,13 @@ public class TimeSeriesJoin extends AbstractImmutableIterator<DataItem> implemen
     private boolean useQueue;
     private boolean queueMarked = false;
 
-    public TimeSeriesJoin(JournalSource masterSource, JournalSource slaveSource, long depth, int cachSize) {
+    public TimeSeriesJoin(JournalSource masterSource, JournalSource slaveSource, long depth, int cacheSize) {
         this.masterSource = masterSource;
         this.slaveSource = slaveSource;
         this.depth = depth;
         this.masterTimestampIndex = masterSource.getJournal().getMetadata().getTimestampColumnIndex();
         this.slaveTimestampIndex = slaveSource.getJournal().getMetadata().getTimestampColumnIndex();
-        this.ringQueue = new RingQueue<>(CachedDataItem.class, cachSize);
+        this.ringQueue = new RingQueue<>(CachedDataItem.class, cacheSize);
     }
 
     @Override

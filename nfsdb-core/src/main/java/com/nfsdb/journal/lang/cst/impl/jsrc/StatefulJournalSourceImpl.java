@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,38 +20,38 @@ import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.lang.cst.DataItem;
 import com.nfsdb.journal.lang.cst.JournalSource;
+import com.nfsdb.journal.lang.cst.StatefulJournalSource;
 
-public class TopJournalSource extends AbstractImmutableIterator<DataItem> implements JournalSource {
-
+public class StatefulJournalSourceImpl extends AbstractImmutableIterator<DataItem> implements StatefulJournalSource {
     private final JournalSource delegate;
-    private final int count;
-    private int remaining;
+    private DataItem current;
 
-    public TopJournalSource(int count, JournalSource delegate) {
+    public StatefulJournalSourceImpl(JournalSource delegate) {
         this.delegate = delegate;
-        this.count = count;
-        this.remaining = count;
+    }
+
+    @Override
+    public DataItem current() {
+        return current;
     }
 
     @Override
     public void reset() {
         delegate.reset();
-        this.remaining = count;
-    }
-
-    @Override
-    public boolean hasNext() {
-        return remaining > 0 && delegate.hasNext();
-    }
-
-    @Override
-    public DataItem next() {
-        remaining--;
-        return delegate.next();
     }
 
     @Override
     public Journal getJournal() {
         return delegate.getJournal();
+    }
+
+    @Override
+    public boolean hasNext() {
+        return delegate.hasNext();
+    }
+
+    @Override
+    public DataItem next() {
+        return current = delegate.next();
     }
 }

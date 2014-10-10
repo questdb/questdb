@@ -127,12 +127,11 @@ public class SymbolToFrameOuterJoin extends AbstractImmutableIterator<DataItem> 
         }
 
         int masterKey = column.getInt(joinedData.rowid);
-        int slaveKey = map[masterKey];
 
-        if (slaveKey == -1) {
-            map[masterKey] = slaveKey = slaveTab.getQuick(masterTab.value(masterKey));
+        if (map[masterKey] == -1) {
+            map[masterKey] = slaveTab.getQuick(masterTab.value(masterKey));
         }
 
-        slaveCursor = frame.cursor(slaveKey);
+        slaveCursor = frame.cursor(map[masterKey]);
     }
 }

@@ -74,7 +74,7 @@ public class KvIndexHeadRowSource implements RowSource, RowCursor {
             this.keyCount = remainingKeys.length;
         }
 
-        rowAcceptor = filter != null ? filter.acceptor(slice, null) : null;
+        rowAcceptor = filter != null ? filter.acceptor(slice) : null;
 
         try {
             this.index = slice.partition.getIndexForColumn(column.value);
@@ -89,12 +89,11 @@ public class KvIndexHeadRowSource implements RowSource, RowCursor {
 
     @Override
     public boolean hasNext() {
-
         int cnt;
         int o;
         if (indexCursor != null && (cnt = remainingCounts[keyIndex]) > 0 && indexCursor.hasNext()) {
             localRowID = indexCursor.next();
-            if (localRowID >= lo && localRowID <= hi && (rowAcceptor == null || rowAcceptor.accept(localRowID, -1) == Choice.PICK)) {
+            if (localRowID >= lo && localRowID <= hi && (rowAcceptor == null || rowAcceptor.accept(localRowID) == Choice.PICK)) {
                 if ((o = remainingOffsets[keyIndex]) == 0) {
                     remainingCounts[keyIndex] = cnt - 1;
                     return true;
@@ -102,10 +101,20 @@ public class KvIndexHeadRowSource implements RowSource, RowCursor {
                     remainingOffsets[keyIndex] = o - 1;
                 }
             }
-//        } else if (indexCursor != null && cnt == 0 && keyIndex == keyCount - 1) {
-//            return false;
         }
         return hasNextKey();
+    }
+
+    @Override
+    public long next() {
+        return localRowID;
+    }
+
+    @Override
+    public void reset() {
+        keyCount = -1;
+        keySource.reset();
+        indexCursor = null;
     }
 
     private boolean hasNextKey() {
@@ -124,7 +133,7 @@ public class KvIndexHeadRowSource implements RowSource, RowCursor {
                         break;
                     }
                     // this is a good rowid
-                    if (localRowID <= hi && (rowAcceptor == null || rowAcceptor.accept(localRowID, -1) == Choice.PICK)) {
+                    if (localRowID <= hi && (rowAcceptor == null || rowAcceptor.accept(localRowID) == Choice.PICK)) {
                         if (o == 0) {
                             remainingCounts[keyIndex] = cnt - 1;
                             return true;
@@ -144,17 +153,5 @@ public class KvIndexHeadRowSource implements RowSource, RowCursor {
 
         return false;
 
-    }
-
-    @Override
-    public long next() {
-        return localRowID;
-    }
-
-    @Override
-    public void reset() {
-        keyCount = -1;
-        keySource.reset();
-        indexCursor = null;
     }
 }

@@ -35,7 +35,7 @@ public class DoubleGreaterThanRowFilter implements RowFilter, RowAcceptor {
     }
 
     @Override
-    public RowAcceptor acceptor(PartitionSlice a, PartitionSlice b) {
+    public RowAcceptor acceptor(PartitionSlice a) {
         AbstractColumn col = a.partition.getAbstractColumn(a.partition.getJournal().getMetadata().getColumnIndex(column));
         if (!(col instanceof FixedColumn)) {
             throw new JournalRuntimeException("Invalid column type");
@@ -46,7 +46,7 @@ public class DoubleGreaterThanRowFilter implements RowFilter, RowAcceptor {
     }
 
     @Override
-    public Choice accept(long localRowIDA, long localRowIDB) {
-        return columnRef.getDouble(localRowIDA) > value ? Choice.PICK : Choice.SKIP;
+    public Choice accept(long localRowID) {
+        return columnRef.getDouble(localRowID) > value ? Choice.PICK : Choice.SKIP;
     }
 }

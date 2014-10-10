@@ -46,10 +46,10 @@ public class FuncTest {
         replay(column);
 
         PartitionSlice slice = mockPartitionColumn("test", 5, column);
-        RowAcceptor acceptor = filter.acceptor(slice, null);
-        Assert.assertEquals(Choice.SKIP, acceptor.accept(100, 0));
-        Assert.assertEquals(Choice.PICK, acceptor.accept(101, 0));
-        Assert.assertEquals(Choice.SKIP, acceptor.accept(102, 0));
+        RowAcceptor acceptor = filter.acceptor(slice);
+        Assert.assertEquals(Choice.SKIP, acceptor.accept(100));
+        Assert.assertEquals(Choice.PICK, acceptor.accept(101));
+        Assert.assertEquals(Choice.SKIP, acceptor.accept(102));
     }
 
     private PartitionSlice mockPartitionColumn(String name, int index, AbstractColumn column) {

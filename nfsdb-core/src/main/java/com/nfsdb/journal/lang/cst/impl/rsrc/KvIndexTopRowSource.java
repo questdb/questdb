@@ -44,7 +44,7 @@ public class KvIndexTopRowSource implements RowSource, RowCursor {
 
     @Override
     public RowCursor cursor(PartitionSlice slice) {
-        rowAcceptor = filter != null ? filter.acceptor(slice, null) : null;
+        rowAcceptor = filter != null ? filter.acceptor(slice) : null;
         try {
             this.index = slice.partition.getIndexForColumn(column.value);
             this.lo = slice.lo;
@@ -66,7 +66,7 @@ public class KvIndexTopRowSource implements RowSource, RowCursor {
         indexCursor = index.cachedCursor(keyCursor.next());
         while (indexCursor.hasNext()) {
             localRowID = indexCursor.next();
-            if (localRowID >= lo && localRowID <= hi && (rowAcceptor == null || rowAcceptor.accept(localRowID, -1) == Choice.PICK)) {
+            if (localRowID >= lo && localRowID <= hi && (rowAcceptor == null || rowAcceptor.accept(localRowID) == Choice.PICK)) {
                 return true;
             }
 

@@ -27,9 +27,12 @@ import com.nfsdb.journal.lang.cst.impl.QImpl;
 import com.nfsdb.journal.lang.cst.impl.dfrn.DataFrame;
 import com.nfsdb.journal.lang.cst.impl.dfrn.DataFrameSource;
 import com.nfsdb.journal.lang.cst.impl.dfrn.MapHeadDataFrameSource;
+import com.nfsdb.journal.lang.cst.impl.join.SlaveResetOuterJoin;
+import com.nfsdb.journal.lang.cst.impl.jsrc.StatefulJournalSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.ksrc.SingleKeySource;
-import com.nfsdb.journal.lang.cst.impl.ref.IntRef;
+import com.nfsdb.journal.lang.cst.impl.ref.MutableIntVariableSource;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
+import com.nfsdb.journal.lang.cst.impl.ref.SymbolXTabVariableSource;
 import com.nfsdb.journal.lang.cst.impl.rsrc.KvIndexTopRowSource;
 import com.nfsdb.journal.model.Album;
 import com.nfsdb.journal.model.Band;
@@ -176,7 +179,7 @@ public class CstTest {
 
         //////////////////
 
-        IntRef key = new IntRef();
+        MutableIntVariableSource key = new MutableIntVariableSource();
         StringRef sym = new StringRef(joinColumn);
         JournalSource src = q.forEachPartition(
                 q.source(slave, false)
@@ -220,7 +223,7 @@ public class CstTest {
                     map[masterKey] = slaveKey;
                 }
 
-                key.value = slaveKey;
+                key.setValue(slaveKey);
                 src.reset();
                 int count = 0;
                 for (DataItem di : src) {
@@ -244,23 +247,22 @@ public class CstTest {
         Journal<Quote> slave = factory.reader(Quote.class, "q2", c);
 
         StringRef sym = new StringRef("sym");
-        IntRef key = new IntRef();
-        JoinedSource src = q.join(
-                q.forEachPartition(
-                        q.source(master, false)
-                        , q.all()
+        StatefulJournalSource m;
+        JoinedSource src = new SlaveResetOuterJoin(
+                m = new StatefulJournalSourceImpl(
+                        q.forEachPartition(
+                                q.source(master, false)
+                                , q.all()
+                        )
                 )
-                , sym
-                , key
-                , q.forEachPartition(
+                ,
+                q.forEachPartition(
                         q.source(slave, false)
                         , q.kvSource(sym
-                                , q.singleKeySource(key)
+                                , q.singleKeySource(new SymbolXTabVariableSource(m, "sym", "sym"))
                                 , 1000, 0, null
                         )
                 )
-                , sym
-                , null
         );
 
         long count = 0;
@@ -292,21 +294,20 @@ public class CstTest {
         Journal<Quote> slave = factory.reader(Quote.class, "q", c);
 
         StringRef sym = new StringRef("sym");
-        IntRef key = new IntRef();
-        JoinedSource src = q.join(
-                q.forEachPartition(
-                        q.source(master, false)
-                        , q.all()
+        StatefulJournalSource m;
+        JoinedSource src = new SlaveResetOuterJoin(
+                m = new StatefulJournalSourceImpl(
+                        q.forEachPartition(
+                                q.source(master, false)
+                                , q.all()
+                        )
                 )
-                , sym
-                , key
-                , q.forEachPartition(
+                ,
+                q.forEachPartition(
                         q.source(slave, false)
-                        , new KvIndexTopRowSource(sym, new SingleKeySource(key), null)
+                        , new KvIndexTopRowSource(sym, new SingleKeySource(new SymbolXTabVariableSource(m, "sym", "sym")), null)
 
                 )
-                , sym
-                , null
         );
 
         long count = 0;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,29 @@
 
 package com.nfsdb.journal.lang.cst.impl.ref;
 
-public class IntRef {
-    public int value;
+import com.nfsdb.journal.lang.cst.IntVariable;
+import com.nfsdb.journal.lang.cst.IntVariableSource;
+import com.nfsdb.journal.lang.cst.PartitionSlice;
+
+public class MutableIntVariableSource implements IntVariableSource, IntVariable {
+
+    private int value;
+
+    public void setValue(int value) {
+        this.value = value;
+    }
+
+    @Override
+    public IntVariable getVariable(PartitionSlice slice) {
+        return this;
+    }
+
+    @Override
+    public void reset() {
+    }
+
+    @Override
+    public int getValue() {
+        return value;
+    }
 }

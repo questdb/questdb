@@ -37,7 +37,7 @@ public class StringEqualsRowFilter implements RowFilter, RowAcceptor {
     }
 
     @Override
-    public RowAcceptor acceptor(PartitionSlice a, PartitionSlice b) {
+    public RowAcceptor acceptor(PartitionSlice a) {
         try {
             a.partition.open();
             AbstractColumn col = a.partition.getAbstractColumn(a.partition.getJournal().getMetadata().getColumnIndex(column.value));
@@ -53,7 +53,7 @@ public class StringEqualsRowFilter implements RowFilter, RowAcceptor {
     }
 
     @Override
-    public Choice accept(long localRowIDA, long localRowIDB) {
-        return columnRef.equalsString(localRowIDA, value.value) ? Choice.PICK : Choice.SKIP;
+    public Choice accept(long localRowID) {
+        return columnRef.equalsString(localRowID, value.value) ? Choice.PICK : Choice.SKIP;
     }
 }

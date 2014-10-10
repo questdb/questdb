@@ -24,14 +24,15 @@ import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.lang.cst.DataItem;
 import com.nfsdb.journal.lang.cst.JoinedSource;
 import com.nfsdb.journal.lang.cst.Q;
+import com.nfsdb.journal.lang.cst.StatefulJournalSource;
 import com.nfsdb.journal.lang.cst.impl.QImpl;
 import com.nfsdb.journal.lang.cst.impl.dfrn.MapHeadDataFrameSource;
 import com.nfsdb.journal.lang.cst.impl.join.InnerSkipJoin;
-import com.nfsdb.journal.lang.cst.impl.join.SymbolOuterJoin;
+import com.nfsdb.journal.lang.cst.impl.join.SlaveResetOuterJoin;
 import com.nfsdb.journal.lang.cst.impl.join.SymbolToFrameOuterJoin;
-import com.nfsdb.journal.lang.cst.impl.ksrc.SingleKeySource;
-import com.nfsdb.journal.lang.cst.impl.ref.IntRef;
+import com.nfsdb.journal.lang.cst.impl.jsrc.StatefulJournalSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
+import com.nfsdb.journal.lang.cst.impl.ref.SymbolXTabVariableSource;
 import com.nfsdb.journal.lang.cst.impl.rsrc.KvIndexTopRowSource;
 import com.nfsdb.journal.lang.cst.impl.rsrc.SkipSymbolRowSource;
 import com.nfsdb.journal.model.Album;
@@ -182,28 +183,26 @@ public class JoinSymbolOnSymbolTest extends AbstractTest {
         aw.commit();
 
         Q q = new QImpl();
-        StringRef band = new StringRef("band");
         StringRef name = new StringRef("name");
-        IntRef key = new IntRef();
-        JoinedSource src = q.join(
-                q.forEachPartition(
-                        q.source(aw, false)
-                        , q.all()
+        StatefulJournalSource master;
+        JoinedSource src = new SlaveResetOuterJoin(
+                master = new StatefulJournalSourceImpl(
+                        q.forEachPartition(
+                                q.source(aw, false)
+                                , q.all()
+                        )
                 )
-                , band
-                , key
-                , q.forEachPartition(
+                ,
+                q.forEachPartition(
                         q.source(bw, false)
                         ,
                         new KvIndexTopRowSource(
                                 name
-                                , new SingleKeySource(key)
+                                , q.singleKeySource(new SymbolXTabVariableSource(master, "band", "name"))
                                 , null
                         )
 
                 )
-                , name
-                , null
         );
 
 
@@ -257,15 +256,15 @@ public class JoinSymbolOnSymbolTest extends AbstractTest {
         Q q = new QImpl();
         StringRef band = new StringRef("band");
         StringRef name = new StringRef("name");
-        IntRef key = new IntRef();
 
-        JoinedSource src = new SymbolOuterJoin(
-                q.forEachPartition(
-                        q.source(bw, false)
-                        , q.all()
+        StatefulJournalSource master;
+        JoinedSource src = new SlaveResetOuterJoin(
+                master = new StatefulJournalSourceImpl(
+                        q.forEachPartition(
+                                q.source(bw, false)
+                                , q.all()
+                        )
                 )
-                , name
-                , key
                 ,
                 q.forEachPartition(
                         q.source(aw, false)
@@ -273,12 +272,11 @@ public class JoinSymbolOnSymbolTest extends AbstractTest {
                         new SkipSymbolRowSource(
                                 q.kvSource(
                                         band
-                                        , q.singleKeySource(key)
+                                        , q.singleKeySource(new SymbolXTabVariableSource(master, "name", "band"))
                                 )
                                 , name
                         )
                 )
-                , band
         );
 
         int count = 0;
@@ -480,16 +478,16 @@ public class JoinSymbolOnSymbolTest extends AbstractTest {
         Q q = new QImpl();
         StringRef band = new StringRef("band");
         StringRef name = new StringRef("name");
-        IntRef key = new IntRef();
 
+        StatefulJournalSourceImpl master;
         JoinedSource src = new InnerSkipJoin(
-                new SymbolOuterJoin(
-                        q.forEachPartition(
-                                q.source(bw, false)
-                                , q.all()
+                new SlaveResetOuterJoin(
+                        master = new StatefulJournalSourceImpl(
+                                q.forEachPartition(
+                                        q.source(bw, false)
+                                        , q.all()
+                                )
                         )
-                        , name
-                        , key
                         ,
                         q.forEachPartition(
                                 q.source(aw, false)
@@ -497,12 +495,11 @@ public class JoinSymbolOnSymbolTest extends AbstractTest {
                                 new SkipSymbolRowSource(
                                         q.kvSource(
                                                 band
-                                                , q.singleKeySource(key)
+                                                , q.singleKeySource(new SymbolXTabVariableSource(master, "name", "band"))
                                         )
                                         , name
                                 )
                         )
-                        , band
                 )
         );
 
@@ -537,27 +534,75 @@ public class JoinSymbolOnSymbolTest extends AbstractTest {
         }
     }
 
+    @Test
+    public void testInnerOneToManyHeadFilter() throws Exception {
+        bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
+        bw.append(new Band().setName("band2").setType("hiphop").setUrl("http://band2.com"));
+        bw.append(new Band().setName("band3").setType("jazz").setUrl("http://band3.com"));
+
+        bw.commit();
+
+        aw.append(new Album().setName("album X").setBand("band1").setGenre("pop"));
+        aw.append(new Album().setName("album BZ").setBand("band1").setGenre("rock"));
+        aw.append(new Album().setName("album BZ").setBand("band1").setGenre("pop"));
+        aw.append(new Album().setName("album Y").setBand("band3").setGenre("metal"));
+
+        aw.commit();
+
+        Q q = new QImpl();
+        StringRef band = new StringRef("band");
+
+        StatefulJournalSource master;
+        JoinedSource src = new InnerSkipJoin(
+                new SlaveResetOuterJoin(
+                        master = new StatefulJournalSourceImpl(
+                                q.forEachPartition(
+                                        q.source(bw, false)
+                                        , q.all()
+                                )
+                        )
+                        ,
+                        q.forEachPartition(
+                                q.source(aw, false)
+                                ,
+                                q.kvSource(
+                                        band
+                                        , q.singleKeySource(new SymbolXTabVariableSource(master, "name", "band"))
+                                )
+                        )
+                )
+        );
+
+        int count = 0;
+        for (DataItem d : src) {
+            Band b = (Band) d.partition.read(d.rowid);
+            Album a = null;
+            if (d.slave != null) {
+                a = (Album) d.slave.partition.read(d.slave.rowid);
+            }
+
+            System.out.println(a + "=" + b);
+        }
+    }
+
     private JoinedSource buildSource(Journal<Band> bw, Journal<Album> aw) {
         Q q = new QImpl();
         StringRef band = new StringRef("band");
-        StringRef name = new StringRef("name");
-        IntRef key = new IntRef();
-
-        return new SymbolOuterJoin(
-                q.forEachPartition(
-                        q.source(bw, false)
-                        , q.all()
+        StatefulJournalSource master;
+        return new SlaveResetOuterJoin(
+                master = new StatefulJournalSourceImpl(
+                        q.forEachPartition(
+                                q.source(bw, false)
+                                , q.all()
+                        )
                 )
-                , name
-                , key
                 ,
                 q.forEachPartition(
                         q.source(aw, false)
                         , q.kvSource(band
-                                , q.singleKeySource(key)
+                                , q.singleKeySource(new SymbolXTabVariableSource(master, "name", "band"))
                         )
                 )
-                , band
         );
     }
 

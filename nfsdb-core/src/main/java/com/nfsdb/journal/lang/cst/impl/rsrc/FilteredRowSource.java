@@ -35,7 +35,7 @@ public class FilteredRowSource implements RowSource, RowCursor {
     @Override
     public RowCursor cursor(PartitionSlice slice) {
         this.underlying = delegate.cursor(slice);
-        this.acceptor = filter.acceptor(slice, null);
+        this.acceptor = filter.acceptor(slice);
         this.rowid = -1;
         this.skip = false;
         return this;
@@ -55,7 +55,7 @@ public class FilteredRowSource implements RowSource, RowCursor {
             while (underlying.hasNext()) {
                 rowid = underlying.next();
 
-                Choice choice = acceptor.accept(rowid, -1);
+                Choice choice = acceptor.accept(rowid);
                 switch (choice) {
                     case SKIP:
                         break;

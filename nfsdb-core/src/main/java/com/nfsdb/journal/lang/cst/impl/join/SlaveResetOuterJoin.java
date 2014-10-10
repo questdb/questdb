@@ -16,37 +16,20 @@
 
 package com.nfsdb.journal.lang.cst.impl.join;
 
-import com.nfsdb.journal.Partition;
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
-import com.nfsdb.journal.column.SymbolTable;
-import com.nfsdb.journal.column.VariableColumn;
 import com.nfsdb.journal.lang.cst.DataItem;
 import com.nfsdb.journal.lang.cst.JoinedSource;
 import com.nfsdb.journal.lang.cst.JournalSource;
-import com.nfsdb.journal.lang.cst.impl.ref.IntRef;
-import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 
-public class StringToSymbolOuterJoin extends AbstractImmutableIterator<DataItem> implements JoinedSource {
+public class SlaveResetOuterJoin extends AbstractImmutableIterator<DataItem> implements JoinedSource {
     private final JournalSource masterSource;
     private final JournalSource slaveSource;
-    private final IntRef keyRef;
-    private final StringRef masterSymbol;
-    private final StringRef slaveSymbol;
     private DataItem joinedData;
-    private int columnIndex;
-    private SymbolTable slaveTab;
-    private Partition lastPartition;
-    private VariableColumn column;
     private boolean nextSlave = false;
 
-    public StringToSymbolOuterJoin(JournalSource masterSource, StringRef masterSymbol, JournalSource slaveSource, StringRef slaveSymbol, IntRef keyRef) {
+    public SlaveResetOuterJoin(JournalSource masterSource, JournalSource slaveSource) {
         this.masterSource = masterSource;
         this.slaveSource = slaveSource;
-        this.keyRef = keyRef;
-        this.masterSymbol = masterSymbol;
-        this.slaveSymbol = slaveSymbol;
-        this.columnIndex = masterSource.getJournal().getMetadata().getColumnIndex(masterSymbol.value);
-        this.slaveTab = slaveSource.getJournal().getSymbolTable(slaveSymbol.value);
     }
 
     @Override
@@ -54,8 +37,6 @@ public class StringToSymbolOuterJoin extends AbstractImmutableIterator<DataItem>
         masterSource.reset();
         slaveSource.reset();
         nextSlave = false;
-        this.columnIndex = masterSource.getJournal().getMetadata().getColumnIndex(masterSymbol.value);
-        this.slaveTab = slaveSource.getJournal().getSymbolTable(slaveSymbol.value);
     }
 
     @Override
@@ -65,9 +46,9 @@ public class StringToSymbolOuterJoin extends AbstractImmutableIterator<DataItem>
 
     @Override
     public DataItem next() {
-
         if (!nextSlave) {
-            nextMaster();
+            joinedData = masterSource.next();
+            slaveSource.reset();
         }
 
         if (nextSlave || slaveSource.hasNext()) {
@@ -77,20 +58,6 @@ public class StringToSymbolOuterJoin extends AbstractImmutableIterator<DataItem>
             joinedData.slave = null;
             nextSlave = false;
         }
-
         return joinedData;
-    }
-
-    private void nextMaster() {
-        DataItem m = masterSource.next();
-        if (lastPartition != m.partition) {
-            lastPartition = m.partition;
-            column = (VariableColumn) m.partition.getAbstractColumn(columnIndex);
-        }
-        joinedData = m;
-
-        String masterStr = column.getString(joinedData.rowid);
-        keyRef.value = slaveTab.getQuick(masterStr);
-        slaveSource.reset();
     }
 }
