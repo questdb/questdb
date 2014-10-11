@@ -29,7 +29,8 @@ public class SSOServiceTokenEncoder implements Closeable {
     private final File temp;
     private final ByteArrayOutputStream bos = new ByteArrayOutputStream();
     private final boolean clean;
-
+    private final String osName = System.getProperty("os.name");
+    private final String osArch = System.getProperty("os.arch");
 
     public SSOServiceTokenEncoder(File dir) {
         this.temp = dir;
@@ -52,7 +53,7 @@ public class SSOServiceTokenEncoder implements Closeable {
     }
 
     public boolean isAvailable() {
-        return true;
+        return osName != null && osName.startsWith("Windows") && "amd64".equals(osArch);
     }
 
     public byte[] encodeServiceToken(String serviceName) throws IOException {
