@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,8 +36,8 @@ public class ChannelProducerGroup<T extends ChannelProducer> implements ChannelP
     @Override
     public void write(WritableByteChannel channel) throws JournalNetworkException {
         if (hasContent) {
-            for (T p : producers) {
-                p.write(channel);
+            for (int i = 0; i < producers.size(); i++) {
+                producers.get(i).write(channel);
             }
             hasContent = false;
         }
@@ -55,9 +55,8 @@ public class ChannelProducerGroup<T extends ChannelProducer> implements ChannelP
     }
 
     void computeHasContent() {
-        for (ChannelProducer p : producers) {
-            this.hasContent = p.hasContent();
-            if (this.hasContent) {
+        for (int i = 0; i < producers.size(); i++) {
+            if (this.hasContent = producers.get(i).hasContent()) {
                 break;
             }
         }

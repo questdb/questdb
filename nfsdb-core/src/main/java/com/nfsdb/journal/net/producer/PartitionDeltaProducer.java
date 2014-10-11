@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,8 @@ import com.nfsdb.journal.column.AbstractColumn;
 import com.nfsdb.journal.column.VariableColumn;
 import com.nfsdb.journal.exceptions.JournalException;
 
+import java.util.List;
+
 public class PartitionDeltaProducer extends ChannelProducerGroup<ColumnDeltaProducer> {
 
     private final Partition partition;
@@ -39,8 +41,9 @@ public class PartitionDeltaProducer extends ChannelProducerGroup<ColumnDeltaProd
     public void configure(long localRowID) throws JournalException {
         partition.open();
         long limit = partition.size();
-        for (ColumnDeltaProducer producer : getProducers()) {
-            producer.configure(localRowID, limit);
+        List<ColumnDeltaProducer> producers = getProducers();
+        for (int i = 0; i < producers.size(); i++) {
+            producers.get(i).configure(localRowID, limit);
         }
         computeHasContent();
     }

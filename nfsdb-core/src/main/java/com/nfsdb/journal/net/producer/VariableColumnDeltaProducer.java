@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,8 +26,9 @@ public class VariableColumnDeltaProducer extends ChannelProducerGroup<ColumnDelt
     }
 
     public void configure(long localRowID, long limit) {
-        for (ColumnDeltaProducer p : getProducers()) {
-            p.configure(localRowID, limit);
+        java.util.List<ColumnDeltaProducer> producers = getProducers();
+        for (int i = 0; i < producers.size(); i++) {
+            producers.get(i).configure(localRowID, limit);
         }
         computeHasContent();
     }

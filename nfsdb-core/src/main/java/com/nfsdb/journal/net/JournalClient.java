@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -165,8 +165,8 @@ public class JournalClient {
             }
             channel = null;
 
-            for (JournalWriter w : writers) {
-                w.close();
+            for (int i = 0; i < writers.size(); i++) {
+                writers.get(i).close();
             }
         } catch (Exception e) {
             throw new JournalNetworkException(e);

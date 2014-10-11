@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -60,8 +60,8 @@ public final class Files {
             if (notSymlink(file)) {
                 File[] files = file.listFiles();
                 if (files != null) {
-                    for (File f : files) {
-                        deleteOrException(f);
+                    for (int i = 0; i < files.length; i++) {
+                        deleteOrException(files[i]);
                     }
                 }
             }

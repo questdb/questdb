@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,8 +48,8 @@ public class JournalConfigurationBuilder {
 
 
         Map<String, JournalMetadata> metadata = new HashMap<>(builders.size());
-        for (JournalMetadataBuilder builder : builders) {
-            JournalMetadata meta = builder.build();
+        for (int i = 0; i < builders.size(); i++) {
+            JournalMetadata meta = builders.get(i).build();
             metadata.put(meta.getModelClass().getName(), meta);
         }
         return new JournalConfigurationImpl(journalBase, metadata);

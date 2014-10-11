@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -140,8 +140,8 @@ public class JournalDeltaProducer implements ChannelProducer {
                 journalSymbolTableProducer.write(channel);
             }
 
-            for (PartitionDeltaProducer producer : partitionDeltaProducers) {
-                producer.write(channel);
+            for (int i = 0; i < partitionDeltaProducers.size(); i++) {
+                partitionDeltaProducers.get(i).write(channel);
             }
 
             if (lagPartitionDeltaProducer != null && lagPartitionDeltaProducer.hasContent()) {

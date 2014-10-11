@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ public class ResultSetConcurrentIterator<T> extends AbstractConcurrentIterator<T
 
             @Override
             public void run() {
-                for (int i = 0, size = rs.size(); i < size; i++) {
+                for (int i = 0; i < rs.size(); i++) {
                     try {
                         if (barrier.isAlerted()) {
                             break;

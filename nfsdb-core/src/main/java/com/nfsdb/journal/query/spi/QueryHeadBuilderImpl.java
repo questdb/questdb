@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -59,8 +59,8 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
             }
         } else {
             this.symbolKeys.ensureCapacity(values.length);
-            for (String value : values) {
-                int key = symbolTable.getQuick(value);
+            for (int i = 0; i < values.length; i++) {
+                int key = symbolTable.getQuick(values[i]);
                 if (key != SymbolTable.VALUE_NOT_FOUND) {
                     symbolKeys.add(key);
                 }
@@ -166,8 +166,8 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
                                     if (localRowID <= hi && localRowID >= lo && (partition.getPartitionIndex() > minPartitionIndex || localRowID > minLocalRowID)) {
 
                                         boolean matches = true;
-                                        for (LongArrayList filterRows : filterSymbolRows) {
-                                            if (filterRows.binarySearch(localRowID) < 0) {
+                                        for (int i = 0; i < filterSymbolRows.length; i++) {
+                                            if (filterSymbolRows[i].binarySearch(localRowID) < 0) {
                                                 matches = false;
                                                 if (strict) {
                                                     found = true;

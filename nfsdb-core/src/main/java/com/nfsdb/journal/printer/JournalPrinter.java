@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -101,7 +101,8 @@ public class JournalPrinter implements Closeable {
         }
 
         try {
-            for (Field f : ff) {
+            for (int i1 = 0; i1 < ff.size(); i1++) {
+                Field f = ff.get(i1);
                 // value field
                 if (f.name == null) {
                     f.fromType = getType(f.typeTemplateIndex);
@@ -113,9 +114,10 @@ public class JournalPrinter implements Closeable {
                     // first type in typeTemplate array wins
                     for (int i = 0; i < typeTemplate.length; i++) {
                         Class clazz = typeTemplate[i];
-                        for (java.lang.reflect.Field field : clazz.getDeclaredFields()) {
-                            if (f.name.equals(field.getName())) {
-                                f.fromType = field.getType();
+                        java.lang.reflect.Field[] declaredFields = clazz.getDeclaredFields();
+                        for (int i2 = 0; i2 < declaredFields.length; i2++) {
+                            if (f.name.equals(declaredFields[i2].getName())) {
+                                f.fromType = declaredFields[i2].getType();
                                 f.typeTemplateIndex = i;
                                 break;
                             }

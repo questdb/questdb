@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -135,8 +135,8 @@ public class JournalEventBridge {
         do {
             currentHolder = AGENT_SEQUENCES_UPDATER.get(this);
             int toRemove = 0;
-            for (Sequence value : currentHolder.agentSequences) {
-                if (value == sequence) // Specifically uses identity
+            for (int i1 = 0; i1 < currentHolder.agentSequences.length; i1++) {
+                if (currentHolder.agentSequences[i1] == sequence) // Specifically uses identity
                 {
                     toRemove++;
                 }

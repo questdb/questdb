@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -183,7 +183,8 @@ public class QueryAllImpl<T> implements QueryAll<T> {
         long loLocalRowID = Rows.toLocalRowID(lo);
 
         try {
-            for (int i = loPartitionID, count = journal.getPartitionCount(); i < count; i++) {
+            int count = journal.getPartitionCount();
+            for (int i = loPartitionID; i < count; i++) {
                 long localRowID = 0;
                 if (i == loPartitionID) {
                     localRowID = loLocalRowID;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -75,11 +75,11 @@ public class TokenStream extends AbstractImmutableIterator<String> {
         }
 
         int pos = buffer.position();
-        for (int i = 0, sz = l.size(); i < sz; i++) {
+        for (int i = 0; i < l.size(); i++) {
             final Token t = l.get(i);
             boolean match = t.text.length() < buffer.remaining();
             if (match) {
-                for (int k = 1, tsz = t.text.length(); k < tsz; k++) {
+                for (int k = 1; k < t.text.length(); k++) {
                     if (buffer.getChar(pos + 2 * (k - 1)) != t.text.charAt(k)) {
                         match = false;
                         break;

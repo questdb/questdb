@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -89,7 +89,7 @@ public class JournalKey<T> {
         char[] location = null;
         if (locLen > 0) {
             location = new char[locLen];
-            for (int i = 0; i < locLen; i++) {
+            for (int i = 0; i < location.length; i++) {
                 location[i] = buffer.getChar();
             }
         }
@@ -166,8 +166,9 @@ public class JournalKey<T> {
     public void write(ByteBuffer buffer) {
         // modelClassName
         buffer.putInt(modelClassName.length());
-        for (byte b : modelClassName.getBytes(Files.UTF_8)) {
-            buffer.put(b);
+        byte[] bytes = modelClassName.getBytes(Files.UTF_8);
+        for (int i = 0; i < bytes.length; i++) {
+            buffer.put(bytes[i]);
         }
         // location
         ByteBuffers.putStringDW(buffer, location);

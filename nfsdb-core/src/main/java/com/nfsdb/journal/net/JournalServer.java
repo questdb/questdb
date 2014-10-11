@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -102,8 +102,8 @@ public class JournalServer {
     public void halt() {
         service.shutdown();
         running.set(false);
-        for (JournalWriter journal : writers) {
-            journal.setTxListener(null);
+        for (int i = 0; i < writers.size(); i++) {
+            writers.get(i).setTxListener(null);
         }
         bridge.halt();
         multicast.halt();
@@ -175,8 +175,8 @@ public class JournalServer {
     }
 
     private synchronized void closeChannels() {
-        for (SocketChannelHolder h : channels) {
-            closeChannel(h, true);
+        for (int i = 0; i < channels.size(); i++) {
+            closeChannel(channels.get(i), true);
         }
     }
 

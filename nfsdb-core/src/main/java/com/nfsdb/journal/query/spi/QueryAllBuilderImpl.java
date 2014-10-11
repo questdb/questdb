@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -55,8 +55,8 @@ public class QueryAllBuilderImpl<T> implements QueryAllBuilder<T> {
         this.symbol = symbol;
         SymbolTable symbolTable = journal.getSymbolTable(symbol);
         this.symbolKeys.resetQuick();
-        for (String value : values) {
-            int key = symbolTable.getQuick(value);
+        for (int i = 0; i < values.length; i++) {
+            int key = symbolTable.getQuick(values[i]);
             if (key != SymbolTable.VALUE_NOT_FOUND) {
                 symbolKeys.add(key);
             }

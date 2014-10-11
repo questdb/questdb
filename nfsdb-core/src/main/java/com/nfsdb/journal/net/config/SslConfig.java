@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -122,9 +122,9 @@ public class SslConfig {
                 aliases.add(e.nextElement());
             }
 
-            for (String s : aliases) {
-                if (!s.equals(alias)) {
-                    keyStore.deleteEntry(s);
+            for (int i = 0; i < aliases.size(); i++) {
+                if (!aliases.get(i).equals(alias)) {
+                    keyStore.deleteEntry(aliases.get(i));
                 }
             }
         }

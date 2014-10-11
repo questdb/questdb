@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -117,8 +117,8 @@ public class Journal<T> implements Iterable<T>, Closeable {
             }
 
             closePartitions();
-            for (SymbolTable tab : symbolTables) {
-                tab.close();
+            for (int i = 0; i < symbolTables.size(); i++) {
+                symbolTables.get(i).close();
             }
             txLog.close();
             open = false;
@@ -260,7 +260,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         long ttl = getMetadata().getOpenFileTTL();
         if (ttl > 0) {
             long delta = System.currentTimeMillis() - ttl;
-            for (int i = 0, partitionsSize = partitions.size(); i < partitionsSize; i++) {
+            for (int i = 0; i < partitions.size(); i++) {
                 Partition<T> partition = partitions.get(i);
                 if (delta > partition.getLastAccessed() && partition.isOpen()) {
                     partition.close();
@@ -370,7 +370,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         if (nullsAdaptor != null) {
             metadata.getNullsAdaptor().clear(obj);
         } else {
-            for (int i = 0, count = metadata.getColumnCount(); i < count; i++) {
+            for (int i = 0; i < metadata.getColumnCount(); i++) {
                 com.nfsdb.journal.factory.configuration.ColumnMetadata m = metadata.getColumnMetadata(i);
                 switch (m.type) {
                     case BOOLEAN:
@@ -599,8 +599,8 @@ public class Journal<T> implements Iterable<T>, Closeable {
         if (irregularPartition != null) {
             irregularPartition.close();
         }
-        for (Partition<T> p : partitions) {
-            p.close();
+        for (int i = 0; i < partitions.size(); i++) {
+            partitions.get(i).close();
         }
         partitions.clear();
     }
@@ -649,7 +649,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
     }
 
     private void configureSymbolTableSynonyms() {
-        for (int i = 0, columnCount = getMetadata().getColumnCount(); i < columnCount; i++) {
+        for (int i = 0; i < getMetadata().getColumnCount(); i++) {
             com.nfsdb.journal.factory.configuration.ColumnMetadata meta = metadata.getColumnMetadata(i);
             if (meta.type == ColumnType.SYMBOL && meta.sameAs != null) {
                 SymbolTable tab = getSymbolTable(meta.sameAs);
@@ -669,7 +669,8 @@ public class Journal<T> implements Iterable<T>, Closeable {
         int partitionIndex = 0;
         if (files != null && tx.journalMaxRowID > 0) {
             Arrays.sort(files);
-            for (File f : files) {
+            for (int i = 0; i < files.length; i++) {
+                File f = files[i];
 
                 if (partitionIndex > Rows.toPartitionIndex(tx.journalMaxRowID)) {
                     break;

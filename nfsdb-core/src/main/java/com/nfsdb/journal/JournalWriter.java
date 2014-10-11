@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -160,7 +160,7 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     public Partition<T> getPartitionForTimestamp(long timestamp) {
-        for (int i = 0, partitionsSize = partitions.size(); i < partitionsSize; i++) {
+        for (int i = 0; i < partitions.size(); i++) {
             Partition<T> result = partitions.get(i);
             if (result.getInterval() == null || result.getInterval().contains(timestamp)) {
                 return result.access();
@@ -227,17 +227,17 @@ public class JournalWriter<T> extends Journal<T> {
 
             Arrays.sort(files);
 
-            for (File file : files) {
+            for (int i = 0; i < files.length; i++) {
                 // get exclusive lock
-                Lock lock = LockManager.lockExclusive(file);
+                Lock lock = LockManager.lockExclusive(files[i]);
                 try {
                     if (lock != null && lock.isValid()) {
-                        LOGGER.trace("Purging : %s", file);
-                        if (!Files.delete(file)) {
-                            LOGGER.info("Could not purge: %s", file);
+                        LOGGER.trace("Purging : %s", files[i]);
+                        if (!Files.delete(files[i])) {
+                            LOGGER.info("Could not purge: %s", files[i]);
                         }
                     } else {
-                        LOGGER.trace("Partition in use: %s", file);
+                        LOGGER.trace("Partition in use: %s", files[i]);
                     }
                 } finally {
                     LockManager.release(lock);
@@ -247,21 +247,23 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     public void rebuildIndexes() throws JournalException {
-        for (int i = 0; i < getPartitionCount(); i++) {
+        int partitionCount = getPartitionCount();
+        for (int i = 0; i < partitionCount; i++) {
             getPartition(i, true).rebuildIndexes();
         }
     }
 
     public void compact() throws JournalException {
-        for (int i = 0; i < getPartitionCount(); i++) {
+        int partitionCount = getPartitionCount();
+        for (int i = 0; i < partitionCount; i++) {
             getPartition(i, true).compact();
         }
     }
 
     public void truncate() throws JournalException {
         beginTx();
-
-        for (int i = 0; i < getPartitionCount(); i++) {
+        int partitionCount = getPartitionCount();
+        for (int i = 0; i < partitionCount; i++) {
             Partition<T> partition = getPartition(i, true);
             partition.truncate(0);
             partition.close();
@@ -401,8 +403,8 @@ public class JournalWriter<T> extends Journal<T> {
      */
     @SafeVarargs
     public final void append(T... objects) throws JournalException {
-        for (T o : objects) {
-            append(o);
+        for (int i = 0; i < objects.length; i++) {
+            append(objects[i]);
         }
     }
 
