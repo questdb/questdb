@@ -176,7 +176,7 @@ public class AuthorizationTest extends AbstractTest {
         try {
             beginSync(server, client);
         } catch (JournalNetworkException e) {
-            Assert.assertTrue(e.getMessage().startsWith("java.io.IOException: ERROR"));
+            Assert.assertTrue(e.getMessage().startsWith("java.io.IOException: ERROR") || e.getMessage().startsWith("java.io.IOException: ActiveDirectory SSO"));
         }
     }
 
