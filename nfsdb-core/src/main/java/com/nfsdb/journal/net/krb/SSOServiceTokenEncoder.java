@@ -71,7 +71,7 @@ public class SSOServiceTokenEncoder implements Closeable {
                 bos.write(buf, 0, len);
             }
 
-            String response = bos.toString();
+            String response = bos.toString("UTF8");
             if (!response.startsWith(OK_RESPONSE)) {
                 throw new IOException(response);
             }

@@ -24,9 +24,9 @@ import com.nfsdb.journal.exceptions.JournalDisconnectedChannelException;
 import com.nfsdb.journal.exceptions.JournalNetworkException;
 import com.nfsdb.journal.factory.JournalReaderFactory;
 import com.nfsdb.journal.logging.Logger;
+import com.nfsdb.journal.net.auth.Authorizer;
 import com.nfsdb.journal.net.bridge.JournalEventBridge;
 import com.nfsdb.journal.net.config.ServerConfig;
-import com.nfsdb.journal.net.config.SslConfig;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -53,18 +53,28 @@ public class JournalServer {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final ArrayList<SocketChannelHolder> channels = new ArrayList<>();
     private final JournalServerAddressMulticast multicast;
+    private final Authorizer authorizer;
     private ServerSocketChannel serverSocketChannel;
 
     public JournalServer(JournalReaderFactory factory) {
         this(new ServerConfig(), factory);
     }
 
+    public JournalServer(JournalReaderFactory factory, Authorizer authorizer) {
+        this(new ServerConfig(), factory, authorizer);
+    }
+
     public JournalServer(ServerConfig config, JournalReaderFactory factory) {
+        this(config, factory, null);
+    }
+
+    public JournalServer(ServerConfig config, JournalReaderFactory factory, Authorizer authorizer) {
         this.config = config;
         this.factory = factory;
         this.service = Executors.newCachedThreadPool(AGENT_THREAD_FACTORY);
         this.bridge = new JournalEventBridge(config.getHeartbeatFrequency(), TimeUnit.MILLISECONDS, config.getEventBufferSize());
         this.multicast = new JournalServerAddressMulticast(config);
+        this.authorizer = authorizer;
     }
 
     public void publish(JournalWriter journal) {
@@ -190,16 +200,11 @@ public class JournalServer {
                     }
                     SocketChannel channel = serverSocketChannel.accept();
                     if (channel != null) {
-                        SocketChannelHolder holder;
-
-                        SslConfig sslConfig = config.getSslConfig();
                         channel.socket().setSoTimeout(config.getSoTimeout());
-
-                        if (sslConfig.isSecure()) {
-                            holder = new SocketChannelHolder(new SecureByteChannel(channel, sslConfig), channel.getRemoteAddress());
-                        } else {
-                            holder = new SocketChannelHolder(channel, channel.getRemoteAddress());
-                        }
+                        SocketChannelHolder holder = new SocketChannelHolder(
+                                config.getSslConfig().isSecure() ? new SecureByteChannel(channel, config.getSslConfig()) : channel
+                                , channel.getRemoteAddress()
+                        );
                         addChannel(holder);
                         service.submit(new Handler(holder));
                         LOGGER.info("Connected: %s", holder.socketAddress);
@@ -256,7 +261,7 @@ public class JournalServer {
 
         Handler(SocketChannelHolder holder) {
             this.holder = holder;
-            this.agent = new JournalServerAgent(JournalServer.this, holder.socketAddress);
+            this.agent = new JournalServerAgent(JournalServer.this, holder.socketAddress, authorizer);
         }
     }
 }

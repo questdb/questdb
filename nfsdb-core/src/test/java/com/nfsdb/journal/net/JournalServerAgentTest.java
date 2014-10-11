@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -63,7 +63,7 @@ public class JournalServerAgentTest extends AbstractTest {
         config.setHeartbeatFrequency(300);
         server = new JournalServer(config, factory);
         server.publish(quoteWriter);
-        agent = new JournalServerAgent(server, new InetSocketAddress(NetworkConfig.DEFAULT_DATA_PORT));
+        agent = new JournalServerAgent(server, new InetSocketAddress(NetworkConfig.DEFAULT_DATA_PORT), null);
     }
 
     @Test
@@ -82,7 +82,7 @@ public class JournalServerAgentTest extends AbstractTest {
         stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
         Assert.assertTrue(stringResponseConsumer.isComplete());
-        Assert.assertEquals("Not Exported", stringResponseConsumer.getValue());
+        Assert.assertEquals("Requested key not exported: JournalKey{modelClassName=com.nfsdb.journal.model.Trade, location='null', partitionType=DEFAULT, recordHint=0, ordered=true}", stringResponseConsumer.getValue());
     }
 
     @Test

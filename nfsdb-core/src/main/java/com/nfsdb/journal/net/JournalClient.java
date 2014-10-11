@@ -25,6 +25,7 @@ import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalNetworkException;
 import com.nfsdb.journal.factory.JournalWriterFactory;
 import com.nfsdb.journal.logging.Logger;
+import com.nfsdb.journal.net.auth.CredentialProvider;
 import com.nfsdb.journal.net.comsumer.JournalDeltaConsumer;
 import com.nfsdb.journal.net.config.ClientConfig;
 import com.nfsdb.journal.net.config.SslConfig;
@@ -34,9 +35,8 @@ import com.nfsdb.journal.net.model.IndexedJournalKey;
 import com.nfsdb.journal.net.producer.JournalClientStateProducer;
 import com.nfsdb.journal.net.protocol.CommandConsumer;
 import com.nfsdb.journal.net.protocol.CommandProducer;
-import com.nfsdb.journal.net.protocol.commands.IntResponseConsumer;
-import com.nfsdb.journal.net.protocol.commands.SetKeyRequestProducer;
-import com.nfsdb.journal.net.protocol.commands.StringResponseConsumer;
+import com.nfsdb.journal.net.protocol.Version;
+import com.nfsdb.journal.net.protocol.commands.*;
 import com.nfsdb.journal.tx.TxListener;
 import gnu.trove.list.array.TByteArrayList;
 
@@ -67,21 +67,34 @@ public class JournalClient {
     private final StringResponseConsumer stringResponseConsumer = new StringResponseConsumer();
     private final JournalClientStateProducer journalClientStateProducer = new JournalClientStateProducer();
     private final IntResponseConsumer intResponseConsumer = new IntResponseConsumer();
+    private final IntResponseProducer intResponseProducer = new IntResponseProducer();
+    private final ByteArrayResponseProducer byteArrayResponseProducer = new ByteArrayResponseProducer();
+
     private final ClientConfig config;
     private final ExecutorService service;
     private final AtomicBoolean running = new AtomicBoolean(false);
+    private final CredentialProvider credentialProvider;
     private ByteChannel channel;
     private StatsCollectingReadableByteChannel statsChannel;
     private Future handlerFuture;
 
     public JournalClient(JournalWriterFactory factory) {
-        this(new ClientConfig(), factory);
+        this(factory, null);
+    }
+
+    public JournalClient(JournalWriterFactory factory, CredentialProvider credentialProvider) {
+        this(new ClientConfig(), factory, credentialProvider);
     }
 
     public JournalClient(ClientConfig config, JournalWriterFactory factory) {
+        this(config, factory, null);
+    }
+
+    public JournalClient(ClientConfig config, JournalWriterFactory factory, CredentialProvider credentialProvider) {
         this.config = config;
         this.factory = factory;
         this.service = Executors.newCachedThreadPool(CLIENT_THREAD_FACTORY);
+        this.credentialProvider = credentialProvider;
     }
 
     public <T> void subscribe(Class<T> clazz) throws JournalException {
@@ -145,7 +158,9 @@ public class JournalClient {
                 this.channel = channel;
             }
 
+            sendProtocolVersion();
             sendKeys();
+            checkAuthAndSendCredential();
             sendState();
             running.set(true);
             counter.incrementAndGet();
@@ -175,6 +190,39 @@ public class JournalClient {
 
     public boolean isRunning() {
         return running.get();
+    }
+
+    private void checkAuthAndSendCredential() throws JournalNetworkException {
+        commandProducer.write(channel, Command.HANDSHAKE_COMPLETE);
+
+        stringResponseConsumer.reset();
+        stringResponseConsumer.read(channel);
+        fail(stringResponseConsumer.isComplete(), "Incomplete response");
+
+        switch (stringResponseConsumer.getValue()) {
+            case "AUTH":
+                fail(credentialProvider != null, "Server requires authentication. Supply CredentialProvider.");
+                assert credentialProvider != null;
+                commandProducer.write(channel, Command.AUTHORIZATION);
+                try {
+                    byteArrayResponseProducer.write(channel, credentialProvider.createToken());
+                } catch (Exception e) {
+                    halt();
+                    throw new JournalNetworkException(e);
+                }
+                checkAck();
+                break;
+            case "OK":
+                break;
+            default:
+                fail(true, "Unknown server response");
+        }
+    }
+
+    private void sendProtocolVersion() throws JournalNetworkException {
+        commandProducer.write(channel, Command.PROTOCOL_VERSION);
+        intResponseProducer.write(channel, Version.PROTOCOL_VERSION);
+        checkAck();
     }
 
     private <T> void add(JournalKey<T> remoteKey, JournalWriter<T> writer, TxListener txListener) {

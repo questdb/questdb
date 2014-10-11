@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import com.nfsdb.journal.exceptions.JournalDisconnectedChannelException;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalNetworkException;
 import com.nfsdb.journal.logging.Logger;
+import com.nfsdb.journal.net.auth.Authorizer;
 import com.nfsdb.journal.net.bridge.JournalEvent;
 import com.nfsdb.journal.net.bridge.JournalEventHandler;
 import com.nfsdb.journal.net.bridge.JournalEventProcessor;
@@ -33,9 +34,8 @@ import com.nfsdb.journal.net.model.JournalClientState;
 import com.nfsdb.journal.net.producer.JournalDeltaProducer;
 import com.nfsdb.journal.net.protocol.CommandConsumer;
 import com.nfsdb.journal.net.protocol.CommandProducer;
-import com.nfsdb.journal.net.protocol.commands.IntResponseProducer;
-import com.nfsdb.journal.net.protocol.commands.SetKeyRequestConsumer;
-import com.nfsdb.journal.net.protocol.commands.StringResponseProducer;
+import com.nfsdb.journal.net.protocol.Version;
+import com.nfsdb.journal.net.protocol.commands.*;
 import com.nfsdb.journal.utils.Lists;
 import gnu.trove.impl.Constants;
 import gnu.trove.map.hash.TIntIntHashMap;
@@ -59,17 +59,23 @@ public class JournalServerAgent {
     private final StringResponseProducer stringResponseProducer = new StringResponseProducer();
     private final JournalClientStateConsumer journalClientStateConsumer = new JournalClientStateConsumer();
     private final IntResponseProducer intResponseProducer = new IntResponseProducer();
+    private final IntResponseConsumer intResponseConsumer = new IntResponseConsumer();
     private final List<Journal> readers = new ArrayList<>();
     private final List<JournalDeltaProducer> producers = new ArrayList<>();
     private final List<JournalClientState> clientStates = new ArrayList<>();
     private final StatsCollectingWritableByteChannel statsChannel;
     private final JournalEventProcessor eventProcessor;
     private final EventHandler handler = new EventHandler();
+    private final Authorizer authorizer;
+    private final ByteArrayResponseConsumer byteArrayResponseConsumer = new ByteArrayResponseConsumer();
+    private boolean authorized;
 
-    public JournalServerAgent(JournalServer server, SocketAddress socketAddress) {
+    public JournalServerAgent(JournalServer server, SocketAddress socketAddress, Authorizer authorizer) {
         this.server = server;
         this.statsChannel = new StatsCollectingWritableByteChannel(socketAddress);
         this.eventProcessor = new JournalEventProcessor(server.getBridge());
+        this.authorizer = authorizer;
+        this.authorized = authorizer == null;
     }
 
     public void close() {
@@ -80,27 +86,55 @@ public class JournalServerAgent {
         commandConsumer.read(channel);
         if (commandConsumer.isComplete()) {
             switch (commandConsumer.getValue()) {
+                case PROTOCOL_VERSION:
+                    intResponseConsumer.read(channel);
+                    if (intResponseConsumer.isComplete()) {
+                        checkProtocolVersion(channel, intResponseConsumer.getValue());
+                        intResponseConsumer.reset();
+                        commandConsumer.reset();
+                    }
+                    break;
+                case HANDSHAKE_COMPLETE:
+                    if (authorized) {
+                        ok(channel);
+                    } else {
+                        stringResponseProducer.write(channel, "AUTH");
+                    }
+                    commandConsumer.reset();
+                    break;
+                case AUTHORIZATION:
+                    byteArrayResponseConsumer.read(channel);
+                    if (byteArrayResponseConsumer.isComplete()) {
+                        authorize(channel, byteArrayResponseConsumer.getValue());
+                    }
+                    byteArrayResponseConsumer.reset();
+                    commandConsumer.reset();
+                    break;
                 case SET_KEY_CMD:
                     LOGGER.trace("SetKey command received");
                     setKeyRequestConsumer.read(channel);
                     if (setKeyRequestConsumer.isComplete()) {
                         setClientKey(channel, setKeyRequestConsumer.getValue());
-                        reset();
+                        setKeyRequestConsumer.reset();
+                        commandConsumer.reset();
                     }
                     break;
                 case DELTA_REQUEST_CMD:
+                    checkAuthorized(channel);
                     LOGGER.trace("DeltaRequest command received");
                     journalClientStateConsumer.read(channel);
                     if (journalClientStateConsumer.isComplete()) {
                         storeDeltaRequest(channel, journalClientStateConsumer.getValue());
-                        reset();
+                        journalClientStateConsumer.reset();
+                        commandConsumer.reset();
                     }
                     break;
                 case CLIENT_READY_CMD:
+                    checkAuthorized(channel);
                     statsChannel.setDelegate(channel);
                     dispatchData2(statsChannel);
                     statsChannel.logStats();
-                    reset();
+                    commandConsumer.reset();
                     break;
                 case CLIENT_DISCONNECT:
                     throw new JournalDisconnectedChannelException();
@@ -108,10 +142,42 @@ public class JournalServerAgent {
         }
     }
 
-    private void reset() {
-        commandConsumer.reset();
-        setKeyRequestConsumer.reset();
-        journalClientStateConsumer.reset();
+    private void authorize(WritableByteChannel channel, byte[] value) throws JournalNetworkException {
+        if (!authorized) {
+            try {
+                ArrayList<JournalKey> keys = new ArrayList<>(readers.size());
+                for (int i = 0; i < readers.size(); i++) {
+                    keys.add(readers.get(i).getKey());
+                }
+                authorized = authorizer.isAuthorized(value, keys);
+            } catch (Throwable e) {
+                LOGGER.error("Exception in authorizer: ", e);
+                authorized = false;
+            }
+        }
+
+        if (authorized) {
+            ok(channel);
+        } else {
+            error(channel, "Authorization failed");
+        }
+    }
+
+    private void checkAuthorized(WritableByteChannel channel) throws JournalNetworkException {
+        if (!authorized) {
+            error(channel, "NOT AUTHORIZED");
+            throw new JournalDisconnectedChannelException();
+        }
+    }
+
+
+    private void checkProtocolVersion(ByteChannel channel, int version) throws JournalNetworkException {
+        if (version == Version.PROTOCOL_VERSION) {
+            ok(channel);
+        } else {
+            error(channel, "Unsupported protocol version. Client: " + version + ", Server: " + Version.PROTOCOL_VERSION);
+        }
+
     }
 
     private <T> void createReader(int index, JournalKey<T> key) throws JournalException {
@@ -137,21 +203,19 @@ public class JournalServerAgent {
         JournalKey<?> readerKey = indexedKey.getKey();
         int maxIndex = server.getMaxWriterIndex();
         if (indexedKey.getIndex() > maxIndex) {
-            stringResponseProducer.write(channel, "Journal index is too large. Max " + maxIndex);
+            error(channel, "Journal index is too large. Max " + maxIndex);
         } else {
             int writerIndex = server.getWriterIndex(readerKey);
             if (writerIndex == JournalServer.JOURNAL_KEY_NOT_FOUND) {
-                LOGGER.info("Requested key not exported: %s", readerKey);
-                stringResponseProducer.write(channel, "Not Exported");
+                error(channel, "Requested key not exported: " + readerKey);
             } else {
                 writerToReaderMap.put(writerIndex, indexedKey.getIndex());
                 readerToWriterMap.put(indexedKey.getIndex(), writerIndex);
                 try {
                     createReader(indexedKey.getIndex(), readerKey);
-                    stringResponseProducer.write(channel, "OK");
+                    ok(channel);
                 } catch (JournalException e) {
-                    LOGGER.info("Could not created reader for key: %s", e, readerKey);
-                    stringResponseProducer.write(channel, "Internal error. Cannot create reader.");
+                    error(channel, "Could not created reader for key: " + readerKey, e);
                 }
             }
         }
@@ -161,7 +225,7 @@ public class JournalServerAgent {
         int index = request.getJournalIndex();
 
         if (readerToWriterMap.get(index) == JOURNAL_INDEX_NOT_FOUND) {
-            stringResponseProducer.write(channel, "Journal index does not match key request");
+            error(channel, "Journal index does not match key request");
         } else {
             Lists.advance(clientStates, index);
 
@@ -175,8 +239,21 @@ public class JournalServerAgent {
             r.setClientStateSyncTime(0);
             r.setWriterUpdateReceived(false);
 
-            stringResponseProducer.write(channel, "OK");
+            ok(channel);
         }
+    }
+
+    private void ok(WritableByteChannel channel) throws JournalNetworkException {
+        stringResponseProducer.write(channel, "OK");
+    }
+
+    private void error(WritableByteChannel channel, String message) throws JournalNetworkException {
+        error(channel, message, null);
+    }
+
+    private void error(WritableByteChannel channel, String message, Exception e) throws JournalNetworkException {
+        stringResponseProducer.write(channel, message);
+        LOGGER.info(message, e);
     }
 
     private boolean processJournalEvents(final WritableByteChannel channel, boolean blocking) throws JournalNetworkException {
