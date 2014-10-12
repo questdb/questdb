@@ -1,5 +1,5 @@
 <!--
-  ~ Copyright (c) 2014. Vlad Ilyushchenko
+  ~ Copyright (c) 2014-2015. Vlad Ilyushchenko
   ~
   ~ Licensed under the Apache License, Version 2.0 (the "License");
   ~ you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@
     <name>NFSdb.Example.Code</name>
     <description>Code examples and usage scenarios for NFSdb</description>
 
-    <url>http://www.nfsdb.org</url>
+    <url>http://github.nfsdb.org</url>
     <licenses>
         <license>
             <name>The Apache Software License, Version 2.0</name>

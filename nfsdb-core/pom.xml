@@ -29,7 +29,7 @@
     <name>NFSdb.Core.Library</name>
     <description>Low Latency, high throughput database and cache</description>
 
-    <url>http://www.nfsdb.org</url>
+    <url>http://github.nfsdb.org</url>
     <licenses>
         <license>
             <name>The Apache Software License, Version 2.0</name>
