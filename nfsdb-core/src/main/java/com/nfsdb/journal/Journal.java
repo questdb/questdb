@@ -503,7 +503,8 @@ public class Journal<T> implements Iterable<T>, Closeable {
 
     public long size() throws JournalException {
         long result = 0;
-        for (int i = 0; i < getPartitionCount(); i++) {
+        int count = getPartitionCount();
+        for (int i = 0; i < count; i++) {
             result += getPartition(i, true).size();
         }
         return result;
@@ -529,8 +530,9 @@ public class Journal<T> implements Iterable<T>, Closeable {
 
     public long incrementRowID(long rowID) throws JournalException {
 
+        int count = getPartitionCount();
         if (rowID == -1) {
-            if (getPartitionCount() > 0 && getPartition(0, true).size() > 0) {
+            if (count > 0 && getPartition(0, true).size() > 0) {
                 return 0;
             } else {
                 return -1;
@@ -544,7 +546,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
         if (localRowID < p.size() - 1) {
             return Rows.toRowID(partitionIndex, localRowID + 1);
         }
-        int count = getPartitionCount();
         while (++partitionIndex < count) {
             p = getPartition(partitionIndex, true);
             if (p.size() > 0) {
