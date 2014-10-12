@@ -12,6 +12,7 @@
 
 
 [![Build Status](https://secure.travis-ci.org/NFSdb/nfsdb.png?branch=master)](http://travis-ci.org/NFSdb/nfsdb)
+[![Dependency Status](https://www.versioneye.com/user/projects/5439d968b2a9c527fe00027c/badge.svg?style=flat)](https://www.versioneye.com/user/projects/5439d968b2a9c527fe00027c)
 
 ##What is NFSdb?
 
