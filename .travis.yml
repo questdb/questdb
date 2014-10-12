@@ -9,3 +9,5 @@ branches:
     - master
 
 install: mvn clean package
+
+after_success: coveralls
