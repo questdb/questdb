@@ -33,7 +33,7 @@ import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Test;
 
-public class TimeseriesJoinTest2 {
+public class TimeSeriesJoinTest {
 
     @ClassRule
     public static final JournalTestFactory factory;
