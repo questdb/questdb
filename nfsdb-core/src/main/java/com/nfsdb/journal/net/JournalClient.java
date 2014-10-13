@@ -158,8 +158,7 @@ public class JournalClient {
                 handlerFuture.get();
                 handlerFuture = null;
             }
-            closeChannel();
-            closeWriters();
+            close0();
         } catch (Exception e) {
             throw new JournalNetworkException(e);
         }
@@ -169,20 +168,22 @@ public class JournalClient {
         return running.get();
     }
 
-    private void closeWriters() {
-        for (int i = 0; i < writers.size(); i++) {
-            writers.get(i).close();
-        }
-        writers.clear();
-        statusSentList.clear();
-        deltaConsumers.clear();
-    }
-
-    private void closeChannel() throws IOException {
+    private void close0() throws IOException {
         if (channel != null && channel.isOpen()) {
             channel.close();
         }
         channel = null;
+
+        for (int i = 0; i < writers.size(); i++) {
+            writers.get(i).close();
+        }
+
+        writers.clear();
+        statusSentList.clear();
+        deltaConsumers.clear();
+        commandConsumer.reset();
+        stringResponseConsumer.reset();
+        intResponseConsumer.reset();
     }
 
     private void handshake() throws JournalNetworkException {
@@ -330,12 +331,11 @@ public class JournalClient {
                     int retryCount = config.getReconnectPolicy().getRetryCount();
                     int loginRetryCount = config.getReconnectPolicy().getLoginRetryCount();
                     boolean connected = false;
-                    while (!connected && retryCount-- > 0 && loginRetryCount > 0) {
+                    while (running.get() && !connected && retryCount-- > 0 && loginRetryCount > 0) {
                         try {
                             LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(config.getReconnectPolicy().getSleepBetweenRetriesMillis()));
                             LOGGER.info("Retrying reconnect ... [" + (retryCount + 1) + "]");
-                            closeChannel();
-                            closeWriters();
+                            close0();
                             reopenWriters();
                             handshake();
                             connected = true;
