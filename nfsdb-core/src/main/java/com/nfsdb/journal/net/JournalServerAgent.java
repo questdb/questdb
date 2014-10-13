@@ -68,10 +68,12 @@ public class JournalServerAgent {
     private final EventHandler handler = new EventHandler();
     private final Authorizer authorizer;
     private final ByteArrayResponseConsumer byteArrayResponseConsumer = new ByteArrayResponseConsumer();
+    private final SocketAddress socketAddress;
     private boolean authorized;
 
     public JournalServerAgent(JournalServer server, SocketAddress socketAddress, Authorizer authorizer) {
         this.server = server;
+        this.socketAddress = socketAddress;
         this.statsChannel = new StatsCollectingWritableByteChannel(socketAddress);
         this.eventProcessor = new JournalEventProcessor(server.getBridge());
         this.authorizer = authorizer;
@@ -277,6 +279,8 @@ public class JournalServerAgent {
 
             if (dataSent) {
                 commandProducer.write(channel, Command.SERVER_READY_CMD);
+            } else if (blocking) {
+                LOGGER.error("Client appears to be refusing new data from server, corrupt client? [" + socketAddress + "]");
             }
         } else {
             commandProducer.write(channel, Command.SERVER_HEARTBEAT);

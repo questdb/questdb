@@ -21,8 +21,8 @@ import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.test.tools.JournalTestFactory;
-import com.nfsdb.journal.test.tools.Rnd;
 import com.nfsdb.journal.utils.Files;
+import com.nfsdb.journal.utils.Rnd;
 import org.junit.ClassRule;
 import org.junit.Test;
 
@@ -62,7 +62,7 @@ public class HugeTableTest {
             if (i == 0) {
                 t = System.nanoTime();
             }
-            name.name = rnd.randomString(10);
+            name.name = rnd.nextString(10);
             w.append(name);
         }
         w.commit();

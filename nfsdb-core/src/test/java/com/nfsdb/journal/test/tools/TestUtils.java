@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import com.nfsdb.journal.printer.JournalPrinter;
 import com.nfsdb.journal.printer.appender.AssertingAppender;
 import com.nfsdb.journal.printer.converter.DateConverter;
 import com.nfsdb.journal.utils.Dates;
+import com.nfsdb.journal.utils.Rnd;
 import com.nfsdb.journal.utils.Unsafe;
 import gnu.trove.map.hash.TIntIntHashMap;
 import org.joda.time.Interval;
@@ -49,7 +50,7 @@ public final class TestUtils {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
         long timestamps[] = {Dates.toMillis("2013-09-04T10:00:00.000Z"), Dates.toMillis("2013-10-04T10:00:00.000Z"), Dates.toMillis("2013-11-04T10:00:00.000Z")};
         Quote q = new Quote();
-        Random r = new Random(System.currentTimeMillis());
+        Rnd r = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
         for (int i = 0; i < count; i++) {
             q.clear();
             q.setSym(symbols[Math.abs(r.nextInt() % (symbols.length))]);
@@ -72,7 +73,7 @@ public final class TestUtils {
     public static void generateQuoteData(JournalWriter<Quote> w, int count, long timetamp, long increment) throws JournalException {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
         Quote q = new Quote();
-        Random r = new Random(System.currentTimeMillis());
+        Rnd r = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
 
         for (int i = 0; i < count; i++) {
             q.clear();
@@ -102,7 +103,7 @@ public final class TestUtils {
         for (int i = 0; i < count; i++) {
             String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
             Quote q = new Quote();
-            Random r = new Random(System.currentTimeMillis());
+            Rnd r = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
 
             q.clear();
             q.setSym(symbols[Math.abs(r.nextInt() % (symbols.length - 1))]);
@@ -182,7 +183,7 @@ public final class TestUtils {
     public static void generateQuoteData(int count, long timestamp, int increment) {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
         String exchanges[] = {"LXE", "GR", "SK", "LN"};
-        Random r = new Random(System.currentTimeMillis());
+        Rnd r = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
         for (int i = 0; i < count; i++) {
             Quote q = new Quote();
             q.setSym(symbols[Math.abs(r.nextInt() % (symbols.length - 1))]);
@@ -312,22 +313,6 @@ public final class TestUtils {
             }
             Assert.assertEquals(expected.next(), actual.next());
         }
-    }
-
-    public static String randomString(Random random, int len) {
-        char chars[] = new char[len];
-        for (int i = 0; i < len; i++) {
-            chars[i] = (char) (Math.abs(random.nextInt()) % 25 + 66);
-        }
-        return new String(chars);
-    }
-
-    public static byte[] randomBytes(Random random, int len) {
-        byte bytes[] = new byte[len];
-        for (int i = 0; i < len; i++) {
-            bytes[i] = (byte) (Math.abs(random.nextInt()) % 25 + 66);
-        }
-        return bytes;
     }
 
     private TestUtils() {

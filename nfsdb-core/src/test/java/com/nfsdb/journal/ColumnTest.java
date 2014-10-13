@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,16 +21,14 @@ import com.nfsdb.journal.column.MappedFile;
 import com.nfsdb.journal.column.MappedFileImpl;
 import com.nfsdb.journal.column.VariableColumn;
 import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.test.tools.RandomString;
-import com.nfsdb.journal.test.tools.TestUtils;
 import com.nfsdb.journal.utils.ByteBuffers;
 import com.nfsdb.journal.utils.Files;
+import com.nfsdb.journal.utils.Rnd;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 import java.nio.ByteBuffer;
-import java.util.Random;
 
 public class ColumnTest {
     @Rule
@@ -213,11 +211,11 @@ public class ColumnTest {
         MappedFile df1 = new MappedFileImpl(dataFile, 12, JournalMode.APPEND);
         MappedFile idxFile1 = new MappedFileImpl(indexFile, 12, JournalMode.APPEND);
 
-        final Random random = new Random(System.currentTimeMillis());
+        final Rnd random = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
         final int len = 5024;
         try (VariableColumn col = new VariableColumn(df1, idxFile1)) {
             ByteBuffer buf = ByteBuffer.allocate(len);
-            String s = TestUtils.randomString(random, buf.remaining() / 2);
+            String s = random.nextString(buf.remaining() / 2);
             ByteBuffers.putStr(buf, s);
             buf.flip();
             col.putBuffer(buf);
@@ -238,9 +236,9 @@ public class ColumnTest {
     @Test
     public void testTwoByteEdges() throws JournalException {
 
-        RandomString rs = new RandomString(65000);
-        String s1 = rs.nextString();
-        String s2 = rs.nextString();
+        Rnd r = new Rnd();
+        String s1 = r.nextString(65000);
+        String s2 = r.nextString(65000);
         MappedFile df1 = new MappedFileImpl(dataFile, 22, JournalMode.APPEND);
         MappedFile idxFile1 = new MappedFileImpl(indexFile, 22, JournalMode.APPEND);
 

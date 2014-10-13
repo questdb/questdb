@@ -440,8 +440,9 @@ public class JournalWriter<T> extends Journal<T> {
         return commitOnClose;
     }
 
-    public void setCommitOnClose(boolean commitOnClose) {
+    public JournalWriter<T> setCommitOnClose(boolean commitOnClose) {
         this.commitOnClose = commitOnClose;
+        return this;
     }
 
     public void purgeTempPartitions() {

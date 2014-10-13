@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,13 +19,12 @@ package com.nfsdb.journal;
 import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.model.Band;
 import com.nfsdb.journal.test.tools.AbstractTest;
-import com.nfsdb.journal.test.tools.TestUtils;
+import com.nfsdb.journal.utils.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
 public class BinaryTest extends AbstractTest {
@@ -36,10 +35,10 @@ public class BinaryTest extends AbstractTest {
     public void testBinaryAppend() throws Exception {
         JournalWriter<Band> writer = factory.writer(Band.class);
 
-        Random r = new Random(System.currentTimeMillis());
+        Rnd r = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
         List<byte[]> bytes = new ArrayList<>();
         for (int i = 0; i < 3; i++) {
-            bytes.add(TestUtils.randomBytes(r, (3 - i) * 1024));
+            bytes.add(r.nextBytes((3 - i) * 1024));
         }
 
         writer.append(new Band().setName("Supertramp").setType("jazz").setImage(bytes.get(0)));
@@ -59,13 +58,13 @@ public class BinaryTest extends AbstractTest {
 
         JournalWriter<Band> writer = factory.bulkWriter(Band.class);
         final int count = 20000;
-        Random r = new Random(System.currentTimeMillis());
+        Rnd r = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
 
-        byte[] bytes = TestUtils.randomBytes(r, 10240);
+        byte[] bytes = r.nextBytes(10240);
         String[] types = new String[]{"jazz", "rap", "pop", "rock", "soul"};
         String[] bands = new String[1200];
         for (int i = 0; i < bands.length; i++) {
-            bands[i] = TestUtils.randomString(r, 10);
+            bands[i] = r.nextString(10);
         }
 
         long t = System.nanoTime();

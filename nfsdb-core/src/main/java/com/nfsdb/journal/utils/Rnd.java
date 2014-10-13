@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.test.tools;
+package com.nfsdb.journal.utils;
 
 public class Rnd {
     private long s0;
@@ -51,7 +51,7 @@ public class Rnd {
         return n > 0 ? n : -n;
     }
 
-    public String randomString(int len) {
+    public String nextString(int len) {
         char chars[] = new char[len];
         for (int i = 0; i < len; i++) {
             chars[i] = (char) (nextPositiveInt() % 25 + 66);
@@ -59,4 +59,11 @@ public class Rnd {
         return new String(chars);
     }
 
+    public byte[] nextBytes(int len) {
+        byte bytes[] = new byte[len];
+        for (int i = 0; i < len; i++) {
+            bytes[i] = (byte) (nextPositiveInt() % 25 + 66);
+        }
+        return bytes;
+    }
 }

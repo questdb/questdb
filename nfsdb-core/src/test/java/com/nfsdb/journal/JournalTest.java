@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import com.nfsdb.journal.tx.TxFuture;
 import com.nfsdb.journal.tx.TxListener;
 import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Files;
+import com.nfsdb.journal.utils.Rnd;
 import com.nfsdb.journal.utils.Rows;
 import org.junit.Assert;
 import org.junit.Test;
@@ -446,18 +447,18 @@ public class JournalTest extends AbstractTest {
 
     @Test
     public void testAppendBreak() throws Exception {
-        Random random = new Random(System.nanoTime());
+        Rnd random = new Rnd(System.nanoTime(), System.currentTimeMillis());
         JournalWriter<TestEntity> w = factory.writer(TestEntity.class);
         try {
             w.append(new TestEntity().setSym("ABC").setDStr("test1"));
-            w.append(new TestEntity().setSym("ABC").setDStr(TestUtils.randomString(random, 100)));
-            w.append(new TestEntity().setSym("ABC").setDStr(TestUtils.randomString(random, 70000)).setTimestamp(-1));
+            w.append(new TestEntity().setSym("ABC").setDStr(random.nextString(100)));
+            w.append(new TestEntity().setSym("ABC").setDStr(random.nextString(70000)).setTimestamp(-1));
         } catch (Exception e) {
             // OK
         } finally {
             w.commit();
         }
-        w.append(new TestEntity().setSym("ABC").setDStr(TestUtils.randomString(random, 300)));
+        w.append(new TestEntity().setSym("ABC").setDStr(random.nextString(300)));
 
         Assert.assertEquals(3, w.query().all().withKeys("ABC").asResultSet().size());
         Assert.assertEquals(1, w.query().head().withKeys("ABC").asResultSet().size());

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,6 +34,7 @@ public class ClientConfig extends NetworkConfig {
     public static final ClientConfig INSTANCE = new ClientConfig() {{
         setHostname("127.0.0.1");
     }};
+    private final ClientReconnectPolicy reconnectPolicy = new ClientReconnectPolicy();
     private int soSndBuf = 8192;
     private boolean keepAlive = true;
     private boolean tcpNoDelay = true;
@@ -73,6 +74,10 @@ public class ClientConfig extends NetworkConfig {
 
     public void setLinger(int linger) {
         this.linger = linger;
+    }
+
+    public ClientReconnectPolicy getReconnectPolicy() {
+        return reconnectPolicy;
     }
 
     public SocketChannel openSocketChannel() throws JournalNetworkException {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,8 +22,8 @@ import com.nfsdb.journal.model.Album;
 import com.nfsdb.journal.model.Band;
 import com.nfsdb.journal.model.Name;
 import com.nfsdb.journal.test.tools.AbstractTest;
-import com.nfsdb.journal.test.tools.Rnd;
 import com.nfsdb.journal.utils.Dates;
+import com.nfsdb.journal.utils.Rnd;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -47,21 +47,21 @@ public class ModelGenerationTest extends AbstractTest {
 
         // 100,000 band names
         for (int i = 0; i < bandCount; i++) {
-            name.name = rnd.randomString(15);
+            name.name = rnd.nextString(15);
             w1.append(name);
         }
         w1.commit();
 
         // 1,000,000 album names
         for (int i = 0; i < albumCount; i++) {
-            name.name = rnd.randomString(30);
+            name.name = rnd.nextString(30);
             w2.append(name);
         }
         w2.commit();
 
         // 200 band types/genres
         for (int i = 0; i < genreCount; i++) {
-            name.name = rnd.randomString(10);
+            name.name = rnd.nextString(10);
             w3.append(name);
         }
         w3.commit();

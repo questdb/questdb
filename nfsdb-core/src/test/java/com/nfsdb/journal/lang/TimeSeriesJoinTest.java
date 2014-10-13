@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,8 +26,8 @@ import com.nfsdb.journal.lang.cst.Q;
 import com.nfsdb.journal.lang.cst.impl.QImpl;
 import com.nfsdb.journal.lang.cst.impl.join.TimeSeriesJoin;
 import com.nfsdb.journal.test.tools.JournalTestFactory;
-import com.nfsdb.journal.test.tools.Rnd;
 import com.nfsdb.journal.utils.Files;
+import com.nfsdb.journal.utils.Rnd;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
