@@ -27,6 +27,7 @@ import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestUtils;
 import com.nfsdb.journal.tx.TxListener;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -48,6 +49,7 @@ public class ReconnectTest extends AbstractTest {
     }
 
     @Test
+    @Ignore
     public void testServerRestart() throws Exception {
         int size = 100000;
         JournalWriter<Quote> remote = factory.writer(Quote.class, "remote", 2 * size);
