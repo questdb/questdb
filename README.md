@@ -154,7 +154,7 @@ NFSdb requires minimum of Java 7 and stable release is available from maven Cent
 <dependency>
     <groupId>com.nfsdb</groupId>
     <artifactId>nfsdb-core</artifactId>
-    <version>2.0.1</version>
+    <version>2.1.0</version>
 </dependency>
 ```
 Check out [release notes](https://github.com/NFSdb/nfsdb/releases/tag/2.0.1) for details of the release.
@@ -172,7 +172,7 @@ Snapshot releases are also available from Maven central. To get hold of those ad
 <dependency>
     <groupId>com.nfsdb</groupId>
     <artifactId>nfsdb-core</artifactId>
-    <version>2.0.2-SNAPSHOT</version>
+    <version>2.1.1-SNAPSHOT</version>
 </dependency>
 ```
 
