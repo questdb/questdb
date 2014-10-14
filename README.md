@@ -4,7 +4,8 @@
 
 This is security-centric release aimed at having replication meet security standards. Features supported in this release are: SSL, Certificate auth (Mutual-auth), Shared Key Auth, Kerberso Auth, Kerberos SSO Auth (Windows only) and client auto-reconnect.
 
----
+
+
 
 ## Overview
 
