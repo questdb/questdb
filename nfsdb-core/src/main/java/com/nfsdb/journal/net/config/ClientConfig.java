@@ -109,9 +109,9 @@ public class ClientConfig extends NetworkConfig {
             LOGGER.info("Connected to %s", address);
             return channel;
         } catch (UnresolvedAddressException e) {
-            throw new JournalNetworkException("DNS lookup error: %s", address);
+            throw new JournalNetworkException("DNS lookup error: " + address);
         } catch (IOException e) {
-            throw new JournalNetworkException("%s: %s", address, e.getMessage());
+            throw new JournalNetworkException(address.toString(), e);
         }
     }
 

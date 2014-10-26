@@ -36,8 +36,12 @@ public enum Command {
 
     private final int cmd;
 
+    Command(int cmd) {
+        this.cmd = cmd;
+    }
+
     public static Command fromByte(byte b) {
-        for (int i = 0; i < Command.values().length; i++) {
+        for (int i = 0, l = Command.values().length; i < l; i++) {
             Command c = Command.values()[i];
             if (c.cmd == b) {
                 return c;
@@ -48,9 +52,5 @@ public enum Command {
 
     public byte getCmd() {
         return (byte) cmd;
-    }
-
-    Command(int cmd) {
-        this.cmd = cmd;
     }
 }

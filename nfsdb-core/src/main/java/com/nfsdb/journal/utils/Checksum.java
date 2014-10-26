@@ -30,6 +30,9 @@ public final class Checksum {
     private static final ThreadLocal<MessageDigest> localMd = new ThreadLocal<>();
     private static final ThreadLocal<ByteBuffer> localBuf = new ThreadLocal<>();
 
+    private Checksum() {
+    }
+
     public static byte[] getChecksum(JournalMetadata<?> metadata) throws JournalRuntimeException {
         try {
             MessageDigest md = localMd.get();
@@ -44,13 +47,11 @@ public final class Checksum {
                 localBuf.set(buf);
             }
             buf.clear();
-            String type = metadata.getModelClass().getName();
-            // model class
-            flushBuf(md, buf, type.length() * 2).put(type.getBytes(Files.UTF_8));
             flushBuf(md, buf, metadata.getPartitionType().name().length() * 2).put(metadata.getPartitionType().name().getBytes(Files.UTF_8));
             for (int i = 0; i < metadata.getColumnCount(); i++) {
                 ColumnMetadata m = metadata.getColumnMetadata(i);
                 flushBuf(md, buf, m.name.length() * 2).put(m.name.getBytes(Files.UTF_8));
+                flushBuf(md, buf, m.type.name().length() * 2).put(m.type.name().getBytes(Files.UTF_8));
                 flushBuf(md, buf, 4).putInt(m.size);
                 flushBuf(md, buf, 4).putInt(m.distinctCountHint);
                 flushBuf(md, buf, 1).put((byte) (m.indexed ? 1 : 0));
@@ -69,9 +70,6 @@ public final class Checksum {
 
     public static int hash(String s, int M) {
         return s == null ? 0 : (s.hashCode() & 0xFFFFFFF) % M;
-    }
-
-    private Checksum() {
     }
 
     private static ByteBuffer flushBuf(MessageDigest md, ByteBuffer buf, int len) {

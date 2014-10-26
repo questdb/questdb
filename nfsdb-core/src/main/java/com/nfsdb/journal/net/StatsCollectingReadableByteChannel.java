@@ -31,6 +31,7 @@ class StatsCollectingReadableByteChannel implements ReadableByteChannel {
     private ReadableByteChannel delegate;
     private long startTime;
     private long byteCount;
+    private long callCount;
 
     public StatsCollectingReadableByteChannel(SocketAddress socketAddress) {
         this.socketAddress = socketAddress;
@@ -38,6 +39,7 @@ class StatsCollectingReadableByteChannel implements ReadableByteChannel {
 
     @Override
     public int read(ByteBuffer dst) throws IOException {
+        callCount++;
         int count = delegate.read(dst);
         this.byteCount += count;
         return count;
@@ -58,12 +60,13 @@ class StatsCollectingReadableByteChannel implements ReadableByteChannel {
         this.delegate = delegate;
         this.startTime = System.currentTimeMillis();
         this.byteCount = 0;
+        this.callCount = 0;
     }
 
     public void logStats() {
         if (byteCount > 10) {
             long endTime = System.currentTimeMillis();
-            LOGGER.info("received %d bytes @ %f MB/s from: %s", byteCount, (double) (byteCount * 1000) / ((endTime - startTime)) / 1024 / 1024, socketAddress);
+            LOGGER.info("received %d bytes @ %f MB/s from: %s [%d calls]", byteCount, (double) (byteCount * 1000) / ((endTime - startTime)) / 1024 / 1024, socketAddress, callCount);
         }
     }
 

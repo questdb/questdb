@@ -30,7 +30,7 @@ public class PartitionDeltaProducer extends ChannelProducerGroup<ColumnDeltaProd
     public PartitionDeltaProducer(Partition partition) {
         this.partition = partition;
         addProducer(new FixedColumnDeltaProducer(partition.getNullsColumn()));
-        for (int i = 0; i < partition.getJournal().getMetadata().getColumnCount(); i++) {
+        for (int i = 0, c = partition.getJournal().getMetadata().getColumnCount(); i < c; i++) {
             AbstractColumn col = partition.getAbstractColumn(i);
             ColumnDeltaProducer producer;
             producer = col instanceof VariableColumn ? new VariableColumnDeltaProducer((VariableColumn) col) : new FixedColumnDeltaProducer(col);
@@ -42,7 +42,7 @@ public class PartitionDeltaProducer extends ChannelProducerGroup<ColumnDeltaProd
         partition.open();
         long limit = partition.size();
         List<ColumnDeltaProducer> producers = getProducers();
-        for (int i = 0; i < producers.size(); i++) {
+        for (int i = 0, sz = producers.size(); i < sz; i++) {
             producers.get(i).configure(localRowID, limit);
         }
         computeHasContent();

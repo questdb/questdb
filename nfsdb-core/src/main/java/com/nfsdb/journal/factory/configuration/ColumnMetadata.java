@@ -34,10 +34,10 @@ public class ColumnMetadata {
     @Override
     public String toString() {
         return "ColumnMetadata{" +
-                "name='" + name + '\'' +
-                ", type=" + type +
+                "name*='" + name + '\'' +
+                ", type*=" + type +
                 ", offset=" + offset +
-                ", size=" + size +
+                ", size*=" + size +
                 ", avgSize=" + avgSize +
                 ", indexed=" + indexed +
                 ", bitHint=" + bitHint +

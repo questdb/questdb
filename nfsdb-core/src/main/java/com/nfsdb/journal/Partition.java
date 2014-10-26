@@ -60,6 +60,26 @@ public class Partition<T> implements Iterable<T>, Closeable {
     private FixedColumn timestampColumn;
     private BinarySearch.LongTimeSeriesProvider indexOfVisitor;
 
+    Partition(Journal<T> journal, Interval interval, int partitionIndex, long txLimit, long[] indexTxAddresses) {
+        this.journal = journal;
+        this.partitionIndex = partitionIndex;
+        this.interval = interval;
+        this.txLimit = txLimit;
+        this.columnCount = journal.getMetadata().getColumnCount();
+        this.nulls = new BitSet(columnCount);
+        this.nullsAdaptor = journal.getMetadata().getNullsAdaptor();
+        this.appendKeyCache = new int[columnCount];
+        this.appendSizeCache = new long[columnCount];
+        Arrays.fill(appendKeyCache, -3);
+
+        String dateStr = Dates.dirNameForIntervalStart(interval, journal.getMetadata().getPartitionType());
+        if (dateStr.length() > 0) {
+            setPartitionDir(new File(this.journal.getLocation(), dateStr), indexTxAddresses);
+        } else {
+            setPartitionDir(this.journal.getLocation(), indexTxAddresses);
+        }
+    }
+
     public NullsColumn getNullsColumn() {
         return nullsColumn;
     }
@@ -131,9 +151,9 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
     public void close() {
         if (isOpen()) {
-            for (AbstractColumn ch : columns) {
-                if (ch != null) {
-                    ch.close();
+            for (int i = 0; i < columns.length; i++) {
+                if (columns[i] != null) {
+                    columns[i].close();
                 }
             }
             nullsColumn.close();
@@ -142,8 +162,8 @@ public class Partition<T> implements Iterable<T>, Closeable {
             LOGGER.trace("Partition %s closed", partitionDir);
         }
 
-        for (SymbolIndexProxy<T> proxy : indexProxies) {
-            proxy.close();
+        for (int i = 0, sz = indexProxies.size(); i < sz; i++) {
+            indexProxies.get(i).close();
         }
     }
 
@@ -549,15 +569,14 @@ public class Partition<T> implements Iterable<T>, Closeable {
             throw new JournalException("Cannot compact closed partition: %s", this);
         }
 
-        for (AbstractColumn col : columns) {
-            if (col != null) {
-                col.compact();
+        for (int i1 = 0; i1 < columns.length; i1++) {
+            if (columns[i1] != null) {
+                columns[i1].compact();
             }
         }
 
-        for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
-            SymbolIndexProxy<T> proxy = indexProxies.get(i);
-            proxy.getIndex().compact();
+        for (int i = 0, sz = indexProxies.size(); i < sz; i++) {
+            indexProxies.get(i).getIndex().compact();
         }
     }
 
@@ -565,7 +584,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
     public void updateIndexes(long oldSize, long newSize) {
         if (oldSize < newSize) {
             try {
-                for (int i1 = 0, indexProxiesSize = indexProxies.size(); i1 < indexProxiesSize; i1++) {
+                for (int i1 = 0, sz = indexProxies.size(); i1 < sz; i1++) {
                     SymbolIndexProxy<T> proxy = indexProxies.get(i1);
                     KVIndex index = proxy.getIndex();
                     FixedColumn col = getFixedWidthColumn(proxy.getColumnIndex());
@@ -696,13 +715,13 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
     void truncate(long newSize) throws JournalException {
         if (isOpen() && size() > newSize) {
-            for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
+            for (int i = 0, sz = indexProxies.size(); i < sz; i++) {
                 SymbolIndexProxy<T> proxy = indexProxies.get(i);
                 proxy.getIndex().truncate(newSize);
             }
-            for (AbstractColumn column : columns) {
-                if (column != null) {
-                    column.truncate(newSize);
+            for (int i = 0; i < columns.length; i++) {
+                if (columns[i] != null) {
+                    columns[i].truncate(newSize);
                 }
             }
 
@@ -764,26 +783,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
             } else {
                 columnIndexProxies.add(null);
             }
-        }
-    }
-
-    Partition(Journal<T> journal, Interval interval, int partitionIndex, long txLimit, long[] indexTxAddresses) {
-        this.journal = journal;
-        this.partitionIndex = partitionIndex;
-        this.interval = interval;
-        this.txLimit = txLimit;
-        this.columnCount = journal.getMetadata().getColumnCount();
-        this.nulls = new BitSet(columnCount);
-        this.nullsAdaptor = journal.getMetadata().getNullsAdaptor();
-        this.appendKeyCache = new int[columnCount];
-        this.appendSizeCache = new long[columnCount];
-        Arrays.fill(appendKeyCache, -3);
-
-        String dateStr = Dates.dirNameForIntervalStart(interval, journal.getMetadata().getPartitionType());
-        if (dateStr.length() > 0) {
-            setPartitionDir(new File(this.journal.getLocation(), dateStr), indexTxAddresses);
-        } else {
-            setPartitionDir(this.journal.getLocation(), indexTxAddresses);
         }
     }
 }

@@ -39,6 +39,7 @@ public class ReconnectTest extends AbstractTest {
     public void setUp() throws Exception {
         client = new JournalClient(
                 new ClientConfig() {{
+                    setHostname("localhost");
                     getReconnectPolicy().setLoginRetryCount(3);
                     getReconnectPolicy().setRetryCount(5);
                     getReconnectPolicy().setSleepBetweenRetriesMillis(TimeUnit.SECONDS.toMillis(1));

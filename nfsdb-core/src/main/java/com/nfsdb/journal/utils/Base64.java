@@ -21,7 +21,7 @@ public class Base64 {
     private static final byte[] decodeMap = initDecodeMap();
     private static final byte PADDING = 127;
 
-    public static char encode(int i) {
+    private static char encode(int i) {
         return encodeMap[i & 0x3F];
     }
 
@@ -44,7 +44,7 @@ public class Base64 {
      * @return the value of {@code ptr+((len+2)/3)*4}, which is the new offset
      * in the output buffer where the further bytes should be placed.
      */
-    public static int _printBase64Binary(byte[] input, int offset, int len, char[] buf, int ptr) {
+    private static int _printBase64Binary(byte[] input, int offset, int len, char[] buf, int ptr) {
         // encode elements until only 1 or 2 elements are left to encode
         int remaining = len;
         int i;

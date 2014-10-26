@@ -44,7 +44,7 @@ public class AuthorizationTest extends AbstractTest {
         JournalServer server = new JournalServer(
                 new ServerConfig() {{
                     setHostname("localhost");
-                    setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
+                    setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(5));
                 }}
                 , factory
                 ,

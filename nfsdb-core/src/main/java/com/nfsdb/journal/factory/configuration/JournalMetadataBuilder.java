@@ -32,7 +32,7 @@ import java.lang.reflect.Modifier;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
-public class JournalMetadataBuilder<T> {
+public class JournalMetadataBuilder<T> implements JMetadataBuilder<T> {
     private final Map<String, ColumnMetadata> columnMetadata = new HashMap<>();
     private final Class<T> modelClass;
     private Constructor<T> constructor;
@@ -110,11 +110,13 @@ public class JournalMetadataBuilder<T> {
         return this;
     }
 
+    @Override
     public JournalMetadataBuilder<T> partitionBy(PartitionType type) {
         this.partitionBy = type;
         return this;
     }
 
+    @Override
     public JournalMetadataBuilder<T> recordCountHint(int count) {
         this.recordCountHint = count;
         return this;
@@ -196,7 +198,8 @@ public class JournalMetadataBuilder<T> {
         }
 
         return new JournalMetadataImpl<>(
-                modelClass
+                modelClass.getName()
+                , modelClass
                 , constructor
                 , key
                 , location

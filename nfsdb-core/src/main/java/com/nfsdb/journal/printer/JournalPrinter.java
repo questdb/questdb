@@ -82,7 +82,7 @@ public class JournalPrinter implements Closeable {
     public void out(Object... instances) throws IOException {
         configure();
         rowBuilder.setLength(0);
-        for (int i = 0; i < ff.size(); i++) {
+        for (int i = 0, sz = ff.size(); i < sz; i++) {
             if (i > 0) {
                 rowBuilder.append(delimiter);
             }

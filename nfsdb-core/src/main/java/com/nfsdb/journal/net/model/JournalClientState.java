@@ -97,7 +97,7 @@ public class JournalClientState {
         request.setLagPartitionName(this.getLagPartitionName());
         request.setLagSize(this.getLagSize());
         request.reset();
-        for (int i = 0; i < symbolTabKeys.size(); i++) {
+        for (int i = 0, sz = symbolTabKeys.size(); i < sz; i++) {
             request.addSymbolTabKey(symbolTabKeys.get(i));
         }
     }

@@ -51,7 +51,7 @@ public class QueryAllResultSetBuilder<T> extends UnorderedResultSetBuilder<T> {
 
         // check if partition has at least one symbol value
         if (symbolKeys.size() > 0) {
-            for (int i = 0; i < symbolKeys.size(); i++) {
+            for (int i = 0, sz = symbolKeys.size(); i < sz; i++) {
                 if (index.contains(symbolKeys.getQuick(i))) {
                     searchIndices = new KVIndex[filterSymbols.size()];
                     for (int k = 0; k < filterSymbols.size(); k++) {
@@ -67,7 +67,7 @@ public class QueryAllResultSetBuilder<T> extends UnorderedResultSetBuilder<T> {
 
     @Override
     public void read(long lo, long hi) {
-        for (int i = 0; i < symbolKeys.size(); i++) {
+        for (int i = 0, sz = symbolKeys.size(); i < sz; i++) {
             int symbolKey = symbolKeys.getQuick(i);
             if (index.contains(symbolKey)) {
                 if (searchIndices.length > 0) {

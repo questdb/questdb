@@ -26,26 +26,31 @@ import java.net.SocketException;
 
 public class NetworkConfig {
     public static final int DEFAULT_DATA_PORT = 7075;
-    private int port = DEFAULT_DATA_PORT;
-    public static final int DEFAULT_DATA_SO_TIMEOUT = 2000;
-    private int soTimeout = DEFAULT_DATA_SO_TIMEOUT;
-    public static final int DEFAULT_MULTICAST_PORT = 4446;
-    private int multicastPort = DEFAULT_MULTICAST_PORT;
-    public static final int DEFAULT_MULTICAST_TIME_TO_LIVE = 16;
-    private int multicastTimeToLive = DEFAULT_MULTICAST_TIME_TO_LIVE;
-    public static final String DEFAULT_MULTICAST_ADDRESS = "230.100.12.1";
-    private String multicastAddress = DEFAULT_MULTICAST_ADDRESS;
     public static final byte ADDRESS_REQUEST_PREFIX = 0x3F;
     public static final byte ADDRESS_RESPONSE_PREFIX = 0x4F;
-    public static final int DEFAULT_SO_RCVBUF = 8192;
-    private int soRcvBuf = DEFAULT_SO_RCVBUF;
+    private static final int DEFAULT_DATA_SO_TIMEOUT = 2000;
+    private static final int DEFAULT_MULTICAST_PORT = 4446;
+    private static final int DEFAULT_MULTICAST_TIME_TO_LIVE = 16;
+    private static final String DEFAULT_MULTICAST_ADDRESS = "230.100.12.4";
+    private static final int DEFAULT_SO_RCVBUF = 8192;
     private final SslConfig sslConfig = new SslConfig();
+    private int port = DEFAULT_DATA_PORT;
+    private int soTimeout = DEFAULT_DATA_SO_TIMEOUT;
+    private int multicastPort = DEFAULT_MULTICAST_PORT;
+    private int multicastTimeToLive = DEFAULT_MULTICAST_TIME_TO_LIVE;
+    private String multicastAddress = DEFAULT_MULTICAST_ADDRESS;
+    private int soRcvBuf = DEFAULT_SO_RCVBUF;
     private String ifName = null;
     private String hostname = null;
     private boolean reuseAddress = true;
+    private boolean enableMulticast = true;
 
 
     public NetworkConfig() {
+        if ("Mac OS X".equals(System.getProperty("os.name"))
+                && "10.10".equals(System.getProperty("os.version"))) {
+            enableMulticast = false;
+        }
     }
 
     public String getHostname() {
@@ -162,5 +167,13 @@ public class NetworkConfig {
 
     public SslConfig getSslConfig() {
         return sslConfig;
+    }
+
+    public boolean isEnableMulticast() {
+        return enableMulticast;
+    }
+
+    public void setEnableMulticast(boolean enableMulticast) {
+        this.enableMulticast = enableMulticast;
     }
 }

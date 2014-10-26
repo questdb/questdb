@@ -40,7 +40,7 @@ public class JournalSymbolTableProducer implements ChannelProducer {
         Lists.advance(symbolTableProducers, journal.getSymbolTableCount() - 1);
         Lists.advance(symbolTables, journal.getSymbolTableCount() - 1);
 
-        for (int i = 0; i < journal.getSymbolTableCount(); i++) {
+        for (int i = 0, sz = journal.getSymbolTableCount(); i < sz; i++) {
             SymbolTable tab = journal.getSymbolTable(i);
             symbolTables.set(i, tab);
             symbolTableProducers.set(i, new VariableColumnDeltaProducer(tab.getDataColumn()));
@@ -51,7 +51,7 @@ public class JournalSymbolTableProducer implements ChannelProducer {
     public void configure(JournalClientState status) {
         hasContent = false;
         buffer.rewind();
-        for (int i = 0; i < symbolTables.size(); i++) {
+        for (int i = 0, sz = symbolTables.size(); i < sz; i++) {
             SymbolTable tab = symbolTables.get(i);
             if (tab != null) {
                 VariableColumnDeltaProducer p = symbolTableProducers.get(i);
@@ -77,7 +77,7 @@ public class JournalSymbolTableProducer implements ChannelProducer {
     public void write(WritableByteChannel channel) throws JournalNetworkException {
         buffer.flip();
         ByteBuffers.copy(buffer, channel);
-        for (int i = 0; i < symbolTableProducers.size(); i++) {
+        for (int i = 0, sz = symbolTableProducers.size(); i < sz; i++) {
             VariableColumnDeltaProducer p = symbolTableProducers.get(i);
             if (p != null && p.hasContent()) {
                 p.write(channel);

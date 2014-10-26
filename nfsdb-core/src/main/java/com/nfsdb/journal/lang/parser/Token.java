@@ -17,8 +17,8 @@
 package com.nfsdb.journal.lang.parser;
 
 public class Token {
-    final boolean hidden;
     final String text;
+    private final boolean hidden;
 
     public Token(String text) {
         this.text = text;

@@ -65,6 +65,7 @@ public class SSLTest {
         }}, factory);
 
         JournalClient client = new JournalClient(new ClientConfig() {{
+            setHostname("localhost");
             getSslConfig().setSecure(true);
             setTcpNoDelay(false);
             try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
@@ -152,6 +153,7 @@ public class SSLTest {
         }}, factory);
 
         JournalClient client = new JournalClient(new ClientConfig() {{
+            setHostname("localhost");
             getSslConfig().setSecure(true);
             try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                 getSslConfig().setKeyStore(is, "changeit");
@@ -279,6 +281,7 @@ public class SSLTest {
         }}, factory);
 
         JournalClient client = new JournalClient(new ClientConfig() {{
+            setHostname("localhost");
             getSslConfig().setSecure(true);
             getSslConfig().setTrustAll(true);
         }}, factory);

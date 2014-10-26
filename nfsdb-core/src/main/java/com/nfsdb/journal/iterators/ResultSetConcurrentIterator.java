@@ -40,7 +40,7 @@ public class ResultSetConcurrentIterator<T> extends AbstractConcurrentIterator<T
 
             @Override
             public void run() {
-                for (int i = 0; i < rs.size(); i++) {
+                for (int i = 0, sz = rs.size(); i < sz; i++) {
                     try {
                         if (barrier.isAlerted()) {
                             break;

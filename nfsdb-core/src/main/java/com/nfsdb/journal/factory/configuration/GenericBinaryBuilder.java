@@ -14,18 +14,20 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.exceptions;
+package com.nfsdb.journal.factory.configuration;
 
-public class JournalNetworkException extends Exception {
-    public JournalNetworkException(String message) {
-        super(message);
+import com.nfsdb.journal.column.ColumnType;
+
+public class GenericBinaryBuilder extends AbstractGenericMetadataBuilder {
+
+    public GenericBinaryBuilder(GenericJournalMetadataBuilder parent, ColumnMetadata meta) {
+        super(parent, meta);
+        meta.type = ColumnType.BINARY;
     }
 
-    public JournalNetworkException(Throwable cause) {
-        super(cause);
-    }
-
-    public JournalNetworkException(String message, Throwable cause) {
-        super(message, cause);
+    public GenericBinaryBuilder size(int size) {
+        this.meta.avgSize = size;
+        this.meta.size = size;
+        return this;
     }
 }

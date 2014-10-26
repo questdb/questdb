@@ -33,6 +33,7 @@ import java.util.Arrays;
 
 public class JournalMetadataImpl<T> implements JournalMetadata<T> {
 
+    private final String id;
     private final Class<T> modelClass;
     private final NullsAdaptor<T> nullsAdaptor;
     private final NullsAdaptorFactory<T> nullsAdaptorFactory;
@@ -51,7 +52,8 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
     private final int lag;
 
     public JournalMetadataImpl(
-            Class<T> modelClass
+            String id
+            , Class<T> modelClass
             , Constructor<T> constructor
             , String key
             , String location
@@ -64,6 +66,7 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
             , int lag
             , NullsAdaptorFactory<T> nullsAdaptorFactory
     ) {
+        this.id = id;
         this.modelClass = modelClass;
         this.nullsAdaptorFactory = nullsAdaptorFactory;
         this.nullsAdaptor = nullsAdaptorFactory != null ? nullsAdaptorFactory.getInstance(modelClass) : null;
@@ -196,10 +199,15 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
         return nullsAdaptorFactory;
     }
 
+    public String getId() {
+        return id;
+    }
+
     @Override
     public String toString() {
         return "JournalMetaImpl{" +
                 "SHA='" + Base64._printBase64Binary(Checksum.getChecksum(this)) + '\'' +
+                ", id=" + id +
                 ", modelClass=" + modelClass +
                 ", nullsAdaptor=" + nullsAdaptor +
                 ", nullsAdaptorFactory=" + nullsAdaptorFactory +

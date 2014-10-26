@@ -25,10 +25,10 @@ import com.nfsdb.journal.utils.Rows;
 import java.util.List;
 
 public class JournalRowBufferedIterator<T> extends AbstractImmutableIterator<JournalRow<T>> {
-    boolean hasNext = true;
     private final List<JournalIteratorRange> ranges;
     private final Journal<T> journal;
     private final JournalRow<T> row;
+    private boolean hasNext = true;
     private int currentIndex = 0;
     private long currentRowID;
     private long currentUpperBound;

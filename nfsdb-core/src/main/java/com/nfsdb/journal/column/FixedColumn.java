@@ -19,7 +19,7 @@ package com.nfsdb.journal.column;
 import com.nfsdb.journal.utils.Unsafe;
 
 public class FixedColumn extends AbstractColumn {
-    protected final int width;
+    final int width;
 
     public FixedColumn(MappedFile mappedFile, int width) {
         super(mappedFile);

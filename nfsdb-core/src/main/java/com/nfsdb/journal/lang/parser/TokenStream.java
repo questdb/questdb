@@ -75,7 +75,7 @@ public class TokenStream extends AbstractImmutableIterator<String> {
         }
 
         int pos = buffer.position();
-        for (int i = 0; i < l.size(); i++) {
+        for (int i = 0, sz = l.size(); i < sz; i++) {
             final Token t = l.get(i);
             boolean match = t.text.length() < buffer.remaining();
             if (match) {
@@ -110,21 +110,69 @@ public class TokenStream extends AbstractImmutableIterator<String> {
 
         s.setLength(0);
 
+        char term = 0;
+
         while (hasNext()) {
             char c = buffer.getChar();
-            Token t = getSymbol(c);
-            if (t != null) {
-                buffer.position(buffer.position() + (t.text.length() - 1) * 2);
-                if (s.length() == 0) {
-                    return t.text;
-                } else {
-                    next = t.text;
-                }
-                return s.toString();
-            } else {
-                s.append(c);
+            String token;
+            switch (term) {
+                case 1:
+                    if ((token = token(c)) != null) {
+                        return token;
+                    } else {
+                        s.append(c);
+                    }
+                    break;
+                case 0:
+                    switch (c) {
+                        case '\'':
+                            term = '\'';
+                            break;
+                        case '"':
+                            term = '"';
+                            break;
+                        default:
+                            if ((token = token(c)) != null) {
+                                return token;
+                            } else {
+                                s.append(c);
+                            }
+                            term = 1;
+                            break;
+                    }
+                    break;
+                case '\'':
+                    switch (c) {
+                        case '\'':
+                            return s.toString();
+                        default:
+                            s.append(c);
+                    }
+                    break;
+                case '"':
+                    switch (c) {
+                        case '"':
+                            return s.toString();
+                        default:
+                            s.append(c);
+                    }
             }
         }
         return s.toString();
+    }
+
+    private String token(char c) {
+        Token t = getSymbol(c);
+        if (t != null) {
+            buffer.position(buffer.position() + (t.text.length() - 1) * 2);
+            if (s.length() == 0) {
+                return t.text;
+            } else {
+                next = t.text;
+            }
+            return s.toString();
+        } else {
+            return null;
+        }
     }
 }

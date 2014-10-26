@@ -14,18 +14,18 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.exceptions;
+package com.nfsdb.journal.factory.configuration;
 
-public class JournalNetworkException extends Exception {
-    public JournalNetworkException(String message) {
-        super(message);
-    }
+import com.nfsdb.journal.PartitionType;
 
-    public JournalNetworkException(Throwable cause) {
-        super(cause);
-    }
+public interface JMetadataBuilder<T> {
+    JMetadataBuilder<T> partitionBy(PartitionType type);
 
-    public JournalNetworkException(String message, Throwable cause) {
-        super(message, cause);
-    }
+    JMetadataBuilder<T> recordCountHint(int count);
+
+    String getLocation();
+
+    JournalMetadata<T> build();
+
+    JMetadataBuilder<T> location(String absolutePath);
 }

@@ -33,6 +33,9 @@ public final class Files {
         UTF_8 = Charset.forName("UTF-8");
     }
 
+    private Files() {
+    } // Prevent construction.
+
     public static boolean delete(File file) {
         try {
             deleteOrException(file);
@@ -52,7 +55,7 @@ public final class Files {
         }
     }
 
-    public static void deleteDirContentsOrException(File file) throws JournalException {
+    private static void deleteDirContentsOrException(File file) throws JournalException {
         if (!file.exists()) {
             return;
         }
@@ -114,9 +117,6 @@ public final class Files {
         }
     }
 
-    private Files() {
-    } // Prevent construction.
-
     private static boolean notSymlink(File file) throws IOException {
         if (file == null) {
             throw new NullPointerException("File must not be null");
@@ -126,7 +126,7 @@ public final class Files {
         }
 
         File fileInCanonicalDir;
-        if (file.getParent() == null) {
+        if (file.getParentFile() == null) {
             fileInCanonicalDir = file;
         } else {
             File canonicalDir = file.getParentFile().getCanonicalFile();

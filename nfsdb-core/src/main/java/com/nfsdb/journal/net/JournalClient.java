@@ -174,7 +174,7 @@ public class JournalClient {
         }
         channel = null;
 
-        for (int i = 0; i < writers.size(); i++) {
+        for (int i = 0, sz = writers.size(); i < sz; i++) {
             writers.get(i).close();
         }
 
@@ -268,8 +268,9 @@ public class JournalClient {
         }
     }
 
+    @SuppressWarnings("unchecked")
     private void reopenWriters() throws JournalException {
-        for (int i = 0; i < localKeys.size(); i++) {
+        for (int i = 0, sz = localKeys.size(); i < sz; i++) {
             add0(factory.writer(localKeys.get(i)), listeners.get(0));
         }
     }
@@ -288,7 +289,7 @@ public class JournalClient {
     }
 
     private void sendKeys() throws JournalNetworkException {
-        for (int i = 0; i < remoteKeys.size(); i++) {
+        for (int i = 0, sz = remoteKeys.size(); i < sz; i++) {
             JournalKey key = remoteKeys.get(i);
             commandProducer.write(channel, Command.SET_KEY_CMD);
             setKeyRequestProducer.write(channel, new IndexedJournalKey(i, key));
@@ -297,7 +298,7 @@ public class JournalClient {
     }
 
     private void sendState() throws JournalNetworkException {
-        for (int i = 0; i < writers.size(); i++) {
+        for (int i = 0, sz = writers.size(); i < sz; i++) {
             if (statusSentList.get(i) == 0) {
                 Journal journal = writers.get(i);
                 commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
@@ -339,9 +340,7 @@ public class JournalClient {
                             reopenWriters();
                             handshake();
                             connected = true;
-                        } catch (AuthConfigurationException e) {
-                            loginRetryCount--;
-                        } catch (AuthFailureException e) {
+                        } catch (AuthConfigurationException | AuthFailureException e) {
                             loginRetryCount--;
                         } catch (IOException | JournalNetworkException | JournalException ignored) {
                         }

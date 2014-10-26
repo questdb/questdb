@@ -54,10 +54,9 @@ public class Journal<T> implements Iterable<T>, Closeable {
 
     public static final long TX_LIMIT_EVAL = -1L;
     private static final Logger LOGGER = Logger.getLogger(Journal.class);
-    protected final List<Partition<T>> partitions = new ArrayList<>();
+    final List<Partition<T>> partitions = new ArrayList<>();
     // empty container for current transaction
-    protected final Tx tx = new Tx();
-    protected TxLog txLog;
+    final Tx tx = new Tx();
     private final JournalMetadata<T> metadata;
     private final File location;
     private final Map<String, SymbolTable> symbolTableMap = new HashMap<>();
@@ -76,7 +75,8 @@ public class Journal<T> implements Iterable<T>, Closeable {
     };
     private final NullsAdaptor<T> nullsAdaptor;
     private final BitSet inactiveColumns;
-    private boolean open;
+    TxLog txLog;
+    boolean open;
     private ColumnMetadata columnMetadata[];
     private Partition<T> irregularPartition;
     private JournalClosingListener closeListener;
@@ -117,7 +117,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
             }
 
             closePartitions();
-            for (int i = 0; i < symbolTables.size(); i++) {
+            for (int i = 0, sz = symbolTables.size(); i < sz; i++) {
                 symbolTables.get(i).close();
             }
             txLog.close();
@@ -131,7 +131,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         if (txLog.hasNext()) {
             txLog.head(tx);
             refreshInternal();
-            for (int i = 0; i < symbolTables.size(); i++) {
+            for (int i = 0, sz = symbolTables.size(); i < sz; i++) {
                 symbolTables.get(i).applyTx(tx.symbolTableSizes[i], tx.symbolTableIndexPointers[i]);
             }
             return true;
@@ -260,7 +260,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         long ttl = getMetadata().getOpenFileTTL();
         if (ttl > 0) {
             long delta = System.currentTimeMillis() - ttl;
-            for (int i = 0; i < partitions.size(); i++) {
+            for (int i = 0, sz = partitions.size(); i < sz; i++) {
                 Partition<T> partition = partitions.get(i);
                 if (delta > partition.getLastAccessed() && partition.isOpen()) {
                     partition.close();
@@ -480,7 +480,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
     @SuppressWarnings("unchecked")
     public T[] read(TLongList rowIDs) throws JournalException {
         T[] result = (T[]) Array.newInstance(metadata.getModelClass(), rowIDs.size());
-        for (int i = 0; i < rowIDs.size(); i++) {
+        for (int i = 0, sz = rowIDs.size(); i < sz; i++) {
             result[i] = read(rowIDs.get(i));
         }
         return result;
@@ -592,28 +592,28 @@ public class Journal<T> implements Iterable<T>, Closeable {
         return new TempPartition<>(this, interval, nonLagPartitionCount(), name);
     }
 
-    protected long getTimestampOffset() {
+    long getTimestampOffset() {
         return timestampOffset;
     }
 
-    protected void closePartitions() {
+    void closePartitions() {
         if (irregularPartition != null) {
             irregularPartition.close();
         }
-        for (int i = 0; i < partitions.size(); i++) {
+        for (int i = 0, sz = partitions.size(); i < sz; i++) {
             partitions.get(i).close();
         }
         partitions.clear();
     }
 
-    protected void configure() throws JournalException {
+    void configure() throws JournalException {
         txLog.head(tx);
         configureColumns();
         configureSymbolTableSynonyms();
         configurePartitions();
     }
 
-    protected void removeIrregularPartitionInternal() {
+    void removeIrregularPartitionInternal() {
         if (irregularPartition != null) {
             if (irregularPartition.isOpen()) {
                 irregularPartition.close();

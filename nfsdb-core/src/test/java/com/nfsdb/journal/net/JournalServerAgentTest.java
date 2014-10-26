@@ -82,7 +82,7 @@ public class JournalServerAgentTest extends AbstractTest {
         stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
         Assert.assertTrue(stringResponseConsumer.isComplete());
-        Assert.assertEquals("Requested key not exported: JournalKey{modelClassName=com.nfsdb.journal.model.Trade, location='null', partitionType=DEFAULT, recordHint=0, ordered=true}", stringResponseConsumer.getValue());
+        Assert.assertEquals("Requested key not exported: JournalKey{id=com.nfsdb.journal.model.Trade, location='null', partitionType=DEFAULT, recordHint=0, ordered=true}", stringResponseConsumer.getValue());
     }
 
     @Test

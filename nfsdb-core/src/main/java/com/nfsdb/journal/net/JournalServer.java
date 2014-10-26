@@ -16,7 +16,6 @@
 
 package com.nfsdb.journal.net;
 
-import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalKey;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.concurrent.NamedDaemonThreadFactory;
@@ -77,6 +76,23 @@ public class JournalServer {
         this.authorizer = authorizer;
     }
 
+    private static void closeChannel(SocketChannelHolder holder, boolean force) {
+        if (holder != null) {
+            try {
+                if (holder.socketAddress != null) {
+                    if (force) {
+                        LOGGER.info("Client forced out: %s", holder.socketAddress);
+                    } else {
+                        LOGGER.info("Client disconnected: %s", holder.socketAddress);
+                    }
+                }
+                holder.byteChannel.close();
+            } catch (IOException e) {
+                LOGGER.error("Cannot close channel [%s]: %s", holder.byteChannel, e.getMessage());
+            }
+        }
+    }
+
     public void publish(JournalWriter journal) {
         writers.add(journal);
     }
@@ -90,7 +106,7 @@ public class JournalServer {
     }
 
     public void start() throws JournalNetworkException {
-        for (int i = 0; i < writers.size(); i++) {
+        for (int i = 0, sz = writers.size(); i < sz; i++) {
             JournalEventPublisher publisher = new JournalEventPublisher(i, bridge);
             JournalWriter w = writers.get(i);
             w.setTxListener(publisher);
@@ -101,7 +117,7 @@ public class JournalServer {
         InetSocketAddress address = config.getSocketAddress();
         if (address.getAddress().isAnyLocalAddress()) {
             LOGGER.warn("Server is bound to *any local address*. Multicast is DISABLED");
-        } else {
+        } else if (config.isEnableMulticast()) {
             multicast.start();
         }
         bridge.start();
@@ -112,7 +128,7 @@ public class JournalServer {
     public void halt() {
         service.shutdown();
         running.set(false);
-        for (int i = 0; i < writers.size(); i++) {
+        for (int i = 0, sz = writers.size(); i < sz; i++) {
             writers.get(i).setTxListener(null);
         }
         bridge.halt();
@@ -141,28 +157,10 @@ public class JournalServer {
         return channels.size();
     }
 
-    private static void closeChannel(SocketChannelHolder holder, boolean force) {
-        if (holder != null) {
-            try {
-                if (holder.socketAddress != null) {
-                    if (force) {
-                        LOGGER.info("Client forced out: %s", holder.socketAddress);
-                    } else {
-                        LOGGER.info("Client disconnected: %s", holder.socketAddress);
-                    }
-                }
-                holder.byteChannel.close();
-            } catch (IOException e) {
-                LOGGER.error("Cannot close channel [%s]: %s", holder.byteChannel, e.getMessage());
-            }
-        }
-    }
-
     int getWriterIndex(JournalKey key) {
-        for (int i = 0; i < writers.size(); i++) {
-            Journal journal = writers.get(i);
-            JournalKey jk = journal.getKey();
-            if (jk.getModelClassName().equals(key.getModelClassName()) && (
+        for (int i = 0, sz = writers.size(); i < sz; i++) {
+            JournalKey jk = writers.get(i).getKey();
+            if (jk.getId().equals(key.getId()) && (
                     (jk.getLocation() == null && key.getLocation() == null)
                             || (jk.getLocation() != null && jk.getLocation().equals(key.getLocation())))) {
                 return i;
@@ -185,7 +183,7 @@ public class JournalServer {
     }
 
     private synchronized void closeChannels() {
-        for (int i = 0; i < channels.size(); i++) {
+        for (int i = 0, sz = channels.size(); i < sz; i++) {
             closeChannel(channels.get(i), true);
         }
     }
@@ -224,6 +222,11 @@ public class JournalServer {
         private final JournalServerAgent agent;
         private final SocketChannelHolder holder;
 
+        Handler(SocketChannelHolder holder) {
+            this.holder = holder;
+            this.agent = new JournalServerAgent(JournalServer.this, holder.socketAddress, authorizer);
+        }
+
         @Override
         public void run() {
             try {
@@ -257,11 +260,6 @@ public class JournalServer {
                 agent.close();
                 removeChannel(holder);
             }
-        }
-
-        Handler(SocketChannelHolder holder) {
-            this.holder = holder;
-            this.agent = new JournalServerAgent(JournalServer.this, holder.socketAddress, authorizer);
         }
     }
 }

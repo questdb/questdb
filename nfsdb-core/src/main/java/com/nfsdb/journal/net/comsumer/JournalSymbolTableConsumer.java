@@ -58,7 +58,7 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
             symbolTableSizes.add(symbolTableSizes.getNoEntryValue());
         }
 
-        for (int i = 0; i < journal.getSymbolTableCount(); i++) {
+        for (int i = 0, sz = journal.getSymbolTableCount(); i < sz; i++) {
             SymbolTable tab = journal.getSymbolTable(i);
             symbolTableConsumers.set(i, new VariableColumnDeltaConsumer(tab.getDataColumn()));
             symbolTables.set(i, tab);
@@ -72,7 +72,7 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
         symbolTableIndex = 0;
         complete = false;
         buffer.rewind();
-        for (int i = 0; i < symbolTableConsumers.size(); i++) {
+        for (int i = 0, sz = symbolTableConsumers.size(); i < sz; i++) {
             VariableColumnDeltaConsumer c = symbolTableConsumers.get(i);
             if (c != null) {
                 c.reset();
@@ -91,7 +91,7 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
         ByteBuffers.copy(channel, buffer);
         if (!complete && !buffer.hasRemaining()) {
             buffer.flip();
-            for (int i = 0; i < symbolTabDataIndicators.size(); i++) {
+            for (int i = 0, sz = symbolTabDataIndicators.size(); i < sz; i++) {
                 symbolTabDataIndicators.set(i, buffer.get());
             }
             symbolTableIndex = 0;
@@ -117,7 +117,7 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
 
     @Override
     protected void commit() {
-        for (int i = 0; i < symbolTables.size(); i++) {
+        for (int i = 0, sz = symbolTables.size(); i < sz; i++) {
             SymbolTable tab = symbolTables.get(i);
             if (tab != null) {
                 int oldSize = symbolTableSizes.get(i);

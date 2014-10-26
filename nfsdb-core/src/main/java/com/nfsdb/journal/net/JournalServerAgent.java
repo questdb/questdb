@@ -148,7 +148,7 @@ public class JournalServerAgent {
         if (!authorized) {
             try {
                 ArrayList<JournalKey> keys = new ArrayList<>(readers.size());
-                for (int i = 0; i < readers.size(); i++) {
+                for (int i = 0, sz = readers.size(); i < sz; i++) {
                     keys.add(readers.get(i).getKey());
                 }
                 authorized = authorizer.isAuthorized(value, keys);
@@ -269,7 +269,7 @@ public class JournalServerAgent {
             // this loop does two things:
             // 1. attempts to dispatch journals that didn't receive updates, dispatch method would check timeout and decide.
             // 2. reset writer update received status
-            for (int i = 0; i < clientStates.size(); i++) {
+            for (int i = 0, sz = clientStates.size(); i < sz; i++) {
                 JournalClientState state = clientStates.get(i);
                 if (state.noCommitNotification()) {
                     dataSent = dispatch(channel, i) || dataSent;

@@ -22,19 +22,23 @@ import com.nfsdb.journal.concurrent.TimerCache;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.configuration.JournalConfiguration;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class JournalCachingFactory extends AbstractJournalReaderFactory implements JournalClosingListener {
 
     private final Map<JournalKey, Journal> journals = new HashMap<>();
+    private final List<Journal> journalList = new ArrayList<>();
+
     private JournalPool pool;
 
     public JournalCachingFactory(JournalConfiguration configuration) {
         this(configuration, new TimerCache().start());
     }
 
-    public JournalCachingFactory(JournalConfiguration configuration, TimerCache timerCache) {
+    private JournalCachingFactory(JournalConfiguration configuration, TimerCache timerCache) {
         this(configuration, timerCache, null);
     }
 
@@ -48,7 +52,8 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
         if (pool != null) {
             pool.release(this);
         } else {
-            for (Journal journal : journals.values()) {
+            for (int i = 0, sz = journalList.size(); i < sz; i++) {
+                Journal journal = journalList.get(i);
                 journal.setCloseListener(null);
                 journal.close();
             }
@@ -69,13 +74,14 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
             result = super.reader(key);
             result.setCloseListener(this);
             journals.put(key, result);
+            journalList.add(result);
         }
         return result;
     }
 
     public void refresh() throws JournalException {
-        for (Journal journal : journals.values()) {
-            journal.refresh();
+        for (int i = 0, sz = journalList.size(); i < sz; i++) {
+            journalList.get(i).refresh();
         }
     }
 
@@ -84,8 +90,8 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
     }
 
     void expireOpenFiles() {
-        for (Journal journal : journals.values()) {
-            journal.expireOpenFiles();
+        for (int i = 0, sz = journalList.size(); i < sz; i++) {
+            journalList.get(i).expireOpenFiles();
         }
     }
 }

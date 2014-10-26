@@ -276,6 +276,10 @@ public class MappedFileImpl implements MappedFile {
 
     private void openInternal(String mode) throws JournalException {
 
+        if (file.getParentFile() == null) {
+            throw new JournalException("Expected a file: " + file);
+        }
+
         if (!file.getParentFile().exists()) {
             if (!file.getParentFile().mkdirs()) {
                 throw new JournalException("Could not create directories: %s", file.getParentFile().getAbsolutePath());

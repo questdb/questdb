@@ -140,7 +140,7 @@ public class JournalDeltaProducer implements ChannelProducer {
                 journalSymbolTableProducer.write(channel);
             }
 
-            for (int i = 0; i < partitionDeltaProducers.size(); i++) {
+            for (int i = 0, sz = partitionDeltaProducers.size(); i < sz; i++) {
                 partitionDeltaProducers.get(i).write(channel);
             }
 

@@ -14,18 +14,19 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.exceptions;
+package com.nfsdb.journal;
 
-public class JournalNetworkException extends Exception {
-    public JournalNetworkException(String message) {
-        super(message);
-    }
+import com.nfsdb.journal.model.Quote;
+import com.nfsdb.journal.test.tools.AbstractTest;
+import com.nfsdb.journal.test.tools.TestUtils;
+import org.junit.Test;
 
-    public JournalNetworkException(Throwable cause) {
-        super(cause);
-    }
-
-    public JournalNetworkException(String message, Throwable cause) {
-        super(message, cause);
+public class WriterDoubleCloseTest extends AbstractTest {
+    @Test
+    public void testDoubleClose() throws Exception {
+        try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
+            TestUtils.generateQuoteData(w, 100);
+            w.close();
+        }
     }
 }

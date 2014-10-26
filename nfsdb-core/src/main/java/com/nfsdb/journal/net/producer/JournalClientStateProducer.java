@@ -61,8 +61,9 @@ public class JournalClientStateProducer extends AbstractObjectProducer<IndexedJo
                 ByteBuffers.putStringW(buffer, null);
             }
             // symbol table count and their indexes and sizes
-            buffer.putChar((char) value.getJournal().getSymbolTableCount());
-            for (int i = 0; i < value.getJournal().getSymbolTableCount(); i++) {
+            int c;
+            buffer.putChar((char) (c = value.getJournal().getSymbolTableCount()));
+            for (int i = 0; i < c; i++) {
                 SymbolTable tab = value.getJournal().getSymbolTable(i);
                 buffer.putChar((char) i);
                 buffer.putInt(tab.size());

@@ -18,6 +18,8 @@ package com.nfsdb.journal.net.producer;
 
 import com.nfsdb.journal.column.VariableColumn;
 
+import java.util.List;
+
 public class VariableColumnDeltaProducer extends ChannelProducerGroup<ColumnDeltaProducer> implements ColumnDeltaProducer {
 
     public VariableColumnDeltaProducer(VariableColumn column) {
@@ -26,8 +28,8 @@ public class VariableColumnDeltaProducer extends ChannelProducerGroup<ColumnDelt
     }
 
     public void configure(long localRowID, long limit) {
-        java.util.List<ColumnDeltaProducer> producers = getProducers();
-        for (int i = 0; i < producers.size(); i++) {
+        List<ColumnDeltaProducer> producers = getProducers();
+        for (int i = 0, sz = producers.size(); i < sz; i++) {
             producers.get(i).configure(localRowID, limit);
         }
         computeHasContent();

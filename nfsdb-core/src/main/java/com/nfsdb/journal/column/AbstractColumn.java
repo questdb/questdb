@@ -22,8 +22,12 @@ import java.io.Closeable;
 import java.nio.ByteBuffer;
 
 public abstract class AbstractColumn implements Closeable {
-    protected final MappedFile mappedFile;
-    protected long txAppendOffset = -1;
+    final MappedFile mappedFile;
+    long txAppendOffset = -1;
+
+    AbstractColumn(MappedFile storage) {
+        this.mappedFile = storage;
+    }
 
     public abstract void truncate(long size);
 
@@ -64,9 +68,5 @@ public abstract class AbstractColumn implements Closeable {
 
     public void compact() throws JournalException {
         mappedFile.compact();
-    }
-
-    AbstractColumn(MappedFile storage) {
-        this.mappedFile = storage;
     }
 }

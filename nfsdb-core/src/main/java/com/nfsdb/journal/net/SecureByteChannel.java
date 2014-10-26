@@ -28,7 +28,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.ByteChannel;
 
-public class SecureByteChannel implements ByteChannel {
+class SecureByteChannel implements ByteChannel {
 
     private static final Logger LOGGER = Logger.getLogger(SecureByteChannel.class);
 

@@ -31,6 +31,7 @@ class StatsCollectingWritableByteChannel implements WritableByteChannel {
     private WritableByteChannel delegate;
     private long startTime;
     private long byteCount;
+    private long callCount;
 
     public StatsCollectingWritableByteChannel(SocketAddress socketAddress) {
         this.socketAddress = socketAddress;
@@ -38,6 +39,7 @@ class StatsCollectingWritableByteChannel implements WritableByteChannel {
 
     @Override
     public int write(ByteBuffer src) throws IOException {
+        callCount++;
         int count = delegate.write(src);
         this.byteCount += count;
         return count;
@@ -57,12 +59,13 @@ class StatsCollectingWritableByteChannel implements WritableByteChannel {
         this.delegate = delegate;
         this.startTime = System.currentTimeMillis();
         this.byteCount = 0;
+        this.callCount = 0;
     }
 
     public void logStats() {
         if (byteCount > 10) {
             long endTime = System.currentTimeMillis();
-            LOGGER.info("sent %d bytes @ %f MB/s to: %s", byteCount, (double) (byteCount * 1000) / ((endTime - startTime)) / 1024 / 1024, socketAddress);
+            LOGGER.info("sent %d bytes @ %f MB/s to: %s [%d calls]", byteCount, (double) (byteCount * 1000) / ((endTime - startTime)) / 1024 / 1024, socketAddress, callCount);
         }
     }
 

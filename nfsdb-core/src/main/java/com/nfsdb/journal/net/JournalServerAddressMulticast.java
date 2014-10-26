@@ -30,7 +30,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class JournalServerAddressMulticast implements Runnable {
+class JournalServerAddressMulticast implements Runnable {
 
     private static final Logger LOGGER = Logger.getLogger(JournalServerAddressMulticast.class);
 

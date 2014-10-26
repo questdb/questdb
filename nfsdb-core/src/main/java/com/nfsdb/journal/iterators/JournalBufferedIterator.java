@@ -28,7 +28,7 @@ public class JournalBufferedIterator<T> extends AbstractImmutableIterator<T> imp
     private final List<JournalIteratorRange> ranges;
     private final Journal<T> journal;
     private final T obj;
-    boolean hasNext = true;
+    private boolean hasNext = true;
     private int currentIndex = 0;
     private long currentRowID;
     private long currentUpperBound;

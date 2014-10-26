@@ -62,4 +62,6 @@ public interface JournalMetadata<T> {
     String getKey();
 
     String getKeyQuiet();
+
+    String getId();
 }

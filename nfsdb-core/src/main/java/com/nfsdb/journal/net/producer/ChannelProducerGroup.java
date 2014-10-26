@@ -36,7 +36,7 @@ public class ChannelProducerGroup<T extends ChannelProducer> implements ChannelP
     @Override
     public void write(WritableByteChannel channel) throws JournalNetworkException {
         if (hasContent) {
-            for (int i = 0; i < producers.size(); i++) {
+            for (int i = 0, sz = producers.size(); i < sz; i++) {
                 producers.get(i).write(channel);
             }
             hasContent = false;
@@ -55,7 +55,7 @@ public class ChannelProducerGroup<T extends ChannelProducer> implements ChannelP
     }
 
     void computeHasContent() {
-        for (int i = 0; i < producers.size(); i++) {
+        for (int i = 0, sz = producers.size(); i < sz; i++) {
             if (this.hasContent = producers.get(i).hasContent()) {
                 break;
             }

@@ -25,10 +25,16 @@ import java.util.List;
 import java.util.Map;
 
 public class JournalConfigurationBuilder {
-    private final List<JournalMetadataBuilder> builders = new ArrayList<>();
+    private final List<JMetadataBuilder> builders = new ArrayList<>();
 
     public <T> JournalMetadataBuilder<T> $(Class<T> clazz) {
         JournalMetadataBuilder<T> builder = new JournalMetadataBuilder<>(clazz);
+        builders.add(builder);
+        return builder;
+    }
+
+    public GenericJournalMetadataBuilder $(String location) {
+        GenericJournalMetadataBuilder builder = new GenericJournalMetadataBuilder(location);
         builders.add(builder);
         return builder;
     }
@@ -48,9 +54,9 @@ public class JournalConfigurationBuilder {
 
 
         Map<String, JournalMetadata> metadata = new HashMap<>(builders.size());
-        for (int i = 0; i < builders.size(); i++) {
+        for (int i = 0, sz = builders.size(); i < sz; i++) {
             JournalMetadata meta = builders.get(i).build();
-            metadata.put(meta.getModelClass().getName(), meta);
+            metadata.put(meta.getId(), meta);
         }
         return new JournalConfigurationImpl(journalBase, metadata);
     }

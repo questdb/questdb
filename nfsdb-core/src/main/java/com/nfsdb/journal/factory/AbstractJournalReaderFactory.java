@@ -30,6 +30,15 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
     private final TimerCache timerCache;
     private final JournalConfiguration configuration;
 
+    AbstractJournalReaderFactory(JournalConfiguration configuration) {
+        this(configuration, new TimerCache().start());
+    }
+
+    AbstractJournalReaderFactory(JournalConfiguration configuration, TimerCache timerCache) {
+        this.timerCache = timerCache;
+        this.configuration = configuration;
+    }
+
     @Override
     public <T> Journal<T> reader(Class<T> clazz, String location) throws JournalException {
         return reader(new JournalKey<>(clazz, location));
@@ -73,16 +82,7 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
     public void close() {
     }
 
-    protected AbstractJournalReaderFactory(JournalConfiguration configuration) {
-        this(configuration, new TimerCache().start());
-    }
-
-    protected AbstractJournalReaderFactory(JournalConfiguration configuration, TimerCache timerCache) {
-        this.timerCache = timerCache;
-        this.configuration = configuration;
-    }
-
-    protected TimerCache getTimerCache() {
+    TimerCache getTimerCache() {
         return timerCache;
     }
 

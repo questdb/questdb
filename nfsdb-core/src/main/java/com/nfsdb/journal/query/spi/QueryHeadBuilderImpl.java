@@ -53,8 +53,9 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
         this.symbolKeys.resetQuick();
         this.symbolKeys.ensureCapacity(values == null || values.length == 0 ? symbolTable.size() : values.length);
         if (values == null || values.length == 0) {
-            this.symbolKeys.ensureCapacity(symbolTable.size());
-            for (int i = 0; i < symbolTable.size(); i++) {
+            int sz = symbolTable.size();
+            this.symbolKeys.ensureCapacity(sz);
+            for (int i = 0; i < sz; i++) {
                 this.symbolKeys.add(i);
             }
         } else {

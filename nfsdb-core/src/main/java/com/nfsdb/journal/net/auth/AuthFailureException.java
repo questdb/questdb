@@ -19,7 +19,7 @@ package com.nfsdb.journal.net.auth;
 import com.nfsdb.journal.exceptions.JournalNetworkException;
 
 public class AuthFailureException extends JournalNetworkException {
-    public AuthFailureException(String message, Object... args) {
-        super(message, args);
+    public AuthFailureException(String message) {
+        super(message);
     }
 }

@@ -43,17 +43,25 @@ public class JournalConfigurationImpl implements JournalConfiguration {
     public <T> JournalMetadata<T> createMetadata(JournalKey<T> key) {
 
         boolean newMeta = false;
-        JournalMetadata<T> meta = journalMetadata.get(key.getModelClassName());
-        JournalMetadataBuilder<T> builder;
+        JournalMetadata<T> meta = journalMetadata.get(key.getId());
+        JMetadataBuilder<T> builder;
         if (meta == null) {
-            builder = new JournalMetadataBuilder<>(key.getModelClass());
+            if (key.getModelClass() != null) {
+                builder = new JournalMetadataBuilder<>(key.getModelClass());
+            } else {
+                builder = new GenericJournalMetadataBuilder(key.getId());
+            }
             newMeta = true;
         } else {
-            builder = new JournalMetadataBuilder<>(meta);
+            if (meta.getModelClass() != null) {
+                builder = new JournalMetadataBuilder<>(meta);
+            } else {
+                builder = new GenericJournalMetadataBuilder(meta);
+            }
         }
 
         if (meta != null && meta.getLocation() == null && key.getLocation() == null) {
-            throw new JournalRuntimeException("There is no defaultPath for %s", key.getModelClassName());
+            throw new JournalRuntimeException("There is no defaultPath for %s", key.getId());
         }
 
         if (key.getPartitionType() != null) {
