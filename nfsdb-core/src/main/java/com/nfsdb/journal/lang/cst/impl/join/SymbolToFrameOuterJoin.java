@@ -26,8 +26,8 @@ import com.nfsdb.journal.lang.cst.DataItem;
 import com.nfsdb.journal.lang.cst.JoinedSource;
 import com.nfsdb.journal.lang.cst.JournalSource;
 import com.nfsdb.journal.lang.cst.RowCursor;
-import com.nfsdb.journal.lang.cst.impl.dfrn.DataFrame;
-import com.nfsdb.journal.lang.cst.impl.dfrn.DataFrameSource;
+import com.nfsdb.journal.lang.cst.impl.dfrm.DataFrame;
+import com.nfsdb.journal.lang.cst.impl.dfrm.DataFrameSource;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 import com.nfsdb.journal.utils.Rows;
 

@@ -24,9 +24,9 @@ import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.lang.cst.*;
 import com.nfsdb.journal.lang.cst.impl.QImpl;
-import com.nfsdb.journal.lang.cst.impl.dfrn.DataFrame;
-import com.nfsdb.journal.lang.cst.impl.dfrn.DataFrameSource;
-import com.nfsdb.journal.lang.cst.impl.dfrn.MapHeadDataFrameSource;
+import com.nfsdb.journal.lang.cst.impl.dfrm.DataFrame;
+import com.nfsdb.journal.lang.cst.impl.dfrm.DataFrameSource;
+import com.nfsdb.journal.lang.cst.impl.dfrm.MapHeadDataFrameSource;
 import com.nfsdb.journal.lang.cst.impl.join.SlaveResetOuterJoin;
 import com.nfsdb.journal.lang.cst.impl.jsrc.StatefulJournalSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.ksrc.SingleKeySource;
@@ -78,7 +78,7 @@ public class CstTest {
 
     @BeforeClass
     public static void setUp() throws Exception {
-        w = factory.writer(Quote.class);
+        w = factory.writer(Quote.class, "quote");
         TestData.appendQuoteData2(w);
     }
 

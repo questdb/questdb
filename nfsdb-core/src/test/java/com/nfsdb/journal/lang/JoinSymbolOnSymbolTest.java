@@ -26,7 +26,7 @@ import com.nfsdb.journal.lang.cst.JoinedSource;
 import com.nfsdb.journal.lang.cst.Q;
 import com.nfsdb.journal.lang.cst.StatefulJournalSource;
 import com.nfsdb.journal.lang.cst.impl.QImpl;
-import com.nfsdb.journal.lang.cst.impl.dfrn.MapHeadDataFrameSource;
+import com.nfsdb.journal.lang.cst.impl.dfrm.MapHeadDataFrameSource;
 import com.nfsdb.journal.lang.cst.impl.join.InnerSkipJoin;
 import com.nfsdb.journal.lang.cst.impl.join.SlaveResetOuterJoin;
 import com.nfsdb.journal.lang.cst.impl.join.SymbolToFrameOuterJoin;

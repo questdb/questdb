@@ -16,12 +16,7 @@
 
 package com.nfsdb.journal.index;
 
-import com.nfsdb.journal.Partition;
-import com.nfsdb.journal.exceptions.JournalException;
-
 public interface Cursor {
-
-    void configure(Partition partition) throws JournalException;
 
     boolean hasNext();
 

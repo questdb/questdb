@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.lang.cst.impl.dfrn;
+package com.nfsdb.journal.lang.cst.impl.dfrm;
 
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.Partition;

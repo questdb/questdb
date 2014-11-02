@@ -14,10 +14,39 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.lang.cst.impl.dfrn;
+package com.nfsdb.journal.lang.cst.impl.dsrc;
 
-import com.nfsdb.journal.lang.cst.RowCursor;
+import com.nfsdb.journal.Journal;
 
-public interface DataFrame {
-    RowCursor cursor(int key);
+public interface DataRow {
+
+    Journal getJournal();
+
+    byte get(String column);
+
+    byte get(int col);
+
+    int getInt(String column);
+
+    int getInt(int col);
+
+    long getLong(String column);
+
+    long getLong(int col);
+
+    double getDouble(String column);
+
+    double getDouble(int col);
+
+    String getStr(String column);
+
+    String getStr(int col);
+
+    String getSym(String column);
+
+    String getSym(int col);
+
+    boolean getBool(String column);
+
+    boolean getBool(int col);
 }

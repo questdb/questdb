@@ -17,7 +17,6 @@
 package com.nfsdb.journal.index;
 
 import com.nfsdb.journal.JournalMode;
-import com.nfsdb.journal.Partition;
 import com.nfsdb.journal.collections.LongArrayList;
 import com.nfsdb.journal.column.MappedFileImpl;
 import com.nfsdb.journal.exceptions.JournalException;
@@ -46,7 +45,7 @@ public class KVIndex implements Closeable {
     */
 
     public static final int ENTRY_SIZE = 16;
-
+    private final IndexCursor cachedCursor = new IndexCursor();
     MappedFileImpl kData;
     // storage for rows
     // block structure is [ rowid1, rowid2 ..., rowidn, prevBlockOffset]
@@ -55,7 +54,6 @@ public class KVIndex implements Closeable {
     int rowBlockLen;
     long firstEntryOffset;
     long keyBlockSize;
-    private final IndexCursor cachedCursor = new IndexCursor();
     private long keyBlockAddressOffset;
     private long keyBlockSizeOffset;
     private long maxValue;
@@ -486,9 +484,8 @@ public class KVIndex implements Closeable {
         private int remainingBlockCount;
         private int remainingRowCount;
         private long rowBlockOffset;
-        private ByteBuffer buffer;
-        private int bufPos;
         private long size;
+        private long address;
 
         public IndexCursor setKey(int key) {
             this.remainingBlockCount = 0;
@@ -503,9 +500,9 @@ public class KVIndex implements Closeable {
                 return this;
             }
 
-            ByteBuffer buf = kData.getBuffer(keyOffset, ENTRY_SIZE);
-            this.rowBlockOffset = buf.getLong();
-            this.size = buf.getLong();
+            long addr = kData.getAddress(keyOffset, ENTRY_SIZE);
+            this.rowBlockOffset = Unsafe.getUnsafe().getLong(addr);
+            this.size = Unsafe.getUnsafe().getLong(addr + 8);
 
             if (size == 0) {
                 return this;
@@ -519,9 +516,7 @@ public class KVIndex implements Closeable {
                 remainingRowCount = rowBlockLen;
             }
 
-            this.buffer = rData.getBuffer(this.rowBlockOffset - rowBlockSize, rowBlockSize);
-            this.bufPos = buffer.position();
-
+            this.address = rData.getAddress(this.rowBlockOffset - rowBlockSize, rowBlockSize);
             return this;
         }
 
@@ -531,24 +526,18 @@ public class KVIndex implements Closeable {
 
         public long next() {
             if (remainingRowCount > 0) {
-                return this.buffer.getLong(this.bufPos + --this.remainingRowCount * 8);
+                return Unsafe.getUnsafe().getLong(address + --this.remainingRowCount * 8);
             } else {
                 remainingBlockCount--;
-                this.rowBlockOffset = this.buffer.getLong(this.bufPos + rowBlockLen * 8);
-                this.buffer = rData.getBuffer(rowBlockOffset - rowBlockSize, rowBlockSize);
-                this.bufPos = buffer.position();
+                this.rowBlockOffset = Unsafe.getUnsafe().getLong(address + rowBlockLen * 8);
+                this.address = rData.getAddress(rowBlockOffset - rowBlockSize, rowBlockSize);
                 this.remainingRowCount = rowBlockLen;
-                return this.buffer.getLong(this.bufPos + --this.remainingRowCount * 8);
+                return Unsafe.getUnsafe().getLong(address + --this.remainingRowCount * 8);
             }
         }
 
         public long size() {
             return size;
-        }
-
-        @Override
-        public void configure(Partition partition) throws JournalException {
-            // nothing to do
         }
     }
 }

@@ -22,4 +22,13 @@ public class DataItem {
     public Partition<Object> partition;
     public long rowid;
     public DataItem slave;
+
+    @Override
+    public String toString() {
+        return "DataItem{" +
+                "partition=" + partition +
+                ", rowid=" + rowid +
+                ", slave=" + slave +
+                '}';
+    }
 }

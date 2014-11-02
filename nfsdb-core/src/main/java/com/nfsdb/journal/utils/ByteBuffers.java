@@ -30,6 +30,9 @@ public final class ByteBuffers {
 
     private static final int[] multipliers = new int[]{1, 3, 5, 7, 9, 11, 13};
 
+    private ByteBuffers() {
+    }
+
     public static void copy(ByteBuffer from, WritableByteChannel to) throws JournalNetworkException {
         copy(from, to, from.remaining());
     }
@@ -132,37 +135,8 @@ public final class ByteBuffers {
         }
     }
 
-    public static void putLongW(ByteBuffer buffer, long array[]) {
-        if (array == null) {
-            buffer.putChar((char) 0);
-        } else {
-            int p = buffer.position();
-            buffer.putChar(p, (char) array.length);
-            p += 2;
-            for (int i = 0; i < array.length; i++) {
-                buffer.putLong(p, array[i]);
-                p += 8;
-            }
-            buffer.position(p);
-        }
-    }
-
-    public static void putIntW(ByteBuffer buffer, int array[]) {
-        if (array == null) {
-            buffer.putChar((char) 0);
-        } else {
-            int p = buffer.position();
-            buffer.putChar(p, (char) array.length);
-            p += 2;
-            for (int i = 0; i < array.length; i++) {
-                buffer.putInt(p, array[i]);
-                p += 4;
-            }
-            buffer.position(p);
-        }
-    }
-
     public static int getBitHint(int recSize, int recCount) {
+//        return Math.min(30, 32 - Integer.numberOfLeadingZeros(recSize * recCount));
         long target = ((long) recSize) * recCount;
         long minDeviation = Long.MAX_VALUE;
         int resultBits = 0;
@@ -229,8 +203,5 @@ public final class ByteBuffers {
             p += 2;
         }
         buffer.position(p);
-    }
-
-    private ByteBuffers() {
     }
 }

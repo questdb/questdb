@@ -16,34 +16,29 @@
 
 package com.nfsdb.journal;
 
-import com.nfsdb.journal.factory.JournalFactory;
-import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
+import com.nfsdb.journal.column.HugeBuffer;
+import com.nfsdb.journal.factory.configuration.JournalMetadataBuilder;
+import com.nfsdb.journal.factory.configuration.JournalMetadataImpl;
 import com.nfsdb.journal.model.Quote;
+import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
-public class ConfigBuilderTest {
+public class JournalMetadataTest {
 
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
 
     @Test
-    public void testConfigWithoutClass() throws Exception {
-        JournalConfigurationBuilder builder = new JournalConfigurationBuilder() {{
-            $("test")
-                    .$double("bid")
-                    .$double("ask")
+    public void testMetadataWrite() throws Exception {
+        JournalMetadataBuilder<Quote> b = new JournalMetadataBuilder<>(Quote.class);
 
-            ;
-        }};
-
-        JournalFactory factory = new JournalFactory(builder.build(temp.newFolder()));
-        JournalWriter w = factory.writer(new JournalKey<>("test"));
-        System.out.println(w.getLocation());
-
-        Journal<Quote> r = factory.reader(Quote.class, "test");
-        System.out.println(r.getLocation());
-        System.out.println(r.getMetadata());
+        HugeBuffer hb = new HugeBuffer(temp.newFile(), 10, JournalMode.APPEND);
+        JournalMetadataImpl m = (JournalMetadataImpl) b.build();
+        m.write(hb);
+        JournalMetadataImpl metadata = new JournalMetadataImpl(hb);
+        hb.close();
+        Assert.assertEquals(m, metadata);
     }
 }

@@ -17,6 +17,7 @@
 package com.nfsdb.journal.factory.configuration;
 
 import com.nfsdb.journal.column.ColumnType;
+import com.nfsdb.journal.column.HugeBuffer;
 
 public class ColumnMetadata {
     public String name;
@@ -60,5 +61,66 @@ public class ColumnMetadata {
         this.distinctCountHint = from.distinctCountHint;
         this.sameAs = from.sameAs;
         this.noCache = from.noCache;
+    }
+
+    public void write(HugeBuffer buf) {
+        buf.put(name);
+        buf.put(type.name());
+        buf.put(size);
+        buf.put(avgSize);
+        buf.put(indexed);
+        buf.put(bitHint);
+        buf.put(indexBitHint);
+        buf.put(distinctCountHint);
+        buf.put(sameAs);
+        buf.put(noCache);
+    }
+
+    public void read(HugeBuffer buf) {
+        name = buf.getStr();
+        type = ColumnType.valueOf(buf.getStr());
+        size = buf.getInt();
+        avgSize = buf.getInt();
+        indexed = buf.getBool();
+        bitHint = buf.getInt();
+        indexBitHint = buf.getInt();
+        distinctCountHint = buf.getInt();
+        sameAs = buf.getStr();
+        noCache = buf.getBool();
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+
+        ColumnMetadata that = (ColumnMetadata) o;
+
+        return avgSize == that.avgSize
+                && bitHint == that.bitHint
+                && distinctCountHint == that.distinctCountHint
+                && indexBitHint == that.indexBitHint
+                && indexed == that.indexed
+                && noCache == that.noCache
+                && size == that.size
+                && name.equals(that.name)
+                && !(sameAs != null ? !sameAs.equals(that.sameAs) : that.sameAs != null)
+                && type == that.type;
+
+    }
+
+    @Override
+    public int hashCode() {
+        int result = name.hashCode();
+        result = 31 * result + type.hashCode();
+        result = 31 * result + size;
+        result = 31 * result + avgSize;
+        result = 31 * result + (indexed ? 1 : 0);
+        result = 31 * result + bitHint;
+        result = 31 * result + indexBitHint;
+        result = 31 * result + distinctCountHint;
+        result = 31 * result + (sameAs != null ? sameAs.hashCode() : 0);
+        result = 31 * result + (noCache ? 1 : 0);
+        return result;
     }
 }

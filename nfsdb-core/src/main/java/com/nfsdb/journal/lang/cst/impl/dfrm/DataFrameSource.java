@@ -14,15 +14,14 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.factory.configuration;
+package com.nfsdb.journal.lang.cst.impl.dfrm;
 
-import com.nfsdb.journal.JournalKey;
-import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.Journal;
 
-import java.io.File;
+public interface DataFrameSource {
+    DataFrame getFrame();
 
-public interface JournalConfiguration {
-    <T> JournalMetadata<T> createMetadata(JournalKey<T> key) throws JournalException;
+    void reset();
 
-    File getJournalBase();
+    Journal getJournal();
 }

@@ -19,6 +19,8 @@ package com.nfsdb.journal;
 import com.nfsdb.journal.collections.LongArrayList;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.index.KVIndex;
+import com.nfsdb.journal.lang.cst.impl.dsrc.DataRow;
+import com.nfsdb.journal.lang.cst.impl.dsrc.DataRowSource;
 import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.query.api.QueryAllBuilder;
@@ -81,6 +83,31 @@ public class PerformanceTest extends AbstractTest {
         }
         result = System.nanoTime() - t;
         LOGGER.info("read (1M): " + TimeUnit.NANOSECONDS.toMillis(result / count) + "ms");
+        if (enabled) {
+            Assert.assertTrue("Read speed must be under 300ms (" + TimeUnit.NANOSECONDS.toMillis(result) + ")", TimeUnit.NANOSECONDS.toMillis(result) < 300);
+        }
+
+        for (int i = -10; i < count; i++) {
+            if (i == 0) {
+                t = System.nanoTime();
+            }
+            DataRowSource s = w.rows();
+            int cnt = 0;
+            for (DataRow r : s) {
+                r.getLong(0);
+                r.getSym(1);
+                r.getDouble(2);
+                r.getDouble(3);
+                r.getInt(4);
+                r.getInt(5);
+                r.getSym(6);
+                r.getSym(7);
+                cnt++;
+            }
+            Assert.assertEquals(TEST_DATA_SIZE, cnt);
+        }
+        result = System.nanoTime() - t;
+        LOGGER.info("generic read (1M): " + TimeUnit.NANOSECONDS.toMillis(result / count) + "ms");
         if (enabled) {
             Assert.assertTrue("Read speed must be under 300ms (" + TimeUnit.NANOSECONDS.toMillis(result) + ")", TimeUnit.NANOSECONDS.toMillis(result) < 300);
         }

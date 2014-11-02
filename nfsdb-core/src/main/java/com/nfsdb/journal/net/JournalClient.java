@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.nfsdb.journal.net;
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalKey;
 import com.nfsdb.journal.JournalWriter;
+import com.nfsdb.journal.PartitionType;
 import com.nfsdb.journal.concurrent.NamedDaemonThreadFactory;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalNetworkException;
@@ -141,7 +142,7 @@ public class JournalClient {
     }
 
     public <T> void subscribe(Class<T> clazz, String remote, String local, int recordHint, TxListener txListener) throws JournalException {
-        add(new JournalKey<>(clazz, remote), factory.writer(clazz, local, recordHint), txListener);
+        add(new JournalKey<>(clazz, remote, PartitionType.DEFAULT, recordHint), factory.writer(clazz, local, recordHint), txListener);
     }
 
     public void start() throws JournalNetworkException {

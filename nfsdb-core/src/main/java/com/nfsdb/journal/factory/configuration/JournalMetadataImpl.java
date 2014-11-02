@@ -17,6 +17,7 @@
 package com.nfsdb.journal.factory.configuration;
 
 import com.nfsdb.journal.PartitionType;
+import com.nfsdb.journal.column.HugeBuffer;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.factory.NullsAdaptor;
@@ -87,6 +88,53 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
             columnIndexLookup.put(columnMetadata[i].name, i);
         }
         this.lag = lag;
+    }
+
+    public JournalMetadataImpl(HugeBuffer buf) {
+        buf.setPos(0);
+        id = buf.getStr();
+        modelClass = null;
+        location = buf.getStr();
+        partitionBy = PartitionType.valueOf(buf.getStr());
+        columnCount = buf.getInt();
+        columnMetadata = new ColumnMetadata[columnCount];
+        columnIndexLookup = new TObjectIntHashMap<>();
+        for (int i = 0; i < columnCount; i++) {
+            columnMetadata[i] = new ColumnMetadata();
+            columnMetadata[i].read(buf);
+            columnIndexLookup.put(columnMetadata[i].name, i);
+        }
+        timestampColumnIndex = buf.getInt();
+        if (timestampColumnIndex >= 0) {
+            timestampMetadata = columnMetadata[timestampColumnIndex];
+        } else {
+            timestampMetadata = null;
+        }
+        openFileTTL = buf.getLong();
+        ioBlockRecordCount = buf.getInt();
+        ioBlockTxCount = buf.getInt();
+        key = buf.getStr();
+        lag = buf.getInt();
+        nullsAdaptor = null;
+        nullsAdaptorFactory = null;
+        constructor = null;
+    }
+
+    public void write(HugeBuffer buf) {
+        buf.setPos(0);
+        buf.put(id);
+        buf.put(location);
+        buf.put(partitionBy.name());
+        buf.put(columnCount);
+        for (int i = 0; i < columnMetadata.length; i++) {
+            columnMetadata[i].write(buf);
+        }
+        buf.put(timestampColumnIndex);
+        buf.put(openFileTTL);
+        buf.put(ioBlockRecordCount);
+        buf.put(ioBlockTxCount);
+        buf.put(key);
+        buf.put(lag);
     }
 
     @Override
@@ -204,26 +252,51 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
     }
 
     @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+
+        JournalMetadataImpl that = (JournalMetadataImpl) o;
+
+        return columnCount == that.columnCount
+                && ioBlockRecordCount == that.ioBlockRecordCount
+                && ioBlockTxCount == that.ioBlockTxCount
+                && lag == that.lag
+                && openFileTTL == that.openFileTTL
+                && timestampColumnIndex == that.timestampColumnIndex
+                && Arrays.equals(columnMetadata, that.columnMetadata)
+                && id.equals(that.id)
+                && !(key != null ? !key.equals(that.key) : that.key != null)
+                && !(location != null ? !location.equals(that.location) : that.location != null)
+                && partitionBy == that.partitionBy
+                && !(timestampMetadata != null ? !timestampMetadata.equals(that.timestampMetadata) : that.timestampMetadata != null);
+
+    }
+
+    @Override
+    public int hashCode() {
+        int result = id.hashCode();
+        result = 31 * result + (location != null ? location.hashCode() : 0);
+        result = 31 * result + partitionBy.hashCode();
+        result = 31 * result + columnCount;
+        result = 31 * result + (timestampMetadata != null ? timestampMetadata.hashCode() : 0);
+        result = 31 * result + (int) (openFileTTL ^ (openFileTTL >>> 32));
+        result = 31 * result + ioBlockRecordCount;
+        result = 31 * result + ioBlockTxCount;
+        result = 31 * result + (key != null ? key.hashCode() : 0);
+        result = 31 * result + Arrays.hashCode(columnMetadata);
+        result = 31 * result + timestampColumnIndex;
+        result = 31 * result + lag;
+        return result;
+    }
+
+    @Override
     public String toString() {
         return "JournalMetaImpl{" +
                 "SHA='" + Base64._printBase64Binary(Checksum.getChecksum(this)) + '\'' +
-                ", id=" + id +
-                ", modelClass=" + modelClass +
-                ", nullsAdaptor=" + nullsAdaptor +
-                ", nullsAdaptorFactory=" + nullsAdaptorFactory +
-                ", location='" + location + '\'' +
                 ", partitionBy=" + partitionBy +
                 ", columnCount=" + columnCount +
-                ", timestampMetadata=" + timestampMetadata +
-                ", constructor=" + constructor +
-                ", openFileTTL=" + openFileTTL +
-                ", ioBlockRecordCount=" + ioBlockRecordCount +
-                ", ioBlockTxCount=" + ioBlockTxCount +
-                ", key='" + key + '\'' +
                 ", columnMetadata=" + Arrays.toString(columnMetadata) +
-                ", columnIndexLookup=" + columnIndexLookup +
-                ", timestampColumnIndex=" + timestampColumnIndex +
-                ", lag=" + lag +
                 '}';
     }
 }

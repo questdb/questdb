@@ -19,18 +19,25 @@ package com.nfsdb.journal.factory.configuration;
 import com.nfsdb.journal.PartitionType;
 import com.nfsdb.journal.column.ColumnType;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
+import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.utils.ByteBuffers;
+import com.nfsdb.journal.utils.Unsafe;
 import gnu.trove.map.TObjectIntMap;
 import gnu.trove.map.hash.TObjectIntHashMap;
 
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-public class GenericJournalMetadataBuilder implements JMetadataBuilder {
-    private final String location;
+public class GenericJournalMetadataBuilder<T> implements JMetadataBuilder<T> {
+    private static final Logger LOGGER = Logger.getLogger(GenericJournalMetadataBuilder.class);
     private final List<ColumnMetadata> metadata = new ArrayList<>();
     private final TObjectIntMap<String> nameToIndexMap = new TObjectIntHashMap<>(10, 0.2f, -1);
+    private String location;
     private int tsColumnIndex = -1;
     private PartitionType partitionBy = PartitionType.NONE;
     private int recordCountHint = 100000;
@@ -38,6 +45,8 @@ public class GenericJournalMetadataBuilder implements JMetadataBuilder {
     private String key;
     private long openFileTTL = TimeUnit.MINUTES.toMillis(3);
     private int lag = -1;
+    private Class<T> modelClass;
+    private Constructor<T> constructor;
 
     public GenericJournalMetadataBuilder(String location) {
         this.location = location;
@@ -82,46 +91,53 @@ public class GenericJournalMetadataBuilder implements JMetadataBuilder {
         return $ts("timestamp");
     }
 
-    public GenericJournalMetadataBuilder $ts(String name) {
+    public GenericJournalMetadataBuilder<T> $ts(String name) {
         ColumnMetadata meta = newMeta(name);
         meta.type = ColumnType.DATE;
         meta.size = 8;
         return this;
     }
 
-    public GenericJournalMetadataBuilder $date(String name) {
+    public GenericJournalMetadataBuilder<T> $date(String name) {
         ColumnMetadata meta = newMeta(name);
         meta.type = ColumnType.DATE;
         meta.size = 8;
         return this;
     }
 
-    public GenericJournalMetadataBuilder partitionBy(PartitionType type) {
+    public GenericJournalMetadataBuilder<T> $double(String name) {
+        ColumnMetadata meta = newMeta(name);
+        meta.type = ColumnType.DOUBLE;
+        meta.size = 8;
+        return this;
+    }
+
+    public GenericJournalMetadataBuilder<T> partitionBy(PartitionType type) {
         this.partitionBy = type;
         return this;
     }
 
-    public GenericJournalMetadataBuilder recordCountHint(int count) {
+    public GenericJournalMetadataBuilder<T> recordCountHint(int count) {
         this.recordCountHint = count;
         return this;
     }
 
-    public GenericJournalMetadataBuilder txCountHint(int count) {
+    public GenericJournalMetadataBuilder<T> txCountHint(int count) {
         this.txCountHint = count;
         return this;
     }
 
-    public GenericJournalMetadataBuilder key(String key) {
+    public GenericJournalMetadataBuilder<T> key(String key) {
         this.key = key;
         return this;
     }
 
-    public GenericJournalMetadataBuilder openFileTTL(long time, TimeUnit unit) {
+    public GenericJournalMetadataBuilder<T> openFileTTL(long time, TimeUnit unit) {
         this.openFileTTL = unit.toMillis(time);
         return this;
     }
 
-    public GenericJournalMetadataBuilder lag(long time, TimeUnit unit) {
+    public GenericJournalMetadataBuilder<T> lag(long time, TimeUnit unit) {
         this.lag = (int) unit.toHours(time);
         return this;
     }
@@ -130,8 +146,7 @@ public class GenericJournalMetadataBuilder implements JMetadataBuilder {
         return location;
     }
 
-    @SuppressWarnings("unchecked")
-    public JournalMetadata build() {
+    public JournalMetadata<T> build() {
 
         // default tx count hint
         if (txCountHint == -1) {
@@ -174,10 +189,10 @@ public class GenericJournalMetadataBuilder implements JMetadataBuilder {
             m[i] = meta;
         }
 
-        return new JournalMetadataImpl(
+        return new JournalMetadataImpl<>(
                 location
-                , null
-                , null
+                , modelClass
+                , constructor
                 , key
                 , location
                 , partitionBy
@@ -205,7 +220,65 @@ public class GenericJournalMetadataBuilder implements JMetadataBuilder {
     }
 
     @Override
-    public JMetadataBuilder location(String absolutePath) {
+    public GenericJournalMetadataBuilder<T> location(String absolutePath) {
+        this.location = absolutePath;
         return this;
+    }
+
+    public JournalMetadata<T> map(Class<T> clazz) {
+        boolean valid = false;
+
+        List<Field> classFields = getAllFields(new ArrayList<Field>(), clazz);
+
+        for (int i = 0; i < classFields.size(); i++) {
+            Field f = classFields.get(i);
+
+            if (Modifier.isStatic(f.getModifiers())) {
+                continue;
+            }
+
+            int index = nameToIndexMap.get(f.getName());
+            if (index == -1) {
+                LOGGER.warn(clazz.getName() + "." + f.getName() + " column name mismatch");
+                continue;
+            }
+
+            Class type = f.getType();
+            ColumnMetadata meta = metadata.get(index);
+
+            if (!meta.type.equals(toColumnType(type))) {
+                LOGGER.warn(clazz.getName() + "." + f.getName() + " column type mismatch");
+            }
+            meta.offset = Unsafe.getUnsafe().objectFieldOffset(f);
+            valid = true;
+        }
+
+        if (valid) {
+            this.modelClass = clazz;
+            try {
+                this.constructor = modelClass.getDeclaredConstructor();
+            } catch (NoSuchMethodException e) {
+                throw new JournalConfigurationException("No default constructor declared on %s", modelClass.getName());
+            }
+
+        }
+        return this.build();
+    }
+
+    private ColumnType toColumnType(Class type) {
+        for (ColumnType t : ColumnType.values()) {
+            if (t.matches(type)) {
+                return t;
+            }
+        }
+        return null;
+    }
+
+    private List<Field> getAllFields(List<Field> fields, Class<?> type) {
+        Collections.addAll(fields, type.getDeclaredFields());
+        if (type.getSuperclass() != null) {
+            fields = getAllFields(fields, type.getSuperclass());
+        }
+        return fields;
     }
 }

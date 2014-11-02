@@ -62,15 +62,6 @@ public class Tx {
                 ", symbolTableIndexPointers=" + Arrays.toString(symbolTableIndexPointers) +
                 ", indexPointers=" + Arrays.toString(indexPointers) +
                 ", lagIndexPointers=" + Arrays.toString(lagIndexPointers) +
-                ", size= " + size() + "}";
-    }
-
-    public int size() {
-        return 8 + 1 + 8 + 8 + 8 + 8
-                + 1 + 1 + 64
-                + 2 + 4 * (symbolTableSizes == null ? 0 : symbolTableSizes.length)
-                + 2 + 8 * (symbolTableIndexPointers == null ? 0 : symbolTableIndexPointers.length)
-                + 2 + 8 * (indexPointers == null ? 0 : indexPointers.length)
-                + 2 + 8 * (lagIndexPointers == null ? 0 : lagIndexPointers.length);
+                "}";
     }
 }

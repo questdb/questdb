@@ -17,6 +17,7 @@
 package com.nfsdb.journal.iterators;
 
 import com.nfsdb.journal.Journal;
+import com.nfsdb.journal.Partition;
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
@@ -32,7 +33,7 @@ public class JournalBufferedIterator<T> extends AbstractImmutableIterator<T> imp
     private int currentIndex = 0;
     private long currentRowID;
     private long currentUpperBound;
-    private int currentPartitionID;
+    private Partition<T> partition;
 
     public JournalBufferedIterator(Journal<T> journal, List<JournalIteratorRange> ranges) {
         this.ranges = ranges;
@@ -48,19 +49,15 @@ public class JournalBufferedIterator<T> extends AbstractImmutableIterator<T> imp
 
     @Override
     public T next() {
-        try {
-            journal.clearObject(obj);
-            journal.read(Rows.toRowID(currentPartitionID, currentRowID), obj);
-            if (currentRowID < currentUpperBound) {
-                currentRowID++;
-            } else {
-                currentIndex++;
-                updateVariables();
-            }
-            return obj;
-        } catch (JournalException e) {
-            throw new JournalRuntimeException("Error in iterator [" + this + "]", e);
+        journal.clearObject(obj);
+        partition.read(currentRowID, obj);
+        if (currentRowID < currentUpperBound) {
+            currentRowID++;
+        } else {
+            currentIndex++;
+            updateVariables();
         }
+        return obj;
     }
 
     @Override
@@ -93,17 +90,6 @@ public class JournalBufferedIterator<T> extends AbstractImmutableIterator<T> imp
     }
 
     @Override
-    public String toString() {
-        return "JournalBufferedIterator{" +
-                "currentRowID=" + currentRowID +
-                ", currentUpperBound=" + currentUpperBound +
-                ", currentPartitionID=" + currentPartitionID +
-                ", currentIndex=" + currentIndex +
-                ", journal=" + journal +
-                '}';
-    }
-
-    @Override
     public Journal<T> getJournal() {
         return journal;
     }
@@ -113,7 +99,11 @@ public class JournalBufferedIterator<T> extends AbstractImmutableIterator<T> imp
             JournalIteratorRange w = ranges.get(currentIndex);
             currentRowID = w.lo;
             currentUpperBound = w.hi;
-            currentPartitionID = w.partitionID;
+            try {
+                partition = journal.getPartition(w.partitionID, true);
+            } catch (JournalException e) {
+                throw new JournalRuntimeException(e);
+            }
         } else {
             hasNext = false;
         }

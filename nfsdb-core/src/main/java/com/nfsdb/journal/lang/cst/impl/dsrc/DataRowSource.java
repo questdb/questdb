@@ -14,14 +14,15 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.lang.cst.impl.dfrn;
+package com.nfsdb.journal.lang.cst.impl.dsrc;
 
 import com.nfsdb.journal.Journal;
+import com.nfsdb.journal.collections.ImmutableIterator;
 
-public interface DataFrameSource {
-    DataFrame getFrame();
+public interface DataRowSource extends ImmutableIterator<DataRow> {
+    Journal getJournal();
+
+    int getColumnIndex(String column);
 
     void reset();
-
-    Journal getJournal();
 }

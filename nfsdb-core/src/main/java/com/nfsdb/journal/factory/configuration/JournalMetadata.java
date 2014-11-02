@@ -17,6 +17,7 @@
 package com.nfsdb.journal.factory.configuration;
 
 import com.nfsdb.journal.PartitionType;
+import com.nfsdb.journal.column.HugeBuffer;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.factory.NullsAdaptor;
 import com.nfsdb.journal.factory.NullsAdaptorFactory;
@@ -64,4 +65,6 @@ public interface JournalMetadata<T> {
     String getKeyQuiet();
 
     String getId();
+
+    void write(HugeBuffer buf);
 }

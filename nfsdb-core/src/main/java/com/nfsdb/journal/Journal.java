@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,6 +30,11 @@ import com.nfsdb.journal.factory.configuration.JournalMetadata;
 import com.nfsdb.journal.iterators.ConcurrentIterator;
 import com.nfsdb.journal.iterators.JournalPeekingIterator;
 import com.nfsdb.journal.iterators.JournalRowBufferedIterator;
+import com.nfsdb.journal.lang.cst.impl.dsrc.DataRowSource;
+import com.nfsdb.journal.lang.cst.impl.dsrc.DataRowSourceImpl;
+import com.nfsdb.journal.lang.cst.impl.jsrc.JournalSourceImpl;
+import com.nfsdb.journal.lang.cst.impl.psrc.JournalPartitionSource;
+import com.nfsdb.journal.lang.cst.impl.rsrc.AllRowSource;
 import com.nfsdb.journal.locks.Lock;
 import com.nfsdb.journal.locks.LockManager;
 import com.nfsdb.journal.logging.Logger;
@@ -300,7 +305,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      * @return true if the specified Journal type compatible with this one
      */
     public boolean isCompatible(Journal<T> that) {
-        return this.getMetadata().getModelClass().equals(that.getMetadata().getModelClass());
+        return this.getMetadata().getId().equals(that.getMetadata().getId());
     }
 
     /**
@@ -590,6 +595,15 @@ public class Journal<T> implements Iterable<T>, Closeable {
             }
         }
         return new TempPartition<>(this, interval, nonLagPartitionCount(), name);
+    }
+
+    public DataRowSource rows() {
+        return new DataRowSourceImpl(
+                new JournalSourceImpl(
+                        new JournalPartitionSource(this, true)
+                        , new AllRowSource()
+                )
+        );
     }
 
     long getTimestampOffset() {

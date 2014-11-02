@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.nfsdb.journal;
 
 import com.nfsdb.journal.column.FixedColumn;
+import com.nfsdb.journal.column.HugeBuffer;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.concurrent.PartitionCleaner;
 import com.nfsdb.journal.concurrent.TimerCache;
@@ -608,9 +609,11 @@ public class JournalWriter<T> extends Journal<T> {
         }
         txLog.head(tx);
 
-        File meta = new File(getLocation(), Constants.JOURNAL_META_FILE);
+        File meta = new File(getLocation(), "_meta2");
         if (!meta.exists()) {
-            Files.writeStringToFile(meta, getMetadata().toString());
+            try (HugeBuffer hb = new HugeBuffer(meta, 12, JournalMode.APPEND)) {
+                getMetadata().write(hb);
+            }
         }
 
         super.configure();

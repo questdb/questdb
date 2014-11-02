@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ package com.nfsdb.journal;
 
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.model.Quote;
@@ -428,7 +427,7 @@ public class JournalTest extends AbstractTest {
         try {
             factory.writer(new JournalKey<>(Quote.class, "quote", PartitionType.MONTH));
             Assert.fail("Exception expected");
-        } catch (JournalRuntimeException e) {
+        } catch (JournalException e) {
             // expect exception
         }
 
@@ -440,7 +439,7 @@ public class JournalTest extends AbstractTest {
         try {
             f2.writer(new JournalKey<>(Quote.class, "quote"));
             Assert.fail("Exception expected");
-        } catch (JournalRuntimeException e) {
+        } catch (JournalException e) {
             // expect exception
         }
     }

@@ -293,10 +293,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
                     Unsafe.getUnsafe().putShort(obj, m.meta.offset, ((FixedColumn) columns[i]).getShort(localRowID));
                     break;
                 case STRING:
-                    String s = ((VariableColumn) columns[i]).getString(localRowID);
-                    if (s != null) {
-                        Unsafe.getUnsafe().putObject(obj, m.meta.offset, s);
-                    }
+                    Unsafe.getUnsafe().putObject(obj, m.meta.offset, ((VariableColumn) columns[i]).getString(localRowID));
                     break;
                 case SYMBOL:
                     int symbolIndex = ((FixedColumn) columns[i]).getInt(localRowID);

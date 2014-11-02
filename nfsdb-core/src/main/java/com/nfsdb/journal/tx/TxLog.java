@@ -17,26 +17,21 @@
 package com.nfsdb.journal.tx;
 
 import com.nfsdb.journal.JournalMode;
-import com.nfsdb.journal.column.MappedFile;
-import com.nfsdb.journal.column.MappedFileImpl;
+import com.nfsdb.journal.column.HugeBuffer;
 import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.factory.configuration.Constants;
-import com.nfsdb.journal.utils.ByteBuffers;
+import com.nfsdb.journal.utils.Unsafe;
 
 import java.io.File;
-import java.nio.ByteBuffer;
-import java.nio.MappedByteBuffer;
 
 public class TxLog {
 
     private long address = 0;
-    private MappedFile mf;
-    private char[] buf;
+    private HugeBuffer mf;
 
     public TxLog(File baseLocation, JournalMode mode) throws JournalException {
         // todo: calculate hint
-        this.mf = new MappedFileImpl(new File(baseLocation, "_tx"), Constants.PIPE_BIT_HINT, mode);
+        this.mf = new HugeBuffer(new File(baseLocation, "_tx"), Constants.PIPE_BIT_HINT, mode);
     }
 
     public boolean hasNext() {
@@ -56,54 +51,26 @@ public class TxLog {
     }
 
     public long prevAddress(long address) {
-        ByteBuffer buffer = mf.getBuffer(address, 12);
-        return buffer.getLong(buffer.position() + 4);
+        return Unsafe.getUnsafe().getLong(mf.getAddress(address, 8));
     }
 
     public void create(Tx tx) {
-
-        if (tx.lagName != null && tx.lagName.length() > 64) {
-            throw new JournalRuntimeException("Partition name is too long");
-        }
-
         long offset = Math.max(9, mf.getAppendOffset());
-        ByteBuffer buffer = mf.getBuffer(offset, tx.size() + 4);
-
-        // 4
-        buffer.putInt(tx.size());
-        // 8
-        buffer.putLong(tx.prevTxAddress);
-        // 1
-        buffer.put(tx.command);
-        // 8
-        buffer.putLong(System.nanoTime());
-        // 8
-        buffer.putLong(tx.journalMaxRowID);
-        // 8
-        buffer.putLong(tx.lastPartitionTimestamp);
-        // 8
-        buffer.putLong(tx.lagSize);
-        // 1
-        if (tx.lagName == null) {
-            buffer.put((byte) 0);
-        } else {
-            buffer.put((byte) 1);
-            // 2
-            buffer.put((byte) tx.lagName.length());
-            // tx.lagName.len
-            for (int i = 0; i < tx.lagName.length(); i++) {
-                buffer.putChar(tx.lagName.charAt(i));
-            }
-        }
-        // 2 + 4 * tx.symbolTableSizes.len
-        ByteBuffers.putIntW(buffer, tx.symbolTableSizes);
-        ByteBuffers.putLongW(buffer, tx.symbolTableIndexPointers);
-        ByteBuffers.putLongW(buffer, tx.indexPointers);
-        ByteBuffers.putLongW(buffer, tx.lagIndexPointers);
-
+        mf.setPos(offset);
+        mf.put(tx.prevTxAddress);
+        mf.put(tx.command);
+        mf.put(System.nanoTime());
+        mf.put(tx.journalMaxRowID);
+        mf.put(tx.lastPartitionTimestamp);
+        mf.put(tx.lagSize);
+        mf.put(tx.lagName);
+        mf.put(tx.symbolTableSizes);
+        mf.put(tx.symbolTableIndexPointers);
+        mf.put(tx.indexPointers);
+        mf.put(tx.lagIndexPointers);
         // write out tx address
+        address = mf.getPos();
         setTxAddress(offset);
-        address = offset + tx.size();
         mf.setAppendOffset(address);
     }
 
@@ -116,13 +83,12 @@ public class TxLog {
     }
 
     public long getTxAddress() {
-        final ByteBuffer buf = mf.getBuffer(0, 9);
-        final int pos = buf.position();
+        long a = mf.getAddress(0, 9);
 
         long address;
         while (true) {
-            address = buf.getLong(pos);
-            byte checksum = buf.get(pos + 8);
+            address = Unsafe.getUnsafe().getLong(a);
+            byte checksum = Unsafe.getUnsafe().getByte(a + 8);
             byte b0 = (byte) address;
             byte b1 = (byte) (address >> 8);
             byte b2 = (byte) (address >> 16);
@@ -150,75 +116,25 @@ public class TxLog {
         byte b5 = (byte) (address >> 40);
         byte b6 = (byte) (address >> 48);
         byte b7 = (byte) (address >> 56);
-        MappedByteBuffer buffer = mf.getBuffer(0, 9);
-        int p = buffer.position();
-        buffer.putLong(p, address);
-        buffer.put(p + 8, (byte) (b0 ^ b1 ^ b2 ^ b3 ^ b4 ^ b5 ^ b6 ^ b7));
+        mf.setPos(0);
+        mf.put(address);
+        mf.put((byte) (b0 ^ b1 ^ b2 ^ b3 ^ b4 ^ b5 ^ b6 ^ b7));
     }
 
     public void get(long address, Tx tx) {
         assert address > 0 : "zero address: " + address;
         tx.address = address;
-        ByteBuffer buffer = mf.getBuffer(address, 4);
-        int txSize = buffer.getInt(buffer.position());
-        buffer = mf.getBuffer(address + 4, txSize);
-
-        tx.prevTxAddress = buffer.getLong();
-        tx.command = buffer.get();
-        tx.timestamp = buffer.getLong();
-        tx.journalMaxRowID = buffer.getLong();
-        tx.lastPartitionTimestamp = buffer.getLong();
-        tx.lagSize = buffer.getLong();
-
-        int sz = buffer.get();
-        if (sz == 0) {
-            tx.lagName = null;
-        } else {
-            // lagName
-            sz = buffer.get();
-            if (buf == null || buf.length < sz) {
-                buf = new char[sz];
-            }
-            for (int i = 0; i < sz; i++) {
-                buf[i] = buffer.getChar();
-            }
-            tx.lagName = new String(buf, 0, sz);
-        }
-
-        // symbolTableSizes
-        sz = buffer.getChar();
-        if (tx.symbolTableSizes == null || tx.symbolTableSizes.length < sz) {
-            tx.symbolTableSizes = new int[sz];
-        }
-        for (int i = 0; i < sz; i++) {
-            tx.symbolTableSizes[i] = buffer.getInt();
-        }
-
-        //symbolTableIndexPointers
-        sz = buffer.getChar();
-        if (tx.symbolTableIndexPointers == null || tx.symbolTableIndexPointers.length < sz) {
-            tx.symbolTableIndexPointers = new long[sz];
-        }
-        for (int i = 0; i < sz; i++) {
-            tx.symbolTableIndexPointers[i] = buffer.getLong();
-        }
-
-        //indexPointers
-        sz = buffer.getChar();
-        if (tx.indexPointers == null || tx.indexPointers.length < sz) {
-            tx.indexPointers = new long[sz];
-        }
-        for (int i = 0; i < sz; i++) {
-            tx.indexPointers[i] = buffer.getLong();
-        }
-
-        //lagIndexPointers
-        sz = buffer.getChar();
-        if (tx.lagIndexPointers == null || tx.lagIndexPointers.length < sz) {
-            tx.lagIndexPointers = new long[sz];
-        }
-        for (int i = 0; i < sz; i++) {
-            tx.lagIndexPointers[i] = buffer.getLong();
-        }
+        mf.setPos(address);
+        tx.prevTxAddress = mf.getLong();
+        tx.command = mf.get();
+        tx.timestamp = mf.getLong();
+        tx.journalMaxRowID = mf.getLong();
+        tx.lastPartitionTimestamp = mf.getLong();
+        tx.lagSize = mf.getLong();
+        tx.lagName = mf.getStr();
+        tx.symbolTableSizes = mf.get(tx.symbolTableSizes);
+        tx.symbolTableIndexPointers = mf.get(tx.symbolTableIndexPointers);
+        tx.indexPointers = mf.get(tx.indexPointers);
+        tx.lagIndexPointers = mf.get(tx.lagIndexPointers);
     }
 }

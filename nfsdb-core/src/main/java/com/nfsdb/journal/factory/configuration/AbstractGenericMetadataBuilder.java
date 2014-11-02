@@ -52,4 +52,8 @@ public abstract class AbstractGenericMetadataBuilder {
     public GenericJournalMetadataBuilder $date(String name) {
         return parent.$date(name);
     }
+
+    public GenericJournalMetadataBuilder $double(String name) {
+        return parent.$double(name);
+    }
 }

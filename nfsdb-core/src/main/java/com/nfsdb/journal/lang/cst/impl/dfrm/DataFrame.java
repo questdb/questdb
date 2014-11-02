@@ -14,15 +14,10 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.factory.configuration;
+package com.nfsdb.journal.lang.cst.impl.dfrm;
 
-import com.nfsdb.journal.JournalKey;
-import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.lang.cst.RowCursor;
 
-import java.io.File;
-
-public interface JournalConfiguration {
-    <T> JournalMetadata<T> createMetadata(JournalKey<T> key) throws JournalException;
-
-    File getJournalBase();
+public interface DataFrame {
+    RowCursor cursor(int key);
 }
