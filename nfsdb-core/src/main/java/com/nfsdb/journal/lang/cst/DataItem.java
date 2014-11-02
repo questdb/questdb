@@ -17,11 +17,72 @@
 package com.nfsdb.journal.lang.cst;
 
 import com.nfsdb.journal.Partition;
+import com.nfsdb.journal.column.FixedColumn;
 
 public class DataItem {
     public Partition<Object> partition;
     public long rowid;
     public DataItem slave;
+
+    public int getColumnIndex(String column) {
+        return partition.getJournal().getMetadata().getColumnIndex(column);
+    }
+
+    public byte get(String column) {
+        return get(getColumnIndex(column));
+    }
+
+    public byte get(int col) {
+        return ((FixedColumn) partition.getAbstractColumn(col)).getByte(rowid);
+    }
+
+    public int getInt(String column) {
+        return getInt(getColumnIndex(column));
+    }
+
+    public int getInt(int col) {
+        return partition.getInt(rowid, col);
+    }
+
+    public long getLong(String column) {
+        return getLong(getColumnIndex(column));
+    }
+
+    public long getLong(int col) {
+        return partition.getLong(rowid, col);
+    }
+
+    public double getDouble(String column) {
+        return getDouble(getColumnIndex(column));
+    }
+
+    public double getDouble(int col) {
+        return partition.getDouble(rowid, col);
+    }
+
+    public String getStr(String column) {
+        return getStr(getColumnIndex(column));
+    }
+
+    public String getStr(int col) {
+        return partition.getString(rowid, col);
+    }
+
+    public String getSym(String column) {
+        return getSym(getColumnIndex(column));
+    }
+
+    public String getSym(int col) {
+        return partition.getSymbol(rowid, col);
+    }
+
+    public boolean getBool(String column) {
+        return getBool(getColumnIndex(column));
+    }
+
+    public boolean getBool(int col) {
+        return partition.getBoolean(rowid, col);
+    }
 
     @Override
     public String toString() {

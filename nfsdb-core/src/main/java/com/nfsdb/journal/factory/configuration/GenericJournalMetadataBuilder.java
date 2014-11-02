@@ -202,7 +202,6 @@ public class GenericJournalMetadataBuilder<T> implements JMetadataBuilder<T> {
                 , recordCountHint
                 , txCountHint
                 , lag
-                , null
         );
     }
 

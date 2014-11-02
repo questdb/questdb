@@ -60,6 +60,5 @@ public class SingleIntHashKeySource implements KeySource, KeyCursor {
     @Override
     public void reset() {
         bucketCount = -1;
-        variableSource.reset();
     }
 }

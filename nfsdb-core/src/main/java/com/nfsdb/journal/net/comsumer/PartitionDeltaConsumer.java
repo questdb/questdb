@@ -34,6 +34,19 @@ public class PartitionDeltaConsumer extends ChannelConsumerGroup {
         this.oldSize = partition.size();
     }
 
+    private static ChannelConsumer[] getColumnConsumers(Partition partition) {
+        ChannelConsumer consumers[] = new ChannelConsumer[partition.getJournal().getMetadata().getColumnCount()];
+        for (int i = 0; i < consumers.length; i++) {
+            AbstractColumn column = partition.getAbstractColumn(i);
+            if (column instanceof VariableColumn) {
+                consumers[i] = new VariableColumnDeltaConsumer((VariableColumn) column);
+            } else {
+                consumers[i] = new FixedColumnDeltaConsumer(column);
+            }
+        }
+        return consumers;
+    }
+
     @Override
     protected void commit() throws JournalNetworkException {
         super.commit();
@@ -42,19 +55,5 @@ public class PartitionDeltaConsumer extends ChannelConsumerGroup {
         long size = partition.size();
         partition.updateIndexes(oldSize, size);
         oldSize = size;
-    }
-
-    private static ChannelConsumer[] getColumnConsumers(Partition partition) {
-        ChannelConsumer consumers[] = new ChannelConsumer[partition.getJournal().getMetadata().getColumnCount() + 1];
-        consumers[0] = new FixedColumnDeltaConsumer(partition.getNullsColumn());
-        for (int i = 1; i < consumers.length; i++) {
-            AbstractColumn column = partition.getAbstractColumn(i - 1);
-            if (column instanceof VariableColumn) {
-                consumers[i] = new VariableColumnDeltaConsumer((VariableColumn) column);
-            } else {
-                consumers[i] = new FixedColumnDeltaConsumer(column);
-            }
-        }
-        return consumers;
     }
 }

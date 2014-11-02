@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -189,19 +189,6 @@ public class ColumnTest {
             for (long l = 0; l < col.size(); l++) {
                 Assert.assertEquals(max - l + 0.33f, col.getFloat(l), 0);
             }
-        }
-    }
-
-    @Test
-    public void testFixedWidthNull() throws Exception {
-        try (FixedColumn col = new FixedColumn(new MappedFileImpl(dataFile, 22, JournalMode.APPEND), 4)) {
-            int max = 150;
-            for (int i = 0; i < max; i++) {
-                col.putNull();
-                col.commit();
-            }
-
-            Assert.assertEquals(max, col.size());
         }
     }
 

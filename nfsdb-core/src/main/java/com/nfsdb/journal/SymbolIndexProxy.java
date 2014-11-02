@@ -16,6 +16,7 @@
 
 package com.nfsdb.journal;
 
+import com.nfsdb.journal.concurrent.TimerCache;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.configuration.JournalMetadata;
 import com.nfsdb.journal.index.KVIndex;
@@ -29,9 +30,17 @@ class SymbolIndexProxy<T> implements Closeable {
     private static final Logger LOGGER = Logger.getLogger(SymbolIndexProxy.class);
     private final Partition<T> partition;
     private final int columnIndex;
+    private final TimerCache timerCache;
     private KVIndex index;
-    private volatile long lastAccessed;
+    private long lastAccessed;
     private long txAddress;
+
+    SymbolIndexProxy(Partition<T> partition, int columnIndex, long txAddress) {
+        this.partition = partition;
+        this.columnIndex = columnIndex;
+        this.txAddress = txAddress;
+        this.timerCache = partition.getJournal().getTimerCache();
+    }
 
     public void close() {
         if (index != null) {
@@ -66,7 +75,7 @@ class SymbolIndexProxy<T> implements Closeable {
     }
 
     KVIndex getIndex() throws JournalException {
-        lastAccessed = partition.getJournal().getTimerCache().getCachedMillis();
+        lastAccessed = timerCache.getCachedMillis();
         if (index == null) {
             JournalMetadata<T> meta = partition.getJournal().getMetadata();
             index = new KVIndex(
@@ -79,11 +88,5 @@ class SymbolIndexProxy<T> implements Closeable {
             );
         }
         return index;
-    }
-
-    SymbolIndexProxy(Partition<T> partition, int columnIndex, long txAddress) {
-        this.partition = partition;
-        this.columnIndex = columnIndex;
-        this.txAddress = txAddress;
     }
 }

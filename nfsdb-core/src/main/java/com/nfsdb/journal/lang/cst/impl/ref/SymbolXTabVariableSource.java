@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -69,10 +69,6 @@ public class SymbolXTabVariableSource implements IntVariableSource, IntVariable 
             slaveKey = map[masterKey];
         }
         return slaveKey;
-    }
-
-    @Override
-    public void reset() {
     }
 
     private boolean switchPartition() {

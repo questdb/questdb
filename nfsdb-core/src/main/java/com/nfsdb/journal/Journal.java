@@ -24,14 +24,12 @@ import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.exceptions.JournalUnsupportedTypeException;
 import com.nfsdb.journal.factory.JournalClosingListener;
-import com.nfsdb.journal.factory.NullsAdaptor;
 import com.nfsdb.journal.factory.configuration.Constants;
 import com.nfsdb.journal.factory.configuration.JournalMetadata;
 import com.nfsdb.journal.iterators.ConcurrentIterator;
 import com.nfsdb.journal.iterators.JournalPeekingIterator;
 import com.nfsdb.journal.iterators.JournalRowBufferedIterator;
-import com.nfsdb.journal.lang.cst.impl.dsrc.DataRowSource;
-import com.nfsdb.journal.lang.cst.impl.dsrc.DataRowSourceImpl;
+import com.nfsdb.journal.lang.cst.JournalSource;
 import com.nfsdb.journal.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.psrc.JournalPartitionSource;
 import com.nfsdb.journal.lang.cst.impl.rsrc.AllRowSource;
@@ -78,7 +76,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
             return (x < y) ? -1 : ((x == y) ? 0 : 1);
         }
     };
-    private final NullsAdaptor<T> nullsAdaptor;
     private final BitSet inactiveColumns;
     TxLog txLog;
     boolean open;
@@ -95,7 +92,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
         this.txLog = new TxLog(location, getMode());
         this.open = true;
         this.timestampOffset = getMetadata().getTimestampColumnMetadata() == null ? -1 : getMetadata().getTimestampColumnMetadata().offset;
-        this.nullsAdaptor = getMetadata().getNullsAdaptor();
         this.inactiveColumns = new BitSet(metadata.getColumnCount());
 
         configure();
@@ -372,41 +368,37 @@ public class Journal<T> implements Iterable<T>, Closeable {
     }
 
     public void clearObject(T obj) {
-        if (nullsAdaptor != null) {
-            metadata.getNullsAdaptor().clear(obj);
-        } else {
-            for (int i = 0; i < metadata.getColumnCount(); i++) {
-                com.nfsdb.journal.factory.configuration.ColumnMetadata m = metadata.getColumnMetadata(i);
-                switch (m.type) {
-                    case BOOLEAN:
-                        Unsafe.getUnsafe().putBoolean(obj, m.offset, false);
-                        break;
-                    case BYTE:
-                        Unsafe.getUnsafe().putByte(obj, m.offset, (byte) 0);
-                        break;
-                    case DOUBLE:
-                        Unsafe.getUnsafe().putDouble(obj, m.offset, 0d);
-                        break;
-                    case INT:
-                        Unsafe.getUnsafe().putInt(obj, m.offset, 0);
-                        break;
-                    case LONG:
-                    case DATE:
-                        Unsafe.getUnsafe().putLong(obj, m.offset, 0L);
-                        break;
-                    case STRING:
-                    case SYMBOL:
-                        Unsafe.getUnsafe().putObject(obj, m.offset, null);
-                        break;
-                    case BINARY:
-                        ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, m.offset);
-                        if (buf != null) {
-                            buf.clear();
-                        }
-                        break;
-                    default:
-                        throw new JournalUnsupportedTypeException(m.type);
-                }
+        for (int i = 0; i < metadata.getColumnCount(); i++) {
+            com.nfsdb.journal.factory.configuration.ColumnMetadata m = metadata.getColumnMetadata(i);
+            switch (m.type) {
+                case BOOLEAN:
+                    Unsafe.getUnsafe().putBoolean(obj, m.offset, false);
+                    break;
+                case BYTE:
+                    Unsafe.getUnsafe().putByte(obj, m.offset, (byte) 0);
+                    break;
+                case DOUBLE:
+                    Unsafe.getUnsafe().putDouble(obj, m.offset, 0d);
+                    break;
+                case INT:
+                    Unsafe.getUnsafe().putInt(obj, m.offset, 0);
+                    break;
+                case LONG:
+                case DATE:
+                    Unsafe.getUnsafe().putLong(obj, m.offset, 0L);
+                    break;
+                case STRING:
+                case SYMBOL:
+                    Unsafe.getUnsafe().putObject(obj, m.offset, null);
+                    break;
+                case BINARY:
+                    ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, m.offset);
+                    if (buf != null) {
+                        buf.clear();
+                    }
+                    break;
+                default:
+                    throw new JournalUnsupportedTypeException(m.type);
             }
         }
     }
@@ -597,12 +589,10 @@ public class Journal<T> implements Iterable<T>, Closeable {
         return new TempPartition<>(this, interval, nonLagPartitionCount(), name);
     }
 
-    public DataRowSource rows() {
-        return new DataRowSourceImpl(
-                new JournalSourceImpl(
-                        new JournalPartitionSource(this, true)
-                        , new AllRowSource()
-                )
+    public JournalSource rows() {
+        return new JournalSourceImpl(
+                new JournalPartitionSource(this, true)
+                , new AllRowSource()
         );
     }
 

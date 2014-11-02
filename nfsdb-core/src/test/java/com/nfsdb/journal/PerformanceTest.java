@@ -19,8 +19,8 @@ package com.nfsdb.journal;
 import com.nfsdb.journal.collections.LongArrayList;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.index.KVIndex;
-import com.nfsdb.journal.lang.cst.impl.dsrc.DataRow;
-import com.nfsdb.journal.lang.cst.impl.dsrc.DataRowSource;
+import com.nfsdb.journal.lang.cst.DataItem;
+import com.nfsdb.journal.lang.cst.JournalSource;
 import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.query.api.QueryAllBuilder;
@@ -65,7 +65,7 @@ public class PerformanceTest extends AbstractTest {
         long result = System.nanoTime() - t;
         LOGGER.info("append (1M): " + TimeUnit.NANOSECONDS.toMillis(result / count) + "ms");
         if (enabled) {
-            Assert.assertTrue("Append speed must be under 750ms (" + TimeUnit.NANOSECONDS.toMillis(result) + ")", TimeUnit.NANOSECONDS.toMillis(result) < 700);
+            Assert.assertTrue("Append speed must be under 400ms (" + TimeUnit.NANOSECONDS.toMillis(result) + ")", TimeUnit.NANOSECONDS.toMillis(result) < 400);
         }
 
 
@@ -84,16 +84,16 @@ public class PerformanceTest extends AbstractTest {
         result = System.nanoTime() - t;
         LOGGER.info("read (1M): " + TimeUnit.NANOSECONDS.toMillis(result / count) + "ms");
         if (enabled) {
-            Assert.assertTrue("Read speed must be under 300ms (" + TimeUnit.NANOSECONDS.toMillis(result) + ")", TimeUnit.NANOSECONDS.toMillis(result) < 300);
+            Assert.assertTrue("Read speed must be under 120ms (" + TimeUnit.NANOSECONDS.toMillis(result) + ")", TimeUnit.NANOSECONDS.toMillis(result) < 120);
         }
 
         for (int i = -10; i < count; i++) {
             if (i == 0) {
                 t = System.nanoTime();
             }
-            DataRowSource s = w.rows();
+            JournalSource s = w.rows();
             int cnt = 0;
-            for (DataRow r : s) {
+            for (DataItem r : s) {
                 r.getLong(0);
                 r.getSym(1);
                 r.getDouble(2);
@@ -109,7 +109,7 @@ public class PerformanceTest extends AbstractTest {
         result = System.nanoTime() - t;
         LOGGER.info("generic read (1M): " + TimeUnit.NANOSECONDS.toMillis(result / count) + "ms");
         if (enabled) {
-            Assert.assertTrue("Read speed must be under 300ms (" + TimeUnit.NANOSECONDS.toMillis(result) + ")", TimeUnit.NANOSECONDS.toMillis(result) < 300);
+            Assert.assertTrue("Read speed must be under 60ms (" + TimeUnit.NANOSECONDS.toMillis(result) + ")", TimeUnit.NANOSECONDS.toMillis(result) < 60);
         }
     }
 

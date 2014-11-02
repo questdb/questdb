@@ -20,8 +20,6 @@ import com.nfsdb.journal.PartitionType;
 import com.nfsdb.journal.column.HugeBuffer;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
-import com.nfsdb.journal.factory.NullsAdaptor;
-import com.nfsdb.journal.factory.NullsAdaptorFactory;
 import com.nfsdb.journal.utils.Base64;
 import com.nfsdb.journal.utils.Checksum;
 import gnu.trove.impl.Constants;
@@ -36,8 +34,6 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
 
     private final String id;
     private final Class<T> modelClass;
-    private final NullsAdaptor<T> nullsAdaptor;
-    private final NullsAdaptorFactory<T> nullsAdaptorFactory;
     private final String location;
     private final PartitionType partitionBy;
     private final int columnCount;
@@ -65,12 +61,9 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
             , int ioBlockRecordCount
             , int ioBlockTxCount
             , int lag
-            , NullsAdaptorFactory<T> nullsAdaptorFactory
     ) {
         this.id = id;
         this.modelClass = modelClass;
-        this.nullsAdaptorFactory = nullsAdaptorFactory;
-        this.nullsAdaptor = nullsAdaptorFactory != null ? nullsAdaptorFactory.getInstance(modelClass) : null;
         this.location = location;
         this.partitionBy = partitionBy;
         this.columnMetadata = new ColumnMetadata[columnMetadata.length];
@@ -115,8 +108,6 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
         ioBlockTxCount = buf.getInt();
         key = buf.getStr();
         lag = buf.getInt();
-        nullsAdaptor = null;
-        nullsAdaptorFactory = null;
         constructor = null;
     }
 
@@ -135,11 +126,6 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
         buf.put(ioBlockTxCount);
         buf.put(key);
         buf.put(lag);
-    }
-
-    @Override
-    public NullsAdaptor<T> getNullsAdaptor() {
-        return nullsAdaptor;
     }
 
     @Override
@@ -240,11 +226,6 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
     @Override
     public String getKeyQuiet() {
         return key;
-    }
-
-    @Override
-    public NullsAdaptorFactory<T> getNullsAdaptorFactory() {
-        return nullsAdaptorFactory;
     }
 
     public String getId() {

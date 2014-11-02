@@ -19,16 +19,10 @@ package com.nfsdb.journal.factory.configuration;
 import com.nfsdb.journal.PartitionType;
 import com.nfsdb.journal.column.HugeBuffer;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
-import com.nfsdb.journal.factory.NullsAdaptor;
-import com.nfsdb.journal.factory.NullsAdaptorFactory;
 
 import java.io.File;
 
 public interface JournalMetadata<T> {
-
-    NullsAdaptor<T> getNullsAdaptor();
-
-    NullsAdaptorFactory<T> getNullsAdaptorFactory();
 
     ColumnMetadata getColumnMetadata(String name);
 

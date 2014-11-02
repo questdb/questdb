@@ -123,7 +123,6 @@ public class JournalConfigurationImpl implements JournalConfiguration {
 
             throw new JournalException("Checksum mismatch");
         }
-
     }
 
     private boolean eq(byte[] expected, byte[] actual) {

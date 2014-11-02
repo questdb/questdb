@@ -19,7 +19,6 @@ package com.nfsdb.journal.factory.configuration;
 import com.nfsdb.journal.PartitionType;
 import com.nfsdb.journal.column.ColumnType;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
-import com.nfsdb.journal.factory.NullsAdaptorFactory;
 import com.nfsdb.journal.utils.ByteBuffers;
 import com.nfsdb.journal.utils.Unsafe;
 import gnu.trove.impl.Constants;
@@ -45,7 +44,6 @@ public class JournalMetadataBuilder<T> implements JMetadataBuilder<T> {
     private String key;
     private long openFileTTL = TimeUnit.MINUTES.toMillis(3);
     private int lag = -1;
-    private NullsAdaptorFactory<T> nullsFactory;
 
     public JournalMetadataBuilder(Class<T> modelClass) {
         this.modelClass = modelClass;
@@ -63,8 +61,6 @@ public class JournalMetadataBuilder<T> implements JMetadataBuilder<T> {
         this.key = model.getKeyQuiet();
         this.openFileTTL = model.getOpenFileTTL();
         this.lag = model.getLag();
-        this.nullsFactory = model.getNullsAdaptorFactory();
-
         for (int i = 0; i < model.getColumnCount(); i++) {
             ColumnMetadata from = model.getColumnMetadata(i);
             ColumnMetadata to = columnMetadata.get(from.name);
@@ -142,11 +138,6 @@ public class JournalMetadataBuilder<T> implements JMetadataBuilder<T> {
         return this;
     }
 
-    public JournalMetadataBuilder<T> nullsFactory(NullsAdaptorFactory<T> factory) {
-        this.nullsFactory = factory;
-        return this;
-    }
-
     public String getLocation() {
         return location;
     }
@@ -210,7 +201,6 @@ public class JournalMetadataBuilder<T> implements JMetadataBuilder<T> {
                 , recordCountHint
                 , txCountHint
                 , lag
-                , nullsFactory
         );
     }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,12 +29,9 @@ public class PartitionDeltaProducer extends ChannelProducerGroup<ColumnDeltaProd
 
     public PartitionDeltaProducer(Partition partition) {
         this.partition = partition;
-        addProducer(new FixedColumnDeltaProducer(partition.getNullsColumn()));
         for (int i = 0, c = partition.getJournal().getMetadata().getColumnCount(); i < c; i++) {
             AbstractColumn col = partition.getAbstractColumn(i);
-            ColumnDeltaProducer producer;
-            producer = col instanceof VariableColumn ? new VariableColumnDeltaProducer((VariableColumn) col) : new FixedColumnDeltaProducer(col);
-            addProducer(producer);
+            addProducer(col instanceof VariableColumn ? new VariableColumnDeltaProducer((VariableColumn) col) : new FixedColumnDeltaProducer(col));
         }
     }
 

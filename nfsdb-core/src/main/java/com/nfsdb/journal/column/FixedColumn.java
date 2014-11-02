@@ -88,13 +88,6 @@ public class FixedColumn extends AbstractColumn {
         Unsafe.getUnsafe().putShort(getAddress(), value);
     }
 
-    public long putNull() {
-        long appendOffset = mappedFile.getAppendOffset();
-        mappedFile.getAddress(appendOffset, width);
-        preCommit(appendOffset + width);
-        return appendOffset;
-    }
-
     @Override
     public long getOffset(long localRowID) {
         return localRowID * width;
