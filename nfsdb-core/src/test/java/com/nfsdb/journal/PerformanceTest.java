@@ -19,7 +19,7 @@ package com.nfsdb.journal;
 import com.nfsdb.journal.collections.LongArrayList;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.index.KVIndex;
-import com.nfsdb.journal.lang.cst.DataItem;
+import com.nfsdb.journal.lang.cst.JournalEntry;
 import com.nfsdb.journal.lang.cst.JournalSource;
 import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.model.Quote;
@@ -68,7 +68,6 @@ public class PerformanceTest extends AbstractTest {
             Assert.assertTrue("Append speed must be under 400ms (" + TimeUnit.NANOSECONDS.toMillis(result) + ")", TimeUnit.NANOSECONDS.toMillis(result) < 400);
         }
 
-
         for (int i = -10; i < count; i++) {
             if (i == 0) {
                 t = System.nanoTime();
@@ -93,7 +92,7 @@ public class PerformanceTest extends AbstractTest {
             }
             JournalSource s = w.rows();
             int cnt = 0;
-            for (DataItem r : s) {
+            for (JournalEntry r : s) {
                 r.getLong(0);
                 r.getSym(1);
                 r.getDouble(2);

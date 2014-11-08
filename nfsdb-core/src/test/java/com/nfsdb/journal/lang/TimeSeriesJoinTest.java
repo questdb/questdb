@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,8 +20,8 @@ import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.journal.lang.cst.DataItem;
 import com.nfsdb.journal.lang.cst.JoinedSource;
+import com.nfsdb.journal.lang.cst.JournalEntry;
 import com.nfsdb.journal.lang.cst.Q;
 import com.nfsdb.journal.lang.cst.impl.QImpl;
 import com.nfsdb.journal.lang.cst.impl.join.TimeSeriesJoin;
@@ -134,7 +134,7 @@ public class TimeSeriesJoinTest {
 
         StringBuilder builder = new StringBuilder();
 
-        for (DataItem d : src) {
+        for (JournalEntry d : src) {
             builder.append(d.partition.getLong(d.rowid, 0));
             builder.append("~");
             if (d.slave == null) {
@@ -178,7 +178,7 @@ public class TimeSeriesJoinTest {
 
         StringBuilder builder = new StringBuilder();
 
-        for (DataItem d : src) {
+        for (JournalEntry d : src) {
             builder.append(d.partition.getLong(d.rowid, 0));
             builder.append("~");
             if (d.slave == null) {

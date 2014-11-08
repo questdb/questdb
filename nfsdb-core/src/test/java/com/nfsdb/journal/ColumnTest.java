@@ -85,7 +85,7 @@ public class ColumnTest {
 
         try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1)) {
             for (int i = 0; i < recordCount; i++) {
-                varchar1.putString("s" + i);
+                varchar1.putStr("s" + i);
                 varchar1.commit();
             }
         }
@@ -96,7 +96,7 @@ public class ColumnTest {
         try (VariableColumn varchar2 = new VariableColumn(df2, idxFile2)) {
             Assert.assertEquals(recordCount, varchar2.size());
             for (int i = 0; i < varchar2.size(); i++) {
-                String s = varchar2.getString(i);
+                String s = varchar2.getStr(i);
                 Assert.assertEquals("s" + i, s);
             }
         }
@@ -108,17 +108,17 @@ public class ColumnTest {
         MappedFile idxFile1 = new MappedFileImpl(indexFile, 22, JournalMode.APPEND);
 
         try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1)) {
-            varchar1.putString("string1");
+            varchar1.putStr("string1");
             varchar1.commit();
-            varchar1.putString("string2");
-            varchar1.commit();
-            varchar1.putNull();
-            varchar1.commit();
-            varchar1.putString("string3");
+            varchar1.putStr("string2");
             varchar1.commit();
             varchar1.putNull();
             varchar1.commit();
-            varchar1.putString("string4");
+            varchar1.putStr("string3");
+            varchar1.commit();
+            varchar1.putNull();
+            varchar1.commit();
+            varchar1.putStr("string4");
             varchar1.commit();
         }
 
@@ -126,12 +126,12 @@ public class ColumnTest {
         MappedFile idxFile2 = new MappedFileImpl(indexFile, 22, JournalMode.READ);
 
         try (VariableColumn varchar2 = new VariableColumn(df2, idxFile2)) {
-            Assert.assertEquals("string1", varchar2.getString(0));
-            Assert.assertEquals("string2", varchar2.getString(1));
-//            Assert.assertNull(varchar2.getString(2));
-            Assert.assertEquals("string3", varchar2.getString(3));
-//            Assert.assertNull(varchar2.getString(4));
-            Assert.assertEquals("string4", varchar2.getString(5));
+            Assert.assertEquals("string1", varchar2.getStr(0));
+            Assert.assertEquals("string2", varchar2.getStr(1));
+//            Assert.assertNull(varchar2.getStr(2));
+            Assert.assertEquals("string3", varchar2.getStr(3));
+//            Assert.assertNull(varchar2.getStr(4));
+            Assert.assertEquals("string4", varchar2.getStr(5));
         }
     }
 
@@ -142,27 +142,27 @@ public class ColumnTest {
         MappedFile idxFile1 = new MappedFileImpl(indexFile, 22, JournalMode.APPEND);
 
         try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1)) {
-            varchar1.putString("string1");
+            varchar1.putStr("string1");
             varchar1.commit();
-            varchar1.putString("string2");
-            varchar1.commit();
-            varchar1.putNull();
-            varchar1.commit();
-            varchar1.putString("string3");
+            varchar1.putStr("string2");
             varchar1.commit();
             varchar1.putNull();
             varchar1.commit();
-            varchar1.putString("string4");
+            varchar1.putStr("string3");
+            varchar1.commit();
+            varchar1.putNull();
+            varchar1.commit();
+            varchar1.putStr("string4");
             varchar1.commit();
 
             Assert.assertEquals(6, varchar1.size());
             varchar1.truncate(4);
             varchar1.commit();
             Assert.assertEquals(4, varchar1.size());
-            Assert.assertEquals("string1", varchar1.getString(0));
-            Assert.assertEquals("string2", varchar1.getString(1));
-//            Assert.assertNull(varchar1.getString(2));
-            Assert.assertEquals("string3", varchar1.getString(3));
+            Assert.assertEquals("string1", varchar1.getStr(0));
+            Assert.assertEquals("string2", varchar1.getStr(1));
+//            Assert.assertNull(varchar1.getStr(2));
+            Assert.assertEquals("string3", varchar1.getStr(3));
 
         }
 
@@ -170,10 +170,10 @@ public class ColumnTest {
         MappedFile idxFile12 = new MappedFileImpl(indexFile, 22, JournalMode.READ);
 
         try (VariableColumn varchar2 = new VariableColumn(df2, idxFile12)) {
-            Assert.assertEquals("string1", varchar2.getString(0));
-            Assert.assertEquals("string2", varchar2.getString(1));
-//            Assert.assertNull(varchar2.getString(2));
-            Assert.assertEquals("string3", varchar2.getString(3));
+            Assert.assertEquals("string1", varchar2.getStr(0));
+            Assert.assertEquals("string2", varchar2.getStr(1));
+//            Assert.assertNull(varchar2.getStr(2));
+            Assert.assertEquals("string3", varchar2.getStr(3));
         }
     }
 
@@ -205,11 +205,11 @@ public class ColumnTest {
             String s = random.nextString(buf.remaining() / 2);
             ByteBuffers.putStr(buf, s);
             buf.flip();
-            col.putBuffer(buf);
+            col.putBin(buf);
             col.commit();
 
-            ByteBuffer bb = ByteBuffer.allocate(col.getBufferSize(0));
-            col.getBuffer(0, bb, bb.remaining());
+            ByteBuffer bb = ByteBuffer.allocate(col.getBinSize(0));
+            col.getBin(0, bb);
             bb.flip();
             char chars[] = new char[bb.remaining() / 2];
             for (int i = 0; i < chars.length; i++) {
@@ -231,9 +231,9 @@ public class ColumnTest {
 
         try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1)) {
 
-            varchar1.putString(s1);
+            varchar1.putStr(s1);
             varchar1.commit();
-            varchar1.putString(s2);
+            varchar1.putStr(s2);
             varchar1.commit();
         }
 
@@ -241,8 +241,8 @@ public class ColumnTest {
         MappedFile idxFile2 = new MappedFileImpl(indexFile, 22, JournalMode.READ);
 
         try (VariableColumn varchar2 = new VariableColumn(df2, idxFile2)) {
-            Assert.assertEquals(s1, varchar2.getString(0));
-            Assert.assertEquals(s2, varchar2.getString(1));
+            Assert.assertEquals(s1, varchar2.getStr(0));
+            Assert.assertEquals(s2, varchar2.getStr(1));
         }
     }
 }

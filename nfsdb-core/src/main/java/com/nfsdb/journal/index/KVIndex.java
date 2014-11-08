@@ -44,16 +44,16 @@ public class KVIndex implements Closeable {
         }
     */
 
-    public static final int ENTRY_SIZE = 16;
+    private static final int ENTRY_SIZE = 16;
     private final IndexCursor cachedCursor = new IndexCursor();
-    MappedFileImpl kData;
-    // storage for rows
-    // block structure is [ rowid1, rowid2 ..., rowidn, prevBlockOffset]
-    MappedFileImpl rData;
     int rowBlockSize;
     int rowBlockLen;
     long firstEntryOffset;
-    long keyBlockSize;
+    private MappedFileImpl kData;
+    // storage for rows
+    // block structure is [ rowid1, rowid2 ..., rowidn, prevBlockOffset]
+    private MappedFileImpl rData;
+    private long keyBlockSize;
     private long keyBlockAddressOffset;
     private long keyBlockSizeOffset;
     private long maxValue;

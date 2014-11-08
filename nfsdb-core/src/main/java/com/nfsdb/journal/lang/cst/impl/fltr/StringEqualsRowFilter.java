@@ -54,6 +54,6 @@ public class StringEqualsRowFilter implements RowFilter, RowAcceptor {
 
     @Override
     public Choice accept(long localRowID) {
-        return columnRef.equalsString(localRowID, value.value) ? Choice.PICK : Choice.SKIP;
+        return columnRef.cmpStr(localRowID, value.value) ? Choice.PICK : Choice.SKIP;
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,7 @@
 
 package com.nfsdb.journal.test.tools;
 
-import com.nfsdb.journal.Journal;
-import com.nfsdb.journal.JournalWriter;
-import com.nfsdb.journal.Partition;
-import com.nfsdb.journal.ResultSet;
+import com.nfsdb.journal.*;
 import com.nfsdb.journal.collections.LongArrayList;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.exceptions.JournalException;
@@ -46,6 +43,9 @@ import java.util.UUID;
 
 public final class TestUtils {
 
+    private TestUtils() {
+    }
+
     public static void generateQuoteData(JournalWriter<Quote> w, int count) throws JournalException {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
         long timestamps[] = {Dates.toMillis("2013-09-04T10:00:00.000Z"), Dates.toMillis("2013-10-04T10:00:00.000Z"), Dates.toMillis("2013-11-04T10:00:00.000Z")};
@@ -70,7 +70,7 @@ public final class TestUtils {
         generateQuoteData(w, count, timetamp, 0);
     }
 
-    public static void generateQuoteData(JournalWriter<Quote> w, int count, long timetamp, long increment) throws JournalException {
+    public static void generateQuoteData(JournalWriter<Quote> w, int count, long timestamp, long increment) throws JournalException {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
         Quote q = new Quote();
         Rnd r = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
@@ -84,9 +84,27 @@ public final class TestUtils {
             q.setBidSize(Math.abs(r.nextInt()));
             q.setEx("LXE");
             q.setMode("Fast trading");
-            q.setTimestamp(timetamp);
-            timetamp += increment;
+            q.setTimestamp(timestamp);
+            timestamp += increment;
             w.append(q);
+        }
+    }
+
+    public static void generateQuoteDataGeneric(JournalWriter w, int count, long timestamp, long increment) throws JournalException {
+        String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
+        Rnd r = new Rnd();
+
+        for (int i = 0; i < count; i++) {
+            JournalEntryWriter ew = w.entryWriter(timestamp);
+            ew.putSym(0, symbols[Math.abs(r.nextInt() % (symbols.length - 1))]);
+            ew.putDouble(1, Math.abs(r.nextDouble()));
+            ew.putDouble(2, Math.abs(r.nextDouble()));
+            ew.putInt(3, Math.abs(r.nextInt()));
+            ew.putInt(4, Math.abs(r.nextInt()));
+            ew.putSym(5, "LXE");
+            ew.putSym(6, "Fast trading");
+            ew.append();
+            timestamp += increment;
         }
     }
 
@@ -313,9 +331,6 @@ public final class TestUtils {
             }
             Assert.assertEquals(expected.next(), actual.next());
         }
-    }
-
-    private TestUtils() {
     }
 
     private static <T> void out(JournalPrinter p, JournalIterator<T> iterator) throws IOException {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,20 +18,20 @@ package com.nfsdb.journal.lang.cst.impl.jsrc;
 
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
-import com.nfsdb.journal.lang.cst.DataItem;
+import com.nfsdb.journal.lang.cst.JournalEntry;
 import com.nfsdb.journal.lang.cst.JournalSource;
 import com.nfsdb.journal.lang.cst.StatefulJournalSource;
 
-public class StatefulJournalSourceImpl extends AbstractImmutableIterator<DataItem> implements StatefulJournalSource {
+public class StatefulJournalSourceImpl extends AbstractImmutableIterator<JournalEntry> implements StatefulJournalSource {
     private final JournalSource delegate;
-    private DataItem current;
+    private JournalEntry current;
 
     public StatefulJournalSourceImpl(JournalSource delegate) {
         this.delegate = delegate;
     }
 
     @Override
-    public DataItem current() {
+    public JournalEntry current() {
         return current;
     }
 
@@ -51,7 +51,7 @@ public class StatefulJournalSourceImpl extends AbstractImmutableIterator<DataIte
     }
 
     @Override
-    public DataItem next() {
+    public JournalEntry next() {
         return current = delegate.next();
     }
 }

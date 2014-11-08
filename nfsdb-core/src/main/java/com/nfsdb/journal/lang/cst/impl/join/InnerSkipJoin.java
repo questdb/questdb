@@ -17,15 +17,15 @@
 package com.nfsdb.journal.lang.cst.impl.join;
 
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
-import com.nfsdb.journal.lang.cst.DataItem;
 import com.nfsdb.journal.lang.cst.JoinedSource;
+import com.nfsdb.journal.lang.cst.JournalEntry;
 
 import java.util.NoSuchElementException;
 
-public class InnerSkipJoin extends AbstractImmutableIterator<DataItem> implements JoinedSource {
+public class InnerSkipJoin extends AbstractImmutableIterator<JournalEntry> implements JoinedSource {
 
     private final JoinedSource delegate;
-    private DataItem data;
+    private JournalEntry data;
 
     public InnerSkipJoin(JoinedSource delegate) {
         this.delegate = delegate;
@@ -33,7 +33,7 @@ public class InnerSkipJoin extends AbstractImmutableIterator<DataItem> implement
 
     @Override
     public boolean hasNext() {
-        DataItem data;
+        JournalEntry data;
 
         while (delegate.hasNext()) {
             if ((data = delegate.next()).slave != null) {
@@ -46,7 +46,7 @@ public class InnerSkipJoin extends AbstractImmutableIterator<DataItem> implement
     }
 
     @Override
-    public DataItem next() {
+    public JournalEntry next() {
         if (data == null) {
             throw new NoSuchElementException();
         }

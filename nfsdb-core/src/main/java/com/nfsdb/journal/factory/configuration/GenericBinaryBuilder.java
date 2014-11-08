@@ -20,7 +20,7 @@ import com.nfsdb.journal.column.ColumnType;
 
 public class GenericBinaryBuilder extends AbstractGenericMetadataBuilder {
 
-    public GenericBinaryBuilder(GenericJournalMetadataBuilder parent, ColumnMetadata meta) {
+    public GenericBinaryBuilder(JournalStructure parent, ColumnMetadata meta) {
         super(parent, meta);
         meta.type = ColumnType.BINARY;
     }

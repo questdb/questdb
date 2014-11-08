@@ -54,8 +54,8 @@ public class ResultSet<T> implements Iterable<T> {
 
             switch (meta.meta.type) {
                 case STRING:
-                    leftStr = leftPart.getString(leftLocalRowID, column);
-                    rightStr = rightPart.getString(rightLocalRowID, column);
+                    leftStr = leftPart.getStr(leftLocalRowID, column);
+                    rightStr = rightPart.getStr(rightLocalRowID, column);
 
                     if (leftStr == null && rightStr == null) {
                         result = 0;
@@ -204,12 +204,12 @@ public class ResultSet<T> implements Iterable<T> {
 
     public String getString(int rsIndex, int columnIndex) throws JournalException {
         long rowID = rowIDs.get(rsIndex);
-        return journal.getPartition(Rows.toPartitionIndex(rowID), true).getString(Rows.toLocalRowID(rowID), columnIndex);
+        return journal.getPartition(Rows.toPartitionIndex(rowID), true).getStr(Rows.toLocalRowID(rowID), columnIndex);
     }
 
     public String getSymbol(int rsIndex, int columnIndex) throws JournalException {
         long rowID = rowIDs.get(rsIndex);
-        return journal.getPartition(Rows.toPartitionIndex(rowID), true).getSymbol(Rows.toLocalRowID(rowID), columnIndex);
+        return journal.getPartition(Rows.toPartitionIndex(rowID), true).getSym(Rows.toLocalRowID(rowID), columnIndex);
     }
 
     public double getDouble(int rsIndex, int columnIndex) throws JournalException {

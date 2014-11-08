@@ -92,7 +92,7 @@ public class JournalConfigurationImpl implements JournalConfiguration {
                 builder = new JournalMetadataBuilder<>(key.getModelClass());
             } else {
                 if (key.getModelClass() == null) {
-                    builder = new GenericJournalMetadataBuilder<>(mn);
+                    builder = (JMetadataBuilder<T>) new JournalStructure(mn);
                 } else {
                     builder = new JournalMetadataBuilder<>(mn);
                 }
@@ -105,18 +105,18 @@ public class JournalConfigurationImpl implements JournalConfiguration {
                 if (key.getModelClass() == null) {
                     // if this is generic access request
                     // return metadata as is, nothing more to do
-                    return new GenericJournalMetadataBuilder<T>(mo).location(journalLocation.getAbsolutePath()).build();
+                    return (JournalMetadata<T>) new JournalStructure(mo).location(journalLocation.getAbsolutePath()).build();
                 }
                 // if this is request to map class on existing journal
                 // check compatibility and map to class (calc offsets and constructor)
-                return new GenericJournalMetadataBuilder<T>(mo).location(journalLocation.getAbsolutePath()).map(key.getModelClass());
+                return new JournalStructure(mo).location(journalLocation.getAbsolutePath()).map(key.getModelClass());
             }
 
             // we have both on-disk and in-app meta
             // check if in-app meta matches on-disk meta
             if (eq(Checksum.getChecksum(mo), Checksum.getChecksum(mn))) {
                 if (mn.getModelClass() == null) {
-                    return new GenericJournalMetadataBuilder<T>(mn).location(journalLocation.getAbsolutePath()).build();
+                    return (JournalMetadata<T>) new JournalStructure(mn).location(journalLocation.getAbsolutePath()).build();
                 }
                 return new JournalMetadataBuilder<>(mn).location(journalLocation.getAbsolutePath()).build();
             }
@@ -171,14 +171,14 @@ public class JournalConfigurationImpl implements JournalConfiguration {
             if (key.getModelClass() != null) {
                 builder = new JournalMetadataBuilder<>(key.getModelClass());
             } else {
-                builder = new GenericJournalMetadataBuilder(key.getId());
+                builder = (JMetadataBuilder<T>) new JournalStructure(key.getId());
             }
             newMeta = true;
         } else {
             if (meta.getModelClass() != null) {
                 builder = new JournalMetadataBuilder<>(meta);
             } else {
-                builder = new GenericJournalMetadataBuilder(meta);
+                builder = (JMetadataBuilder<T>) new JournalStructure(meta);
             }
         }
 

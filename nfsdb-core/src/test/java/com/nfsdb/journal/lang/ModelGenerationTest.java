@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -108,7 +108,7 @@ public class ModelGenerationTest extends AbstractTest {
         for (int k = 0; k < cnt; k++) {
             for (int i = 0; i < pcn; i++) {
                 band.setTimestamp(ts0);
-                band.setName(pbn.getString(rnd.nextPositiveInt() % 100000, 0));
+                band.setName(pbn.getStr(rnd.nextPositiveInt() % 100000, 0));
                 pt.read(rnd.nextPositiveInt() % 200, name);
                 band.setType(name.name);
                 bw.append(band);
@@ -156,7 +156,7 @@ public class ModelGenerationTest extends AbstractTest {
 //        Partition bp = bw.getLastPartition();
 //
 //        for (int i = 0; i < pcn; i++) {
-//            String an = ap.getString(rnd.nextPositiveInt() % albumCount, 0);
+//            String an = ap.getStr(rnd.nextPositiveInt() % albumCount, 0);
 //            album.setName(an);
 //
 //        }

@@ -21,8 +21,8 @@ import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.journal.lang.cst.DataItem;
 import com.nfsdb.journal.lang.cst.JoinedSource;
+import com.nfsdb.journal.lang.cst.JournalEntry;
 import com.nfsdb.journal.lang.cst.Q;
 import com.nfsdb.journal.lang.cst.StatefulJournalSource;
 import com.nfsdb.journal.lang.cst.impl.QImpl;
@@ -97,7 +97,7 @@ public class JoinSymbolOnSymbolTest extends AbstractTest {
         JoinedSource src = buildSource(bw, aw);
 
         int count = 0;
-        for (DataItem d : src) {
+        for (JournalEntry d : src) {
             Band b = (Band) d.partition.read(d.rowid);
             Album a = null;
             if (d.slave != null) {
@@ -137,7 +137,7 @@ public class JoinSymbolOnSymbolTest extends AbstractTest {
         JoinedSource src = buildSource(bw, aw);
 
         int count = 0;
-        for (DataItem d : src) {
+        for (JournalEntry d : src) {
             Band b = (Band) d.partition.read(d.rowid);
             Album a = null;
             if (d.slave != null) {
@@ -207,7 +207,7 @@ public class JoinSymbolOnSymbolTest extends AbstractTest {
 
 
         int count = 0;
-        for (DataItem d : src) {
+        for (JournalEntry d : src) {
             Album a = (Album) d.partition.read(d.rowid);
             Band b = null;
             if (d.slave != null) {
@@ -280,7 +280,7 @@ public class JoinSymbolOnSymbolTest extends AbstractTest {
         );
 
         int count = 0;
-        for (DataItem d : src) {
+        for (JournalEntry d : src) {
             Band b = (Band) d.partition.read(d.rowid);
             Album a = null;
             if (d.slave != null) {
@@ -352,7 +352,7 @@ public class JoinSymbolOnSymbolTest extends AbstractTest {
         );
 
         int count = 0;
-        for (DataItem d : src) {
+        for (JournalEntry d : src) {
             Band b = (Band) d.partition.read(d.rowid);
             Album a = null;
             if (d.slave != null) {
@@ -428,7 +428,7 @@ public class JoinSymbolOnSymbolTest extends AbstractTest {
         );
 
         int count = 0;
-        for (DataItem d : src) {
+        for (JournalEntry d : src) {
             Band b = (Band) d.partition.read(d.rowid);
             Album a = null;
             if (d.slave != null) {
@@ -504,7 +504,7 @@ public class JoinSymbolOnSymbolTest extends AbstractTest {
         );
 
         int count = 0;
-        for (DataItem d : src) {
+        for (JournalEntry d : src) {
             Band b = (Band) d.partition.read(d.rowid);
             Album a = null;
             if (d.slave != null) {
@@ -573,8 +573,7 @@ public class JoinSymbolOnSymbolTest extends AbstractTest {
                 )
         );
 
-        int count = 0;
-        for (DataItem d : src) {
+        for (JournalEntry d : src) {
             Band b = (Band) d.partition.read(d.rowid);
             Album a = null;
             if (d.slave != null) {

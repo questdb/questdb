@@ -90,6 +90,15 @@ public class MappedFileImpl implements MappedFile {
         }
     }
 
+    @Override
+    public int getLocalRemaining(long offset) {
+        if (offset >= cachedBufferLo && offset <= cachedBufferHi) {
+            return (int) (cachedBufferHi - offset);
+        } else {
+            return 0;
+        }
+    }
+
     public void delete() {
         close();
         Files.delete(file);

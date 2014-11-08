@@ -21,12 +21,16 @@ import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.utils.ByteBuffers;
 import com.nfsdb.journal.utils.Unsafe;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.ByteBuffer;
 
 
 public class VariableColumn extends AbstractColumn {
     private final FixedColumn indexColumn;
     private char buffer[] = new char[32];
+    private byte[] streamBuf;
 
     public VariableColumn(MappedFile dataFile, MappedFile indexFile) {
         super(dataFile);
@@ -74,17 +78,17 @@ public class VariableColumn extends AbstractColumn {
         return indexColumn.getLong(localRowID);
     }
 
-    public String getString(long localRowID) {
+    public String getStr(long localRowID) {
         long offset = indexColumn.getLong(localRowID);
         int len = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
 
         if (len == -1) {
             return null;
         }
-        return asString(mappedFile.getAddress(offset, len * 2 + 4) + 4, len);
+        return getStr0(mappedFile.getAddress(offset, len * 2 + 4) + 4, len);
     }
 
-    public boolean equalsString(long localRowID, String value) {
+    public boolean cmpStr(long localRowID, String value) {
         long offset = indexColumn.getLong(localRowID);
         int len = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
 
@@ -103,7 +107,7 @@ public class VariableColumn extends AbstractColumn {
         return true;
     }
 
-    public long putString(String value) {
+    public long putStr(CharSequence value) {
         if (value == null) {
             return putNull();
         } else {
@@ -131,7 +135,7 @@ public class VariableColumn extends AbstractColumn {
         return indexColumn;
     }
 
-    public void putBuffer(ByteBuffer value) {
+    public void putBin(ByteBuffer value) {
         final long rowOffset = getOffset();
         final long targetOffset = rowOffset + value.remaining() + 4;
         long appendOffset = rowOffset;
@@ -150,22 +154,103 @@ public class VariableColumn extends AbstractColumn {
         commitAppend(rowOffset, (int) (targetOffset - rowOffset));
     }
 
-    public int getBufferSize(long localRowID) {
-        ByteBuffer bb = getBufferInternal(localRowID, 4);
-        return bb.getInt(bb.position());
+    private void initStreamBuf() {
+        if (streamBuf == null) {
+            streamBuf = new byte[1024 * 1024];
+        }
     }
 
-    public void getBuffer(long localRowID, ByteBuffer target, int count) {
-        long offset = getOffset(localRowID) + 4; // skip size
-        if (count < target.remaining()) {
-            throw new JournalRuntimeException("ByteBuffer too small");
+    public void putBin(InputStream s) {
+        if (s == null) {
+            putNull();
+            return;
         }
 
-        while (count > 0) {
+        initStreamBuf();
+
+        final long rowOffset = getOffset();
+        long off = rowOffset + 4;
+        int blockRemaining = 0;
+        long blockAddress = 0;
+        int bufRemaining;
+        int sz = 0;
+        try {
+            while ((bufRemaining = s.read(streamBuf)) != -1) {
+                sz += bufRemaining;
+                while (bufRemaining > 0) {
+
+                    if (blockRemaining == 0) {
+                        blockAddress = mappedFile.getAddress(off, 1);
+                        blockRemaining = mappedFile.getLocalRemaining(off);
+                    }
+
+                    if (blockRemaining <= 0) {
+                        throw new JournalRuntimeException("Internal error. Unable to allocate disk block");
+                    }
+
+                    int len = bufRemaining > blockRemaining ? blockRemaining : bufRemaining;
+                    Unsafe.getUnsafe().copyMemory(streamBuf, Unsafe.getByteArrayOffset(), null, blockAddress, len);
+                    bufRemaining -= len;
+                    off += len;
+                    blockRemaining -= len;
+                    blockAddress += len;
+                }
+            }
+            long a = mappedFile.getAddress(rowOffset, 4);
+            Unsafe.getUnsafe().putInt(a, sz);
+            commitAppend(rowOffset, sz + 4);
+        } catch (IOException e) {
+            throw new JournalRuntimeException(e);
+        }
+    }
+
+    public int getBinSize(long localRowID) {
+        return Unsafe.getUnsafe().getInt(mappedFile.getAddress(getOffset(localRowID), 4));
+    }
+
+    public void getBin(long localRowID, ByteBuffer target) {
+        long offset = getOffset(localRowID) + 4; // skip size
+
+        while (target.remaining() > 0) {
             ByteBuffer bb = getBuffer(offset, 1);
-            int sz = ByteBuffers.copy(bb, target, count);
-            count -= sz;
+            int sz = ByteBuffers.copy(bb, target, target.remaining());
             offset += sz;
+        }
+    }
+
+    public void getBin(long localRowID, OutputStream s) {
+        getBin(localRowID, s, getBinSize(localRowID));
+    }
+
+    public void getBin(long localRowID, OutputStream s, int len) {
+        initStreamBuf();
+
+        long offset = getOffset(localRowID) + 4; // skip size
+
+        int blockRemaining = 0;
+        long blockAddress = 0;
+
+        try {
+            while (len > 0) {
+                if (blockRemaining == 0) {
+                    blockAddress = mappedFile.getAddress(offset, 1);
+                    blockRemaining = mappedFile.getLocalRemaining(offset);
+                }
+
+                if (blockRemaining <= 0) {
+                    throw new JournalRuntimeException("Internal error. Unable to allocate disk block");
+                }
+
+                int l = len > blockRemaining ? blockRemaining : len;
+                Unsafe.getUnsafe().copyMemory(null, blockAddress, streamBuf, Unsafe.getByteArrayOffset(), l);
+                offset += l;
+                blockRemaining -= l;
+                len -= l;
+                blockAddress += l;
+                s.write(streamBuf, 0, l);
+            }
+        } catch (IOException e) {
+            throw new JournalRuntimeException(e);
         }
     }
 
@@ -175,23 +260,12 @@ public class VariableColumn extends AbstractColumn {
         return commitAppend(offset, 4);
     }
 
-    private String asString(long address, int len) {
+    private String getStr0(long address, int len) {
         if (buffer.length < len) {
             buffer = new char[len];
         }
-        for (int i = 0; i < len; i++) {
-            buffer[i] = Unsafe.getUnsafe().getChar(address);
-            address += 2;
-        }
+        Unsafe.getUnsafe().copyMemory(null, address, buffer, Unsafe.getCharArrayOffset(), len * 2);
         return new String(buffer, 0, len);
-    }
-
-    private ByteBuffer getBufferInternal(long localRowID, int recordLength) {
-        long max = indexColumn.size();
-        if (localRowID > max) {
-            throw new JournalRuntimeException("localRowID is out of bounds. %d > %d", localRowID, max);
-        }
-        return getBuffer(getOffset(localRowID), recordLength);
     }
 
     long commitAppend(long offset, int size) {

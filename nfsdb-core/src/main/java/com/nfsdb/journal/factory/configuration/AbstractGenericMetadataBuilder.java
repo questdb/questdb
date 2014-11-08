@@ -18,9 +18,9 @@ package com.nfsdb.journal.factory.configuration;
 
 public abstract class AbstractGenericMetadataBuilder {
     protected final ColumnMetadata meta;
-    private final GenericJournalMetadataBuilder parent;
+    private final JournalStructure parent;
 
-    public AbstractGenericMetadataBuilder(GenericJournalMetadataBuilder parent, ColumnMetadata meta) {
+    public AbstractGenericMetadataBuilder(JournalStructure parent, ColumnMetadata meta) {
         this.parent = parent;
         this.meta = meta;
     }
@@ -41,19 +41,19 @@ public abstract class AbstractGenericMetadataBuilder {
         return parent.$int(name);
     }
 
-    public GenericJournalMetadataBuilder $ts(String name) {
+    public JournalStructure $ts(String name) {
         return parent.$ts(name);
     }
 
-    public GenericJournalMetadataBuilder $ts() {
+    public JournalStructure $ts() {
         return parent.$ts();
     }
 
-    public GenericJournalMetadataBuilder $date(String name) {
+    public JournalStructure $date(String name) {
         return parent.$date(name);
     }
 
-    public GenericJournalMetadataBuilder $double(String name) {
+    public JournalStructure $double(String name) {
         return parent.$double(name);
     }
 }

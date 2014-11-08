@@ -20,27 +20,27 @@ import com.nfsdb.journal.Partition;
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.collections.RingQueue;
 import com.nfsdb.journal.column.FixedColumn;
-import com.nfsdb.journal.lang.cst.DataItem;
 import com.nfsdb.journal.lang.cst.JoinedSource;
+import com.nfsdb.journal.lang.cst.JournalEntry;
 import com.nfsdb.journal.lang.cst.JournalSource;
 
 import java.util.NoSuchElementException;
 
-public class TimeSeriesJoin extends AbstractImmutableIterator<DataItem> implements JoinedSource {
+public class TimeSeriesJoin extends AbstractImmutableIterator<JournalEntry> implements JoinedSource {
     private final JournalSource masterSource;
     private final JournalSource slaveSource;
     private final long depth;
-    private final RingQueue<CachedDataItem> ringQueue;
+    private final RingQueue<CachedJournalEntry> ringQueue;
     private final int masterTimestampIndex;
     private final int slaveTimestampIndex;
-    private DataItem joinedData;
+    private JournalEntry joinedData;
     private Partition lastMasterPartition;
     private Partition lastSlavePartition;
     private boolean nextSlave = false;
     private FixedColumn masterColumn;
     private FixedColumn slaveColumn;
     private long masterTimestamp;
-    private DataItem nextData;
+    private JournalEntry nextData;
     private boolean useQueue;
     private boolean queueMarked = false;
 
@@ -50,7 +50,7 @@ public class TimeSeriesJoin extends AbstractImmutableIterator<DataItem> implemen
         this.depth = depth;
         this.masterTimestampIndex = masterSource.getJournal().getMetadata().getTimestampColumnIndex();
         this.slaveTimestampIndex = slaveSource.getJournal().getMetadata().getTimestampColumnIndex();
-        this.ringQueue = new RingQueue<>(CachedDataItem.class, cacheSize);
+        this.ringQueue = new RingQueue<>(CachedJournalEntry.class, cacheSize);
     }
 
     @Override
@@ -79,7 +79,7 @@ public class TimeSeriesJoin extends AbstractImmutableIterator<DataItem> implemen
             if (useQueue) {
 
                 while ((useQueue = ringQueue.hasNext())) {
-                    CachedDataItem data = ringQueue.next();
+                    CachedJournalEntry data = ringQueue.next();
 
                     if (data.timestamp < masterTimestamp) {
                         continue;
@@ -105,7 +105,7 @@ public class TimeSeriesJoin extends AbstractImmutableIterator<DataItem> implemen
             if (!useQueue) {
 
                 while ((nextSlave = slaveSource.hasNext())) {
-                    DataItem s = slaveSource.next();
+                    JournalEntry s = slaveSource.next();
 
                     if (lastSlavePartition != s.partition) {
                         lastSlavePartition = s.partition;
@@ -118,9 +118,9 @@ public class TimeSeriesJoin extends AbstractImmutableIterator<DataItem> implemen
                         continue;
                     } else {
                         long pos = ringQueue.nextWritePos();
-                        CachedDataItem data = ringQueue.get(pos);
+                        CachedJournalEntry data = ringQueue.get(pos);
                         if (data == null) {
-                            data = new CachedDataItem();
+                            data = new CachedJournalEntry();
                             ringQueue.put(pos, data);
                         }
                         data.timestamp = slaveTimestamp;
@@ -151,17 +151,17 @@ public class TimeSeriesJoin extends AbstractImmutableIterator<DataItem> implemen
     }
 
     @Override
-    public DataItem next() {
+    public JournalEntry next() {
         if (nextData == null) {
             throw new NoSuchElementException();
         }
-        DataItem d = nextData;
+        JournalEntry d = nextData;
         nextData = null;
         return d;
     }
 
     private void nextMaster() {
-        DataItem m = masterSource.next();
+        JournalEntry m = masterSource.next();
         if (lastMasterPartition != m.partition) {
             lastMasterPartition = m.partition;
             masterColumn = (FixedColumn) m.partition.getAbstractColumn(masterTimestampIndex);
@@ -170,7 +170,7 @@ public class TimeSeriesJoin extends AbstractImmutableIterator<DataItem> implemen
         masterTimestamp = masterColumn.getLong(m.rowid);
     }
 
-    public static class CachedDataItem extends DataItem {
+    public static class CachedJournalEntry extends JournalEntry {
         private long timestamp;
 
         @Override

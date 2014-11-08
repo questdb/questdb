@@ -34,6 +34,7 @@ import org.joda.time.Interval;
 
 import java.io.Closeable;
 import java.io.File;
+import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -43,10 +44,10 @@ public class Partition<T> implements Iterable<T>, Closeable {
     private static final Logger LOGGER = Logger.getLogger(Partition.class);
     private final Journal<T> journal;
     private final ArrayList<SymbolIndexProxy<T>> indexProxies = new ArrayList<>();
-    private final ArrayList<SymbolIndexProxy<T>> columnIndexProxies = new ArrayList<>();
     private final Interval interval;
     private final int columnCount;
-    private AbstractColumn[] columns;
+    SymbolIndexProxy<T> sparseIndexProxies[];
+    AbstractColumn[] columns;
     private int partitionIndex;
     private File partitionDir;
     private long lastAccessed = System.currentTimeMillis();
@@ -144,12 +145,18 @@ public class Partition<T> implements Iterable<T>, Closeable {
         return columns != null;
     }
 
-    public String getString(long localRowID, int columnIndex) {
+    public String getStr(long localRowID, int columnIndex) {
         checkColumnIndex(columnIndex);
-        return ((VariableColumn) columns[columnIndex]).getString(localRowID);
+
+        return ((VariableColumn) columns[columnIndex]).getStr(localRowID);
     }
 
-    public String getSymbol(long localRowID, int columnIndex) {
+    public void getBin(long localRowID, int columnIndex, OutputStream s) {
+        checkColumnIndex(columnIndex);
+        ((VariableColumn) columns[columnIndex]).getBin(localRowID, s);
+    }
+
+    public String getSym(long localRowID, int columnIndex) {
         checkColumnIndex(columnIndex);
         int symbolIndex = ((FixedColumn) columns[columnIndex]).getInt(localRowID);
         switch (symbolIndex) {
@@ -187,7 +194,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
     }
 
     public KVIndex getIndexForColumn(final int columnIndex) throws JournalException {
-        SymbolIndexProxy h = columnIndexProxies.get(columnIndex);
+        SymbolIndexProxy h = sparseIndexProxies[columnIndex];
         if (h == null) {
             throw new JournalException("There is no index for column '%s' in %s", journal.getMetadata().getColumnMetadata(columnIndex).name, this);
         }
@@ -205,7 +212,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
             if (journal.getInactiveColumns().get(i)) {
                 continue;
             }
-            Journal.ColumnMetadata m = journal.getColumnMetadata(i);
+            Journal.ColumnMetadata m = journal.columnMetadata[i];
             switch (m.meta.type) {
                 case BOOLEAN:
                     Unsafe.getUnsafe().putBoolean(obj, m.meta.offset, ((FixedColumn) columns[i]).getBool(localRowID));
@@ -227,10 +234,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
                     Unsafe.getUnsafe().putShort(obj, m.meta.offset, ((FixedColumn) columns[i]).getShort(localRowID));
                     break;
                 case STRING:
-                    String s = ((VariableColumn) columns[i]).getString(localRowID);
-                    if (s != null) {
-                        Unsafe.getUnsafe().putObject(obj, m.meta.offset, s);
-                    }
+                    Unsafe.getUnsafe().putObject(obj, m.meta.offset, ((VariableColumn) columns[i]).getStr(localRowID));
                     break;
                 case SYMBOL:
                     int symbolIndex = ((FixedColumn) columns[i]).getInt(localRowID);
@@ -240,7 +244,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
                     }
                     break;
                 case BINARY:
-                    int size = ((VariableColumn) columns[i]).getBufferSize(localRowID);
+                    int size = ((VariableColumn) columns[i]).getBinSize(localRowID);
                     ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, m.meta.offset);
                     if (size == -1) {
                         if (buf != null) {
@@ -256,7 +260,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
                             buf.rewind();
                         }
                         buf.limit(size);
-                        ((VariableColumn) columns[i]).getBuffer(localRowID, buf, size);
+                        ((VariableColumn) columns[i]).getBin(localRowID, buf);
                         buf.flip();
                     }
 
@@ -277,18 +281,10 @@ public class Partition<T> implements Iterable<T>, Closeable {
                 Journal.ColumnMetadata meta = journal.getColumnMetadata(i);
 
                 switch (meta.meta.type) {
-                    case BOOLEAN:
-                    case BYTE:
-                    case DOUBLE:
-                    case LONG:
-                    case DATE:
-                    case SHORT:
-                        ((FixedColumn) columns[i]).copy(obj, meta.meta.offset, meta.meta.size);
-                        break;
                     case INT:
                         int v = Unsafe.getUnsafe().getInt(obj, meta.meta.offset);
                         if (meta.meta.indexed) {
-                            columnIndexProxies.get(i).getIndex().add(v % meta.meta.distinctCountHint, ((FixedColumn) columns[i]).putInt(v));
+                            sparseIndexProxies[i].getIndex().add(v % meta.meta.distinctCountHint, ((FixedColumn) columns[i]).putInt(v));
                         } else {
                             ((FixedColumn) columns[i]).putInt(v);
                         }
@@ -301,6 +297,9 @@ public class Partition<T> implements Iterable<T>, Closeable {
                         break;
                     case BINARY:
                         appendBin(obj, i, meta);
+                        break;
+                    default:
+                        ((FixedColumn) columns[i]).copy(obj, meta.meta.offset);
                         break;
                 }
 
@@ -510,7 +509,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
         if (buf == null || buf.remaining() == 0) {
             ((VariableColumn) columns[i]).putNull();
         } else {
-            ((VariableColumn) columns[i]).putBuffer(buf);
+            ((VariableColumn) columns[i]).putBin(buf);
         }
     }
 
@@ -523,7 +522,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
             key = meta.symbolTable.put(sym);
         }
         if (meta.meta.indexed) {
-            columnIndexProxies.get(i).getIndex().add(key, ((FixedColumn) columns[i]).putInt(key));
+            sparseIndexProxies[i].getIndex().add(key, ((FixedColumn) columns[i]).putInt(key));
         } else {
             ((FixedColumn) columns[i]).putInt(key);
         }
@@ -531,17 +530,12 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
     private void appendStr(T obj, int i, Journal.ColumnMetadata meta) throws JournalException {
         String s = (String) Unsafe.getUnsafe().getObject(obj, meta.meta.offset);
-        if (s == null) {
-            if (meta.meta.indexed) {
-                columnIndexProxies.get(i).getIndex().add(SymbolTable.VALUE_IS_NULL, ((VariableColumn) columns[i]).putNull());
-            } else {
-                ((VariableColumn) columns[i]).putNull();
-            }
-        } else {
-            long offset = ((VariableColumn) columns[i]).putString(s);
-            if (meta.meta.indexed) {
-                columnIndexProxies.get(i).getIndex().add(Checksum.hash(s, meta.meta.distinctCountHint), offset);
-            }
+        long offset = ((VariableColumn) columns[i]).putStr(s);
+        if (meta.meta.indexed) {
+            sparseIndexProxies[i].getIndex().add(
+                    s == null ? SymbolTable.VALUE_IS_NULL : Checksum.hash(s, meta.meta.distinctCountHint)
+                    , offset
+            );
         }
     }
 
@@ -650,17 +644,20 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
     }
 
+    @SuppressWarnings("unchecked")
     private void createSymbolIndexProxies(long[] indexTxAddresses) {
         indexProxies.clear();
-        columnIndexProxies.clear();
-        JournalMetadata<T> meta = journal.getMetadata();
+        if (sparseIndexProxies == null || sparseIndexProxies.length != columnCount) {
+            sparseIndexProxies = new SymbolIndexProxy[columnCount];
+        }
+
         for (int i = 0; i < columnCount; i++) {
-            if (meta.getColumnMetadata(i).indexed) {
+            if (journal.metadata.getColumnMetadata(i).indexed) {
                 SymbolIndexProxy<T> proxy = new SymbolIndexProxy<>(this, i, indexTxAddresses == null ? 0 : indexTxAddresses[i]);
                 indexProxies.add(proxy);
-                columnIndexProxies.add(proxy);
+                sparseIndexProxies[i] = proxy;
             } else {
-                columnIndexProxies.add(null);
+                sparseIndexProxies[i] = null;
             }
         }
     }

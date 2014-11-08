@@ -20,8 +20,8 @@ import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.journal.lang.cst.DataItem;
 import com.nfsdb.journal.lang.cst.JoinedSource;
+import com.nfsdb.journal.lang.cst.JournalEntry;
 import com.nfsdb.journal.lang.cst.Q;
 import com.nfsdb.journal.lang.cst.StatefulJournalSource;
 import com.nfsdb.journal.lang.cst.impl.QImpl;
@@ -116,7 +116,7 @@ public class JoinStringToSymbolTest {
 
 
         int count = 0;
-        for (DataItem d : src) {
+        for (JournalEntry d : src) {
             Album a = (Album) d.partition.read(d.rowid);
             Band b = null;
             if (d.slave != null) {

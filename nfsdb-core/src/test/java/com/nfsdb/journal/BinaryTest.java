@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,8 @@
 
 package com.nfsdb.journal;
 
+import com.nfsdb.journal.factory.configuration.JournalStructure;
+import com.nfsdb.journal.lang.cst.JournalEntry;
 import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.model.Band;
 import com.nfsdb.journal.test.tools.AbstractTest;
@@ -23,6 +25,8 @@ import com.nfsdb.journal.utils.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -78,5 +82,47 @@ public class BinaryTest extends AbstractTest {
         }
         writer.commit();
         LOGGER.info("Appended " + count + " 10k blobs in " + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t) + "ms.");
+    }
+
+    @Test
+    public void testGenericBinaryAppend() throws Exception {
+        JournalWriter writer = factory.writer(new JournalStructure("bintest") {{
+                                                  $str("name");
+                                                  $sym("genre");
+                                                  $bin("image");
+                                              }}
+        );
+
+        Rnd r = new Rnd();
+        List<byte[]> bytes = new ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            bytes.add(r.nextBytes((3 - i) * 1024));
+        }
+
+        JournalEntryWriter w = writer.entryWriter(0);
+        w.putStr(0, "Supertramp");
+        w.putSym(1, "jazz");
+        w.putBin(2, new ByteArrayInputStream(bytes.get(0)));
+        w.append();
+
+        w = writer.entryWriter(0);
+        w.putStr(0, "TinieTempah");
+        w.putSym(1, "pop");
+        w.putBin(2, new ByteArrayInputStream(bytes.get(1)));
+        w.append();
+
+        w.putStr(0, "Tom Waits");
+        w.putSym(1, "jazz");
+        w.putBin(2, new ByteArrayInputStream(bytes.get(2)));
+        w.append();
+
+        writer.commit();
+
+        int c = 0;
+        for (JournalEntry e : writer.rows()) {
+            ByteArrayOutputStream o = new ByteArrayOutputStream();
+            e.getBin(2, o);
+            Assert.assertArrayEquals(bytes.get(c++), o.toByteArray());
+        }
     }
 }

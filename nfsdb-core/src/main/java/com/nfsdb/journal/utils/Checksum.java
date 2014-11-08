@@ -68,7 +68,7 @@ public final class Checksum {
         }
     }
 
-    public static int hash(String s, int M) {
+    public static int hash(CharSequence s, int M) {
         return s == null ? 0 : (s.hashCode() & 0xFFFFFFF) % M;
     }
 

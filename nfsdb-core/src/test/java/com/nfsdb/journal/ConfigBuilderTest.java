@@ -16,49 +16,61 @@
 
 package com.nfsdb.journal;
 
-import com.nfsdb.journal.factory.JournalFactory;
-import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.journal.lang.cst.DataItem;
+import com.nfsdb.journal.factory.configuration.JournalStructure;
+import com.nfsdb.journal.lang.cst.JournalEntry;
 import com.nfsdb.journal.lang.cst.JournalSource;
 import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
 
 import java.util.Iterator;
 
 public class ConfigBuilderTest extends AbstractTest {
 
-    @Rule
-    public final TemporaryFolder temp = new TemporaryFolder();
-
     @Test
     public void testConfigWithoutClass() throws Exception {
-        JournalConfigurationBuilder builder = new JournalConfigurationBuilder() {{
-            $("test")
-                    .$double("bid")
-                    .$double("ask")
+        JournalWriter w = factory.writer(new JournalStructure("test") {{
+            $double("bid");
+            $double("ask");
+            $sym("sym").index();
+            $int("bidSize");
+            $int("askSize");
+            $sym("ex");
+            $sym("mode");
+            $ts();
+        }});
+        JournalEntryWriter b;
 
-            ;
-        }};
+        b = w.entryWriter(100);
+        b.putDouble(0, 10);
+        b.putDouble(1, 20);
+        b.putSym(2, "BP.L");
+        b.append();
 
-        JournalFactory factory = new JournalFactory(builder.build(temp.newFolder()));
-        JournalWriter w = factory.writer(new JournalKey<>("test"));
-        System.out.println(w.getLocation());
+        b = w.entryWriter(101);
+        b.putDouble(0, 15);
+        b.putDouble(1, 45);
+        b.putSym(2, "XX.L");
+        b.append();
 
-        Journal<Quote> r = factory.reader(Quote.class, "test");
-        System.out.println(r.getLocation());
-        System.out.println(r.getMetadata());
+        w.commit();
+
+        String expected = "10.0\t20.0\tBP.L\t0\t0\tnull\tnull\t1970-01-01T00:00:00.100Z\n" +
+                "15.0\t45.0\tXX.L\t0\t0\tnull\tnull\t1970-01-01T00:00:00.101Z";
+
+        Journal<MyQuote> r = factory.reader(MyQuote.class, "test");
+        TestUtils.assertEquals(expected, r.bufferedIterator());
     }
 
     @Test
     public void testWriteClassReadGeneric() throws Exception {
-        JournalWriter<Quote> w = factory.writer(Quote.class);
+        JournalWriter<Quote> w = factory.writer(Quote.class, "q");
         TestUtils.generateQuoteData(w, 10000);
-        Journal r = factory.reader(Quote.class.getName());
+
+
+        Journal r = factory.reader("q");
 
         Iterator<Quote> expected = w.bufferedIterator();
         JournalSource actual = r.rows();
@@ -76,7 +88,7 @@ public class ConfigBuilderTest extends AbstractTest {
             }
 
             Quote e = expected.next();
-            DataItem a = actual.next();
+            JournalEntry a = actual.next();
             Assert.assertEquals(e.getTimestamp(), a.getLong(0));
             Assert.assertEquals(e.getSym(), a.getSym(1));
             Assert.assertEquals(e.getBid(), a.getDouble(2), 0.0001);
@@ -86,5 +98,16 @@ public class ConfigBuilderTest extends AbstractTest {
             Assert.assertEquals(e.getMode(), a.getSym(6));
             Assert.assertEquals(e.getEx(), a.getSym(7));
         }
+    }
+
+    public static class MyQuote {
+        private double bid;
+        private double ask;
+        private String sym;
+        private int bidSize;
+        private int askSize;
+        private String ex;
+        private String mode;
+        private long timestamp;
     }
 }

@@ -91,7 +91,7 @@ public class SymbolTable implements Closeable {
     public int put(String value) {
         int key = getQuick(value);
         if (key == VALUE_NOT_FOUND) {
-            key = (int) data.putString(value);
+            key = (int) data.putStr(value);
             data.commit();
             index.add(hashKey(value), key);
             size++;
@@ -118,7 +118,7 @@ public class SymbolTable implements Closeable {
         Cursor cursor = index.cachedCursor(hashKey);
         while (cursor.hasNext()) {
             int key;
-            if (data.equalsString((key = (int) cursor.next()), value)) {
+            if (data.cmpStr((key = (int) cursor.next()), value)) {
                 cache(key, value);
                 return key;
             }
@@ -145,7 +145,7 @@ public class SymbolTable implements Closeable {
         }
         String value = key < keyCache.size() ? keyCache.get(key) : null;
         if (value == null) {
-            cache(key, value = data.getString(key));
+            cache(key, value = data.getStr(key));
         }
         return value;
     }
@@ -154,8 +154,8 @@ public class SymbolTable implements Closeable {
 
         return new AbstractImmutableIterator<String>() {
 
-            private long current = 0;
             private final long size = SymbolTable.this.size();
+            private long current = 0;
 
             @Override
             public boolean hasNext() {
@@ -164,7 +164,7 @@ public class SymbolTable implements Closeable {
 
             @Override
             public String next() {
-                return data.getString(current++);
+                return data.getStr(current++);
             }
         };
     }
@@ -201,7 +201,7 @@ public class SymbolTable implements Closeable {
     public void updateIndex(int oldSize, int newSize) {
         if (oldSize < newSize) {
             for (int i = oldSize; i < newSize; i++) {
-                index.add(hashKey(data.getString(i)), i);
+                index.add(hashKey(data.getStr(i)), i);
             }
         }
     }
@@ -212,7 +212,7 @@ public class SymbolTable implements Closeable {
 
     public SymbolTable preLoad() {
         for (int key = 0, size = (int) data.size(); key < size; key++) {
-            String value = data.getString(key);
+            String value = data.getStr(key);
             valueCache.putIfAbsent(value, key);
             keyCache.add(value);
 

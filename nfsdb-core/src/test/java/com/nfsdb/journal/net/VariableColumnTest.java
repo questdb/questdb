@@ -66,12 +66,12 @@ public class VariableColumnTest {
         int max = 150000;
 
         for (int i = 0; i < max; i++) {
-            col1.putString("test123" + (max - i));
+            col1.putStr("test123" + (max - i));
             col1.commit();
         }
 
         for (int i = 0; i < max - 50000; i++) {
-            col2.putString("test123" + (max - i));
+            col2.putStr("test123" + (max - i));
             col2.commit();
         }
 
@@ -85,7 +85,7 @@ public class VariableColumnTest {
         Assert.assertEquals(col1.size(), col2.size());
 
         for (int i = 0; i < max; i++) {
-            Assert.assertEquals("test123" + (max - i), col2.getString(i));
+            Assert.assertEquals("test123" + (max - i), col2.getStr(i));
         }
     }
 
@@ -99,12 +99,12 @@ public class VariableColumnTest {
         int max = 150000;
 
         for (int i = 0; i < max; i++) {
-            col1.putString("test123" + (max - i));
+            col1.putStr("test123" + (max - i));
             col1.commit();
         }
 
         for (int i = 0; i < max; i++) {
-            col2.putString("test123" + (max - i));
+            col2.putStr("test123" + (max - i));
             col2.commit();
         }
 
@@ -137,7 +137,7 @@ public class VariableColumnTest {
         int max = 150000;
 
         for (int i = 0; i < max; i++) {
-            col1.putString("test123" + (max - i));
+            col1.putStr("test123" + (max - i));
             col1.commit();
         }
 
@@ -151,7 +151,7 @@ public class VariableColumnTest {
         Assert.assertEquals(col1.size(), col2.size());
 
         for (int i = 0; i < max; i++) {
-            Assert.assertEquals("test123" + (max - i), col2.getString(i));
+            Assert.assertEquals("test123" + (max - i), col2.getStr(i));
         }
     }
 
@@ -165,12 +165,12 @@ public class VariableColumnTest {
         int max = 150000;
 
         for (int i = 0; i < max - 50000; i++) {
-            col1.putString("test123" + (max - i));
+            col1.putStr("test123" + (max - i));
             col1.commit();
         }
 
         for (int i = 0; i < max; i++) {
-            col2.putString("test123" + (max - i));
+            col2.putStr("test123" + (max - i));
             col2.commit();
         }
 
@@ -189,12 +189,12 @@ public class VariableColumnTest {
         int max = 150000;
 
         for (int i = 0; i < max; i++) {
-            col1.putString("test123" + (max - i));
+            col1.putStr("test123" + (max - i));
             col1.commit();
         }
 
         for (int i = 0; i < max - 50000; i++) {
-            col2.putString("test123" + (max - i));
+            col2.putStr("test123" + (max - i));
             col2.commit();
         }
 
@@ -208,7 +208,7 @@ public class VariableColumnTest {
         Assert.assertEquals(col1.size(), col2.size());
 
         for (int i = 0; i < 1000; i++) {
-            col1.putString("test123" + (max + 1000 - i));
+            col1.putStr("test123" + (max + 1000 - i));
             col1.commit();
         }
 
@@ -222,11 +222,11 @@ public class VariableColumnTest {
         Assert.assertEquals(col1.size(), col2.size());
 
         for (int i = 0; i < max; i++) {
-            Assert.assertEquals("test123" + (max - i), col2.getString(i));
+            Assert.assertEquals("test123" + (max - i), col2.getStr(i));
         }
 
         for (int i = 0; i < 1000; i++) {
-            Assert.assertEquals("test123" + (max + 1000 - i), col2.getString(i + max));
+            Assert.assertEquals("test123" + (max + 1000 - i), col2.getStr(i + max));
         }
     }
 

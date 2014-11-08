@@ -19,7 +19,7 @@ package com.nfsdb.journal.lang.cst.impl.dfrm;
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.Partition;
 import com.nfsdb.journal.column.FixedColumn;
-import com.nfsdb.journal.lang.cst.DataItem;
+import com.nfsdb.journal.lang.cst.JournalEntry;
 import com.nfsdb.journal.lang.cst.JournalSource;
 import com.nfsdb.journal.lang.cst.RowCursor;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
@@ -47,7 +47,7 @@ public class MapHeadDataFrameSource implements DataFrameSource, DataFrame, RowCu
         FixedColumn column = null;
         Partition p = null;
         int pIndex = 0;
-        for (DataItem d : source) {
+        for (JournalEntry d : source) {
             if (p != d.partition) {
                 column = (FixedColumn) d.partition.getAbstractColumn(columnIndex);
                 p = d.partition;

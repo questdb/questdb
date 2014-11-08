@@ -17,14 +17,14 @@
 package com.nfsdb.journal.lang.cst.impl.join;
 
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
-import com.nfsdb.journal.lang.cst.DataItem;
 import com.nfsdb.journal.lang.cst.JoinedSource;
+import com.nfsdb.journal.lang.cst.JournalEntry;
 import com.nfsdb.journal.lang.cst.JournalSource;
 
-public class SlaveResetOuterJoin extends AbstractImmutableIterator<DataItem> implements JoinedSource {
+public class SlaveResetOuterJoin extends AbstractImmutableIterator<JournalEntry> implements JoinedSource {
     private final JournalSource masterSource;
     private final JournalSource slaveSource;
-    private DataItem joinedData;
+    private JournalEntry joinedData;
     private boolean nextSlave = false;
 
     public SlaveResetOuterJoin(JournalSource masterSource, JournalSource slaveSource) {
@@ -45,7 +45,7 @@ public class SlaveResetOuterJoin extends AbstractImmutableIterator<DataItem> imp
     }
 
     @Override
-    public DataItem next() {
+    public JournalEntry next() {
         if (!nextSlave) {
             joinedData = masterSource.next();
             slaveSource.reset();

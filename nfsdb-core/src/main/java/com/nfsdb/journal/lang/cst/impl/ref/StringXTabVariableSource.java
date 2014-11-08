@@ -55,7 +55,7 @@ public class StringXTabVariableSource implements IntVariableSource, IntVariable 
     public int getValue() {
         if (switchPartition() || masterSource.current().rowid != rowid) {
             rowid = masterSource.current().rowid;
-            slaveKey = slaveTab.getQuick(column.getString(rowid));
+            slaveKey = slaveTab.getQuick(column.getStr(rowid));
         }
         return slaveKey;
     }

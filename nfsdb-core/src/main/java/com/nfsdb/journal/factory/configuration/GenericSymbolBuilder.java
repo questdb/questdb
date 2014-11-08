@@ -19,7 +19,7 @@ package com.nfsdb.journal.factory.configuration;
 import com.nfsdb.journal.column.ColumnType;
 
 public class GenericSymbolBuilder extends AbstractGenericMetadataBuilder {
-    public GenericSymbolBuilder(GenericJournalMetadataBuilder parent, ColumnMetadata meta) {
+    public GenericSymbolBuilder(JournalStructure parent, ColumnMetadata meta) {
         super(parent, meta);
         meta.type = ColumnType.SYMBOL;
         meta.size = 4;

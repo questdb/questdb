@@ -20,10 +20,10 @@ import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.lang.cst.*;
 
-public class JournalSourceImpl extends AbstractImmutableIterator<DataItem> implements JournalSource {
+public class JournalSourceImpl extends AbstractImmutableIterator<JournalEntry> implements JournalSource {
     private final PartitionSource partitionSource;
     private final RowSource rowSource;
-    private final DataItem item = new DataItem();
+    private final JournalEntry item = new JournalEntry();
     private RowCursor cursor;
 
     public JournalSourceImpl(PartitionSource partitionSource, RowSource rowSource) {
@@ -37,7 +37,7 @@ public class JournalSourceImpl extends AbstractImmutableIterator<DataItem> imple
     }
 
     @Override
-    public DataItem next() {
+    public JournalEntry next() {
         item.rowid = cursor.next();
         return item;
     }

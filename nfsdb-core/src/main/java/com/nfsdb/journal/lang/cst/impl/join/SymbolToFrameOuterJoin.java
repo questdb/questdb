@@ -22,8 +22,8 @@ import com.nfsdb.journal.column.FixedColumn;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
-import com.nfsdb.journal.lang.cst.DataItem;
 import com.nfsdb.journal.lang.cst.JoinedSource;
+import com.nfsdb.journal.lang.cst.JournalEntry;
 import com.nfsdb.journal.lang.cst.JournalSource;
 import com.nfsdb.journal.lang.cst.RowCursor;
 import com.nfsdb.journal.lang.cst.impl.dfrm.DataFrame;
@@ -33,13 +33,13 @@ import com.nfsdb.journal.utils.Rows;
 
 import java.util.Arrays;
 
-public class SymbolToFrameOuterJoin extends AbstractImmutableIterator<DataItem> implements JoinedSource {
+public class SymbolToFrameOuterJoin extends AbstractImmutableIterator<JournalEntry> implements JoinedSource {
     private final JournalSource masterSource;
     private final DataFrameSource slaveSource;
     private final StringRef masterSymbol;
     private final StringRef slaveSymbol;
-    private final DataItem dataItem = new DataItem();
-    private DataItem joinedData;
+    private final JournalEntry journalEntry = new JournalEntry();
+    private JournalEntry joinedData;
     private DataFrame frame;
     private int columnIndex;
     private SymbolTable masterTab;
@@ -79,7 +79,7 @@ public class SymbolToFrameOuterJoin extends AbstractImmutableIterator<DataItem> 
 
     @Override
     @SuppressWarnings("unchecked")
-    public DataItem next() {
+    public JournalEntry next() {
 
         if (!nextSlave) {
             nextMaster();
@@ -88,12 +88,12 @@ public class SymbolToFrameOuterJoin extends AbstractImmutableIterator<DataItem> 
         if (nextSlave || slaveCursor.hasNext()) {
             long rowid = slaveCursor.next();
             try {
-                dataItem.partition = slaveSource.getJournal().getPartition(Rows.toPartitionIndex(rowid), false);
-                dataItem.rowid = Rows.toLocalRowID(rowid);
+                journalEntry.partition = slaveSource.getJournal().getPartition(Rows.toPartitionIndex(rowid), false);
+                journalEntry.rowid = Rows.toLocalRowID(rowid);
             } catch (JournalException e) {
                 throw new JournalRuntimeException(e);
             }
-            joinedData.slave = dataItem;
+            joinedData.slave = journalEntry;
             nextSlave = slaveCursor.hasNext();
         } else {
             joinedData.slave = null;
@@ -109,7 +109,7 @@ public class SymbolToFrameOuterJoin extends AbstractImmutableIterator<DataItem> 
             frame = slaveSource.getFrame();
         }
 
-        DataItem m = masterSource.next();
+        JournalEntry m = masterSource.next();
         if (lastPartition != m.partition) {
             lastPartition = m.partition;
             column = (FixedColumn) m.partition.getAbstractColumn(columnIndex);

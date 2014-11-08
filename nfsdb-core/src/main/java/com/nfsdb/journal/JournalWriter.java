@@ -53,6 +53,7 @@ public class JournalWriter<T> extends Journal<T> {
     private final boolean checkOrder;
     private final PeekingListIterator<T> peekingListIterator = new PeekingListIterator<>();
     private final MergingIterator<T> mergingIterator = new MergingIterator<>();
+    private final JournalEntryWriterImpl journalEntryWriter;
     private Lock writeLock;
     private TxListener txListener;
     private TxAsyncListener txAsyncListener;
@@ -72,6 +73,7 @@ public class JournalWriter<T> extends Journal<T> {
         this.lagMillis = TimeUnit.HOURS.toMillis(getMetadata().getLag());
         this.lagSwellMillis = lagMillis * 3;
         this.checkOrder = key.isOrdered() && getTimestampOffset() != -1;
+        this.journalEntryWriter = new JournalEntryWriterImpl(this);
     }
 
     @Override
@@ -344,12 +346,43 @@ public class JournalWriter<T> extends Journal<T> {
             }
 
             appendPartition.append(obj);
-
-            if (timestamp > appendTimestampLo) {
-                appendTimestampLo = timestamp;
-            }
+            appendTimestampLo = timestamp;
         } else {
             getAppendPartition().append(obj);
+        }
+    }
+
+    public JournalEntryWriter entryWriter() throws JournalException {
+        return entryWriter(0);
+    }
+
+    public JournalEntryWriter entryWriter(long timestamp) throws JournalException {
+        if (!txActive) {
+            beginTx();
+        }
+
+        if (checkOrder) {
+            if (timestamp > appendTimestampHi) {
+                switchAppendPartition(timestamp);
+            }
+
+            if (timestamp < appendTimestampLo) {
+                throw new JournalException("Cannot insert records out of order. maxHardTimestamp=%d (%s), timestamp=%d (%s): %s"
+                        , appendTimestampLo, Dates.toString(appendTimestampLo), timestamp, Dates.toString(timestamp), this);
+            }
+
+            journalEntryWriter.setPartition(appendPartition, timestamp);
+            return journalEntryWriter;
+
+        } else {
+            journalEntryWriter.setPartition(getAppendPartition(), timestamp);
+            return journalEntryWriter;
+        }
+    }
+
+    void updateTsLo(long ts) {
+        if (checkOrder) {
+            appendTimestampLo = ts;
         }
     }
 
@@ -591,7 +624,7 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     @Override
-    protected void closePartitions() {
+    void closePartitions() {
         super.closePartitions();
         appendPartition = null;
         appendTimestampHi = -1;

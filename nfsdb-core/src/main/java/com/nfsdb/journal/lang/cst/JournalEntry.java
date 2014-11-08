@@ -19,10 +19,12 @@ package com.nfsdb.journal.lang.cst;
 import com.nfsdb.journal.Partition;
 import com.nfsdb.journal.column.FixedColumn;
 
-public class DataItem {
+import java.io.OutputStream;
+
+public class JournalEntry {
     public Partition<Object> partition;
     public long rowid;
-    public DataItem slave;
+    public JournalEntry slave;
 
     public int getColumnIndex(String column) {
         return partition.getJournal().getMetadata().getColumnIndex(column);
@@ -65,7 +67,7 @@ public class DataItem {
     }
 
     public String getStr(int col) {
-        return partition.getString(rowid, col);
+        return partition.getStr(rowid, col);
     }
 
     public String getSym(String column) {
@@ -73,7 +75,7 @@ public class DataItem {
     }
 
     public String getSym(int col) {
-        return partition.getSymbol(rowid, col);
+        return partition.getSym(rowid, col);
     }
 
     public boolean getBool(String column) {
@@ -82,6 +84,10 @@ public class DataItem {
 
     public boolean getBool(int col) {
         return partition.getBoolean(rowid, col);
+    }
+
+    public void getBin(int col, OutputStream s) {
+        partition.getBin(rowid, col, s);
     }
 
     @Override

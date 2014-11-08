@@ -20,6 +20,7 @@ import com.nfsdb.journal.JournalBulkWriter;
 import com.nfsdb.journal.JournalKey;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.factory.configuration.JMetadataBuilder;
 import com.nfsdb.journal.factory.configuration.JournalConfiguration;
 
 public interface JournalWriterFactory {
@@ -30,6 +31,8 @@ public interface JournalWriterFactory {
 
     <T> JournalWriter<T> writer(Class<T> clazz, String location, int recordHint) throws JournalException;
 
+    JournalWriter writer(String location) throws JournalException;
+
     <T> JournalWriter<T> writer(JournalKey<T> key) throws JournalException;
 
     <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz) throws JournalException;
@@ -37,6 +40,8 @@ public interface JournalWriterFactory {
     <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz, String location) throws JournalException;
 
     <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz, String location, int recordHint) throws JournalException;
+
+    <T> JournalWriter<T> writer(JMetadataBuilder<T> metadata) throws JournalException;
 
     <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException;
 

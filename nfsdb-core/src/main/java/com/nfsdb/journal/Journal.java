@@ -60,7 +60,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
     final List<Partition<T>> partitions = new ArrayList<>();
     // empty container for current transaction
     final Tx tx = new Tx();
-    private final JournalMetadata<T> metadata;
+    final JournalMetadata<T> metadata;
     private final File location;
     private final Map<String, SymbolTable> symbolTableMap = new HashMap<>();
     private final ArrayList<SymbolTable> symbolTables = new ArrayList<>();
@@ -79,7 +79,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
     private final BitSet inactiveColumns;
     TxLog txLog;
     boolean open;
-    private ColumnMetadata columnMetadata[];
+    ColumnMetadata[] columnMetadata;
     private Partition<T> irregularPartition;
     private JournalClosingListener closeListener;
 

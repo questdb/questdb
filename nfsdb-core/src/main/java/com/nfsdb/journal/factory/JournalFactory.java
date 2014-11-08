@@ -21,8 +21,10 @@ import com.nfsdb.journal.JournalKey;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.PartitionType;
 import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.factory.configuration.JMetadataBuilder;
 import com.nfsdb.journal.factory.configuration.JournalConfiguration;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
+import com.nfsdb.journal.factory.configuration.JournalMetadata;
 
 import java.io.Closeable;
 import java.io.File;
@@ -57,8 +59,19 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
     }
 
     @Override
+    public JournalWriter writer(String location) throws JournalException {
+        return writer(new JournalKey<>(location));
+    }
+
+    @Override
     public <T> JournalWriter<T> writer(JournalKey<T> key) throws JournalException {
         return new JournalWriter<>(getConfiguration().createMetadata(key), key, getTimerCache());
+    }
+
+    @Override
+    public <T> JournalWriter<T> writer(JMetadataBuilder<T> b) throws JournalException {
+        JournalMetadata<T> metadata = b.location(new File(getConfiguration().getJournalBase(), b.getLocation()).getAbsolutePath()).build();
+        return new JournalWriter<>(metadata, metadata.deriveKey(), getTimerCache());
     }
 
     @Override

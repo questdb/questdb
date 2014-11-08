@@ -17,8 +17,8 @@
 package com.nfsdb.journal.lang.cst.impl.dsrc;
 
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
-import com.nfsdb.journal.lang.cst.DataItem;
 import com.nfsdb.journal.lang.cst.DataSource;
+import com.nfsdb.journal.lang.cst.JournalEntry;
 import com.nfsdb.journal.lang.cst.JournalSource;
 
 public class DataSourceImpl<T> extends AbstractImmutableIterator<T> implements DataSource<T> {
@@ -38,7 +38,7 @@ public class DataSourceImpl<T> extends AbstractImmutableIterator<T> implements D
     @SuppressWarnings("unchecked")
     @Override
     public T next() {
-        DataItem item = journalSource.next();
+        JournalEntry item = journalSource.next();
         item.partition.read(item.rowid, container);
         return container;
     }

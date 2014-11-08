@@ -203,7 +203,7 @@ public class CstTest {
 
             Arrays.fill(map, -1);
 
-            for (DataItem d : q.forEachPartition(q.source(master, false), q.all())) {
+            for (JournalEntry d : q.forEachPartition(q.source(master, false), q.all())) {
 
                 if (last != d.partition) {
                     last = d.partition;
@@ -226,7 +226,7 @@ public class CstTest {
                 key.setValue(slaveKey);
                 src.reset();
                 int count = 0;
-                for (DataItem di : src) {
+                for (JournalEntry di : src) {
                     count++;
                 }
 //                System.out.println(count);
@@ -273,7 +273,7 @@ public class CstTest {
                 count = 0;
             }
             src.reset();
-            for (DataItem d : src) {
+            for (JournalEntry d : src) {
                 count++;
             }
         }
@@ -318,7 +318,7 @@ public class CstTest {
                 count = 0;
             }
             src.reset();
-            for (DataItem d : src) {
+            for (JournalEntry d : src) {
                 count++;
             }
         }

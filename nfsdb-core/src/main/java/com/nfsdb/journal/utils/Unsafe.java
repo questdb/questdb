@@ -22,21 +22,33 @@ import java.lang.reflect.Field;
 
 public final class Unsafe {
     private static final sun.misc.Unsafe UNSAFE;
-
-    public static sun.misc.Unsafe getUnsafe() {
-        return UNSAFE;
-    }
+    private static final long BYTE_ARRAY_OFFSET;
+    private static final long CHAR_ARRAY_OFFSET;
 
     static {
         try {
             Field theUnsafe = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
             theUnsafe.setAccessible(true);
             UNSAFE = (sun.misc.Unsafe) theUnsafe.get(null);
+            BYTE_ARRAY_OFFSET = UNSAFE.arrayBaseOffset(byte[].class);
+            CHAR_ARRAY_OFFSET = UNSAFE.arrayBaseOffset(char[].class);
         } catch (Exception e) {
             throw new JournalRuntimeException(e);
         }
     }
 
     private Unsafe() {
+    }
+
+    public static sun.misc.Unsafe getUnsafe() {
+        return UNSAFE;
+    }
+
+    public static long getByteArrayOffset() {
+        return BYTE_ARRAY_OFFSET;
+    }
+
+    public static long getCharArrayOffset() {
+        return CHAR_ARRAY_OFFSET;
     }
 }

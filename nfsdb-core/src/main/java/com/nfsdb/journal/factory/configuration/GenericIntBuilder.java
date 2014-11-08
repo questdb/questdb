@@ -20,7 +20,7 @@ import com.nfsdb.journal.column.ColumnType;
 
 public class GenericIntBuilder extends AbstractGenericMetadataBuilder {
 
-    public GenericIntBuilder(GenericJournalMetadataBuilder parent, ColumnMetadata meta) {
+    public GenericIntBuilder(JournalStructure parent, ColumnMetadata meta) {
         super(parent, meta);
         this.meta.type = ColumnType.INT;
         this.meta.size = 4;

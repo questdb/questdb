@@ -62,8 +62,12 @@ public class FixedColumn extends AbstractColumn {
         Unsafe.getUnsafe().putByte(getAddress(), b);
     }
 
-    public void copy(Object obj, long offset, long len) {
-        Unsafe.getUnsafe().copyMemory(obj, offset, null, getAddress(), len);
+    public void copy(Object obj, long offset) {
+        Unsafe.getUnsafe().copyMemory(obj, offset, null, getAddress(), width);
+    }
+
+    public void putNull() {
+        Unsafe.getUnsafe().setMemory(getAddress(), width, (byte) 0);
     }
 
     public void putDouble(double value) {

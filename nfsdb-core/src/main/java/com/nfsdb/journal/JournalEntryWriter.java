@@ -14,27 +14,34 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.column;
+package com.nfsdb.journal;
 
 import com.nfsdb.journal.exceptions.JournalException;
 
-import java.io.Closeable;
-import java.nio.MappedByteBuffer;
+import java.io.InputStream;
 
-public interface MappedFile extends Closeable {
-    public MappedByteBuffer getBuffer(long offset, int size);
+public interface JournalEntryWriter {
+    long getTimestamp();
 
-    long getAddress(long offset, int size);
+    void put(int index, byte value);
 
-    int getLocalRemaining(long offset);
+    void putLong(int index, long value);
 
-    void close();
+    void putDate(int index, long value);
 
-    long getAppendOffset();
+    void putDouble(int index, double value);
 
-    void setAppendOffset(long offset);
+    void putStr(int index, String value);
 
-    void compact() throws JournalException;
+    void putSym(int index, String value);
 
-    void force();
+    void putBin(int index, InputStream value);
+
+    void putNull(int index);
+
+    void putInt(int index, int value);
+
+    void putBool(int index, boolean value);
+
+    void append() throws JournalException;
 }

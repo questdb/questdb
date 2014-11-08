@@ -16,6 +16,7 @@
 
 package com.nfsdb.journal.factory.configuration;
 
+import com.nfsdb.journal.JournalKey;
 import com.nfsdb.journal.PartitionType;
 import com.nfsdb.journal.column.HugeBuffer;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
@@ -23,6 +24,8 @@ import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import java.io.File;
 
 public interface JournalMetadata<T> {
+
+    JournalKey<T> deriveKey();
 
     ColumnMetadata getColumnMetadata(String name);
 

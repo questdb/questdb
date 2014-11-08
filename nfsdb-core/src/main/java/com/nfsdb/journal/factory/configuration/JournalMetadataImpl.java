@@ -16,6 +16,7 @@
 
 package com.nfsdb.journal.factory.configuration;
 
+import com.nfsdb.journal.JournalKey;
 import com.nfsdb.journal.PartitionType;
 import com.nfsdb.journal.column.HugeBuffer;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
@@ -126,6 +127,15 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
         buf.put(ioBlockTxCount);
         buf.put(key);
         buf.put(lag);
+    }
+
+    @Override
+    public JournalKey<T> deriveKey() {
+        if (modelClass != null) {
+            return new JournalKey<>(modelClass, location);
+        } else {
+            return new JournalKey<>(location);
+        }
     }
 
     @Override

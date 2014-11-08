@@ -20,7 +20,7 @@ import com.nfsdb.journal.column.ColumnType;
 
 public class GenericStringBuilder extends AbstractGenericMetadataBuilder {
 
-    public GenericStringBuilder(GenericJournalMetadataBuilder parent, ColumnMetadata meta) {
+    public GenericStringBuilder(JournalStructure parent, ColumnMetadata meta) {
         super(parent, meta);
         meta.type = ColumnType.STRING;
         size(this.meta.avgSize);
