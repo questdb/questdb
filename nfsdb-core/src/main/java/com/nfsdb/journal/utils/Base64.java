@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-ackage com.nfsdb.journal.utils;
+package com.nfsdb.journal.utils;
 
 public class Base64 {
 
