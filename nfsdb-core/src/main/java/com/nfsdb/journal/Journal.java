@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@ import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.concurrent.TimerCache;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
-import com.nfsdb.journal.exceptions.JournalUnsupportedTypeException;
 import com.nfsdb.journal.factory.JournalClosingListener;
 import com.nfsdb.journal.factory.configuration.Constants;
 import com.nfsdb.journal.factory.configuration.JournalMetadata;
@@ -61,6 +60,9 @@ public class Journal<T> implements Iterable<T>, Closeable {
     // empty container for current transaction
     final Tx tx = new Tx();
     final JournalMetadata<T> metadata;
+    TxLog txLog;
+    boolean open;
+    ColumnMetadata[] columnMetadata;
     private final File location;
     private final Map<String, SymbolTable> symbolTableMap = new HashMap<>();
     private final ArrayList<SymbolTable> symbolTables = new ArrayList<>();
@@ -77,9 +79,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
         }
     };
     private final BitSet inactiveColumns;
-    TxLog txLog;
-    boolean open;
-    ColumnMetadata[] columnMetadata;
     private Partition<T> irregularPartition;
     private JournalClosingListener closeListener;
 
@@ -383,6 +382,9 @@ public class Journal<T> implements Iterable<T>, Closeable {
                 case INT:
                     Unsafe.getUnsafe().putInt(obj, m.offset, 0);
                     break;
+                case SHORT:
+                    Unsafe.getUnsafe().putShort(obj, m.offset, (short) 0);
+                    break;
                 case LONG:
                 case DATE:
                     Unsafe.getUnsafe().putLong(obj, m.offset, 0L);
@@ -398,7 +400,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
                     }
                     break;
                 default:
-                    throw new JournalUnsupportedTypeException(m.type);
+                    throw new JournalRuntimeException("Unsupported type: " + m.type);
             }
         }
     }

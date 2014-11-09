@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,9 +29,6 @@ import java.nio.channels.WritableByteChannel;
 public final class ByteBuffers {
 
     private static final int[] multipliers = new int[]{1, 3, 5, 7, 9, 11, 13};
-
-    private ByteBuffers() {
-    }
 
     public static void copy(ByteBuffer from, WritableByteChannel to) throws JournalNetworkException {
         copy(from, to, from.remaining());
@@ -203,5 +200,8 @@ public final class ByteBuffers {
             p += 2;
         }
         buffer.position(p);
+    }
+
+    private ByteBuffers() {
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,6 +34,16 @@ public class PartitionDeltaConsumer extends ChannelConsumerGroup {
         this.oldSize = partition.size();
     }
 
+    @Override
+    protected void commit() throws JournalNetworkException {
+        super.commit();
+        partition.commitColumns();
+        partition.applyTx(Journal.TX_LIMIT_EVAL, null);
+        long size = partition.size();
+        partition.updateIndexes(oldSize, size);
+        oldSize = size;
+    }
+
     private static ChannelConsumer[] getColumnConsumers(Partition partition) {
         ChannelConsumer consumers[] = new ChannelConsumer[partition.getJournal().getMetadata().getColumnCount()];
         for (int i = 0; i < consumers.length; i++) {
@@ -45,15 +55,5 @@ public class PartitionDeltaConsumer extends ChannelConsumerGroup {
             }
         }
         return consumers;
-    }
-
-    @Override
-    protected void commit() throws JournalNetworkException {
-        super.commit();
-        partition.commitColumns();
-        partition.applyTx(Journal.TX_LIMIT_EVAL, null);
-        long size = partition.size();
-        partition.updateIndexes(oldSize, size);
-        oldSize = size;
     }
 }

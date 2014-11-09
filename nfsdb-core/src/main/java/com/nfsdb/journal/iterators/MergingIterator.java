@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,18 +33,6 @@ public class MergingIterator<T> extends AbstractImmutableIterator<T> {
 
     public static <T, X extends ImmutableIterator<T>> ImmutableIterator<T> merge(List<X> iterators, Comparator<T> comparator) {
         return merge(iterators, comparator, 0);
-    }
-
-    private static <T, X extends ImmutableIterator<T>> ImmutableIterator<T> merge(List<X> iterators, Comparator<T> comparator, int index) {
-        if (iterators == null || iterators.size() == 0) {
-            throw new IllegalArgumentException();
-        }
-
-        if (iterators.size() - index == 1) {
-            return iterators.get(index);
-        }
-
-        return new MergingIterator<T>().$new(iterators.get(index), merge(iterators, comparator, ++index), comparator);
     }
 
     @Override
@@ -82,5 +70,17 @@ public class MergingIterator<T> extends AbstractImmutableIterator<T> {
         }
 
         return result;
+    }
+
+    private static <T, X extends ImmutableIterator<T>> ImmutableIterator<T> merge(List<X> iterators, Comparator<T> comparator, int index) {
+        if (iterators == null || iterators.size() == 0) {
+            throw new IllegalArgumentException();
+        }
+
+        if (iterators.size() - index == 1) {
+            return iterators.get(index);
+        }
+
+        return new MergingIterator<T>().$new(iterators.get(index), merge(iterators, comparator, ++index), comparator);
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,15 +33,11 @@ public class Logger {
 
     /////////////////////////////////////////////////////////////////
 
-    private Logger(Class<?> aClass) {
-        logger = java.util.logging.Logger.getLogger(aClass.getName());
-    }
-
-    /////////////////////////////////////////////////////////////////
-
     public static Logger getLogger(Class<?> clazz) {
         return new Logger(clazz);
     }
+
+    /////////////////////////////////////////////////////////////////
 
     public void trace(java.lang.Object message) {
         logger.finest(message.toString());
@@ -53,12 +49,12 @@ public class Logger {
         }
     }
 
-
-    /////////////////////////////////////////////////////////////////
-
     public boolean isTraceEnabled() {
         return logger.isLoggable(Level.FINEST);
     }
+
+
+    /////////////////////////////////////////////////////////////////
 
     public void debug(java.lang.Object message) {
         logger.fine(message.toString());
@@ -70,11 +66,11 @@ public class Logger {
         }
     }
 
-    /////////////////////////////////////////////////////////////////
-
     public boolean isDebugEnabled() {
         return logger.isLoggable(Level.FINE);
     }
+
+    /////////////////////////////////////////////////////////////////
 
     public void info(java.lang.Object message) {
         log(Level.INFO, message.toString());
@@ -108,8 +104,6 @@ public class Logger {
         }
     }
 
-    /////////////////////////////////////////////////////////////////
-
     public void error(java.lang.Object message) {
         logger.severe(message.toString());
     }
@@ -120,6 +114,8 @@ public class Logger {
         log(Level.SEVERE, message.toString(), throwable);
     }
 
+    /////////////////////////////////////////////////////////////////
+
     public void error(String format, Object... args) {
         if (isErrorEnabled()) {
             log(Level.SEVERE, String.format(format, args));
@@ -128,6 +124,10 @@ public class Logger {
 
     public boolean isErrorEnabled() {
         return logger.isLoggable(Level.SEVERE);
+    }
+
+    private Logger(Class<?> aClass) {
+        logger = java.util.logging.Logger.getLogger(aClass.getName());
     }
 
     private void log(Level level, String message) {

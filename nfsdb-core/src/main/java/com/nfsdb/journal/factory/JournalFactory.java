@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -70,7 +70,7 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
 
     @Override
     public <T> JournalWriter<T> writer(JMetadataBuilder<T> b) throws JournalException {
-        JournalMetadata<T> metadata = b.location(new File(getConfiguration().getJournalBase(), b.getLocation()).getAbsolutePath()).build();
+        JournalMetadata<T> metadata = getConfiguration().augmentMetadata(b);
         return new JournalWriter<>(metadata, metadata.deriveKey(), getTimerCache());
     }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.nfsdb.journal.JournalKey;
 import com.nfsdb.journal.JournalMode;
 import com.nfsdb.journal.column.HugeBuffer;
 import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.exceptions.JournalMetadataException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.utils.Base64;
 import com.nfsdb.journal.utils.Checksum;
@@ -39,41 +40,25 @@ public class JournalConfigurationImpl implements JournalConfiguration {
         this.journalMetadata = journalMetadata;
     }
 
-    private String getLocation(JournalKey key) {
-        if (key.getLocation() != null) {
-            return key.getLocation();
+    public <T> JournalMetadata<T> augmentMetadata(JMetadataBuilder<T> builder) throws JournalException {
+        File journalLocation = new File(getJournalBase(), builder.getLocation());
+
+        JournalMetadata<T> mo = readMetadata(journalLocation);
+        JournalMetadata<T> mn = builder.location(journalLocation).build();
+
+        if (mo == null || eq(Checksum.getChecksum(mo), Checksum.getChecksum(mn))) {
+            return mn;
         }
 
-        JournalMetadata m = journalMetadata.get(key.getId());
-        if (m == null) {
-            if (key.getModelClass() == null) {
-                return key.getId();
-            }
-
-            return key.getModelClass().getName();
-        }
-
-        return m.getLocation();
+        throw new JournalMetadataException(mo, mn);
     }
 
     @SuppressWarnings("unchecked")
     @Override
     public <T> JournalMetadata<T> createMetadata(JournalKey<T> key) throws JournalException {
         File journalLocation = new File(getJournalBase(), getLocation(key));
-        JournalMetadata<T> mo = null;
 
-        if (journalLocation.exists()) {
-            File metaFile = new File(journalLocation, "_meta2");
-            if (!metaFile.exists()) {
-                // todo: read old meta file for compatibility
-                throw new JournalException(journalLocation + " is not a recognised journal");
-            }
-
-            try (HugeBuffer hb = new HugeBuffer(metaFile, 12, JournalMode.READ)) {
-                mo = new JournalMetadataImpl<>(hb);
-            }
-        }
-
+        JournalMetadata<T> mo = readMetadata(journalLocation);
         JournalMetadata<T> mn = journalMetadata.get(key.getId());
 
         if (mo == null) {
@@ -105,61 +90,25 @@ public class JournalConfigurationImpl implements JournalConfiguration {
                 if (key.getModelClass() == null) {
                     // if this is generic access request
                     // return metadata as is, nothing more to do
-                    return (JournalMetadata<T>) new JournalStructure(mo).location(journalLocation.getAbsolutePath()).build();
+                    return (JournalMetadata<T>) new JournalStructure(mo).location(journalLocation).build();
                 }
                 // if this is request to map class on existing journal
                 // check compatibility and map to class (calc offsets and constructor)
-                return new JournalStructure(mo).location(journalLocation.getAbsolutePath()).map(key.getModelClass());
+                return new JournalStructure(mo).location(journalLocation).map(key.getModelClass());
             }
 
             // we have both on-disk and in-app meta
             // check if in-app meta matches on-disk meta
             if (eq(Checksum.getChecksum(mo), Checksum.getChecksum(mn))) {
                 if (mn.getModelClass() == null) {
-                    return (JournalMetadata<T>) new JournalStructure(mn).location(journalLocation.getAbsolutePath()).build();
+                    return (JournalMetadata<T>) new JournalStructure(mn).location(journalLocation).build();
                 }
-                return new JournalMetadataBuilder<>(mn).location(journalLocation.getAbsolutePath()).build();
+                return new JournalMetadataBuilder<>(mn).location(journalLocation).build();
             }
 
-            throw new JournalException("Checksum mismatch");
+            throw new JournalMetadataException(mo, mn);
         }
     }
-
-    private boolean eq(byte[] expected, byte[] actual) {
-        if (expected.length != actual.length) {
-            return false;
-        }
-
-        for (int i = 0; i < expected.length; i++) {
-            if (expected[i] != actual[i]) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private <T> JMetadataBuilder<T> apply(JMetadataBuilder<T> builder, JournalKey<T> key, File journalLocation) {
-        if (key.getPartitionType() != null) {
-            switch (key.getPartitionType()) {
-                case NONE:
-                case DAY:
-                case MONTH:
-                case YEAR:
-                    builder.partitionBy(key.getPartitionType());
-                    break;
-                case DEFAULT:
-                    break;
-            }
-        }
-
-        if (key.getRecordHint() > NULL_RECORD_HINT) {
-            builder.recordCountHint(key.getRecordHint());
-        }
-
-        return builder.location(journalLocation.getAbsolutePath());
-    }
-
 
     @SuppressWarnings("unchecked")
     public <T> JournalMetadata<T> createMetadata2(JournalKey<T> key) throws JournalException {
@@ -215,7 +164,7 @@ public class JournalConfigurationImpl implements JournalConfiguration {
             journalMetadata.put(key.getId(), m);
         }
 
-        builder.location(journalLocation.getAbsolutePath());
+        builder.location(journalLocation);
 
         JournalMetadata<T> result = builder.build();
 
@@ -245,5 +194,72 @@ public class JournalConfigurationImpl implements JournalConfiguration {
     @Override
     public File getJournalBase() {
         return journalBase;
+    }
+
+    private <T> JournalMetadata<T> readMetadata(File location) throws JournalException {
+        if (location.exists()) {
+            File metaFile = new File(location, "_meta2");
+            if (!metaFile.exists()) {
+                // todo: read old meta file for compatibility
+                throw new JournalException(location + " is not a recognised journal");
+            }
+
+            try (HugeBuffer hb = new HugeBuffer(metaFile, 12, JournalMode.READ)) {
+                return new JournalMetadataImpl<>(hb);
+            }
+        }
+        return null;
+    }
+
+    private String getLocation(JournalKey key) {
+        if (key.getLocation() != null) {
+            return key.getLocation();
+        }
+
+        JournalMetadata m = journalMetadata.get(key.getId());
+        if (m == null) {
+            if (key.getModelClass() == null) {
+                return key.getId();
+            }
+
+            return key.getModelClass().getName();
+        }
+
+        return m.getLocation();
+    }
+
+    private boolean eq(byte[] expected, byte[] actual) {
+        if (expected.length != actual.length) {
+            return false;
+        }
+
+        for (int i = 0; i < expected.length; i++) {
+            if (expected[i] != actual[i]) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private <T> JMetadataBuilder<T> apply(JMetadataBuilder<T> builder, JournalKey<T> key, File journalLocation) {
+        if (key.getPartitionType() != null) {
+            switch (key.getPartitionType()) {
+                case NONE:
+                case DAY:
+                case MONTH:
+                case YEAR:
+                    builder.partitionBy(key.getPartitionType());
+                    break;
+                case DEFAULT:
+                    break;
+            }
+        }
+
+        if (key.getRecordHint() > NULL_RECORD_HINT) {
+            builder.recordCountHint(key.getRecordHint());
+        }
+
+        return builder.location(journalLocation);
     }
 }

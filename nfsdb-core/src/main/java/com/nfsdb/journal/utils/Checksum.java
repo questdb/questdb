@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,9 +29,6 @@ public final class Checksum {
 
     private static final ThreadLocal<MessageDigest> localMd = new ThreadLocal<>();
     private static final ThreadLocal<ByteBuffer> localBuf = new ThreadLocal<>();
-
-    private Checksum() {
-    }
 
     public static byte[] getChecksum(JournalMetadata<?> metadata) throws JournalRuntimeException {
         try {
@@ -70,6 +67,9 @@ public final class Checksum {
 
     public static int hash(CharSequence s, int M) {
         return s == null ? 0 : (s.hashCode() & 0xFFFFFFF) % M;
+    }
+
+    private Checksum() {
     }
 
     private static ByteBuffer flushBuf(MessageDigest md, ByteBuffer buf, int len) {

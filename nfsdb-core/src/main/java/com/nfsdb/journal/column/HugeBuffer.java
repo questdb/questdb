@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -145,12 +145,6 @@ public class HugeBuffer extends MappedFileImpl {
         }
     }
 
-    private long nextAddress(int len) {
-        long a = getAddress(pos, len);
-        pos += len;
-        return a;
-    }
-
     public int getInt() {
         return Unsafe.getUnsafe().getInt(nextAddress(4));
     }
@@ -165,5 +159,11 @@ public class HugeBuffer extends MappedFileImpl {
 
     public byte get() {
         return Unsafe.getUnsafe().getByte(nextAddress(1));
+    }
+
+    private long nextAddress(int len) {
+        long a = getAddress(pos, len);
+        pos += len;
+        return a;
     }
 }

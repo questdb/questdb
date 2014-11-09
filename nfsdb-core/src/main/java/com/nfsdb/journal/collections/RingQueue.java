@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -56,6 +56,33 @@ public class RingQueue<T> {
         buffer[((int) (pos % len))] = value;
     }
 
+    public boolean hasNext() {
+        return readPos < writePos;
+    }
+
+    public T next() {
+        return buffer[((int) (readPos++ % len))];
+    }
+
+    public void mark() {
+        writeStart = readPos - 1;
+    }
+
+    public void toMark() {
+        readPos = writeStart;
+    }
+
+    @Override
+    public String toString() {
+        return "RingQueue{" +
+                "len=" + len +
+                ", writeStart=" + writeStart +
+                ", writePos=" + writePos +
+                ", readPos=" + readPos +
+                ", init=" + init +
+                '}';
+    }
+
     @SuppressWarnings("unchecked")
     private void resize() {
         int newLen = len * 2;
@@ -82,32 +109,5 @@ public class RingQueue<T> {
 
         this.buffer = buf;
         this.len = newLen;
-    }
-
-    public boolean hasNext() {
-        return readPos < writePos;
-    }
-
-    public T next() {
-        return buffer[((int) (readPos++ % len))];
-    }
-
-    public void mark() {
-        writeStart = readPos - 1;
-    }
-
-    public void toMark() {
-        readPos = writeStart;
-    }
-
-    @Override
-    public String toString() {
-        return "RingQueue{" +
-                "len=" + len +
-                ", writeStart=" + writeStart +
-                ", writePos=" + writePos +
-                ", readPos=" + readPos +
-                ", init=" + init +
-                '}';
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,6 +54,10 @@ public class JournalEntry {
         return partition.getLong(rowid, col);
     }
 
+    public long getDate(int col) {
+        return partition.getLong(rowid, col);
+    }
+
     public double getDouble(String column) {
         return getDouble(getColumnIndex(column));
     }
@@ -88,6 +92,10 @@ public class JournalEntry {
 
     public void getBin(int col, OutputStream s) {
         partition.getBin(rowid, col, s);
+    }
+
+    public short getShort(int col) {
+        return partition.getShort(rowid, col);
     }
 
     @Override

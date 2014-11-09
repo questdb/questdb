@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,9 +42,6 @@ import java.util.Random;
 import java.util.UUID;
 
 public final class TestUtils {
-
-    private TestUtils() {
-    }
 
     public static void generateQuoteData(JournalWriter<Quote> w, int count) throws JournalException {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
@@ -331,6 +328,9 @@ public final class TestUtils {
             }
             Assert.assertEquals(expected.next(), actual.next());
         }
+    }
+
+    private TestUtils() {
     }
 
     private static <T> void out(JournalPrinter p, JournalIterator<T> iterator) throws IOException {

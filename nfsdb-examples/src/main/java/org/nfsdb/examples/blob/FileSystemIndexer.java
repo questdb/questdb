@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,15 +22,18 @@ import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.factory.configuration.JournalStructure;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
+import java.util.zip.GZIPOutputStream;
 
 public class FileSystemIndexer {
-    public static void main(String[] args) throws JournalException, IOException {
-        JournalFactory factory = new JournalFactory(args[0]);
+    private static final byte[] buffer = new byte[1024 * 1024];
 
+    public static void main(String[] args) throws JournalException, IOException {
+
+        final String nfsdb = args[0];
+        final String dirToIndex = args[1];
+
+        JournalFactory factory = new JournalFactory(nfsdb);
 
         JournalWriter writer = factory.writer(new JournalStructure("files") {{
             $sym("name").index();
@@ -39,7 +42,7 @@ public class FileSystemIndexer {
         }});
 
         long t = System.currentTimeMillis();
-        int count = processDir(writer, new File("/Users/vlad/dev/site/nfsdb"));
+        int count = processDir(writer, new File(dirToIndex));
         System.out.println("Added " + count + " files in " + (System.currentTimeMillis() - t) + " ms.");
     }
 
@@ -57,15 +60,25 @@ public class FileSystemIndexer {
                 JournalEntryWriter w = writer.entryWriter(System.currentTimeMillis());
                 w.putSym(0, f.getAbsolutePath());
 
-                try (InputStream s = new FileInputStream(f)) {
-                    w.putBin(1, s);
+                try (InputStream in = new FileInputStream(f)) {
+                    try (GZIPOutputStream out = new GZIPOutputStream(w.putBin(1))) {
+                        pump(in, out);
+                    }
                 }
 
                 w.append();
                 count++;
             }
+            writer.commit();
         }
 
         return count;
+    }
+
+    private static void pump(InputStream in, OutputStream out) throws IOException {
+        int r;
+        while ((r = in.read(buffer)) != -1) {
+            out.write(buffer, 0, r);
+        }
     }
 }

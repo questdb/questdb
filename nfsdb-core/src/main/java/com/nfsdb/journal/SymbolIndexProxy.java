@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,13 +34,6 @@ class SymbolIndexProxy<T> implements Closeable {
     private KVIndex index;
     private long lastAccessed;
     private long txAddress;
-
-    SymbolIndexProxy(Partition<T> partition, int columnIndex, long txAddress) {
-        this.partition = partition;
-        this.columnIndex = columnIndex;
-        this.txAddress = txAddress;
-        this.timerCache = partition.getJournal().getTimerCache();
-    }
 
     public void close() {
         if (index != null) {
@@ -88,5 +81,12 @@ class SymbolIndexProxy<T> implements Closeable {
             );
         }
         return index;
+    }
+
+    SymbolIndexProxy(Partition<T> partition, int columnIndex, long txAddress) {
+        this.partition = partition;
+        this.columnIndex = columnIndex;
+        this.txAddress = txAddress;
+        this.timerCache = partition.getJournal().getTimerCache();
     }
 }

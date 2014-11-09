@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -380,12 +380,6 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
-    void updateTsLo(long ts) {
-        if (checkOrder) {
-            appendTimestampLo = ts;
-        }
-    }
-
     /**
      * Max timestamp in journal for append operation. Objects with timestamp older then
      * this will always be rejected.
@@ -624,13 +618,6 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     @Override
-    void closePartitions() {
-        super.closePartitions();
-        appendPartition = null;
-        appendTimestampHi = -1;
-    }
-
-    @Override
     protected void configure() throws JournalException {
         writeLock = LockManager.lockExclusive(getLocation());
         if (writeLock == null || !writeLock.isValid()) {
@@ -664,6 +651,19 @@ public class JournalWriter<T> extends Journal<T> {
             this.partitionCleaner.start();
         }
 
+    }
+
+    void updateTsLo(long ts) {
+        if (checkOrder) {
+            appendTimestampLo = ts;
+        }
+    }
+
+    @Override
+    void closePartitions() {
+        super.closePartitions();
+        appendPartition = null;
+        appendTimestampHi = -1;
     }
 
     private void switchAppendPartition(long timestamp) throws JournalException {

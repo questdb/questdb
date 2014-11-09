@@ -84,15 +84,6 @@ public class JournalKey<T> {
         this.ordered = ordered;
     }
 
-    private JournalKey(String clazz, String location, PartitionType partitionType, int recordHint, boolean ordered) {
-        this.modelClass = null;
-        this.id = clazz;
-        this.location = location;
-        this.partitionType = partitionType;
-        this.recordHint = recordHint;
-        this.ordered = ordered;
-    }
-
     public static JournalKey<Object> fromBuffer(ByteBuffer buffer) {
         // id
         int clazzLen = buffer.getInt();
@@ -160,8 +151,6 @@ public class JournalKey<T> {
         return result;
     }
 
-    //////////////////////// REPLICATION CODE //////////////////////
-
     @Override
     public String toString() {
         return "JournalKey{" +
@@ -172,6 +161,8 @@ public class JournalKey<T> {
                 ", ordered=" + ordered +
                 '}';
     }
+
+    //////////////////////// REPLICATION CODE //////////////////////
 
     public int getBufferSize() {
         return 4 + id.getBytes(Files.UTF_8).length + 4 + 2 * (location == null ? 0 : location.length()) + 1 + 1 + 4;
@@ -192,5 +183,14 @@ public class JournalKey<T> {
         buffer.putInt(recordHint);
         // ordered
         buffer.put((byte) (ordered ? 1 : 0));
+    }
+
+    private JournalKey(String clazz, String location, PartitionType partitionType, int recordHint, boolean ordered) {
+        this.modelClass = null;
+        this.id = clazz;
+        this.location = location;
+        this.partitionType = partitionType;
+        this.recordHint = recordHint;
+        this.ordered = ordered;
     }
 }

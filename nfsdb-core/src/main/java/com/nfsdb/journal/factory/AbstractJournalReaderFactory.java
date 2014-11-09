@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,15 +29,6 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
 
     private final TimerCache timerCache;
     private final JournalConfiguration configuration;
-
-    AbstractJournalReaderFactory(JournalConfiguration configuration) {
-        this(configuration, new TimerCache().start());
-    }
-
-    AbstractJournalReaderFactory(JournalConfiguration configuration, TimerCache timerCache) {
-        this.timerCache = timerCache;
-        this.configuration = configuration;
-    }
 
     @Override
     public <T> Journal<T> reader(Class<T> clazz, String location) throws JournalException {
@@ -103,6 +94,15 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
             new JournalWriter<>(metadata, key, timerCache).close();
         }
         return metadata;
+    }
+
+    AbstractJournalReaderFactory(JournalConfiguration configuration) {
+        this(configuration, new TimerCache().start());
+    }
+
+    AbstractJournalReaderFactory(JournalConfiguration configuration, TimerCache timerCache) {
+        this.timerCache = timerCache;
+        this.configuration = configuration;
     }
 
 }

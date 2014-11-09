@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,72 +42,64 @@ public class Quote {
         return timestamp;
     }
 
-    public Quote setTimestamp(long timestamp) {
+    public void setTimestamp(long timestamp) {
         this.timestamp = timestamp;
-        return this;
     }
 
     public String getSym() {
         return sym;
     }
 
-    public Quote setSym(String sym) {
+    public void setSym(String sym) {
         this.sym = sym;
-        return this;
     }
 
     public double getBid() {
         return bid;
     }
 
-    public Quote setBid(double bid) {
+    public void setBid(double bid) {
         this.bid = bid;
-        return this;
     }
 
     public double getAsk() {
         return ask;
     }
 
-    public Quote setAsk(double ask) {
+    public void setAsk(double ask) {
         this.ask = ask;
-        return this;
     }
 
     public int getBidSize() {
         return bidSize;
     }
 
-    public Quote setBidSize(int bidSize) {
+    public void setBidSize(int bidSize) {
         this.bidSize = bidSize;
-        return this;
     }
 
     public int getAskSize() {
         return askSize;
     }
 
-    public Quote setAskSize(int askSize) {
+    public void setAskSize(int askSize) {
         this.askSize = askSize;
-        return this;
     }
 
     public String getMode() {
         return mode;
     }
 
-    public Quote setMode(String mode) {
+    public void setMode(String mode) {
         this.mode = mode;
-        return this;
     }
 
     public String getEx() {
         return ex;
     }
 
-    public Quote setEx(String ex) {
+    public void setEx(String ex) {
         this.ex = ex;
-        return this;
     }
 
     @Override

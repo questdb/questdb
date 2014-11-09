@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import com.nfsdb.journal.utils.Unsafe;
 import gnu.trove.map.TObjectIntMap;
 import gnu.trove.map.hash.TObjectIntHashMap;
 
+import java.io.File;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
@@ -117,13 +118,6 @@ public class JournalStructure implements JMetadataBuilder<Object> {
         return $meta(name, ColumnType.SHORT);
     }
 
-    private JournalStructure $meta(String name, ColumnType type) {
-        ColumnMetadata m = newMeta(name);
-        m.type = type;
-        m.size = type.size();
-        return this;
-    }
-
     public JournalStructure partitionBy(PartitionType type) {
         this.partitionBy = type;
         return this;
@@ -179,7 +173,7 @@ public class JournalStructure implements JMetadataBuilder<Object> {
             }
 
             // distinctCount
-            if (meta.distinctCountHint <= 0) {
+            if (meta.distinctCountHint <= 0 && meta.type == ColumnType.SYMBOL) {
                 meta.distinctCountHint = (int) (recordCountHint * 0.2); //20%
             }
 
@@ -217,22 +211,15 @@ public class JournalStructure implements JMetadataBuilder<Object> {
         );
     }
 
-    private ColumnMetadata newMeta(String name) {
-        int index = nameToIndexMap.get(name);
-        if (index == -1) {
-            ColumnMetadata meta = new ColumnMetadata();
-            meta.name = name;
-            metadata.add(meta);
-            nameToIndexMap.put(name, metadata.size() - 1);
-            return meta;
-        } else {
-            throw new JournalConfigurationException("Duplicate column: " + name);
-        }
+    @Override
+    public JournalStructure location(String location) {
+        this.location = location;
+        return this;
     }
 
     @Override
-    public JournalStructure location(String absolutePath) {
-        this.location = absolutePath;
+    public JournalStructure location(File path) {
+        this.location = path.getAbsolutePath();
         return this;
     }
 
@@ -273,6 +260,26 @@ public class JournalStructure implements JMetadataBuilder<Object> {
         }
 
         return this.build();
+    }
+
+    private JournalStructure $meta(String name, ColumnType type) {
+        ColumnMetadata m = newMeta(name);
+        m.type = type;
+        m.size = type.size();
+        return this;
+    }
+
+    private ColumnMetadata newMeta(String name) {
+        int index = nameToIndexMap.get(name);
+        if (index == -1) {
+            ColumnMetadata meta = new ColumnMetadata();
+            meta.name = name;
+            metadata.add(meta);
+            nameToIndexMap.put(name, metadata.size() - 1);
+            return meta;
+        } else {
+            throw new JournalConfigurationException("Duplicate column: " + name);
+        }
     }
 
     private boolean missingMappings() {

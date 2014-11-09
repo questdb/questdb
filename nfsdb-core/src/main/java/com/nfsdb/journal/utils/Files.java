@@ -33,9 +33,6 @@ public final class Files {
         UTF_8 = Charset.forName("UTF-8");
     }
 
-    private Files() {
-    } // Prevent construction.
-
     public static boolean delete(File file) {
         try {
             deleteOrException(file);
@@ -52,24 +49,6 @@ public final class Files {
         deleteDirContentsOrException(file);
         if (!file.delete()) {
             throw new JournalException("Cannot delete file %s", file);
-        }
-    }
-
-    private static void deleteDirContentsOrException(File file) throws JournalException {
-        if (!file.exists()) {
-            return;
-        }
-        try {
-            if (notSymlink(file)) {
-                File[] files = file.listFiles();
-                if (files != null) {
-                    for (int i = 0; i < files.length; i++) {
-                        deleteOrException(files[i]);
-                    }
-                }
-            }
-        } catch (IOException e) {
-            throw new JournalException("Cannot delete dir contents: %s", file, e);
         }
     }
 
@@ -114,6 +93,27 @@ public final class Files {
     public static void mkDirsOrException(File dir) {
         if (!dir.mkdirs()) {
             throw new JournalRuntimeException("Cannot create temp directory: %s", dir);
+        }
+    }
+
+    private Files() {
+    } // Prevent construction.
+
+    private static void deleteDirContentsOrException(File file) throws JournalException {
+        if (!file.exists()) {
+            return;
+        }
+        try {
+            if (notSymlink(file)) {
+                File[] files = file.listFiles();
+                if (files != null) {
+                    for (int i = 0; i < files.length; i++) {
+                        deleteOrException(files[i]);
+                    }
+                }
+            }
+        } catch (IOException e) {
+            throw new JournalException("Cannot delete dir contents: %s", file, e);
         }
     }
 

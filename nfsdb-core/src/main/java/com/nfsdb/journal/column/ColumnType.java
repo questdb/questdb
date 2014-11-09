@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,16 +33,16 @@ public enum ColumnType {
     private final Class type;
     private final int size;
 
-    ColumnType(Class type, int size) {
-        this.type = type;
-        this.size = size;
-    }
-
     public boolean matches(Class type) {
         return this.type == type;
     }
 
     public int size() {
         return size;
+    }
+
+    ColumnType(Class type, int size) {
+        this.type = type;
+        this.size = size;
     }
 }

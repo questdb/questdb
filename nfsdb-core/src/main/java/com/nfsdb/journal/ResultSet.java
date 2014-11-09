@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,115 +32,6 @@ import java.util.Random;
 public class ResultSet<T> implements Iterable<T> {
     private final Journal<T> journal;
     private final TLongList rowIDs;
-
-    ResultSet(Journal<T> journal, TLongList rowIDs) {
-        this.journal = journal;
-        this.rowIDs = rowIDs;
-    }
-
-    private static <T> int compare(Journal<T> journal, int[] columns, long rightRowID, long leftRowID) throws JournalException {
-        int result = 0;
-        long leftLocalRowID = Rows.toLocalRowID(leftRowID);
-        long rightLocalRowID = Rows.toLocalRowID(rightRowID);
-
-        Partition<T> leftPart = journal.getPartition(Rows.toPartitionIndex(leftRowID), true);
-        Partition<T> rightPart = journal.getPartition(Rows.toPartitionIndex(rightRowID), true);
-
-        for (int column : columns) {
-            Journal.ColumnMetadata meta = journal.getColumnMetadata(column);
-
-            String leftStr;
-            String rightStr;
-
-            switch (meta.meta.type) {
-                case STRING:
-                    leftStr = leftPart.getStr(leftLocalRowID, column);
-                    rightStr = rightPart.getStr(rightLocalRowID, column);
-
-                    if (leftStr == null && rightStr == null) {
-                        result = 0;
-                    } else if (leftStr == null) {
-                        result = 1;
-                    } else if (rightStr == null) {
-                        result = -1;
-                    } else {
-                        result = rightStr.compareTo(leftStr);
-                    }
-                    break;
-                default:
-                    switch (meta.meta.type) {
-                        case INT:
-                            result = compare(rightPart.getInt(rightLocalRowID, column), leftPart.getInt(leftLocalRowID, column));
-                            break;
-                        case LONG:
-                            result = compare(rightPart.getLong(rightLocalRowID, column), leftPart.getLong(leftLocalRowID, column));
-                            break;
-                        case DOUBLE:
-                            result = compare(rightPart.getDouble(rightLocalRowID, column), leftPart.getDouble(leftLocalRowID, column));
-                            break;
-                        case SYMBOL:
-                            int leftSymIndex = leftPart.getInt(leftLocalRowID, column);
-                            int rightSymIndex = rightPart.getInt(rightLocalRowID, column);
-
-                            if (leftSymIndex == SymbolTable.VALUE_IS_NULL && rightSymIndex == SymbolTable.VALUE_IS_NULL) {
-                                result = 0;
-                            } else if (leftSymIndex == SymbolTable.VALUE_IS_NULL) {
-                                result = 1;
-                            } else if (rightSymIndex == SymbolTable.VALUE_IS_NULL) {
-                                result = -1;
-                            } else {
-                                leftStr = meta.symbolTable.value(leftSymIndex);
-                                rightStr = meta.symbolTable.value(rightSymIndex);
-
-                                if (leftStr == null || rightStr == null) {
-                                    throw new JournalException("Corrupt column [%s] !", meta);
-                                }
-
-                                result = rightStr.compareTo(leftStr);
-                            }
-                            break;
-                        default:
-                            throw new JournalException("Unsupported type: " + meta.meta.type);
-                    }
-            }
-
-
-            if (result != 0) {
-                break;
-            }
-        }
-        return result;
-    }
-
-    private static int compare(long a, long b) {
-        if (a == b) {
-            return 0;
-        } else if (a > b) {
-            return 1;
-        } else {
-            return -1;
-        }
-    }
-
-    private static int compare(int a, int b) {
-        if (a == b) {
-            return 0;
-        } else if (a > b) {
-            return 1;
-        } else {
-            return -1;
-        }
-    }
-
-    private static int compare(double a, double b) {
-        if (a == b) {
-            return 0;
-        } else if (a > b) {
-            return 1;
-        } else {
-            return -1;
-        }
-    }
 
     public T[] read() throws JournalException {
         return journal.read(rowIDs);
@@ -264,6 +155,110 @@ public class ResultSet<T> implements Iterable<T> {
         return new ResultSet<>(journal, rows);
     }
 
+    private static <T> int compare(Journal<T> journal, int[] columns, long rightRowID, long leftRowID) throws JournalException {
+        int result = 0;
+        long leftLocalRowID = Rows.toLocalRowID(leftRowID);
+        long rightLocalRowID = Rows.toLocalRowID(rightRowID);
+
+        Partition<T> leftPart = journal.getPartition(Rows.toPartitionIndex(leftRowID), true);
+        Partition<T> rightPart = journal.getPartition(Rows.toPartitionIndex(rightRowID), true);
+
+        for (int column : columns) {
+            Journal.ColumnMetadata meta = journal.getColumnMetadata(column);
+
+            String leftStr;
+            String rightStr;
+
+            switch (meta.meta.type) {
+                case STRING:
+                    leftStr = leftPart.getStr(leftLocalRowID, column);
+                    rightStr = rightPart.getStr(rightLocalRowID, column);
+
+                    if (leftStr == null && rightStr == null) {
+                        result = 0;
+                    } else if (leftStr == null) {
+                        result = 1;
+                    } else if (rightStr == null) {
+                        result = -1;
+                    } else {
+                        result = rightStr.compareTo(leftStr);
+                    }
+                    break;
+                default:
+                    switch (meta.meta.type) {
+                        case INT:
+                            result = compare(rightPart.getInt(rightLocalRowID, column), leftPart.getInt(leftLocalRowID, column));
+                            break;
+                        case LONG:
+                            result = compare(rightPart.getLong(rightLocalRowID, column), leftPart.getLong(leftLocalRowID, column));
+                            break;
+                        case DOUBLE:
+                            result = compare(rightPart.getDouble(rightLocalRowID, column), leftPart.getDouble(leftLocalRowID, column));
+                            break;
+                        case SYMBOL:
+                            int leftSymIndex = leftPart.getInt(leftLocalRowID, column);
+                            int rightSymIndex = rightPart.getInt(rightLocalRowID, column);
+
+                            if (leftSymIndex == SymbolTable.VALUE_IS_NULL && rightSymIndex == SymbolTable.VALUE_IS_NULL) {
+                                result = 0;
+                            } else if (leftSymIndex == SymbolTable.VALUE_IS_NULL) {
+                                result = 1;
+                            } else if (rightSymIndex == SymbolTable.VALUE_IS_NULL) {
+                                result = -1;
+                            } else {
+                                leftStr = meta.symbolTable.value(leftSymIndex);
+                                rightStr = meta.symbolTable.value(rightSymIndex);
+
+                                if (leftStr == null || rightStr == null) {
+                                    throw new JournalException("Corrupt column [%s] !", meta);
+                                }
+
+                                result = rightStr.compareTo(leftStr);
+                            }
+                            break;
+                        default:
+                            throw new JournalException("Unsupported type: " + meta.meta.type);
+                    }
+            }
+
+
+            if (result != 0) {
+                break;
+            }
+        }
+        return result;
+    }
+
+    private static int compare(long a, long b) {
+        if (a == b) {
+            return 0;
+        } else if (a > b) {
+            return 1;
+        } else {
+            return -1;
+        }
+    }
+
+    private static int compare(int a, int b) {
+        if (a == b) {
+            return 0;
+        } else if (a > b) {
+            return 1;
+        } else {
+            return -1;
+        }
+    }
+
+    private static int compare(double a, double b) {
+        if (a == b) {
+            return 0;
+        } else if (a > b) {
+            return 1;
+        } else {
+            return -1;
+        }
+    }
+
     void quickSort(Order order, int lo, int hi, int... columnIndices) throws JournalException {
 
         if (lo >= hi) {
@@ -314,6 +309,11 @@ public class ResultSet<T> implements Iterable<T> {
 
     public enum Order {
         ASC, DESC
+    }
+
+    ResultSet(Journal<T> journal, TLongList rowIDs) {
+        this.journal = journal;
+        this.rowIDs = rowIDs;
     }
 
 }

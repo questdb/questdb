@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import gnu.trove.impl.Constants;
 import gnu.trove.map.TObjectIntMap;
 import gnu.trove.map.hash.TObjectIntHashMap;
 
+import java.io.File;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
@@ -106,6 +107,11 @@ public class JournalMetadataBuilder<T> implements JMetadataBuilder<T> {
         return this;
     }
 
+    public JournalMetadataBuilder<T> location(File location) {
+        this.location = location.getAbsolutePath();
+        return this;
+    }
+
     @Override
     public JournalMetadataBuilder<T> partitionBy(PartitionType type) {
         this.partitionBy = type;
@@ -166,7 +172,7 @@ public class JournalMetadataBuilder<T> implements JMetadataBuilder<T> {
             }
 
             // distinctCount
-            if (meta.distinctCountHint <= 0) {
+            if (meta.distinctCountHint <= 0 && meta.type == ColumnType.SYMBOL) {
                 meta.distinctCountHint = (int) (recordCountHint * 0.2); //20%
             }
 

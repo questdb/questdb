@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,10 +24,6 @@ import java.nio.ByteBuffer;
 public abstract class AbstractColumn implements Closeable {
     final MappedFile mappedFile;
     long txAppendOffset = -1;
-
-    AbstractColumn(MappedFile storage) {
-        this.mappedFile = storage;
-    }
 
     public abstract void truncate(long size);
 
@@ -68,5 +64,9 @@ public abstract class AbstractColumn implements Closeable {
 
     public void compact() throws JournalException {
         mappedFile.compact();
+    }
+
+    AbstractColumn(MappedFile storage) {
+        this.mappedFile = storage;
     }
 }

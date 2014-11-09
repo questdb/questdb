@@ -14,22 +14,14 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.factory.configuration;
+package com.nfsdb.journal.printer.converter;
 
-import com.nfsdb.journal.PartitionType;
+import com.nfsdb.journal.printer.JournalPrinter;
+import com.nfsdb.journal.utils.Unsafe;
 
-import java.io.File;
-
-public interface JMetadataBuilder<T> {
-    JMetadataBuilder<T> partitionBy(PartitionType type);
-
-    JMetadataBuilder<T> recordCountHint(int count);
-
-    String getLocation();
-
-    JournalMetadata<T> build();
-
-    JMetadataBuilder<T> location(String location);
-
-    JMetadataBuilder<T> location(File path);
+public class ShortConverter implements Converter {
+    @Override
+    public void convert(StringBuilder stringBuilder, JournalPrinter.Field field, Object obj) {
+        stringBuilder.append(Unsafe.getUnsafe().getShort(obj, field.getOffset()));
+    }
 }

@@ -195,6 +195,10 @@ public class JournalPrinter implements Closeable {
                 f.converter = new ByteConverter();
             } else if (f.fromType == String.class) {
                 f.converter = new StringConverter(this);
+            } else if (f.fromType == short.class) {
+                f.converter = new ShortConverter();
+            } else {
+                throw new JournalRuntimeException("Unsupported type: " + f.fromType.getName());
             }
         }
     }

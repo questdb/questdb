@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.utils.Checksum;
 
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.BitSet;
 
 public class JournalEntryWriterImpl implements JournalEntryWriter {
@@ -42,28 +43,9 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
         koTuple = new long[meta.length * 2];
     }
 
-    void setPartition(Partition partition, long timestamp) {
-        if (this.partition != partition) {
-            this.columns = partition.columns;
-            this.partition = partition;
-            this.indexProxies = partition.sparseIndexProxies;
-        }
-        this.timestamp = timestamp;
-        updated.clear();
-        if (timestampIndex != -1) {
-            putDate(timestampIndex, timestamp);
-        }
-    }
-
     @Override
     public long getTimestamp() {
         return timestamp;
-    }
-
-    private void assertType(int index, ColumnType t) {
-        if (meta[index].meta.type != t) {
-            throw new JournalRuntimeException("Expected type: " + meta[index].meta.type);
-        }
     }
 
     @Override
@@ -101,6 +83,90 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
         updated.set(index);
     }
 
+    @Override
+    public void putStr(int index, CharSequence value) {
+        assertType(index, ColumnType.STRING);
+        putString0(index, value);
+        updated.set(index);
+    }
+
+    @Override
+    public void putSym(int index, String value) {
+        assertType(index, ColumnType.SYMBOL);
+        putSymbol0(index, value);
+        updated.set(index);
+    }
+
+    public void putBin0(int index, InputStream value) {
+        ((VariableColumn) columns[index]).putBin(value);
+    }
+
+    @Override
+    public void putBin(int index, InputStream value) {
+        putBin0(index, value);
+        updated.set(index);
+    }
+
+    public OutputStream putBin(int index) {
+        updated.set(index);
+        return ((VariableColumn) columns[index]).putBin();
+    }
+
+    @Override
+    public void putNull(int index) {
+        putNull0(index);
+        updated.set(index);
+    }
+
+    @Override
+    public void putInt(int index, int value) {
+        assertType(index, ColumnType.INT);
+        putInt0(index, value);
+        updated.set(index);
+    }
+
+    @Override
+    public void putShort(int index, short value) {
+        assertType(index, ColumnType.SHORT);
+        ((FixedColumn) columns[index]).putShort(value);
+        updated.set(index);
+    }
+
+    @Override
+    public void append() throws JournalException {
+        for (int i = 0; i < meta.length; i++) {
+            if (!updated.get(i)) {
+                putNull(i);
+            }
+            columns[i].commit();
+
+            if (meta[i].meta.indexed) {
+                indexProxies[i].getIndex().add((int) koTuple[i * 2], koTuple[i * 2 + 1]);
+            }
+        }
+        partition.applyTx(Journal.TX_LIMIT_EVAL, null);
+        journal.updateTsLo(timestamp);
+    }
+
+    void setPartition(Partition partition, long timestamp) {
+        if (this.partition != partition) {
+            this.columns = partition.columns;
+            this.partition = partition;
+            this.indexProxies = partition.sparseIndexProxies;
+        }
+        this.timestamp = timestamp;
+        updated.clear();
+        if (timestampIndex != -1) {
+            putDate(timestampIndex, timestamp);
+        }
+    }
+
+    private void assertType(int index, ColumnType t) {
+        if (meta[index].meta.type != t) {
+            throw new JournalRuntimeException("Expected type: " + meta[index].meta.type);
+        }
+    }
+
     private void putString0(int index, CharSequence value) {
         if (meta[index].meta.indexed) {
             koTuple[index * 2] = value == null ? SymbolTable.VALUE_IS_NULL : Checksum.hash(value, meta[index].meta.distinctCountHint);
@@ -108,13 +174,6 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
         } else {
             ((VariableColumn) columns[index]).putStr(value);
         }
-    }
-
-    @Override
-    public void putStr(int index, String value) {
-        assertType(index, ColumnType.STRING);
-        putString0(index, value);
-        updated.set(index);
     }
 
     private void putSymbol0(int index, String value) {
@@ -130,13 +189,6 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
         } else {
             ((FixedColumn) columns[index]).putInt(key);
         }
-    }
-
-    @Override
-    public void putSym(int index, String value) {
-        assertType(index, ColumnType.SYMBOL);
-        putSymbol0(index, value);
-        updated.set(index);
     }
 
     private void putNull0(int index) {
@@ -158,22 +210,6 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
         }
     }
 
-    public void putBin0(int index, InputStream value) {
-        ((VariableColumn) columns[index]).putBin(value);
-    }
-
-    @Override
-    public void putBin(int index, InputStream value) {
-        putBin0(index, value);
-        updated.set(index);
-    }
-
-    @Override
-    public void putNull(int index) {
-        putNull0(index);
-        updated.set(index);
-    }
-
     private void putInt0(int index, int value) {
         if (meta[index].meta.indexed) {
             koTuple[index * 2] = value % meta[index].meta.distinctCountHint;
@@ -181,28 +217,5 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
         } else {
             ((FixedColumn) columns[index]).putInt(value);
         }
-    }
-
-    @Override
-    public void putInt(int index, int value) {
-        assertType(index, ColumnType.INT);
-        putInt0(index, value);
-        updated.set(index);
-    }
-
-    @Override
-    public void append() throws JournalException {
-        for (int i = 0; i < meta.length; i++) {
-            if (!updated.get(i)) {
-                putNull(i);
-            }
-            columns[i].commit();
-
-            if (meta[i].meta.indexed) {
-                indexProxies[i].getIndex().add((int) koTuple[i * 2], koTuple[i * 2 + 1]);
-            }
-        }
-        partition.applyTx(Journal.TX_LIMIT_EVAL, null);
-        journal.updateTsLo(timestamp);
     }
 }

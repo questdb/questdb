@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.nfsdb.journal;
 import com.nfsdb.journal.exceptions.JournalException;
 
 import java.io.InputStream;
+import java.io.OutputStream;
 
 public interface JournalEntryWriter {
     long getTimestamp();
@@ -31,11 +32,13 @@ public interface JournalEntryWriter {
 
     void putDouble(int index, double value);
 
-    void putStr(int index, String value);
+    void putStr(int index, CharSequence value);
 
     void putSym(int index, String value);
 
     void putBin(int index, InputStream value);
+
+    OutputStream putBin(int index);
 
     void putNull(int index);
 
@@ -44,4 +47,6 @@ public interface JournalEntryWriter {
     void putBool(int index, boolean value);
 
     void append() throws JournalException;
+
+    void putShort(int index, short value);
 }

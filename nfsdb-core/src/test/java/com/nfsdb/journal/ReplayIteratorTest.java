@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -69,19 +69,6 @@ public class ReplayIteratorTest extends AbstractTest {
 
     }
 
-    private long[] deltas(List<Entity> entities) {
-        long last = 0;
-        long result[] = new long[entities.size()];
-
-        for (int i = 0; i < entities.size(); i++) {
-            Entity e = entities.get(i);
-            result[i] = last == 0 ? 0 : e.timestamp - last;
-            last = e.timestamp;
-        }
-
-        return result;
-    }
-
     @Test
     public void testJournalReplay() throws Exception {
         JournalWriter<Quote> w = factory.writer(Quote.class);
@@ -98,6 +85,19 @@ public class ReplayIteratorTest extends AbstractTest {
 
         ReplayIterator<Quote> replay = new ReplayIterator<>(w.bufferedIterator(), 0.00000001f);
         TestUtils.assertEquals(w.bufferedIterator(), replay);
+    }
+
+    private long[] deltas(List<Entity> entities) {
+        long last = 0;
+        long result[] = new long[entities.size()];
+
+        for (int i = 0; i < entities.size(); i++) {
+            Entity e = entities.get(i);
+            result[i] = last == 0 ? 0 : e.timestamp - last;
+            last = e.timestamp;
+        }
+
+        return result;
     }
 
     private static class Entity {

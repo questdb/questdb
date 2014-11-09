@@ -45,20 +45,6 @@ public class SSOServiceTokenEncoder implements Closeable {
         copy("/Microsoft.IdentityModel.dll", temp);
     }
 
-    private static void copy(String resource, File dir) throws IOException {
-        URL url = SSOServiceTokenEncoder.class.getResource(resource);
-        if (url == null) {
-            throw new IOException("Broken package? Resource not found: " + resource);
-        }
-
-        File file = new File(url.getPath());
-        try (FileChannel in = new FileInputStream(file).getChannel()) {
-            try (FileChannel out = new FileOutputStream(new File(dir, file.getName())).getChannel()) {
-                out.transferFrom(in, 0, in.size());
-            }
-        }
-    }
-
     @Override
     public void close() throws IOException {
         if (clean) {
@@ -90,6 +76,20 @@ public class SSOServiceTokenEncoder implements Closeable {
                 throw new IOException(response);
             }
             return Base64._parseBase64Binary(response.substring(OK_RESPONSE.length()));
+        }
+    }
+
+    private static void copy(String resource, File dir) throws IOException {
+        URL url = SSOServiceTokenEncoder.class.getResource(resource);
+        if (url == null) {
+            throw new IOException("Broken package? Resource not found: " + resource);
+        }
+
+        File file = new File(url.getPath());
+        try (FileChannel in = new FileInputStream(file).getChannel()) {
+            try (FileChannel out = new FileOutputStream(new File(dir, file.getName())).getChannel()) {
+                out.transferFrom(in, 0, in.size());
+            }
         }
     }
 }

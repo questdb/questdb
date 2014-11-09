@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,32 +42,18 @@ import java.util.concurrent.TimeUnit;
 
 public class Partition<T> implements Iterable<T>, Closeable {
     private static final Logger LOGGER = Logger.getLogger(Partition.class);
+    SymbolIndexProxy<T> sparseIndexProxies[];
+    AbstractColumn[] columns;
     private final Journal<T> journal;
     private final ArrayList<SymbolIndexProxy<T>> indexProxies = new ArrayList<>();
     private final Interval interval;
     private final int columnCount;
-    SymbolIndexProxy<T> sparseIndexProxies[];
-    AbstractColumn[] columns;
     private int partitionIndex;
     private File partitionDir;
     private long lastAccessed = System.currentTimeMillis();
     private long txLimit;
     private FixedColumn timestampColumn;
     private BinarySearch.LongTimeSeriesProvider indexOfVisitor;
-
-    Partition(Journal<T> journal, Interval interval, int partitionIndex, long txLimit, long[] indexTxAddresses) {
-        this.journal = journal;
-        this.partitionIndex = partitionIndex;
-        this.interval = interval;
-        this.txLimit = txLimit;
-        this.columnCount = journal.getMetadata().getColumnCount();
-        String dateStr = Dates.dirNameForIntervalStart(interval, journal.getMetadata().getPartitionType());
-        if (dateStr.length() > 0) {
-            setPartitionDir(new File(this.journal.getLocation(), dateStr), indexTxAddresses);
-        } else {
-            setPartitionDir(this.journal.getLocation(), indexTxAddresses);
-        }
-    }
 
     public Partition<T> open() throws JournalException {
         access();
@@ -172,6 +158,10 @@ public class Partition<T> implements Iterable<T>, Closeable {
         return getFixedWidthColumn(columnIndex).getLong(localRowID);
     }
 
+    public short getShort(long localRowID, int columnIndex) {
+        return getFixedWidthColumn(columnIndex).getShort(localRowID);
+    }
+
     public int getInt(long localRowID, int columnIndex) {
         return getFixedWidthColumn(columnIndex).getInt(localRowID);
     }
@@ -265,51 +255,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
                     }
 
             }
-        }
-    }
-
-    void append(Iterator<T> it) throws JournalException {
-        while (it.hasNext()) {
-            append(it.next());
-        }
-    }
-
-    void append(T obj) throws JournalException {
-
-        try {
-            for (int i = 0; i < columnCount; i++) {
-                Journal.ColumnMetadata meta = journal.getColumnMetadata(i);
-
-                switch (meta.meta.type) {
-                    case INT:
-                        int v = Unsafe.getUnsafe().getInt(obj, meta.meta.offset);
-                        if (meta.meta.indexed) {
-                            sparseIndexProxies[i].getIndex().add(v % meta.meta.distinctCountHint, ((FixedColumn) columns[i]).putInt(v));
-                        } else {
-                            ((FixedColumn) columns[i]).putInt(v);
-                        }
-                        break;
-                    case STRING:
-                        appendStr(obj, i, meta);
-                        break;
-                    case SYMBOL:
-                        appendSym(obj, i, meta);
-                        break;
-                    case BINARY:
-                        appendBin(obj, i, meta);
-                        break;
-                    default:
-                        ((FixedColumn) columns[i]).copy(obj, meta.meta.offset);
-                        break;
-                }
-
-                columns[i].commit();
-            }
-
-            applyTx(Journal.TX_LIMIT_EVAL, null);
-        } catch (Throwable e) {
-            ((JournalWriter) this.journal).rollback();
-            throw e;
         }
     }
 
@@ -504,6 +449,51 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
     }
 
+    void append(Iterator<T> it) throws JournalException {
+        while (it.hasNext()) {
+            append(it.next());
+        }
+    }
+
+    void append(T obj) throws JournalException {
+
+        try {
+            for (int i = 0; i < columnCount; i++) {
+                Journal.ColumnMetadata meta = journal.getColumnMetadata(i);
+
+                switch (meta.meta.type) {
+                    case INT:
+                        int v = Unsafe.getUnsafe().getInt(obj, meta.meta.offset);
+                        if (meta.meta.indexed) {
+                            sparseIndexProxies[i].getIndex().add(v % meta.meta.distinctCountHint, ((FixedColumn) columns[i]).putInt(v));
+                        } else {
+                            ((FixedColumn) columns[i]).putInt(v);
+                        }
+                        break;
+                    case STRING:
+                        appendStr(obj, i, meta);
+                        break;
+                    case SYMBOL:
+                        appendSym(obj, i, meta);
+                        break;
+                    case BINARY:
+                        appendBin(obj, i, meta);
+                        break;
+                    default:
+                        ((FixedColumn) columns[i]).copy(obj, meta.meta.offset);
+                        break;
+                }
+
+                columns[i].commit();
+            }
+
+            applyTx(Journal.TX_LIMIT_EVAL, null);
+        } catch (Throwable e) {
+            ((JournalWriter) this.journal).rollback();
+            throw e;
+        }
+    }
+
     private void appendBin(T obj, int i, Journal.ColumnMetadata meta) {
         ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, meta.meta.offset);
         if (buf == null || buf.remaining() == 0) {
@@ -659,6 +649,20 @@ public class Partition<T> implements Iterable<T>, Closeable {
             } else {
                 sparseIndexProxies[i] = null;
             }
+        }
+    }
+
+    Partition(Journal<T> journal, Interval interval, int partitionIndex, long txLimit, long[] indexTxAddresses) {
+        this.journal = journal;
+        this.partitionIndex = partitionIndex;
+        this.interval = interval;
+        this.txLimit = txLimit;
+        this.columnCount = journal.getMetadata().getColumnCount();
+        String dateStr = Dates.dirNameForIntervalStart(interval, journal.getMetadata().getPartitionType());
+        if (dateStr.length() > 0) {
+            setPartitionDir(new File(this.journal.getLocation(), dateStr), indexTxAddresses);
+        } else {
+            setPartitionDir(this.journal.getLocation(), indexTxAddresses);
         }
     }
 }
