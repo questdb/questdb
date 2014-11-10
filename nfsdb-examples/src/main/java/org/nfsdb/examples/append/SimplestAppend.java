@@ -34,7 +34,7 @@ public class SimplestAppend {
      * @throws com.nfsdb.journal.exceptions.JournalException
      */
     public static void main(String[] args) throws JournalException {
-        try (JournalFactory factory = new JournalFactory(ModelConfiguration.CONFIG.build("c:\\temp\\nfsdb"))) {
+        try (JournalFactory factory = new JournalFactory(ModelConfiguration.CONFIG.build(args[0]))) {
             // delete existing price journal
             Files.delete(new File(factory.getConfiguration().getJournalBase(), Price.class.getName()));
             final int count = 1000000;

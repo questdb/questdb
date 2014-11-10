@@ -48,6 +48,7 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
     private final TObjectIntMap<String> columnIndexLookup;
     private final int timestampColumnIndex;
     private final int lag;
+    private final boolean partialMapping;
 
     public JournalMetadataImpl(
             String id
@@ -62,6 +63,7 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
             , int ioBlockRecordCount
             , int ioBlockTxCount
             , int lag
+            , boolean partialMapping
     ) {
         this.id = id;
         this.modelClass = modelClass;
@@ -82,6 +84,7 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
             columnIndexLookup.put(columnMetadata[i].name, i);
         }
         this.lag = lag;
+        this.partialMapping = partialMapping;
     }
 
     public JournalMetadataImpl(HugeBuffer buf) {
@@ -110,6 +113,7 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
         key = buf.getStr();
         lag = buf.getInt();
         constructor = null;
+        partialMapping = false;
     }
 
     public void write(HugeBuffer buf) {
@@ -240,6 +244,11 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
 
     public String getId() {
         return id;
+    }
+
+    @Override
+    public boolean isPartialMapping() {
+        return partialMapping;
     }
 
     @Override

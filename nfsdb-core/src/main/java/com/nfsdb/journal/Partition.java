@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,6 +34,7 @@ import org.joda.time.Interval;
 
 import java.io.Closeable;
 import java.io.File;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -42,18 +43,32 @@ import java.util.concurrent.TimeUnit;
 
 public class Partition<T> implements Iterable<T>, Closeable {
     private static final Logger LOGGER = Logger.getLogger(Partition.class);
-    SymbolIndexProxy<T> sparseIndexProxies[];
-    AbstractColumn[] columns;
     private final Journal<T> journal;
     private final ArrayList<SymbolIndexProxy<T>> indexProxies = new ArrayList<>();
     private final Interval interval;
     private final int columnCount;
+    SymbolIndexProxy<T> sparseIndexProxies[];
+    AbstractColumn[] columns;
     private int partitionIndex;
     private File partitionDir;
     private long lastAccessed = System.currentTimeMillis();
     private long txLimit;
     private FixedColumn timestampColumn;
     private BinarySearch.LongTimeSeriesProvider indexOfVisitor;
+
+    Partition(Journal<T> journal, Interval interval, int partitionIndex, long txLimit, long[] indexTxAddresses) {
+        this.journal = journal;
+        this.partitionIndex = partitionIndex;
+        this.interval = interval;
+        this.txLimit = txLimit;
+        this.columnCount = journal.getMetadata().getColumnCount();
+        String dateStr = Dates.dirNameForIntervalStart(interval, journal.getMetadata().getPartitionType());
+        if (dateStr.length() > 0) {
+            setPartitionDir(new File(this.journal.getLocation(), dateStr), indexTxAddresses);
+        } else {
+            setPartitionDir(this.journal.getLocation(), indexTxAddresses);
+        }
+    }
 
     public Partition<T> open() throws JournalException {
         access();
@@ -142,6 +157,11 @@ public class Partition<T> implements Iterable<T>, Closeable {
         ((VariableColumn) columns[columnIndex]).getBin(localRowID, s);
     }
 
+    public InputStream getBin(long localRowID, int columnIndex) {
+        checkColumnIndex(columnIndex);
+        return ((VariableColumn) columns[columnIndex]).getBin(localRowID);
+    }
+
     public String getSym(long localRowID, int columnIndex) {
         checkColumnIndex(columnIndex);
         int symbolIndex = ((FixedColumn) columns[columnIndex]).getInt(localRowID);
@@ -203,6 +223,11 @@ public class Partition<T> implements Iterable<T>, Closeable {
                 continue;
             }
             Journal.ColumnMetadata m = journal.columnMetadata[i];
+
+            if (m.meta.offset == 0) {
+                continue;
+            }
+
             switch (m.meta.type) {
                 case BOOLEAN:
                     Unsafe.getUnsafe().putBoolean(obj, m.meta.offset, ((FixedColumn) columns[i]).getBool(localRowID));
@@ -649,20 +674,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
             } else {
                 sparseIndexProxies[i] = null;
             }
-        }
-    }
-
-    Partition(Journal<T> journal, Interval interval, int partitionIndex, long txLimit, long[] indexTxAddresses) {
-        this.journal = journal;
-        this.partitionIndex = partitionIndex;
-        this.interval = interval;
-        this.txLimit = txLimit;
-        this.columnCount = journal.getMetadata().getColumnCount();
-        String dateStr = Dates.dirNameForIntervalStart(interval, journal.getMetadata().getPartitionType());
-        if (dateStr.length() > 0) {
-            setPartitionDir(new File(this.journal.getLocation(), dateStr), indexTxAddresses);
-        } else {
-            setPartitionDir(this.journal.getLocation(), indexTxAddresses);
         }
     }
 }

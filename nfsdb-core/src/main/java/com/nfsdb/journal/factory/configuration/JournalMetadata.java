@@ -64,4 +64,6 @@ public interface JournalMetadata<T> {
     String getId();
 
     void write(HugeBuffer buf);
+
+    boolean isPartialMapping();
 }

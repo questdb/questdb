@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -290,9 +290,9 @@ public class GenericInteropTest extends AbstractTest {
         writer.commit();
 
         Journal<Data> reader = factory.reader(Data.class, "test");
-        String expected = "GBPUSD\t30000\t0.65\t0.66\t1000\t1100\t1\tOK\tsystem\tGBPUSD:GLOBAL\ttrue\tnull\t12345678\t425\n" +
-                "EURUSD\t19999\t1.24\t1.25\t10000\t12000\t2\tOK\tsystem\tEURUSD:GLOBAL\ttrue\tnull\t1234567\t11000\n" +
-                "HKDUSD\t40000\t2.88\t2.89\t1000\t1100\t3\tOK\tsystem\tHKDUSD:GLOBAL\ttrue\tnull\t989931\t398";
+        String expected = "GBPUSD\t1970-01-01T00:00:30.000Z\t0.65\t0.66\t1000\t1100\t1\tOK\tsystem\tGBPUSD:GLOBAL\ttrue\tnull\t12345678\t425\n" +
+                "EURUSD\t1970-01-01T00:00:19.999Z\t1.24\t1.25\t10000\t12000\t2\tOK\tsystem\tEURUSD:GLOBAL\ttrue\tnull\t1234567\t11000\n" +
+                "HKDUSD\t1970-01-01T00:00:40.000Z\t2.88\t2.89\t1000\t1100\t3\tOK\tsystem\tHKDUSD:GLOBAL\ttrue\tnull\t989931\t398\n";
         TestUtils.assertEquals(expected, reader.bufferedIterator());
     }
 
@@ -331,6 +331,52 @@ public class GenericInteropTest extends AbstractTest {
         }
     }
 
+    @Test
+    public void testPartialObjectWriter() throws Exception {
+        JournalWriter writer = makeGenericWriter();
+        writer.close();
+
+        try {
+            factory.writer(Partial.class, "test");
+            Assert.fail("Expected exception");
+        } catch (JournalException ignore) {
+            // ignore exception
+        }
+    }
+
+    @Test
+    public void testPartialObjectReader() throws Exception {
+        JournalWriter writer = makeGenericWriter();
+
+        JournalEntryWriter w = writer.entryWriter();
+
+        w.putSym(0, "EURUSD");
+        w.putDate(1, 19999);
+        w.putDouble(2, 1.24);
+        w.putDouble(3, 1.25);
+        w.putInt(4, 10000);
+        w.putInt(5, 12000);
+        w.putInt(6, 1);
+        w.putStr(7, "OK");
+        w.putStr(8, "system");
+        w.putStr(9, "EURUSD:GLOBAL");
+        w.putBool(10, true);
+        w.putNull(11);
+        w.putLong(12, 13141516);
+        w.putShort(13, (short) 25000);
+        w.append();
+        writer.commit();
+
+        writer.close();
+
+
+        Journal<Partial> reader = factory.reader(Partial.class, "test");
+
+        String expected = "EURUSD\t1970-01-01T00:00:19.999Z\t1.24\t1.25\t10000\t12000";
+
+        TestUtils.assertEquals(expected, reader.bufferedIterator());
+    }
+
     private JournalWriter makeGenericWriter() throws JournalException {
         return factory.writer(new JournalStructure("test") {{
             $sym("sym").index();
@@ -365,5 +411,23 @@ public class GenericInteropTest extends AbstractTest {
         private String nullable;
         private long ticks;
         private short modulo;
+    }
+
+    public static class Partial {
+        private String sym;
+        private long created;
+        private double bid;
+        private double ask;
+        private int bidSize;
+        private int askSize;
+    }
+
+    public static class WrongType {
+        private String sym;
+        private long created;
+        private int bid;
+        private double ask;
+        private int bidSize;
+        private int askSize;
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.nfsdb.journal.test.tools;
 
 import com.nfsdb.journal.*;
 import com.nfsdb.journal.collections.LongArrayList;
+import com.nfsdb.journal.column.ColumnType;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.configuration.ColumnMetadata;
@@ -42,6 +43,9 @@ import java.util.Random;
 import java.util.UUID;
 
 public final class TestUtils {
+
+    private TestUtils() {
+    }
 
     public static void generateQuoteData(JournalWriter<Quote> w, int count) throws JournalException {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
@@ -185,10 +189,10 @@ public final class TestUtils {
         p.types(meta.getModelClass());
 
         for (int i = 0; i < meta.getColumnCount(); i++) {
-            String name = meta.getColumnMetadata(i).name;
-            if (!"__isset_bit_vector".equals(name) && !"__isset_bitfield".equals(name)) {
-                JournalPrinter.Field f = p.f(name);
-                if (i == meta.getTimestampColumnIndex()) {
+            ColumnMetadata m = meta.getColumnMetadata(i);
+            if (m.offset != 0) {
+                JournalPrinter.Field f = p.f(m.name);
+                if (m.type == ColumnType.DATE) {
                     f.c(new DateConverter(p));
                 }
             }
@@ -328,9 +332,6 @@ public final class TestUtils {
             }
             Assert.assertEquals(expected.next(), actual.next());
         }
-    }
-
-    private TestUtils() {
     }
 
     private static <T> void out(JournalPrinter p, JournalIterator<T> iterator) throws IOException {

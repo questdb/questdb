@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -70,6 +70,9 @@ public class JournalWriter<T> extends Journal<T> {
 
     public JournalWriter(JournalMetadata<T> metadata, JournalKey<T> key, TimerCache timerCache) throws JournalException {
         super(metadata, key, timerCache);
+        if (metadata.isPartialMapping()) {
+            throw new JournalException("Metadata is unusable for writer. Partially mapped?");
+        }
         this.lagMillis = TimeUnit.HOURS.toMillis(getMetadata().getLag());
         this.lagSwellMillis = lagMillis * 3;
         this.checkOrder = key.isOrdered() && getTimestampOffset() != -1;

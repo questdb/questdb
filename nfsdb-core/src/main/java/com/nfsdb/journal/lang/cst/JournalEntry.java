@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.nfsdb.journal.lang.cst;
 import com.nfsdb.journal.Partition;
 import com.nfsdb.journal.column.FixedColumn;
 
+import java.io.InputStream;
 import java.io.OutputStream;
 
 public class JournalEntry {
@@ -94,8 +95,20 @@ public class JournalEntry {
         partition.getBin(rowid, col, s);
     }
 
+    public void getBin(String column, OutputStream s) {
+        getBin(getColumnIndex(column), s);
+    }
+
     public short getShort(int col) {
         return partition.getShort(rowid, col);
+    }
+
+    public InputStream getBin(String column) {
+        return getBin(getColumnIndex(column));
+    }
+
+    public InputStream getBin(int col) {
+        return partition.getBin(rowid, col);
     }
 
     @Override

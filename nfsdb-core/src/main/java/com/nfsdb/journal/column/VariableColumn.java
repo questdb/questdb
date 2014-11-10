@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import java.nio.ByteBuffer;
 public class VariableColumn extends AbstractColumn {
     private final FixedColumn indexColumn;
     private final BinaryOutputStream binOut = new BinaryOutputStream();
+    private final BinaryInputStream binIn = new BinaryInputStream();
     private char buffer[] = new char[32];
     private byte[] streamBuf;
 
@@ -40,6 +41,9 @@ public class VariableColumn extends AbstractColumn {
 
     @Override
     public void commit() {
+        if (binOut.offset != -1) {
+            binOut.close();
+        }
         super.commit();
         indexColumn.commit();
     }
@@ -250,6 +254,11 @@ public class VariableColumn extends AbstractColumn {
         }
     }
 
+    public InputStream getBin(long localRowID) {
+        binIn.reset(getOffset(localRowID));
+        return binIn;
+    }
+
     public long putNull() {
         long offset = getOffset();
         Unsafe.getUnsafe().putInt(mappedFile.getAddress(offset, 4), -1);
@@ -277,7 +286,7 @@ public class VariableColumn extends AbstractColumn {
 
     private class BinaryOutputStream extends OutputStream {
 
-        private long offset;
+        private long offset = -1;
         private long workOffset;
         private long blockAddress;
         private int blockRemaining;
@@ -293,16 +302,54 @@ public class VariableColumn extends AbstractColumn {
         }
 
         @Override
-        public void close() throws IOException {
+        public void close() {
             long a = mappedFile.getAddress(offset, 4);
             Unsafe.getUnsafe().putInt(a, (int) (workOffset - offset - 4));
             commitAppend(offset, (int) (workOffset - offset));
+            offset = -1;
         }
 
         private void reset(long offset) {
+            if (this.offset != -1) {
+                close();
+            }
             this.offset = offset;
             this.workOffset = offset + 4;
             this.blockRemaining = 0;
+        }
+
+        private void renew() {
+            blockAddress = mappedFile.getAddress(workOffset, 1);
+            blockRemaining = mappedFile.getLocalRemaining(workOffset);
+        }
+    }
+
+    private class BinaryInputStream extends InputStream {
+        private long workOffset;
+        private long blockAddress;
+        private int remaining;
+        private int blockRemaining;
+
+        @Override
+        public int read() throws IOException {
+            if (remaining == 0) {
+                return -1;
+            }
+
+            if (blockRemaining == 0) {
+                renew();
+            }
+
+            blockRemaining--;
+            workOffset++;
+            remaining--;
+            return Unsafe.getUnsafe().getByte(blockAddress++);
+        }
+
+        private void reset(long offset) {
+            this.workOffset = offset + 4;
+            this.blockRemaining = 0;
+            this.remaining = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
         }
 
         private void renew() {

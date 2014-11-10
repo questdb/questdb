@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit;
 
 public class SimplestIterate {
     public static void main(String[] args) throws JournalException {
-        try (JournalFactory factory = new JournalFactory("c:\\temp\\nfsdb")) {
+        try (JournalFactory factory = new JournalFactory(args[0])) {
 
             try (Journal<Price> journal = factory.reader(Price.class)) {
                 long tZero = System.nanoTime();

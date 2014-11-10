@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,6 +48,7 @@ public class JournalStructure implements JMetadataBuilder<Object> {
     private int lag = -1;
     private Class<Object> modelClass;
     private Constructor<Object> constructor;
+    private boolean partialMapping = false;
 
     public JournalStructure(String location) {
         this.location = location;
@@ -69,7 +70,6 @@ public class JournalStructure implements JMetadataBuilder<Object> {
             metadata.add(to);
             nameToIndexMap.put(to.name, i);
         }
-
     }
 
     public GenericSymbolBuilder $sym(String name) {
@@ -159,7 +159,6 @@ public class JournalStructure implements JMetadataBuilder<Object> {
             txCountHint = (int) (recordCountHint * 0.1);
         }
 
-
         ColumnMetadata m[] = new ColumnMetadata[metadata.size()];
 
         for (int i = 0, sz = metadata.size(); i < sz; i++) {
@@ -208,6 +207,7 @@ public class JournalStructure implements JMetadataBuilder<Object> {
                 , recordCountHint
                 , txCountHint
                 , lag
+                , partialMapping
         );
     }
 
@@ -236,7 +236,7 @@ public class JournalStructure implements JMetadataBuilder<Object> {
 
             int index = nameToIndexMap.get(f.getName());
             if (index == -1) {
-                LOGGER.warn(clazz.getName() + "." + f.getName() + " column name mismatch");
+                LOGGER.warn("Unusable member field: " + clazz.getName() + "." + f.getName());
                 continue;
             }
 
@@ -248,9 +248,7 @@ public class JournalStructure implements JMetadataBuilder<Object> {
             meta.offset = Unsafe.getUnsafe().objectFieldOffset(f);
         }
 
-        if (missingMappings()) {
-            throw new JournalConfigurationException("Missing mappings for: " + clazz.getName() + ". Check log for details");
-        }
+        this.partialMapping = missingMappings();
 
         this.modelClass = clazz;
         try {
@@ -288,7 +286,7 @@ public class JournalStructure implements JMetadataBuilder<Object> {
             ColumnMetadata m = metadata.get(i);
             if (m.offset == 0) {
                 mappingMissing = true;
-                LOGGER.error("Missing mapping: %s", m.name);
+                LOGGER.warn("Unmapped data column: %s", m.name);
             }
         }
 

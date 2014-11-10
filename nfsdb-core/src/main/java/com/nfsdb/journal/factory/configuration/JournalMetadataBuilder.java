@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -94,6 +94,7 @@ public class JournalMetadataBuilder<T> implements JMetadataBuilder<T> {
         if (tsColumnIndex == -1) {
             throw new JournalConfigurationException("Invalid column name: %s", name);
         }
+        getMeta(name).type = ColumnType.DATE;
         return this;
     }
 
@@ -158,9 +159,9 @@ public class JournalMetadataBuilder<T> implements JMetadataBuilder<T> {
 
         ColumnMetadata metadata[] = new ColumnMetadata[nameToIndexMap.size()];
 
-        for (String name : columnMetadata.keySet()) {
-            int index = nameToIndexMap.get(name);
-            ColumnMetadata meta = columnMetadata.get(name);
+        for (Map.Entry<String, ColumnMetadata> e : columnMetadata.entrySet()) {
+            int index = nameToIndexMap.get(e.getKey());
+            ColumnMetadata meta = e.getValue();
 
 
             if (meta.indexed && meta.distinctCountHint <= 1) {
@@ -207,6 +208,7 @@ public class JournalMetadataBuilder<T> implements JMetadataBuilder<T> {
                 , recordCountHint
                 , txCountHint
                 , lag
+                , false
         );
     }
 
