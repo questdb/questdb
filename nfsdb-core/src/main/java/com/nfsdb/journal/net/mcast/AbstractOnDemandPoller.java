@@ -17,6 +17,7 @@
 package com.nfsdb.journal.net.mcast;
 
 import com.nfsdb.journal.exceptions.JournalNetworkException;
+import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.net.config.NetworkConfig;
 
 import java.io.IOException;
@@ -29,6 +30,7 @@ import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 
 public abstract class AbstractOnDemandPoller<T> {
+    private static final Logger LOGGER = Logger.getLogger(AbstractOnDemandPoller.class);
     private final NetworkConfig networkConfig;
     private final InetSocketAddress socketAddress;
     private final int inMessageCode;
@@ -50,8 +52,7 @@ public abstract class AbstractOnDemandPoller<T> {
     private ByteBuffer poll1(int retryCount, long timeout, TimeUnit timeUnit) throws JournalNetworkException {
         ProtocolFamily family = NetworkConfig.isInet6(socketAddress.getAddress()) ? StandardProtocolFamily.INET6 : StandardProtocolFamily.INET;
 
-        System.out.println("poller: " + socketAddress);
-        System.out.println("poller: " + networkConfig.getNetworkInterface());
+        LOGGER.info("Polling on " + networkConfig.getNetworkInterface());
         try (DatagramChannel dc = DatagramChannel.open(family)
                 .setOption(StandardSocketOptions.SO_REUSEADDR, true)
                 .setOption(StandardSocketOptions.IP_MULTICAST_IF, networkConfig.getNetworkInterface())

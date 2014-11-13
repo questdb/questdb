@@ -62,6 +62,7 @@ public class SSLTest {
             try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                 getSslConfig().setKeyStore(is, "changeit");
             }
+            setEnableMulticast(false);
         }}, factory);
 
         JournalClient client = new JournalClient(new ClientConfig() {{
@@ -103,9 +104,11 @@ public class SSLTest {
             try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                 getSslConfig().setKeyStore(is, "changeit");
             }
+            setEnableMulticast(false);
         }}, factory);
 
         JournalClient client = new JournalClient(new ClientConfig() {{
+            setHostname("localhost");
             getSslConfig().setSecure(true);
             try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                 getSslConfig().setTrustStore(is, "changeit");
@@ -150,6 +153,7 @@ public class SSLTest {
             try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                 getSslConfig().setTrustStore(is, "changeit");
             }
+            setEnableMulticast(false);
         }}, factory);
 
         JournalClient client = new JournalClient(new ClientConfig() {{
@@ -193,9 +197,11 @@ public class SSLTest {
             try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                 getSslConfig().setKeyStore(is, "changeit");
             }
+            setEnableMulticast(false);
         }}, factory);
 
         JournalClient client = new JournalClient(new ClientConfig() {{
+            setHostname("localhost");
             getSslConfig().setSecure(true);
             try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                 getSslConfig().setTrustStore(is, "changeit");
@@ -239,9 +245,11 @@ public class SSLTest {
             try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                 getSslConfig().setKeyStore(is, "changeit");
             }
+            setEnableMulticast(false);
         }}, factory);
 
         JournalClient client = new JournalClient(new ClientConfig() {{
+            setHostname("localhost");
             getSslConfig().setSecure(true);
         }}, factory);
 

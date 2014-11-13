@@ -18,6 +18,7 @@ package com.nfsdb.journal.net.mcast;
 
 import com.nfsdb.journal.exceptions.JournalNetworkException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
+import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.net.config.NetworkConfig;
 
 import java.net.*;
@@ -29,6 +30,9 @@ import java.util.Iterator;
 import java.util.concurrent.CountDownLatch;
 
 public abstract class AbstractOnDemandSender {
+
+    private static final Logger LOGGER = Logger.getLogger(AbstractOnDemandSender.class);
+
     private final NetworkConfig networkConfig;
     private final InetSocketAddress socketAddress;
     private final int inMessageCode;
@@ -62,8 +66,7 @@ public abstract class AbstractOnDemandSender {
             InetAddress multicastAddress = socketAddress.getAddress();
             ProtocolFamily family = NetworkConfig.isInet6(multicastAddress) ? StandardProtocolFamily.INET6 : StandardProtocolFamily.INET;
 
-            System.out.println(multicastAddress);
-            System.out.println(networkConfig.getNetworkInterface());
+            LOGGER.info("Sending on: " + networkConfig.getNetworkInterface());
 
             try (DatagramChannel dc = DatagramChannel.open(family)
                     .setOption(StandardSocketOptions.SO_REUSEADDR, true)
@@ -103,8 +106,7 @@ public abstract class AbstractOnDemandSender {
                 }
             }
         } catch (Throwable e) {
-            System.out.println("shutdown");
-            e.printStackTrace();
+            LOGGER.error("Multicast sender crashed", e);
         } finally {
             latch.countDown();
         }

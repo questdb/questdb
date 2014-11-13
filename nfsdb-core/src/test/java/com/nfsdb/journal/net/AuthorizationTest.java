@@ -38,12 +38,16 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 public class AuthorizationTest extends AbstractTest {
+
+    private final ClientConfig local = new ClientConfig("localhost");
     @Test
     public void testClientAndServerSuccessfulAuth() throws Exception {
 
         JournalServer server = new JournalServer(
                 new ServerConfig() {{
-                    setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(5));
+                    setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(100));
+                    setEnableMulticast(false);
+                    setHostname("localhost");
                 }}
                 , factory
                 ,
@@ -55,7 +59,7 @@ public class AuthorizationTest extends AbstractTest {
                 });
 
 
-        JournalClient client = new JournalClient(ClientConfig.INSTANCE, factory, new CredentialProvider() {
+        JournalClient client = new JournalClient(local, factory, new CredentialProvider() {
             @Override
             public byte[] createToken() {
                 return "SECRET".getBytes();
@@ -70,6 +74,8 @@ public class AuthorizationTest extends AbstractTest {
         JournalServer server = new JournalServer(
                 new ServerConfig() {{
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
+                    setEnableMulticast(false);
+                    setHostname("localhost");
                 }}
                 , factory
                 ,
@@ -81,7 +87,7 @@ public class AuthorizationTest extends AbstractTest {
                 });
 
 
-        JournalClient client = new JournalClient(ClientConfig.INSTANCE, factory, new CredentialProvider() {
+        JournalClient client = new JournalClient(local, factory, new CredentialProvider() {
             @Override
             public byte[] createToken() {
                 return "NON_SECRET".getBytes();
@@ -100,6 +106,8 @@ public class AuthorizationTest extends AbstractTest {
         JournalServer server = new JournalServer(
                 new ServerConfig() {{
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
+                    setEnableMulticast(false);
+                    setHostname("localhost");
                 }}
                 , factory
                 ,
@@ -111,7 +119,7 @@ public class AuthorizationTest extends AbstractTest {
                 });
 
 
-        JournalClient client = new JournalClient(ClientConfig.INSTANCE, factory, new CredentialProvider() {
+        JournalClient client = new JournalClient(local, factory, new CredentialProvider() {
             @Override
             public byte[] createToken() {
                 return "SECRET".getBytes();
@@ -130,6 +138,8 @@ public class AuthorizationTest extends AbstractTest {
         JournalServer server = new JournalServer(
                 new ServerConfig() {{
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
+                    setEnableMulticast(false);
+                    setHostname("localhost");
                 }}
                 , factory
                 ,
@@ -141,7 +151,7 @@ public class AuthorizationTest extends AbstractTest {
                 });
 
 
-        JournalClient client = new JournalClient(ClientConfig.INSTANCE, factory);
+        JournalClient client = new JournalClient(local, factory);
 
         try {
             beginSync(server, client);
@@ -155,6 +165,8 @@ public class AuthorizationTest extends AbstractTest {
         JournalServer server = new JournalServer(
                 new ServerConfig() {{
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
+                    setEnableMulticast(false);
+                    setHostname("localhost");
                 }}
                 , factory
                 ,
@@ -166,7 +178,7 @@ public class AuthorizationTest extends AbstractTest {
                 });
 
 
-        JournalClient client = new JournalClient(ClientConfig.INSTANCE, factory, new SSOCredentialProvider("HOST/test"));
+        JournalClient client = new JournalClient(local, factory, new SSOCredentialProvider("HOST/test"));
 
         try {
             beginSync(server, client);

@@ -41,14 +41,12 @@ public class IntegrationTest extends AbstractTest {
     @Before
     public void setUp() throws Exception {
         server = new JournalServer(new ServerConfig() {{
+//            setHostname("localhost");
 //            setHostname("0:0:0:0:0:0:0:0");
-//            setIfName("lo0");
-            setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
+            setHostname("0.0.0.0");
+            setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(100));
         }}, factory);
-        client = new JournalClient(new ClientConfig() {{
-//            setHostname("fe80::82e6:50ff:fe11:b68a%4");
-//            setIfName("lo0");
-        }}, factory);
+        client = new JournalClient(new ClientConfig(), factory);
     }
 
     @Test
@@ -146,7 +144,7 @@ public class IntegrationTest extends AbstractTest {
             }
         });
 
-        JournalClient client2 = new JournalClient(ClientConfig.INSTANCE, factory);
+        JournalClient client2 = new JournalClient(new ClientConfig("localhost"), factory);
 
         client2.subscribe(Quote.class, "remote", "local2", new TxListener() {
             @Override

@@ -27,7 +27,7 @@ import org.junit.Test;
 public class ClientRecoveryTest extends AbstractTest {
     @Test
     public void testClientWriterRelease() throws Exception {
-        JournalClient client = new JournalClient(ClientConfig.INSTANCE, factory);
+        JournalClient client = new JournalClient(new ClientConfig("localhost"), factory);
         client.subscribe(Quote.class);
         try {
             client.start();

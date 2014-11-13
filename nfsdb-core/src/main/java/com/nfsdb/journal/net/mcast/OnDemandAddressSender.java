@@ -18,6 +18,7 @@ package com.nfsdb.journal.net.mcast;
 
 import com.nfsdb.journal.exceptions.JournalNetworkException;
 import com.nfsdb.journal.net.config.ServerConfig;
+import com.nfsdb.journal.utils.ByteBuffers;
 
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
@@ -33,12 +34,9 @@ public class OnDemandAddressSender extends AbstractOnDemandSender {
     @Override
     protected void prepareBuffer(ByteBuffer buf) throws JournalNetworkException {
         InetSocketAddress address = serverConfig.getInterfaceSocketAddress();
-        int port = address.getPort();
-        byte[] b = address.getAddress().getAddress();
-        buf.putInt(b.length);
-        buf.put(b);
+        ByteBuffers.putStringW(buf, address.getAddress().toString());
         buf.put((byte) (serverConfig.getSslConfig().isSecure() ? 1 : 0));
-        buf.putInt(port);
+        buf.putInt(address.getPort());
         buf.flip();
     }
 }

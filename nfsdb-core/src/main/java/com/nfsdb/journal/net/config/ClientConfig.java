@@ -29,7 +29,6 @@ import java.util.concurrent.TimeUnit;
 public class ClientConfig extends NetworkConfig {
 
     public static final Logger LOGGER = Logger.getLogger(ClientConfig.class);
-    public static final ClientConfig INSTANCE = new ClientConfig();
     private final ClientReconnectPolicy reconnectPolicy = new ClientReconnectPolicy();
     private int soSndBuf = 8192;
     private boolean keepAlive = true;
@@ -37,9 +36,14 @@ public class ClientConfig extends NetworkConfig {
     private int linger = -1;
 
     public ClientConfig() {
-        getSslConfig().setClient(true);
-        setHostname(null);
+        this(null);
     }
+
+    public ClientConfig(String hostname) {
+        getSslConfig().setClient(true);
+        setHostname(hostname);
+    }
+
 
     public int getSoSndBuf() {
         return soSndBuf;

@@ -110,7 +110,8 @@ public class ReconnectTest extends AbstractTest {
     private JournalServer newServer() throws JournalNetworkException {
         return new JournalServer(new ServerConfig() {{
             setHostname("localhost");
-            setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
+            setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(100));
+            setEnableMulticast(false);
         }}, factory);
     }
 }

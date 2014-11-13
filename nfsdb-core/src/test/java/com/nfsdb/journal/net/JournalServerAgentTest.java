@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -59,8 +59,11 @@ public class JournalServerAgentTest extends AbstractTest {
         channel = new MockByteChannel();
         quoteWriter = factory.writer(Quote.class);
         tradeWriter = factory.writer(Trade.class);
-        ServerConfig config = new ServerConfig();
-        config.setHeartbeatFrequency(300);
+        ServerConfig config = new ServerConfig() {{
+            setHeartbeatFrequency(100);
+            setEnableMulticast(false);
+        }};
+
         server = new JournalServer(config, factory);
         server.publish(quoteWriter);
         agent = new JournalServerAgent(server, new InetSocketAddress(NetworkConfig.DEFAULT_DATA_PORT), null);

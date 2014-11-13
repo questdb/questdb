@@ -19,9 +19,7 @@ package com.nfsdb.journal.net.mcast;
 import com.nfsdb.journal.exceptions.JournalNetworkException;
 import com.nfsdb.journal.net.config.NetworkConfig;
 
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 
 public class OnDemandAddressPoller extends AbstractOnDemandPoller<InetSocketAddress> {
@@ -34,16 +32,14 @@ public class OnDemandAddressPoller extends AbstractOnDemandPoller<InetSocketAddr
         if (buf == null) {
             throw new JournalNetworkException("Cannot find NFSdb servers on network");
         }
-        try {
-            byte[] b = new byte[buf.getInt()];
-            buf.get(b);
-            InetAddress address = InetAddress.getByAddress(b);
-            // skip SSL byte
-            buf.get();
-            int port = buf.getInt();
-            return new InetSocketAddress(address, port);
-        } catch (UnknownHostException e) {
-            throw new JournalNetworkException(e);
+
+        char[] chars = new char[buf.getChar()];
+        for (int i = 0; i < chars.length; i++) {
+            chars[i] = buf.getChar();
         }
+        // skip SSL byte
+        buf.get();
+        int port = buf.getInt();
+        return new InetSocketAddress(new String(chars).substring(1), port);
     }
 }

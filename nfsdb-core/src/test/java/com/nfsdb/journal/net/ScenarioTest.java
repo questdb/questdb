@@ -35,6 +35,11 @@ public class ScenarioTest extends AbstractTest {
 
     private final ServerConfig serverConfig = new ServerConfig() {{
         setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(300));
+        setHostname("localhost");
+    }};
+
+    private final ClientConfig clientConfig = new ClientConfig() {{
+        setHostname("localhost");
     }};
 
     private static void iteration(String expected, Journal<Quote> origin, JournalWriter<Quote> remote, Journal<Quote> local, int lo, int hi) throws Exception {
@@ -50,7 +55,7 @@ public class ScenarioTest extends AbstractTest {
     @Test
     public void testSingleJournalTrickle() throws Exception {
         JournalServer server = new JournalServer(serverConfig, factory);
-        JournalClient client = new JournalClient(ClientConfig.INSTANCE, factory);
+        JournalClient client = new JournalClient(clientConfig, factory);
 
         // prepare test data
         JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
@@ -121,7 +126,7 @@ public class ScenarioTest extends AbstractTest {
         Assert.assertEquals(0, local.size());
 
         JournalServer server = new JournalServer(serverConfig, factory);
-        JournalClient client = new JournalClient(ClientConfig.INSTANCE, factory);
+        JournalClient client = new JournalClient(clientConfig, factory);
 
         server.publish(remote);
         server.start();

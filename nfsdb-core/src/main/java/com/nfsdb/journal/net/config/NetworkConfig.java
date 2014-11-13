@@ -137,7 +137,6 @@ public class NetworkConfig {
         } catch (SocketException e) {
             throw new JournalNetworkException("Cannot validate network interface", e);
         }
-        System.out.println("Selected: " + ifn);
         return networkInterface = ifn;
     }
 
