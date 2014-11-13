@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,12 +41,11 @@ public class IntegrationTest extends AbstractTest {
     @Before
     public void setUp() throws Exception {
         server = new JournalServer(new ServerConfig() {{
-//            setHostname("localhost");
-//            setHostname("0:0:0:0:0:0:0:0");
-            setHostname("0.0.0.0");
+            setHostname("localhost");
             setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(100));
+            setEnableMulticast(false);
         }}, factory);
-        client = new JournalClient(new ClientConfig(), factory);
+        client = new JournalClient(new ClientConfig("localhost"), factory);
     }
 
     @Test

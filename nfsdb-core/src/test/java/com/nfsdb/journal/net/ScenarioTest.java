@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,21 +36,10 @@ public class ScenarioTest extends AbstractTest {
     private final ServerConfig serverConfig = new ServerConfig() {{
         setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(300));
         setHostname("localhost");
+        setEnableMulticast(false);
     }};
 
-    private final ClientConfig clientConfig = new ClientConfig() {{
-        setHostname("localhost");
-    }};
-
-    private static void iteration(String expected, Journal<Quote> origin, JournalWriter<Quote> remote, Journal<Quote> local, int lo, int hi) throws Exception {
-        remote.append(origin.query().all().asResultSet().subset(lo, hi));
-        remote.commit();
-
-        Thread.sleep(100);
-
-        local.refresh();
-        TestUtils.assertEquals(expected, local.query().head().withKeys().asResultSet());
-    }
+    private final ClientConfig clientConfig = new ClientConfig("localhost");
 
     @Test
     public void testSingleJournalTrickle() throws Exception {
@@ -147,6 +136,16 @@ public class ScenarioTest extends AbstractTest {
         local.refresh();
         remoteReader.refresh();
         assertEquals(remoteReader, local);
+    }
+
+    private static void iteration(String expected, Journal<Quote> origin, JournalWriter<Quote> remote, Journal<Quote> local, int lo, int hi) throws Exception {
+        remote.append(origin.query().all().asResultSet().subset(lo, hi));
+        remote.commit();
+
+        Thread.sleep(100);
+
+        local.refresh();
+        TestUtils.assertEquals(expected, local.query().head().withKeys().asResultSet());
     }
 
     private void lagIteration(final Journal<Quote> origin, final JournalWriter<Quote> remote, final int lo, final int hi) throws JournalException {
