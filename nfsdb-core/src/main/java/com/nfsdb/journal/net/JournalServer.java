@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -72,25 +72,12 @@ public class JournalServer {
         this.factory = factory;
         this.service = Executors.newCachedThreadPool(AGENT_THREAD_FACTORY);
         this.bridge = new JournalEventBridge(config.getHeartbeatFrequency(), TimeUnit.MILLISECONDS, config.getEventBufferSize());
-        this.addressSender = new OnDemandAddressSender(config, 230, 235);
-        this.authorizer = authorizer;
-    }
-
-    private static void closeChannel(SocketChannelHolder holder, boolean force) {
-        if (holder != null) {
-            try {
-                if (holder.socketAddress != null) {
-                    if (force) {
-                        LOGGER.info("Client forced out: %s", holder.socketAddress);
-                    } else {
-                        LOGGER.info("Client disconnected: %s", holder.socketAddress);
-                    }
-                }
-                holder.byteChannel.close();
-            } catch (IOException e) {
-                LOGGER.error("Cannot close channel [%s]: %s", holder.byteChannel, e.getMessage());
-            }
+        if (config.isEnableMulticast()) {
+            this.addressSender = new OnDemandAddressSender(config, 230, 235);
+        } else {
+            this.addressSender = null;
         }
+        this.authorizer = authorizer;
     }
 
     public void publish(JournalWriter journal) {
@@ -129,7 +116,10 @@ public class JournalServer {
             writers.get(i).setTxListener(null);
         }
         bridge.halt();
-        addressSender.halt();
+
+        if (addressSender != null) {
+            addressSender.halt();
+        }
 
         try {
             closeChannels();
@@ -152,6 +142,23 @@ public class JournalServer {
 
     public synchronized int getConnectedClients() {
         return channels.size();
+    }
+
+    private static void closeChannel(SocketChannelHolder holder, boolean force) {
+        if (holder != null) {
+            try {
+                if (holder.socketAddress != null) {
+                    if (force) {
+                        LOGGER.info("Client forced out: %s", holder.socketAddress);
+                    } else {
+                        LOGGER.info("Client disconnected: %s", holder.socketAddress);
+                    }
+                }
+                holder.byteChannel.close();
+            } catch (IOException e) {
+                LOGGER.error("Cannot close channel [%s]: %s", holder.byteChannel, e.getMessage());
+            }
+        }
     }
 
     int getWriterIndex(JournalKey key) {
@@ -218,11 +225,6 @@ public class JournalServer {
         private final JournalServerAgent agent;
         private final SocketChannelHolder holder;
 
-        Handler(SocketChannelHolder holder) {
-            this.holder = holder;
-            this.agent = new JournalServerAgent(JournalServer.this, holder.socketAddress, authorizer);
-        }
-
         @Override
         public void run() {
             try {
@@ -256,6 +258,11 @@ public class JournalServer {
                 agent.close();
                 removeChannel(holder);
             }
+        }
+
+        Handler(SocketChannelHolder holder) {
+            this.holder = holder;
+            this.agent = new JournalServerAgent(JournalServer.this, holder.socketAddress, authorizer);
         }
     }
 }
