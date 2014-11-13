@@ -20,29 +20,18 @@ import com.nfsdb.journal.exceptions.JournalNetworkException;
 import com.nfsdb.journal.logging.Logger;
 
 import java.io.IOException;
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
-import java.net.UnknownHostException;
 import java.nio.channels.ServerSocketChannel;
-import java.util.Enumeration;
 import java.util.concurrent.TimeUnit;
 
 public class ServerConfig extends NetworkConfig {
     public static final long SYNC_TIMEOUT = TimeUnit.SECONDS.toMillis(15);
     private static final long DEFAULT_HEARTBEAT_FREQUENCY = TimeUnit.SECONDS.toMillis(5);
-    private long heartbeatFrequency = DEFAULT_HEARTBEAT_FREQUENCY;
     private static final int RING_BUFFER_SIZE = 1024;
-    private int eventBufferSize = RING_BUFFER_SIZE;
     private static final Logger LOGGER = Logger.getLogger(ServerConfig.class);
-
-    public ServerConfig() {
-        try {
-            setHostname(InetAddress.getLocalHost().getHostName());
-        } catch (UnknownHostException e) {
-            // ignore error and keep NULL
-        }
-    }
+    private long heartbeatFrequency = DEFAULT_HEARTBEAT_FREQUENCY;
+    private int eventBufferSize = RING_BUFFER_SIZE;
 
     public long getHeartbeatFrequency() {
         return heartbeatFrequency;
@@ -61,24 +50,9 @@ public class ServerConfig extends NetworkConfig {
     }
 
     public InetSocketAddress getSocketAddress() throws JournalNetworkException {
-        InetSocketAddress address;
-        if (getIfName() == null) {
-            String host = getHostname();
-            if (host == null) {
-                address = new InetSocketAddress(getPort());
-            } else {
-                address = new InetSocketAddress(host, getPort());
-            }
-        } else {
-            NetworkInterface ifn = getNetworkInterface();
-            Enumeration<InetAddress> addresses = ifn.getInetAddresses();
-            if (addresses.hasMoreElements()) {
-                address = new InetSocketAddress(addresses.nextElement(), getPort());
-            } else {
-                throw new JournalNetworkException("Interface does not have addresses: " + getIfName());
-            }
-        }
-        return address;
+        // must call this to have hostAddress populated
+        InetSocketAddress address = getInterfaceSocketAddress();
+        return hostAddress == null ? address : new InetSocketAddress(hostAddress, getPort());
     }
 
     public ServerSocketChannel openServerSocketChannel() throws JournalNetworkException {
@@ -87,11 +61,9 @@ public class ServerConfig extends NetworkConfig {
             InetSocketAddress address = getSocketAddress();
             channel = ServerSocketChannel.open();
             channel.socket().bind(address);
-            channel.socket().setSoTimeout(getSoTimeout());
             channel.socket().setReceiveBufferSize(getSoRcvBuf());
-            channel.socket().setReuseAddress(isReuseAddress());
 
-            NetworkInterface ifn = NetworkInterface.getByInetAddress(address.getAddress());
+            NetworkInterface ifn = getNetworkInterface();
             LOGGER.info("Server is now listening on %s [%s]", address, ifn == null ? "all" : ifn.getName());
 
             return channel;

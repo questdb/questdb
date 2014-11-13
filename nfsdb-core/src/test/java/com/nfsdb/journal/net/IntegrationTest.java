@@ -41,10 +41,14 @@ public class IntegrationTest extends AbstractTest {
     @Before
     public void setUp() throws Exception {
         server = new JournalServer(new ServerConfig() {{
-            setHostname("localhost");
+//            setHostname("0:0:0:0:0:0:0:0");
+//            setIfName("lo0");
             setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
         }}, factory);
-        client = new JournalClient(ClientConfig.INSTANCE, factory);
+        client = new JournalClient(new ClientConfig() {{
+//            setHostname("fe80::82e6:50ff:fe11:b68a%4");
+//            setIfName("lo0");
+        }}, factory);
     }
 
     @Test

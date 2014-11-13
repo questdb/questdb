@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,24 +16,20 @@
 
 package com.nfsdb.journal.net.config;
 
-import com.nfsdb.journal.concurrent.NamedDaemonThreadFactory;
 import com.nfsdb.journal.exceptions.JournalNetworkException;
 import com.nfsdb.journal.logging.Logger;
+import com.nfsdb.journal.net.mcast.OnDemandAddressPoller;
 
 import java.io.IOException;
-import java.net.DatagramPacket;
 import java.net.InetSocketAddress;
-import java.net.MulticastSocket;
 import java.nio.channels.SocketChannel;
 import java.nio.channels.UnresolvedAddressException;
-import java.util.concurrent.*;
+import java.util.concurrent.TimeUnit;
 
 public class ClientConfig extends NetworkConfig {
 
     public static final Logger LOGGER = Logger.getLogger(ClientConfig.class);
-    public static final ClientConfig INSTANCE = new ClientConfig() {{
-        setHostname("127.0.0.1");
-    }};
+    public static final ClientConfig INSTANCE = new ClientConfig();
     private final ClientReconnectPolicy reconnectPolicy = new ClientReconnectPolicy();
     private int soSndBuf = 8192;
     private boolean keepAlive = true;
@@ -42,6 +38,7 @@ public class ClientConfig extends NetworkConfig {
 
     public ClientConfig() {
         getSslConfig().setClient(true);
+        setHostname(null);
     }
 
     public int getSoSndBuf() {
@@ -82,18 +79,10 @@ public class ClientConfig extends NetworkConfig {
 
     public SocketChannel openSocketChannel() throws JournalNetworkException {
         String host = getHostname();
-        InetSocketAddress address;
-        ServerInformation serverInformation;
+        InetSocketAddress address = host != null ? new InetSocketAddress(host, getPort()) : pollServerAddress();
 
-        if (host == null) {
-            serverInformation = lookupServerInformation();
-            address = serverInformation.address;
-        } else {
-            address = new InetSocketAddress(host, getPort());
-        }
         try {
             SocketChannel channel = SocketChannel.open(address);
-            channel.socket().setSoTimeout(getSoTimeout());
             channel.socket().setTcpNoDelay(isTcpNoDelay());
             channel.socket().setKeepAlive(getKeepAlive());
             channel.socket().setSendBufferSize(getSoSndBuf());
@@ -104,7 +93,6 @@ public class ClientConfig extends NetworkConfig {
             if (channel.socket().getReceiveBufferSize() != getSoRcvBuf()) {
                 LOGGER.warn("SO_RCVBUF value is ignored");
             }
-            channel.socket().setReuseAddress(isReuseAddress());
             channel.socket().setSoLinger(getLinger() > -1, getLinger());
             LOGGER.info("Connected to %s", address);
             return channel;
@@ -115,70 +103,7 @@ public class ClientConfig extends NetworkConfig {
         }
     }
 
-    public ServerInformation lookupServerInformation() throws JournalNetworkException {
-        final ExecutorService executor = Executors.newFixedThreadPool(1, new NamedDaemonThreadFactory("jj-client-multicast", true));
-        final MulticastSocket socket = openMulticastSocket();
-        final DatagramPacket packetSnd;
-        try {
-            packetSnd = new DatagramPacket(new byte[]{ADDRESS_REQUEST_PREFIX}, 1, getMulticastSocketAddress());
-        } catch (Exception e) {
-            throw new JournalNetworkException("Cannot create send packet. Should never occur", e);
-        }
-        final DatagramPacket packetRcv = new DatagramPacket(new byte[10], 10);
-
-        Future<ServerInformation> future = executor.submit(new Callable<ServerInformation>() {
-            @Override
-            public ServerInformation call() throws Exception {
-                while (true) {
-                    socket.receive(packetRcv);
-                    byte[] data = packetRcv.getData();
-
-                    switch (data[0]) {
-                        case ADDRESS_RESPONSE_PREFIX:
-                            ServerInformation info = new ServerInformation();
-                            //  server address
-                            String host = Integer.toString(data[1] & 0xFF) + "."
-                                    + Integer.toString(data[2] & 0xFF) + "."
-                                    + Integer.toString(data[3] & 0xFF) + "."
-                                    + Integer.toString(data[4] & 0xFF);
-                            // info.ssl = data[5] == 1;
-                            int offset = 6;
-                            int port = data[offset] << 24 | (data[offset + 1] & 0xFF) << 16 | (data[offset + 2] & 0xFF) << 8 | (data[offset + 3] & 0xFF);
-                            info.address = new InetSocketAddress(host, port);
-                            LOGGER.debug("Received: %s:%d", host, port);
-                            return info;
-                    }
-                }
-            }
-        });
-
-
-        ServerInformation info = null;
-        int tryCount = 6;
-        while (tryCount > 0) {
-            try {
-                LOGGER.debug("Asking");
-                socket.send(packetSnd);
-                info = future.get(1, TimeUnit.SECONDS);
-                break;
-            } catch (TimeoutException e) {
-                tryCount--;
-            } catch (Exception e) {
-                throw new JournalNetworkException("Server address lookup failed", e);
-            }
-        }
-
-        executor.shutdown();
-        socket.close();
-
-        if (info == null) {
-            throw new JournalNetworkException("No servers found on network");
-        }
-        return info;
-    }
-
-    public static class ServerInformation {
-        InetSocketAddress address;
-        //boolean ssl;
+    private InetSocketAddress pollServerAddress() throws JournalNetworkException {
+        return new OnDemandAddressPoller(this, 235, 230).poll(3, 500, TimeUnit.MILLISECONDS);
     }
 }

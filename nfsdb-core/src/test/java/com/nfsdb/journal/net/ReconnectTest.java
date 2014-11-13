@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.nfsdb.journal.net;
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.exceptions.JournalNetworkException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.net.config.ClientConfig;
@@ -106,7 +107,7 @@ public class ReconnectTest extends AbstractTest {
         TestUtils.assertDataEquals(remote, local);
     }
 
-    private JournalServer newServer() {
+    private JournalServer newServer() throws JournalNetworkException {
         return new JournalServer(new ServerConfig() {{
             setHostname("localhost");
             setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));

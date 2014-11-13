@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,9 +26,9 @@ import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.net.auth.Authorizer;
 import com.nfsdb.journal.net.bridge.JournalEventBridge;
 import com.nfsdb.journal.net.config.ServerConfig;
+import com.nfsdb.journal.net.mcast.OnDemandAddressSender;
 
 import java.io.IOException;
-import java.net.InetSocketAddress;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.util.ArrayList;
@@ -51,29 +51,46 @@ public class JournalServer {
     private final ExecutorService service;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final ArrayList<SocketChannelHolder> channels = new ArrayList<>();
-    private final JournalServerAddressMulticast multicast;
+    private final OnDemandAddressSender addressSender;
     private final Authorizer authorizer;
     private ServerSocketChannel serverSocketChannel;
 
-    public JournalServer(JournalReaderFactory factory) {
+    public JournalServer(JournalReaderFactory factory) throws JournalNetworkException {
         this(new ServerConfig(), factory);
     }
 
-    public JournalServer(JournalReaderFactory factory, Authorizer authorizer) {
+    public JournalServer(JournalReaderFactory factory, Authorizer authorizer) throws JournalNetworkException {
         this(new ServerConfig(), factory, authorizer);
     }
 
-    public JournalServer(ServerConfig config, JournalReaderFactory factory) {
+    public JournalServer(ServerConfig config, JournalReaderFactory factory) throws JournalNetworkException {
         this(config, factory, null);
     }
 
-    public JournalServer(ServerConfig config, JournalReaderFactory factory, Authorizer authorizer) {
+    public JournalServer(ServerConfig config, JournalReaderFactory factory, Authorizer authorizer) throws JournalNetworkException {
         this.config = config;
         this.factory = factory;
         this.service = Executors.newCachedThreadPool(AGENT_THREAD_FACTORY);
         this.bridge = new JournalEventBridge(config.getHeartbeatFrequency(), TimeUnit.MILLISECONDS, config.getEventBufferSize());
-        this.multicast = new JournalServerAddressMulticast(config);
+        this.addressSender = new OnDemandAddressSender(config, 230, 235);
         this.authorizer = authorizer;
+    }
+
+    private static void closeChannel(SocketChannelHolder holder, boolean force) {
+        if (holder != null) {
+            try {
+                if (holder.socketAddress != null) {
+                    if (force) {
+                        LOGGER.info("Client forced out: %s", holder.socketAddress);
+                    } else {
+                        LOGGER.info("Client disconnected: %s", holder.socketAddress);
+                    }
+                }
+                holder.byteChannel.close();
+            } catch (IOException e) {
+                LOGGER.error("Cannot close channel [%s]: %s", holder.byteChannel, e.getMessage());
+            }
+        }
     }
 
     public void publish(JournalWriter journal) {
@@ -97,11 +114,8 @@ public class JournalServer {
 
         }
         serverSocketChannel = config.openServerSocketChannel();
-        InetSocketAddress address = config.getSocketAddress();
-        if (address.getAddress().isAnyLocalAddress()) {
-            LOGGER.warn("Server is bound to *any local address*. Multicast is DISABLED");
-        } else if (config.isEnableMulticast()) {
-            multicast.start();
+        if (config.isEnableMulticast()) {
+            addressSender.start();
         }
         bridge.start();
         running.set(true);
@@ -115,7 +129,7 @@ public class JournalServer {
             writers.get(i).setTxListener(null);
         }
         bridge.halt();
-        multicast.halt();
+        addressSender.halt();
 
         try {
             closeChannels();
@@ -138,23 +152,6 @@ public class JournalServer {
 
     public synchronized int getConnectedClients() {
         return channels.size();
-    }
-
-    private static void closeChannel(SocketChannelHolder holder, boolean force) {
-        if (holder != null) {
-            try {
-                if (holder.socketAddress != null) {
-                    if (force) {
-                        LOGGER.info("Client forced out: %s", holder.socketAddress);
-                    } else {
-                        LOGGER.info("Client disconnected: %s", holder.socketAddress);
-                    }
-                }
-                holder.byteChannel.close();
-            } catch (IOException e) {
-                LOGGER.error("Cannot close channel [%s]: %s", holder.byteChannel, e.getMessage());
-            }
-        }
     }
 
     int getWriterIndex(JournalKey key) {
@@ -198,7 +195,6 @@ public class JournalServer {
                     }
                     SocketChannel channel = serverSocketChannel.accept();
                     if (channel != null) {
-                        channel.socket().setSoTimeout(config.getSoTimeout());
                         SocketChannelHolder holder = new SocketChannelHolder(
                                 config.getSslConfig().isSecure() ? new SecureByteChannel(channel, config.getSslConfig()) : channel
                                 , channel.getRemoteAddress()
@@ -221,6 +217,11 @@ public class JournalServer {
 
         private final JournalServerAgent agent;
         private final SocketChannelHolder holder;
+
+        Handler(SocketChannelHolder holder) {
+            this.holder = holder;
+            this.agent = new JournalServerAgent(JournalServer.this, holder.socketAddress, authorizer);
+        }
 
         @Override
         public void run() {
@@ -255,11 +256,6 @@ public class JournalServer {
                 agent.close();
                 removeChannel(holder);
             }
-        }
-
-        Handler(SocketChannelHolder holder) {
-            this.holder = holder;
-            this.agent = new JournalServerAgent(JournalServer.this, holder.socketAddress, authorizer);
         }
     }
 }

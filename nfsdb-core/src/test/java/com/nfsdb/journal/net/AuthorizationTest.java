@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,7 +43,6 @@ public class AuthorizationTest extends AbstractTest {
 
         JournalServer server = new JournalServer(
                 new ServerConfig() {{
-                    setHostname("localhost");
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(5));
                 }}
                 , factory
@@ -70,7 +69,6 @@ public class AuthorizationTest extends AbstractTest {
     public void testClientWrongAuth() throws Exception {
         JournalServer server = new JournalServer(
                 new ServerConfig() {{
-                    setHostname("localhost");
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
                 }}
                 , factory
@@ -101,7 +99,6 @@ public class AuthorizationTest extends AbstractTest {
     public void testServerAuthException() throws Exception {
         JournalServer server = new JournalServer(
                 new ServerConfig() {{
-                    setHostname("localhost");
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
                 }}
                 , factory
@@ -132,7 +129,6 @@ public class AuthorizationTest extends AbstractTest {
     public void testSillyClient() throws Exception {
         JournalServer server = new JournalServer(
                 new ServerConfig() {{
-                    setHostname("localhost");
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
                 }}
                 , factory
@@ -158,7 +154,6 @@ public class AuthorizationTest extends AbstractTest {
     public void testExceptionInCredentialProvider() throws Exception {
         JournalServer server = new JournalServer(
                 new ServerConfig() {{
-                    setHostname("localhost");
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
                 }}
                 , factory
