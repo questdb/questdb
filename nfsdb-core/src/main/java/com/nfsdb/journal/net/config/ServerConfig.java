@@ -22,6 +22,7 @@ import com.nfsdb.journal.logging.Logger;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
+import java.net.StandardSocketOptions;
 import java.nio.channels.ServerSocketChannel;
 import java.util.concurrent.TimeUnit;
 
@@ -57,15 +58,10 @@ public class ServerConfig extends NetworkConfig {
 
     public ServerSocketChannel openServerSocketChannel() throws JournalNetworkException {
         try {
-            ServerSocketChannel channel;
             InetSocketAddress address = getSocketAddress();
-            channel = ServerSocketChannel.open();
-            channel.socket().bind(address);
-            channel.socket().setReceiveBufferSize(getSoRcvBuf());
-
+            ServerSocketChannel channel = ServerSocketChannel.open().bind(address).setOption(StandardSocketOptions.SO_RCVBUF, getSoRcvBuf());
             NetworkInterface ifn = getNetworkInterface();
             LOGGER.info("Server is now listening on %s [%s]", address, ifn == null ? "all" : ifn.getName());
-
             return channel;
         } catch (IOException e) {
             throw new JournalNetworkException("Cannot open server socket", e);

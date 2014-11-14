@@ -149,7 +149,7 @@ public class VariableColumn extends AbstractColumn {
         target.putInt(value.remaining());
         appendOffset += 4;
         while (true) {
-            appendOffset += ByteBuffers.copy(value, target, targetOffset - appendOffset);
+            appendOffset += ByteBuffers.copy(value, target, (int) (targetOffset - appendOffset));
             if (appendOffset < targetOffset) {
                 target = getBuffer(appendOffset, 1);
             } else {
@@ -217,8 +217,8 @@ public class VariableColumn extends AbstractColumn {
 
         while (target.remaining() > 0) {
             ByteBuffer bb = getBuffer(offset, 1);
-            int sz = ByteBuffers.copy(bb, target, target.remaining());
-            offset += sz;
+            offset += bb.remaining();
+            ByteBuffers.copy(bb, target, bb.remaining());
         }
     }
 

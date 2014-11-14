@@ -119,12 +119,16 @@ public class JournalStructure implements JMetadataBuilder<Object> {
     }
 
     public JournalStructure partitionBy(PartitionType type) {
-        this.partitionBy = type;
+        if (type != PartitionType.DEFAULT) {
+            this.partitionBy = type;
+        }
         return this;
     }
 
     public JournalStructure recordCountHint(int count) {
-        this.recordCountHint = count;
+        if (count > 0) {
+            this.recordCountHint = count;
+        }
         return this;
     }
 

@@ -28,70 +28,86 @@ import java.nio.channels.WritableByteChannel;
 
 public final class ByteBuffers {
 
-    private static final int[] multipliers = new int[]{1, 3, 5, 7, 9, 11, 13};
+    //    private static final int[] multipliers = new int[]{1, 3, 5, 7, 9, 11, 13};
+    private static final int[] multipliers = new int[]{1, 3};
 
     private ByteBuffers() {
     }
 
     public static void copy(ByteBuffer from, WritableByteChannel to) throws JournalNetworkException {
-        copy(from, to, from.remaining());
+        try {
+            if (to.write(from) <= 0) {
+                throw new JournalNetworkException("Write to closed channel");
+            }
+        } catch (IOException e) {
+            throw new JournalNetworkException(e);
+        }
     }
 
     public static int copy(ByteBuffer from, WritableByteChannel to, int count) throws JournalNetworkException {
-        int result = 0;
-        if (to != null) {
+        if (count <= 0 || !from.hasRemaining()) {
+            return 0;
+        }
+
+        int result;
+
+        try {
+            if (count >= from.remaining()) {
+                if ((result = to.write(from)) <= 0) {
+                    throw new JournalNetworkException("Write to closed channel");
+                }
+                return result;
+            }
+
             int limit = from.limit();
             try {
-                if (from.remaining() > count) {
-                    from.limit(from.position() + count);
+                from.limit(from.position() + count);
+                if ((result = to.write(from)) <= 0) {
+                    throw new JournalNetworkException("Write to closed channel");
                 }
-                result = from.remaining();
-                if (result > 0) {
-                    try {
-                        int n = to.write(from);
-                        if (n <= 0) {
-                            throw new JournalNetworkException("Write to closed channel");
-                        }
-                    } catch (IOException e) {
-                        throw new JournalNetworkException(e);
-                    }
-                }
+
+                return result;
             } finally {
                 from.limit(limit);
             }
+        } catch (IOException e) {
+            throw new JournalNetworkException(e);
         }
-        return result;
     }
 
-    public static void copy(ReadableByteChannel from, ByteBuffer to) throws JournalNetworkException {
-        copy(from, to, to.remaining());
+    public static int copy(ReadableByteChannel from, ByteBuffer to) throws JournalNetworkException {
+        try {
+            int result = from.read(to);
+            if (result == -1) {
+                throw new JournalDisconnectedChannelException();
+            }
+            return result;
+        } catch (IOException e) {
+            throw new JournalNetworkException(e);
+        }
     }
 
     public static int copy(ReadableByteChannel from, ByteBuffer to, int count) throws JournalNetworkException {
+        if (count >= to.remaining()) {
+            return copy(from, to);
+        }
+
         int result = 0;
-        if (to != null) {
-            int limit = to.limit();
+        int limit = to.limit();
+        try {
+            to.limit(to.position() + count);
             try {
-                if (to.remaining() > count) {
-                    to.limit(to.position() + count);
-                }
-                try {
-                    result = from.read(to);
-                } catch (IOException e) {
-                    throw new JournalNetworkException(e);
-                }
-                if (result == -1) {
-                    throw new JournalDisconnectedChannelException();
-                }
-            } finally {
-                to.limit(limit);
+                result = from.read(to);
+            } catch (IOException e) {
+                throw new JournalNetworkException(e);
             }
+            if (result == -1) {
+                throw new JournalDisconnectedChannelException();
+            }
+        } finally {
+            to.limit(limit);
         }
         return result;
-    }
-
-    public static void copy(ByteBuffer from, ByteBuffer to) {
-        copy(from, to, to == null ? 0 : to.remaining());
     }
 
     /**
@@ -136,6 +152,7 @@ public final class ByteBuffers {
     }
 
     public static int getBitHint(int recSize, int recCount) {
+//                return Math.min(30, 32 - Integer.numberOfLeadingZeros(recSize * recCount));
         long target = ((long) recSize) * recCount;
         long minDeviation = Long.MAX_VALUE;
         int resultBits = 0;
@@ -162,20 +179,39 @@ public final class ByteBuffers {
         return resultBits;
     }
 
-    public static int copy(ByteBuffer from, ByteBuffer to, long count) {
+    public static int copy(ByteBuffer from, ByteBuffer to) {
+        int result = from.remaining();
+        if ((from instanceof DirectBuffer) && (to instanceof DirectBuffer)) {
+            Unsafe.getUnsafe().copyMemory(((DirectBuffer) from).address() + from.position(), ((DirectBuffer) to).address() + to.position(), result);
+            from.position(from.position() + result);
+            to.position(to.position() + result);
+        } else {
+            to.put(from);
+        }
+        return result;
+    }
+
+    public static int copy(ByteBuffer from, ByteBuffer to, int count) {
+
+        if (count <= 0) {
+            return 0;
+        }
+
+        if (count > to.remaining()) {
+            count = to.remaining();
+        }
+
+        if (from.remaining() <= count) {
+            return copy(from, to);
+        }
+
         int result = 0;
-        if (to != null && to.remaining() > 0) {
-            int limit = from.limit();
-            try {
-                int c = count < to.remaining() ? (int) count : to.remaining();
-                if (from.remaining() > c) {
-                    from.limit(from.position() + c);
-                }
-                result = from.remaining();
-                to.put(from);
-            } finally {
-                from.limit(limit);
-            }
+        int limit = from.limit();
+        try {
+            from.limit(from.position() + count);
+            result = copy(from, to);
+        } finally {
+            from.limit(limit);
         }
         return result;
     }

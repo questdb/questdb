@@ -115,13 +115,17 @@ public class JournalMetadataBuilder<T> implements JMetadataBuilder<T> {
 
     @Override
     public JournalMetadataBuilder<T> partitionBy(PartitionType type) {
-        this.partitionBy = type;
+        if (type != PartitionType.DEFAULT) {
+            this.partitionBy = type;
+        }
         return this;
     }
 
     @Override
     public JournalMetadataBuilder<T> recordCountHint(int count) {
-        this.recordCountHint = count;
+        if (count > 0) {
+            this.recordCountHint = count;
+        }
         return this;
     }
 

@@ -22,6 +22,7 @@ import com.nfsdb.journal.net.mcast.OnDemandAddressPoller;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.StandardSocketOptions;
 import java.nio.channels.SocketChannel;
 import java.nio.channels.UnresolvedAddressException;
 import java.util.concurrent.TimeUnit;
@@ -33,7 +34,7 @@ public class ClientConfig extends NetworkConfig {
     private int soSndBuf = 8192;
     private boolean keepAlive = true;
     private boolean tcpNoDelay = true;
-    private int linger = -1;
+    private int linger = 0;
 
     public ClientConfig() {
         this(null);
@@ -86,18 +87,20 @@ public class ClientConfig extends NetworkConfig {
         InetSocketAddress address = host != null ? new InetSocketAddress(host, getPort()) : pollServerAddress();
 
         try {
-            SocketChannel channel = SocketChannel.open(address);
-            channel.socket().setTcpNoDelay(isTcpNoDelay());
-            channel.socket().setKeepAlive(getKeepAlive());
-            channel.socket().setSendBufferSize(getSoSndBuf());
-            if (channel.socket().getSendBufferSize() != getSoSndBuf()) {
+            SocketChannel channel = SocketChannel.open(address)
+                    .setOption(StandardSocketOptions.TCP_NODELAY, isTcpNoDelay())
+                    .setOption(StandardSocketOptions.SO_KEEPALIVE, getKeepAlive())
+                    .setOption(StandardSocketOptions.SO_SNDBUF, getSoRcvBuf())
+                    .setOption(StandardSocketOptions.SO_RCVBUF, getSoRcvBuf())
+                    .setOption(StandardSocketOptions.SO_LINGER, getLinger());
+
+            if (channel.getOption(StandardSocketOptions.SO_SNDBUF) != getSoSndBuf()) {
                 LOGGER.warn("SO_SNDBUF value is ignored");
             }
-            channel.socket().setReceiveBufferSize(getSoRcvBuf());
-            if (channel.socket().getReceiveBufferSize() != getSoRcvBuf()) {
+            if (channel.getOption(StandardSocketOptions.SO_RCVBUF) != getSoRcvBuf()) {
                 LOGGER.warn("SO_RCVBUF value is ignored");
             }
-            channel.socket().setSoLinger(getLinger() > -1, getLinger());
+
             LOGGER.info("Connected to %s", address);
             return channel;
         } catch (UnresolvedAddressException e) {

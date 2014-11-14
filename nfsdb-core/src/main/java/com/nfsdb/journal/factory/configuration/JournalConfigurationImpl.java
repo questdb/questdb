@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -82,7 +82,7 @@ public class JournalConfigurationImpl implements JournalConfiguration {
                     builder = new JournalMetadataBuilder<>(mn);
                 }
             }
-            return apply(builder, key, journalLocation).build();
+            return builder.partitionBy(key.getPartitionType()).recordCountHint(key.getRecordHint()).location(journalLocation).build();
         } else {
             // journal exists on disk
             if (mn == null) {
@@ -90,20 +90,20 @@ public class JournalConfigurationImpl implements JournalConfiguration {
                 if (key.getModelClass() == null) {
                     // if this is generic access request
                     // return metadata as is, nothing more to do
-                    return (JournalMetadata<T>) new JournalStructure(mo).location(journalLocation).build();
+                    return (JournalMetadata<T>) new JournalStructure(mo).location(journalLocation).recordCountHint(key.getRecordHint()).build();
                 }
                 // if this is request to map class on existing journal
                 // check compatibility and map to class (calc offsets and constructor)
-                return new JournalStructure(mo).location(journalLocation).map(key.getModelClass());
+                return new JournalStructure(mo).location(journalLocation).recordCountHint(key.getRecordHint()).map(key.getModelClass());
             }
 
             // we have both on-disk and in-app meta
             // check if in-app meta matches on-disk meta
             if (eq(Checksum.getChecksum(mo), Checksum.getChecksum(mn))) {
                 if (mn.getModelClass() == null) {
-                    return (JournalMetadata<T>) new JournalStructure(mn).location(journalLocation).build();
+                    return (JournalMetadata<T>) new JournalStructure(mn).recordCountHint(key.getRecordHint()).location(journalLocation).build();
                 }
-                return new JournalMetadataBuilder<>(mn).location(journalLocation).build();
+                return new JournalMetadataBuilder<>(mn).location(journalLocation).recordCountHint(key.getRecordHint()).build();
             }
 
             throw new JournalMetadataException(mo, mn);
@@ -240,26 +240,5 @@ public class JournalConfigurationImpl implements JournalConfiguration {
         }
 
         return true;
-    }
-
-    private <T> JMetadataBuilder<T> apply(JMetadataBuilder<T> builder, JournalKey<T> key, File journalLocation) {
-        if (key.getPartitionType() != null) {
-            switch (key.getPartitionType()) {
-                case NONE:
-                case DAY:
-                case MONTH:
-                case YEAR:
-                    builder.partitionBy(key.getPartitionType());
-                    break;
-                case DEFAULT:
-                    break;
-            }
-        }
-
-        if (key.getRecordHint() > NULL_RECORD_HINT) {
-            builder.recordCountHint(key.getRecordHint());
-        }
-
-        return builder.location(journalLocation);
     }
 }
