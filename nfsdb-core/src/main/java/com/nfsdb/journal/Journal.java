@@ -32,9 +32,6 @@ import com.nfsdb.journal.lang.cst.JournalSource;
 import com.nfsdb.journal.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.psrc.JournalPartitionSource;
 import com.nfsdb.journal.lang.cst.impl.rsrc.AllRowSource;
-import com.nfsdb.journal.locks.Lock;
-import com.nfsdb.journal.locks.LockManager;
-import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.query.api.Query;
 import com.nfsdb.journal.query.spi.QueryImpl;
 import com.nfsdb.journal.tx.Tx;
@@ -55,7 +52,6 @@ import java.util.*;
 public class Journal<T> implements Iterable<T>, Closeable {
 
     public static final long TX_LIMIT_EVAL = -1L;
-    private static final Logger LOGGER = Logger.getLogger(Journal.class);
     final List<Partition<T>> partitions = new ArrayList<>();
     // empty container for current transaction
     final Tx tx = new Tx();
@@ -717,43 +713,18 @@ public class Journal<T> implements Iterable<T>, Closeable {
     }
 
     private void configureIrregularPartition() throws JournalException {
-        // if journal is under intense write activity in another process
-        // lag partition can keep changing
-        // so we will be trying to pin lag partition
-        while (true) {
-            String lagPartitionName = tx.lagName;
-            if (lagPartitionName != null && (irregularPartition == null || !lagPartitionName.equals(irregularPartition.getName()))) {
-                // new lag partition
-                // try to lock lag directory before any activity
-                File lagLocation = new File(getLocation(), lagPartitionName);
-                LOGGER.trace("Attempting to attach partition %s to %s", lagLocation.getName(), this);
-                Lock lock = LockManager.lockShared(lagLocation);
-                try {
-                    // if our lock has been successful
-                    // continue with replacing lag
-                    if (lock != null && lock.isValid()) {
-                        LOGGER.trace("Lock successful for %s", lagLocation.getName());
-                        Partition<T> temp = createTempPartition(lagPartitionName);
-                        temp.applyTx(tx.lagSize, tx.lagIndexPointers);
-                        setIrregularPartition(temp);
-                        // exit out of while loop
-                        break;
-                    } else {
-                        LOGGER.debug("Lock unsuccessful for %s", lagLocation.getName());
-                    }
-                } finally {
-                    LockManager.release(lock);
-                }
-            } else if (lagPartitionName != null && irregularPartition != null && lagPartitionName.equals(irregularPartition.getName())) {
-                irregularPartition.applyTx(tx.lagSize, tx.lagIndexPointers);
-                break;
-            } else if (lagPartitionName == null && irregularPartition != null) {
-                removeIrregularPartitionInternal();
-                break;
-            } else {
-                // there is no lag partition, exit.
-                break;
-            }
+        String lagPartitionName = tx.lagName;
+        if (lagPartitionName != null && (irregularPartition == null || !lagPartitionName.equals(irregularPartition.getName()))) {
+            // new lag partition
+            // try to lock lag directory before any activity
+            Partition<T> temp = createTempPartition(lagPartitionName);
+            temp.applyTx(tx.lagSize, tx.lagIndexPointers);
+            setIrregularPartition(temp);
+            // exit out of while loop
+        } else if (lagPartitionName != null && irregularPartition != null && lagPartitionName.equals(irregularPartition.getName())) {
+            irregularPartition.applyTx(tx.lagSize, tx.lagIndexPointers);
+        } else if (lagPartitionName == null && irregularPartition != null) {
+            removeIrregularPartitionInternal();
         }
     }
 

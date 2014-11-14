@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -212,23 +212,13 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     public void purgeUnusedTempPartitions(TxLog txLog) throws JournalException {
-        final String txLagName;
-
-        if (txLog.isEmpty()) {
-            txLagName = null;
-        } else {
-            final Tx tx = new Tx();
-            txLog.head(tx);
-            txLagName = tx.lagName;
-        }
-
+        final Tx tx = new Tx();
         final String lagPartitionName = hasIrregularPartition() ? getIrregularPartition().getName() : null;
 
         File[] files = getLocation().listFiles(new FileFilter() {
             public boolean accept(File f) {
                 return f.isDirectory() && f.getName().startsWith(Constants.TEMP_DIRECTORY_PREFIX) &&
-                        (lagPartitionName == null || !lagPartitionName.equals(f.getName())) &&
-                        (txLagName == null || !txLagName.equals(f.getName()));
+                        (lagPartitionName == null || !lagPartitionName.equals(f.getName()));
             }
         });
 
@@ -237,6 +227,11 @@ public class JournalWriter<T> extends Journal<T> {
             Arrays.sort(files);
 
             for (int i = 0; i < files.length; i++) {
+
+                if (!txLog.isEmpty() && files[i].getName().equals(txLog.head(tx).lagName)) {
+                    continue;
+                }
+
                 // get exclusive lock
                 Lock lock = LockManager.lockExclusive(files[i]);
                 try {
