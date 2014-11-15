@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.lang;
+package com.nfsdb.journal.test.tools;
 
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ import com.nfsdb.journal.column.FixedColumn;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
-import com.nfsdb.journal.lang.cst.JoinedSource;
+import com.nfsdb.journal.lang.cst.EntrySource;
 import com.nfsdb.journal.lang.cst.JournalEntry;
 import com.nfsdb.journal.lang.cst.JournalSource;
 import com.nfsdb.journal.lang.cst.RowCursor;
@@ -33,7 +33,7 @@ import com.nfsdb.journal.utils.Rows;
 
 import java.util.Arrays;
 
-public class SymbolToFrameOuterJoin extends AbstractImmutableIterator<JournalEntry> implements JoinedSource {
+public class SymbolToFrameOuterJoin extends AbstractImmutableIterator<JournalEntry> implements EntrySource {
     private final JournalSource masterSource;
     private final DataFrameSource slaveSource;
     private final StringRef masterSymbol;

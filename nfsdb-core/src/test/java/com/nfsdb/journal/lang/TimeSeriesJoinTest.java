@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,11 +20,12 @@ import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.journal.lang.cst.JoinedSource;
+import com.nfsdb.journal.lang.cst.EntrySource;
 import com.nfsdb.journal.lang.cst.JournalEntry;
-import com.nfsdb.journal.lang.cst.Q;
-import com.nfsdb.journal.lang.cst.impl.QImpl;
 import com.nfsdb.journal.lang.cst.impl.join.TimeSeriesJoin;
+import com.nfsdb.journal.lang.cst.impl.jsrc.JournalSourceImpl;
+import com.nfsdb.journal.lang.cst.impl.psrc.JournalPartitionSource;
+import com.nfsdb.journal.lang.cst.impl.rsrc.AllRowSource;
 import com.nfsdb.journal.test.tools.JournalTestFactory;
 import com.nfsdb.journal.utils.Files;
 import com.nfsdb.journal.utils.Rnd;
@@ -53,7 +54,6 @@ public class TimeSeriesJoinTest {
 
     }
 
-    private static Q q;
     private static JournalWriter<Ts> w1;
     private static JournalWriter<Ts> w2;
 
@@ -80,8 +80,6 @@ public class TimeSeriesJoinTest {
 
         w1.commit();
         w2.commit();
-
-        q = new QImpl();
     }
 
     @Test
@@ -118,16 +116,10 @@ public class TimeSeriesJoinTest {
                 "234~334\n";
 
 
-        JoinedSource src = new TimeSeriesJoin(
-                q.forEachPartition(
-                        q.source(w1, true)
-                        , q.all()
-                )
+        EntrySource src = new TimeSeriesJoin(
+                new JournalSourceImpl(new JournalPartitionSource(w1, true), new AllRowSource())
                 ,
-                q.forEachPartition(
-                        q.source(w2, true)
-                        , q.all()
-                )
+                new JournalSourceImpl(new JournalPartitionSource(w2, true), new AllRowSource())
                 , 150
                 , 2 // trigger re-sizes to test ring expand formulas
         );
@@ -162,16 +154,10 @@ public class TimeSeriesJoinTest {
                 "229~null\n" +
                 "234~247\n";
 
-        JoinedSource src = new TimeSeriesJoin(
-                q.forEachPartition(
-                        q.source(w1, true)
-                        , q.all()
-                )
+        EntrySource src = new TimeSeriesJoin(
+                new JournalSourceImpl(new JournalPartitionSource(w1, true), new AllRowSource())
                 ,
-                q.forEachPartition(
-                        q.source(w2, true)
-                        , q.all()
-                )
+                new JournalSourceImpl(new JournalPartitionSource(w2, true), new AllRowSource())
                 , 15
                 , 2 // trigger re-sizes to test ring expand formulas
         );

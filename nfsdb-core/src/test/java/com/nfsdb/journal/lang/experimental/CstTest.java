@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.lang;
+package com.nfsdb.journal.lang.experimental;
 
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
@@ -22,17 +22,20 @@ import com.nfsdb.journal.Partition;
 import com.nfsdb.journal.column.FixedColumn;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.journal.lang.cst.*;
-import com.nfsdb.journal.lang.cst.impl.QImpl;
-import com.nfsdb.journal.lang.cst.impl.dfrm.DataFrame;
-import com.nfsdb.journal.lang.cst.impl.dfrm.DataFrameSource;
-import com.nfsdb.journal.lang.cst.impl.dfrm.MapHeadDataFrameSource;
+import com.nfsdb.journal.lang.cst.EntrySource;
+import com.nfsdb.journal.lang.cst.JournalEntry;
+import com.nfsdb.journal.lang.cst.JournalSource;
+import com.nfsdb.journal.lang.cst.StatefulJournalSource;
 import com.nfsdb.journal.lang.cst.impl.join.SlaveResetOuterJoin;
+import com.nfsdb.journal.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.jsrc.StatefulJournalSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.ksrc.SingleKeySource;
+import com.nfsdb.journal.lang.cst.impl.psrc.JournalPartitionSource;
 import com.nfsdb.journal.lang.cst.impl.ref.MutableIntVariableSource;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 import com.nfsdb.journal.lang.cst.impl.ref.SymbolXTabVariableSource;
+import com.nfsdb.journal.lang.cst.impl.rsrc.AllRowSource;
+import com.nfsdb.journal.lang.cst.impl.rsrc.KvIndexHeadRowSource;
 import com.nfsdb.journal.lang.cst.impl.rsrc.KvIndexTopRowSource;
 import com.nfsdb.journal.model.Album;
 import com.nfsdb.journal.model.Band;
@@ -40,13 +43,11 @@ import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.test.tools.JournalTestFactory;
 import com.nfsdb.journal.test.tools.TestData;
 import com.nfsdb.journal.test.tools.TestUtils;
-import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Files;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Test;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 
 public class CstTest {
@@ -73,95 +74,10 @@ public class CstTest {
                 ;
             }}.build(Files.makeTempDir())
     );
-    private static final Q q = new QImpl();
-    private static JournalWriter<Quote> w;
 
     @BeforeClass
     public static void setUp() throws Exception {
-        w = factory.writer(Quote.class, "quote");
-        TestData.appendQuoteData2(w);
-    }
-
-    @Test
-    public void testUnionAndFilter() throws Exception {
-        StringRef sym = new StringRef();
-        sym.value = "sym";
-
-
-        DataSource<Quote> ds =
-                q.ds(
-                        q.forEachPartition(
-                                q.interval(
-                                        q.source(w, false)
-                                        , Dates.interval("2013-03-12T00:00:00.000Z", "2013-03-13T00:00:00.000Z")
-                                )
-                                , q.forEachRow(
-                                        q.union(
-                                                q.kvSource(sym
-                                                        , q.symbolTableSource(sym, new ArrayList<String>() {{
-                                                                    add("BP.L");
-                                                                    add("XXX");
-                                                                }}
-                                                        )
-                                                )
-                                                , q.kvSource(sym
-                                                        , q.symbolTableSource(sym, new ArrayList<String>() {{
-                                                                    add("WTB.L");
-                                                                }}
-                                                        )
-                                                )
-                                        )
-                                        , q.greaterThan("ask", 0.6)
-                                )
-                        )
-                        , new Quote()
-                );
-
-        for (Quote quote : ds) {
-            System.out.println(quote);
-        }
-    }
-
-    @Test
-    public void testHead() throws Exception {
-        StringRef sym = new StringRef("sym");
-
-        DataSource<Quote> ds =
-                q.ds(
-                        q.forEachPartition(
-                                q.interval(
-                                        q.source(w, false)
-                                        , Dates.interval("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z")
-                                )
-                                , q.kvSource(sym, q.symbolTableSource(sym), 1, 0, null)
-                        ), new Quote()
-                );
-
-        for (Quote quote : ds) {
-            System.out.println(quote);
-        }
-    }
-
-    @Test
-    public void testHeadFiltered() throws Exception {
-        StringRef sym = new StringRef("sym");
-        StringRef ex = new StringRef("ex");
-        StringRef exValue = new StringRef("SK");
-
-        DataSource<Quote> ds =
-                q.ds(
-                        q.forEachPartition(
-                                q.interval(
-                                        q.source(w, false)
-                                        , Dates.interval("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z")
-                                )
-                                , q.kvSource(sym, q.symbolTableSource(sym), 1, 0, q.equalsSymbol(ex, exValue))
-                        ), new Quote()
-                );
-
-        for (Quote quote : ds) {
-            System.out.println(quote);
-        }
+        TestData.appendQuoteData2(factory.writer(Quote.class, "quote"));
     }
 
     @Test
@@ -181,13 +97,7 @@ public class CstTest {
 
         MutableIntVariableSource key = new MutableIntVariableSource();
         StringRef sym = new StringRef(joinColumn);
-        JournalSource src = q.forEachPartition(
-                q.source(slave, false)
-                , q.kvSource(sym
-                        , q.singleKeySource(key)
-                        , 1000, 0, null
-                )
-        );
+        JournalSource src = new JournalSourceImpl(new JournalPartitionSource(slave, false), new KvIndexHeadRowSource(sym, new SingleKeySource(key), 1000, 0, null));
         SymbolTable slaveTab = src.getJournal().getSymbolTable(joinColumn);
         ////////////////////
 
@@ -203,7 +113,7 @@ public class CstTest {
 
             Arrays.fill(map, -1);
 
-            for (JournalEntry d : q.forEachPartition(q.source(master, false), q.all())) {
+            for (JournalEntry d : new JournalSourceImpl(new JournalPartitionSource(master, false), new AllRowSource())) {
 
                 if (last != d.partition) {
                     last = d.partition;
@@ -248,21 +158,12 @@ public class CstTest {
 
         StringRef sym = new StringRef("sym");
         StatefulJournalSource m;
-        JoinedSource src = new SlaveResetOuterJoin(
+        EntrySource src = new SlaveResetOuterJoin(
                 m = new StatefulJournalSourceImpl(
-                        q.forEachPartition(
-                                q.source(master, false)
-                                , q.all()
-                        )
+                        new JournalSourceImpl(new JournalPartitionSource(master, false), new AllRowSource())
                 )
                 ,
-                q.forEachPartition(
-                        q.source(slave, false)
-                        , q.kvSource(sym
-                                , q.singleKeySource(new SymbolXTabVariableSource(m, "sym", "sym"))
-                                , 1000, 0, null
-                        )
-                )
+                new JournalSourceImpl(new JournalPartitionSource(slave, false), new KvIndexHeadRowSource(sym, new SingleKeySource(new SymbolXTabVariableSource(m, "sym", "sym")), 1000, 0, null))
         );
 
         long count = 0;
@@ -295,19 +196,12 @@ public class CstTest {
 
         StringRef sym = new StringRef("sym");
         StatefulJournalSource m;
-        JoinedSource src = new SlaveResetOuterJoin(
+        EntrySource src = new SlaveResetOuterJoin(
                 m = new StatefulJournalSourceImpl(
-                        q.forEachPartition(
-                                q.source(master, false)
-                                , q.all()
-                        )
+                        new JournalSourceImpl(new JournalPartitionSource(master, false), new AllRowSource())
                 )
                 ,
-                q.forEachPartition(
-                        q.source(slave, false)
-                        , new KvIndexTopRowSource(sym, new SingleKeySource(new SymbolXTabVariableSource(m, "sym", "sym")), null)
-
-                )
+                new JournalSourceImpl(new JournalPartitionSource(slave, false), new KvIndexTopRowSource(sym, new SingleKeySource(new SymbolXTabVariableSource(m, "sym", "sym")), null))
         );
 
         long count = 0;
@@ -319,44 +213,13 @@ public class CstTest {
             }
             src.reset();
             for (JournalEntry d : src) {
+                d.getDate(0);
+                d.getDouble(2);
+                d.getDouble(3);
                 count++;
             }
         }
         System.out.println(count);
-        System.out.println(System.nanoTime() - t);
-    }
-
-    @Test
-    public void testOuterJoin() throws Exception {
-        JournalWriter<Band> w = factory.writer(Band.class);
-        JournalWriter<Album> wa = factory.writer(Album.class);
-
-        LangTestUtils.generateBands(w, 12000);
-        LangTestUtils.generateAlbums(wa, 10000);
-    }
-
-    @Test
-    public void testMapHeadFrame() throws Exception {
-
-        StringRef sym = new StringRef("sym");
-        StringRef ex = new StringRef("ex");
-        DataFrameSource src = new MapHeadDataFrameSource(
-                q.forEachPartition(
-                        q.interval(
-                                q.source(w, false)
-                                , Dates.interval("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z")
-                        )
-                        , q.kvSource(sym, q.symbolTableSource(sym), 1, 0, null)
-                )
-                , ex
-        );
-
-        DataFrame frame = src.getFrame();
-
-        RowCursor c = frame.cursor(2);
-
-        while (c.hasNext()) {
-            System.out.println(c.next());
-        }
+        System.out.println((System.nanoTime() - t) / 20);
     }
 }

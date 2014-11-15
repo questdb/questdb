@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,6 +30,10 @@ public class KvIndexRowSource implements RowSource, RowCursor {
     private KVIndex index;
     private Cursor indexCursor;
     private KeyCursor keyCursor;
+    private long lo;
+    private long hi;
+    private boolean full;
+    private long rowid;
 
     public KvIndexRowSource(StringRef symbol, KeySource keySource) {
         this.symbol = symbol;
@@ -42,6 +46,9 @@ public class KvIndexRowSource implements RowSource, RowCursor {
             this.index = slice.partition.getIndexForColumn(symbol.value);
             this.keyCursor = this.keySource.cursor(slice);
             this.indexCursor = null;
+            this.full = slice.lo == 0 && slice.calcHi;
+            this.lo = slice.lo;
+            this.hi = slice.calcHi ? slice.partition.open().size() - 1 : slice.hi;
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
@@ -59,12 +66,23 @@ public class KvIndexRowSource implements RowSource, RowCursor {
             this.indexCursor = index.cachedCursor(keyCursor.next());
         }
 
-        return indexCursor.hasNext();
+        if (full) {
+            return indexCursor.hasNext();
+        } else {
+            while (indexCursor.hasNext()) {
+                long rowid = indexCursor.next();
+                if (rowid >= lo && rowid <= hi) {
+                    this.rowid = rowid;
+                    return true;
+                }
+            }
+            return false;
+        }
     }
 
     @Override
     public long next() {
-        return indexCursor.next();
+        return full ? indexCursor.next() : this.rowid;
     }
 
     @Override

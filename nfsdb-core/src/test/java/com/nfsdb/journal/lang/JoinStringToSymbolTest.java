@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,16 +20,17 @@ import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.journal.lang.cst.JoinedSource;
+import com.nfsdb.journal.lang.cst.EntrySource;
 import com.nfsdb.journal.lang.cst.JournalEntry;
-import com.nfsdb.journal.lang.cst.Q;
 import com.nfsdb.journal.lang.cst.StatefulJournalSource;
-import com.nfsdb.journal.lang.cst.impl.QImpl;
 import com.nfsdb.journal.lang.cst.impl.join.SlaveResetOuterJoin;
+import com.nfsdb.journal.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.jsrc.StatefulJournalSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.ksrc.SingleKeySource;
+import com.nfsdb.journal.lang.cst.impl.psrc.JournalPartitionSource;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 import com.nfsdb.journal.lang.cst.impl.ref.StringXTabVariableSource;
+import com.nfsdb.journal.lang.cst.impl.rsrc.AllRowSource;
 import com.nfsdb.journal.lang.cst.impl.rsrc.KvIndexTopRowSource;
 import com.nfsdb.journal.model.Album;
 import com.nfsdb.journal.model.Band;
@@ -91,28 +92,23 @@ public class JoinStringToSymbolTest {
 
         aw.commit();
 
-        Q q = new QImpl();
         StringRef name = new StringRef("name");
         StatefulJournalSource master;
-        JoinedSource src = new SlaveResetOuterJoin(
-                master = new StatefulJournalSourceImpl(
-                        q.forEachPartition(
-                                q.source(aw, false)
-                                , q.all()
-                        )
-                )
-                ,
-                q.forEachPartition(
-                        q.source(bw, false)
-                        ,
-                        new KvIndexTopRowSource(
-                                name
-                                , new SingleKeySource(new StringXTabVariableSource(master, "band", "name"))
-                                , null
-                        )
-
-                )
-        );
+        EntrySource src =
+                new SlaveResetOuterJoin(
+                        master = new StatefulJournalSourceImpl(
+                                new JournalSourceImpl(
+                                        new JournalPartitionSource(aw, false), new AllRowSource()
+                                )
+                        ),
+                        new JournalSourceImpl(
+                                new JournalPartitionSource(bw, false),
+                                new KvIndexTopRowSource(
+                                        name
+                                        , new SingleKeySource(new StringXTabVariableSource(master, "band", "name"))
+                                        , null
+                                ))
+                );
 
 
         int count = 0;

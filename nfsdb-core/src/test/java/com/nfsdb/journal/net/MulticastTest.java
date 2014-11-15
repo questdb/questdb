@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,25 +35,10 @@ import java.util.concurrent.TimeUnit;
 
 public class MulticastTest extends AbstractTest {
 
-    private void assertMulticast(ServerConfig serverConfig) throws JournalNetworkException {
-        AbstractOnDemandSender sender = new OnDemandAddressSender(serverConfig, 120, 150);
-        sender.start();
-
-        OnDemandAddressPoller poller = new OnDemandAddressPoller(serverConfig, 150, 120);
-        InetSocketAddress address = poller.poll(2, 500, TimeUnit.MILLISECONDS);
-        Assert.assertNotNull(address);
-        System.out.println(address);
-        sender.halt();
-    }
-
-    private boolean isMulticastEnabled() throws JournalNetworkException, SocketException {
-        return new ServerConfig().getNetworkInterface().supportsMulticast();
-    }
-
     @Test
     public void testLocalhostBehaviour() throws Exception {
 
-        if (!isMulticastEnabled()) {
+        if (isMulticastDisabled()) {
             return;
         }
 
@@ -64,7 +49,7 @@ public class MulticastTest extends AbstractTest {
 
     @Test
     public void testDefaultNICBehaviour() throws Exception {
-        if (!isMulticastEnabled()) {
+        if (isMulticastDisabled()) {
             return;
         }
         assertMulticast(new ServerConfig());
@@ -72,7 +57,7 @@ public class MulticastTest extends AbstractTest {
 
     @Test
     public void testIPV4Forced() throws Exception {
-        if (!isMulticastEnabled()) {
+        if (isMulticastDisabled()) {
             return;
         }
         System.setProperty("java.net.preferIPv4Stack", "true");
@@ -83,7 +68,7 @@ public class MulticastTest extends AbstractTest {
 
     @Test
     public void testAllNics() throws Exception {
-        if (!isMulticastEnabled()) {
+        if (isMulticastDisabled()) {
             return;
         }
         ServerConfig networkConfig = new ServerConfig();
@@ -93,7 +78,7 @@ public class MulticastTest extends AbstractTest {
 
     @Test
     public void testIPv6() throws Exception {
-        if (!isMulticastEnabled()) {
+        if (isMulticastDisabled()) {
             return;
         }
 
@@ -114,5 +99,19 @@ public class MulticastTest extends AbstractTest {
         server.halt();
         Journal<Quote> local = factory.reader(Quote.class, "local");
         TestUtils.assertDataEquals(remote, local);
+    }
+
+    private void assertMulticast(ServerConfig serverConfig) throws JournalNetworkException {
+        AbstractOnDemandSender sender = new OnDemandAddressSender(serverConfig, 120, 150);
+        sender.start();
+
+        OnDemandAddressPoller poller = new OnDemandAddressPoller(serverConfig, 150, 120);
+        InetSocketAddress address = poller.poll(2, 500, TimeUnit.MILLISECONDS);
+        Assert.assertNotNull(address);
+        sender.halt();
+    }
+
+    private boolean isMulticastDisabled() throws JournalNetworkException, SocketException {
+        return !new ServerConfig().getNetworkInterface().supportsMulticast();
     }
 }

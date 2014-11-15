@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,13 +20,13 @@ import com.nfsdb.journal.Partition;
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.collections.RingQueue;
 import com.nfsdb.journal.column.FixedColumn;
-import com.nfsdb.journal.lang.cst.JoinedSource;
+import com.nfsdb.journal.lang.cst.EntrySource;
 import com.nfsdb.journal.lang.cst.JournalEntry;
 import com.nfsdb.journal.lang.cst.JournalSource;
 
 import java.util.NoSuchElementException;
 
-public class TimeSeriesJoin extends AbstractImmutableIterator<JournalEntry> implements JoinedSource {
+public class TimeSeriesJoin extends AbstractImmutableIterator<JournalEntry> implements EntrySource {
     private final JournalSource masterSource;
     private final JournalSource slaveSource;
     private final long depth;
