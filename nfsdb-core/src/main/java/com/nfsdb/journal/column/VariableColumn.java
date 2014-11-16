@@ -18,7 +18,6 @@ package com.nfsdb.journal.column;
 
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
-import com.nfsdb.journal.utils.ByteBuffers;
 import com.nfsdb.journal.utils.Unsafe;
 
 import java.io.IOException;
@@ -145,16 +144,26 @@ public class VariableColumn extends AbstractColumn {
         final long targetOffset = rowOffset + value.remaining() + 4;
         long appendOffset = rowOffset;
 
-        ByteBuffer target = getBuffer(rowOffset, 4);
-        target.putInt(value.remaining());
+        long address = mappedFile.getAddress(rowOffset, 4);
+        Unsafe.getUnsafe().putInt(address, value.remaining());
         appendOffset += 4;
-        while (true) {
-            appendOffset += ByteBuffers.copy(value, target, (int) (targetOffset - appendOffset));
-            if (appendOffset < targetOffset) {
-                target = getBuffer(appendOffset, 1);
-            } else {
-                break;
+        address += 4;
+        int len = mappedFile.getLocalRemaining(appendOffset);
+
+        while (appendOffset < targetOffset) {
+
+            if (len == 0) {
+                address = mappedFile.getAddress(appendOffset, 1);
+                len = mappedFile.getLocalRemaining(appendOffset);
             }
+            int min = len < value.remaining() ? len : value.remaining();
+
+            for (int i = 0; i < min; i++) {
+                Unsafe.getUnsafe().putByte(address++, value.get());
+            }
+
+            len -= min;
+            appendOffset += min;
         }
         commitAppend(rowOffset, (int) (targetOffset - rowOffset));
     }
@@ -215,10 +224,15 @@ public class VariableColumn extends AbstractColumn {
     public void getBin(long localRowID, ByteBuffer target) {
         long offset = getOffset(localRowID) + 4; // skip size
 
-        while (target.remaining() > 0) {
-            ByteBuffer bb = getBuffer(offset, 1);
-            offset += bb.remaining();
-            ByteBuffers.copy(bb, target, bb.remaining());
+        while (target.hasRemaining()) {
+            long address = mappedFile.getAddress(offset, 1);
+            int len = mappedFile.getLocalRemaining(offset);
+            int min = len < target.remaining() ? len : target.remaining();
+
+            for (int i = 0; i < min; i++) {
+                target.put(Unsafe.getUnsafe().getByte(address++));
+            }
+            offset += min;
         }
     }
 
