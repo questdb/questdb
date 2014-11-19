@@ -36,7 +36,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
-import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
 public class JournalTest extends AbstractTest {
@@ -333,7 +332,7 @@ public class JournalTest extends AbstractTest {
 
         ResultSet<Quote> originRs = origin.query().all().asResultSet();
         int blockSize = 5130;
-        Random rnd = new Random(System.currentTimeMillis());
+        Rnd rnd = new Rnd(System.currentTimeMillis(), System.nanoTime());
 
         try {
             for (int i = 0; i < originRs.size(); ) {
@@ -366,7 +365,7 @@ public class JournalTest extends AbstractTest {
 
         ResultSet<Quote> originRs = origin.query().all().asResultSet();
         int blockSize = 5130;
-        Random rnd = new Random(System.currentTimeMillis());
+        Rnd rnd = new Rnd(System.currentTimeMillis(), System.nanoTime());
 
         try {
             for (int i = 0; i < originRs.size(); ) {

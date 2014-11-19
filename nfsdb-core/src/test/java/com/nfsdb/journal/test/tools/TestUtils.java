@@ -39,7 +39,6 @@ import org.junit.Assert;
 
 import java.io.IOException;
 import java.util.Iterator;
-import java.util.Random;
 import java.util.UUID;
 
 public final class TestUtils {
@@ -220,7 +219,7 @@ public final class TestUtils {
 
     public static void generateTestEntityData(JournalWriter<TestEntity> w, int count, long timetamp, int increment) throws JournalException {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L", null};
-        Random r = new Random(System.currentTimeMillis());
+        Rnd r = new Rnd(System.currentTimeMillis(), System.nanoTime());
         for (int i = 0; i < count; i++) {
             TestEntity e = new TestEntity();
             e.setSym(symbols[Math.abs(r.nextInt() % (symbols.length))]);

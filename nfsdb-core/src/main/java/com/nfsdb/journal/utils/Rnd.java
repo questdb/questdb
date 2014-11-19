@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,8 +38,12 @@ public class Rnd {
         return (s1 = l1 ^ l0 ^ (l1 >> 17) ^ (l0 >> 26)) + l0;
     }
 
+    public long nextLong(int bits) {
+        return nextLong() >>> (64 - bits);
+    }
+
     public double nextDouble() {
-        return Double.longBitsToDouble(nextLong());
+        return (nextLong(26) << 27 + nextLong(27)) / (double) (1L << 53);
     }
 
     public int nextInt() {
@@ -65,5 +69,9 @@ public class Rnd {
             bytes[i] = (byte) (nextPositiveInt() % 25 + 66);
         }
         return bytes;
+    }
+
+    public boolean nextBoolean() {
+        return nextLong(1) != 0;
     }
 }
