@@ -24,6 +24,7 @@ import com.nfsdb.journal.lang.cst.JournalSource;
 import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.query.api.QueryAllBuilder;
+import com.nfsdb.journal.query.api.QueryHeadBuilder;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestUtils;
 import com.nfsdb.journal.utils.Dates;
@@ -195,9 +196,13 @@ public class PerformanceTest extends AbstractTest {
 
         try (Journal<Quote> journal = factory.reader(Quote.class)) {
             int count = 1000000;
-            long t = System.nanoTime();
-            for (int i = 0; i < count; i++) {
-                journal.query().head().withKeys().asResultSet().read();
+            long t = 0;
+            QueryHeadBuilder qhb = journal.query().head().withKeys();
+            for (int i = -100000; i < count; i++) {
+                if (i == 0) {
+                    t = System.nanoTime();
+                }
+                qhb.asResultSet().read();
             }
             LOGGER.info("journal.query().head().withKeys() (query+read) latency: " + (System.nanoTime() - t) / count + "ns");
         }

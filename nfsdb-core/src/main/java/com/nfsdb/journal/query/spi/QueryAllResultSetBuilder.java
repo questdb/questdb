@@ -18,7 +18,7 @@ package com.nfsdb.journal.query.spi;
 
 import com.nfsdb.journal.Partition;
 import com.nfsdb.journal.UnorderedResultSetBuilder;
-import com.nfsdb.journal.collections.IntArrayList;
+import com.nfsdb.journal.collections.DirectIntList;
 import com.nfsdb.journal.collections.LongArrayList;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.index.Cursor;
@@ -29,14 +29,14 @@ import org.joda.time.Interval;
 import java.util.List;
 
 public class QueryAllResultSetBuilder<T> extends UnorderedResultSetBuilder<T> {
-    private final IntArrayList symbolKeys;
+    private final DirectIntList symbolKeys;
     private final List<String> filterSymbols;
-    private final IntArrayList filterSymbolKeys;
+    private final DirectIntList filterSymbolKeys;
     final private String symbol;
     private KVIndex index;
     private KVIndex[] searchIndices;
 
-    public QueryAllResultSetBuilder(Interval interval, String symbol, IntArrayList symbolKeys, List<String> filterSymbols, IntArrayList filterSymbolKeys) {
+    public QueryAllResultSetBuilder(Interval interval, String symbol, DirectIntList symbolKeys, List<String> filterSymbols, DirectIntList filterSymbolKeys) {
         super(interval);
         this.symbol = symbol;
         this.symbolKeys = symbolKeys;
@@ -52,7 +52,7 @@ public class QueryAllResultSetBuilder<T> extends UnorderedResultSetBuilder<T> {
         // check if partition has at least one symbol value
         if (symbolKeys.size() > 0) {
             for (int i = 0, sz = symbolKeys.size(); i < sz; i++) {
-                if (index.contains(symbolKeys.getQuick(i))) {
+                if (index.contains(symbolKeys.get(i))) {
                     searchIndices = new KVIndex[filterSymbols.size()];
                     for (int k = 0; k < filterSymbols.size(); k++) {
                         searchIndices[k] = partition.getIndexForColumn(filterSymbols.get(k));
@@ -68,7 +68,7 @@ public class QueryAllResultSetBuilder<T> extends UnorderedResultSetBuilder<T> {
     @Override
     public void read(long lo, long hi) {
         for (int i = 0, sz = symbolKeys.size(); i < sz; i++) {
-            int symbolKey = symbolKeys.getQuick(i);
+            int symbolKey = symbolKeys.get(i);
             if (index.contains(symbolKey)) {
                 if (searchIndices.length > 0) {
                     for (int k = 0; k < searchIndices.length; k++) {

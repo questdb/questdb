@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -56,9 +56,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
     // empty container for current transaction
     final Tx tx = new Tx();
     final JournalMetadata<T> metadata;
-    TxLog txLog;
-    boolean open;
-    ColumnMetadata[] columnMetadata;
     private final File location;
     private final Map<String, SymbolTable> symbolTableMap = new HashMap<>();
     private final ArrayList<SymbolTable> symbolTables = new ArrayList<>();
@@ -75,6 +72,9 @@ public class Journal<T> implements Iterable<T>, Closeable {
         }
     };
     private final BitSet inactiveColumns;
+    TxLog txLog;
+    boolean open;
+    ColumnMetadata[] columnMetadata;
     private Partition<T> irregularPartition;
     private JournalClosingListener closeListener;
 

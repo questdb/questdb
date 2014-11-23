@@ -16,33 +16,24 @@
 
 package com.nfsdb.journal.collections;
 
-import gnu.trove.list.array.TIntArrayList;
+import com.nfsdb.journal.utils.Unsafe;
 
-public class IntArrayList extends TIntArrayList {
-
-    public IntArrayList() {
+public class DirectIntList extends AbstractDirectList {
+    public DirectIntList() {
+        super(2, 10);
     }
 
-    public IntArrayList(IntArrayList that) {
-        super();
-        add(that);
+    public DirectIntList(int capacity) {
+        super(2, capacity);
     }
 
-    public IntArrayList(int capacity) {
-        super(capacity);
+    public void add(int x) {
+        ensureCapacity();
+        Unsafe.getUnsafe().putInt(pos, x);
+        pos += 4;
     }
 
-    public void setCapacity(int capacity) {
-        if (capacity > _data.length) {
-            int[] tmp = new int[capacity];
-            System.arraycopy(_data, 0, tmp, 0, _data.length);
-            _data = tmp;
-        }
-    }
-
-    public void add(IntArrayList that) {
-        int sz = that.size();
-        setCapacity(sz);
-        add(that._data, 0, sz);
+    public int get(int p) {
+        return Unsafe.getUnsafe().getInt(start + (p << 2));
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.Partition;
 import com.nfsdb.journal.UnorderedResultSet;
 import com.nfsdb.journal.UnorderedResultSetBuilder;
-import com.nfsdb.journal.collections.IntArrayList;
+import com.nfsdb.journal.collections.DirectIntList;
 import com.nfsdb.journal.collections.LongArrayList;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.exceptions.JournalException;
@@ -35,9 +35,11 @@ import java.util.List;
 public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
 
     private final Journal<T> journal;
-    private final IntArrayList symbolKeys = new IntArrayList();
+    private final DirectIntList symbolKeys = new DirectIntList();
+    private final DirectIntList zone1Keys = new DirectIntList();
+    private final DirectIntList zone2Keys = new DirectIntList();
     private final List<String> filterSymbols = new ArrayList<>();
-    private final IntArrayList filterSymbolKeys = new IntArrayList();
+    private final DirectIntList filterSymbolKeys = new DirectIntList();
     private int symbolColumnIndex;
     private Interval interval;
     private long minRowID = -1L;
@@ -50,16 +52,13 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
     public void setSymbol(String symbol, String... values) {
         this.symbolColumnIndex = journal.getMetadata().getColumnIndex(symbol);
         SymbolTable symbolTable = journal.getSymbolTable(symbol);
-        this.symbolKeys.resetQuick();
-        this.symbolKeys.ensureCapacity(values == null || values.length == 0 ? symbolTable.size() : values.length);
+        this.symbolKeys.reset(values == null || values.length == 0 ? symbolTable.size() : values.length);
         if (values == null || values.length == 0) {
             int sz = symbolTable.size();
-            this.symbolKeys.ensureCapacity(sz);
             for (int i = 0; i < sz; i++) {
                 this.symbolKeys.add(i);
             }
         } else {
-            this.symbolKeys.ensureCapacity(values.length);
             for (int i = 0; i < values.length; i++) {
                 int key = symbolTable.getQuick(values[i]);
                 if (key != SymbolTable.VALUE_NOT_FOUND) {
@@ -95,7 +94,7 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
     @Override
     public void resetFilter() {
         filterSymbols.clear();
-        filterSymbolKeys.resetQuick();
+        filterSymbolKeys.reset();
     }
 
     @Override
@@ -116,14 +115,16 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
             minLocalRowID = Rows.toLocalRowID(minRowID);
         }
 
-        final IntArrayList symbolKeys = new IntArrayList(this.symbolKeys);
+        zone1Keys.reset(symbolKeys.size());
+        zone2Keys.reset(symbolKeys.size());
+        zone1Keys.add(symbolKeys);
 
         return journal.iteratePartitionsDesc(
                 new UnorderedResultSetBuilder<T>(interval) {
                     private final KVIndex filterKVIndexes[] = new KVIndex[filterSymbolKeys.size()];
                     private final LongArrayList filterSymbolRows[] = new LongArrayList[filterSymbolKeys.size()];
-                    private IntArrayList keys = symbolKeys;
-                    private IntArrayList remainingKeys = new IntArrayList(keys.size());
+                    private DirectIntList keys = zone1Keys;
+                    private DirectIntList remainingKeys = zone2Keys;
 
                     {
                         for (int i = 0; i < filterSymbolRows.length; i++) {
@@ -134,7 +135,7 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
                     @Override
                     public Accept accept(Partition<T> partition) throws JournalException {
                         super.accept(partition);
-                        return keys.isEmpty() || partition.getPartitionIndex() < minPartitionIndex ? Accept.BREAK : Accept.CONTINUE;
+                        return keys.size() == 0 || partition.getPartitionIndex() < minPartitionIndex ? Accept.BREAK : Accept.CONTINUE;
                     }
 
                     @Override
@@ -144,7 +145,7 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
                         boolean filterOk = true;
                         for (int i = 0; i < filterSymbols.size(); i++) {
                             filterKVIndexes[i] = partition.getIndexForColumn(filterSymbols.get(i));
-                            int filterKey = filterSymbolKeys.getQuick(i);
+                            int filterKey = filterSymbolKeys.get(i);
                             if (filterKVIndexes[i].contains(filterKey)) {
                                 filterSymbolRows[i].setCapacity(filterKVIndexes[i].getValueCount(filterKey));
                                 filterKVIndexes[i].getValues(filterKey, filterSymbolRows[i]);
@@ -157,7 +158,7 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
 
                         if (filterOk) {
                             for (int k = 0; k < keys.size(); k++) {
-                                int key = keys.getQuick(k);
+                                int key = keys.get(k);
                                 boolean found = false;
                                 KVIndex.IndexCursor cursor = index.cachedCursor(key);
 
@@ -196,12 +197,11 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
                                     remainingKeys.add(key);
                                 }
                             }
-                            IntArrayList temp = keys;
+                            DirectIntList temp = keys;
                             keys = remainingKeys;
                             remainingKeys = temp;
-                            remainingKeys.resetQuick();
+                            remainingKeys.reset();
                         }
-
                     }
                 }
         );

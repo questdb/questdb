@@ -16,7 +16,7 @@
 
 package com.nfsdb.journal.lang.cst.impl.ksrc;
 
-import com.nfsdb.journal.collections.IntArrayList;
+import com.nfsdb.journal.collections.DirectIntList;
 import com.nfsdb.journal.lang.cst.KeyCursor;
 import com.nfsdb.journal.lang.cst.KeySource;
 import com.nfsdb.journal.lang.cst.PartitionSlice;
@@ -24,11 +24,11 @@ import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 
 public class IntHashKeySource implements KeySource, KeyCursor {
     private final StringRef column;
-    private final IntArrayList values;
+    private final DirectIntList values;
     private int bucketCount = -1;
     private int valueIndex;
 
-    public IntHashKeySource(StringRef column, IntArrayList values) {
+    public IntHashKeySource(StringRef column, DirectIntList values) {
         this.column = column;
         this.values = values;
     }

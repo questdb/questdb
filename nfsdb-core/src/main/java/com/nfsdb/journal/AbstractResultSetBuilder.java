@@ -26,6 +26,13 @@ public abstract class AbstractResultSetBuilder<T, X> {
     protected Journal<T> journal;
     private Interval interval = null;
 
+    protected AbstractResultSetBuilder(Interval interval) {
+        this.interval = interval;
+    }
+
+    protected AbstractResultSetBuilder() {
+    }
+
     public void setJournal(Journal<T> journal) {
         this.journal = journal;
     }
@@ -97,13 +104,6 @@ public abstract class AbstractResultSetBuilder<T, X> {
     public abstract void read(long lo, long hi) throws JournalException;
 
     public abstract X getResult();
-
-    protected AbstractResultSetBuilder(Interval interval) {
-        this.interval = interval;
-    }
-
-    protected AbstractResultSetBuilder() {
-    }
 
     public enum Accept {
         CONTINUE, SKIP, BREAK

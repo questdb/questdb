@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@ package com.nfsdb.journal.query.spi;
 
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.UnorderedResultSet;
-import com.nfsdb.journal.collections.IntArrayList;
+import com.nfsdb.journal.collections.DirectIntList;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.query.api.QueryAllBuilder;
@@ -30,9 +30,9 @@ import java.util.List;
 public class QueryAllBuilderImpl<T> implements QueryAllBuilder<T> {
 
     private final Journal<T> journal;
-    private final IntArrayList symbolKeys = new IntArrayList();
+    private final DirectIntList symbolKeys = new DirectIntList();
     private final List<String> filterSymbols = new ArrayList<>();
-    private final IntArrayList filterSymbolKeys = new IntArrayList();
+    private final DirectIntList filterSymbolKeys = new DirectIntList();
     private String symbol;
     private Interval interval;
 
@@ -54,7 +54,7 @@ public class QueryAllBuilderImpl<T> implements QueryAllBuilder<T> {
     public void setSymbol(String symbol, String... values) {
         this.symbol = symbol;
         SymbolTable symbolTable = journal.getSymbolTable(symbol);
-        this.symbolKeys.resetQuick();
+        this.symbolKeys.reset();
         for (int i = 0; i < values.length; i++) {
             int key = symbolTable.getQuick(values[i]);
             if (key != SymbolTable.VALUE_NOT_FOUND) {
@@ -75,7 +75,7 @@ public class QueryAllBuilderImpl<T> implements QueryAllBuilder<T> {
     @Override
     public void resetFilter() {
         filterSymbols.clear();
-        filterSymbolKeys.resetQuick();
+        filterSymbolKeys.reset();
     }
 
     public void setInterval(Interval interval) {
