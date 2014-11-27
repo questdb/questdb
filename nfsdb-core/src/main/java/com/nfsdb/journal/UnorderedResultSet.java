@@ -16,7 +16,7 @@
 
 package com.nfsdb.journal;
 
-import com.nfsdb.journal.collections.LongArrayList;
+import com.nfsdb.journal.collections.DirectLongList;
 
 /**
  * Unordered result set does not guarantee ROWIDs to be in ascending order.
@@ -25,7 +25,7 @@ import com.nfsdb.journal.collections.LongArrayList;
  */
 public class UnorderedResultSet<T> extends ResultSet<T> {
 
-    public UnorderedResultSet(Journal<T> journal, LongArrayList rowIDs) {
+    public UnorderedResultSet(Journal<T> journal, DirectLongList rowIDs) {
         super(journal, rowIDs);
     }
 }

@@ -17,7 +17,7 @@
 package com.nfsdb.journal.index;
 
 import com.nfsdb.journal.JournalMode;
-import com.nfsdb.journal.collections.LongArrayList;
+import com.nfsdb.journal.collections.DirectLongList;
 import com.nfsdb.journal.column.MappedFileImpl;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
@@ -280,8 +280,8 @@ public class KVIndex implements Closeable {
      * @param key key value
      * @return List of values or exception if key doesn't exist.
      */
-    public LongArrayList getValues(int key) {
-        LongArrayList result = new LongArrayList();
+    public DirectLongList getValues(int key) {
+        DirectLongList result = new DirectLongList();
         getValues(key, result);
         return result;
     }
@@ -294,9 +294,7 @@ public class KVIndex implements Closeable {
      * @param values the array to copy values to. The contents of this array will be overwritten with new values
      *               beginning from 0 index.
      */
-    public void getValues(int key, LongArrayList values) {
-
-        values.resetQuick();
+    public void getValues(int key, DirectLongList values) {
 
         if (key < 0) {
             return;
@@ -310,7 +308,7 @@ public class KVIndex implements Closeable {
         long rowBlockOffset = Unsafe.getUnsafe().getLong(address);
         long rowCount = Unsafe.getUnsafe().getLong(address + 8);
 
-        values.setCapacity((int) rowCount);
+        values.reset((int) rowCount);
         values.setPos((int) rowCount);
 
         int rowBlockCount = (int) (rowCount / rowBlockLen) + 1;
@@ -324,7 +322,7 @@ public class KVIndex implements Closeable {
             address = rData.getAddress(rowBlockOffset - rowBlockSize, rowBlockSize);
             int z = i * rowBlockLen;
             for (int k = 0; k < len; k++) {
-                values.setQuick(z + k, Unsafe.getUnsafe().getLong(address));
+                values.set(z + k, Unsafe.getUnsafe().getLong(address));
                 address += 8;
             }
             if (i > 0) {

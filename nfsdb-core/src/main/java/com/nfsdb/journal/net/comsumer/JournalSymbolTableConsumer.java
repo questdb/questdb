@@ -17,14 +17,12 @@
 package com.nfsdb.journal.net.comsumer;
 
 import com.nfsdb.journal.Journal;
+import com.nfsdb.journal.collections.DirectIntList;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.exceptions.JournalNetworkException;
 import com.nfsdb.journal.net.AbstractChannelConsumer;
 import com.nfsdb.journal.utils.ByteBuffers;
 import com.nfsdb.journal.utils.Lists;
-import gnu.trove.list.TIntList;
-import gnu.trove.list.array.TByteArrayList;
-import gnu.trove.list.array.TIntArrayList;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -36,8 +34,8 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
     private final ByteBuffer buffer;
     private final ArrayList<VariableColumnDeltaConsumer> symbolTableConsumers;
     private final ArrayList<SymbolTable> symbolTables;
-    private final TIntList symbolTableSizes;
-    private final TByteArrayList symbolTabDataIndicators = new TByteArrayList();
+    private final DirectIntList symbolTableSizes;
+    private final DirectIntList symbolTabDataIndicators = new DirectIntList();
     private boolean complete;
     private int symbolTableIndex = 0;
 
@@ -45,17 +43,17 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
         this.buffer = ByteBuffer.allocateDirect(journal.getSymbolTableCount()).order(ByteOrder.LITTLE_ENDIAN);
         this.symbolTableConsumers = new ArrayList<>(journal.getSymbolTableCount());
         this.symbolTables = new ArrayList<>(journal.getSymbolTableCount());
-        this.symbolTableSizes = new TIntArrayList(journal.getSymbolTableCount());
+        this.symbolTableSizes = new DirectIntList(journal.getSymbolTableCount());
 
         Lists.advance(this.symbolTableConsumers, journal.getSymbolTableCount() - 1);
         Lists.advance(this.symbolTables, journal.getSymbolTableCount() - 1);
 
         while (symbolTabDataIndicators.size() < journal.getSymbolTableCount()) {
-            symbolTabDataIndicators.add(symbolTabDataIndicators.getNoEntryValue());
+            symbolTabDataIndicators.add(-1);
         }
 
         while (symbolTableSizes.size() < journal.getSymbolTableCount()) {
-            symbolTableSizes.add(symbolTableSizes.getNoEntryValue());
+            symbolTableSizes.add(-1);
         }
 
         for (int i = 0, sz = journal.getSymbolTableCount(); i < sz; i++) {

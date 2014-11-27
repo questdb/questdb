@@ -17,7 +17,7 @@
 package com.nfsdb.journal.test.tools;
 
 import com.nfsdb.journal.*;
-import com.nfsdb.journal.collections.LongArrayList;
+import com.nfsdb.journal.collections.DirectLongList;
 import com.nfsdb.journal.column.ColumnType;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.exceptions.JournalException;
@@ -278,6 +278,9 @@ public final class TestUtils {
             }
         }
 
+        DirectLongList ev = new DirectLongList();
+        DirectLongList av = new DirectLongList();
+
         // check if partitions are the same
         for (int i = 0; i < expected.getPartitionCount(); i++) {
 
@@ -302,8 +305,10 @@ public final class TestUtils {
                     int count = colKeyCount.get(k);
 
                     for (int j = 0; j < count; j++) {
-                        LongArrayList ev = ei.getValues(j);
-                        LongArrayList av = ai.getValues(j);
+                        ev.reset();
+                        av.reset();
+                        ei.getValues(j, ev);
+                        ai.getValues(j, av);
 
                         Assert.assertEquals("Values mismatch. partition=" + i + ",column=" + expected.getColumnMetadata(k).meta.name + ", key=" + j + ": ", ev.size(), av.size());
                         for (int l = 0; l < ev.size(); l++) {

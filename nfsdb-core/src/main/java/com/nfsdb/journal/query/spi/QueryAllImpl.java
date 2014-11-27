@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,7 +45,7 @@ public class QueryAllImpl<T> implements QueryAll<T> {
         return journal.iteratePartitions(new OrderedResultSetBuilder<T>() {
             @Override
             public void read(long lo, long hi) throws JournalException {
-                result.ensureCapacity((int) (hi - lo + 1));
+                result.addCapacity((int) (hi - lo + 1));
                 for (long i = lo; i < hi + 1; i++) {
                     result.add(Rows.toRowID(partition.getPartitionIndex(), i));
                 }

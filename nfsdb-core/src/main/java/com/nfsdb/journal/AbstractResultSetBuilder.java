@@ -16,12 +16,12 @@
 
 package com.nfsdb.journal;
 
-import com.nfsdb.journal.collections.LongArrayList;
+import com.nfsdb.journal.collections.DirectLongList;
 import com.nfsdb.journal.exceptions.JournalException;
 import org.joda.time.Interval;
 
 public abstract class AbstractResultSetBuilder<T, X> {
-    protected final LongArrayList result = new LongArrayList();
+    protected final DirectLongList result = new DirectLongList();
     protected Partition<T> partition;
     protected Journal<T> journal;
     private Interval interval = null;

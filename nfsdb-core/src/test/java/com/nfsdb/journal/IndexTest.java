@@ -16,7 +16,7 @@
 
 package com.nfsdb.journal;
 
-import com.nfsdb.journal.collections.LongArrayList;
+import com.nfsdb.journal.collections.DirectLongList;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.index.KVIndex;
@@ -330,16 +330,17 @@ public class IndexTest extends AbstractTest {
 
     private void assertValues(long values[][], KVIndex index) {
         for (int i = 0; i < values.length; i++) {
-            LongArrayList array = index.getValues(i);
-            Assert.assertEquals(values[i].length, array.size());
-            for (int k = 0; k < values[i].length; k++) {
-                Assert.assertEquals(values[i][k], array.get(k));
-            }
+            try (DirectLongList array = index.getValues(i)) {
+                Assert.assertEquals(values[i].length, array.size());
+                for (int k = 0; k < values[i].length; k++) {
+                    Assert.assertEquals(values[i][k], array.get(k));
+                }
 
-            KVIndex.IndexCursor cursor = index.cachedCursor(i);
-            int k = (int) cursor.size();
-            while (cursor.hasNext()) {
-                Assert.assertEquals(values[i][--k], cursor.next());
+                KVIndex.IndexCursor cursor = index.cachedCursor(i);
+                int k = (int) cursor.size();
+                while (cursor.hasNext()) {
+                    Assert.assertEquals(values[i][--k], cursor.next());
+                }
             }
         }
     }

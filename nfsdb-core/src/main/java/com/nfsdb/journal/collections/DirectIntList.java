@@ -36,4 +36,8 @@ public class DirectIntList extends AbstractDirectList {
     public int get(int p) {
         return Unsafe.getUnsafe().getInt(start + (p << 2));
     }
+
+    public void set(int p, long v) {
+        Unsafe.getUnsafe().putLong(start + (p << 2), v);
+    }
 }

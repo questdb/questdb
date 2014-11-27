@@ -20,6 +20,7 @@ import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalKey;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.PartitionType;
+import com.nfsdb.journal.collections.DirectIntList;
 import com.nfsdb.journal.concurrent.NamedDaemonThreadFactory;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalNetworkException;
@@ -40,7 +41,6 @@ import com.nfsdb.journal.net.protocol.CommandProducer;
 import com.nfsdb.journal.net.protocol.Version;
 import com.nfsdb.journal.net.protocol.commands.*;
 import com.nfsdb.journal.tx.TxListener;
-import gnu.trove.list.array.TByteArrayList;
 
 import java.io.IOException;
 import java.nio.channels.ByteChannel;
@@ -61,7 +61,7 @@ public class JournalClient {
     private final List<TxListener> listeners = new ArrayList<>();
     private final List<JournalWriter> writers = new ArrayList<>();
     private final List<JournalDeltaConsumer> deltaConsumers = new ArrayList<>();
-    private final TByteArrayList statusSentList = new TByteArrayList();
+    private final DirectIntList statusSentList = new DirectIntList();
     private final JournalWriterFactory factory;
     private final CommandProducer commandProducer = new CommandProducer();
     private final CommandConsumer commandConsumer = new CommandConsumer();
@@ -180,7 +180,7 @@ public class JournalClient {
         }
 
         writers.clear();
-        statusSentList.clear();
+        statusSentList.free();
         deltaConsumers.clear();
         commandConsumer.reset();
         stringResponseConsumer.reset();

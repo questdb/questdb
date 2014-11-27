@@ -16,6 +16,7 @@
 
 package com.nfsdb.journal;
 
+import com.nfsdb.journal.collections.DirectLongList;
 import com.nfsdb.journal.column.ColumnType;
 import com.nfsdb.journal.column.FixedColumn;
 import com.nfsdb.journal.column.SymbolTable;
@@ -39,7 +40,6 @@ import com.nfsdb.journal.tx.TxLog;
 import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Rows;
 import com.nfsdb.journal.utils.Unsafe;
-import gnu.trove.list.TLongList;
 import org.joda.time.Interval;
 
 import java.io.Closeable;
@@ -473,7 +473,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      * @throws com.nfsdb.journal.exceptions.JournalException if there is an error
      */
     @SuppressWarnings("unchecked")
-    public T[] read(TLongList rowIDs) throws JournalException {
+    public T[] read(DirectLongList rowIDs) throws JournalException {
         T[] result = (T[]) Array.newInstance(metadata.getModelClass(), rowIDs.size());
         for (int i = 0, sz = rowIDs.size(); i < sz; i++) {
             result[i] = read(rowIDs.get(i));

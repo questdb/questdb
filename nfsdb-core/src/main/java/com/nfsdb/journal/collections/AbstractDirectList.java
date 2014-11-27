@@ -22,21 +22,21 @@ import java.io.Closeable;
 
 public class AbstractDirectList implements Closeable {
     public static final int CACHE_LINE_SIZE = 64;
-    private final int primSize;
+    private final int pow2;
     protected long pos;
     protected long start;
+    protected long limit;
     private long address;
-    private long limit;
 
-    public AbstractDirectList(int primitiveSize, int capacity) {
-        this.primSize = primitiveSize;
-        this.address = Unsafe.getUnsafe().allocateMemory((capacity << primitiveSize) + CACHE_LINE_SIZE);
+    public AbstractDirectList(int pow2, int capacity) {
+        this.pow2 = pow2;
+        this.address = Unsafe.getUnsafe().allocateMemory((capacity << pow2) + CACHE_LINE_SIZE);
         this.start = this.pos = address + (address & (CACHE_LINE_SIZE - 1));
-        this.limit = pos + (capacity << primitiveSize);
+        this.limit = pos + (capacity << pow2);
     }
 
-    public AbstractDirectList(int primitiveSize, AbstractDirectList that) {
-        this(primitiveSize, (int) ((that.pos - that.start) >> primitiveSize));
+    public AbstractDirectList(int pow2, AbstractDirectList that) {
+        this(pow2, (int) ((that.pos - that.start) >> pow2));
         add(that);
     }
 
@@ -55,34 +55,50 @@ public class AbstractDirectList implements Closeable {
     }
 
     public void reset(int capacity) {
-        if (capacity << primSize < limit - start) {
+        setCapacity(capacity);
+        reset();
+    }
+
+    public void setCapacity(int capacity) {
+        if (capacity << pow2 > limit - start) {
             extend(capacity);
         }
-        reset();
+    }
+
+    public void addCapacity(int capacity) {
+        if (capacity << pow2 > limit - pos) {
+            extend((int) (((limit - start) >> pow2) + capacity));
+        }
+    }
+
+    public void setPos(int p) {
+        pos = start + (p << pow2);
     }
 
     protected void ensureCapacity() {
         if (this.pos >= limit) {
-            extend((int) ((limit - start) >> (primSize - 1)));
+            extend((int) ((limit - start) >> (pow2 - 1)));
         }
     }
 
     private void extend(int capacity) {
-        long address = Unsafe.getUnsafe().allocateMemory((capacity << primSize) + CACHE_LINE_SIZE);
+        long address = Unsafe.getUnsafe().allocateMemory((capacity << pow2) + CACHE_LINE_SIZE);
         long start = address + (address & (CACHE_LINE_SIZE - 1));
-        Unsafe.getUnsafe().copyMemory(this.start, start, capacity << (primSize - 1)); // copy half of future capacity
-        Unsafe.getUnsafe().freeMemory(this.address);
+        Unsafe.getUnsafe().copyMemory(this.start, start, limit - this.start);
+        if (this.address != 0) {
+            Unsafe.getUnsafe().freeMemory(this.address);
+        }
         this.pos = this.pos - this.start + start;
-        this.limit = start + (capacity << primSize);
+        this.limit = start + (capacity << pow2);
         this.address = address;
         this.start = start;
     }
 
     public int size() {
-        return (int) ((pos - start) >> primSize);
+        return (int) ((pos - start) >> pow2);
     }
 
-    private void free() {
+    public void free() {
         if (address != 0) {
             Unsafe.getUnsafe().freeMemory(address);
             address = 0;

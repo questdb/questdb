@@ -16,12 +16,12 @@
 
 package com.nfsdb.journal;
 
-import com.nfsdb.journal.collections.LongArrayList;
+import com.nfsdb.journal.collections.DirectLongList;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.utils.Rows;
 
 public class OrderedResultSet<T> extends ResultSet<T> {
-    public OrderedResultSet(Journal<T> journal, LongArrayList rowIDs) {
+    public OrderedResultSet(Journal<T> journal, DirectLongList rowIDs) {
         super(journal, rowIDs);
     }
 

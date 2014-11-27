@@ -16,7 +16,7 @@
 
 package com.nfsdb.journal;
 
-import com.nfsdb.journal.collections.LongArrayList;
+import com.nfsdb.journal.collections.DirectLongList;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.index.KVIndex;
 import com.nfsdb.journal.lang.cst.JournalEntry;
@@ -150,17 +150,18 @@ public class PerformanceTest extends AbstractTest {
                 Assert.assertTrue("Count lookup must be under 150ns: " + t, t / 10 < 150);
             }
 
-            LongArrayList list = new LongArrayList();
-            for (int i = -10; i < 10; i++) {
-                if (i == 0) {
-                    t = System.nanoTime();
+            try (DirectLongList list = new DirectLongList()) {
+                for (int i = -10; i < 10; i++) {
+                    if (i == 0) {
+                        t = System.nanoTime();
+                    }
+                    index.getValues(13567 + i, list);
                 }
-                index.getValues(13567 + i, list);
-            }
-            t = System.nanoTime() - t;
-            LOGGER.info("index values lookup latency: " + t / 10 + "ns");
-            if (enabled) {
-                Assert.assertTrue("Values lookup must be under 1.5μs: " + t / 10, t / 10 < 1500);
+                t = System.nanoTime() - t;
+                LOGGER.info("index values lookup latency: " + t / 10 + "ns");
+                if (enabled) {
+                    Assert.assertTrue("Values lookup must be under 1.5μs: " + t / 10, t / 10 < 1500);
+                }
             }
         }
     }

@@ -16,10 +16,10 @@
 
 package com.nfsdb.journal.net.model;
 
-import gnu.trove.list.array.TIntArrayList;
+import com.nfsdb.journal.collections.DirectIntList;
 
 public class JournalClientState {
-    private final TIntArrayList symbolTabKeys = new TIntArrayList();
+    private final DirectIntList symbolTabKeys = new DirectIntList();
     private int journalIndex;
     private long maxRowID;
     private long lagSize;
@@ -57,7 +57,7 @@ public class JournalClientState {
         symbolTabKeys.add(key);
     }
 
-    public TIntArrayList getSymbolTabKeys() {
+    public DirectIntList getSymbolTabKeys() {
         return symbolTabKeys;
     }
 
@@ -108,7 +108,7 @@ public class JournalClientState {
 
     public void setSymbolTableKey(int columnIndex, int key) {
         while (symbolTabKeys.size() <= columnIndex) {
-            symbolTabKeys.add(symbolTabKeys.getNoEntryValue());
+            symbolTabKeys.add(-1);
         }
         symbolTabKeys.set(columnIndex, key);
     }

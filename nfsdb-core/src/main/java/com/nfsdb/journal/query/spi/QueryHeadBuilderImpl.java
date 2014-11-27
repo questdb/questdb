@@ -21,7 +21,7 @@ import com.nfsdb.journal.Partition;
 import com.nfsdb.journal.UnorderedResultSet;
 import com.nfsdb.journal.UnorderedResultSetBuilder;
 import com.nfsdb.journal.collections.DirectIntList;
-import com.nfsdb.journal.collections.LongArrayList;
+import com.nfsdb.journal.collections.DirectLongList;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.index.KVIndex;
@@ -122,13 +122,13 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
         return journal.iteratePartitionsDesc(
                 new UnorderedResultSetBuilder<T>(interval) {
                     private final KVIndex filterKVIndexes[] = new KVIndex[filterSymbolKeys.size()];
-                    private final LongArrayList filterSymbolRows[] = new LongArrayList[filterSymbolKeys.size()];
+                    private final DirectLongList filterSymbolRows[] = new DirectLongList[filterSymbolKeys.size()];
                     private DirectIntList keys = zone1Keys;
                     private DirectIntList remainingKeys = zone2Keys;
 
                     {
                         for (int i = 0; i < filterSymbolRows.length; i++) {
-                            filterSymbolRows[i] = new LongArrayList();
+                            filterSymbolRows[i] = new DirectLongList();
                         }
                     }
 

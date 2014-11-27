@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,11 +24,11 @@ import com.nfsdb.journal.net.config.ServerConfig;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestData;
 import com.nfsdb.journal.test.tools.TestUtils;
+import com.nfsdb.journal.utils.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.ArrayList;
-import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
 public class ScenarioTest extends AbstractTest {
@@ -40,6 +40,16 @@ public class ScenarioTest extends AbstractTest {
     }};
 
     private final ClientConfig clientConfig = new ClientConfig("localhost");
+
+    private static void iteration(String expected, Journal<Quote> origin, JournalWriter<Quote> remote, Journal<Quote> local, int lo, int hi) throws Exception {
+        remote.append(origin.query().all().asResultSet().subset(lo, hi));
+        remote.commit();
+
+        Thread.sleep(100);
+
+        local.refresh();
+        TestUtils.assertEquals(expected, local.query().head().withKeys().asResultSet());
+    }
 
     @Test
     public void testSingleJournalTrickle() throws Exception {
@@ -100,7 +110,7 @@ public class ScenarioTest extends AbstractTest {
         TestData.appendQuoteData2(origin);
 
         final JournalWriter<Quote> randomOrigin = factory.writer(new JournalKey<>(Quote.class, "origin-rnd", PartitionType.NONE, false));
-        randomOrigin.append(origin.query().all().asResultSet().shuffle(new Random(System.currentTimeMillis())));
+        randomOrigin.append(origin.query().all().asResultSet().shuffle(new Rnd(System.currentTimeMillis(), System.nanoTime())));
         origin.close();
 
         final JournalWriter<Quote> remote = factory.writer(Quote.class, "remote");
@@ -136,16 +146,6 @@ public class ScenarioTest extends AbstractTest {
         local.refresh();
         remoteReader.refresh();
         assertEquals(remoteReader, local);
-    }
-
-    private static void iteration(String expected, Journal<Quote> origin, JournalWriter<Quote> remote, Journal<Quote> local, int lo, int hi) throws Exception {
-        remote.append(origin.query().all().asResultSet().subset(lo, hi));
-        remote.commit();
-
-        Thread.sleep(100);
-
-        local.refresh();
-        TestUtils.assertEquals(expected, local.query().head().withKeys().asResultSet());
     }
 
     private void lagIteration(final Journal<Quote> origin, final JournalWriter<Quote> remote, final int lo, final int hi) throws JournalException {

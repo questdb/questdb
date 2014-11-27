@@ -19,7 +19,7 @@ package com.nfsdb.journal.query.spi;
 import com.nfsdb.journal.Partition;
 import com.nfsdb.journal.UnorderedResultSetBuilder;
 import com.nfsdb.journal.collections.DirectIntList;
-import com.nfsdb.journal.collections.LongArrayList;
+import com.nfsdb.journal.collections.DirectLongList;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.index.Cursor;
 import com.nfsdb.journal.index.KVIndex;
@@ -73,7 +73,7 @@ public class QueryAllResultSetBuilder<T> extends UnorderedResultSetBuilder<T> {
                 if (searchIndices.length > 0) {
                     for (int k = 0; k < searchIndices.length; k++) {
                         if (searchIndices[k].contains(filterSymbolKeys.get(k))) {
-                            LongArrayList searchLocalRowIDs = searchIndices[k].getValues(filterSymbolKeys.get(k));
+                            DirectLongList searchLocalRowIDs = searchIndices[k].getValues(filterSymbolKeys.get(k));
 
                             Cursor cursor = index.cachedCursor(symbolKey);
                             while (cursor.hasNext()) {

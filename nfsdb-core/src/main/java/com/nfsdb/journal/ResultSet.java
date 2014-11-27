@@ -16,24 +16,23 @@
 
 package com.nfsdb.journal;
 
-import com.nfsdb.journal.collections.LongArrayList;
+import com.nfsdb.journal.collections.DirectLongList;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.iterators.ConcurrentIterator;
 import com.nfsdb.journal.iterators.ResultSetBufferedIterator;
 import com.nfsdb.journal.iterators.ResultSetConcurrentIterator;
 import com.nfsdb.journal.iterators.ResultSetIterator;
+import com.nfsdb.journal.utils.Rnd;
 import com.nfsdb.journal.utils.Rows;
-import gnu.trove.list.TLongList;
 
 import java.util.Iterator;
-import java.util.Random;
 
 public class ResultSet<T> implements Iterable<T> {
     private final Journal<T> journal;
-    private final TLongList rowIDs;
+    private final DirectLongList rowIDs;
 
-    ResultSet(Journal<T> journal, TLongList rowIDs) {
+    ResultSet(Journal<T> journal, DirectLongList rowIDs) {
         this.journal = journal;
         this.rowIDs = rowIDs;
     }
@@ -255,13 +254,12 @@ public class ResultSet<T> implements Iterable<T> {
      * @return a subset of result set from lo (inclusive) to hi (exclusive)
      */
     public ResultSet<T> subset(int lo, int hi) {
-        TLongList rowIDs = this.rowIDs.subList(lo, hi);
-        return new ResultSet<>(journal, rowIDs);
+        return new ResultSet<>(journal, this.rowIDs.subset(lo, hi));
     }
 
-    public ResultSet<T> shuffle(Random random) {
-        LongArrayList rows = new LongArrayList(this.rowIDs);
-        rows.shuffle(random);
+    public ResultSet<T> shuffle(Rnd rnd) {
+        DirectLongList rows = new DirectLongList(this.rowIDs);
+        rows.shuffle(rnd);
         return new ResultSet<>(journal, rows);
     }
 

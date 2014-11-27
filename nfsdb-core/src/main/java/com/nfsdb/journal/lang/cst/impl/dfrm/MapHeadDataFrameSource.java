@@ -18,6 +18,7 @@ package com.nfsdb.journal.lang.cst.impl.dfrm;
 
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.Partition;
+import com.nfsdb.journal.collections.DirectLongList;
 import com.nfsdb.journal.column.FixedColumn;
 import com.nfsdb.journal.lang.cst.JournalEntry;
 import com.nfsdb.journal.lang.cst.JournalSource;
@@ -25,15 +26,14 @@ import com.nfsdb.journal.lang.cst.RowCursor;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 import com.nfsdb.journal.utils.Rows;
 import gnu.trove.iterator.TIntObjectIterator;
-import gnu.trove.list.array.TLongArrayList;
 import gnu.trove.map.hash.TIntObjectHashMap;
 
 public class MapHeadDataFrameSource implements DataFrameSource, DataFrame, RowCursor {
 
     private final JournalSource source;
     private final StringRef symbol;
-    private final TIntObjectHashMap<TLongArrayList> frame = new TIntObjectHashMap<>();
-    private TLongArrayList series;
+    private final TIntObjectHashMap<DirectLongList> frame = new TIntObjectHashMap<>();
+    private DirectLongList series;
     private int seriesPos;
 
     public MapHeadDataFrameSource(JournalSource source, StringRef symbol) {
@@ -57,9 +57,9 @@ public class MapHeadDataFrameSource implements DataFrameSource, DataFrame, RowCu
             assert column != null;
 
             int key;
-            TLongArrayList series = frame.get(key = column.getInt(d.rowid));
+            DirectLongList series = frame.get(key = column.getInt(d.rowid));
             if (series == null) {
-                series = new TLongArrayList();
+                series = new DirectLongList();
                 frame.put(key, series);
             }
 
@@ -70,10 +70,10 @@ public class MapHeadDataFrameSource implements DataFrameSource, DataFrame, RowCu
     }
 
     public void reset() {
-        TIntObjectIterator<TLongArrayList> it = frame.iterator();
+        TIntObjectIterator<DirectLongList> it = frame.iterator();
         while (it.hasNext()) {
-            TLongArrayList l = it.value();
-            l.resetQuick();
+            DirectLongList l = it.value();
+            l.reset();
             it.advance();
         }
     }
@@ -92,7 +92,7 @@ public class MapHeadDataFrameSource implements DataFrameSource, DataFrame, RowCu
 
     @Override
     public long next() {
-        return series.getQuick(seriesPos++);
+        return series.get(seriesPos++);
     }
 
     @Override

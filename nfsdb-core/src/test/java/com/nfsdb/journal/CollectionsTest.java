@@ -18,6 +18,7 @@ package com.nfsdb.journal;
 
 import com.nfsdb.journal.collections.DirectIntList;
 import com.nfsdb.journal.collections.DirectLongList;
+import com.nfsdb.journal.utils.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -100,5 +101,83 @@ public class CollectionsTest {
 
         list.add(list3);
         Assert.assertEquals(2 * N + 2, list.size());
+    }
+
+    @Test
+    public void testLongSearch() throws Exception {
+        DirectLongList list = new DirectLongList();
+        Rnd rnd = new Rnd();
+
+        for (int i = 7; i < 2000; i += 10) {
+            list.add(i + (rnd.nextPositiveInt() & 9));
+        }
+        Assert.assertEquals(18, list.binarySearch(188));
+        Assert.assertEquals(-1, list.binarySearch(6));
+        Assert.assertEquals(-25, list.binarySearch(240));
+        Assert.assertEquals(-201, list.binarySearch(2010));
+
+        list.free();
+    }
+
+    @Test
+    public void testLongSort() throws Exception {
+        DirectLongList list = new DirectLongList();
+        Rnd rnd = new Rnd();
+        populate(list, rnd, 50);
+        assertOrder(list);
+        populate(list, rnd, 700);
+        assertOrder(list);
+        populate(list, rnd, 10000);
+        assertOrder(list);
+    }
+
+    @Test
+    public void testLongSubset() throws Exception {
+        DirectLongList list = new DirectLongList();
+        populate(list, new Rnd(), 10000);
+        int lo = 150;
+        int hi = 1468;
+        DirectLongList subset = list.subset(lo, hi);
+
+        for (int i = lo; i < hi; i++) {
+            Assert.assertEquals("at: " + i, list.get(i), subset.get(i - lo));
+        }
+    }
+
+    private void populate(DirectLongList list, Rnd rnd, int count) {
+        for (int i = 0; i < count; i++) {
+            list.add(rnd.nextLong());
+        }
+
+        list.sort();
+    }
+
+    private void assertOrder(DirectLongList list) {
+        long last = Long.MIN_VALUE;
+        for (int i = 0; i < list.size(); i++) {
+            Assert.assertTrue("at " + i, last <= list.get(i));
+            last = list.get(i);
+        }
+    }
+
+    @Test
+    public void testCapacityReset() throws Exception {
+        final int N = 372;
+        final int M = 518;
+
+        DirectLongList list = new DirectLongList(N);
+        int count = 0;
+        for (int i = 0; i < N; i++) {
+            list.add(count++);
+        }
+
+        list.setCapacity(M);
+        for (int i = 0; i < M; i++) {
+            list.add(count++);
+        }
+
+        for (int i = 0; i < list.size(); i++) {
+            Assert.assertEquals("at " + i, i, list.get(i));
+        }
     }
 }
