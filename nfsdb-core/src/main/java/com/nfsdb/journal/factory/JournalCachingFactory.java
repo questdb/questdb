@@ -31,11 +31,10 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
 
     private final Map<JournalKey, Journal> journals = new HashMap<>();
     private final List<Journal> journalList = new ArrayList<>();
-
     private JournalPool pool;
 
     public JournalCachingFactory(JournalConfiguration configuration) {
-        this(configuration, new TimerCache().start());
+        super(configuration);
     }
 
     public JournalCachingFactory(JournalConfiguration configuration, TimerCache timerCache, JournalPool pool) {
@@ -55,6 +54,7 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
             }
             journals.clear();
         }
+        super.close();
     }
 
     @Override
@@ -79,10 +79,6 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
         for (int i = 0, sz = journalList.size(); i < sz; i++) {
             journalList.get(i).refresh();
         }
-    }
-
-    private JournalCachingFactory(JournalConfiguration configuration, TimerCache timerCache) {
-        this(configuration, timerCache, null);
     }
 
     void clearPool() {

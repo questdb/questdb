@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,21 +16,11 @@
 
 package com.nfsdb.journal.test.tools;
 
-import com.nfsdb.journal.exceptions.JournalConfigurationException;
-import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.model.configuration.ModelConfiguration;
 import com.nfsdb.journal.utils.Files;
 import org.junit.Rule;
 
 public abstract class AbstractTest {
     @Rule
-    public final JournalTestFactory factory;
-
-    protected AbstractTest() {
-        try {
-            this.factory = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
-        } catch (JournalConfigurationException e) {
-            throw new JournalRuntimeException(e);
-        }
-    }
+    public final JournalTestFactory factory = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
 }

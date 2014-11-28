@@ -47,7 +47,7 @@ public class HugeTableTest {
         }
     }
 
-    private static final Logger LOGGER = Logger.getLogger(PerformanceTest.class);
+    private static final Logger LOGGER = Logger.getLogger(HugeTableTest.class);
 
     @Test
     public void testLargeSymbolTable() throws Exception {

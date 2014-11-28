@@ -29,6 +29,19 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
 
     private final TimerCache timerCache;
     private final JournalConfiguration configuration;
+    private final boolean ownTimerCache;
+
+    AbstractJournalReaderFactory(JournalConfiguration configuration) {
+        this.configuration = configuration;
+        this.timerCache = new TimerCache().start();
+        this.ownTimerCache = true;
+    }
+
+    AbstractJournalReaderFactory(JournalConfiguration configuration, TimerCache timerCache) {
+        this.timerCache = timerCache;
+        this.configuration = configuration;
+        this.ownTimerCache = false;
+    }
 
     @Override
     public <T> Journal<T> reader(Class<T> clazz, String location) throws JournalException {
@@ -42,7 +55,7 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
 
     @Override
     public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        return new Journal<>(getOrCreateMetadata(key), key, timerCache);
+        return new Journal<>(getOrCreateMetadata(key), key, getTimerCache());
     }
 
     @Override
@@ -72,7 +85,7 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
 
     @Override
     public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
-        return new JournalBulkReader<>(getOrCreateMetadata(key), key, timerCache);
+        return new JournalBulkReader<>(getOrCreateMetadata(key), key, getTimerCache());
     }
 
     public JournalConfiguration getConfiguration() {
@@ -81,9 +94,12 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
 
     @Override
     public void close() {
+        if (ownTimerCache) {
+            timerCache.halt();
+        }
     }
 
-    TimerCache getTimerCache() {
+    protected TimerCache getTimerCache() {
         return timerCache;
     }
 
@@ -94,15 +110,6 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
             new JournalWriter<>(metadata, key, timerCache).close();
         }
         return metadata;
-    }
-
-    AbstractJournalReaderFactory(JournalConfiguration configuration) {
-        this(configuration, new TimerCache().start());
-    }
-
-    AbstractJournalReaderFactory(JournalConfiguration configuration, TimerCache timerCache) {
-        this.timerCache = timerCache;
-        this.configuration = configuration;
     }
 
 }

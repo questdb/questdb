@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,11 +34,11 @@ public class JournalPool implements Closeable {
     private final ArrayBlockingQueue<JournalCachingFactory> pool;
     private final ExecutorService service = Executors.newCachedThreadPool(new NamedDaemonThreadFactory("pool-release-thread", true));
     private final AtomicBoolean running = new AtomicBoolean(true);
+    private final TimerCache timerCache;
 
     public JournalPool(JournalConfiguration configuration, int capacity) throws InterruptedException {
         this.pool = new ArrayBlockingQueue<>(capacity, true);
-
-        TimerCache timerCache = new TimerCache().start();
+        this.timerCache = new TimerCache().start();
         for (int i = 0; i < capacity; i++) {
             pool.put(new JournalCachingFactory(configuration, timerCache, this));
         }
@@ -62,6 +62,7 @@ public class JournalPool implements Closeable {
                 factory.close();
             }
         }
+        timerCache.halt();
     }
 
     void release(final JournalCachingFactory factory) {

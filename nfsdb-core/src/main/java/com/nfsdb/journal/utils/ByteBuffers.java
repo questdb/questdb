@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -191,10 +191,10 @@ public final class ByteBuffers {
         return result;
     }
 
-    public static int copy(ByteBuffer from, ByteBuffer to, int count) {
+    public static void copy(ByteBuffer from, ByteBuffer to, int count) {
 
         if (count <= 0) {
-            return 0;
+            return;
         }
 
         if (count > to.remaining()) {
@@ -202,18 +202,17 @@ public final class ByteBuffers {
         }
 
         if (from.remaining() <= count) {
-            return copy(from, to);
+            copy(from, to);
+            return;
         }
 
-        int result = 0;
         int limit = from.limit();
         try {
             from.limit(from.position() + count);
-            result = copy(from, to);
+            copy(from, to);
         } finally {
             from.limit(limit);
         }
-        return result;
     }
 
     public static int copy(ByteBuffer from, int fromPos, ByteBuffer to, int toPos, int count) {

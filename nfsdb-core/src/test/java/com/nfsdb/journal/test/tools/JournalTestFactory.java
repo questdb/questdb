@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.nfsdb.journal.test.tools;
 
 import com.nfsdb.journal.*;
+import com.nfsdb.journal.concurrent.TimerCache;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalClosingListener;
@@ -33,14 +34,19 @@ import java.util.List;
 public class JournalTestFactory extends JournalFactory implements TestRule, JournalClosingListener {
 
     private final List<Journal> journals = new ArrayList<>();
+    private TimerCache timerCache;
 
     public JournalTestFactory(JournalConfiguration configuration) throws JournalConfigurationException {
-        super(configuration);
+        super(configuration, null);
+    }
+
+    @Override
+    protected TimerCache getTimerCache() {
+        return timerCache;
     }
 
     @Override
     public Statement apply(final Statement base, final Description desc) {
-
         return new Statement() {
             @Override
             public void evaluate() throws Throwable {
@@ -48,6 +54,7 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
                 try {
                     Files.deleteOrException(getConfiguration().getJournalBase());
                     Files.mkDirsOrException(getConfiguration().getJournalBase());
+                    timerCache = new TimerCache().start();
                     base.evaluate();
                 } catch (Throwable e) {
                     throwable = e;
@@ -60,6 +67,7 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
                     }
                     journals.clear();
                     Files.delete(getConfiguration().getJournalBase());
+                    timerCache.halt();
                 }
 
                 if (throwable != null) {

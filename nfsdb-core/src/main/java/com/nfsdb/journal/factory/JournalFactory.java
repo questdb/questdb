@@ -20,6 +20,7 @@ import com.nfsdb.journal.JournalBulkWriter;
 import com.nfsdb.journal.JournalKey;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.PartitionType;
+import com.nfsdb.journal.concurrent.TimerCache;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.configuration.JMetadataBuilder;
 import com.nfsdb.journal.factory.configuration.JournalConfiguration;
@@ -32,15 +33,19 @@ import java.io.File;
 public class JournalFactory extends AbstractJournalReaderFactory implements JournalReaderFactory, JournalWriterFactory, Closeable {
 
     public JournalFactory(String journalBase) {
-        this(new JournalConfigurationBuilder().build(journalBase));
+        super(new JournalConfigurationBuilder().build(journalBase));
     }
 
     public JournalFactory(File journalBase) {
-        this(new JournalConfigurationBuilder().build(journalBase));
+        super(new JournalConfigurationBuilder().build(journalBase));
     }
 
     public JournalFactory(JournalConfiguration configuration) {
         super(configuration);
+    }
+
+    protected JournalFactory(JournalConfiguration configuration, TimerCache timerCache) {
+        super(configuration, timerCache);
     }
 
     @Override

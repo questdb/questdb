@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,22 +20,18 @@ import com.lmax.disruptor.BatchEventProcessor;
 import com.lmax.disruptor.BlockingWaitStrategy;
 import com.lmax.disruptor.RingBuffer;
 import com.nfsdb.journal.JournalWriter;
-import com.nfsdb.journal.logging.Logger;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 
 public class PartitionCleaner {
-
-    private static final Logger LOGGER = Logger.getLogger(PartitionCleaner.class);
     private final ExecutorService executor;
     private final RingBuffer<PartitionCleanerEvent> ringBuffer = RingBuffer.createSingleProducer(PartitionCleanerEvent.EVENT_FACTORY, 32, new BlockingWaitStrategy());
     private final BatchEventProcessor<PartitionCleanerEvent> batchEventProcessor;
     private boolean started = false;
 
     public PartitionCleaner(JournalWriter writer, String name) {
-        this.executor = Executors.newFixedThreadPool(1, new NamedDaemonThreadFactory("jj-cleaner-" + name, true));
+        this.executor = Executors.newCachedThreadPool(new NamedDaemonThreadFactory("jj-cleaner-" + name, true));
         this.batchEventProcessor = new BatchEventProcessor<>(ringBuffer, ringBuffer.newBarrier(), new PartitionCleanerEventHandler(writer));
         ringBuffer.addGatingSequences(batchEventProcessor.getSequence());
     }
@@ -62,10 +58,6 @@ public class PartitionCleaner {
             batchEventProcessor.halt();
         } while (batchEventProcessor.isRunning());
 
-        try {
-            executor.awaitTermination(30, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            LOGGER.info("Partition cleaner shutdown, but thread is still running");
-        }
+        executor.shutdown();
     }
 }

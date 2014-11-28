@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -89,7 +89,7 @@ public class VariableColumn extends AbstractColumn {
         if (len == -1) {
             return null;
         }
-        return getStr0(mappedFile.getAddress(offset, len * 2 + 4) + 4, len);
+        return getStr0(mappedFile.getAddress(offset + 4, len * 2), len);
     }
 
     public boolean cmpStr(long localRowID, String value) {
@@ -100,7 +100,7 @@ public class VariableColumn extends AbstractColumn {
             return false;
         }
 
-        long address = mappedFile.getAddress(offset, len * 2 + 4) + 4;
+        long address = mappedFile.getAddress(offset + 4, len * 2);
         for (int i = 0; i < len; i++) {
             if (Unsafe.getUnsafe().getChar(address) != value.charAt(i)) {
                 return false;
@@ -148,13 +148,13 @@ public class VariableColumn extends AbstractColumn {
         Unsafe.getUnsafe().putInt(address, value.remaining());
         appendOffset += 4;
         address += 4;
-        int len = mappedFile.getLocalRemaining(appendOffset);
+        int len = mappedFile.getAddressSize(appendOffset);
 
         while (appendOffset < targetOffset) {
 
             if (len == 0) {
                 address = mappedFile.getAddress(appendOffset, 1);
-                len = mappedFile.getLocalRemaining(appendOffset);
+                len = mappedFile.getAddressSize(appendOffset);
             }
             int min = len < value.remaining() ? len : value.remaining();
 
@@ -189,7 +189,7 @@ public class VariableColumn extends AbstractColumn {
 
                     if (blockRemaining == 0) {
                         blockAddress = mappedFile.getAddress(off, 1);
-                        blockRemaining = mappedFile.getLocalRemaining(off);
+                        blockRemaining = mappedFile.getAddressSize(off);
                     }
 
                     if (blockRemaining <= 0) {
@@ -226,7 +226,7 @@ public class VariableColumn extends AbstractColumn {
 
         while (target.hasRemaining()) {
             long address = mappedFile.getAddress(offset, 1);
-            int len = mappedFile.getLocalRemaining(offset);
+            int len = mappedFile.getAddressSize(offset);
             int min = len < target.remaining() ? len : target.remaining();
 
             for (int i = 0; i < min; i++) {
@@ -252,7 +252,7 @@ public class VariableColumn extends AbstractColumn {
             while (len > 0) {
                 if (blockRemaining == 0) {
                     blockAddress = mappedFile.getAddress(offset, 1);
-                    blockRemaining = mappedFile.getLocalRemaining(offset);
+                    blockRemaining = mappedFile.getAddressSize(offset);
                 }
 
                 int l = len > blockRemaining ? blockRemaining : len;
@@ -334,7 +334,7 @@ public class VariableColumn extends AbstractColumn {
 
         private void renew() {
             blockAddress = mappedFile.getAddress(workOffset, 1);
-            blockRemaining = mappedFile.getLocalRemaining(workOffset);
+            blockRemaining = mappedFile.getAddressSize(workOffset);
         }
     }
 
@@ -368,7 +368,7 @@ public class VariableColumn extends AbstractColumn {
 
         private void renew() {
             blockAddress = mappedFile.getAddress(workOffset, 1);
-            blockRemaining = mappedFile.getLocalRemaining(workOffset);
+            blockRemaining = mappedFile.getAddressSize(workOffset);
         }
     }
 }

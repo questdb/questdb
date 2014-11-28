@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -346,64 +346,43 @@ public class DirectLongList extends AbstractDirectList {
         // Sort these elements using insertion sort
         if (get(e2) < get(e1)) {
             swap(e2, e1);
-//            long t = a[e2];
-//            a[e2] = a[e1];
-//            a[e1] = t;
         }
 
         if (get(e3) < get(e2)) {
             long t = get(e3);
             let(e3, e2);
             set(e2, t);
-//            a[e3] = a[e2];
-//            a[e2] = t;
             if (t < get(e1)) {
                 let(e2, e1);
-//                a[e2] = a[e1];
                 set(e1, t);
-//                a[e1] = t;
             }
         }
         if (get(e4) < get(e3)) {
             long t = get(e4);
             let(e4, e3);
-//            a[e4] = a[e3];
             set(e3, t);
-//            a[e3] = t;
             if (t < get(e2)) {
                 let(e3, e2);
-//                a[e3] = a[e2];
                 set(e2, t);
-//                a[e2] = t;
                 if (t < get(e1)) {
                     let(e2, e1);
-//                    a[e2] = a[e1];
                     set(e1, t);
-//                    a[e1] = t;
                 }
             }
         }
         if (get(e5) < get(e4)) {
             long t = get(e5);
             let(e5, e4);
-//            a[e5] = a[e4];
             set(e4, t);
-//            a[e4] = t;
             if (t < get(e3)) {
                 let(e4, e3);
-//                a[e4] = a[e3];
                 set(e3, t);
-//                a[e3] = t;
                 if (t < get(e2)) {
                     let(e3, e2);
-//                    a[e3] = a[e2];
                     set(e2, t);
-//                    a[e2] = t;
                     if (t < get(e1)) {
                         let(e2, e1);
-//                        a[e2] = a[e1];
                         set(e1, t);
-//                        a[e1] = t;
                     }
                 }
             }
@@ -466,7 +445,6 @@ public class DirectLongList extends AbstractDirectList {
                      * of "a[i++] = b;" due to performance issue.
                      */
                     set(less, ak);
-//                    a[less] = ak;
                     ++less;
                 } else if (ak > pivot2) { // Move a[k] to right part
                     while (get(great) > pivot2) {
@@ -477,19 +455,15 @@ public class DirectLongList extends AbstractDirectList {
                     if (get(great) < pivot1) { // a[great] <= pivot2
                         let(k, less);
                         let(less, great);
-//                        a[k] = a[less];
-//                        a[less] = a[great];
                         ++less;
                     } else { // pivot1 <= a[great] <= pivot2
                         let(k, great);
-//                        a[k] = a[great];
                     }
                     /*
                      * Here and below we use "a[i] = b; i--;" instead
                      * of "a[i--] = b;" due to performance issue.
                      */
                     set(great, ak);
-//                    a[great] = ak;
                     --great;
                 }
             }
@@ -499,10 +473,6 @@ public class DirectLongList extends AbstractDirectList {
             set(less - 1, pivot1);
             let(right, great + 1);
             set(great + 1, pivot2);
-//            a[left] = a[less - 1];
-//            a[less - 1] = pivot1;
-//            a[right] = a[great + 1];
-//            a[great + 1] = pivot2;
 
             // Sort left and right parts recursively, excluding known pivots
             sort(left, less - 2, leftmost);
@@ -548,9 +518,7 @@ public class DirectLongList extends AbstractDirectList {
                     long ak = get(k);
                     if (ak == pivot1) { // Move a[k] to left part
                         let(k, less);
-//                        a[k] = a[less];
                         set(less, ak);
-//                        a[less] = ak;
                         ++less;
                     } else if (ak == pivot2) { // Move a[k] to right part
                         while (get(great) == pivot2) {
@@ -570,14 +538,11 @@ public class DirectLongList extends AbstractDirectList {
                              * accurate assignment a[less] = a[great].
                              */
                             set(less, pivot1);
-//                            a[less] = pivot1;
                             ++less;
                         } else { // pivot1 < a[great] < pivot2
                             let(k, great);
-//                            a[k] = a[great];
                         }
                         set(great, ak);
-//                        a[great] = ak;
                         --great;
                     }
                 }
@@ -620,9 +585,7 @@ public class DirectLongList extends AbstractDirectList {
                 long ak = get(k);
                 if (ak < pivot) { // Move a[k] to left part
                     let(k, less);
-//                    a[k] = a[less];
                     set(less, ak);
-//                    a[less] = ak;
                     ++less;
                 } else { // a[k] > pivot - Move a[k] to right part
                     while (get(great) > pivot) {
@@ -631,7 +594,6 @@ public class DirectLongList extends AbstractDirectList {
                     if (get(great) < pivot) { // a[great] <= pivot
                         let(k, less);
                         let(less, great);
-//                        a[less] = a[great];
                         ++less;
                     } else { // a[great] == pivot
                         /*
@@ -643,10 +605,8 @@ public class DirectLongList extends AbstractDirectList {
                          * more accurate assignment a[k] = a[great].
                          */
                         set(k, pivot);
-//                        a[k] = pivot;
                     }
                     set(great, ak);
-//                    a[great] = ak;
                     --great;
                 }
             }

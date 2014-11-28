@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,15 +19,18 @@ package com.nfsdb.journal.column;
 import com.nfsdb.journal.exceptions.JournalException;
 
 import java.io.Closeable;
-import java.nio.MappedByteBuffer;
+import java.nio.ByteBuffer;
 
 public interface MappedFile extends Closeable {
-    public MappedByteBuffer getBuffer(long offset, int size);
+    public ByteBuffer getBuffer(long offset, int size);
 
     long getAddress(long offset, int size);
 
-    int getLocalRemaining(long offset);
+    int getAddressSize(long offset);
 
+    /**
+     * Suppress exception.
+     */
     void close();
 
     long getAppendOffset();

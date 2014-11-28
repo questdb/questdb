@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -160,6 +160,7 @@ public class JournalClient {
                 handlerFuture = null;
             }
             close0();
+            statusSentList.free();
         } catch (Exception e) {
             throw new JournalNetworkException(e);
         }
@@ -180,7 +181,7 @@ public class JournalClient {
         }
 
         writers.clear();
-        statusSentList.free();
+        statusSentList.clear();
         deltaConsumers.clear();
         commandConsumer.reset();
         stringResponseConsumer.reset();
@@ -263,7 +264,7 @@ public class JournalClient {
     private <T> void add0(JournalWriter<T> writer, TxListener txListener) {
         deltaConsumers.add(new JournalDeltaConsumer(writer.setCommitOnClose(false)));
         writers.add(writer);
-        statusSentList.add((byte) 0);
+        statusSentList.add(0);
         if (txListener != null) {
             writer.setTxListener(txListener);
         }
@@ -305,7 +306,7 @@ public class JournalClient {
                 commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
                 journalClientStateProducer.write(channel, new IndexedJournal(i, journal));
                 checkAck();
-                statusSentList.set(i, (byte) 1);
+                statusSentList.set(i, 1);
             }
         }
         sendReady();
@@ -387,7 +388,7 @@ public class JournalClient {
                                     int index = intResponseConsumer.getValue();
                                     deltaConsumer = deltaConsumers.get(index);
                                     deltaConsumer.read(statsChannel);
-                                    statusSentList.set(index, (byte) 0);
+                                    statusSentList.set(index, 0);
                                 }
                                 statsChannel.logStats();
                                 break;

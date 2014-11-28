@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ public class TimerCache {
         service.submit(new Runnable() {
             @Override
             public void run() {
-                while (!service.isTerminated()) {
+                while (!service.isShutdown()) {
                     millis = System.currentTimeMillis();
                     LockSupport.parkNanos(updateFrequency);
                 }
@@ -45,5 +45,9 @@ public class TimerCache {
 
     public long getCachedMillis() {
         return millis;
+    }
+
+    public void halt() {
+        service.shutdownNow();
     }
 }
