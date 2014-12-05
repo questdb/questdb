@@ -16,11 +16,11 @@
 
 package com.nfsdb.journal.lang.experimental;
 
+import com.nfsdb.journal.collections.IntHashSet;
 import com.nfsdb.journal.utils.Hash;
 import com.nfsdb.journal.utils.MemoryBuffer;
 import com.nfsdb.journal.utils.Rnd;
 import com.nfsdb.journal.utils.Unsafe;
-import gnu.trove.set.hash.TIntHashSet;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -30,7 +30,7 @@ public class HashTest {
     public void testStringHash() throws Exception {
         MemoryBufferImpl buf = new MemoryBufferImpl(30);
         Rnd rnd = new Rnd();
-        TIntHashSet hashes = new TIntHashSet(100000);
+        IntHashSet hashes = new IntHashSet(100000);
 
 
         for (int i = 0; i < 100000; i++) {

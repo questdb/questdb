@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,13 +17,11 @@
 package com.nfsdb.journal.factory.configuration;
 
 import com.nfsdb.journal.PartitionType;
+import com.nfsdb.journal.collections.ObjIntHashMap;
 import com.nfsdb.journal.column.ColumnType;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.utils.ByteBuffers;
 import com.nfsdb.journal.utils.Unsafe;
-import gnu.trove.impl.Constants;
-import gnu.trove.map.TObjectIntMap;
-import gnu.trove.map.hash.TObjectIntHashMap;
 
 import java.io.File;
 import java.lang.reflect.Constructor;
@@ -36,7 +34,7 @@ public class JournalMetadataBuilder<T> implements JMetadataBuilder<T> {
     private final Map<String, ColumnMetadata> columnMetadata = new HashMap<>();
     private final Class<T> modelClass;
     private Constructor<T> constructor;
-    private TObjectIntMap<String> nameToIndexMap;
+    private ObjIntHashMap<String> nameToIndexMap;
     private String location;
     private int tsColumnIndex = -1;
     private PartitionType partitionBy = PartitionType.NONE;
@@ -233,7 +231,7 @@ public class JournalMetadataBuilder<T> implements JMetadataBuilder<T> {
 
         List<Field> classFields = getAllFields(new ArrayList<Field>(), modelClass);
 
-        this.nameToIndexMap = new TObjectIntHashMap<>(classFields.size(), Constants.DEFAULT_LOAD_FACTOR, -1);
+        this.nameToIndexMap = new ObjIntHashMap<>(classFields.size());
         this.location = modelClass.getCanonicalName();
 
         for (int i = 0; i < classFields.size(); i++) {

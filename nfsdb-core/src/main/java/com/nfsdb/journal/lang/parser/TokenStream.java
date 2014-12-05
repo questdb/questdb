@@ -17,8 +17,8 @@
 package com.nfsdb.journal.lang.parser;
 
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
+import com.nfsdb.journal.collections.IntObjHashMap;
 import com.nfsdb.journal.utils.ByteBuffers;
-import gnu.trove.map.hash.TCharObjectHashMap;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -27,7 +27,7 @@ import java.util.Comparator;
 import java.util.List;
 
 public class TokenStream extends AbstractImmutableIterator<String> {
-    private final TCharObjectHashMap<List<Token>> symbols = new TCharObjectHashMap<>();
+    private final IntObjHashMap<List<Token>> symbols = new IntObjHashMap<>();
     private final StringBuilder s = new StringBuilder();
     private ByteBuffer buffer;
     private String next = null;

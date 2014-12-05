@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,12 @@
 
 package com.nfsdb.journal.lang.cst.impl.rsrc;
 
+import com.nfsdb.journal.collections.IntHashSet;
 import com.nfsdb.journal.column.FixedColumn;
 import com.nfsdb.journal.lang.cst.PartitionSlice;
 import com.nfsdb.journal.lang.cst.RowCursor;
 import com.nfsdb.journal.lang.cst.RowSource;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
-import gnu.trove.set.TIntSet;
-import gnu.trove.set.hash.TIntHashSet;
 
 /**
  * Takes stream of rowids, converts them to int values of FixedColumn and
@@ -35,7 +34,7 @@ public class SkipSymbolRowSource implements RowSource, RowCursor {
 
     private final RowSource delegate;
     private final StringRef symbolName;
-    private final TIntSet set = new TIntHashSet();
+    private final IntHashSet set = new IntHashSet();
     private FixedColumn column;
     private int columnIndex = -1;
     private RowCursor cursor;

@@ -18,6 +18,8 @@ package com.nfsdb.journal.column;
 
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
+import com.nfsdb.journal.utils.DirectMemoryBuffer;
+import com.nfsdb.journal.utils.MemoryBuffer;
 import com.nfsdb.journal.utils.Unsafe;
 
 import java.io.IOException;
@@ -30,6 +32,7 @@ public class VariableColumn extends AbstractColumn {
     private final FixedColumn indexColumn;
     private final BinaryOutputStream binOut = new BinaryOutputStream();
     private final BinaryInputStream binIn = new BinaryInputStream();
+    private final DirectMemoryBuffer memBuf = new DirectMemoryBuffer();
     private char buffer[] = new char[32];
     private byte[] streamBuf;
 
@@ -127,6 +130,18 @@ public class VariableColumn extends AbstractColumn {
             }
             return commitAppend(offset, len);
         }
+    }
+
+    public MemoryBuffer getStrBuf(long localRowID) {
+        long offset = indexColumn.getLong(localRowID);
+        int len = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4)) << 1;
+
+        // -1 >> 1
+        if (len == -2) {
+            return null;
+        }
+
+        return memBuf.init(mappedFile.getAddress(offset + 4, len), len);
     }
 
     @Override

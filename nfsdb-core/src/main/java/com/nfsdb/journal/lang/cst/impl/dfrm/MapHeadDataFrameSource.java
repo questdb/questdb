@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,20 +19,19 @@ package com.nfsdb.journal.lang.cst.impl.dfrm;
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.Partition;
 import com.nfsdb.journal.collections.DirectLongList;
+import com.nfsdb.journal.collections.IntObjHashMap;
 import com.nfsdb.journal.column.FixedColumn;
 import com.nfsdb.journal.lang.cst.JournalEntry;
 import com.nfsdb.journal.lang.cst.JournalSource;
 import com.nfsdb.journal.lang.cst.RowCursor;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 import com.nfsdb.journal.utils.Rows;
-import gnu.trove.iterator.TIntObjectIterator;
-import gnu.trove.map.hash.TIntObjectHashMap;
 
 public class MapHeadDataFrameSource implements DataFrameSource, DataFrame, RowCursor {
 
     private final JournalSource source;
     private final StringRef symbol;
-    private final TIntObjectHashMap<DirectLongList> frame = new TIntObjectHashMap<>();
+    private final IntObjHashMap<DirectLongList> frame = new IntObjHashMap<>();
     private DirectLongList series;
     private int seriesPos;
 
@@ -70,11 +69,8 @@ public class MapHeadDataFrameSource implements DataFrameSource, DataFrame, RowCu
     }
 
     public void reset() {
-        TIntObjectIterator<DirectLongList> it = frame.iterator();
-        while (it.hasNext()) {
-            DirectLongList l = it.value();
-            l.reset();
-            it.advance();
+        for (DirectLongList list : frame.values()) {
+            list.reset();
         }
     }
 

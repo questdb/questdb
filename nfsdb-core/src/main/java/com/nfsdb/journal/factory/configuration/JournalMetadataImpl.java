@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,14 +18,12 @@ package com.nfsdb.journal.factory.configuration;
 
 import com.nfsdb.journal.JournalKey;
 import com.nfsdb.journal.PartitionType;
+import com.nfsdb.journal.collections.ObjIntHashMap;
 import com.nfsdb.journal.column.HugeBuffer;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.utils.Base64;
 import com.nfsdb.journal.utils.Checksum;
-import gnu.trove.impl.Constants;
-import gnu.trove.map.TObjectIntMap;
-import gnu.trove.map.hash.TObjectIntHashMap;
 
 import java.io.File;
 import java.lang.reflect.Constructor;
@@ -45,7 +43,7 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
     private final int ioBlockTxCount;
     private final String key;
     private final ColumnMetadata[] columnMetadata;
-    private final TObjectIntMap<String> columnIndexLookup;
+    private final ObjIntHashMap<String> columnIndexLookup;
     private final int timestampColumnIndex;
     private final int lag;
     private final boolean partialMapping;
@@ -79,7 +77,7 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
         this.ioBlockRecordCount = ioBlockRecordCount;
         this.ioBlockTxCount = ioBlockTxCount;
         this.key = key;
-        this.columnIndexLookup = new TObjectIntHashMap<>(columnCount, Constants.DEFAULT_LOAD_FACTOR, -1);
+        this.columnIndexLookup = new ObjIntHashMap<>(columnCount);
         for (int i = 0; i < columnMetadata.length; i++) {
             columnIndexLookup.put(columnMetadata[i].name, i);
         }
@@ -95,7 +93,7 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
         partitionBy = PartitionType.valueOf(buf.getStr());
         columnCount = buf.getInt();
         columnMetadata = new ColumnMetadata[columnCount];
-        columnIndexLookup = new TObjectIntHashMap<>();
+        columnIndexLookup = new ObjIntHashMap<>();
         for (int i = 0; i < columnCount; i++) {
             columnMetadata[i] = new ColumnMetadata();
             columnMetadata[i].read(buf);

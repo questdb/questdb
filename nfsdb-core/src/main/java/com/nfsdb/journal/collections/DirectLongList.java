@@ -48,7 +48,7 @@ public class DirectLongList extends AbstractDirectList {
         super(3, 10);
     }
 
-    public DirectLongList(int capacity) {
+    public DirectLongList(long capacity) {
         super(3, capacity);
     }
 
@@ -62,11 +62,12 @@ public class DirectLongList extends AbstractDirectList {
         pos += 8;
     }
 
-    public long get(int p) {
+    public long get(long p) {
         return Unsafe.getUnsafe().getLong(start + (p << 3));
     }
 
-    public void set(int p, long v) {
+    public void set(long p, long v) {
+        assert p >= 0 && p < (limit - start) >> 3;
         Unsafe.getUnsafe().putLong(start + (p << 3), v);
     }
 
@@ -528,7 +529,6 @@ public class DirectLongList extends AbstractDirectList {
                         }
                         if (get(great) == pivot1) { // a[great] < pivot2
                             let(k, less);
-//                            a[k] = a[less];
                             /*
                              * Even though a[great] equals to pivot1, the
                              * assignment a[less] = pivot1 may be incorrect,

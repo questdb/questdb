@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,6 @@ import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestUtils;
 import com.nfsdb.journal.utils.Dates;
-import gnu.trove.list.array.TIntArrayList;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -118,12 +117,10 @@ public class IteratorTest extends AbstractTest {
         });
 
         int expected[] = {1, 1, 2, 2, 3, 4, 4, 4, 5, 6, 6, 7, 8, 9, 10, 11, 13, 14, 15, 17};
-        TIntArrayList result = new TIntArrayList();
+        int i = 0;
         for (int a : iterator) {
-            result.add(a);
+            Assert.assertEquals(expected[i++], a);
         }
-
-        Assert.assertArrayEquals(expected, result.toArray());
     }
 
     @Test
@@ -348,6 +345,13 @@ public class IteratorTest extends AbstractTest {
         private final CountDownLatch latch;
         private final int index;
 
+        private Generator(JournalFactory factory, CyclicBarrier barrier, int index, CountDownLatch latch) {
+            this.factory = factory;
+            this.barrier = barrier;
+            this.index = index;
+            this.latch = latch;
+        }
+
         @Override
         public void run() {
             try {
@@ -369,13 +373,6 @@ public class IteratorTest extends AbstractTest {
             } catch (Exception e) {
                 e.printStackTrace();
             }
-        }
-
-        private Generator(JournalFactory factory, CyclicBarrier barrier, int index, CountDownLatch latch) {
-            this.factory = factory;
-            this.barrier = barrier;
-            this.index = index;
-            this.latch = latch;
         }
     }
 }

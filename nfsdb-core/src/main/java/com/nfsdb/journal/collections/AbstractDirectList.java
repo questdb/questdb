@@ -28,7 +28,7 @@ public class AbstractDirectList implements Closeable {
     protected long limit;
     private long address;
 
-    public AbstractDirectList(int pow2, int capacity) {
+    public AbstractDirectList(int pow2, long capacity) {
         this.pow2 = pow2;
         this.address = Unsafe.getUnsafe().allocateMemory((capacity << pow2) + CACHE_LINE_SIZE);
         this.start = this.pos = address + (address & (CACHE_LINE_SIZE - 1));
@@ -59,19 +59,19 @@ public class AbstractDirectList implements Closeable {
         reset();
     }
 
-    public void setCapacity(int capacity) {
+    public void setCapacity(long capacity) {
         if (capacity << pow2 > limit - start) {
             extend(capacity);
         }
     }
 
-    public void addCapacity(int capacity) {
+    public void addCapacity(long capacity) {
         if (capacity << pow2 > limit - pos) {
             extend((int) (((limit - start) >> pow2) + capacity));
         }
     }
 
-    public void setPos(int p) {
+    public void setPos(long p) {
         pos = start + (p << pow2);
     }
 
@@ -81,7 +81,7 @@ public class AbstractDirectList implements Closeable {
         }
     }
 
-    private void extend(int capacity) {
+    private void extend(long capacity) {
         long address = Unsafe.getUnsafe().allocateMemory((capacity << pow2) + CACHE_LINE_SIZE);
         long start = address + (address & (CACHE_LINE_SIZE - 1));
         Unsafe.getUnsafe().copyMemory(this.start, start, limit - this.start);
@@ -108,6 +108,10 @@ public class AbstractDirectList implements Closeable {
     public void clear() {
         pos = start;
         Unsafe.getUnsafe().setMemory(start, limit - start, (byte) 0);
+    }
+
+    public void zero(byte v) {
+        Unsafe.getUnsafe().setMemory(start, limit - start, v);
     }
 
     public void close() {

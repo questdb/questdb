@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,13 +31,14 @@ import com.nfsdb.journal.printer.JournalPrinter;
 import com.nfsdb.journal.printer.appender.AssertingAppender;
 import com.nfsdb.journal.printer.converter.DateConverter;
 import com.nfsdb.journal.utils.Dates;
+import com.nfsdb.journal.utils.Lists;
 import com.nfsdb.journal.utils.Rnd;
 import com.nfsdb.journal.utils.Unsafe;
-import gnu.trove.map.hash.TIntIntHashMap;
 import org.joda.time.Interval;
 import org.junit.Assert;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.UUID;
 
@@ -253,7 +254,8 @@ public final class TestUtils {
         Assert.assertEquals(expected.getPartitionCount(), actual.getPartitionCount());
         // check if SymbolIndexes are the same
 
-        TIntIntHashMap colKeyCount = new TIntIntHashMap();
+        ArrayList<Integer> colKeyCount = new ArrayList<>();
+
         for (int k = 0; k < expected.getMetadata().getColumnCount(); k++) {
             SymbolTable et = expected.getColumnMetadata(k).symbolTable;
             SymbolTable at = actual.getColumnMetadata(k).symbolTable;
@@ -268,7 +270,9 @@ public final class TestUtils {
 
             Assert.assertEquals(et.size(), at.size());
 
-            colKeyCount.put(k, et.size());
+            Lists.advance(colKeyCount, k);
+
+            colKeyCount.set(k, et.size());
 
             for (int i = 0; i < et.size(); i++) {
                 String ev = et.value(i);

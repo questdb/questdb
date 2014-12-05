@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,21 @@
 
 package com.nfsdb.journal;
 
-import com.nfsdb.journal.collections.DirectIntList;
-import com.nfsdb.journal.collections.DirectLongList;
+import com.nfsdb.journal.collections.*;
+import com.nfsdb.journal.column.MappedFileImpl;
+import com.nfsdb.journal.column.VariableColumn;
 import com.nfsdb.journal.utils.Rnd;
 import org.junit.Assert;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+
+import java.io.File;
 
 public class CollectionsTest {
+
+    @Rule
+    public final TemporaryFolder temp = new TemporaryFolder();
 
     @Test
     public void testDirectIntList() throws Exception {
@@ -179,5 +187,93 @@ public class CollectionsTest {
         for (int i = 0; i < list.size(); i++) {
             Assert.assertEquals("at " + i, i, list.get(i));
         }
+    }
+
+    @Test
+    public void testDirectMap() throws Exception {
+
+        Rnd rnd = new Rnd();
+        VariableColumn data = new VariableColumn(
+                new MappedFileImpl(
+                        new File(temp.getRoot(), "1.d")
+                        , 16
+                        , JournalMode.APPEND
+                )
+                ,
+                new MappedFileImpl(
+                        new File(temp.getRoot(), "1.i")
+                        , 16
+                        , JournalMode.APPEND
+                )
+        );
+
+        for (int i = 0; i < 100000; i++) {
+            data.putStr(rnd.nextString(25));
+            data.commit();
+        }
+
+        try (DirectBufIntMap map = new DirectBufIntMap()) {
+
+
+            long sz = data.size();
+            for (int i = 0; i < sz; i++) {
+                map.put(data.getStrBuf(i), (int) (sz - i));
+            }
+
+            for (int i = 0; i < sz; i++) {
+                Assert.assertEquals(sz - i, map.get(data.getStrBuf(i)));
+            }
+
+            map.put(data.getStrBuf(105), 3345);
+            Assert.assertEquals(3345, map.get(data.getStrBuf(105)));
+        }
+    }
+
+    @Test
+    public void testIntObjHashMap() throws Exception {
+        IntObjHashMap<String> map = new IntObjHashMap<>();
+        Rnd rnd = new Rnd();
+
+        for (int i = 0; i < 1000; i++) {
+            map.put(i, rnd.nextString(25));
+        }
+
+        Rnd rnd2 = new Rnd();
+        for (int i = 0; i < 1000; i++) {
+            Assert.assertEquals(rnd2.nextString(25), map.get(i));
+        }
+    }
+
+    @Test
+    public void testIntHash() throws Exception {
+        IntHashSet set = new IntHashSet(10);
+
+        for (int i = 0; i < 1000; i++) {
+            Assert.assertTrue(set.add(i));
+        }
+
+        for (int i = 0; i < 1000; i++) {
+            Assert.assertFalse(set.add(i));
+        }
+    }
+
+    @Test
+    public void testObjIntHashMap() throws Exception {
+        ObjIntHashMap<String> map = new ObjIntHashMap<>();
+        Rnd rnd = new Rnd();
+
+        for (int i = 0; i < 1000; i++) {
+            map.put(rnd.nextString(25), i);
+        }
+
+        Rnd rnd2 = new Rnd();
+        for (int i = 0; i < 1000; i++) {
+            Assert.assertEquals(i, map.get(rnd2.nextString(25)));
+        }
+
+        Assert.assertEquals(1000, map.size());
+
+        Assert.assertTrue(map.putIfAbsent("ABC", 100));
+        Assert.assertFalse(map.putIfAbsent("ABC", 100));
     }
 }

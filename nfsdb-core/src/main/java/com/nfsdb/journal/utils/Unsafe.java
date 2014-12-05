@@ -24,6 +24,8 @@ public final class Unsafe {
     private static final sun.misc.Unsafe UNSAFE;
     private static final long BYTE_ARRAY_OFFSET;
     private static final long CHAR_ARRAY_OFFSET;
+    private static final long INT_ARRAY_OFFSET;
+    private static final long OBJ_ARRAY_OFFSET;
 
     static {
         try {
@@ -32,9 +34,14 @@ public final class Unsafe {
             UNSAFE = (sun.misc.Unsafe) theUnsafe.get(null);
             BYTE_ARRAY_OFFSET = UNSAFE.arrayBaseOffset(byte[].class);
             CHAR_ARRAY_OFFSET = UNSAFE.arrayBaseOffset(char[].class);
+            INT_ARRAY_OFFSET = UNSAFE.arrayBaseOffset(int[].class);
+            OBJ_ARRAY_OFFSET = UNSAFE.arrayBaseOffset(Object[].class);
         } catch (Exception e) {
             throw new JournalRuntimeException(e);
         }
+    }
+
+    private Unsafe() {
     }
 
     public static sun.misc.Unsafe getUnsafe() {
@@ -49,6 +56,11 @@ public final class Unsafe {
         return CHAR_ARRAY_OFFSET;
     }
 
-    private Unsafe() {
+    public static long getIntArrayOffset() {
+        return INT_ARRAY_OFFSET;
+    }
+
+    public static long getObjArrayOffset() {
+        return OBJ_ARRAY_OFFSET;
     }
 }

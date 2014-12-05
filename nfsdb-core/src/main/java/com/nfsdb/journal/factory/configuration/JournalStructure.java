@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,13 +17,12 @@
 package com.nfsdb.journal.factory.configuration;
 
 import com.nfsdb.journal.PartitionType;
+import com.nfsdb.journal.collections.ObjIntHashMap;
 import com.nfsdb.journal.column.ColumnType;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.utils.ByteBuffers;
 import com.nfsdb.journal.utils.Unsafe;
-import gnu.trove.map.TObjectIntMap;
-import gnu.trove.map.hash.TObjectIntHashMap;
 
 import java.io.File;
 import java.lang.reflect.Constructor;
@@ -37,7 +36,7 @@ import java.util.concurrent.TimeUnit;
 public class JournalStructure implements JMetadataBuilder<Object> {
     private static final Logger LOGGER = Logger.getLogger(JournalStructure.class);
     private final List<ColumnMetadata> metadata = new ArrayList<>();
-    private final TObjectIntMap<String> nameToIndexMap = new TObjectIntHashMap<>(10, 0.2f, -1);
+    private final ObjIntHashMap<String> nameToIndexMap = new ObjIntHashMap<>();
     private String location;
     private int tsColumnIndex = -1;
     private PartitionType partitionBy = PartitionType.NONE;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.nfsdb.journal.column;
 
 import com.nfsdb.journal.JournalMode;
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
+import com.nfsdb.journal.collections.ObjIntHashMap;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalInvalidSymbolValueException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
@@ -26,7 +27,6 @@ import com.nfsdb.journal.index.KVIndex;
 import com.nfsdb.journal.utils.ByteBuffers;
 import com.nfsdb.journal.utils.Checksum;
 import com.nfsdb.journal.utils.Lists;
-import gnu.trove.map.hash.TObjectIntHashMap;
 
 import java.io.Closeable;
 import java.io.File;
@@ -39,10 +39,10 @@ public class SymbolTable implements Closeable {
     private static final String DATA_FILE_SUFFIX = ".symd";
     private static final String INDEX_FILE_SUFFIX = ".symi";
     private static final String HASH_INDEX_FILE_SUFFIX = ".symr";
-    private static final float CACHE_LOAD_FACTOR = 0.2f;
+    private static final double CACHE_LOAD_FACTOR = 0.2;
     private final int hashKeyCount;
     private final String column;
-    private final TObjectIntHashMap<String> valueCache;
+    private final ObjIntHashMap<String> valueCache;
     private final ArrayList<String> keyCache;
     private final boolean noCache;
     private VariableColumn data;
@@ -75,7 +75,7 @@ public class SymbolTable implements Closeable {
         this.size = size;
 
         this.index = new KVIndex(new File(directory, column + HASH_INDEX_FILE_SUFFIX), this.hashKeyCount, keyCount, txCountHint, mode, indexTxAddress);
-        this.valueCache = new TObjectIntHashMap<>(noCache ? 0 : keyCount, CACHE_LOAD_FACTOR, VALUE_NOT_FOUND);
+        this.valueCache = new ObjIntHashMap<>(noCache ? 0 : keyCount, VALUE_NOT_FOUND);
         this.keyCache = new ArrayList<>(noCache ? 0 : keyCount);
     }
 

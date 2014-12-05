@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.nfsdb.journal.net;
 
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalKey;
+import com.nfsdb.journal.collections.DirectIntList;
 import com.nfsdb.journal.exceptions.JournalDisconnectedChannelException;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalNetworkException;
@@ -37,8 +38,6 @@ import com.nfsdb.journal.net.protocol.CommandProducer;
 import com.nfsdb.journal.net.protocol.Version;
 import com.nfsdb.journal.net.protocol.commands.*;
 import com.nfsdb.journal.utils.Lists;
-import gnu.trove.impl.Constants;
-import gnu.trove.map.hash.TIntIntHashMap;
 
 import java.net.SocketAddress;
 import java.nio.channels.ByteChannel;
@@ -48,9 +47,9 @@ import java.util.List;
 
 public class JournalServerAgent {
 
-    private static final int JOURNAL_INDEX_NOT_FOUND = -1;
-    private final TIntIntHashMap writerToReaderMap = new TIntIntHashMap(Constants.DEFAULT_CAPACITY, Constants.DEFAULT_LOAD_FACTOR, JOURNAL_INDEX_NOT_FOUND, JOURNAL_INDEX_NOT_FOUND);
-    private final TIntIntHashMap readerToWriterMap = new TIntIntHashMap(Constants.DEFAULT_CAPACITY, Constants.DEFAULT_LOAD_FACTOR, JOURNAL_INDEX_NOT_FOUND, JOURNAL_INDEX_NOT_FOUND);
+    private static final byte JOURNAL_INDEX_NOT_FOUND = -1;
+    private final DirectIntList writerToReaderMap = new DirectIntList();
+    private final DirectIntList readerToWriterMap = new DirectIntList();
     private final Logger LOGGER = Logger.getLogger(JournalServerAgent.class);
     private final JournalServer server;
     private final CommandConsumer commandConsumer = new CommandConsumer();
@@ -78,10 +77,14 @@ public class JournalServerAgent {
         this.eventProcessor = new JournalEventProcessor(server.getBridge());
         this.authorizer = authorizer;
         this.authorized = authorizer == null;
+        writerToReaderMap.zero(JOURNAL_INDEX_NOT_FOUND);
+        readerToWriterMap.zero(JOURNAL_INDEX_NOT_FOUND);
     }
 
     public void close() {
         server.getBridge().removeAgentSequence(eventProcessor.getSequence());
+        writerToReaderMap.free();
+        readerToWriterMap.free();
     }
 
     public void process(ByteChannel channel) throws JournalNetworkException {
@@ -213,8 +216,8 @@ public class JournalServerAgent {
             if (writerIndex == JournalServer.JOURNAL_KEY_NOT_FOUND) {
                 error(channel, "Requested key not exported: " + readerKey);
             } else {
-                writerToReaderMap.put(writerIndex, indexedKey.getIndex());
-                readerToWriterMap.put(indexedKey.getIndex(), writerIndex);
+                writerToReaderMap.extendAndSet(writerIndex, indexedKey.getIndex());
+                readerToWriterMap.extendAndSet(indexedKey.getIndex(), writerIndex);
                 try {
                     createReader(indexedKey.getIndex(), readerKey);
                     ok(channel);

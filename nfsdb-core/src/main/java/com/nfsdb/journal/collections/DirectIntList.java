@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ public class DirectIntList extends AbstractDirectList {
         super(2, 10);
     }
 
-    public DirectIntList(int capacity) {
+    public DirectIntList(long capacity) {
         super(2, capacity);
     }
 
@@ -33,11 +33,30 @@ public class DirectIntList extends AbstractDirectList {
         pos += 4;
     }
 
-    public int get(int p) {
+    public int get(long p) {
         return Unsafe.getUnsafe().getInt(start + (p << 2));
     }
 
-    public void set(int p, long v) {
-        Unsafe.getUnsafe().putLong(start + (p << 2), v);
+    public void set(long p, int v) {
+        Unsafe.getUnsafe().putInt(start + (p << 2), v);
+    }
+
+    public void extendAndSet(long p, int v) {
+        setCapacity(p + 1);
+        set(p, v);
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("{");
+        for (int i = 0; i < size(); i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            sb.append(get(i));
+        }
+        sb.append("}");
+        return sb.toString();
     }
 }
