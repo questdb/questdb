@@ -144,7 +144,7 @@ public class IntObjHashMap<V> {
         Arrays.fill(values, FREE);
     }
 
-    private class ValuesIterator extends AbstractImmutableIterator<V> {
+    public class ValuesIterator extends AbstractImmutableIterator<V> {
         private int index;
 
         @Override

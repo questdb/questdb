@@ -160,10 +160,20 @@ public class JournalClient {
                 handlerFuture = null;
             }
             close0();
-            statusSentList.free();
+            free();
         } catch (Exception e) {
             throw new JournalNetworkException(e);
         }
+    }
+
+    private void free() {
+        for (int i = 0; i < deltaConsumers.size(); i++) {
+            deltaConsumers.get(i).free();
+        }
+        commandConsumer.free();
+        stringResponseConsumer.free();
+        intResponseConsumer.free();
+        statusSentList.free();
     }
 
     public boolean isRunning() {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -125,5 +125,16 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
                 tab.commit();
             }
         }
+    }
+
+    @Override
+    public void free() {
+        super.free();
+        ByteBuffers.release(buffer);
+        for (int i = 0; i < symbolTableConsumers.size(); i++) {
+            symbolTableConsumers.get(i).free();
+        }
+        symbolTableSizes.free();
+        symbolTabDataIndicators.free();
     }
 }

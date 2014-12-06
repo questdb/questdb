@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -179,5 +179,18 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
         }
 
         return consumer;
+    }
+
+    @Override
+    public void free() {
+        super.free();
+        journalServerStateConsumer.free();
+        journalSymbolTableConsumer.free();
+        for (int i = 0; i < partitionDeltaConsumers.size(); i++) {
+            partitionDeltaConsumers.get(i).free();
+        }
+        if (lagPartitionDeltaConsumer != null) {
+            lagPartitionDeltaConsumer.free();
+        }
     }
 }
