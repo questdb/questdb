@@ -22,13 +22,12 @@ import com.nfsdb.journal.collections.RingQueue;
 import com.nfsdb.journal.column.FixedColumn;
 import com.nfsdb.journal.lang.cst.EntrySource;
 import com.nfsdb.journal.lang.cst.JournalEntry;
-import com.nfsdb.journal.lang.cst.JournalSource;
 
 import java.util.NoSuchElementException;
 
 public class TimeSeriesJoin extends AbstractImmutableIterator<JournalEntry> implements EntrySource {
-    private final JournalSource masterSource;
-    private final JournalSource slaveSource;
+    private final EntrySource masterSource;
+    private final EntrySource slaveSource;
     private final long depth;
     private final RingQueue<CachedJournalEntry> ringQueue;
     private final int masterTimestampIndex;
@@ -44,12 +43,12 @@ public class TimeSeriesJoin extends AbstractImmutableIterator<JournalEntry> impl
     private boolean useQueue;
     private boolean queueMarked = false;
 
-    public TimeSeriesJoin(JournalSource masterSource, JournalSource slaveSource, long depth, int cacheSize) {
+    public TimeSeriesJoin(EntrySource masterSource, int masterTsIndex, EntrySource slaveSource, int slaveTsIndex, long depth, int cacheSize) {
         this.masterSource = masterSource;
         this.slaveSource = slaveSource;
         this.depth = depth;
-        this.masterTimestampIndex = masterSource.getJournal().getMetadata().getTimestampColumnIndex();
-        this.slaveTimestampIndex = slaveSource.getJournal().getMetadata().getTimestampColumnIndex();
+        this.masterTimestampIndex = masterTsIndex;
+        this.slaveTimestampIndex = slaveTsIndex;
         this.ringQueue = new RingQueue<>(CachedJournalEntry.class, cacheSize);
     }
 

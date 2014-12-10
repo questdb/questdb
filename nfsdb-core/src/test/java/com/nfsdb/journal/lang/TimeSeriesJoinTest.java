@@ -116,10 +116,13 @@ public class TimeSeriesJoinTest {
                 "234~334\n";
 
 
+        // from w1 tj w2 depth 150
         EntrySource src = new TimeSeriesJoin(
                 new JournalSourceImpl(new JournalPartitionSource(w1, true), new AllRowSource())
+                , w1.getMetadata().getTimestampColumnIndex()
                 ,
                 new JournalSourceImpl(new JournalPartitionSource(w2, true), new AllRowSource())
+                , w2.getMetadata().getTimestampColumnIndex()
                 , 150
                 , 2 // trigger re-sizes to test ring expand formulas
         );
@@ -156,8 +159,10 @@ public class TimeSeriesJoinTest {
 
         EntrySource src = new TimeSeriesJoin(
                 new JournalSourceImpl(new JournalPartitionSource(w1, true), new AllRowSource())
+                , w1.getMetadata().getTimestampColumnIndex()
                 ,
                 new JournalSourceImpl(new JournalPartitionSource(w2, true), new AllRowSource())
+                , w2.getMetadata().getTimestampColumnIndex()
                 , 15
                 , 2 // trigger re-sizes to test ring expand formulas
         );
