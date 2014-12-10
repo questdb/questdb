@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,16 +16,15 @@
 
 package com.nfsdb.journal.collections;
 
-import com.nfsdb.journal.utils.DirectMemoryBuffer;
 import com.nfsdb.journal.utils.Hash;
 import com.nfsdb.journal.utils.Unsafe;
 
 import java.io.Closeable;
+import java.util.Iterator;
 
-public class DirectCompositeKeyIntMap implements Closeable {
+public class DirectCompositeKeyIntMap implements Closeable, Iterable<DirectCompositeKeyIntMap.Entry> {
 
     private final int seed = 0xdeadbeef;
-    private final DirectMemoryBuffer memBuf = new DirectMemoryBuffer();
     private final double loadFactor;
     private final Key keyBuilder = new Key();
     private final Entry entry = new Entry();
@@ -93,9 +92,8 @@ public class DirectCompositeKeyIntMap implements Closeable {
         }
     }
 
-    public Iterable<Entry> iterator() {
+    public Iterator<Entry> iterator() {
         iterator.index = 0;
-        iterator.len = keyCapacity;
         return iterator;
     }
 
@@ -157,7 +155,7 @@ public class DirectCompositeKeyIntMap implements Closeable {
             if (offset == -1) {
                 continue;
             }
-            long index = Hash.hashXX(memBuf.init(offset + 4 + kStart, Unsafe.getUnsafe().getInt(kStart + offset)), seed) % capacity;
+            long index = Hash.hashXX(offset + 4 + kStart, Unsafe.getUnsafe().getInt(kStart + offset), seed) % capacity;
             while (pointers.get(index) != -1) {
                 index = (index + 1) % capacity;
             }
@@ -194,38 +192,24 @@ public class DirectCompositeKeyIntMap implements Closeable {
     public class EntryIterator extends AbstractImmutableIterator<Entry> {
 
         private long index;
-        private long len;
 
         @Override
         public boolean hasNext() {
-            if (index >= len) {
+            if (index >= keyCapacity) {
                 return false;
             }
 
-            entry.key.offset = keyOffsets.get(index);
-            if (entry.key.offset != -1) {
-                entry.value = values.get(index++);
-                entry.key.rPos = kStart + entry.key.offset;
-                return true;
-            }
-
-            return scan(index++);
-
-        }
-
-        private boolean scan(long index) {
-            while (index < len && (entry.key.offset = keyOffsets.get(index)) == -1) {
+            while (index < keyCapacity && (entry.key.offset = keyOffsets.get(index)) == -1) {
                 index++;
             }
 
-            if (entry.key.offset == -1) {
-                return false;
+            if (entry.key.offset != -1) {
+                entry.value = values.get(index++);
+                entry.key.rPos = kStart + entry.key.offset + 4;
+                return true;
             }
-            entry.value = values.get(index);
-            entry.key.rPos = kStart + entry.key.offset;
-            this.index = index + 1;
-            return true;
 
+            return false;
         }
 
         @Override
@@ -238,11 +222,18 @@ public class DirectCompositeKeyIntMap implements Closeable {
         private long offset;
         private int len;
         private long rPos;
+        private char[] strBuf = null;
 
         private void checkSize(int size) {
             if (kPos + size > kLimit) {
                 resize();
             }
+        }
+
+        public long getLong() {
+            long v = Unsafe.getUnsafe().getLong(rPos);
+            rPos += 8;
+            return v;
         }
 
         public Key putLong(long value) {
@@ -259,7 +250,7 @@ public class DirectCompositeKeyIntMap implements Closeable {
             kPos += len;
         }
 
-        public Key put(CharSequence value) {
+        public Key putStr(CharSequence value) {
             int len = value.length();
             checkSize(len << 1 + 4);
             Unsafe.getUnsafe().putInt(kPos, value.length());
@@ -269,6 +260,17 @@ public class DirectCompositeKeyIntMap implements Closeable {
             }
             kPos += len << 1;
             return this;
+        }
+
+        public String getStr() {
+            int len = Unsafe.getUnsafe().getInt(rPos);
+            rPos += 4;
+            if (strBuf == null || strBuf.length < len) {
+                strBuf = new char[len];
+            }
+            Unsafe.getUnsafe().copyMemory(null, rPos, strBuf, Unsafe.getCharArrayOffset(), ((long) len) << 1);
+            rPos += len << 1;
+            return new String(strBuf);
         }
 
         public Key $() {

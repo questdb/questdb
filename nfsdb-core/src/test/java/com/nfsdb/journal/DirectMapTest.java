@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,12 +28,15 @@ public class DirectMapTest {
         Rnd rnd = new Rnd();
 
         for (int i = 0; i < 10000; i++) {
-            map.put(map.withKey().putLong(rnd.nextLong()).put(rnd.nextString(10)).$(), i);
+            map.put(map.withKey().putLong(rnd.nextLong()).putStr(rnd.nextString(10)).$(), i);
         }
 
+
         int count = 0;
-        for (DirectCompositeKeyIntMap.Entry e : map.iterator()) {
+        for (DirectCompositeKeyIntMap.Entry e : map) {
             count++;
+            e.key.getLong();
+            e.key.getStr();
         }
 
         Assert.assertEquals(10000, count);
