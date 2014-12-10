@@ -17,15 +17,11 @@
 package com.nfsdb.journal;
 
 import com.nfsdb.journal.collections.*;
-import com.nfsdb.journal.column.MappedFileImpl;
-import com.nfsdb.journal.column.VariableColumn;
 import com.nfsdb.journal.utils.Rnd;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
-
-import java.io.File;
 
 public class CollectionsTest {
 
@@ -186,46 +182,6 @@ public class CollectionsTest {
 
         for (int i = 0; i < list.size(); i++) {
             Assert.assertEquals("at " + i, i, list.get(i));
-        }
-    }
-
-    @Test
-    public void testDirectMap() throws Exception {
-
-        Rnd rnd = new Rnd();
-        VariableColumn data = new VariableColumn(
-                new MappedFileImpl(
-                        new File(temp.getRoot(), "1.d")
-                        , 16
-                        , JournalMode.APPEND
-                )
-                ,
-                new MappedFileImpl(
-                        new File(temp.getRoot(), "1.i")
-                        , 16
-                        , JournalMode.APPEND
-                )
-        );
-
-        for (int i = 0; i < 100000; i++) {
-            data.putStr(rnd.nextString(25));
-            data.commit();
-        }
-
-        try (DirectBufIntMap map = new DirectBufIntMap()) {
-
-
-            long sz = data.size();
-            for (int i = 0; i < sz; i++) {
-                map.put(data.getStrBuf(i), (int) (sz - i));
-            }
-
-            for (int i = 0; i < sz; i++) {
-                Assert.assertEquals(sz - i, map.get(data.getStrBuf(i)));
-            }
-
-            map.put(data.getStrBuf(105), 3345);
-            Assert.assertEquals(3345, map.get(data.getStrBuf(105)));
         }
     }
 

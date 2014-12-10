@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,12 +18,11 @@ package com.nfsdb.journal.collections;
 
 import com.nfsdb.journal.utils.DirectMemoryBuffer;
 import com.nfsdb.journal.utils.Hash;
-import com.nfsdb.journal.utils.MemoryBuffer;
 import com.nfsdb.journal.utils.Unsafe;
 
 import java.io.Closeable;
 
-public class DirectBufIntMap implements Closeable {
+public class DirectCompositeKeyIntMap implements Closeable {
 
     private final int seed = 0xdeadbeef;
     private final DirectMemoryBuffer memBuf = new DirectMemoryBuffer();
@@ -40,11 +39,11 @@ public class DirectBufIntMap implements Closeable {
     private int free;
     private long keyCapacity;
 
-    public DirectBufIntMap() {
+    public DirectCompositeKeyIntMap() {
         this(67, 4 * 1024, 0.5d);
     }
 
-    public DirectBufIntMap(long capacity, long keyAreaCapacity, double loadFactor) {
+    public DirectCompositeKeyIntMap(long capacity, long keyAreaCapacity, double loadFactor) {
         this.loadFactor = loadFactor;
         this.kAddress = Unsafe.getUnsafe().allocateMemory(keyAreaCapacity + AbstractDirectList.CACHE_LINE_SIZE);
         this.kStart = kPos = this.kAddress + (this.kAddress & (AbstractDirectList.CACHE_LINE_SIZE - 1));
@@ -56,39 +55,6 @@ public class DirectBufIntMap implements Closeable {
         this.keyOffsets.zero((byte) -1);
         this.keyOffsets.setPos(keyCapacity);
         this.values = new DirectIntList(keyCapacity);
-    }
-
-    public void put(MemoryBuffer b, int v) {
-        long index = Hash.hashXX(b, seed) % keyCapacity;
-        long address = keyOffsets.get(index);
-
-        if (address == -1) {
-            keyOffsets.set(index, add(b));
-            values.set(index, v);
-            if (--free == 0) {
-                rehash();
-            }
-        } else if (eq(b, address)) {
-            values.set(index, v);
-        } else {
-            probe(b, index, v);
-        }
-    }
-
-    private void probe(MemoryBuffer b, long index, int v) {
-        long offset;
-        while ((offset = keyOffsets.get(index = (++index % keyCapacity))) != -1) {
-            if (eq(b, offset)) {
-                values.set(index, v);
-                return;
-            }
-        }
-        keyOffsets.set(index, add(b));
-        values.set(index, v);
-        free--;
-        if (free == 0) {
-            rehash();
-        }
     }
 
     public void put(Key key, int v) {
@@ -132,57 +98,6 @@ public class DirectBufIntMap implements Closeable {
         iterator.len = keyCapacity;
         return iterator;
     }
-    public int get(MemoryBuffer b) {
-        int h = Hash.hashXX(b, seed);
-        long p = h % keyCapacity;
-        long address = keyOffsets.get(p);
-
-        if (address == -1) {
-            return -1;
-        }
-
-        if (eq(b, address)) {
-            return values.get(p);
-        }
-
-        long pp = p;
-        do {
-            address = keyOffsets.get(++p % keyCapacity);
-            if (address == -1) {
-                return -1;
-            }
-
-            if (eq(b, address)) {
-                return values.get(p);
-            }
-        } while (p != pp);
-
-        return -1;
-    }
-
-    private boolean eq(MemoryBuffer b, long offset) {
-        int len = b.length();
-        if (len != Unsafe.getUnsafe().getInt(kStart + offset)) {
-            return false;
-        }
-
-        int p = 0;
-        long a = kStart + offset + 4;
-        while (p < len - 4) {
-            if (b.getInt(p) != Unsafe.getUnsafe().getInt(a + p)) {
-                return false;
-            }
-            p += 4;
-        }
-
-        while (p < len) {
-            if (b.getByte(p) != Unsafe.getUnsafe().getByte(a + p)) {
-                return false;
-            }
-            p++;
-        }
-        return true;
-    }
 
     private boolean eq(Key key, long offset) {
         long a = kStart + offset;
@@ -213,33 +128,6 @@ public class DirectBufIntMap implements Closeable {
 
     public Key withKey() {
         return keyBuilder.begin();
-    }
-
-    private long add(MemoryBuffer b) {
-        long address = kPos - kStart;
-
-        int len = b.length();
-        if (kPos + len + 4 > kLimit) {
-            resize();
-        }
-
-        Unsafe.getUnsafe().putInt(kPos, len);
-        kPos += 4;
-
-        int p = 0;
-        while (p < len - 4) {
-            Unsafe.getUnsafe().putInt(kPos + p, b.getInt(p));
-            p += 4;
-        }
-
-        while (p < len) {
-            Unsafe.getUnsafe().putByte(kPos + p, b.getByte(p));
-            p++;
-        }
-
-        kPos += len;
-
-        return address;
     }
 
     private void resize() {
@@ -317,6 +205,7 @@ public class DirectBufIntMap implements Closeable {
             entry.key.offset = keyOffsets.get(index);
             if (entry.key.offset != -1) {
                 entry.value = values.get(index++);
+                entry.key.rPos = kStart + entry.key.offset;
                 return true;
             }
 
@@ -333,6 +222,7 @@ public class DirectBufIntMap implements Closeable {
                 return false;
             }
             entry.value = values.get(index);
+            entry.key.rPos = kStart + entry.key.offset;
             this.index = index + 1;
             return true;
 
@@ -347,6 +237,7 @@ public class DirectBufIntMap implements Closeable {
     public class Key {
         private long offset;
         private int len;
+        private long rPos;
 
         private void checkSize(int size) {
             if (kPos + size > kLimit) {

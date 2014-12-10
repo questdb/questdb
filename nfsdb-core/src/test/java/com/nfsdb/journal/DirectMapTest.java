@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 
 package com.nfsdb.journal;
 
-import com.nfsdb.journal.collections.DirectBufIntMap;
+import com.nfsdb.journal.collections.DirectCompositeKeyIntMap;
 import com.nfsdb.journal.utils.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
@@ -24,7 +24,7 @@ import org.junit.Test;
 public class DirectMapTest {
     @Test
     public void testCompositeKeyMap() throws Exception {
-        DirectBufIntMap map = new DirectBufIntMap();
+        DirectCompositeKeyIntMap map = new DirectCompositeKeyIntMap();
         Rnd rnd = new Rnd();
 
         for (int i = 0; i < 10000; i++) {
@@ -32,7 +32,7 @@ public class DirectMapTest {
         }
 
         int count = 0;
-        for (DirectBufIntMap.Entry e : map.iterator()) {
+        for (DirectCompositeKeyIntMap.Entry e : map.iterator()) {
             count++;
         }
 
