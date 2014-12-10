@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,8 +28,11 @@ public class DirectBufIntMap implements Closeable {
     private final int seed = 0xdeadbeef;
     private final DirectMemoryBuffer memBuf = new DirectMemoryBuffer();
     private final double loadFactor;
+    private final Key keyBuilder = new Key();
+    private final Entry entry = new Entry();
+    private final EntryIterator iterator = new EntryIterator();
     private DirectIntList values;
-    private DirectLongList pointers;
+    private DirectLongList keyOffsets;
     private long kAddress;
     private long kStart;
     private long kLimit;
@@ -49,18 +52,18 @@ public class DirectBufIntMap implements Closeable {
 
         this.keyCapacity = Primes.next((long) (capacity / loadFactor));
         this.free = (int) (keyCapacity * loadFactor);
-        this.pointers = new DirectLongList(keyCapacity);
-        this.pointers.zero((byte) -1);
-        this.pointers.setPos(keyCapacity);
+        this.keyOffsets = new DirectLongList(keyCapacity);
+        this.keyOffsets.zero((byte) -1);
+        this.keyOffsets.setPos(keyCapacity);
         this.values = new DirectIntList(keyCapacity);
     }
 
     public void put(MemoryBuffer b, int v) {
         long index = Hash.hashXX(b, seed) % keyCapacity;
-        long address = pointers.get(index);
+        long address = keyOffsets.get(index);
 
         if (address == -1) {
-            pointers.set(index, add(b));
+            keyOffsets.set(index, add(b));
             values.set(index, v);
             if (--free == 0) {
                 rehash();
@@ -74,13 +77,13 @@ public class DirectBufIntMap implements Closeable {
 
     private void probe(MemoryBuffer b, long index, int v) {
         long offset;
-        while ((offset = pointers.get(index = (++index % keyCapacity))) != -1) {
+        while ((offset = keyOffsets.get(index = (++index % keyCapacity))) != -1) {
             if (eq(b, offset)) {
                 values.set(index, v);
                 return;
             }
         }
-        pointers.set(index, add(b));
+        keyOffsets.set(index, add(b));
         values.set(index, v);
         free--;
         if (free == 0) {
@@ -88,10 +91,51 @@ public class DirectBufIntMap implements Closeable {
         }
     }
 
+    public void put(Key key, int v) {
+        long index = Hash.hashXX(kStart + key.offset, key.len, seed) % keyCapacity;
+        long offset = keyOffsets.get(index);
+
+        if (offset == -1) {
+            keyOffsets.set(index, key.offset);
+            values.set(index, v);
+            if (--free == 0) {
+                rehash();
+            }
+        } else if (eq(key, offset)) {
+            values.set(index, v);
+            // rollback added key
+            kPos = kStart + key.offset;
+        } else {
+            probe(key, index, v);
+        }
+    }
+
+    private void probe(Key key, long index, int v) {
+        long offset;
+        while ((offset = keyOffsets.get(index = (++index % keyCapacity))) != -1) {
+            if (eq(key, offset)) {
+                values.set(index, v);
+                kPos = kStart + key.offset;
+                return;
+            }
+        }
+        keyOffsets.set(index, key.offset);
+        values.set(index, v);
+        free--;
+        if (free == 0) {
+            rehash();
+        }
+    }
+
+    public Iterable<Entry> iterator() {
+        iterator.index = 0;
+        iterator.len = keyCapacity;
+        return iterator;
+    }
     public int get(MemoryBuffer b) {
         int h = Hash.hashXX(b, seed);
         long p = h % keyCapacity;
-        long address = pointers.get(p);
+        long address = keyOffsets.get(p);
 
         if (address == -1) {
             return -1;
@@ -103,7 +147,7 @@ public class DirectBufIntMap implements Closeable {
 
         long pp = p;
         do {
-            address = pointers.get(++p % keyCapacity);
+            address = keyOffsets.get(++p % keyCapacity);
             if (address == -1) {
                 return -1;
             }
@@ -138,6 +182,37 @@ public class DirectBufIntMap implements Closeable {
             p++;
         }
         return true;
+    }
+
+    private boolean eq(Key key, long offset) {
+        long a = kStart + offset;
+        long b = kStart + key.offset;
+
+        if (Unsafe.getUnsafe().getInt(a) != Unsafe.getUnsafe().getInt(b)) {
+            return false;
+        }
+
+
+        long lim = b + key.len;
+
+        while (b < lim - 8) {
+            if (Unsafe.getUnsafe().getLong(a) != Unsafe.getUnsafe().getLong(b)) {
+                return false;
+            }
+            a += 8;
+            b += 8;
+        }
+
+        while (b < lim) {
+            if (Unsafe.getUnsafe().getByte(a++) != Unsafe.getUnsafe().getByte(b++)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public Key withKey() {
+        return keyBuilder.begin();
     }
 
     private long add(MemoryBuffer b) {
@@ -189,8 +264,8 @@ public class DirectBufIntMap implements Closeable {
         pointers.setPos(capacity);
         values.setPos(capacity);
 
-        for (int i = 0, sz = this.pointers.size(); i < sz; i++) {
-            long offset = this.pointers.get(i);
+        for (int i = 0, sz = this.keyOffsets.size(); i < sz; i++) {
+            long offset = this.keyOffsets.get(i);
             if (offset == -1) {
                 continue;
             }
@@ -201,9 +276,9 @@ public class DirectBufIntMap implements Closeable {
             pointers.set(index, offset);
             values.set(index, this.values.get(i));
         }
-        this.pointers.free();
+        this.keyOffsets.free();
         this.values.free();
-        this.pointers = pointers;
+        this.keyOffsets = pointers;
         this.values = values;
         this.free += (capacity - keyCapacity) * loadFactor;
         this.keyCapacity = capacity;
@@ -215,11 +290,105 @@ public class DirectBufIntMap implements Closeable {
             kAddress = 0;
         }
         values.free();
-        pointers.free();
+        keyOffsets.free();
     }
 
     @Override
     public void close() {
         free();
+    }
+
+    public class Entry {
+        public final Key key = keyBuilder;
+        public int value;
+    }
+
+    public class EntryIterator extends AbstractImmutableIterator<Entry> {
+
+        private long index;
+        private long len;
+
+        @Override
+        public boolean hasNext() {
+            if (index >= len) {
+                return false;
+            }
+
+            entry.key.offset = keyOffsets.get(index);
+            if (entry.key.offset != -1) {
+                entry.value = values.get(index++);
+                return true;
+            }
+
+            return scan(index++);
+
+        }
+
+        private boolean scan(long index) {
+            while (index < len && (entry.key.offset = keyOffsets.get(index)) == -1) {
+                index++;
+            }
+
+            if (entry.key.offset == -1) {
+                return false;
+            }
+            entry.value = values.get(index);
+            this.index = index + 1;
+            return true;
+
+        }
+
+        @Override
+        public Entry next() {
+            return entry;
+        }
+    }
+
+    public class Key {
+        private long offset;
+        private int len;
+
+        private void checkSize(int size) {
+            if (kPos + size > kLimit) {
+                resize();
+            }
+        }
+
+        public Key putLong(long value) {
+            checkSize(8);
+            Unsafe.getUnsafe().putLong(kPos, value);
+            kPos += 8;
+            return this;
+        }
+
+        public void put(long address, int len) {
+            checkSize(len + 4);
+            Unsafe.getUnsafe().putInt(kPos, len);
+            Unsafe.getUnsafe().copyMemory(address, kPos += 4, len);
+            kPos += len;
+        }
+
+        public Key put(CharSequence value) {
+            int len = value.length();
+            checkSize(len << 1 + 4);
+            Unsafe.getUnsafe().putInt(kPos, value.length());
+            kPos += 4;
+            for (int i = 0; i < len; i++) {
+                Unsafe.getUnsafe().putChar(kPos + (i << 1), value.charAt(i));
+            }
+            kPos += len << 1;
+            return this;
+        }
+
+        public Key $() {
+            Unsafe.getUnsafe().putInt(kStart + offset, len = (int) (kPos - kStart - offset));
+            return this;
+        }
+
+        public Key begin() {
+            keyBuilder.offset = kPos - kStart;
+            kPos += 4;
+            return this;
+        }
     }
 }
