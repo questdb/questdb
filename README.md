@@ -3,6 +3,8 @@
 
 ## News
 
+[![Gitter](https://badges.gitter.im/Join Chat.svg)](https://gitter.im/NFSdb/nfsdb?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+
 14 Oct 2014. [Release 2.1.0](http://github.nfsdb.org/release-notes/) is out.
 
 This is security-centric release aimed at having replication meet security standards. Features supported in this release are: SSL, Certificate auth (Mutual-auth), Shared Key Auth, Kerberso Auth, Kerberos SSO Auth (Windows only) and client auto-reconnect.
