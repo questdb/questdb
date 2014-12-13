@@ -63,6 +63,14 @@ public class Rnd {
         return new String(chars);
     }
 
+    public void nextChars(long address, int len) {
+        long limit = address + len - 2;
+        while (address < limit) {
+            Unsafe.getUnsafe().putChar(address, (char) (nextPositiveInt() % 25 + 66));
+            address += 2;
+        }
+    }
+
     public byte[] nextBytes(int len) {
         byte bytes[] = new byte[len];
         for (int i = 0; i < len; i++) {
