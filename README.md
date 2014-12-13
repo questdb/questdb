@@ -1,9 +1,8 @@
 [![Build Status](https://secure.travis-ci.org/NFSdb/nfsdb.png?branch=master)](http://travis-ci.org/NFSdb/nfsdb)
 [![Dependency Status](https://www.versioneye.com/user/projects/5439d968b2a9c527fe00027c/badge.svg?style=flat)](https://www.versioneye.com/user/projects/5439d968b2a9c527fe00027c)
+[![Gitter](https://badges.gitter.im/Join Chat.svg)](https://gitter.im/NFSdb/nfsdb?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
 ## News
-
-[![Gitter](https://badges.gitter.im/Join Chat.svg)](https://gitter.im/NFSdb/nfsdb?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
 14 Oct 2014. [Release 2.1.0](http://github.nfsdb.org/release-notes/) is out.
 
