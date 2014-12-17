@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.test.tools;
+package com.nfsdb.journal;
 
-import com.nfsdb.journal.Journal;
-import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.model.Quote;
+import com.nfsdb.journal.test.tools.AbstractTest;
+import com.nfsdb.journal.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 

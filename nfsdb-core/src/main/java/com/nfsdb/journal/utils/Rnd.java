@@ -46,6 +46,10 @@ public class Rnd {
         return (nextLong(26) << 27 + nextLong(27)) / (double) (1L << 53);
     }
 
+    public float nextFloat() {
+        return nextLong(24) / ((float) (1 << 24));
+    }
+
     public int nextInt() {
         return (int) nextLong();
     }
