@@ -33,6 +33,9 @@ public final class Files {
         UTF_8 = Charset.forName("UTF-8");
     }
 
+    private Files() {
+    } // Prevent construction.
+
     public static boolean delete(File file) {
         try {
             deleteOrException(file);
@@ -47,7 +50,15 @@ public final class Files {
             return;
         }
         deleteDirContentsOrException(file);
-        if (!file.delete()) {
+
+        int retryCount = 3;
+        boolean deleted = false;
+        while (retryCount > 0 && !(deleted = file.delete())) {
+            retryCount--;
+            Thread.yield();
+        }
+
+        if (!deleted) {
             throw new JournalException("Cannot delete file %s", file);
         }
     }
@@ -95,9 +106,6 @@ public final class Files {
             throw new JournalRuntimeException("Cannot create temp directory: %s", dir);
         }
     }
-
-    private Files() {
-    } // Prevent construction.
 
     private static void deleteDirContentsOrException(File file) throws JournalException {
         if (!file.exists()) {

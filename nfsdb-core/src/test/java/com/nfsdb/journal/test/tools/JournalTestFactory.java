@@ -22,6 +22,7 @@ import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalClosingListener;
 import com.nfsdb.journal.factory.JournalFactory;
+import com.nfsdb.journal.factory.configuration.JMetadataBuilder;
 import com.nfsdb.journal.factory.configuration.JournalConfiguration;
 import com.nfsdb.journal.utils.Files;
 import org.junit.rules.TestRule;
@@ -30,6 +31,7 @@ import org.junit.runners.model.Statement;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.locks.LockSupport;
 
 public class JournalTestFactory extends JournalFactory implements TestRule, JournalClosingListener {
 
@@ -66,7 +68,8 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
                         }
                     }
                     journals.clear();
-                    Files.delete(getConfiguration().getJournalBase());
+                    LockSupport.parkNanos(10000);
+                    Files.deleteOrException(getConfiguration().getJournalBase());
                     timerCache.halt();
                 }
 
@@ -100,6 +103,14 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
         writer.setCloseListener(this);
         return writer;
     }
+
+    public <T> JournalWriter<T> writer(JMetadataBuilder<T> b) throws JournalException {
+        JournalWriter<T> writer = super.writer(b);
+        journals.add(writer);
+        writer.setCloseListener(this);
+        return writer;
+    }
+
 
     @Override
     public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {

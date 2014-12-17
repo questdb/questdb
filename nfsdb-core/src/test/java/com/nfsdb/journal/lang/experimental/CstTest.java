@@ -19,6 +19,7 @@ package com.nfsdb.journal.lang.experimental;
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.Partition;
+import com.nfsdb.journal.collections.DirectCompositeKeyIntMap;
 import com.nfsdb.journal.column.FixedColumn;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
@@ -221,5 +222,34 @@ public class CstTest {
         }
         System.out.println(count);
         System.out.println((System.nanoTime() - t) / 20);
+    }
+
+    @Test
+    public void testResample() throws Exception {
+        JournalWriter<Quote> w = factory.writer(Quote.class);
+        TestUtils.generateQuoteData(w, 100000, System.currentTimeMillis(), 2);
+
+        DirectCompositeKeyIntMap map = new DirectCompositeKeyIntMap();
+
+        int tsIndex = w.getMetadata().getColumnIndex("timestamp");
+        int symIndex = w.getMetadata().getColumnIndex("sym");
+        for (JournalEntry e : w.rows()) {
+            long ts = e.getLong(tsIndex);
+            map.put(
+                    map.withKey()
+                            .putStr(e.getSym(symIndex))
+                            .putLong(ts - (ts % 60000L))
+                            .$()
+                    , 1
+            );
+        }
+
+        for (DirectCompositeKeyIntMap.Entry e : map) {
+            System.out.println(e.key.getStr() + "\t" + e.key.getLong() + "\t" + e.value);
+        }
+
+
+        map.free();
+
     }
 }

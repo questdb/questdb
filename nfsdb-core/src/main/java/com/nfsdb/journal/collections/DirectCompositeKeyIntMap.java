@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -268,7 +268,7 @@ public class DirectCompositeKeyIntMap implements Closeable, Iterable<DirectCompo
             if (strBuf == null || strBuf.length < len) {
                 strBuf = new char[len];
             }
-            Unsafe.getUnsafe().copyMemory(null, rPos, strBuf, Unsafe.getCharArrayOffset(), ((long) len) << 1);
+            Unsafe.getUnsafe().copyMemory(null, rPos, strBuf, sun.misc.Unsafe.ARRAY_CHAR_BASE_OFFSET, ((long) len) << 1);
             rPos += len << 1;
             return new String(strBuf);
         }

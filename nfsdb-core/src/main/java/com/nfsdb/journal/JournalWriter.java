@@ -71,6 +71,7 @@ public class JournalWriter<T> extends Journal<T> {
     public JournalWriter(JournalMetadata<T> metadata, JournalKey<T> key, TimerCache timerCache) throws JournalException {
         super(metadata, key, timerCache);
         if (metadata.isPartialMapping()) {
+            close();
             throw new JournalException("Metadata is unusable for writer. Partially mapped?");
         }
         this.lagMillis = TimeUnit.HOURS.toMillis(getMetadata().getLag());

@@ -108,11 +108,13 @@ public class MappedFileImpl implements MappedFile {
     public void close() {
         try {
             unmap();
-            channel.close();
+            if (channel != null) {
+                channel.close();
+                channel = null;
+            }
         } catch (IOException e) {
             throw new JournalRuntimeException("Cannot close file", e);
         }
-        offsetBuffer = ByteBuffers.release(offsetBuffer);
     }
 
     @Override
@@ -358,5 +360,8 @@ public class MappedFileImpl implements MappedFile {
         cachedBufferLo = cachedBufferHi = -1;
         buffers.clear();
         stitches.clear();
+
+        offsetBuffer = ByteBuffers.release(offsetBuffer);
+        assert offsetBuffer == null;
     }
 }

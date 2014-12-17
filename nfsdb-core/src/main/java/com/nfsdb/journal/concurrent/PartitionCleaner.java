@@ -28,11 +28,12 @@ public class PartitionCleaner {
     private final ExecutorService executor;
     private final RingBuffer<PartitionCleanerEvent> ringBuffer = RingBuffer.createSingleProducer(PartitionCleanerEvent.EVENT_FACTORY, 32, new BlockingWaitStrategy());
     private final BatchEventProcessor<PartitionCleanerEvent> batchEventProcessor;
+    private final PartitionCleanerEventHandler h;
     private boolean started = false;
 
     public PartitionCleaner(JournalWriter writer, String name) {
         this.executor = Executors.newCachedThreadPool(new NamedDaemonThreadFactory("jj-cleaner-" + name, true));
-        this.batchEventProcessor = new BatchEventProcessor<>(ringBuffer, ringBuffer.newBarrier(), new PartitionCleanerEventHandler(writer));
+        this.batchEventProcessor = new BatchEventProcessor<>(ringBuffer, ringBuffer.newBarrier(), h = new PartitionCleanerEventHandler(writer));
         ringBuffer.addGatingSequences(batchEventProcessor.getSequence());
     }
 
@@ -48,7 +49,8 @@ public class PartitionCleaner {
     public void halt() {
         executor.shutdown();
 
-        while (started && !batchEventProcessor.isRunning()) {
+        // wait until txLog handle become available
+        while (started && h.txLog == null) {
             Thread.yield();
         }
 

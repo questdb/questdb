@@ -38,7 +38,6 @@ import com.nfsdb.journal.lang.cst.impl.ref.SymbolXTabVariableSource;
 import com.nfsdb.journal.lang.cst.impl.rsrc.*;
 import com.nfsdb.journal.model.Album;
 import com.nfsdb.journal.model.Band;
-import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.JournalTestFactory;
 import com.nfsdb.journal.utils.Files;
 import org.junit.Assert;
@@ -46,7 +45,7 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 
-public class JoinSymbolOnSymbolTest extends AbstractTest {
+public class JoinSymbolOnSymbolTest {
 
     @Rule
     public final JournalTestFactory factory;

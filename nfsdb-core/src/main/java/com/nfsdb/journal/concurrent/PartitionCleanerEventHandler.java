@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ import com.nfsdb.journal.tx.TxLog;
 
 class PartitionCleanerEventHandler implements EventHandler<PartitionCleanerEvent>, LifecycleAware {
     private final JournalWriter writer;
-    private TxLog txLog;
+    volatile TxLog txLog;
 
     public PartitionCleanerEventHandler(JournalWriter writer) {
         this.writer = writer;
@@ -52,6 +52,7 @@ class PartitionCleanerEventHandler implements EventHandler<PartitionCleanerEvent
     public void onShutdown() {
         if (this.txLog != null) {
             this.txLog.close();
+            this.txLog = null;
         }
     }
 }

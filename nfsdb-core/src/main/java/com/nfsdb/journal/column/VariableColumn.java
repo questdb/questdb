@@ -197,7 +197,7 @@ public class VariableColumn extends AbstractColumn {
                     }
 
                     int len = bufRemaining > blockRemaining ? blockRemaining : bufRemaining;
-                    Unsafe.getUnsafe().copyMemory(streamBuf, Unsafe.getByteArrayOffset(), null, blockAddress, len);
+                    Unsafe.getUnsafe().copyMemory(streamBuf, sun.misc.Unsafe.ARRAY_BYTE_BASE_OFFSET, null, blockAddress, len);
                     bufRemaining -= len;
                     off += len;
                     blockRemaining -= len;
@@ -256,7 +256,7 @@ public class VariableColumn extends AbstractColumn {
                 }
 
                 int l = len > blockRemaining ? blockRemaining : len;
-                Unsafe.getUnsafe().copyMemory(null, blockAddress, streamBuf, Unsafe.getByteArrayOffset(), l);
+                Unsafe.getUnsafe().copyMemory(null, blockAddress, streamBuf, sun.misc.Unsafe.ARRAY_BYTE_BASE_OFFSET, l);
                 offset += l;
                 blockRemaining -= l;
                 len -= l;
@@ -289,7 +289,7 @@ public class VariableColumn extends AbstractColumn {
         if (buffer.length < len) {
             buffer = new char[len];
         }
-        Unsafe.getUnsafe().copyMemory(null, address, buffer, Unsafe.getCharArrayOffset(), ((long) len) * 2);
+        Unsafe.getUnsafe().copyMemory(null, address, buffer, sun.misc.Unsafe.ARRAY_CHAR_BASE_OFFSET, ((long) len) * 2);
         return new String(buffer, 0, len);
     }
 
