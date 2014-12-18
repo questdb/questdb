@@ -14,51 +14,64 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.lang;
+package com.nfsdb.journal.export;
 
 import com.nfsdb.journal.factory.configuration.ColumnMetadata;
 import com.nfsdb.journal.lang.cst.EntrySource;
 import com.nfsdb.journal.lang.cst.JournalEntry;
-import org.joda.time.format.ISODateTimeFormat;
+import com.nfsdb.journal.utils.Dates2;
+import com.nfsdb.journal.utils.Numbers;
 
 import java.io.IOException;
-import java.io.OutputStream;
 
 public class JournalEntryPrinter {
-    private final OutputStream out;
     private final boolean enabled;
+    private final CharSink sink;
 
-    public JournalEntryPrinter(OutputStream out, boolean enabled) {
-        this.out = out;
+    public JournalEntryPrinter(CharSink sink, boolean enabled) {
+        this.sink = sink;
         this.enabled = enabled;
     }
 
     public void print(JournalEntry e) throws IOException {
-        for (int i = 0; i < e.partition.getJournal().getMetadata().getColumnCount(); i++) {
+        for (int i = 0, sz = e.partition.getJournal().getMetadata().getColumnCount(); i < sz; i++) {
             ColumnMetadata m = e.partition.getJournal().getMetadata().getColumnMetadata(i);
             switch (m.type) {
                 case DATE:
-                    out.write(ISODateTimeFormat.dateTime().print(e.getLong(i)).getBytes());
+                    Dates2.appendDateISO(sink, e.getLong(i));
                     break;
                 case DOUBLE:
-                    out.write(Double.toString(e.getDouble(i)).getBytes());
+                    Numbers.append(sink, e.getDouble(i), 12);
                     break;
                 case INT:
-                    out.write(Integer.toString(e.getInt(i)).getBytes());
+                    Numbers.append(sink, e.getInt(i));
                     break;
                 case STRING:
-                    out.write(e.getStr(i).getBytes());
+                    sink.put(e.getStr(i));
                     break;
                 case SYMBOL:
-                    out.write(e.getSym(i).getBytes());
+                    sink.put(e.getSym(i));
+                    break;
+                case SHORT:
+                    Numbers.append(sink, e.getShort(i));
+                    break;
+                case LONG:
+                    Numbers.append(sink, e.getLong(i));
+                    break;
+                case BYTE:
+                    Numbers.append(sink, e.get(i));
+                    break;
+                case BOOLEAN:
+                    sink.put(e.getBool(i) ? "true" : "false");
+                    break;
             }
-            out.write("\t".getBytes());
+            sink.put('\t');
         }
-
         if (e.slave != null) {
             print(e.slave);
         } else {
-            out.write("\n".getBytes());
+            sink.put('\n');
+            sink.flush();
         }
     }
 

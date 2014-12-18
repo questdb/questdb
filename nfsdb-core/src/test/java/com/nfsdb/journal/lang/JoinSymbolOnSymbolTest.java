@@ -20,6 +20,8 @@ import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
+import com.nfsdb.journal.export.FlexBufferSink;
+import com.nfsdb.journal.export.JournalEntryPrinter;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.lang.cst.EntrySource;
 import com.nfsdb.journal.lang.cst.JournalEntry;
@@ -45,11 +47,14 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 
+import java.io.FileDescriptor;
+import java.io.FileOutputStream;
+
 public class JoinSymbolOnSymbolTest {
 
     @Rule
     public final JournalTestFactory factory;
-    private final JournalEntryPrinter out = new JournalEntryPrinter(System.out, false);
+    private final JournalEntryPrinter out;
     private JournalWriter<Band> bw;
     private JournalWriter<Album> aw;
 
@@ -74,6 +79,8 @@ public class JoinSymbolOnSymbolTest {
         } catch (JournalConfigurationException e) {
             throw new JournalRuntimeException(e);
         }
+
+        out = new JournalEntryPrinter(new FlexBufferSink(new FileOutputStream(FileDescriptor.out).getChannel()), true);
     }
 
     @Before
