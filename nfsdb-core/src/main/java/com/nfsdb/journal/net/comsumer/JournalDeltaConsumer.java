@@ -23,7 +23,6 @@ import com.nfsdb.journal.exceptions.JournalNetworkException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.net.AbstractChannelConsumer;
 import com.nfsdb.journal.net.model.JournalServerState;
-import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Interval;
 import com.nfsdb.journal.utils.Lists;
 
@@ -163,7 +162,7 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
         for (int i = 0; i < metadata.getNonLagPartitionCount(); i++) {
             JournalServerState.PartitionMetadata partitionMetadata = metadata.getMeta(i);
             if (partitionMetadata.getPartitionIndex() >= pc) {
-                Interval interval = Dates.interval(partitionMetadata.getIntervalStart(), partitionMetadata.getIntervalEnd());
+                Interval interval = new Interval(partitionMetadata.getIntervalEnd(), partitionMetadata.getIntervalStart());
                 journal.createPartition(interval, partitionMetadata.getPartitionIndex());
             }
         }

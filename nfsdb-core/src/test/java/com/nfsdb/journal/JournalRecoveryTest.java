@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ package com.nfsdb.journal;
 import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestUtils;
-import com.nfsdb.journal.utils.Dates;
+import com.nfsdb.journal.utils.Interval;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -31,9 +31,9 @@ public class JournalRecoveryTest extends AbstractTest {
         try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
             w.setCommitOnClose(false);
             Assert.assertFalse(w.isCommitOnClose());
-            TestUtils.generateQuoteData(w, 10000, Dates.interval("2013-01-01T00:00:00.000Z", "2013-02-28T12:55:00.000Z"));
+            TestUtils.generateQuoteData(w, 10000, new Interval("2013-01-01T00:00:00.000Z", "2013-02-28T12:55:00.000Z"));
             ts = w.getMaxTimestamp();
-            TestUtils.generateQuoteData(w, 10000, Dates.interval("2013-03-01T00:00:00.000Z", "2013-05-30T12:55:00.000Z"), false);
+            TestUtils.generateQuoteData(w, 10000, new Interval("2013-03-01T00:00:00.000Z", "2013-05-30T12:55:00.000Z"), false);
             Assert.assertTrue(w.getMaxTimestamp() > ts);
         }
 
@@ -52,7 +52,7 @@ public class JournalRecoveryTest extends AbstractTest {
     @Test
     public void testLagRecovery() throws Exception {
         JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
-        TestUtils.generateQuoteData(origin, 100000, Dates.interval("2013-01-01T00:00:00.000Z", "2013-05-30T12:55:00.000Z"));
+        TestUtils.generateQuoteData(origin, 100000, new Interval("2013-01-01T00:00:00.000Z", "2013-05-30T12:55:00.000Z"));
 
         try (Journal<Quote> r = factory.reader(Quote.class, "origin")) {
             Assert.assertEquals(100000, r.size());

@@ -37,7 +37,10 @@ import com.nfsdb.journal.query.api.Query;
 import com.nfsdb.journal.query.spi.QueryImpl;
 import com.nfsdb.journal.tx.Tx;
 import com.nfsdb.journal.tx.TxLog;
-import com.nfsdb.journal.utils.*;
+import com.nfsdb.journal.utils.Dates;
+import com.nfsdb.journal.utils.Interval;
+import com.nfsdb.journal.utils.Rows;
+import com.nfsdb.journal.utils.Unsafe;
 
 import java.io.Closeable;
 import java.io.File;
@@ -576,9 +579,9 @@ public class Journal<T> implements Iterable<T>, Closeable {
         if (getMetadata().getPartitionType() != PartitionType.NONE) {
             if (nonLagPartitionCount() > 0) {
                 Interval lastPartitionInterval = partitions.get(nonLagPartitionCount() - 1).getInterval();
-                interval = new Interval(lastPartitionInterval.getLo(), Dates2.addHours(lastPartitionInterval.getHi(), lag));
+                interval = new Interval(lastPartitionInterval.getLo(), Dates.addHours(lastPartitionInterval.getHi(), lag));
             } else {
-                interval = Dates.intervalForDate(System.currentTimeMillis(), getMetadata().getPartitionType());
+                interval = new Interval(System.currentTimeMillis(), getMetadata().getPartitionType());
             }
         }
         return new TempPartition<>(this, interval, nonLagPartitionCount(), name);
@@ -689,7 +692,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
                     indexTxAddresses = tx.indexPointers;
                 }
 
-                Interval interval = Dates.intervalForDirName(f.getName(), getMetadata().getPartitionType());
+                Interval interval = new Interval(f.getName(), getMetadata().getPartitionType());
                 if (partition != null) {
                     if (partition.getInterval() == null || partition.getInterval().equals(interval)) {
                         partition.applyTx(txLimit, indexTxAddresses);

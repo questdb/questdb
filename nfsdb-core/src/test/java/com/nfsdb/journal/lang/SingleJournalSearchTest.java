@@ -39,8 +39,8 @@ import com.nfsdb.journal.model.Band;
 import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.test.tools.JournalTestFactory;
 import com.nfsdb.journal.test.tools.TestData;
-import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Files;
+import com.nfsdb.journal.utils.Interval;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
@@ -90,7 +90,7 @@ public class SingleJournalSearchTest {
         StringRef sym = new StringRef("sym");
 
         // from quote where timestamp in ("2013-03-12T00:00:00.000Z", "2013-03-13T00:00:00.000Z") and (sym in ("BP.L", "XXX") or sym = "WTB.L")
-        assertEquals(expected, new JournalSourceImpl(new IntervalPartitionSource(new JournalPartitionSource(journal, false), Dates.interval("2013-03-12T00:00:00.000Z", "2013-03-13T00:00:00.000Z")), new FilteredRowSource(
+        assertEquals(expected, new JournalSourceImpl(new IntervalPartitionSource(new JournalPartitionSource(journal, false), new Interval("2013-03-12T00:00:00.000Z", "2013-03-13T00:00:00.000Z")), new FilteredRowSource(
                         new UnionRowSource(
                                 new RowSource[]{
                                         new KvIndexRowSource(
@@ -132,7 +132,7 @@ public class SingleJournalSearchTest {
                 new JournalSourceImpl(
                         new IntervalPartitionSource(
                                 new JournalPartitionSource(journal, false)
-                                , Dates.interval("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z")
+                                , new Interval("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z")
                         ),
                         new KvIndexHeadRowSource(
                                 sym,
@@ -168,7 +168,7 @@ public class SingleJournalSearchTest {
                                         journal
                                         , false
                                 )
-                                , Dates.interval("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z"))
+                                , new Interval("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z"))
                         ,
                         new KvIndexHeadRowSource(sym, new SymbolKeySource(sym), 1, 0, new SymbolEqualsRowFilter(ex, exValue))
                 )

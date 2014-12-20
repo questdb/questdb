@@ -58,7 +58,7 @@ public class PerformanceTest extends AbstractTest {
             if (i == 0) {
                 t = System.nanoTime();
             }
-            TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.toMillis("2013-10-05T10:00:00.000Z"), 1000);
+            TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
             w.commit();
         }
 
@@ -170,12 +170,12 @@ public class PerformanceTest extends AbstractTest {
     public void testAllBySymbolValueOverInterval() throws JournalException {
 
         JournalWriter<Quote> w = factory.writer(Quote.class, "quote", TEST_DATA_SIZE);
-        TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.toMillis("2013-10-05T10:00:00.000Z"), 1000);
+        TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
         w.commit();
 
         try (Journal<Quote> journal = factory.reader(Quote.class)) {
             int count = 1000;
-            Interval interval = Dates.interval(Dates.toMillis("2013-10-05T10:00:00.000Z"), Dates.toMillis("2013-10-15T10:00:00.000Z"));
+            Interval interval = new Interval(Dates.parseDateTime("2013-10-15T10:00:00.000Z"), Dates.parseDateTime("2013-10-05T10:00:00.000Z"));
             long t = 0;
             QueryAllBuilder<Quote> builder = journal.query().all().withKeys("LLOY.L").slice(interval);
             for (int i = -1000; i < count; i++) {
@@ -192,7 +192,7 @@ public class PerformanceTest extends AbstractTest {
     public void testLatestBySymbol() throws JournalException {
 
         JournalWriter<Quote> w = factory.writer(Quote.class, "quote", TEST_DATA_SIZE);
-        TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.toMillis("2013-10-05T10:00:00.000Z"), 1000);
+        TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
         w.commit();
 
         try (Journal<Quote> journal = factory.reader(Quote.class)) {

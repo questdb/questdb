@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -77,9 +77,9 @@ public class JournalTest extends AbstractJournalTest {
     public void testConsumerPartitionEdge() throws Exception {
         origin.truncate();
 
-        TestUtils.generateQuoteData(origin, 500, Dates.toMillis("2013-10-01T00:00:00.000Z"));
-        TestUtils.generateQuoteData(origin, 500, Dates.toMillis("2013-11-01T00:00:00.000Z"));
-        TestUtils.generateQuoteData(origin, 500, Dates.toMillis("2013-12-01T00:00:00.000Z"));
+        TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2013-10-01T00:00:00.000Z"));
+        TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2013-11-01T00:00:00.000Z"));
+        TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2013-12-01T00:00:00.000Z"));
 
         master.append(origin);
         master.commit();
@@ -127,8 +127,8 @@ public class JournalTest extends AbstractJournalTest {
     @Test
     public void testEmptyPartitionAdd() throws Exception {
         master.append(origin);
-        master.getAppendPartition(Dates.toMillis("2013-12-01T00:00:00.000Z"));
-        master.append(new Quote().setTimestamp(Dates.toMillis("2014-01-01T00:00:00.000Z")));
+        master.getAppendPartition(Dates.parseDateTime("2013-12-01T00:00:00.000Z"));
+        master.append(new Quote().setTimestamp(Dates.parseDateTime("2014-01-01T00:00:00.000Z")));
         master.commit();
         executeSequence(true);
         Assert.assertEquals(master.getPartitionCount(), slave.getPartitionCount());

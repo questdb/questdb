@@ -73,7 +73,7 @@ public class ModelGenerationTest extends AbstractTest {
         // generate 100,000 bands
         // at rate of 5-10 per day
 
-        long ts = Dates.toMillis("2014-03-01T00:00:00.000Z");
+        long ts = Dates.parseDateTime("2014-03-01T00:00:00.000Z");
         long ts0 = ts;
 
         int nextBump = rnd.nextPositiveInt() % 6 + 5;

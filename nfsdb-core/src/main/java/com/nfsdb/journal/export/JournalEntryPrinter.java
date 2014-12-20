@@ -19,7 +19,7 @@ package com.nfsdb.journal.export;
 import com.nfsdb.journal.factory.configuration.ColumnMetadata;
 import com.nfsdb.journal.lang.cst.EntrySource;
 import com.nfsdb.journal.lang.cst.JournalEntry;
-import com.nfsdb.journal.utils.Dates2;
+import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Numbers;
 
 public class JournalEntryPrinter {
@@ -36,7 +36,7 @@ public class JournalEntryPrinter {
             ColumnMetadata m = e.partition.getJournal().getMetadata().getColumnMetadata(i);
             switch (m.type) {
                 case DATE:
-                    Dates2.appendDateTime(sink, e.getLong(i));
+                    Dates.appendDateTime(sink, e.getLong(i));
                     break;
                 case DOUBLE:
                     Numbers.append(sink, e.getDouble(i), 12);

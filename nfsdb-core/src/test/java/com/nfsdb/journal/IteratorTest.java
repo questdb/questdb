@@ -23,6 +23,7 @@ import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestUtils;
 import com.nfsdb.journal.utils.Dates;
+import com.nfsdb.journal.utils.Interval;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -75,8 +76,8 @@ public class IteratorTest extends AbstractTest {
     @Test
     public void testEmptyPartitionFollowedByNonEmpty() throws Exception {
         JournalWriter<Quote> w = factory.writer(Quote.class);
-        w.getAppendPartition(Dates.toMillis("2012-01-10T10:00:00.000Z"));
-        w.append(new Quote().setSym("TST").setTimestamp(Dates.toMillis("2012-02-10T10:00:00.000Z")));
+        w.getAppendPartition(Dates.parseDateTime("2012-01-10T10:00:00.000Z"));
+        w.append(new Quote().setSym("TST").setTimestamp(Dates.parseDateTime("2012-02-10T10:00:00.000Z")));
 
         Assert.assertTrue(w.iterator().hasNext());
     }
@@ -137,7 +138,7 @@ public class IteratorTest extends AbstractTest {
     @Test
     public void testPartitionParallelIterator() throws Exception {
         JournalWriter<Quote> w = factory.writer(Quote.class);
-        TestUtils.generateQuoteData(w, 100000, Dates.interval("2014-01-01T00:00:00.000Z", "2014-02-10T00:00:00.000Z"));
+        TestUtils.generateQuoteData(w, 100000, new Interval("2014-01-01T00:00:00.000Z", "2014-02-10T00:00:00.000Z"));
 
         Journal<Quote> r1 = factory.reader(Quote.class);
         Journal<Quote> r2 = factory.reader(Quote.class);
@@ -153,7 +154,7 @@ public class IteratorTest extends AbstractTest {
     @Test
     public void testResultSetParallelIterator() throws Exception {
         JournalWriter<Quote> w = factory.writer(Quote.class);
-        TestUtils.generateQuoteData(w, 100000, Dates.interval("2014-01-01T00:00:00.000Z", "2014-02-10T00:00:00.000Z"));
+        TestUtils.generateQuoteData(w, 100000, new Interval("2014-01-01T00:00:00.000Z", "2014-02-10T00:00:00.000Z"));
 
         Journal<Quote> r1 = factory.reader(Quote.class);
         Journal<Quote> r2 = factory.reader(Quote.class);

@@ -34,8 +34,8 @@ import org.junit.Test;
 
 public class QueryTest extends AbstractTest {
 
-    private final long ts1 = Dates.toMillis("2013-04-28T17:20:00.000Z");
-    private final long ts2 = Dates.toMillis("2013-05-03T23:43:20.000Z");
+    private final long ts1 = Dates.parseDateTime("2013-04-28T17:20:00.000Z");
+    private final long ts2 = Dates.parseDateTime("2013-05-03T23:43:20.000Z");
     private Query<Quote> q;
     private JournalWriter<Quote> w;
 
@@ -58,7 +58,7 @@ public class QueryTest extends AbstractTest {
                 "2013-04-28T22:53:20.000Z\tRRS.L\t0.7787230809761455\t0.25803443163774886\t857471455\t190622110\tFast trading\tLXE\n" +
                 "2013-04-28T18:43:20.000Z\tRRS.L\t0.18670502698896196\t0.0885706583279452\t505468688\t2038459861\tFast trading\tGR";
 
-        ResultSet<Quote> rs = q.all().withKeys("RRS.L").slice(Dates.interval(ts1, ts2)).asResultSet();
+        ResultSet<Quote> rs = q.all().withKeys("RRS.L").slice(new Interval(ts2, ts1)).asResultSet();
         TestUtils.assertOrderDesc(rs.bufferedIterator());
         TestUtils.assertEquals(expected, rs);
     }
@@ -75,7 +75,7 @@ public class QueryTest extends AbstractTest {
                 "2013-04-28T22:53:20.000Z\tRRS.L\t0.7787230809761455\t0.25803443163774886\t857471455\t190622110\tFast trading\tLXE\n" +
                 "2013-04-28T18:43:20.000Z\tRRS.L\t0.18670502698896196\t0.0885706583279452\t505468688\t2038459861\tFast trading\tGR";
 
-        ResultSet<Quote> rs = q.all().withKeys("RRS.L").slice(Dates.interval(ts1, ts2)).asResultSet();
+        ResultSet<Quote> rs = q.all().withKeys("RRS.L").slice(new Interval(ts2, ts1)).asResultSet();
         TestUtils.assertOrderDesc(rs.bufferedIterator());
         TestUtils.assertEquals(expected, rs);
     }
@@ -92,7 +92,7 @@ public class QueryTest extends AbstractTest {
                 "2013-04-30T17:56:40.000Z\tGKN.L\t0.9957244238271116\t0.22502876454673404\t1074244114\t1402712074\tFast trading\tLXE\n" +
                 "2013-04-29T11:23:20.000Z\tGKN.L\t0.4466437532316928\t0.32495899970572273\t2015090903\t1376158663\tFast trading\tLXE\n" +
                 "2013-04-29T05:50:00.000Z\tGKN.L\t0.17560585850669297\t0.6791795548403247\t2114761437\t561608998\tFast trading\tLXE";
-        ResultSet<Quote> rs = q.all().withKeys("GKN.L").slice(Dates.interval(ts1, ts2)).asResultSet();
+        ResultSet<Quote> rs = q.all().withKeys("GKN.L").slice(new Interval(ts2, ts1)).asResultSet();
         TestUtils.assertOrderDesc(rs.bufferedIterator());
         TestUtils.assertEquals(expected, rs);
     }
@@ -268,7 +268,7 @@ public class QueryTest extends AbstractTest {
                 .withKeys("TLW.L", "BP.L")
                 .filter("ex", "SK")
                 .filter("ex", "GR")
-                .slice(Dates.interval(ts1, ts2))
+                .slice(new Interval(ts2, ts1))
                 .asResultSet();
 
         TestUtils.assertEquals(expected, rs.sort());
@@ -276,7 +276,7 @@ public class QueryTest extends AbstractTest {
 
     @Test
     public void testAllBySymbolValuesOverInterval() throws Exception {
-        ResultSet<Quote> rs = q.all().withKeys().slice(Dates.interval(ts1, ts2)).asResultSet();
+        ResultSet<Quote> rs = q.all().withKeys().slice(new Interval(ts2, ts1)).asResultSet();
         Assert.assertEquals(0, rs.size());
 
         String expected = "2013-04-29T01:40:00.000Z\tWTB.L\t0.154905273744959\t0.3463641298845208\t1190004376\t548681062\tFast trading\tSK\n" +
@@ -294,7 +294,7 @@ public class QueryTest extends AbstractTest {
                 "2013-05-02T22:43:20.000Z\tBT-A.L\t0.12282110119740142\t0.822933043281861\t997442403\t430556502\tFast trading\tSK\n" +
                 "2013-05-03T01:30:00.000Z\tWTB.L\t0.6696457609278927\t0.7177695674107006\t1859909396\t1567568718\tFast trading\tSK\n" +
                 "2013-05-03T07:03:20.000Z\tBT-A.L\t0.008144226019699663\t0.8149620429664706\t1492076657\t2143247261\tFast trading\tLXE\n";
-        rs = q.all().withKeys("WTB.L", "BT-A.L").slice(Dates.interval(ts1, ts2)).asResultSet();
+        rs = q.all().withKeys("WTB.L", "BT-A.L").slice(new Interval(ts2, ts1)).asResultSet();
         TestUtils.assertEquals(expected, rs.sort());
     }
 
@@ -392,8 +392,8 @@ public class QueryTest extends AbstractTest {
                 "2013-05-03T20:56:40.000Z\tAGK.L\t0.5512691746253235\t0.2622798544196908\t523767429\t834063697\tFast trading\tSK\n" +
                 "2013-05-03T22:20:00.000Z\tAGK.L\t0.9788182552381814\t0.3069421348721998\t2053761104\t1032198554\tFast trading\tLXE\n" +
                 "2013-05-03T23:43:20.000Z\tLLOY.L\t0.26716989176964423\t0.21548997929605662\t1042166874\t578687855\tFast trading\tSK\n";
-        TestUtils.assertOrder(q.all().bufferedIterator(Dates.interval(ts1, ts2)));
-        TestUtils.assertEquals(expected, q.all().bufferedIterator(Dates.interval(ts1, ts2)));
+        TestUtils.assertOrder(q.all().bufferedIterator(new Interval(ts2, ts1)));
+        TestUtils.assertEquals(expected, q.all().bufferedIterator(new Interval(ts2, ts1)));
     }
 
     @Test
@@ -494,7 +494,9 @@ public class QueryTest extends AbstractTest {
     @Test
     public void testLatestByKeyWithinMonths() throws Exception {
         Query<Quote> q = advanceTestData();
-        UnorderedResultSet<Quote> rs = q.getJournal().query().head().withKeys().limit(Dates.lastMonth()).asResultSet();
+        long millis;
+        Interval interval = new Interval(Dates.addMonths(millis = System.currentTimeMillis(), -1), millis);
+        UnorderedResultSet<Quote> rs = q.getJournal().query().head().withKeys().limit(interval).asResultSet();
         Assert.assertEquals(10, rs.size());
     }
 
@@ -510,7 +512,7 @@ public class QueryTest extends AbstractTest {
                 "2013-05-03T19:33:20.000Z\tADM.L\t0.8577260763596468\t0.01591134909601677\t901921998\t767627517\tFast trading\tSK\n" +
                 "2013-05-03T22:20:00.000Z\tAGK.L\t0.9788182552381814\t0.3069421348721998\t2053761104\t1032198554\tFast trading\tLXE\n" +
                 "2013-05-03T23:43:20.000Z\tLLOY.L\t0.26716989176964423\t0.21548997929605662\t1042166874\t578687855\tFast trading\tSK\n";
-        UnorderedResultSet<Quote> rs = q.head().withKeys().limit(Dates.interval(ts1, ts2)).asResultSet();
+        UnorderedResultSet<Quote> rs = q.head().withKeys().limit(new Interval(ts2, ts1)).asResultSet();
         TestUtils.assertEquals(expected, rs.sort());
     }
 
@@ -519,7 +521,7 @@ public class QueryTest extends AbstractTest {
         String expected = "2013-05-03T22:20:00.000Z\tAGK.L\t0.9788182552381814\t0.3069421348721998\t2053761104\t1032198554\tFast trading\tLXE\n" +
                 "2013-05-03T16:46:40.000Z\tBP.L\t0.800516898126557\t0.17852653385834039\t39877735\t1842395295\tFast trading\tGR\n" +
                 "2013-05-03T23:43:20.000Z\tLLOY.L\t0.26716989176964423\t0.21548997929605662\t1042166874\t578687855\tFast trading\tSK\n";
-        UnorderedResultSet<Quote> rs = q.head().withSymValues("ex").limit(Dates.interval(ts1, ts2)).asResultSet();
+        UnorderedResultSet<Quote> rs = q.head().withSymValues("ex").limit(new Interval(ts2, ts1)).asResultSet();
         TestUtils.assertEquals(expected, rs);
     }
 
@@ -527,7 +529,7 @@ public class QueryTest extends AbstractTest {
     public void testLatestByKeyValuesOverInterval() throws Exception {
         String expected = "2013-05-03T18:10:00.000Z\tBP.L\t0.02942030917851568\t0.572757460747041\t683641977\t1362036057\tFast trading\tLXE\n" +
                 "2013-05-03T22:20:00.000Z\tAGK.L\t0.9788182552381814\t0.3069421348721998\t2053761104\t1032198554\tFast trading\tLXE\n";
-        UnorderedResultSet<Quote> rs = q.head().withKeys("BP.L", "AGK.L", "BAD").limit(Dates.interval(ts1, ts2)).asResultSet();
+        UnorderedResultSet<Quote> rs = q.head().withKeys("BP.L", "AGK.L", "BAD").limit(new Interval(ts2, ts1)).asResultSet();
         TestUtils.assertEquals(expected, rs);
     }
 
@@ -603,7 +605,7 @@ public class QueryTest extends AbstractTest {
     public void testIterateOverInterval() throws Exception {
         int count = 0;
         long timestamp = 0;
-        for (Quote a : q.all().bufferedIterator(Dates.interval(ts1, ts2))) {
+        for (Quote a : q.all().bufferedIterator(new Interval(ts2, ts1))) {
             count++;
             Assert.assertTrue(timestamp <= a.getTimestamp());
             timestamp = a.getTimestamp();
@@ -647,14 +649,14 @@ public class QueryTest extends AbstractTest {
 
     @Test
     public void testLatestByKeyValueOverInterval() throws JournalException {
-        Quote Quote = q.head().withKeys("RRS.L").limit(Dates.interval(ts1, ts2)).asResultSet().readFirst();
+        Quote Quote = q.head().withKeys("RRS.L").limit(new Interval(ts2, ts1)).asResultSet().readFirst();
         Assert.assertNotNull(Quote);
         Assert.assertEquals(0.5590262812936236, Quote.getBid(), 0.00000000001);
     }
 
     @Test
     public void testParallelIteratorInterval() throws Exception {
-        Interval interval = Dates.interval("2013-05-04T06:40:00.000Z", "2013-05-05T17:23:20.000Z");
+        Interval interval = new Interval("2013-05-04T06:40:00.000Z", "2013-05-05T17:23:20.000Z");
         Query<Quote> q2 = factory.reader(Quote.class).query();
         JournalIterator<Quote> expected = q.all().iterator(interval);
         try (ConcurrentIterator<Quote> actual = q2.all().concurrentIterator(interval)) {

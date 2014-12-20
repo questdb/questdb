@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,7 +43,7 @@ public class ResultSetTest extends AbstractTest {
     @Test
     public void testReadPrimitive() throws Exception {
         JournalWriter<TestEntity> w = factory.writer(TestEntity.class);
-        TestUtils.generateTestEntityData(w, 10000, Dates.toMillis("2012-05-15T10:55:00.000Z"), 100000);
+        TestUtils.generateTestEntityData(w, 10000, Dates.parseDateTime("2012-05-15T10:55:00.000Z"), 100000);
 
         ResultSet<TestEntity> rs = w.query().all().asResultSet();
 

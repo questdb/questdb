@@ -35,6 +35,13 @@ class SymbolIndexProxy<T> implements Closeable {
     private long lastAccessed;
     private long txAddress;
 
+    SymbolIndexProxy(Partition<T> partition, int columnIndex, long txAddress) {
+        this.partition = partition;
+        this.columnIndex = columnIndex;
+        this.txAddress = txAddress;
+        this.timerCache = partition.getJournal().getTimerCache();
+    }
+
     public void close() {
         if (index != null) {
             LOGGER.trace("Closing " + this);
@@ -81,12 +88,5 @@ class SymbolIndexProxy<T> implements Closeable {
             );
         }
         return index;
-    }
-
-    SymbolIndexProxy(Partition<T> partition, int columnIndex, long txAddress) {
-        this.partition = partition;
-        this.columnIndex = columnIndex;
-        this.txAddress = txAddress;
-        this.timerCache = partition.getJournal().getTimerCache();
     }
 }

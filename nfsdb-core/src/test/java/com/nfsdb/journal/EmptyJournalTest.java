@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,8 +32,8 @@ public class EmptyJournalTest extends AbstractTest {
     @Test
     public void testJournalWithEmptyPartition() throws Exception {
         JournalWriter<Quote> w = factory.writer(Quote.class);
-        w.getAppendPartition(Dates.toMillis("2012-02-10T10:00:00.000Z"));
-        w.getAppendPartition(Dates.toMillis("2012-03-10T10:00:00.000Z"));
+        w.getAppendPartition(Dates.parseDateTime("2012-02-10T10:00:00.000Z"));
+        w.getAppendPartition(Dates.parseDateTime("2012-03-10T10:00:00.000Z"));
         testJournalIterator(w);
     }
 

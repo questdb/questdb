@@ -45,7 +45,7 @@ public final class TestUtils {
 
     public static void generateQuoteData(JournalWriter<Quote> w, int count) throws JournalException {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
-        long timestamps[] = {Dates.toMillis("2013-09-04T10:00:00.000Z"), Dates.toMillis("2013-10-04T10:00:00.000Z"), Dates.toMillis("2013-11-04T10:00:00.000Z")};
+        long timestamps[] = {Dates.parseDateTime("2013-09-04T10:00:00.000Z"), Dates.parseDateTime("2013-10-04T10:00:00.000Z"), Dates.parseDateTime("2013-11-04T10:00:00.000Z")};
         Quote q = new Quote();
         Rnd r = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
         for (int i = 0; i < count; i++) {
@@ -233,7 +233,7 @@ public final class TestUtils {
     }
 
     public static void generateTestEntityData(JournalWriter<TestEntity> w, int count) throws JournalException {
-        generateTestEntityData(w, count, Dates.toMillis("2012-05-15T10:55:00.000Z"), count * 100);
+        generateTestEntityData(w, count, Dates.parseDateTime("2012-05-15T10:55:00.000Z"), count * 100);
     }
 
     public static <T> void assertDataEquals(Journal<T> expected, Journal<T> actual) throws JournalException {

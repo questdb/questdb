@@ -59,7 +59,7 @@ public class SearchByKeysTest {
 
     @Before
     public void setUp() throws Exception {
-        timestamp = Dates.toMillis("2013-01-01T00:00:00.000Z");
+        timestamp = Dates.parseDateTime("2013-01-01T00:00:00.000Z");
         // total 1500 rows to append
         // over 3 days
         // millis

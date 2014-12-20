@@ -24,7 +24,7 @@ import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.printer.JournalPrinter;
 import com.nfsdb.journal.printer.appender.StdOutAppender;
 import com.nfsdb.journal.query.api.QueryAllBuilder;
-import com.nfsdb.journal.utils.Dates2;
+import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Files;
 import org.nfsdb.examples.model.ModelConfiguration;
 import org.nfsdb.examples.model.Quote;
@@ -89,10 +89,10 @@ public class DailyPriceAverageExample {
                     // so this loop leverages data order by printing out result when
                     // day of year changes
                     for (Quote q : builder.asResultSet().bufferedIterator()) {
-                        long thisDay = Dates2.floorDD(q.getTimestamp());
+                        long thisDay = Dates.floorDD(q.getTimestamp());
                         if (thisDay != previousDay) {
                             if (previousDay != -1) {
-                                Dates2.appendCalDate1(sink, previousDay);
+                                Dates.formatDashYYYYMMDD(sink, previousDay);
                                 printer.out(symbol, sink.toString(), avgSum / avgCount);
                                 sink.clear();
                             }
@@ -107,7 +107,7 @@ public class DailyPriceAverageExample {
                     }
 
                     if (previousDay != -1) {
-                        Dates2.appendCalDate1(sink, previousDay);
+                        Dates.formatDashYYYYMMDD(sink, previousDay);
                         printer.out(symbol, sink.toString(), avgSum / avgCount);
                     }
                 }

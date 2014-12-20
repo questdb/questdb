@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,10 +28,10 @@ public class JournalLagTest extends AbstractJournalTest {
     @Override
     public void setUp() throws Exception {
         super.setUp();
-        TestUtils.generateQuoteData(origin, 500, Dates.toMillis("2013-02-01T00:00:00.000Z"), 100);
-        TestUtils.generateQuoteData(origin, 500, Dates.toMillis("2013-02-01T01:00:00.000Z"), 100);
-        TestUtils.generateQuoteData(origin, 500, Dates.toMillis("2013-02-01T13:00:00.000Z"), 100);
-        TestUtils.generateQuoteData(origin, 500, Dates.toMillis("2013-05-01T00:00:00.000Z"), 100);
+        TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2013-02-01T00:00:00.000Z"), 100);
+        TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2013-02-01T01:00:00.000Z"), 100);
+        TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2013-02-01T13:00:00.000Z"), 100);
+        TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2013-05-01T00:00:00.000Z"), 100);
     }
 
     @Test

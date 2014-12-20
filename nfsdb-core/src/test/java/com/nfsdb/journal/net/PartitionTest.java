@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ import org.junit.Test;
 
 public class PartitionTest extends AbstractTest {
 
-    private static final long timestamp = Dates.toMillis("2013-12-12T00:00:00.000Z");
+    private static final long timestamp = Dates.parseDateTime("2013-12-12T00:00:00.000Z");
     private JournalWriter<Quote> origin;
     private JournalWriter<Quote> master;
     private JournalWriter<Quote> slave;
@@ -139,7 +139,7 @@ public class PartitionTest extends AbstractTest {
         consumer.read(channel);
         comparePartitions();
 
-        TestUtils.generateQuoteData(master, 200, Dates.toMillis("2014-01-01T00:00:00.000Z"));
+        TestUtils.generateQuoteData(master, 200, Dates.parseDateTime("2014-01-01T00:00:00.000Z"));
         producer.configure(slave.size());
         consumer.reset();
         producer.write(channel);

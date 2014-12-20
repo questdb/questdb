@@ -21,7 +21,7 @@ import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.model.configuration.ModelConfiguration;
 import com.nfsdb.journal.test.tools.AbstractTest;
-import com.nfsdb.journal.utils.Dates2;
+import com.nfsdb.journal.utils.Dates;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -44,8 +44,8 @@ public class LockTest extends AbstractTest {
         rw = factory.writer(Quote.class);
 
         List<Quote> data = new ArrayList<>();
-        data.add(new Quote().setSym("S1").setTimestamp(Dates2.toMillis(2013, 3, 10, 15, 0)));
-        data.add(new Quote().setSym("S2").setTimestamp(Dates2.toMillis(2013, 3, 10, 16, 0)));
+        data.add(new Quote().setSym("S1").setTimestamp(Dates.toMillis(2013, 3, 10, 15, 0)));
+        data.add(new Quote().setSym("S2").setTimestamp(Dates.toMillis(2013, 3, 10, 16, 0)));
         rw.mergeAppend(data);
         rw.commit();
 

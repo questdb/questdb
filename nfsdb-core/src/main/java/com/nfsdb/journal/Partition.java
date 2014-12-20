@@ -62,12 +62,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
         this.interval = interval;
         this.txLimit = txLimit;
         this.columnCount = journal.getMetadata().getColumnCount();
-        String dateStr = Dates.dirNameForIntervalStart(interval, journal.getMetadata().getPartitionType());
-        if (dateStr.length() > 0) {
-            setPartitionDir(new File(this.journal.getLocation(), dateStr), indexTxAddresses);
-        } else {
-            setPartitionDir(this.journal.getLocation(), indexTxAddresses);
-        }
+        setPartitionDir(new File(this.journal.getLocation(), interval.getDirName(journal.getMetadata().getPartitionType())), indexTxAddresses);
     }
 
     public Partition<T> open() throws JournalException {

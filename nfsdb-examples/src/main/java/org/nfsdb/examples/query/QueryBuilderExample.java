@@ -22,8 +22,8 @@ import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.query.api.QueryAllBuilder;
 import com.nfsdb.journal.utils.Dates;
-import com.nfsdb.journal.utils.Dates2;
 import com.nfsdb.journal.utils.Files;
+import com.nfsdb.journal.utils.Interval;
 import org.nfsdb.examples.model.ModelConfiguration;
 import org.nfsdb.examples.model.Quote;
 import org.nfsdb.examples.support.QuoteGenerator;
@@ -71,11 +71,11 @@ public class QueryBuilderExample {
                 //
                 // reuse builder to narrow down query interval
                 //
-                long lo = Dates2.addDays(System.currentTimeMillis(), 10);
-                long hi = Dates2.addDays(lo, 10);
+                long lo = Dates.addDays(System.currentTimeMillis(), 10);
+                long hi = Dates.addDays(lo, 10);
                 t = System.nanoTime();
                 count = 0;
-                for (Quote q : builder.slice(Dates.interval(lo, hi)).asResultSet().bufferedIterator()) {
+                for (Quote q : builder.slice(new Interval(hi, lo)).asResultSet().bufferedIterator()) {
                     assert q != null;
                     count++;
                 }

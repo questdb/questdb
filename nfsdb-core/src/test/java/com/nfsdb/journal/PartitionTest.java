@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,10 +29,10 @@ public class PartitionTest extends AbstractTest {
     public void testIndexOf() throws JournalException {
         JournalWriter<Quote> journal = factory.writer(Quote.class);
 
-        long ts1 = Dates.toMillis("2012-06-05T00:00:00.000");
-        long ts2 = Dates.toMillis("2012-07-03T00:00:00.000");
-        long ts3 = Dates.toMillis("2012-06-04T00:00:00.000");
-        long ts4 = Dates.toMillis("2012-06-06T00:00:00.000");
+        long ts1 = Dates.parseDateTime("2012-06-05T00:00:00.000");
+        long ts2 = Dates.parseDateTime("2012-07-03T00:00:00.000");
+        long ts3 = Dates.parseDateTime("2012-06-04T00:00:00.000");
+        long ts4 = Dates.parseDateTime("2012-06-06T00:00:00.000");
 
         Quote q9 = new Quote().setSym("S5").setTimestamp(ts3);
         Quote q10 = new Quote().setSym("S5").setTimestamp(ts4);
@@ -61,20 +61,20 @@ public class PartitionTest extends AbstractTest {
 
         Assert.assertEquals(2, journal.getPartitionCount());
 
-        long tsA = Dates.toMillis("2012-06-15T00:00:00.000");
+        long tsA = Dates.parseDateTime("2012-06-15T00:00:00.000");
 
         Partition<Quote> partition1 = journal.getPartitionForTimestamp(tsA).open();
         Assert.assertNotNull("getPartition(timestamp) failed", partition1);
 
         Assert.assertEquals(-2, partition1.indexOf(tsA, BinarySearch.SearchType.NEWER_OR_SAME));
-        Assert.assertEquals(-1, partition1.indexOf(Dates.toMillis("2012-06-03T00:00:00.000"), BinarySearch.SearchType.OLDER_OR_SAME));
-        Assert.assertEquals(0, partition1.indexOf(Dates.toMillis("2012-06-03T00:00:00.000"), BinarySearch.SearchType.NEWER_OR_SAME));
+        Assert.assertEquals(-1, partition1.indexOf(Dates.parseDateTime("2012-06-03T00:00:00.000"), BinarySearch.SearchType.OLDER_OR_SAME));
+        Assert.assertEquals(0, partition1.indexOf(Dates.parseDateTime("2012-06-03T00:00:00.000"), BinarySearch.SearchType.NEWER_OR_SAME));
 
         Assert.assertEquals(4, partition1.indexOf(ts1, BinarySearch.SearchType.OLDER_OR_SAME));
         Assert.assertEquals(1, partition1.indexOf(ts1, BinarySearch.SearchType.NEWER_OR_SAME));
 
         Partition<Quote> p = journal.openOrCreateLagPartition();
-        long result = p.indexOf(Dates.toMillis("2012-06-15T00:00:00.000"), BinarySearch.SearchType.OLDER_OR_SAME);
+        long result = p.indexOf(Dates.parseDateTime("2012-06-15T00:00:00.000"), BinarySearch.SearchType.OLDER_OR_SAME);
         Assert.assertEquals(-1, result);
     }
 }

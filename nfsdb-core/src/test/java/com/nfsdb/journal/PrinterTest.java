@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@ public class PrinterTest {
     @Test
     public void testDateConversion() throws Exception {
 
-        long millis = Dates.toMillis("2013-10-11T10:00:00.000Z");
+        long millis = Dates.parseDateTime("2013-10-11T10:00:00.000Z");
 
         Quote position1 = new Quote().setBidSize(10).setTimestamp(millis);
         Quote position2 = new Quote().setTimestamp(millis);

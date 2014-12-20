@@ -21,7 +21,6 @@ import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestUtils;
 import com.nfsdb.journal.utils.Dates;
-import com.nfsdb.journal.utils.Dates2;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -40,16 +39,16 @@ public class JournalRefreshTest extends AbstractTest {
     @Test
     public void testRefreshScenarios() throws JournalException {
         // initial data
-        rw.append(new Quote().setSym("IMO-1").setTimestamp(Dates2.toMillis(2013, 1, 10, 10, 0)));
-        rw.append(new Quote().setSym("IMO-2").setTimestamp(Dates2.toMillis(2013, 1, 10, 14, 0)));
+        rw.append(new Quote().setSym("IMO-1").setTimestamp(Dates.toMillis(2013, 1, 10, 10, 0)));
+        rw.append(new Quote().setSym("IMO-2").setTimestamp(Dates.toMillis(2013, 1, 10, 14, 0)));
         rw.commit();
 
         Journal<Quote> r = factory.reader(Quote.class);
         Assert.assertEquals(2, r.size());
 
         // append data to same partition
-        rw.append(new Quote().setSym("IMO-1").setTimestamp(Dates2.toMillis(2013, 1, 10, 15, 0)));
-        rw.append(new Quote().setSym("IMO-2").setTimestamp(Dates2.toMillis(2013, 1, 10, 16, 0)));
+        rw.append(new Quote().setSym("IMO-1").setTimestamp(Dates.toMillis(2013, 1, 10, 15, 0)));
+        rw.append(new Quote().setSym("IMO-2").setTimestamp(Dates.toMillis(2013, 1, 10, 16, 0)));
         rw.commit();
 
         // check that size didn't change before we call refresh
@@ -60,8 +59,8 @@ public class JournalRefreshTest extends AbstractTest {
         Assert.assertEquals(4, r.size());
 
         // append data to new partition
-        rw.append(new Quote().setSym("IMO-3").setTimestamp(Dates2.toMillis(2013, 2, 10, 15, 0)));
-        rw.append(new Quote().setSym("IMO-4").setTimestamp(Dates2.toMillis(2013, 2, 10, 16, 0)));
+        rw.append(new Quote().setSym("IMO-3").setTimestamp(Dates.toMillis(2013, 2, 10, 15, 0)));
+        rw.append(new Quote().setSym("IMO-4").setTimestamp(Dates.toMillis(2013, 2, 10, 16, 0)));
 
         // check that size didn't change before we call refresh
         Assert.assertEquals(4, r.size());
@@ -75,8 +74,8 @@ public class JournalRefreshTest extends AbstractTest {
         Assert.assertEquals(6, r.size());
 
         List<Quote> data = new ArrayList<>();
-        data.add(new Quote().setSym("IMO-5").setTimestamp(Dates2.toMillis(2013, 3, 10, 15, 0)));
-        data.add(new Quote().setSym("IMO-6").setTimestamp(Dates2.toMillis(2013, 3, 10, 16, 0)));
+        data.add(new Quote().setSym("IMO-5").setTimestamp(Dates.toMillis(2013, 3, 10, 15, 0)));
+        data.add(new Quote().setSym("IMO-6").setTimestamp(Dates.toMillis(2013, 3, 10, 16, 0)));
         rw.mergeAppend(data);
 
         rw.commit();
@@ -90,7 +89,7 @@ public class JournalRefreshTest extends AbstractTest {
 
     @Test
     public void testTruncateRefresh() throws Exception {
-        TestUtils.generateQuoteData(rw, 1000, Dates.toMillis("2013-09-04T10:00:00.000Z"));
+        TestUtils.generateQuoteData(rw, 1000, Dates.parseDateTime("2013-09-04T10:00:00.000Z"));
         rw.commit();
 
         Journal<Quote> r = factory.reader(Quote.class);
@@ -114,7 +113,7 @@ public class JournalRefreshTest extends AbstractTest {
         reader.refresh();
         Assert.assertEquals(1001, reader.size());
 
-        TestUtils.generateQuoteData(rw, 302, Dates.toMillis("2014-02-10T10:00:00.000Z"));
+        TestUtils.generateQuoteData(rw, 302, Dates.parseDateTime("2014-02-10T10:00:00.000Z"));
         reader.refresh();
         Assert.assertEquals(1001, reader.size());
 
@@ -153,8 +152,8 @@ public class JournalRefreshTest extends AbstractTest {
         JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
         Journal<Quote> reader = factory.reader(Quote.class);
 
-        TestUtils.generateQuoteData(origin, 500, Dates.toMillis("2014-02-10T02:00:00.000Z"));
-        TestUtils.generateQuoteData(origin, 500, Dates.toMillis("2014-02-10T10:00:00.000Z"));
+        TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2014-02-10T02:00:00.000Z"));
+        TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2014-02-10T10:00:00.000Z"));
 
         rw.append(origin.query().all().asResultSet().subset(0, 500));
         rw.commit();

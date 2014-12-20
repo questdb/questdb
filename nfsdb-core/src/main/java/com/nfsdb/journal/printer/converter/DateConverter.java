@@ -18,7 +18,7 @@ package com.nfsdb.journal.printer.converter;
 
 import com.nfsdb.journal.export.StringSink;
 import com.nfsdb.journal.printer.JournalPrinter;
-import com.nfsdb.journal.utils.Dates2;
+import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Unsafe;
 
 public class DateConverter extends AbstractConverter {
@@ -34,7 +34,7 @@ public class DateConverter extends AbstractConverter {
         if (millis == 0) {
             stringBuilder.append(getPrinter().getNullString());
         } else {
-            Dates2.appendDateTime(sink, millis);
+            Dates.appendDateTime(sink, millis);
             stringBuilder.append(sink);
             sink.clear();
         }

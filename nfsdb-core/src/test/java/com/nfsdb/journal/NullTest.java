@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ public class NullTest extends AbstractTest {
     public void tumbleTryNullTest() throws JournalException {
         final int TEST_DATA_SIZE = (int) 1E3;
         JournalWriter<Quote> w = factory.writer(Quote.class, "quote", 1000);
-        long timestamp = Dates.toMillis("2013-10-05T10:00:00.000Z");
+        long timestamp = Dates.parseDateTime("2013-10-05T10:00:00.000Z");
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
         Quote q = new Quote();
         int increment = 6000;
