@@ -93,8 +93,8 @@ public class JournalDeltaProducer implements ChannelProducer {
             partitionDeltaProducers.add(producer);
             Partition partition = journal.getPartition(i, false);
             journalServerState.addPartitionMetadata(partition.getPartitionIndex()
-                    , partition.getInterval().getStartMillis()
-                    , partition.getInterval().getEndMillis()
+                    , partition.getInterval().getLo()
+                    , partition.getInterval().getHi()
                     , (byte) (producer.hasContent() ? 0 : 1));
 
             localRowID = 0;
@@ -119,7 +119,7 @@ public class JournalDeltaProducer implements ChannelProducer {
 
             if (lagPartitionDeltaProducer.hasContent()) {
                 journalServerState.setLagPartitionName(lag.getName());
-                journalServerState.setLagPartitionMetadata(lag.getPartitionIndex(), lag.getInterval().getStartMillis(), lag.getInterval().getEndMillis(), (byte) 0);
+                journalServerState.setLagPartitionMetadata(lag.getPartitionIndex(), lag.getInterval().getLo(), lag.getInterval().getHi(), (byte) 0);
             }
         } else if (status.getLagPartitionName() != null) {
             journalServerState.setDetachLag(true);

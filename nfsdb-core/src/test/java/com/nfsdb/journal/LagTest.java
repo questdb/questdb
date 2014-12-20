@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestData;
 import com.nfsdb.journal.utils.Dates;
+import com.nfsdb.journal.utils.Dates2;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -95,8 +96,8 @@ public class LagTest extends AbstractTest {
 
         // initial data
         List<Quote> data1 = new ArrayList<>();
-        data1.add(new Quote().setSym("S1").setTimestamp(Dates.utc(2013, 1, 10, 10, 0).getMillis()));
-        data1.add(new Quote().setSym("S2").setTimestamp(Dates.utc(2013, 1, 10, 14, 0).getMillis()));
+        data1.add(new Quote().setSym("S1").setTimestamp(Dates2.toMillis(2013, 1, 10, 10, 0)));
+        data1.add(new Quote().setSym("S2").setTimestamp(Dates2.toMillis(2013, 1, 10, 14, 0)));
 
         rw.mergeAppend(data1);
         rw.commit();
@@ -106,62 +107,62 @@ public class LagTest extends AbstractTest {
 
         // simple append scenario
         List<Quote> data2 = new ArrayList<>();
-        data2.add(new Quote().setSym("S3").setTimestamp(Dates.utc(2013, 1, 10, 15, 0).getMillis()));
-        data2.add(new Quote().setSym("S4").setTimestamp(Dates.utc(2013, 1, 10, 16, 0).getMillis()));
+        data2.add(new Quote().setSym("S3").setTimestamp(Dates2.toMillis(2013, 1, 10, 15, 0)));
+        data2.add(new Quote().setSym("S4").setTimestamp(Dates2.toMillis(2013, 1, 10, 16, 0)));
         rw.mergeAppend(data2);
 
         // simple append + lag split (30 days increment)
         List<Quote> data3 = new ArrayList<>();
-        data3.add(new Quote().setSym("S8").setTimestamp(Dates.utc(2013, 2, 10, 15, 0).getMillis()));
-        data3.add(new Quote().setSym("S9").setTimestamp(Dates.utc(2013, 2, 10, 16, 0).getMillis()));
+        data3.add(new Quote().setSym("S8").setTimestamp(Dates2.toMillis(2013, 2, 10, 15, 0)));
+        data3.add(new Quote().setSym("S9").setTimestamp(Dates2.toMillis(2013, 2, 10, 16, 0)));
         rw.mergeAppend(data3);
 
         // data on fully above lag
         List<Quote> data4 = new ArrayList<>();
-        data4.add(new Quote().setSym("S6").setTimestamp(Dates.utc(2013, 2, 10, 10, 0).getMillis()));
-        data4.add(new Quote().setSym("S7").setTimestamp(Dates.utc(2013, 2, 10, 11, 0).getMillis()));
+        data4.add(new Quote().setSym("S6").setTimestamp(Dates2.toMillis(2013, 2, 10, 10, 0)));
+        data4.add(new Quote().setSym("S7").setTimestamp(Dates2.toMillis(2013, 2, 10, 11, 0)));
         rw.mergeAppend(data4);
 
         // lag is fully inside data
         List<Quote> data5 = new ArrayList<>();
-        data5.add(new Quote().setSym("S5").setTimestamp(Dates.utc(2013, 2, 10, 9, 0).getMillis()));
-        data5.add(new Quote().setSym("S10").setTimestamp(Dates.utc(2013, 2, 10, 17, 0).getMillis()));
+        data5.add(new Quote().setSym("S5").setTimestamp(Dates2.toMillis(2013, 2, 10, 9, 0)));
+        data5.add(new Quote().setSym("S10").setTimestamp(Dates2.toMillis(2013, 2, 10, 17, 0)));
         rw.mergeAppend(data5);
 
         // lag and data have equal boundaries
         List<Quote> data6 = new ArrayList<>();
-        data6.add(new Quote().setSym("near-S5").setTimestamp(Dates.utc(2013, 2, 10, 9, 0).getMillis()));
-        data6.add(new Quote().setSym("near-S10").setTimestamp(Dates.utc(2013, 2, 10, 17, 0).getMillis()));
+        data6.add(new Quote().setSym("near-S5").setTimestamp(Dates2.toMillis(2013, 2, 10, 9, 0)));
+        data6.add(new Quote().setSym("near-S10").setTimestamp(Dates2.toMillis(2013, 2, 10, 17, 0)));
         rw.mergeAppend(data6);
 
         // bottom part of data overlaps top part of lag
         List<Quote> data7 = new ArrayList<>();
-        data7.add(new Quote().setSym("after-S4").setTimestamp(Dates.utc(2013, 2, 9, 9, 0).getMillis()));
-        data7.add(new Quote().setSym("after-S9").setTimestamp(Dates.utc(2013, 2, 10, 16, 30).getMillis()));
+        data7.add(new Quote().setSym("after-S4").setTimestamp(Dates2.toMillis(2013, 2, 9, 9, 0)));
+        data7.add(new Quote().setSym("after-S9").setTimestamp(Dates2.toMillis(2013, 2, 10, 16, 30)));
         rw.mergeAppend(data7);
 
         // top part of data overlaps bottom part of lag
         List<Quote> data8 = new ArrayList<>();
-        data8.add(new Quote().setSym("after-S8").setTimestamp(Dates.utc(2013, 2, 10, 15, 30).getMillis()));
-        data8.add(new Quote().setSym("after-S10").setTimestamp(Dates.utc(2013, 2, 10, 18, 30).getMillis()));
+        data8.add(new Quote().setSym("after-S8").setTimestamp(Dates2.toMillis(2013, 2, 10, 15, 30)));
+        data8.add(new Quote().setSym("after-S10").setTimestamp(Dates2.toMillis(2013, 2, 10, 18, 30)));
         rw.mergeAppend(data8);
 
         // data is fully inside of lag
         List<Quote> data9 = new ArrayList<>();
-        data9.add(new Quote().setSym("after-S6").setTimestamp(Dates.utc(2013, 2, 10, 10, 30).getMillis()));
-        data9.add(new Quote().setSym("before-S10").setTimestamp(Dates.utc(2013, 2, 10, 16, 45).getMillis()));
+        data9.add(new Quote().setSym("after-S6").setTimestamp(Dates2.toMillis(2013, 2, 10, 10, 30)));
+        data9.add(new Quote().setSym("before-S10").setTimestamp(Dates2.toMillis(2013, 2, 10, 16, 45)));
         rw.mergeAppend(data9);
 
         // full discard
         List<Quote> data10 = new ArrayList<>();
-        data10.add(new Quote().setSym("discard-S1").setTimestamp(Dates.utc(2013, 1, 1, 10, 30).getMillis()));
-        data10.add(new Quote().setSym("discard-S2").setTimestamp(Dates.utc(2013, 1, 1, 16, 45).getMillis()));
+        data10.add(new Quote().setSym("discard-S1").setTimestamp(Dates2.toMillis(2013, 1, 1, 10, 30)));
+        data10.add(new Quote().setSym("discard-S2").setTimestamp(Dates2.toMillis(2013, 1, 1, 16, 45)));
         rw.mergeAppend(data10);
 
         // full discard
         List<Quote> data11 = new ArrayList<>();
-        data11.add(new Quote().setSym("discard-S3").setTimestamp(Dates.utc(2013, 1, 1, 10, 30).getMillis()));
-        data11.add(new Quote().setSym("before-S6").setTimestamp(Dates.utc(2013, 2, 10, 9, 45).getMillis()));
+        data11.add(new Quote().setSym("discard-S3").setTimestamp(Dates2.toMillis(2013, 1, 1, 10, 30)));
+        data11.add(new Quote().setSym("before-S6").setTimestamp(Dates2.toMillis(2013, 2, 10, 9, 45)));
         rw.mergeAppend(data11);
 
         String expected[] = {"S1", "S2", "S3", "S4", "after-S4", "S5", "near-S5", "before-S6", "S6", "after-S6", "S7"

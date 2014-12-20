@@ -24,8 +24,8 @@ import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.net.AbstractChannelConsumer;
 import com.nfsdb.journal.net.model.JournalServerState;
 import com.nfsdb.journal.utils.Dates;
+import com.nfsdb.journal.utils.Interval;
 import com.nfsdb.journal.utils.Lists;
-import org.joda.time.Interval;
 
 import java.nio.channels.ReadableByteChannel;
 import java.util.ArrayList;

@@ -1,20 +1,4 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-package com.nfsdb.journal.utils;/*
  * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,7 +13,7 @@ package com.nfsdb.journal.utils;/*
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+package com.nfsdb.journal.utils;
 
 import com.nfsdb.journal.export.CharSink;
 
@@ -181,21 +165,13 @@ final public class Dates2 {
         int y = getYear(millis);
         boolean l = isLeapYear(y);
         int m = getMonthOfYear(millis, y, l);
-        Numbers.append(sink, y);
+        append0000(sink, y);
         append0(sink.put('-'), m);
         append0(sink.put('-'), getDayOfMonth(millis, y, m, l));
         append0(sink.put('T'), getHourOfDay(millis));
         append0(sink.put(':'), getMinuteOfHour(millis));
         append0(sink.put(':'), getSecondOfMinute(millis));
-        sink.put(".");
-
-        int s = getMillisOfSecond(millis);
-        if (s < 10) {
-            sink.put('0').put('0');
-        } else if (s < 100) {
-            sink.put('0');
-        }
-        Numbers.append(sink, s);
+        append00(sink.put("."), getMillisOfSecond(millis));
         sink.put("Z");
     }
 
@@ -227,11 +203,39 @@ final public class Dates2 {
         append0(sink, getDayOfMonth(millis, y, m, l));
     }
 
-    private static CharSink append0(CharSink sink, int x) {
-        if (x < 10) {
+    // YYYY
+    public static void appendYear(CharSink sink, long millis) {
+        Numbers.append(sink, getYear(millis));
+    }
+
+    private static CharSink append0(CharSink sink, int val) {
+        if (val < 10) {
             sink.put('0');
         }
-        Numbers.append(sink, x);
+        Numbers.append(sink, val);
+        return sink;
+    }
+
+    private static CharSink append00(CharSink sink, int val) {
+        if (val < 10) {
+            sink.put('0').put('0');
+        } else if (val < 100) {
+            sink.put('0');
+        }
+        Numbers.append(sink, val);
+        return sink;
+    }
+
+
+    private static CharSink append0000(CharSink sink, int val) {
+        if (val < 10) {
+            sink.put('0').put('0').put('0');
+        } else if (val < 100) {
+            sink.put('0').put('0');
+        } else if (val < 1000) {
+            sink.put('0');
+        }
+        Numbers.append(sink, val);
         return sink;
     }
 
@@ -267,9 +271,11 @@ final public class Dates2 {
         checkChar(seq, p++, ':');
         int sec = Numbers.parseInt(seq, p, p += 2);
         checkRange(sec, 0, 59, "Second");
-        checkChar(seq, p++, '.');
-        int mil = Numbers.parseInt(seq, p, p += 3);
-        checkRange(mil, 0, 999, "Millis");
+        int mil = 0;
+        if (seq.charAt(p) == '.') {
+            mil = Numbers.parseInt(seq, ++p, p += 3);
+            checkRange(mil, 0, 999, "Millis");
+        }
 
         if (p < seq.length()) {
             checkChar(seq, p, 'Z');
@@ -341,9 +347,14 @@ final public class Dates2 {
                 ;
     }
 
-    public static long getDate(int y, int m, int d) {
+    public static long toMillis(int y, int m, int d) {
         boolean l = isLeapYear(y);
         return yearMillis(y, l) + monthOfYearMillis(m, l) + (d - 1) * DAY_MILLIS;
+    }
+
+    public static long toMillis(int y, int m, int d, int h, int mi) {
+        boolean l = isLeapYear(y);
+        return yearMillis(y, l) + monthOfYearMillis(m, l) + (d - 1) * DAY_MILLIS + h * HOUR_MILLIS + mi * MINUTE_MILLIS;
     }
 
     public static long getTime(long millis) {
@@ -378,7 +389,7 @@ final public class Dates2 {
         if (_d > maxDay) {
             _d = maxDay;
         }
-        return getDate(_y, _m, _d) + getTime(millis) + (millis < 0 ? 1 : 0);
+        return toMillis(_y, _m, _d) + getTime(millis) + (millis < 0 ? 1 : 0);
     }
 
     public static long addYear(long millis, int years) {
@@ -401,4 +412,7 @@ final public class Dates2 {
         return millis + days * DAY_MILLIS;
     }
 
+    public static long addHours(long millis, int hours) {
+        return millis + hours * HOUR_MILLIS;
+    }
 }

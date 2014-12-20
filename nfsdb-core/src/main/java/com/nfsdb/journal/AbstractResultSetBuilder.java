@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@ package com.nfsdb.journal;
 
 import com.nfsdb.journal.collections.DirectLongList;
 import com.nfsdb.journal.exceptions.JournalException;
-import org.joda.time.Interval;
+import com.nfsdb.journal.utils.Interval;
 
 public abstract class AbstractResultSetBuilder<T, X> {
     protected final DirectLongList result = new DirectLongList();
@@ -42,13 +42,13 @@ public abstract class AbstractResultSetBuilder<T, X> {
         if (interval != null && partition.getInterval() != null
                 &&
                 (
-                        partition.getInterval().getStartMillis() > interval.getEndMillis()
-                                || partition.getInterval().getEndMillis() < interval.getStartMillis()
+                        partition.getInterval().getLo() > interval.getHi()
+                                || partition.getInterval().getHi() < interval.getLo()
                 )
                 ) {
 
-            return (partition.getInterval().getEndMillis() < interval.getStartMillis() && !desc) ||
-                    (partition.getInterval().getStartMillis() > interval.getEndMillis() && desc);
+            return (partition.getInterval().getHi() < interval.getLo() && !desc) ||
+                    (partition.getInterval().getLo() > interval.getHi() && desc);
         }
 
         switch (accept(partition)) {
@@ -66,8 +66,8 @@ public abstract class AbstractResultSetBuilder<T, X> {
             long hi = size - 1;
 
             if (interval != null && partition.getInterval() != null) {
-                if (partition.getInterval().getStartMillis() < interval.getStartMillis()) {
-                    long _lo = partition.indexOf(interval.getStartMillis(), BinarySearch.SearchType.NEWER_OR_SAME);
+                if (partition.getInterval().getLo() < interval.getLo()) {
+                    long _lo = partition.indexOf(interval.getLo(), BinarySearch.SearchType.NEWER_OR_SAME);
 
                     // there are no data with timestamp later then start date of interval, skip partition
                     if (_lo == -2) {
@@ -77,8 +77,8 @@ public abstract class AbstractResultSetBuilder<T, X> {
                     lo = _lo;
                 }
 
-                if (partition.getInterval().getEndMillis() > interval.getEndMillis()) {
-                    long _hi = partition.indexOf(interval.getEndMillis(), BinarySearch.SearchType.OLDER_OR_SAME);
+                if (partition.getInterval().getHi() > interval.getHi()) {
+                    long _hi = partition.indexOf(interval.getHi(), BinarySearch.SearchType.OLDER_OR_SAME);
 
                     // there are no data with timestamp earlier then end date of interval, skip partition
                     if (_hi == -1) {

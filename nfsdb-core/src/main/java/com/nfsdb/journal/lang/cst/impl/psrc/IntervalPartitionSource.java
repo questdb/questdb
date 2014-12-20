@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.lang.cst.PartitionSlice;
 import com.nfsdb.journal.lang.cst.PartitionSource;
-import org.joda.time.Interval;
+import com.nfsdb.journal.utils.Interval;
 
 import java.util.NoSuchElementException;
 
@@ -53,10 +53,10 @@ public class IntervalPartitionSource extends AbstractImmutableIterator<Partition
                 if (partition.getInterval().overlaps(interval)) {
 
                     long hi = slice.calcHi ? partition.open().size() - 1 : slice.hi;
-                    long lo = partition.indexOf(interval.getStartMillis(), BinarySearch.SearchType.NEWER_OR_SAME, slice.lo, hi);
+                    long lo = partition.indexOf(interval.getLo(), BinarySearch.SearchType.NEWER_OR_SAME, slice.lo, hi);
 
                     if (lo >= 0) {
-                        hi = partition.indexOf(interval.getEndMillis(), BinarySearch.SearchType.OLDER_OR_SAME, lo, hi);
+                        hi = partition.indexOf(interval.getHi(), BinarySearch.SearchType.OLDER_OR_SAME, lo, hi);
                         if (hi >= 0) {
                             this.slice.partition = slice.partition;
                             this.slice.lo = lo;

@@ -30,11 +30,7 @@ import com.nfsdb.journal.model.TestEntity;
 import com.nfsdb.journal.printer.JournalPrinter;
 import com.nfsdb.journal.printer.appender.AssertingAppender;
 import com.nfsdb.journal.printer.converter.DateConverter;
-import com.nfsdb.journal.utils.Dates;
-import com.nfsdb.journal.utils.Lists;
-import com.nfsdb.journal.utils.Rnd;
-import com.nfsdb.journal.utils.Unsafe;
-import org.joda.time.Interval;
+import com.nfsdb.journal.utils.*;
 import org.junit.Assert;
 
 import java.io.IOException;
@@ -115,9 +111,9 @@ public final class TestUtils {
 
     public static void generateQuoteData(JournalWriter<Quote> w, int count, Interval interval, boolean commit) throws JournalException {
 
-        long span = interval.getEndMillis() - interval.getStartMillis();
+        long span = interval.getHi() - interval.getLo();
         long inc = span / count;
-        long lo = interval.getStartMillis();
+        long lo = interval.getLo();
 
         for (int i = 0; i < count; i++) {
             String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};

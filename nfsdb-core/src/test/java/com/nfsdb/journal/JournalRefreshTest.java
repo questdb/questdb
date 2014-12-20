@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestUtils;
 import com.nfsdb.journal.utils.Dates;
+import com.nfsdb.journal.utils.Dates2;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -39,16 +40,16 @@ public class JournalRefreshTest extends AbstractTest {
     @Test
     public void testRefreshScenarios() throws JournalException {
         // initial data
-        rw.append(new Quote().setSym("IMO-1").setTimestamp(Dates.utc(2013, 1, 10, 10, 0).getMillis()));
-        rw.append(new Quote().setSym("IMO-2").setTimestamp(Dates.utc(2013, 1, 10, 14, 0).getMillis()));
+        rw.append(new Quote().setSym("IMO-1").setTimestamp(Dates2.toMillis(2013, 1, 10, 10, 0)));
+        rw.append(new Quote().setSym("IMO-2").setTimestamp(Dates2.toMillis(2013, 1, 10, 14, 0)));
         rw.commit();
 
         Journal<Quote> r = factory.reader(Quote.class);
         Assert.assertEquals(2, r.size());
 
         // append data to same partition
-        rw.append(new Quote().setSym("IMO-1").setTimestamp(Dates.utc(2013, 1, 10, 15, 0).getMillis()));
-        rw.append(new Quote().setSym("IMO-2").setTimestamp(Dates.utc(2013, 1, 10, 16, 0).getMillis()));
+        rw.append(new Quote().setSym("IMO-1").setTimestamp(Dates2.toMillis(2013, 1, 10, 15, 0)));
+        rw.append(new Quote().setSym("IMO-2").setTimestamp(Dates2.toMillis(2013, 1, 10, 16, 0)));
         rw.commit();
 
         // check that size didn't change before we call refresh
@@ -59,8 +60,8 @@ public class JournalRefreshTest extends AbstractTest {
         Assert.assertEquals(4, r.size());
 
         // append data to new partition
-        rw.append(new Quote().setSym("IMO-3").setTimestamp(Dates.utc(2013, 2, 10, 15, 0).getMillis()));
-        rw.append(new Quote().setSym("IMO-4").setTimestamp(Dates.utc(2013, 2, 10, 16, 0).getMillis()));
+        rw.append(new Quote().setSym("IMO-3").setTimestamp(Dates2.toMillis(2013, 2, 10, 15, 0)));
+        rw.append(new Quote().setSym("IMO-4").setTimestamp(Dates2.toMillis(2013, 2, 10, 16, 0)));
 
         // check that size didn't change before we call refresh
         Assert.assertEquals(4, r.size());
@@ -74,8 +75,8 @@ public class JournalRefreshTest extends AbstractTest {
         Assert.assertEquals(6, r.size());
 
         List<Quote> data = new ArrayList<>();
-        data.add(new Quote().setSym("IMO-5").setTimestamp(Dates.utc(2013, 3, 10, 15, 0).getMillis()));
-        data.add(new Quote().setSym("IMO-6").setTimestamp(Dates.utc(2013, 3, 10, 16, 0).getMillis()));
+        data.add(new Quote().setSym("IMO-5").setTimestamp(Dates2.toMillis(2013, 3, 10, 15, 0)));
+        data.add(new Quote().setSym("IMO-6").setTimestamp(Dates2.toMillis(2013, 3, 10, 16, 0)));
         rw.mergeAppend(data);
 
         rw.commit();

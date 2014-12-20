@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ package com.nfsdb.journal;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.locks.Lock;
 import com.nfsdb.journal.locks.LockManager;
-import org.joda.time.Interval;
+import com.nfsdb.journal.utils.Interval;
 
 import java.io.File;
 

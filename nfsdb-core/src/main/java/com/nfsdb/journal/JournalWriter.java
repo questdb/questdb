@@ -32,11 +32,7 @@ import com.nfsdb.journal.locks.Lock;
 import com.nfsdb.journal.locks.LockManager;
 import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.tx.*;
-import com.nfsdb.journal.utils.Dates;
-import com.nfsdb.journal.utils.Files;
-import com.nfsdb.journal.utils.PeekingListIterator;
-import com.nfsdb.journal.utils.Rows;
-import org.joda.time.Interval;
+import com.nfsdb.journal.utils.*;
 
 import java.io.File;
 import java.io.FileFilter;
@@ -674,7 +670,7 @@ public class JournalWriter<T> extends Journal<T> {
         if (interval == null) {
             appendTimestampHi = Long.MAX_VALUE;
         } else {
-            appendTimestampHi = interval.getEndMillis();
+            appendTimestampHi = interval.getHi();
         }
 
         if (computeTimestampLo) {
@@ -684,7 +680,7 @@ public class JournalWriter<T> extends Journal<T> {
                 appendTimestampLo = column.getLong(sz - 1);
             }
         } else {
-            appendTimestampLo = appendPartition.getInterval().getStartMillis();
+            appendTimestampLo = appendPartition.getInterval().getLo();
         }
     }
 
@@ -733,7 +729,7 @@ public class JournalWriter<T> extends Journal<T> {
         tx.command = command;
         tx.prevTxAddress = txLog.getTxAddress();
         tx.journalMaxRowID = partition == null ? 0 : Rows.toRowID(partition.getPartitionIndex(), partition.size());
-        tx.lastPartitionTimestamp = partition == null || partition.getInterval() == null ? 0 : partition.getInterval().getStartMillis();
+        tx.lastPartitionTimestamp = partition == null || partition.getInterval() == null ? 0 : partition.getInterval().getLo();
         tx.lagSize = lag == null ? 0 : lag.open().size();
         tx.lagName = lag == null ? null : lag.getName();
         tx.symbolTableSizes = new int[getSymbolTableCount()];

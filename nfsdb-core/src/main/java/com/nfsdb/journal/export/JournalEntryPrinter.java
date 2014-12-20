@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,8 +21,6 @@ import com.nfsdb.journal.lang.cst.EntrySource;
 import com.nfsdb.journal.lang.cst.JournalEntry;
 import com.nfsdb.journal.utils.Dates2;
 import com.nfsdb.journal.utils.Numbers;
-
-import java.io.IOException;
 
 public class JournalEntryPrinter {
     private final boolean enabled;
@@ -75,7 +73,7 @@ public class JournalEntryPrinter {
         }
     }
 
-    public void print(EntrySource src) throws IOException {
+    public void print(EntrySource src) {
         if (!enabled) {
             return;
         }

@@ -150,7 +150,7 @@ public class ModelGenerationTest extends AbstractTest {
         }
         aw.commit();
 
-        pcn = (albumCount / 100) * (rnd.nextPositiveInt() % 100);
+        //pcn = (albumCount / 100) * (rnd.nextPositiveInt() % 100);
 
 //        Partition ap = w2.getLastPartition();
 //        Partition bp = bw.getLastPartition();

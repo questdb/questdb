@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,14 +16,9 @@
 
 package com.nfsdb.journal;
 
-import org.joda.time.Interval;
+import com.nfsdb.journal.utils.Interval;
 
 public abstract class OrderedResultSetBuilder<T> extends AbstractResultSetBuilder<T, OrderedResultSet<T>> {
-
-    @Override
-    public OrderedResultSet<T> getResult() {
-        return new OrderedResultSet<>(journal, result);
-    }
 
     protected OrderedResultSetBuilder(Interval interval) {
         super(interval);
@@ -31,5 +26,10 @@ public abstract class OrderedResultSetBuilder<T> extends AbstractResultSetBuilde
 
     protected OrderedResultSetBuilder() {
         super();
+    }
+
+    @Override
+    public OrderedResultSet<T> getResult() {
+        return new OrderedResultSet<>(journal, result);
     }
 }

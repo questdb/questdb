@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 
 package com.nfsdb.journal;
 
-import com.nfsdb.journal.test.tools.TestCharSink;
+import com.nfsdb.journal.export.StringSink;
 import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Dates2;
 import org.junit.Assert;
@@ -25,7 +25,7 @@ import org.junit.Test;
 
 public class Dates2Test {
 
-    private final TestCharSink sink = new TestCharSink();
+    private final StringSink sink = new StringSink();
 
     @Before
     public void setUp() throws Exception {
@@ -37,7 +37,7 @@ public class Dates2Test {
         assertTrue("2014-11-30T12:34:55.332Z");
         assertTrue("2008-03-15T11:22:30.500Z");
         assertTrue("1917-10-01T11:22:30.500Z");
-        assertTrue("900-01-01T01:02:00.005Z");
+        assertTrue("0900-01-01T01:02:00.005Z");
     }
 
     @Test

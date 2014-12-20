@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,8 +23,8 @@ import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.utils.Dates;
+import com.nfsdb.journal.utils.Dates2;
 import com.nfsdb.journal.utils.Files;
-import org.joda.time.DateTime;
 import org.nfsdb.examples.model.Quote;
 import org.nfsdb.examples.support.QuoteGenerator;
 
@@ -59,8 +59,8 @@ public class IntervalExample {
                 int count = 0;
                 long t = System.nanoTime();
 
-                DateTime lo = Dates.utc().plusDays(10);
-                DateTime hi = lo.plusDays(10);
+                long lo = Dates2.addDays(System.currentTimeMillis(), 10);
+                long hi = Dates2.addDays(lo, 10);
 
                 // iterate the interval between lo and hi millis.
                 for (Quote q : journal.query().all().iterator(Dates.interval(lo, hi))) {

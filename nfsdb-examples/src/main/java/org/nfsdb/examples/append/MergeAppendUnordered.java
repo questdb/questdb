@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,9 +20,7 @@ import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Files;
-import org.joda.time.DateTime;
 import org.nfsdb.examples.model.Quote;
 
 import java.io.File;
@@ -76,8 +74,7 @@ public class MergeAppendUnordered {
                     batch.add(new Quote());
                 }
 
-                DateTime utc = Dates.utc();
-
+                long utc = System.currentTimeMillis();
                 long t = System.nanoTime();
                 for (int i = 0; i < batchCount; i++) {
 
@@ -93,7 +90,7 @@ public class MergeAppendUnordered {
                         q.setBidSize(Math.abs(r.nextInt() % 10000));
                         q.setEx("LXE");
                         q.setMode("Fast trading");
-                        long timestamp = utc.plusSeconds(i * batchSize + (batchSize - k)).getMillis();
+                        long timestamp = utc + (i * batchSize + (batchSize - k)) * 1000L;
                         // make batches overlap (subtract 10 seconds)
                         timestamp -= 100000000L;
                         q.setTimestamp(timestamp);

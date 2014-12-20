@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.test.tools;
+package com.nfsdb.journal.export;
 
-import com.nfsdb.journal.export.CharSink;
+import org.jetbrains.annotations.NotNull;
 
-public class TestCharSink implements CharSink {
+public class StringSink implements CharSink, CharSequence {
     private final StringBuilder builder = new StringBuilder();
 
     @Override
@@ -37,6 +37,7 @@ public class TestCharSink implements CharSink {
     public void flush() {
     }
 
+    @NotNull
     @Override
     public String toString() {
         return builder.toString();
@@ -44,5 +45,20 @@ public class TestCharSink implements CharSink {
 
     public void clear() {
         builder.setLength(0);
+    }
+
+    @Override
+    public int length() {
+        return builder.length();
+    }
+
+    @Override
+    public char charAt(int index) {
+        return builder.charAt(index);
+    }
+
+    @Override
+    public CharSequence subSequence(int lo, int hi) {
+        return builder.subSequence(lo, hi);
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ import com.nfsdb.journal.query.api.QueryHeadBuilder;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestUtils;
 import com.nfsdb.journal.utils.Dates;
-import org.joda.time.Interval;
+import com.nfsdb.journal.utils.Interval;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;

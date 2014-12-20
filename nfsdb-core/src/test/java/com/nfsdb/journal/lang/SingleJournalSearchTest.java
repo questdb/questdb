@@ -18,6 +18,7 @@ package com.nfsdb.journal.lang;
 
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.export.JournalEntryPrinter;
+import com.nfsdb.journal.export.StringSink;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.lang.cst.EntrySource;
 import com.nfsdb.journal.lang.cst.RowSource;
@@ -37,7 +38,6 @@ import com.nfsdb.journal.model.Album;
 import com.nfsdb.journal.model.Band;
 import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.test.tools.JournalTestFactory;
-import com.nfsdb.journal.test.tools.TestCharSink;
 import com.nfsdb.journal.test.tools.TestData;
 import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Files;
@@ -74,7 +74,7 @@ public class SingleJournalSearchTest {
     );
     //private static final JournalEntryPrinter out = new JournalEntryPrinter(System.out, true);
     private static JournalWriter<Quote> journal;
-    private final TestCharSink sink = new TestCharSink();
+    private final StringSink sink = new StringSink();
 
     @BeforeClass
     public static void setUp() throws Exception {

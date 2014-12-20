@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,15 +19,13 @@ package org.nfsdb.examples.reporting;
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalException;
+import com.nfsdb.journal.export.StringSink;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.printer.JournalPrinter;
 import com.nfsdb.journal.printer.appender.StdOutAppender;
 import com.nfsdb.journal.query.api.QueryAllBuilder;
-import com.nfsdb.journal.utils.Dates;
+import com.nfsdb.journal.utils.Dates2;
 import com.nfsdb.journal.utils.Files;
-import org.joda.time.DateTime;
-import org.joda.time.DateTimeField;
-import org.joda.time.chrono.ISOChronology;
 import org.nfsdb.examples.model.ModelConfiguration;
 import org.nfsdb.examples.model.Quote;
 import org.nfsdb.examples.support.QuoteGenerator;
@@ -66,17 +64,17 @@ public class DailyPriceAverageExample {
                 final String symbol = "BP.L";
                 // create query builder to search for all records with key (sym) = "BP.L"
                 final QueryAllBuilder<Quote> builder = journal.query().all().withKeys(symbol);
-                final DateTimeField dayOfYear = ISOChronology.getInstanceUTC().dayOfYear();
 
                 // state
-                int previousDay = -1;
+                long previousDay = -1;
                 double avgSum = 0;
                 int avgCount = 0;
+                StringSink sink = new StringSink();
 
                 try (JournalPrinter printer = new JournalPrinter()) {
 
                     // tell printer the types of objects we'll be producing
-                    printer.types(String.class, DateTime.class, double.class);
+                    printer.types(String.class, String.class, double.class);
                     // add fields to out output
                     // in this example we are using scalar values, so we have same number of fields as there are types.
                     // fields not declared here won't be printed.
@@ -91,10 +89,12 @@ public class DailyPriceAverageExample {
                     // so this loop leverages data order by printing out result when
                     // day of year changes
                     for (Quote q : builder.asResultSet().bufferedIterator()) {
-                        int thisDay = dayOfYear.get(q.getTimestamp());
+                        long thisDay = Dates2.floorDD(q.getTimestamp());
                         if (thisDay != previousDay) {
                             if (previousDay != -1) {
-                                printer.out(symbol, Dates.utc().withDayOfYear(previousDay).withHourOfDay(0).withMinuteOfHour(0).withSecondOfMinute(0).withMillisOfSecond(0), avgSum / avgCount);
+                                Dates2.appendCalDate1(sink, previousDay);
+                                printer.out(symbol, sink.toString(), avgSum / avgCount);
+                                sink.clear();
                             }
                             avgCount = 1;
                             avgSum = q.getTimestamp();
@@ -107,7 +107,8 @@ public class DailyPriceAverageExample {
                     }
 
                     if (previousDay != -1) {
-                        printer.out(symbol, Dates.utc().withDayOfYear(previousDay).withHourOfDay(0).withMinuteOfHour(0).withSecondOfMinute(0).withMillisOfSecond(0), avgSum / avgCount);
+                        Dates2.appendCalDate1(sink, previousDay);
+                        printer.out(symbol, sink.toString(), avgSum / avgCount);
                     }
                 }
                 System.out.println("Read " + count + " records in " + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t) + "ms");

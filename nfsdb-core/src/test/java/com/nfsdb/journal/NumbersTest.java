@@ -16,7 +16,7 @@
 
 package com.nfsdb.journal;
 
-import com.nfsdb.journal.test.tools.TestCharSink;
+import com.nfsdb.journal.export.StringSink;
 import com.nfsdb.journal.utils.Numbers;
 import com.nfsdb.journal.utils.Rnd;
 import org.junit.Assert;
@@ -25,7 +25,7 @@ import org.junit.Test;
 
 public class NumbersTest {
 
-    private final TestCharSink sink = new TestCharSink();
+    private final StringSink sink = new StringSink();
     
     private Rnd rnd;
 

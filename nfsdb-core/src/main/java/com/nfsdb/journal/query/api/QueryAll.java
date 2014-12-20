@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ import com.nfsdb.journal.iterators.ConcurrentIterator;
 import com.nfsdb.journal.iterators.JournalIterator;
 import com.nfsdb.journal.iterators.JournalPeekingIterator;
 import com.nfsdb.journal.iterators.JournalRowBufferedIterator;
-import org.joda.time.Interval;
+import com.nfsdb.journal.utils.Interval;
 
 public interface QueryAll<T> extends Iterable<T> {
 

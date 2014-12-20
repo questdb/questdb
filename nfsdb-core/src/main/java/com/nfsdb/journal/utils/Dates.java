@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,25 +18,17 @@ package com.nfsdb.journal.utils;
 
 import com.nfsdb.journal.PartitionType;
 import com.nfsdb.journal.exceptions.JournalUnsupportedTypeException;
-import org.joda.time.DateTime;
-import org.joda.time.DateTimeZone;
-import org.joda.time.Interval;
+import com.nfsdb.journal.export.StringSink;
 
 public final class Dates {
 
     private Dates() {
     } // Prevent construction.
 
-    public static DateTime utc(int year, int month, int day, int hour, int minute) {
-        return new DateTime(year, month, day, hour, minute, DateTimeZone.UTC);
-    }
-
     public static String toString(long millis) {
-        return utc(millis).toString();
-    }
-
-    public static DateTime utc(long millis) {
-        return new DateTime(millis, DateTimeZone.UTC);
+        StringSink sink = new StringSink();
+        Dates2.appendDateTime(sink, millis);
+        return sink.toString();
     }
 
     public static Interval interval(String start, String end) {
@@ -45,27 +37,19 @@ public final class Dates {
 
     public static Interval interval(long start, long end) {
         if (end < start) {
-            return new Interval(end, start, DateTimeZone.UTC);
+            return new Interval(end, start);
         } else {
-            return new Interval(start, end, DateTimeZone.UTC);
+            return new Interval(start, end);
         }
     }
 
     public static long toMillis(String date) {
-        return new DateTime(date, DateTimeZone.UTC).getMillis();
-    }
-
-    public static Interval interval(DateTime start, DateTime end) {
-        return interval(start.getMillis(), end.getMillis());
+        return Dates2.parseDateTime(date);
     }
 
     public static Interval lastMonth() {
         long millis = System.currentTimeMillis();
         return new Interval(millis - 30 * Dates2.DAY_MILLIS, millis);
-    }
-
-    public static DateTime utc() {
-        return DateTime.now(DateTimeZone.UTC);
     }
 
     public static Interval intervalForDirName(String name, PartitionType partitionType) {
@@ -78,7 +62,7 @@ public final class Dates {
                 return intervalForDate(Dates2.parseDateTime(name + "T00:00:00.000Z"), partitionType);
             case NONE:
                 if ("default".equals(name)) {
-                    return new Interval(0, Long.MAX_VALUE, DateTimeZone.UTC);
+                    return new Interval(0, Long.MAX_VALUE);
                 }
             default:
                 throw new JournalUnsupportedTypeException(partitionType);
@@ -88,26 +72,30 @@ public final class Dates {
     public static Interval intervalForDate(long timestamp, PartitionType partitionType) {
         switch (partitionType) {
             case NONE:
-                return new Interval(0, Long.MAX_VALUE, DateTimeZone.UTC);
+                return new Interval(0, Long.MAX_VALUE);
             default:
                 long lo = intervalStart(timestamp, partitionType);
                 long hi = intervalEnd(lo, partitionType);
-                return new Interval(lo, hi, DateTimeZone.UTC);
+                return new Interval(lo, hi);
         }
     }
 
     public static String dirNameForIntervalStart(Interval interval, PartitionType partitionType) {
+        StringSink sink = new StringSink();
         switch (partitionType) {
             case YEAR:
-                return interval.getStart().toString("YYYY");
+                Dates2.appendYear(sink, interval.getLo());
+                break;
             case MONTH:
-                return interval.getStart().toString("YYYY-MM");
+                Dates2.appendCalDate2(sink, interval.getLo());
+                break;
             case DAY:
-                return interval.getStart().toString("YYYY-MM-dd");
+                Dates2.appendCalDate1(sink, interval.getLo());
+                break;
             case NONE:
                 return "default";
         }
-        return "";
+        return sink.toString();
     }
 
     private static long intervalStart(long timestamp, PartitionType partitionType) {

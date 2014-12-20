@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,10 +37,7 @@ import com.nfsdb.journal.query.api.Query;
 import com.nfsdb.journal.query.spi.QueryImpl;
 import com.nfsdb.journal.tx.Tx;
 import com.nfsdb.journal.tx.TxLog;
-import com.nfsdb.journal.utils.Dates;
-import com.nfsdb.journal.utils.Rows;
-import com.nfsdb.journal.utils.Unsafe;
-import org.joda.time.Interval;
+import com.nfsdb.journal.utils.*;
 
 import java.io.Closeable;
 import java.io.File;
@@ -579,7 +576,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         if (getMetadata().getPartitionType() != PartitionType.NONE) {
             if (nonLagPartitionCount() > 0) {
                 Interval lastPartitionInterval = partitions.get(nonLagPartitionCount() - 1).getInterval();
-                interval = new Interval(lastPartitionInterval.getStart(), lastPartitionInterval.getEnd().plusHours(lag));
+                interval = new Interval(lastPartitionInterval.getLo(), Dates2.addHours(lastPartitionInterval.getHi(), lag));
             } else {
                 interval = Dates.intervalForDate(System.currentTimeMillis(), getMetadata().getPartitionType());
             }

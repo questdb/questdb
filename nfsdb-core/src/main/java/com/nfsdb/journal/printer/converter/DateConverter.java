@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,22 +16,16 @@
 
 package com.nfsdb.journal.printer.converter;
 
+import com.nfsdb.journal.export.StringSink;
 import com.nfsdb.journal.printer.JournalPrinter;
+import com.nfsdb.journal.utils.Dates2;
 import com.nfsdb.journal.utils.Unsafe;
-import org.joda.time.format.DateTimeFormatter;
-import org.joda.time.format.ISODateTimeFormat;
 
 public class DateConverter extends AbstractConverter {
-    private final DateTimeFormatter dateTimeFormatter;
+    private final StringSink sink = new StringSink();
 
     public DateConverter(JournalPrinter printer) {
         super(printer);
-        this.dateTimeFormatter = ISODateTimeFormat.dateTime().withZoneUTC();
-    }
-
-    public DateConverter(JournalPrinter printer, DateTimeFormatter dateTimeFormatter) {
-        super(printer);
-        this.dateTimeFormatter = dateTimeFormatter;
     }
 
     @Override
@@ -40,7 +34,9 @@ public class DateConverter extends AbstractConverter {
         if (millis == 0) {
             stringBuilder.append(getPrinter().getNullString());
         } else {
-            stringBuilder.append(dateTimeFormatter.print(millis));
+            Dates2.appendDateTime(sink, millis);
+            stringBuilder.append(sink);
+            sink.clear();
         }
     }
 }
