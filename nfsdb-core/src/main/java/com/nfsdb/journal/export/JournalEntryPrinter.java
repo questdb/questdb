@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,12 +33,12 @@ public class JournalEntryPrinter {
         this.enabled = enabled;
     }
 
-    public void print(JournalEntry e) throws IOException {
+    public void print(JournalEntry e) {
         for (int i = 0, sz = e.partition.getJournal().getMetadata().getColumnCount(); i < sz; i++) {
             ColumnMetadata m = e.partition.getJournal().getMetadata().getColumnMetadata(i);
             switch (m.type) {
                 case DATE:
-                    Dates2.appendDateISO(sink, e.getLong(i));
+                    Dates2.appendDateTime(sink, e.getLong(i));
                     break;
                 case DOUBLE:
                     Numbers.append(sink, e.getDouble(i), 12);

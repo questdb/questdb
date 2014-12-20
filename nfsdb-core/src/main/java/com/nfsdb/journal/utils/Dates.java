@@ -17,13 +17,15 @@
 package com.nfsdb.journal.utils;
 
 import com.nfsdb.journal.PartitionType;
-import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.exceptions.JournalUnsupportedTypeException;
 import org.joda.time.DateTime;
 import org.joda.time.DateTimeZone;
 import org.joda.time.Interval;
 
 public final class Dates {
+
+    private Dates() {
+    } // Prevent construction.
 
     public static DateTime utc(int year, int month, int day, int hour, int minute) {
         return new DateTime(year, month, day, hour, minute, DateTimeZone.UTC);
@@ -57,8 +59,9 @@ public final class Dates {
         return interval(start.getMillis(), end.getMillis());
     }
 
-    public static Interval lastMonths(int duration) {
-        return lastMonths(utc(), duration);
+    public static Interval lastMonth() {
+        long millis = System.currentTimeMillis();
+        return new Interval(millis - 30 * Dates2.DAY_MILLIS, millis);
     }
 
     public static DateTime utc() {
@@ -68,11 +71,11 @@ public final class Dates {
     public static Interval intervalForDirName(String name, PartitionType partitionType) {
         switch (partitionType) {
             case YEAR:
-                return intervalForDate(Dates.utc(name + "-01-01T00:00:00.000Z").getMillis(), partitionType);
+                return intervalForDate(Dates2.parseDateTime(name + "-01-01T00:00:00.000Z"), partitionType);
             case MONTH:
-                return intervalForDate(Dates.utc(name + "-01T00:00:00.000Z").getMillis(), partitionType);
+                return intervalForDate(Dates2.parseDateTime(name + "-01T00:00:00.000Z"), partitionType);
             case DAY:
-                return intervalForDate(Dates.utc(name + "T00:00:00.000Z").getMillis(), partitionType);
+                return intervalForDate(Dates2.parseDateTime(name + "T00:00:00.000Z"), partitionType);
             case NONE:
                 if ("default".equals(name)) {
                     return new Interval(0, Long.MAX_VALUE, DateTimeZone.UTC);
@@ -93,10 +96,6 @@ public final class Dates {
         }
     }
 
-    public static DateTime utc(String date) {
-        return new DateTime(date, DateTimeZone.UTC);
-    }
-
     public static String dirNameForIntervalStart(Interval interval, PartitionType partitionType) {
         switch (partitionType) {
             case YEAR:
@@ -111,25 +110,14 @@ public final class Dates {
         return "";
     }
 
-    private Dates() {
-    } // Prevent construction.
-
-    private static Interval lastMonths(DateTime endDateTime, int duration) {
-        if (duration < 1) {
-            throw new JournalRuntimeException("Duration should be >= 1: %d", duration);
-        }
-        DateTime start = endDateTime.minusMonths(duration);
-        return new Interval(start, endDateTime);
-    }
-
     private static long intervalStart(long timestamp, PartitionType partitionType) {
         switch (partitionType) {
             case YEAR:
-                return Dates.utc(timestamp).withMonthOfYear(1).withDayOfMonth(1).withTimeAtStartOfDay().getMillis();
+                return Dates2.floorYYYY(timestamp);
             case MONTH:
-                return Dates.utc(timestamp).withDayOfMonth(1).withTimeAtStartOfDay().getMillis();
+                return Dates2.floorMM(timestamp);
             case DAY:
-                return Dates.utc(timestamp).withTimeAtStartOfDay().getMillis();
+                return Dates2.floorDD(timestamp);
         }
         return 0;
     }
@@ -137,11 +125,11 @@ public final class Dates {
     private static long intervalEnd(long start, PartitionType partitionType) {
         switch (partitionType) {
             case YEAR:
-                return Dates.utc(start).plusYears(1).getMillis() - 1;
+                return Dates2.ceilYYYY(start);
             case MONTH:
-                return Dates.utc(start).plusMonths(1).getMillis() - 1;
+                return Dates2.ceilMM(start);
             case DAY:
-                return Dates.utc(start).plusDays(1).getMillis() - 1;
+                return Dates2.ceilDD(start);
         }
         return 0;
     }

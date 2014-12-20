@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -402,24 +402,29 @@ public class Numbers {
     }
 
     public static int parseInt(CharSequence sequence) {
-        int len = sequence.length();
+        return parseInt(sequence, 0, sequence.length());
+    }
 
-        if (len == 0) {
+    public static int parseInt(CharSequence sequence, int p, int lim) {
+
+        if (lim == p) {
             throw new NumberFormatException("empty string");
         }
 
-        boolean negative = sequence.charAt(0) == '-';
-        int pos = negative ? 1 : 0;
+        boolean negative = sequence.charAt(p) == '-';
+        if (negative) {
+            p++;
+        }
 
-        if (pos >= len) {
+        if (p >= lim) {
             throw new NumberFormatException("Expect some numbers after sign");
         }
 
         int val = 0;
-        for (; pos < len; pos++) {
-            int c = sequence.charAt(pos);
+        for (; p < lim; p++) {
+            int c = sequence.charAt(p);
             if (c < '0' || c > '9') {
-                throw new NumberFormatException("Illegal character at " + pos);
+                throw new NumberFormatException("Illegal character at " + p);
             }
             // val * 10 + (c - '0')
             int r = (val << 3) + (val << 1) + (c - '0');

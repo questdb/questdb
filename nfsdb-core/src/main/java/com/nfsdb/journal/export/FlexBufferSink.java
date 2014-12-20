@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,8 +23,8 @@ import java.nio.ByteBuffer;
 import java.nio.channels.WritableByteChannel;
 
 public class FlexBufferSink implements CharSink {
+    private final WritableByteChannel channel;
     private ByteBuffer buffer;
-    private WritableByteChannel channel;
     private int capacity = 1024;
 
     public FlexBufferSink(WritableByteChannel channel) {

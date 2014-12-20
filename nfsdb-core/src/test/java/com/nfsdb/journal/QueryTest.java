@@ -27,7 +27,6 @@ import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestData;
 import com.nfsdb.journal.test.tools.TestUtils;
 import com.nfsdb.journal.utils.Dates;
-import org.joda.time.DateTime;
 import org.joda.time.Interval;
 import org.junit.Assert;
 import org.junit.Before;
@@ -495,7 +494,7 @@ public class QueryTest extends AbstractTest {
     @Test
     public void testLatestByKeyWithinMonths() throws Exception {
         Query<Quote> q = advanceTestData();
-        UnorderedResultSet<Quote> rs = q.getJournal().query().head().withKeys().limit(Dates.lastMonths(1)).asResultSet();
+        UnorderedResultSet<Quote> rs = q.getJournal().query().head().withKeys().limit(Dates.lastMonth()).asResultSet();
         Assert.assertEquals(10, rs.size());
     }
 
@@ -614,12 +613,12 @@ public class QueryTest extends AbstractTest {
 
     @Test
     public void testFindWithSearchSymbols() throws JournalException {
-        final DateTime now = Dates.utc();
+        final long millis = System.currentTimeMillis();
 
-        Quote q1 = new Quote().setSym("S1").setEx("EX1").setTimestamp(now.getMillis());
-        Quote q2 = new Quote().setSym("S2").setEx("EX1").setTimestamp(now.getMillis());
-        Quote q3 = new Quote().setSym("S3").setEx("EX1").setTimestamp(now.getMillis());
-        Quote q4 = new Quote().setSym("S4").setEx("EX3").setTimestamp(now.getMillis());
+        Quote q1 = new Quote().setSym("S1").setEx("EX1").setTimestamp(millis);
+        Quote q2 = new Quote().setSym("S2").setEx("EX1").setTimestamp(millis);
+        Quote q3 = new Quote().setSym("S3").setEx("EX1").setTimestamp(millis);
+        Quote q4 = new Quote().setSym("S4").setEx("EX3").setTimestamp(millis);
 
         w.append(q1, q2, q3, q4);
 

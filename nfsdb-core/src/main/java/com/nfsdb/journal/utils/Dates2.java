@@ -1,4 +1,20 @@
 /*
+ * Copyright (c) 2014. Vlad Ilyushchenko
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package com.nfsdb.journal.utils;/*
  * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,11 +30,10 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.utils;
 
 import com.nfsdb.journal.export.CharSink;
 
-public class Dates2 {
+final public class Dates2 {
 
     public static final long DAY_MILLIS = 86400000L;
     public static final long AVG_YEAR_MILLIS = (long) (365.25 * DAY_MILLIS);
@@ -46,13 +61,20 @@ public class Dates2 {
         for (int i = 0; i < 11; i++) {
             minSum += DAYS_PER_MONTH[i] * DAY_MILLIS;
             MIN_MONTH_OF_YEAR_MILLIS[i + 1] = minSum;
-            maxSum += (i == 1 ? 29 : DAYS_PER_MONTH[i]) * DAY_MILLIS;
+            maxSum += getDaysPerMonth(i + 1, true) * DAY_MILLIS;
             MAX_MONTH_OF_YEAR_MILLIS[i + 1] = maxSum;
         }
     }
 
+    private Dates2() {
+    }
+
     public static boolean isLeapYear(int year) {
         return ((year & 3) == 0) && ((year % 100) != 0 || (year % 400) == 0);
+    }
+
+    public static int getDaysPerMonth(int m, boolean leap) {
+        return leap & m == 2 ? 29 : DAYS_PER_MONTH[m - 1];
     }
 
     public static long yearMillis(int year, boolean leap) {
@@ -154,7 +176,8 @@ public class Dates2 {
         }
     }
 
-    public static void appendDateISO(CharSink sink, long millis) {
+    // YYYY-MM-DDThh:mm:ss.mmmmZ
+    public static void appendDateTime(CharSink sink, long millis) {
         int y = getYear(millis);
         boolean l = isLeapYear(y);
         int m = getMonthOfYear(millis, y, l);
@@ -176,6 +199,34 @@ public class Dates2 {
         sink.put("Z");
     }
 
+    // YYYY-MM-DD
+    public static void appendCalDate1(CharSink sink, long millis) {
+        int y = getYear(millis);
+        boolean l = isLeapYear(y);
+        int m = getMonthOfYear(millis, y, l);
+        Numbers.append(sink, y);
+        append0(sink.put('-'), m);
+        append0(sink.put('-'), getDayOfMonth(millis, y, m, l));
+    }
+
+    // YYYY-MM
+    public static void appendCalDate2(CharSink sink, long millis) {
+        int y = getYear(millis);
+        int m = getMonthOfYear(millis, y, isLeapYear(y));
+        Numbers.append(sink, y);
+        append0(sink.put('-'), m);
+    }
+
+    // YYYYMMDD
+    public static void appendCalDate3(CharSink sink, long millis) {
+        int y = getYear(millis);
+        boolean l = isLeapYear(y);
+        int m = getMonthOfYear(millis, y, l);
+        Numbers.append(sink, y);
+        append0(sink, m);
+        append0(sink, getDayOfMonth(millis, y, m, l));
+    }
+
     private static CharSink append0(CharSink sink, int x) {
         if (x < 10) {
             sink.put('0');
@@ -183,4 +234,171 @@ public class Dates2 {
         Numbers.append(sink, x);
         return sink;
     }
+
+    private static void checkChar(CharSequence s, int p, char c) {
+        if (s.charAt(p) != c) {
+            throw new NumberFormatException("Expected " + c + " at " + p);
+        }
+    }
+
+    private static void checkRange(int x, int min, int max, String what) {
+        if (x < min || x > max) {
+            throw new NumberFormatException(what + " not in range: " + x);
+        }
+    }
+
+    // YYYY-MM-DDThh:mm:ss.mmm
+    public static long parseDateTime(CharSequence seq) {
+        int p = 0;
+        int year = Numbers.parseInt(seq, p, p += 4);
+        checkChar(seq, p++, '-');
+        int month = Numbers.parseInt(seq, p, p += 2);
+        checkRange(month, 1, 12, "Month");
+        checkChar(seq, p++, '-');
+        boolean l = isLeapYear(year);
+        int day = Numbers.parseInt(seq, p, p += 2);
+        checkRange(day, 1, getDaysPerMonth(month, l), "Day");
+        checkChar(seq, p++, 'T');
+        int hour = Numbers.parseInt(seq, p, p += 2);
+        checkRange(hour, 0, 23, "Hour");
+        checkChar(seq, p++, ':');
+        int min = Numbers.parseInt(seq, p, p += 2);
+        checkRange(min, 0, 59, "Minute");
+        checkChar(seq, p++, ':');
+        int sec = Numbers.parseInt(seq, p, p += 2);
+        checkRange(sec, 0, 59, "Second");
+        checkChar(seq, p++, '.');
+        int mil = Numbers.parseInt(seq, p, p += 3);
+        checkRange(mil, 0, 999, "Millis");
+
+        if (p < seq.length()) {
+            checkChar(seq, p, 'Z');
+        }
+
+        return yearMillis(year, l)
+                + monthOfYearMillis(month, l)
+                + (day - 1) * DAY_MILLIS
+                + hour * HOUR_MILLIS
+                + min * MINUTE_MILLIS
+                + sec * SECOND_MILLIS
+                + mil;
+    }
+
+    public static long floorYYYY(long millis) {
+        int y;
+        return yearMillis(y = getYear(millis), isLeapYear(y));
+    }
+
+    public static long floorMM(long millis) {
+        int y;
+        boolean l;
+        return yearMillis(y = getYear(millis), l = isLeapYear(y)) + monthOfYearMillis(getMonthOfYear(millis, y, l), l);
+    }
+
+    public static long floorDD(long millis) {
+        return millis - getTime(millis);
+    }
+
+    public static long floorHH(long millis) {
+        return millis - millis % HOUR_MILLIS;
+    }
+
+    public static long ceilYYYY(long millis) {
+        int y;
+        boolean l;
+        return yearMillis(y = getYear(millis), l = isLeapYear(y))
+                + monthOfYearMillis(12, l)
+                + (DAYS_PER_MONTH[11] - 1) * DAY_MILLIS
+                + 23 * HOUR_MILLIS
+                + 59 * MINUTE_MILLIS
+                + 59 * SECOND_MILLIS
+                + 999L;
+    }
+
+    public static long ceilMM(long millis) {
+        int y, m;
+        boolean l;
+        return yearMillis(y = getYear(millis), l = isLeapYear(y))
+                + monthOfYearMillis(m = getMonthOfYear(millis, y, l), l)
+                + (getDaysPerMonth(m, l) - 1) * DAY_MILLIS
+                + 23 * HOUR_MILLIS
+                + 59 * MINUTE_MILLIS
+                + 59 * SECOND_MILLIS
+                + 999L
+                ;
+    }
+
+    public static long ceilDD(long millis) {
+        int y, m;
+        boolean l;
+        return yearMillis(y = getYear(millis), l = isLeapYear(y))
+                + monthOfYearMillis(m = getMonthOfYear(millis, y, l), l)
+                + (getDayOfMonth(millis, y, m, l) - 1) * DAY_MILLIS
+                + 23 * HOUR_MILLIS
+                + 59 * MINUTE_MILLIS
+                + 59 * SECOND_MILLIS
+                + 999L
+                ;
+    }
+
+    public static long getDate(int y, int m, int d) {
+        boolean l = isLeapYear(y);
+        return yearMillis(y, l) + monthOfYearMillis(m, l) + (d - 1) * DAY_MILLIS;
+    }
+
+    public static long getTime(long millis) {
+        return millis < 0 ? DAY_MILLIS - 1 + (millis % DAY_MILLIS) : millis % DAY_MILLIS;
+    }
+
+    public static long addMonths(final long millis, int months) {
+        if (months == 0) {
+            return millis;
+        }
+        boolean l;
+        int y = getYear(millis);
+        int m = getMonthOfYear(millis, y, l = isLeapYear(y));
+        int _y;
+        int _m = m - 1 + months;
+        if (_m >= 0) {
+            _y = y + _m / 12;
+            _m = (_m % 12) + 1;
+        } else {
+            _y = y + _m / 12 - 1;
+            _m = -_m % 12;
+            if (_m == 0) {
+                _m = 12;
+            }
+            _m = 12 - _m + 1;
+            if (_m == 1) {
+                _y += 1;
+            }
+        }
+        int _d = getDayOfMonth(millis, y, m, l);
+        int maxDay = getDaysPerMonth(_m, isLeapYear(_y));
+        if (_d > maxDay) {
+            _d = maxDay;
+        }
+        return getDate(_y, _m, _d) + getTime(millis) + (millis < 0 ? 1 : 0);
+    }
+
+    public static long addYear(long millis, int years) {
+        if (years == 0) {
+            return millis;
+        }
+
+        int y, m;
+        boolean l;
+
+        return yearMillis((y = getYear(millis)) + years, l = isLeapYear(y + years))
+                + monthOfYearMillis(m = getMonthOfYear(millis, y, l), l)
+                + (getDayOfMonth(millis, y, m, l) - 1) * DAY_MILLIS
+                + getTime(millis)
+                + (millis < 0 ? 1 : 0);
+
+    }
+
+    public static long addDays(long millis, int days) {
+        return millis + days * DAY_MILLIS;
+    }
+
 }
