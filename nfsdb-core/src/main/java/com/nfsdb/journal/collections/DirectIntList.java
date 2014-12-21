@@ -19,6 +19,7 @@ package com.nfsdb.journal.collections;
 import com.nfsdb.journal.utils.Unsafe;
 
 public class DirectIntList extends AbstractDirectList {
+
     public DirectIntList() {
         super(2, 10);
     }

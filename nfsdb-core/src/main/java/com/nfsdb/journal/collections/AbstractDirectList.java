@@ -23,6 +23,7 @@ import java.io.Closeable;
 public class AbstractDirectList implements Closeable {
     public static final int CACHE_LINE_SIZE = 64;
     private final int pow2;
+    private final int onePow2;
     protected long pos;
     protected long start;
     protected long limit;
@@ -32,7 +33,8 @@ public class AbstractDirectList implements Closeable {
         this.pow2 = pow2;
         this.address = Unsafe.getUnsafe().allocateMemory((capacity << pow2) + CACHE_LINE_SIZE);
         this.start = this.pos = address + (address & (CACHE_LINE_SIZE - 1));
-        this.limit = pos + (capacity << pow2);
+        this.limit = pos + ((capacity - 1) << pow2);
+        this.onePow2 = (1 << pow2);
     }
 
     public AbstractDirectList(int pow2, AbstractDirectList that) {
@@ -66,8 +68,8 @@ public class AbstractDirectList implements Closeable {
     }
 
     public void addCapacity(long capacity) {
-        if (capacity << pow2 > limit - pos) {
-            extend((int) (((limit - start) >> pow2) + capacity));
+        if (capacity << pow2 > limit - pos + onePow2) {
+            extend((int) (((limit - start + onePow2) >> pow2) + capacity));
         }
     }
 
@@ -76,20 +78,20 @@ public class AbstractDirectList implements Closeable {
     }
 
     protected void ensureCapacity() {
-        if (this.pos >= limit) {
-            extend((int) ((limit - start) >> (pow2 - 1)));
+        if (this.pos > limit) {
+            extend((int) ((limit - start + onePow2) >> (pow2 - 1)));
         }
     }
 
     private void extend(long capacity) {
         long address = Unsafe.getUnsafe().allocateMemory((capacity << pow2) + CACHE_LINE_SIZE);
         long start = address + (address & (CACHE_LINE_SIZE - 1));
-        Unsafe.getUnsafe().copyMemory(this.start, start, limit - this.start);
+        Unsafe.getUnsafe().copyMemory(this.start, start, limit + onePow2 - this.start);
         if (this.address != 0) {
             Unsafe.getUnsafe().freeMemory(this.address);
         }
         this.pos = this.pos - this.start + start;
-        this.limit = start + (capacity << pow2);
+        this.limit = start + ((capacity - 1) << pow2);
         this.address = address;
         this.start = start;
     }
@@ -107,11 +109,11 @@ public class AbstractDirectList implements Closeable {
 
     public void clear() {
         pos = start;
-        Unsafe.getUnsafe().setMemory(start, limit - start, (byte) 0);
+        zero((byte) 0);
     }
 
     public void zero(byte v) {
-        Unsafe.getUnsafe().setMemory(start, limit - start, v);
+        Unsafe.getUnsafe().setMemory(start, limit - start + onePow2, v);
     }
 
     public void close() {

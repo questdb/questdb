@@ -67,7 +67,7 @@ public class DirectLongList extends AbstractDirectList {
     }
 
     public void set(long p, long v) {
-        assert p >= 0 && p < (limit - start) >> 3;
+        assert p >= 0 && p <= (limit - start) >> 3;
         Unsafe.getUnsafe().putLong(start + (p << 3), v);
     }
 
