@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -153,4 +153,75 @@ public class NumbersTest {
         Assert.assertEquals(567963, Numbers.parseInt("567963"));
         Assert.assertEquals(-23346346, Numbers.parseInt("-23346346"));
     }
+
+    @Test
+    public void testParseDouble() throws Exception {
+
+        String s9 = "0.33458980809808359835083490580348503845E203";
+        Assert.assertEquals(Double.parseDouble(s9), Numbers.parseDouble(s9), 0.000000001);
+
+        String s0 = "0.33458980809808359835083490580348503845";
+        Assert.assertEquals(Double.parseDouble(s0), Numbers.parseDouble(s0), 0.000000001);
+
+
+        String s1 = "0.45677888912387699";
+        Assert.assertEquals(Double.parseDouble(s1), Numbers.parseDouble(s1), 0.000000001);
+
+        String s2 = "1.459983E35";
+        Assert.assertEquals(Double.parseDouble(s2) / 1e35d, Numbers.parseDouble(s2) / 1e35d, 0.00001);
+
+
+        String s3 = "0.000000023E-30";
+        Assert.assertEquals(Double.parseDouble(s3), Numbers.parseDouble(s3), 0.000000001);
+
+        String s4 = "0.000000023E-204";
+        Assert.assertEquals(Double.parseDouble(s4), Numbers.parseDouble(s4), 0.000000001);
+
+        String s5 = "0.0000E-204";
+        Assert.assertEquals(Double.parseDouble(s5), Numbers.parseDouble(s5), 0.000000001);
+
+        String s6 = "200E2";
+        Assert.assertEquals(Double.parseDouble(s6), Numbers.parseDouble(s6), 0.000000001);
+
+        String s7 = "NaN";
+        Assert.assertEquals(Double.parseDouble(s7), Numbers.parseDouble(s7), 0.000000001);
+
+        String s8 = "-Infinity";
+        Assert.assertEquals(Double.parseDouble(s8), Numbers.parseDouble(s8), 0.000000001);
+
+    }
+
+    @Test(expected = NumberFormatException.class)
+    public void testParseIntOverflow() throws Exception {
+        String i1 = "12345566787";
+        Numbers.parseInt(i1);
+    }
+
+    @Test
+    public void testParseFloat() throws Exception {
+        String s1 = "0.45677899234";
+        Assert.assertEquals(Float.parseFloat(s1), Numbers.parseFloat(s1), 0.000000001);
+
+        String s2 = "1.459983E35";
+        Assert.assertEquals(Float.parseFloat(s2) / 1e35d, Numbers.parseFloat(s2) / 1e35d, 0.00001);
+
+        String s3 = "0.000000023E-30";
+        Assert.assertEquals(Float.parseFloat(s3), Numbers.parseFloat(s3), 0.000000001);
+
+        String s4 = "0.000000023E-38";
+        Assert.assertEquals(Float.parseFloat(s4), Numbers.parseFloat(s4), 0.000000001);
+
+        String s5 = "0.0000E-204";
+        Assert.assertEquals(Float.parseFloat(s5), Numbers.parseFloat(s5), 0.000000001);
+
+        String s6 = "200E2";
+        Assert.assertEquals(Float.parseFloat(s6), Numbers.parseFloat(s6), 0.000000001);
+
+        String s7 = "NaN";
+        Assert.assertEquals(Float.parseFloat(s7), Numbers.parseFloat(s7), 0.000000001);
+
+        String s8 = "-Infinity";
+        Assert.assertEquals(Float.parseFloat(s8), Numbers.parseFloat(s8), 0.000000001);
+    }
+
 }

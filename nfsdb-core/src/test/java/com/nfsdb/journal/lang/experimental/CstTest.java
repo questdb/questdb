@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,6 +47,7 @@ import com.nfsdb.journal.test.tools.TestUtils;
 import com.nfsdb.journal.utils.Files;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -225,11 +226,12 @@ public class CstTest {
     }
 
     @Test
+    @Ignore
     public void testResample() throws Exception {
         JournalWriter<Quote> w = factory.writer(Quote.class);
         TestUtils.generateQuoteData(w, 100000, System.currentTimeMillis(), 2);
 
-        DirectCompositeKeyIntMap map = new DirectCompositeKeyIntMap();
+        DirectCompositeKeyIntMap map = new DirectCompositeKeyIntMap(null);
 
         int tsIndex = w.getMetadata().getColumnIndex("timestamp");
         int symIndex = w.getMetadata().getColumnIndex("sym");
@@ -245,7 +247,7 @@ public class CstTest {
         }
 
         for (DirectCompositeKeyIntMap.Entry e : map) {
-            System.out.println(e.key.getStr() + "\t" + e.key.getLong() + "\t" + e.value);
+            System.out.println(e.key.getStr(1) + "\t" + e.key.getLong(0) + "\t" + e.value);
         }
 
 

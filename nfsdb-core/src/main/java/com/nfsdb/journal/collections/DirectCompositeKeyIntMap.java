@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.nfsdb.journal.collections;
 
+import com.nfsdb.journal.column.ColumnType;
 import com.nfsdb.journal.utils.Hash;
 import com.nfsdb.journal.utils.Unsafe;
 
@@ -29,6 +30,7 @@ public class DirectCompositeKeyIntMap implements Closeable, Iterable<DirectCompo
     private final Key keyBuilder = new Key();
     private final Entry entry = new Entry();
     private final EntryIterator iterator = new EntryIterator();
+    private final ColumnType[] keyColumnTypes;
     private DirectIntList values;
     private DirectLongList keyOffsets;
     private long kAddress;
@@ -38,11 +40,11 @@ public class DirectCompositeKeyIntMap implements Closeable, Iterable<DirectCompo
     private int free;
     private long keyCapacity;
 
-    public DirectCompositeKeyIntMap() {
-        this(67, 4 * 1024, 0.5d);
+    public DirectCompositeKeyIntMap(ColumnType[] keyColumnTypes) {
+        this(67, 4 * 1024, 0.5d, keyColumnTypes);
     }
 
-    public DirectCompositeKeyIntMap(long capacity, long keyAreaCapacity, double loadFactor) {
+    public DirectCompositeKeyIntMap(long capacity, long keyAreaCapacity, double loadFactor, ColumnType[] keyColumnTypes) {
         this.loadFactor = loadFactor;
         this.kAddress = Unsafe.getUnsafe().allocateMemory(keyAreaCapacity + AbstractDirectList.CACHE_LINE_SIZE);
         this.kStart = kPos = this.kAddress + (this.kAddress & (AbstractDirectList.CACHE_LINE_SIZE - 1));
@@ -54,6 +56,7 @@ public class DirectCompositeKeyIntMap implements Closeable, Iterable<DirectCompo
         this.keyOffsets.zero((byte) -1);
         this.keyOffsets.setPos(keyCapacity);
         this.values = new DirectIntList(keyCapacity);
+        this.keyColumnTypes = keyColumnTypes;
     }
 
     public void put(Key key, int v) {
@@ -218,11 +221,34 @@ public class DirectCompositeKeyIntMap implements Closeable, Iterable<DirectCompo
         }
     }
 
+    /**
+     * Column count is fixed. Key structure:
+     * <p>
+     * len[4] | column2 offset [4] | column 3 offset [4] ... | data1 | data2 ...
+     * </p>
+     * <p/>
+     * To offset of column 0 data skip all of the header information:
+     * <p/>
+     * offset = 4 + columnCount * 4
+     * <p/>
+     * To get offset of column 1 and onwards:
+     * <p/>
+     * offset = 4 + (columnIndex - 1) * 4
+     * <p/>
+     * To get length of column 0:
+     * <p/>
+     * len = column1Offset - 4 - 4 * columnCount
+     * <p/>
+     * To get length of column 1 and onwards:
+     * <p/>
+     * len = column2Offset - column1Offset
+     */
     public class Key {
         private long offset;
         private int len;
         private long rPos;
         private char[] strBuf = null;
+        private long nextColOffset;
 
         private void checkSize(int size) {
             if (kPos + size > kLimit) {
@@ -230,16 +256,15 @@ public class DirectCompositeKeyIntMap implements Closeable, Iterable<DirectCompo
             }
         }
 
-        public long getLong() {
-            long v = Unsafe.getUnsafe().getLong(rPos);
-            rPos += 8;
-            return v;
+        public long getLong(int index) {
+            return Unsafe.getUnsafe().getLong(getColumnAddress(index));
         }
 
         public Key putLong(long value) {
             checkSize(8);
             Unsafe.getUnsafe().putLong(kPos, value);
             kPos += 8;
+            writeOffset();
             return this;
         }
 
@@ -248,28 +273,41 @@ public class DirectCompositeKeyIntMap implements Closeable, Iterable<DirectCompo
             Unsafe.getUnsafe().putInt(kPos, len);
             Unsafe.getUnsafe().copyMemory(address, kPos += 4, len);
             kPos += len;
+            writeOffset();
+        }
+
+        private void writeOffset() {
+            Unsafe.getUnsafe().putInt(nextColOffset, (int) (kPos - offset));
+            nextColOffset += 4;
         }
 
         public Key putStr(CharSequence value) {
             int len = value.length();
-            checkSize(len << 1 + 4);
-            Unsafe.getUnsafe().putInt(kPos, value.length());
-            kPos += 4;
+            checkSize(len << 1);
             for (int i = 0; i < len; i++) {
                 Unsafe.getUnsafe().putChar(kPos + (i << 1), value.charAt(i));
             }
             kPos += len << 1;
+            writeOffset();
+
             return this;
         }
 
-        public String getStr() {
-            int len = Unsafe.getUnsafe().getInt(rPos);
-            rPos += 4;
+        private long getColumnAddress(int index) {
+            if (index == 0) {
+                return rPos + keyColumnTypes.length * 4;
+            } else {
+                return Unsafe.getUnsafe().getInt(rPos + (index - 1) * 4) + offset;
+            }
+        }
+
+        public String getStr(int index) {
+            long address = getColumnAddress(index);
+            int len = (int) (getColumnAddress(index + 1) - address) >> 1;
             if (strBuf == null || strBuf.length < len) {
                 strBuf = new char[len];
             }
-            Unsafe.getUnsafe().copyMemory(null, rPos, strBuf, sun.misc.Unsafe.ARRAY_CHAR_BASE_OFFSET, ((long) len) << 1);
-            rPos += len << 1;
+            Unsafe.getUnsafe().copyMemory(null, address, strBuf, sun.misc.Unsafe.ARRAY_CHAR_BASE_OFFSET, ((long) len) << 1);
             return new String(strBuf);
         }
 
@@ -280,7 +318,8 @@ public class DirectCompositeKeyIntMap implements Closeable, Iterable<DirectCompo
 
         public Key begin() {
             keyBuilder.offset = kPos - kStart;
-            kPos += 4;
+            nextColOffset = kPos + 4;
+            kPos += 4 + 4 * keyColumnTypes.length;
             return this;
         }
     }
