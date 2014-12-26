@@ -126,7 +126,7 @@ public class Numbers {
 
     public static void append(CharSink sink, int i) {
         if (i < 0) {
-            if (i == Integer.MAX_VALUE) {
+            if (i == Integer.MIN_VALUE) {
                 sink.put("-2147483648");
                 return;
             }
@@ -503,7 +503,7 @@ public class Numbers {
     private static float parseFloatConst(CharSequence sequence, int p, int lim, String target, float value) {
 
         if (lim - p > target.length()) {
-            throw new NumberFormatException("String is too long for NaN");
+            throw new NumberFormatException("String is too long for");
         }
 
         for (int i = 0; i < target.length(); i++) {
@@ -523,10 +523,24 @@ public class Numbers {
 
 
     public static int parseInt(CharSequence sequence) {
-        return parseInt(sequence, 0, sequence.length());
+        if (sequence == null) {
+            throw new NumberFormatException("null");
+        }
+
+        return parseInt0(sequence, 0, sequence.length());
     }
 
     public static int parseInt(CharSequence sequence, int p, int lim) {
+        if (sequence == null) {
+            throw new NumberFormatException("null");
+        }
+
+        return parseInt0(sequence, p, lim);
+
+    }
+
+    private static int parseInt0(CharSequence sequence, int p, int lim) {
+
 
         if (lim == p) {
             throw new NumberFormatException("empty string");
@@ -548,14 +562,67 @@ public class Numbers {
                 throw new NumberFormatException("Illegal character at " + p);
             }
             // val * 10 + (c - '0')
-            int r = (val << 3) + (val << 1) + (c - '0');
-            if (r < val) {
+            int r = (val << 3) + (val << 1) - (c - '0');
+            if (r > val) {
                 throw new NumberFormatException("Number overflow: " + sequence);
             }
             val = r;
         }
 
-        return negative ? -val : val;
+        if (val == Integer.MIN_VALUE && !negative) {
+            throw new NumberFormatException("Number overflow: " + sequence);
+        }
+        return negative ? val : -val;
+    }
+
+    public static long parseLong(CharSequence sequence) {
+        if (sequence == null) {
+            throw new NumberFormatException("null");
+        }
+
+        return parseLong0(sequence, 0, sequence.length());
+    }
+
+    public static long parseLong(CharSequence sequence, int p, int lim) {
+        if (sequence == null) {
+            throw new NumberFormatException("null");
+        }
+        return parseLong0(sequence, p, lim);
+    }
+
+    private static long parseLong0(CharSequence sequence, int p, int lim) {
+
+        if (lim == p) {
+            throw new NumberFormatException("empty string");
+        }
+
+        boolean negative = sequence.charAt(p) == '-';
+        if (negative) {
+            p++;
+        }
+
+        if (p >= lim) {
+            throw new NumberFormatException("Expect some numbers after sign");
+        }
+
+        long val = 0;
+        for (; p < lim; p++) {
+            int c = sequence.charAt(p);
+            if (c < '0' || c > '9') {
+                throw new NumberFormatException("Illegal character at " + p);
+            }
+            // val * 10 + (c - '0')
+            long r = (val << 3) + (val << 1) - (c - '0');
+            if (r > val) {
+                throw new NumberFormatException("Number overflow: " + sequence);
+            }
+            val = r;
+        }
+
+        if (val == Long.MIN_VALUE && !negative) {
+            throw new NumberFormatException("Number overflow: " + sequence);
+        }
+        return negative ? val : -val;
     }
 
     public static float parseFloat(CharSequence sequence) {

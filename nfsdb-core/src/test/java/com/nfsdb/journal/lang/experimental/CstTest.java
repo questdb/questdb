@@ -231,7 +231,7 @@ public class CstTest {
         JournalWriter<Quote> w = factory.writer(Quote.class);
         TestUtils.generateQuoteData(w, 100000, System.currentTimeMillis(), 2);
 
-        DirectCompositeKeyIntMap map = new DirectCompositeKeyIntMap(null);
+        DirectCompositeKeyIntMap map = new DirectCompositeKeyIntMap(null, null);
 
         int tsIndex = w.getMetadata().getColumnIndex("timestamp");
         int symIndex = w.getMetadata().getColumnIndex("sym");
