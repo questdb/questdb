@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,11 @@
 
 package com.nfsdb.journal.export;
 
-import com.nfsdb.journal.factory.configuration.ColumnMetadata;
-import com.nfsdb.journal.lang.cst.EntrySource;
-import com.nfsdb.journal.lang.cst.JournalEntry;
+import com.nfsdb.journal.lang.cst.DataRow;
 import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Numbers;
+
+import java.util.Iterator;
 
 public class JournalEntryPrinter {
     private final boolean enabled;
@@ -31,10 +31,15 @@ public class JournalEntryPrinter {
         this.enabled = enabled;
     }
 
-    public void print(JournalEntry e) {
-        for (int i = 0, sz = e.partition.getJournal().getMetadata().getColumnCount(); i < sz; i++) {
-            ColumnMetadata m = e.partition.getJournal().getMetadata().getColumnMetadata(i);
-            switch (m.type) {
+    public void print(DataRow e) {
+        if (e == null) {
+            sink.put("\n");
+            sink.flush();
+            return;
+        }
+
+        for (int i = 0, sz = e.getColumnCount(); i < sz; i++) {
+            switch (e.getColumnType(i)) {
                 case DATE:
                     Dates.appendDateTime(sink, e.getLong(i));
                     break;
@@ -65,21 +70,16 @@ public class JournalEntryPrinter {
             }
             sink.put('\t');
         }
-        if (e.slave != null) {
-            print(e.slave);
-        } else {
-            sink.put('\n');
-            sink.flush();
-        }
+        print(e.getSlave());
     }
 
-    public void print(EntrySource src) {
+    public <X extends DataRow> void print(Iterator<X> src) {
         if (!enabled) {
             return;
         }
 
-        for (JournalEntry e : src) {
-            print(e);
+        while (src.hasNext()) {
+            print(src.next());
         }
     }
 }

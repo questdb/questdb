@@ -62,7 +62,7 @@ public class FlexBufferSink implements CharSink {
         try {
             buffer.flip();
             channel.write(buffer);
-            buffer.rewind();
+            buffer.clear();
         } catch (IOException e) {
             e.printStackTrace();
         }

@@ -37,10 +37,6 @@ public class HashTest {
             rnd.nextChars(address, LEN);
             hashes.add(Hash.hashXX(address, LEN, rnd.nextInt()));
         }
-
-        System.out.println(hashes.size());
-
         Assert.assertTrue("Hash function distribution dropped", hashes.size() > 99990);
-
     }
 }

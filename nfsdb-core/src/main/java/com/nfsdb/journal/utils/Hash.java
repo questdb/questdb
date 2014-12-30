@@ -39,9 +39,10 @@ public class Hash {
     public static int hashXX(long address, int len, int seed) {
         int i32;
         long p = address;
+        long l = address + len;
 
         if (len >= 16) {
-            int limit = len - 16;
+            long limit = l - 16;
             int v1 = seed + PRIME32_1 + PRIME32_2;
             int v2 = seed + PRIME32_2;
             int v3 = seed;
@@ -52,17 +53,18 @@ public class Hash {
                 v1 = rotl(v1, 13);
                 v1 *= PRIME32_1;
                 p += 4;
+
                 v2 += Unsafe.getUnsafe().getInt(p) * PRIME32_2;
                 v2 = rotl(v2, 13);
                 v2 *= PRIME32_1;
                 p += 4;
+
                 v3 += Unsafe.getUnsafe().getInt(p) * PRIME32_2;
                 v3 = rotl(v3, 13);
                 v3 *= PRIME32_1;
                 p += 4;
 
-                int i = Unsafe.getUnsafe().getInt(p);
-                v4 += i * PRIME32_2;
+                v4 += Unsafe.getUnsafe().getInt(p) * PRIME32_2;
                 v4 = rotl(v4, 13);
                 v4 *= PRIME32_1;
                 p += 4;
@@ -76,13 +78,13 @@ public class Hash {
 
         i32 += len;
 
-        while (p + 4 <= len) {
+        while (p + 4 <= l) {
             i32 += Unsafe.getUnsafe().getInt(p) * PRIME32_3;
             i32 = rotl(i32, 17) * PRIME32_4;
             p += 4;
         }
 
-        while (p < len) {
+        while (p < l) {
             i32 += Unsafe.getUnsafe().getByte(p) * PRIME32_5;
             i32 = rotl(i32, 11) * PRIME32_1;
             p++;

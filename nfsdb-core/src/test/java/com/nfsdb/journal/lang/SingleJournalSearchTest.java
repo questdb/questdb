@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,7 +46,6 @@ import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Test;
 
-import java.io.IOException;
 import java.util.ArrayList;
 
 public class SingleJournalSearchTest {
@@ -176,7 +175,7 @@ public class SingleJournalSearchTest {
 
     }
 
-    private void assertEquals(CharSequence expected, EntrySource src) throws IOException {
+    private void assertEquals(CharSequence expected, EntrySource src) {
         JournalEntryPrinter p = new JournalEntryPrinter(sink, true);
         p.print(src);
         Assert.assertEquals(expected, sink.toString());

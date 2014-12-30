@@ -17,98 +17,90 @@
 package com.nfsdb.journal.lang.cst;
 
 import com.nfsdb.journal.Partition;
+import com.nfsdb.journal.column.ColumnType;
 import com.nfsdb.journal.column.FixedColumn;
 
 import java.io.InputStream;
 import java.io.OutputStream;
 
-public class JournalEntry {
+public class JournalEntry extends AbstractDataRow {
     public Partition<Object> partition;
     public long rowid;
     public JournalEntry slave;
 
+    @Override
     public int getColumnIndex(String column) {
         return partition.getJournal().getMetadata().getColumnIndex(column);
     }
 
-    public byte get(String column) {
-        return get(getColumnIndex(column));
-    }
-
+    @Override
     public byte get(int col) {
         return ((FixedColumn) partition.getAbstractColumn(col)).getByte(rowid);
     }
 
-    public int getInt(String column) {
-        return getInt(getColumnIndex(column));
-    }
-
+    @Override
     public int getInt(int col) {
         return partition.getInt(rowid, col);
     }
 
-    public long getLong(String column) {
-        return getLong(getColumnIndex(column));
-    }
-
+    @Override
     public long getLong(int col) {
         return partition.getLong(rowid, col);
     }
 
+    @Override
     public long getDate(int col) {
         return partition.getLong(rowid, col);
     }
 
-    public double getDouble(String column) {
-        return getDouble(getColumnIndex(column));
-    }
-
+    @Override
     public double getDouble(int col) {
         return partition.getDouble(rowid, col);
     }
 
-    public String getStr(String column) {
-        return getStr(getColumnIndex(column));
-    }
-
+    @Override
     public String getStr(int col) {
         return partition.getStr(rowid, col);
     }
 
-    public String getSym(String column) {
-        return getSym(getColumnIndex(column));
-    }
-
+    @Override
     public String getSym(int col) {
         return partition.getSym(rowid, col);
     }
 
-    public boolean getBool(String column) {
-        return getBool(getColumnIndex(column));
-    }
-
+    @Override
     public boolean getBool(int col) {
         return partition.getBoolean(rowid, col);
     }
 
+    @Override
     public void getBin(int col, OutputStream s) {
         partition.getBin(rowid, col, s);
     }
 
-    public void getBin(String column, OutputStream s) {
-        getBin(getColumnIndex(column), s);
-    }
-
+    @Override
     public short getShort(int col) {
         return partition.getShort(rowid, col);
     }
 
-    public InputStream getBin(String column) {
-        return getBin(getColumnIndex(column));
-    }
-
+    @Override
     public InputStream getBin(int col) {
         return partition.getBin(rowid, col);
+    }
+
+    @Override
+    public DataRow getSlave() {
+        return slave;
+    }
+
+    @Override
+    public int getColumnCount() {
+        return partition.getJournal().getMetadata().getColumnCount();
+    }
+
+    @Override
+    public ColumnType getColumnTypeInternal(int column) {
+        return partition.getJournal().getMetadata().getColumnMetadata(column).type;
     }
 
     @Override
