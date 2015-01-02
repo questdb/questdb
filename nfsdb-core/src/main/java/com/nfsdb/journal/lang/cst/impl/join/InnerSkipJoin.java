@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ public class InnerSkipJoin extends AbstractImmutableIterator<JournalEntry> imple
         JournalEntry data;
 
         while (delegate.hasNext()) {
-            if ((data = delegate.next()).slave != null) {
+            if ((data = delegate.next()).getSlave() != null) {
                 this.data = data;
                 return true;
             }

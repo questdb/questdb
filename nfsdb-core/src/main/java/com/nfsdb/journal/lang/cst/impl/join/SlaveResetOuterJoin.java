@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -52,10 +52,10 @@ public class SlaveResetOuterJoin extends AbstractImmutableIterator<JournalEntry>
         }
 
         if (nextSlave || slaveSource.hasNext()) {
-            joinedData.slave = slaveSource.next();
+            joinedData.setSlave(slaveSource.next());
             nextSlave = slaveSource.hasNext();
         } else {
-            joinedData.slave = null;
+            joinedData.setSlave(null);
             nextSlave = false;
         }
         return joinedData;

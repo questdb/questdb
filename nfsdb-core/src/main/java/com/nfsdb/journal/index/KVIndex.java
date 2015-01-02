@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,10 +44,10 @@ public class KVIndex implements Closeable {
     */
 
     private static final int ENTRY_SIZE = 16;
+    private final IndexCursor cachedCursor = new IndexCursor();
     int rowBlockSize;
     int rowBlockLen;
     long firstEntryOffset;
-    private final IndexCursor cachedCursor = new IndexCursor();
     private MappedFileImpl kData;
     // storage for rows
     // block structure is [ rowid1, rowid2 ..., rowidn, prevBlockOffset]
@@ -104,8 +104,6 @@ public class KVIndex implements Closeable {
         }
 
         long keyOffset = getKeyOffset(key);
-        long rowBlockOffset;
-        long rowCount;
 
         if (keyOffset >= firstEntryOffset + keyBlockSize) {
             long oldSize = keyBlockSize;
@@ -126,8 +124,8 @@ public class KVIndex implements Closeable {
         }
 
         long address = kData.getAddress(keyOffset, ENTRY_SIZE);
-        rowBlockOffset = Unsafe.getUnsafe().getLong(address);
-        rowCount = Unsafe.getUnsafe().getLong(address + 8);
+        long rowBlockOffset = Unsafe.getUnsafe().getLong(address);
+        long rowCount = Unsafe.getUnsafe().getLong(address + 8);
 
         int cellIndex = (int) (rowCount % rowBlockLen);
         if (rowBlockOffset == 0 || cellIndex == 0) {

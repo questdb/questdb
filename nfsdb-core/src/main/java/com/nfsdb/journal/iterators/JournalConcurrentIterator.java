@@ -42,11 +42,11 @@ public class JournalConcurrentIterator<T> extends AbstractConcurrentIterator<T> 
     protected Runnable getRunnable() {
         return new Runnable() {
 
+            boolean hasNext = true;
             private int currentIndex = 0;
             private long currentRowID;
             private long currentUpperBound;
             private int currentPartitionID;
-            boolean hasNext = true;
 
             @Override
             public void run() {
@@ -57,7 +57,6 @@ public class JournalConcurrentIterator<T> extends AbstractConcurrentIterator<T> 
                         Holder<T> holder = buffer.get(outSeq);
                         boolean hadNext = hasNext;
                         if (hadNext) {
-                            journal.clearObject(holder.object);
                             journal.read(Rows.toRowID(currentPartitionID, currentRowID), holder.object);
                             if (currentRowID < currentUpperBound) {
                                 currentRowID++;

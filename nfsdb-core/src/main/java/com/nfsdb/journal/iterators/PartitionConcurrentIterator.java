@@ -54,7 +54,6 @@ public class PartitionConcurrentIterator<T> extends AbstractConcurrentIterator<T
 
                         long seq = buffer.next();
                         Holder<T> holder = buffer.get(seq);
-                        partition.getJournal().clearObject(holder.object);
                         partition.read(i, holder.object);
                         buffer.publish(seq);
                     } catch (JournalException e) {

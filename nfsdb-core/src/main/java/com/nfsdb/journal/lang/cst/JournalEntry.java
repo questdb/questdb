@@ -26,7 +26,6 @@ import java.io.OutputStream;
 public class JournalEntry extends AbstractDataRow {
     public Partition<Object> partition;
     public long rowid;
-    public JournalEntry slave;
 
     @Override
     public int getColumnIndex(String column) {
@@ -89,11 +88,6 @@ public class JournalEntry extends AbstractDataRow {
     }
 
     @Override
-    public DataRow getSlave() {
-        return slave;
-    }
-
-    @Override
     public int getColumnCount() {
         return partition.getJournal().getMetadata().getColumnCount();
     }
@@ -108,7 +102,7 @@ public class JournalEntry extends AbstractDataRow {
         return "DataItem{" +
                 "partition=" + partition +
                 ", rowid=" + rowid +
-                ", slave=" + slave +
+                ", slave=" + getSlave() +
                 '}';
     }
 }

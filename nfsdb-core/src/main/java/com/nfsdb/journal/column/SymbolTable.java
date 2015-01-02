@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -140,9 +140,14 @@ public class SymbolTable implements Closeable {
     }
 
     public String value(int key) {
+        if (key == VALUE_IS_NULL) {
+            return null;
+        }
+
         if (key >= size) {
             throw new JournalRuntimeException("Invalid symbol key: " + key);
         }
+
         String value = key < keyCache.size() ? keyCache.get(key) : null;
         if (value == null) {
             cache(key, value = data.getStr(key));

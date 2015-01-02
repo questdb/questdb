@@ -70,7 +70,6 @@ public class BinaryTest extends AbstractTest {
         long t = System.nanoTime();
         Band band = new Band();
         for (int i = 0; i < count; i++) {
-            writer.clearObject(band);
             band.setName(bands[Math.abs(r.nextInt() % bands.length)]);
             band.setType(types[Math.abs(r.nextInt() % types.length)]);
             band.setImage(bytes);

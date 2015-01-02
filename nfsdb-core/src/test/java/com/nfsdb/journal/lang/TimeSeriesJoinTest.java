@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,9 +19,10 @@ package com.nfsdb.journal.lang;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
+import com.nfsdb.journal.export.JournalEntryPrinter;
+import com.nfsdb.journal.export.StringSink;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.lang.cst.EntrySource;
-import com.nfsdb.journal.lang.cst.JournalEntry;
 import com.nfsdb.journal.lang.cst.impl.join.TimeSeriesJoin;
 import com.nfsdb.journal.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.psrc.JournalPartitionSource;
@@ -29,10 +30,7 @@ import com.nfsdb.journal.lang.cst.impl.rsrc.AllRowSource;
 import com.nfsdb.journal.test.tools.JournalTestFactory;
 import com.nfsdb.journal.utils.Files;
 import com.nfsdb.journal.utils.Rnd;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.ClassRule;
-import org.junit.Test;
+import org.junit.*;
 
 public class TimeSeriesJoinTest {
 
@@ -43,9 +41,7 @@ public class TimeSeriesJoinTest {
         try {
             factory = new JournalTestFactory(
                     new JournalConfigurationBuilder() {{
-                        $(Ts.class)
-                                .$ts()
-                        ;
+                        $(Ts.class);
                     }}.build(Files.makeTempDir())
             );
         } catch (JournalConfigurationException e) {
@@ -54,9 +50,10 @@ public class TimeSeriesJoinTest {
 
     }
 
+    private static final StringSink sink = new StringSink();
+    private static final JournalEntryPrinter printer = new JournalEntryPrinter(sink, true);
     private static JournalWriter<Ts> w1;
     private static JournalWriter<Ts> w2;
-
 
     @BeforeClass
     public static void setUp() throws Exception {
@@ -70,11 +67,11 @@ public class TimeSeriesJoinTest {
         long t2 = t1;
         for (int i = 0; i < 10; i++) {
             t1 += rnd.nextPositiveInt() % 100;
-            ts.timestamp = t1;
+            ts.ts = t1;
             w1.append(ts);
 
             t2 += rnd.nextPositiveInt() % 100;
-            ts.timestamp = t2;
+            ts.ts = t2;
             w2.append(ts);
         }
 
@@ -82,109 +79,92 @@ public class TimeSeriesJoinTest {
         w2.commit();
     }
 
+    @Before
+    public void setUp2() throws Exception {
+        sink.clear();
+    }
+
     @Test
     public void testJoinNoNulls() throws Exception {
-        String expected = "20~89\n" +
-                "20~128\n" +
-                "53~89\n" +
-                "53~128\n" +
-                "53~199\n" +
-                "54~89\n" +
-                "54~128\n" +
-                "54~199\n" +
-                "96~128\n" +
-                "96~199\n" +
-                "102~128\n" +
-                "102~199\n" +
-                "102~247\n" +
-                "118~128\n" +
-                "118~199\n" +
-                "118~247\n" +
-                "132~199\n" +
-                "132~247\n" +
-                "213~247\n" +
-                "213~319\n" +
-                "213~322\n" +
-                "213~334\n" +
-                "229~247\n" +
-                "229~319\n" +
-                "229~322\n" +
-                "229~334\n" +
-                "234~247\n" +
-                "234~319\n" +
-                "234~322\n" +
-                "234~334\n";
+        String expected = "20\t89\t\n" +
+                "20\t128\t\n" +
+                "53\t89\t\n" +
+                "53\t128\t\n" +
+                "53\t199\t\n" +
+                "54\t89\t\n" +
+                "54\t128\t\n" +
+                "54\t199\t\n" +
+                "96\t128\t\n" +
+                "96\t199\t\n" +
+                "102\t128\t\n" +
+                "102\t199\t\n" +
+                "102\t247\t\n" +
+                "118\t128\t\n" +
+                "118\t199\t\n" +
+                "118\t247\t\n" +
+                "132\t199\t\n" +
+                "132\t247\t\n" +
+                "213\t247\t\n" +
+                "213\t319\t\n" +
+                "213\t322\t\n" +
+                "213\t334\t\n" +
+                "229\t247\t\n" +
+                "229\t319\t\n" +
+                "229\t322\t\n" +
+                "229\t334\t\n" +
+                "234\t247\t\n" +
+                "234\t319\t\n" +
+                "234\t322\t\n" +
+                "234\t334\t\n";
 
 
         // from w1 tj w2 depth 150
-        EntrySource src = new TimeSeriesJoin(
-                new JournalSourceImpl(new JournalPartitionSource(w1, true), new AllRowSource())
-                , w1.getMetadata().getTimestampColumnIndex()
-                ,
-                new JournalSourceImpl(new JournalPartitionSource(w2, true), new AllRowSource())
-                , w2.getMetadata().getTimestampColumnIndex()
-                , 150
-                , 2 // trigger re-sizes to test ring expand formulas
+
+        printer.print(
+                new TimeSeriesJoin(
+                        new JournalSourceImpl(new JournalPartitionSource(w1, true), new AllRowSource())
+                        , 0
+                        ,
+                        new JournalSourceImpl(new JournalPartitionSource(w2, true), new AllRowSource())
+                        , 0
+                        , 150
+                        , 2 // trigger re-sizes to test ring expand formulas
+                )
         );
-
-        StringBuilder builder = new StringBuilder();
-
-        for (JournalEntry d : src) {
-            builder.append(d.partition.getLong(d.rowid, 0));
-            builder.append("~");
-            if (d.slave == null) {
-                builder.append("null");
-            } else {
-                builder.append(d.slave.partition.getLong(d.slave.rowid, 0));
-            }
-            builder.append("\n");
-        }
-
-        Assert.assertEquals(expected, builder.toString());
+//        System.out.println(sink);
+        Assert.assertEquals(expected, sink.toString());
     }
 
     @Test
     public void testJoinWithNulls() throws Exception {
 
-        String expected = "20~null\n" +
-                "53~null\n" +
-                "54~null\n" +
-                "96~null\n" +
-                "102~null\n" +
-                "118~128\n" +
-                "132~null\n" +
-                "213~null\n" +
-                "229~null\n" +
-                "234~247\n";
+        String expected = "20\t\n" +
+                "53\t\n" +
+                "54\t\n" +
+                "96\t\n" +
+                "102\t\n" +
+                "118\t128\t\n" +
+                "132\t\n" +
+                "213\t\n" +
+                "229\t\n" +
+                "234\t247\t\n";
 
         EntrySource src = new TimeSeriesJoin(
                 new JournalSourceImpl(new JournalPartitionSource(w1, true), new AllRowSource())
-                , w1.getMetadata().getTimestampColumnIndex()
+                , 0
                 ,
                 new JournalSourceImpl(new JournalPartitionSource(w2, true), new AllRowSource())
-                , w2.getMetadata().getTimestampColumnIndex()
+                , 0
                 , 15
                 , 2 // trigger re-sizes to test ring expand formulas
         );
 
-        StringBuilder builder = new StringBuilder();
-
-        for (JournalEntry d : src) {
-            builder.append(d.partition.getLong(d.rowid, 0));
-            builder.append("~");
-            if (d.slave == null) {
-                builder.append("null");
-            } else {
-                builder.append(d.slave.partition.getLong(d.slave.rowid, 0));
-            }
-            builder.append("\n");
-        }
-
-        Assert.assertEquals(expected, builder.toString());
+        printer.print(src);
+        Assert.assertEquals(expected, sink.toString());
     }
 
     @SuppressWarnings("unused")
     public static class Ts {
-        private long timestamp;
+        private long ts;
     }
 }

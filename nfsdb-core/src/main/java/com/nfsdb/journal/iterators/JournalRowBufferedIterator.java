@@ -49,11 +49,9 @@ public class JournalRowBufferedIterator<T> extends AbstractImmutableIterator<Jou
     @Override
     public JournalRow<T> next() {
         try {
-            T obj = row.getObject();
-            journal.clearObject(obj);
             long rowID = Rows.toRowID(currentPartitionID, currentRowID);
             row.setRowID(rowID);
-            journal.read(rowID, obj);
+            journal.read(rowID, row.getObject());
             if (currentRowID < currentUpperBound) {
                 currentRowID++;
             } else {

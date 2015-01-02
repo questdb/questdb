@@ -49,7 +49,6 @@ public class JournalBufferedIterator<T> extends AbstractImmutableIterator<T> imp
 
     @Override
     public T next() {
-        journal.clearObject(obj);
         partition.read(currentRowID, obj);
         if (currentRowID < currentUpperBound) {
             currentRowID++;
@@ -64,7 +63,6 @@ public class JournalBufferedIterator<T> extends AbstractImmutableIterator<T> imp
     public T peekLast() {
         JournalIteratorRange w = ranges.get(ranges.size() - 1);
         try {
-            journal.clearObject(obj);
             journal.read(Rows.toRowID(w.partitionID, w.hi), obj);
             return obj;
         } catch (JournalException e) {
@@ -76,7 +74,6 @@ public class JournalBufferedIterator<T> extends AbstractImmutableIterator<T> imp
     public T peekFirst() {
         JournalIteratorRange w = ranges.get(0);
         try {
-            journal.clearObject(obj);
             journal.read(Rows.toRowID(w.partitionID, w.lo), obj);
             return obj;
         } catch (JournalException e) {

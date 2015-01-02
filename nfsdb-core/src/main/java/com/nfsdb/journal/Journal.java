@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,7 +46,6 @@ import java.io.Closeable;
 import java.io.File;
 import java.io.FileFilter;
 import java.lang.reflect.Array;
-import java.nio.ByteBuffer;
 import java.util.*;
 
 public class Journal<T> implements Iterable<T>, Closeable {
@@ -360,45 +359,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
     @SuppressWarnings("unchecked")
     public T newObject() {
         return (T) getMetadata().newObject();
-    }
-
-    public void clearObject(T obj) {
-        for (int i = 0; i < metadata.getColumnCount(); i++) {
-            com.nfsdb.journal.factory.configuration.ColumnMetadata m = metadata.getColumnMetadata(i);
-            switch (m.type) {
-                case BOOLEAN:
-                    Unsafe.getUnsafe().putBoolean(obj, m.offset, false);
-                    break;
-                case BYTE:
-                    Unsafe.getUnsafe().putByte(obj, m.offset, (byte) 0);
-                    break;
-                case DOUBLE:
-                    Unsafe.getUnsafe().putDouble(obj, m.offset, 0d);
-                    break;
-                case INT:
-                    Unsafe.getUnsafe().putInt(obj, m.offset, 0);
-                    break;
-                case SHORT:
-                    Unsafe.getUnsafe().putShort(obj, m.offset, (short) 0);
-                    break;
-                case LONG:
-                case DATE:
-                    Unsafe.getUnsafe().putLong(obj, m.offset, 0L);
-                    break;
-                case STRING:
-                case SYMBOL:
-                    Unsafe.getUnsafe().putObject(obj, m.offset, null);
-                    break;
-                case BINARY:
-                    ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, m.offset);
-                    if (buf != null) {
-                        buf.clear();
-                    }
-                    break;
-                default:
-                    throw new JournalRuntimeException("Unsupported type: " + m.type);
-            }
-        }
     }
 
     /**

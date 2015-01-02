@@ -20,11 +20,10 @@ import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
-import com.nfsdb.journal.export.FlexBufferSink;
 import com.nfsdb.journal.export.JournalEntryPrinter;
+import com.nfsdb.journal.export.StringSink;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.lang.cst.EntrySource;
-import com.nfsdb.journal.lang.cst.JournalEntry;
 import com.nfsdb.journal.lang.cst.StatefulJournalSource;
 import com.nfsdb.journal.lang.cst.impl.dfrm.MapHeadDataFrameSource;
 import com.nfsdb.journal.lang.cst.impl.join.InnerSkipJoin;
@@ -47,14 +46,12 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 
-import java.io.FileDescriptor;
-import java.io.FileOutputStream;
-
 public class JoinSymbolOnSymbolTest {
 
     @Rule
     public final JournalTestFactory factory;
-    private final JournalEntryPrinter out;
+    private final StringSink sink = new StringSink();
+    private final JournalEntryPrinter out = new JournalEntryPrinter(sink, true);
     private JournalWriter<Band> bw;
     private JournalWriter<Album> aw;
 
@@ -80,7 +77,7 @@ public class JoinSymbolOnSymbolTest {
             throw new JournalRuntimeException(e);
         }
 
-        out = new JournalEntryPrinter(new FlexBufferSink(new FileOutputStream(FileDescriptor.out).getChannel()), false);
+//        out = new JournalEntryPrinter(new FlexBufferSink(new FileOutputStream(FileDescriptor.out).getChannel()), false);
     }
 
     @Before
@@ -91,6 +88,12 @@ public class JoinSymbolOnSymbolTest {
 
     @Test
     public void testOuterOneToOne() throws Exception {
+
+        final String expected = "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t\n" +
+                "1970-01-01T00:00:00.000Z\tband2\thttp://band2.com\thiphop\t\t\n" +
+                "1970-01-01T00:00:00.000Z\tband3\thttp://band3.com\tjazz\t\tband3\talbum Y\tmetal\t1970-01-01T00:00:00.000Z\t\n";
+
+
         bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
         bw.append(new Band().setName("band2").setType("hiphop").setUrl("http://band2.com"));
         bw.append(new Band().setName("band3").setType("jazz").setUrl("http://band3.com"));
@@ -103,35 +106,18 @@ public class JoinSymbolOnSymbolTest {
         aw.commit();
 
         // from band outer join album
-        EntrySource src = buildSource(bw, aw);
-        out.print(src);
-
-        int count = 0;
-        for (JournalEntry d : src) {
-            Band b = (Band) d.partition.read(d.rowid);
-            Album a = null;
-            if (d.slave != null) {
-                a = (Album) d.slave.partition.read(d.slave.rowid);
-            }
-
-            switch (count++) {
-                case 0:
-                case 2:
-                    Assert.assertNotNull(a);
-                    Assert.assertEquals(b.getName(), a.getBand());
-                    break;
-                case 1:
-                    Assert.assertNull(a);
-                    Assert.assertEquals("band2", b.getName());
-                    break;
-                default:
-                    Assert.fail("Do not expect more than 3 rows");
-            }
-        }
+        out.print(buildSource(bw, aw));
+        Assert.assertEquals(expected, sink.toString());
     }
 
     @Test
     public void testOuterOneToMany() throws Exception {
+
+        final String expected = "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum BZ\trock\t1970-01-01T00:00:00.000Z\t\n" +
+                "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t\n" +
+                "1970-01-01T00:00:00.000Z\tband2\thttp://band2.com\thiphop\t\t\n" +
+                "1970-01-01T00:00:00.000Z\tband3\thttp://band3.com\tjazz\t\tband3\talbum Y\tmetal\t1970-01-01T00:00:00.000Z\t\n";
+
         bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
         bw.append(new Band().setName("band2").setType("hiphop").setUrl("http://band2.com"));
         bw.append(new Band().setName("band3").setType("jazz").setUrl("http://band3.com"));
@@ -146,43 +132,17 @@ public class JoinSymbolOnSymbolTest {
 
         // from band outer join album
         // this is data-driven one to many
-        EntrySource src = buildSource(bw, aw);
-
-        out.print(src);
-
-        int count = 0;
-        for (JournalEntry d : src) {
-            Band b = (Band) d.partition.read(d.rowid);
-            Album a = null;
-            if (d.slave != null) {
-                a = (Album) d.slave.partition.read(d.slave.rowid);
-            }
-
-            switch (count++) {
-                case 0:
-                case 1:
-                    Assert.assertNotNull(a);
-                    Assert.assertEquals(b.getName(), a.getBand());
-                    Assert.assertEquals("band1", b.getName());
-                    break;
-                case 2:
-                    Assert.assertNull(a);
-                    Assert.assertEquals("band2", b.getName());
-                    break;
-                case 3:
-                    Assert.assertNotNull(a);
-                    Assert.assertEquals(b.getName(), a.getBand());
-                    Assert.assertEquals("band3", b.getName());
-                    break;
-                default:
-                    Assert.fail("expect 4 rows");
-
-            }
-        }
+        out.print(buildSource(bw, aw));
+        Assert.assertEquals(expected, sink.toString());
     }
 
     @Test
     public void testOuterOneToOneHead() throws Exception {
+
+        final String expected = "band1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband1\thttp://new.band1.com\tjazz\t\t\n" +
+                "band1\talbum BZ\trock\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband1\thttp://new.band1.com\tjazz\t\t\n" +
+                "band3\talbum Y\tmetal\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband3\thttp://band3.com\tjazz\t\t\n";
+
         bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
         bw.append(new Band().setName("band2").setType("hiphop").setUrl("http://band2.com"));
         bw.append(new Band().setName("band3").setType("jazz").setUrl("http://band3.com"));
@@ -213,29 +173,7 @@ public class JoinSymbolOnSymbolTest {
 
         out.print(src);
 
-        int count = 0;
-        for (JournalEntry d : src) {
-            Album a = (Album) d.partition.read(d.rowid);
-            Band b = null;
-            if (d.slave != null) {
-                b = (Band) d.slave.partition.read(d.slave.rowid);
-            }
-
-            switch (count++) {
-                case 0:
-                case 1:
-                    Assert.assertNotNull(b);
-                    Assert.assertEquals(a.getBand(), b.getName());
-                    Assert.assertEquals("http://new.band1.com", b.getUrl());
-                    break;
-                case 2:
-                    Assert.assertNotNull(b);
-                    Assert.assertEquals(a.getBand(), b.getName());
-                    break;
-                default:
-                    Assert.fail("expected 3 rows");
-            }
-        }
+        Assert.assertEquals(expected, sink.toString());
     }
 
     /**
@@ -247,6 +185,12 @@ public class JoinSymbolOnSymbolTest {
      */
     @Test
     public void testOuterOneToManyHead() throws Exception {
+
+        final String expected = "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum BZ\tpop\t1970-01-01T00:00:00.000Z\t\n" +
+                "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t\n" +
+                "1970-01-01T00:00:00.000Z\tband2\thttp://band2.com\thiphop\t\t\n" +
+                "1970-01-01T00:00:00.000Z\tband3\thttp://band3.com\tjazz\t\tband3\talbum Y\tmetal\t1970-01-01T00:00:00.000Z\t\n";
+
         bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
         bw.append(new Band().setName("band2").setType("hiphop").setUrl("http://band2.com"));
         bw.append(new Band().setName("band3").setType("jazz").setUrl("http://band3.com"));
@@ -282,44 +226,17 @@ public class JoinSymbolOnSymbolTest {
         );
 
         out.print(src);
-
-        int count = 0;
-        for (JournalEntry d : src) {
-            Band b = (Band) d.partition.read(d.rowid);
-            Album a = null;
-            if (d.slave != null) {
-                a = (Album) d.slave.partition.read(d.slave.rowid);
-            }
-
-            switch (count++) {
-                case 0:
-                    Assert.assertNotNull(a);
-                    Assert.assertEquals(b.getName(), a.getBand());
-                    Assert.assertEquals("album BZ", a.getName());
-                    Assert.assertEquals("pop", a.getGenre());
-                    break;
-                case 1:
-                    Assert.assertNotNull(a);
-                    Assert.assertEquals(b.getName(), a.getBand());
-                    Assert.assertEquals("album X", a.getName());
-                    break;
-                case 2:
-                    Assert.assertNull(a);
-                    Assert.assertEquals("band2", b.getName());
-                    break;
-                case 3:
-                    Assert.assertNotNull(a);
-                    Assert.assertEquals(b.getName(), a.getBand());
-                    Assert.assertEquals("band3", b.getName());
-                    break;
-                default:
-                    Assert.fail("expected 4 rows");
-            }
-        }
+        Assert.assertEquals(expected, sink.toString());
     }
 
     @Test
     public void testOuterOneToManyMapHead() throws Exception {
+
+        final String expected = "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t\n" +
+                "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum BZ\tpop\t1970-01-01T00:00:00.000Z\t\n" +
+                "1970-01-01T00:00:00.000Z\tband2\thttp://band2.com\thiphop\t\tband2\talbum Y\tmetal\t1970-01-01T00:00:00.000Z\t\n" +
+                "1970-01-01T00:00:00.000Z\tband3\thttp://band3.com\tjazz\t\t\n";
+
         bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
         bw.append(new Band().setName("band2").setType("hiphop").setUrl("http://band2.com"));
         bw.append(new Band().setName("band3").setType("jazz").setUrl("http://band3.com"));
@@ -355,46 +272,16 @@ public class JoinSymbolOnSymbolTest {
         );
 
         out.print(src);
-
-        int count = 0;
-        for (JournalEntry d : src) {
-            Band b = (Band) d.partition.read(d.rowid);
-            Album a = null;
-            if (d.slave != null) {
-                a = (Album) d.slave.partition.read(d.slave.rowid);
-            }
-
-            switch (count++) {
-                case 0:
-                    Assert.assertNotNull(a);
-                    Assert.assertEquals(b.getName(), a.getBand());
-                    Assert.assertEquals("album X", a.getName());
-                    Assert.assertEquals("pop", a.getGenre());
-                    break;
-                case 1:
-                    Assert.assertNotNull(a);
-                    Assert.assertEquals(b.getName(), a.getBand());
-                    Assert.assertEquals("album BZ", a.getName());
-                    Assert.assertEquals("pop", a.getGenre());
-                    break;
-                case 2:
-                    Assert.assertNotNull(a);
-                    Assert.assertEquals(b.getName(), a.getBand());
-                    Assert.assertEquals("album Y", a.getName());
-                    Assert.assertEquals("band2", b.getName());
-                    break;
-                case 3:
-                    Assert.assertNull(a);
-                    Assert.assertEquals("band3", b.getName());
-                    break;
-                default:
-                    Assert.fail("expected 4 rows");
-            }
-        }
+        Assert.assertEquals(expected, sink.toString());
     }
 
     @Test
     public void testInnerOneToManyMapHead() throws Exception {
+
+        final String expected = "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t\n" +
+                "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum BZ\tpop\t1970-01-01T00:00:00.000Z\t\n" +
+                "1970-01-01T00:00:00.000Z\tband2\thttp://band2.com\thiphop\t\tband2\talbum Y\tmetal\t1970-01-01T00:00:00.000Z\t\n";
+
         bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
         bw.append(new Band().setName("band2").setType("hiphop").setUrl("http://band2.com"));
         bw.append(new Band().setName("band3").setType("jazz").setUrl("http://band3.com"));
@@ -433,42 +320,16 @@ public class JoinSymbolOnSymbolTest {
         );
 
         out.print(src);
-
-        int count = 0;
-        for (JournalEntry d : src) {
-            Band b = (Band) d.partition.read(d.rowid);
-            Album a = null;
-            if (d.slave != null) {
-                a = (Album) d.slave.partition.read(d.slave.rowid);
-            }
-
-            switch (count++) {
-                case 0:
-                    Assert.assertNotNull(a);
-                    Assert.assertEquals(b.getName(), a.getBand());
-                    Assert.assertEquals("album X", a.getName());
-                    Assert.assertEquals("pop", a.getGenre());
-                    break;
-                case 1:
-                    Assert.assertNotNull(a);
-                    Assert.assertEquals(b.getName(), a.getBand());
-                    Assert.assertEquals("album BZ", a.getName());
-                    Assert.assertEquals("pop", a.getGenre());
-                    break;
-                case 2:
-                    Assert.assertNotNull(a);
-                    Assert.assertEquals(b.getName(), a.getBand());
-                    Assert.assertEquals("album Y", a.getName());
-                    Assert.assertEquals("band2", b.getName());
-                    break;
-                default:
-                    Assert.fail("expected 3 rows");
-            }
-        }
+        Assert.assertEquals(expected, sink.toString());
     }
 
     @Test
     public void testInnerOneToManyHead() throws Exception {
+
+        final String expected = "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum BZ\tpop\t1970-01-01T00:00:00.000Z\t\n" +
+                "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t\n" +
+                "1970-01-01T00:00:00.000Z\tband3\thttp://band3.com\tjazz\t\tband3\talbum Y\tmetal\t1970-01-01T00:00:00.000Z\t\n";
+
         bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
         bw.append(new Band().setName("band2").setType("hiphop").setUrl("http://band2.com"));
         bw.append(new Band().setName("band3").setType("jazz").setUrl("http://band3.com"));
@@ -506,41 +367,17 @@ public class JoinSymbolOnSymbolTest {
         );
 
         out.print(src);
-
-        int count = 0;
-        for (JournalEntry d : src) {
-
-            Band b = (Band) d.partition.read(d.rowid);
-            Album a = null;
-            if (d.slave != null) {
-                a = (Album) d.slave.partition.read(d.slave.rowid);
-            }
-
-            switch (count++) {
-                case 0:
-                    Assert.assertNotNull(a);
-                    Assert.assertEquals(b.getName(), a.getBand());
-                    Assert.assertEquals("album BZ", a.getName());
-                    Assert.assertEquals("pop", a.getGenre());
-                    break;
-                case 1:
-                    Assert.assertNotNull(a);
-                    Assert.assertEquals(b.getName(), a.getBand());
-                    Assert.assertEquals("album X", a.getName());
-                    break;
-                case 2:
-                    Assert.assertNotNull(a);
-                    Assert.assertEquals(b.getName(), a.getBand());
-                    Assert.assertEquals("band3", b.getName());
-                    break;
-                default:
-                    Assert.fail("expected 3 rows");
-            }
-        }
+        Assert.assertEquals(expected, sink.toString());
     }
 
     @Test
     public void testInnerOneToManyHeadFilter() throws Exception {
+
+        final String expected = "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum BZ\tpop\t1970-01-01T00:00:00.000Z\t\n" +
+                "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum BZ\trock\t1970-01-01T00:00:00.000Z\t\n" +
+                "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t\n" +
+                "1970-01-01T00:00:00.000Z\tband3\thttp://band3.com\tjazz\t\tband3\talbum Y\tmetal\t1970-01-01T00:00:00.000Z\t\n";
+
         bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
         bw.append(new Band().setName("band2").setType("hiphop").setUrl("http://band2.com"));
         bw.append(new Band().setName("band3").setType("jazz").setUrl("http://band3.com"));
@@ -572,6 +409,7 @@ public class JoinSymbolOnSymbolTest {
         );
 
         out.print(src);
+        Assert.assertEquals(expected, sink.toString());
     }
 
     private EntrySource buildSource(Journal<Band> bw, Journal<Album> aw) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,9 +19,10 @@ package com.nfsdb.journal.lang;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
+import com.nfsdb.journal.export.JournalEntryPrinter;
+import com.nfsdb.journal.export.StringSink;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.lang.cst.EntrySource;
-import com.nfsdb.journal.lang.cst.JournalEntry;
 import com.nfsdb.journal.lang.cst.StatefulJournalSource;
 import com.nfsdb.journal.lang.cst.impl.join.SlaveResetOuterJoin;
 import com.nfsdb.journal.lang.cst.impl.jsrc.JournalSourceImpl;
@@ -79,6 +80,11 @@ public class JoinStringToSymbolTest {
 
     @Test
     public void testOuterOneToOneHead() throws Exception {
+
+        final String expected = "band1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband1\thttp://new.band1.com\tjazz\t\t\n" +
+                "band1\talbum BZ\trock\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband1\thttp://new.band1.com\tjazz\t\t\n" +
+                "band3\talbum Y\tmetal\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband3\thttp://band3.com\tjazz\t\t\n";
+
         bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
         bw.append(new Band().setName("band2").setType("hiphop").setUrl("http://band2.com"));
         bw.append(new Band().setName("band3").setType("jazz").setUrl("http://band3.com"));
@@ -111,29 +117,10 @@ public class JoinStringToSymbolTest {
                 );
 
 
-        int count = 0;
-        for (JournalEntry d : src) {
-            Album a = (Album) d.partition.read(d.rowid);
-            Band b = null;
-            if (d.slave != null) {
-                b = (Band) d.slave.partition.read(d.slave.rowid);
-            }
-
-            switch (count++) {
-                case 0:
-                case 1:
-                    Assert.assertNotNull(b);
-                    Assert.assertEquals(a.getBand(), b.getName());
-                    Assert.assertEquals("http://new.band1.com", b.getUrl());
-                    break;
-                case 2:
-                    Assert.assertNotNull(b);
-                    Assert.assertEquals(a.getBand(), b.getName());
-                    break;
-                default:
-                    Assert.fail("expected 3 rows");
-            }
-        }
+        StringSink sink = new StringSink();
+        JournalEntryPrinter p = new JournalEntryPrinter(sink, true);
+        p.print(src);
+        Assert.assertEquals(expected, sink.toString());
     }
 
 }

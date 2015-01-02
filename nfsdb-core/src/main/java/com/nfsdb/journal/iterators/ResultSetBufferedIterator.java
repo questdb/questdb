@@ -26,13 +26,11 @@ public class ResultSetBufferedIterator<T> extends AbstractImmutableIterator<T> i
 
     private final ResultSet<T> rs;
     private final T obj;
-    private final Journal<T> journal;
     private int cursor = 0;
 
     public ResultSetBufferedIterator(ResultSet<T> rs) {
         this.rs = rs;
         this.obj = rs.getJournal().newObject();
-        this.journal = rs.getJournal();
     }
 
     @Override
@@ -67,7 +65,6 @@ public class ResultSetBufferedIterator<T> extends AbstractImmutableIterator<T> i
 
     private T get(int rsIndex) {
         try {
-            journal.clearObject(obj);
             rs.read(rsIndex, obj);
             return obj;
         } catch (JournalException e) {

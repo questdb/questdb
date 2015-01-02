@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -214,12 +214,8 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
     public void read(long localRowID, T obj) {
         for (int i = 0; i < columnCount; i++) {
-            if (journal.getInactiveColumns().get(i)) {
-                continue;
-            }
-            Journal.ColumnMetadata m = journal.columnMetadata[i];
-
-            if (m.meta.offset == 0) {
+            Journal.ColumnMetadata m;
+            if (journal.getInactiveColumns().get(i) || (m = journal.columnMetadata[i]).meta.offset == 0) {
                 continue;
             }
 
@@ -247,34 +243,34 @@ public class Partition<T> implements Iterable<T>, Closeable {
                     Unsafe.getUnsafe().putObject(obj, m.meta.offset, ((VariableColumn) columns[i]).getStr(localRowID));
                     break;
                 case SYMBOL:
-                    int symbolIndex = ((FixedColumn) columns[i]).getInt(localRowID);
-                    // check if symbol was null
-                    if (symbolIndex > SymbolTable.VALUE_IS_NULL) {
-                        Unsafe.getUnsafe().putObject(obj, m.meta.offset, m.symbolTable.value(symbolIndex));
-                    }
+                    Unsafe.getUnsafe().putObject(obj, m.meta.offset, m.symbolTable.value(((FixedColumn) columns[i]).getInt(localRowID)));
                     break;
                 case BINARY:
-                    int size = ((VariableColumn) columns[i]).getBinSize(localRowID);
-                    ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, m.meta.offset);
-                    if (size == -1) {
-                        if (buf != null) {
-                            buf.clear();
-                        }
-                    } else {
-                        if (buf == null || buf.capacity() < size) {
-                            buf = ByteBuffer.allocate(size);
-                            Unsafe.getUnsafe().putObject(obj, m.meta.offset, buf);
-                        }
-
-                        if (buf.remaining() < size) {
-                            buf.rewind();
-                        }
-                        buf.limit(size);
-                        ((VariableColumn) columns[i]).getBin(localRowID, buf);
-                        buf.flip();
-                    }
+                    readBin(localRowID, obj, i, m);
 
             }
+        }
+    }
+
+    private void readBin(long localRowID, T obj, int i, Journal.ColumnMetadata m) {
+        int size = ((VariableColumn) columns[i]).getBinSize(localRowID);
+        ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, m.meta.offset);
+        if (size == -1) {
+            if (buf != null) {
+                buf.clear();
+            }
+        } else {
+            if (buf == null || buf.capacity() < size) {
+                buf = ByteBuffer.allocate(size);
+                Unsafe.getUnsafe().putObject(obj, m.meta.offset, buf);
+            }
+
+            if (buf.remaining() < size) {
+                buf.rewind();
+            }
+            buf.limit(size);
+            ((VariableColumn) columns[i]).getBin(localRowID, buf);
+            buf.flip();
         }
     }
 
@@ -491,10 +487,28 @@ public class Partition<T> implements Iterable<T>, Closeable {
                         }
                         break;
                     case STRING:
-                        appendStr(obj, i, meta);
+                        String s = (String) Unsafe.getUnsafe().getObject(obj, meta.meta.offset);
+                        long offset = ((VariableColumn) columns[i]).putStr(s);
+                        if (meta.meta.indexed) {
+                            sparseIndexProxies[i].getIndex().add(
+                                    s == null ? SymbolTable.VALUE_IS_NULL : Checksum.hash(s, meta.meta.distinctCountHint)
+                                    , offset
+                            );
+                        }
                         break;
                     case SYMBOL:
-                        appendSym(obj, i, meta);
+                        int key;
+                        String sym = (String) Unsafe.getUnsafe().getObject(obj, meta.meta.offset);
+                        if (sym == null) {
+                            key = SymbolTable.VALUE_IS_NULL;
+                        } else {
+                            key = meta.symbolTable.put(sym);
+                        }
+                        if (meta.meta.indexed) {
+                            sparseIndexProxies[i].getIndex().add(key, ((FixedColumn) columns[i]).putInt(key));
+                        } else {
+                            ((FixedColumn) columns[i]).putInt(key);
+                        }
                         break;
                     case BINARY:
                         appendBin(obj, i, meta);
@@ -520,32 +534,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
             ((VariableColumn) columns[i]).putNull();
         } else {
             ((VariableColumn) columns[i]).putBin(buf);
-        }
-    }
-
-    private void appendSym(T obj, int i, Journal.ColumnMetadata meta) throws JournalException {
-        int key;
-        String sym = (String) Unsafe.getUnsafe().getObject(obj, meta.meta.offset);
-        if (sym == null) {
-            key = SymbolTable.VALUE_IS_NULL;
-        } else {
-            key = meta.symbolTable.put(sym);
-        }
-        if (meta.meta.indexed) {
-            sparseIndexProxies[i].getIndex().add(key, ((FixedColumn) columns[i]).putInt(key));
-        } else {
-            ((FixedColumn) columns[i]).putInt(key);
-        }
-    }
-
-    private void appendStr(T obj, int i, Journal.ColumnMetadata meta) throws JournalException {
-        String s = (String) Unsafe.getUnsafe().getObject(obj, meta.meta.offset);
-        long offset = ((VariableColumn) columns[i]).putStr(s);
-        if (meta.meta.indexed) {
-            sparseIndexProxies[i].getIndex().add(
-                    s == null ? SymbolTable.VALUE_IS_NULL : Checksum.hash(s, meta.meta.distinctCountHint)
-                    , offset
-            );
         }
     }
 

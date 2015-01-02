@@ -72,7 +72,6 @@ public class PartitionBufferedIterator<T> extends AbstractImmutableIterator<T> i
             if (!partition.isOpen()) {
                 partition.open();
             }
-            partition.getJournal().clearObject(obj);
             partition.read(localRowID, obj);
             return obj;
         } catch (JournalException e) {

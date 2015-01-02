@@ -24,6 +24,8 @@ import java.io.OutputStream;
 public abstract class AbstractDataRow implements DataRow {
 
     private ColumnType[] types;
+    private DataRow slave;
+
 
     @Override
     public byte get(String column) {
@@ -85,4 +87,14 @@ public abstract class AbstractDataRow implements DataRow {
     }
 
     protected abstract ColumnType getColumnTypeInternal(int x);
+
+    @Override
+    public DataRow getSlave() {
+        return slave;
+    }
+
+    public void setSlave(DataRow slave) {
+        this.slave = slave;
+    }
+
 }

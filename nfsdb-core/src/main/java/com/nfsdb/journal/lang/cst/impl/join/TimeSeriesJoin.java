@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -95,7 +95,7 @@ public class TimeSeriesJoin extends AbstractImmutableIterator<JournalEntry> impl
                     }
 
                     nextSlave = true;
-                    joinedData.slave = data;
+                    joinedData.setSlave(data);
                     nextData = joinedData;
                     return true;
                 }
@@ -132,14 +132,14 @@ public class TimeSeriesJoin extends AbstractImmutableIterator<JournalEntry> impl
                         break;
                     }
 
-                    joinedData.slave = s;
+                    joinedData.setSlave(s);
                     nextData = joinedData;
                     return true;
                 }
             }
 
             if (!sl) {
-                joinedData.slave = null;
+                joinedData.setSlave(null);
                 nextData = joinedData;
                 return true;
             }

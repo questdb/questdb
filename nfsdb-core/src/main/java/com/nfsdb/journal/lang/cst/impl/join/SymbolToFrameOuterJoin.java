@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -93,10 +93,10 @@ public class SymbolToFrameOuterJoin extends AbstractImmutableIterator<JournalEnt
             } catch (JournalException e) {
                 throw new JournalRuntimeException(e);
             }
-            joinedData.slave = journalEntry;
+            joinedData.setSlave(journalEntry);
             nextSlave = slaveCursor.hasNext();
         } else {
-            joinedData.slave = null;
+            joinedData.setSlave(null);
             nextSlave = false;
         }
 
