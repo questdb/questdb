@@ -16,6 +16,8 @@
 
 package com.nfsdb.journal.collections;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+
 import java.util.Arrays;
 
 
@@ -49,7 +51,7 @@ public class IntObjHashMap<V> {
     @SuppressWarnings({"unchecked"})
     protected void rehash() {
 
-        int newCapacity = (int) Primes.next(values.length << 1);
+        int newCapacity = Primes.next(values.length << 1);
 
         free = (int) (newCapacity * loadFactor);
 
@@ -159,6 +161,7 @@ public class IntObjHashMap<V> {
             return index < values.length;
         }
 
+        @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
         @Override
         public V next() {
             return values[index++];

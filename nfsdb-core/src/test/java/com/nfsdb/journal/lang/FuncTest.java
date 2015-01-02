@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,59 +16,56 @@
 
 package com.nfsdb.journal.lang;
 
-import com.nfsdb.journal.Journal;
-import com.nfsdb.journal.Partition;
-import com.nfsdb.journal.column.AbstractColumn;
-import com.nfsdb.journal.column.FixedColumn;
-import com.nfsdb.journal.factory.configuration.JournalMetadata;
+import com.nfsdb.journal.JournalEntryWriter;
+import com.nfsdb.journal.JournalWriter;
+import com.nfsdb.journal.factory.configuration.JournalStructure;
 import com.nfsdb.journal.lang.cst.Choice;
 import com.nfsdb.journal.lang.cst.PartitionSlice;
 import com.nfsdb.journal.lang.cst.RowAcceptor;
 import com.nfsdb.journal.lang.cst.impl.fltr.DoubleGreaterThanRowFilter;
+import com.nfsdb.journal.test.tools.AbstractTest;
+import com.nfsdb.journal.utils.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static org.easymock.EasyMock.*;
 
-public class FuncTest {
+public class FuncTest extends AbstractTest {
 
     @Test
     public void testGreaterThan() throws Exception {
-        DoubleGreaterThanRowFilter filter = new DoubleGreaterThanRowFilter("test", 10);
 
-        FixedColumn column = createMock(FixedColumn.class);
-        // let row 100 have value 5.0
-        // let row 101 have value 11.0
-        // let row 102 have value 10
-        expect(column.getDouble(100)).andReturn(5d);
-        expect(column.getDouble(101)).andReturn(11d);
-        expect(column.getDouble(102)).andReturn(10d);
-        replay(column);
+        // configure journal "xxx" with single double column "price"
+        JournalWriter w = factory.writer(new JournalStructure("xxx").$double("price"));
 
-        PartitionSlice slice = mockPartitionColumn("test", 5, column);
-        RowAcceptor acceptor = filter.acceptor(slice);
-        Assert.assertEquals(Choice.SKIP, acceptor.accept(100));
-        Assert.assertEquals(Choice.PICK, acceptor.accept(101));
-        Assert.assertEquals(Choice.SKIP, acceptor.accept(102));
-    }
+        // populate 500 rows with pseudo-random double values
+        Rnd rnd = new Rnd();
+        for (int i = 0; i < 500; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            ew.putDouble(0, rnd.nextDouble());
+            ew.append();
+        }
+        w.commit();
 
-    private PartitionSlice mockPartitionColumn(String name, int index, AbstractColumn column) {
-        JournalMetadata metadata = createMock(JournalMetadata.class);
-        expect(metadata.getColumnIndex(name)).andReturn(index);
-        replay(metadata);
-
-        Journal journal = createMock(Journal.class);
-        expect(journal.getMetadata()).andReturn(metadata);
-        replay(journal);
-
-        Partition partition = createMock(Partition.class);
-        expect(partition.getJournal()).andReturn(journal);
-        expect(partition.getAbstractColumn(index)).andReturn(column);
-        replay(partition);
-
+        // create test slice that covers entire journal
+        // our journal has only one partition
         PartitionSlice slice = new PartitionSlice();
-        slice.partition = partition;
+        slice.lo = 0;
+        slice.partition = w.getLastPartition();
+        slice.hi = slice.partition.size() - 1;
 
-        return slice;
+        // create filter and acceptor
+        DoubleGreaterThanRowFilter filter = new DoubleGreaterThanRowFilter("price", 10);
+        RowAcceptor acceptor = filter.acceptor(slice);
+
+        for (long row = slice.lo; row <= slice.hi; row++) {
+            Choice choice = acceptor.accept(row);
+            switch (choice) {
+                case PICK:
+                    Assert.assertTrue(slice.partition.getDouble(row, 0) > 10);
+                    break;
+                default:
+                    Assert.assertTrue(slice.partition.getDouble(row, 0) <= 10);
+            }
+        }
     }
 }

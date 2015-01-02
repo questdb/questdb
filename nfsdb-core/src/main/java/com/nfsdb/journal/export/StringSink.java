@@ -16,6 +16,7 @@
 
 package com.nfsdb.journal.export;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
 
 public class StringSink implements CharSink, CharSequence {
@@ -37,6 +38,8 @@ public class StringSink implements CharSink, CharSequence {
     public void flush() {
     }
 
+    /* Either IDEA or FireBug complain, annotation galore */
+    @SuppressFBWarnings({"RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE"})
     @NotNull
     @Override
     public String toString() {

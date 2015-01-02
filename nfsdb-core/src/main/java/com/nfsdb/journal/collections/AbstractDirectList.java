@@ -108,8 +108,12 @@ public class AbstractDirectList implements Closeable {
     }
 
     public void clear() {
+        clear((byte) 0);
+    }
+
+    public void clear(byte b) {
         pos = start;
-        zero((byte) 0);
+        zero(b);
     }
 
     public void zero(byte v) {

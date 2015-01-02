@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,32 +32,7 @@ import org.junit.Test;
 
 public class MultiMapTest extends AbstractTest {
 
-    private CharSink sink = new StringSink();
-
-/*
-    @Test
-    public void testMultiValue() throws Exception {
-        try (Multimap map = new Multimap(new ColumnType[]{ColumnType.LONG, ColumnType.STRING}, new ColumnType[]{ColumnType.DOUBLE})) {
-            Rnd rnd = new Rnd();
-
-            for (int i = 0; i < 10000; i++) {
-                double d = rnd.nextDouble();
-                long l = rnd.nextLong();
-                String s = rnd.nextString(10);
-                map.claimSlot(
-                        map.claimKey().putLong(l).putStr(s).$()
-                ).putDouble(0, d);
-            }
-
-            rnd = new Rnd();
-            for (Multimap.Record r: map) {
-                Assert.assertEquals(rnd.nextDouble(), r.getDouble(0), 0.0000001d);
-                Assert.assertEquals(rnd.nextLong(), r.getLong(1));
-                Assert.assertEquals(rnd.nextString(10), r.getStr(2));
-            }
-        }
-    }
-*/
+    private final CharSink sink = new StringSink();
 
     @Test
     public void testCount() throws Exception {
@@ -126,6 +101,7 @@ public class MultiMapTest extends AbstractTest {
 
         JournalWriter<Quote> w = factory.writer(Quote.class);
         TestUtils.generateQuoteData(w, 10000, 1419908881558L, 30);
+        w.commit();
 
         int tsIndex = w.getMetadata().getColumnIndex("timestamp");
         int symIndex = w.getMetadata().getColumnIndex("sym");
@@ -142,7 +118,6 @@ public class MultiMapTest extends AbstractTest {
                 .setLoadFactor(0.5f)
                 .build();
 
-
         for (JournalEntry e : w.rows()) {
             long ts = e.getLong(tsIndex);
 
@@ -156,15 +131,11 @@ public class MultiMapTest extends AbstractTest {
             val.putInt(0, val.isNew() ? 1 : val.getInt(0) + 1);
         }
 
-
         JournalEntryPrinter out = new JournalEntryPrinter(sink, true);
         out.print(map.iterator());
         map.free();
 
         Assert.assertEquals(expected, sink.toString());
 
-//        System.out.println(sink);
-
     }
-
 }

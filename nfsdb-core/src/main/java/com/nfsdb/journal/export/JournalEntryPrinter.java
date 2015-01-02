@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.nfsdb.journal.export;
 
+import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.lang.cst.DataRow;
 import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Numbers;
@@ -67,6 +68,8 @@ public class JournalEntryPrinter {
                 case BOOLEAN:
                     sink.put(e.getBool(i) ? "true" : "false");
                     break;
+                default:
+                    throw new JournalRuntimeException("Unsupported type: " + e.getColumnType(i));
             }
             sink.put('\t');
         }

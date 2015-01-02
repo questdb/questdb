@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.nfsdb.journal.utils;
 
 import com.nfsdb.journal.export.CharSink;
 import com.nfsdb.journal.export.StringSink;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 final public class Dates {
 
@@ -289,6 +290,7 @@ final public class Dates {
     }
 
     // YYYY-MM-DDThh:mm:ss.mmm
+    @SuppressFBWarnings({"ICAST_INTEGER_MULTIPLY_CAST_TO_LONG"})
     public static long parseDateTime(CharSequence seq) {
         int p = 0;
         int year = Numbers.parseInt(seq, p, p += 4);
@@ -393,6 +395,7 @@ final public class Dates {
         return yearMillis(y, l) + monthOfYearMillis(m, l) + (d - 1) * DAY_MILLIS;
     }
 
+    @SuppressFBWarnings({"ICAST_INTEGER_MULTIPLY_CAST_TO_LONG"})
     public static long toMillis(int y, int m, int d, int h, int mi) {
         boolean l = isLeapYear(y);
         return yearMillis(y, l) + monthOfYearMillis(m, l) + (d - 1) * DAY_MILLIS + h * HOUR_MILLIS + mi * MINUTE_MILLIS;

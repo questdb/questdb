@@ -55,7 +55,7 @@ public class ObjIntHashMap<V> {
     @SuppressWarnings({"unchecked"})
     protected void rehash() {
 
-        int newCapacity = (int) Primes.next(values.length << 1);
+        int newCapacity = Primes.next(values.length << 1);
         free = capacity = (int) (newCapacity * loadFactor);
         int[] oldValues = values;
         V[] oldKeys = keys;

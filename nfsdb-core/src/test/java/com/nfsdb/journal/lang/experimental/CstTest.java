@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,8 +19,12 @@ package com.nfsdb.journal.lang.experimental;
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.Partition;
+import com.nfsdb.journal.collections.MultiMap;
+import com.nfsdb.journal.column.ColumnType;
 import com.nfsdb.journal.column.FixedColumn;
 import com.nfsdb.journal.column.SymbolTable;
+import com.nfsdb.journal.factory.JournalFactory;
+import com.nfsdb.journal.factory.configuration.ColumnMetadata;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.journal.lang.cst.EntrySource;
 import com.nfsdb.journal.lang.cst.JournalEntry;
@@ -43,6 +47,7 @@ import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.test.tools.JournalTestFactory;
 import com.nfsdb.journal.test.tools.TestData;
 import com.nfsdb.journal.test.tools.TestUtils;
+import com.nfsdb.journal.utils.Dates;
 import com.nfsdb.journal.utils.Files;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
@@ -222,4 +227,58 @@ public class CstTest {
         System.out.println(count);
         System.out.println((System.nanoTime() - t) / 20);
     }
+
+    public void testResamplingPerformance() throws Exception {
+
+        JournalFactory factory = new JournalFactory("d:/data");
+        Journal w = factory.reader("quote");
+
+        int tsIndex = w.getMetadata().getColumnIndex("timestamp");
+        int symIndex = w.getMetadata().getColumnIndex("sym");
+
+        long t = 0;
+        for (int i = -10; i < 10; i++) {
+            if (i == 0) {
+                t = System.nanoTime();
+            }
+
+            MultiMap map = new MultiMap.Builder()
+                    .keyColumn(w.getMetadata().getColumnMetadata(tsIndex))
+                    .keyColumn(w.getMetadata().getColumnMetadata(symIndex))
+                    .valueColumn(new ColumnMetadata() {{
+                        name = "count";
+                        type = ColumnType.INT;
+                    }})
+                    .setCapacity(50)
+                    .setDataSize(500 * 1024)
+                    .setLoadFactor(0.5f)
+                    .build();
+
+            long prev = -1;
+            for (JournalEntry e : w.rows()) {
+                long ts = Dates.floorMI(e.getLong(tsIndex));
+
+                if (ts != prev) {
+                    map.clear();
+                    prev = ts;
+                }
+
+                MultiMap.Values val = map.claimSlot(
+                        map.claimKey()
+                                .putLong(ts)
+                                .putInt(e.getInt(symIndex))
+                                .$()
+                );
+
+                val.putInt(0, val.isNew() ? 1 : val.getInt(0) + 1);
+            }
+            System.out.println(map.size());
+
+//        JournalEntryPrinter out = new JournalEntryPrinter(sink, true);
+//        out.print(map.iterator());
+            map.free();
+        }
+        System.out.println(System.nanoTime() - t);
+    }
+
 }

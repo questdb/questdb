@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -61,7 +61,7 @@ public class ServerConfig extends NetworkConfig {
             InetSocketAddress address = getSocketAddress();
             ServerSocketChannel channel = ServerSocketChannel.open().bind(address).setOption(StandardSocketOptions.SO_RCVBUF, getSoRcvBuf());
             NetworkInterface ifn = getNetworkInterface();
-            LOGGER.info("Server is now listening on %s [%s]", address, ifn == null ? "all" : ifn.getName());
+            LOGGER.info("Server is now listening on %s [%s]", address, ifn.getName());
             return channel;
         } catch (IOException e) {
             throw new JournalNetworkException("Cannot open server socket", e);

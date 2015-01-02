@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ import java.util.List;
 
 public class MultiMap implements Closeable, Iterable<MultiMap.Record> {
 
-    private final int seed = 0xdeadbeef;
+    private static final int seed = 0xdeadbeef;
     private final float loadFactor;
     private final Key key = new Key();
     private final Values values0 = new Values();
@@ -51,16 +51,16 @@ public class MultiMap implements Closeable, Iterable<MultiMap.Record> {
     private long kLimit;
     private long kPos;
     private int free;
-    private long keyCapacity;
+    private int keyCapacity;
     private int size = 0;
 
-    private MultiMap(long capacity, long dataSize, float loadFactor, List<ColumnMetadata> valueColumns, List<ColumnMetadata> keyColumns) {
+    private MultiMap(int capacity, long dataSize, float loadFactor, List<ColumnMetadata> valueColumns, List<ColumnMetadata> keyColumns) {
         this.loadFactor = loadFactor;
         this.kAddress = Unsafe.getUnsafe().allocateMemory(dataSize + AbstractDirectList.CACHE_LINE_SIZE);
         this.kStart = kPos = this.kAddress + (this.kAddress & (AbstractDirectList.CACHE_LINE_SIZE - 1));
         this.kLimit = kStart + dataSize;
 
-        this.keyCapacity = Primes.next((long) (capacity / loadFactor));
+        this.keyCapacity = Primes.next((int) (capacity / loadFactor));
         this.free = (int) (keyCapacity * loadFactor);
         this.keyOffsets = new DirectLongList(keyCapacity);
         this.keyOffsets.zero((byte) -1);
@@ -97,8 +97,7 @@ public class MultiMap implements Closeable, Iterable<MultiMap.Record> {
     public Values claimSlot(Key key) {
         // calculate hash remembering "key" structure
         // [ len | value block | key offset block | key data block ]
-        long h = Hash.hashXX(key.startAddr + keyBlockOffset, key.len - keyBlockOffset, seed);
-        long index = h % keyCapacity;
+        int index = Hash.hashXX(key.startAddr + keyBlockOffset, key.len - keyBlockOffset, seed) % keyCapacity;
         long offset = keyOffsets.get(index);
 
         if (offset == -1) {
@@ -117,7 +116,7 @@ public class MultiMap implements Closeable, Iterable<MultiMap.Record> {
         }
     }
 
-    private Values probe0(Key key, long index) {
+    private Values probe0(Key key, int index) {
         long offset;
         while ((offset = keyOffsets.get(index = (++index % keyCapacity))) != -1) {
             if (eq(key, offset)) {
@@ -189,7 +188,7 @@ public class MultiMap implements Closeable, Iterable<MultiMap.Record> {
     }
 
     private void rehash() {
-        long capacity = Primes.next(keyCapacity << 1);
+        int capacity = Primes.next(keyCapacity << 1);
         DirectLongList pointers = new DirectLongList(capacity);
         pointers.zero((byte) -1);
         pointers.setPos(capacity);
@@ -235,10 +234,17 @@ public class MultiMap implements Closeable, Iterable<MultiMap.Record> {
         return size;
     }
 
+    public void clear() {
+        kPos = kStart;
+        free = (int) (keyCapacity * loadFactor);
+        size = 0;
+        keyOffsets.clear((byte) -1);
+    }
+
     public static class Builder {
         private final List<ColumnMetadata> valueColumns = new ArrayList<>();
         private final List<ColumnMetadata> keyColumns = new ArrayList<>();
-        private long capacity = 67;
+        private int capacity = 67;
         private long dataSize = 4096;
         private float loadFactor = 0.5f;
 
@@ -252,7 +258,7 @@ public class MultiMap implements Closeable, Iterable<MultiMap.Record> {
             return this;
         }
 
-        public Builder setCapacity(long capacity) {
+        public Builder setCapacity(int capacity) {
             this.capacity = capacity;
             return this;
         }
@@ -289,6 +295,14 @@ public class MultiMap implements Closeable, Iterable<MultiMap.Record> {
             checkSize(8);
             Unsafe.getUnsafe().putLong(appendAddr, value);
             appendAddr += 8;
+            writeOffset();
+            return this;
+        }
+
+        public Key putInt(int value) {
+            checkSize(4);
+            Unsafe.getUnsafe().putInt(appendAddr, value);
+            appendAddr += 4;
             writeOffset();
             return this;
         }

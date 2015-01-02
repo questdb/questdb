@@ -21,8 +21,8 @@ import java.util.Arrays;
 
 public class IntHashSet {
 
+    private static final int noEntryValue = -1;
     private final double loadFactor;
-    private final int noEntryValue = -1;
     private int[] keys;
     private int free;
     private int capacity;
@@ -46,7 +46,7 @@ public class IntHashSet {
 
     @SuppressWarnings({"unchecked"})
     protected void rehash() {
-        int newCapacity = (int) Primes.next(keys.length << 1);
+        int newCapacity = Primes.next(keys.length << 1);
 
         free = capacity = (int) (newCapacity * loadFactor);
 
