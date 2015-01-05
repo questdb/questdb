@@ -16,14 +16,14 @@
 
 package org.nfsdb.examples.query;
 
-import com.nfsdb.journal.Journal;
-import com.nfsdb.journal.JournalWriter;
-import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.factory.JournalFactory;
-import com.nfsdb.journal.query.api.QueryAllBuilder;
-import com.nfsdb.journal.utils.Dates;
-import com.nfsdb.journal.utils.Files;
-import com.nfsdb.journal.utils.Interval;
+import com.nfsdb.Journal;
+import com.nfsdb.JournalWriter;
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalFactory;
+import com.nfsdb.query.api.QueryAllBuilder;
+import com.nfsdb.utils.Dates;
+import com.nfsdb.utils.Files;
+import com.nfsdb.utils.Interval;
 import org.nfsdb.examples.model.ModelConfiguration;
 import org.nfsdb.examples.model.Quote;
 import org.nfsdb.examples.support.QuoteGenerator;

@@ -16,11 +16,11 @@
 
 package org.nfsdb.examples.network.authentication;
 
-import com.nfsdb.journal.Journal;
-import com.nfsdb.journal.factory.JournalFactory;
-import com.nfsdb.journal.net.JournalClient;
-import com.nfsdb.journal.net.auth.CredentialProvider;
-import com.nfsdb.journal.tx.TxListener;
+import com.nfsdb.Journal;
+import com.nfsdb.factory.JournalFactory;
+import com.nfsdb.net.JournalClient;
+import com.nfsdb.net.auth.CredentialProvider;
+import com.nfsdb.tx.TxListener;
 import org.nfsdb.examples.model.Price;
 
 /**

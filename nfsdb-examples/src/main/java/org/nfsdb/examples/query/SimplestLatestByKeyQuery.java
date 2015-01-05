@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,10 @@
 
 package org.nfsdb.examples.query;
 
-import com.nfsdb.journal.Journal;
-import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.factory.JournalFactory;
-import com.nfsdb.journal.query.api.QueryHeadBuilder;
+import com.nfsdb.Journal;
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalFactory;
+import com.nfsdb.query.api.QueryHeadBuilder;
 import org.nfsdb.examples.model.ModelConfiguration;
 import org.nfsdb.examples.model.Price;
 

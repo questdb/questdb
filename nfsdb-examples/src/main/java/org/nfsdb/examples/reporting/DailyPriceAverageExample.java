@@ -16,16 +16,16 @@
 
 package org.nfsdb.examples.reporting;
 
-import com.nfsdb.journal.Journal;
-import com.nfsdb.journal.JournalWriter;
-import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.export.StringSink;
-import com.nfsdb.journal.factory.JournalFactory;
-import com.nfsdb.journal.printer.JournalPrinter;
-import com.nfsdb.journal.printer.appender.StdOutAppender;
-import com.nfsdb.journal.query.api.QueryAllBuilder;
-import com.nfsdb.journal.utils.Dates;
-import com.nfsdb.journal.utils.Files;
+import com.nfsdb.Journal;
+import com.nfsdb.JournalWriter;
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.export.StringSink;
+import com.nfsdb.factory.JournalFactory;
+import com.nfsdb.printer.JournalPrinter;
+import com.nfsdb.printer.appender.StdOutAppender;
+import com.nfsdb.query.api.QueryAllBuilder;
+import com.nfsdb.utils.Dates;
+import com.nfsdb.utils.Files;
 import org.nfsdb.examples.model.ModelConfiguration;
 import org.nfsdb.examples.model.Quote;
 import org.nfsdb.examples.support.QuoteGenerator;
@@ -79,7 +79,7 @@ public class DailyPriceAverageExample {
                     // in this example we are using scalar values, so we have same number of fields as there are types.
                     // fields not declared here won't be printed.
                     printer.v(0).h("Symbol").v(1).h("Date").v(2).h("avg(Ask)");
-                    // tell printer the appender we want to use, appender is anything implementing com.nfsdb.journal.printer.appender.Appender interface.
+                    // tell printer the appender we want to use, appender is anything implementing Appender interface.
                     printer.setAppender(StdOutAppender.INSTANCE);
 
                     // print out header

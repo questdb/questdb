@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,9 +20,9 @@ import com.lmax.disruptor.BatchEventProcessor;
 import com.lmax.disruptor.BusySpinWaitStrategy;
 import com.lmax.disruptor.RingBuffer;
 import com.lmax.disruptor.SequenceBarrier;
-import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.factory.JournalFactory;
-import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalFactory;
+import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;

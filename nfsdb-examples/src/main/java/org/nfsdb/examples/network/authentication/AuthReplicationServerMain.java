@@ -16,12 +16,12 @@
 
 package org.nfsdb.examples.network.authentication;
 
-import com.nfsdb.journal.JournalKey;
-import com.nfsdb.journal.JournalWriter;
-import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.factory.JournalFactory;
-import com.nfsdb.journal.net.JournalServer;
-import com.nfsdb.journal.net.auth.Authorizer;
+import com.nfsdb.JournalKey;
+import com.nfsdb.JournalWriter;
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalFactory;
+import com.nfsdb.net.JournalServer;
+import com.nfsdb.net.auth.Authorizer;
 import org.nfsdb.examples.model.Price;
 
 import java.util.List;

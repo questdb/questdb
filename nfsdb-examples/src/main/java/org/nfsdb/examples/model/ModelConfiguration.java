@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,8 @@
 
 package org.nfsdb.examples.model;
 
-import com.nfsdb.journal.PartitionType;
-import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
+import com.nfsdb.PartitionType;
+import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 
 import java.util.concurrent.TimeUnit;
 

@@ -16,11 +16,11 @@
 
 package org.nfsdb.examples.append;
 
-import com.nfsdb.journal.JournalWriter;
-import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.factory.JournalFactory;
-import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.journal.utils.Files;
+import com.nfsdb.JournalWriter;
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalFactory;
+import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
+import com.nfsdb.utils.Files;
 import org.nfsdb.examples.model.Quote;
 
 import java.io.File;

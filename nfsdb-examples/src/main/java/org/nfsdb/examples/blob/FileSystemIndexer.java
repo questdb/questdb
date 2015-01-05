@@ -16,11 +16,11 @@
 
 package org.nfsdb.examples.blob;
 
-import com.nfsdb.journal.JournalEntryWriter;
-import com.nfsdb.journal.JournalWriter;
-import com.nfsdb.journal.exceptions.JournalException;
-import com.nfsdb.journal.factory.JournalFactory;
-import com.nfsdb.journal.factory.configuration.JournalStructure;
+import com.nfsdb.JournalEntryWriter;
+import com.nfsdb.JournalWriter;
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalFactory;
+import com.nfsdb.factory.configuration.JournalStructure;
 
 import java.io.*;
 import java.util.zip.GZIPOutputStream;
