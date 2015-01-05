@@ -14,10 +14,16 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.lang.cst;
+package com.nfsdb.journal.lang.cst.impl.qry;
 
-import com.nfsdb.journal.collections.ImmutableIterator;
+import com.nfsdb.journal.column.ColumnType;
 
-public interface EntrySource extends ImmutableIterator<JournalEntry> {
-    void reset();
+public interface RecordMetadata {
+    RecordMetadata nextMetadata();
+
+    int getColumnCount();
+
+    ColumnType getColumnType(int index);
+
+    int getColumnIndex(CharSequence name);
 }

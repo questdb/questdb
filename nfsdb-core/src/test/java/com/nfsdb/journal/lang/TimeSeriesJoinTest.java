@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,10 +19,9 @@ package com.nfsdb.journal.lang;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
-import com.nfsdb.journal.export.JournalEntryPrinter;
+import com.nfsdb.journal.export.RecordSourcePrinter;
 import com.nfsdb.journal.export.StringSink;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.journal.lang.cst.EntrySource;
 import com.nfsdb.journal.lang.cst.impl.join.TimeSeriesJoin;
 import com.nfsdb.journal.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.psrc.JournalPartitionSource;
@@ -51,7 +50,7 @@ public class TimeSeriesJoinTest {
     }
 
     private static final StringSink sink = new StringSink();
-    private static final JournalEntryPrinter printer = new JournalEntryPrinter(sink, true);
+    private static final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
     private static JournalWriter<Ts> w1;
     private static JournalWriter<Ts> w2;
 
@@ -149,7 +148,7 @@ public class TimeSeriesJoinTest {
                 "229\t\n" +
                 "234\t247\t\n";
 
-        EntrySource src = new TimeSeriesJoin(
+        printer.print(new TimeSeriesJoin(
                 new JournalSourceImpl(new JournalPartitionSource(w1, true), new AllRowSource())
                 , 0
                 ,
@@ -157,9 +156,7 @@ public class TimeSeriesJoinTest {
                 , 0
                 , 15
                 , 2 // trigger re-sizes to test ring expand formulas
-        );
-
-        printer.print(src);
+        ));
         Assert.assertEquals(expected, sink.toString());
     }
 

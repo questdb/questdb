@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,8 +20,8 @@ import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalMetadataException;
 import com.nfsdb.journal.factory.configuration.JournalMetadataBuilder;
 import com.nfsdb.journal.factory.configuration.JournalStructure;
-import com.nfsdb.journal.lang.cst.JournalEntry;
-import com.nfsdb.journal.lang.cst.JournalSource;
+import com.nfsdb.journal.lang.cst.impl.qry.JournalRecord;
+import com.nfsdb.journal.lang.cst.impl.qry.JournalRecordSource;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestUtils;
 import org.junit.Assert;
@@ -73,8 +73,8 @@ public class GenericInteropTest extends AbstractTest {
         writer.commit();
 
         Journal reader = factory.reader("test");
-        JournalSource src = reader.rows();
-        JournalEntry e;
+        JournalRecordSource src = reader.rows();
+        JournalRecord e;
 
         Assert.assertTrue(src.hasNext());
         Assert.assertNotNull(e = src.next());
@@ -191,8 +191,8 @@ public class GenericInteropTest extends AbstractTest {
         writer.commit();
 
         Journal reader = factory.reader("test");
-        JournalSource src = reader.rows();
-        JournalEntry e;
+        JournalRecordSource src = reader.rows();
+        JournalRecord e;
 
         Assert.assertTrue(src.hasNext());
         Assert.assertNotNull(e = src.next());

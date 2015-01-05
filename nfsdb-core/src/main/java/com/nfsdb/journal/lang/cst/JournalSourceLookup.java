@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,8 @@
 
 package com.nfsdb.journal.lang.cst;
 
+import com.nfsdb.journal.lang.cst.impl.qry.JournalRecordSource;
+
 public interface JournalSourceLookup {
-    JournalSource source(String value);
+    JournalRecordSource source(String value);
 }

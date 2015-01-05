@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,10 +17,9 @@
 package com.nfsdb.journal.lang;
 
 import com.nfsdb.journal.JournalWriter;
-import com.nfsdb.journal.export.JournalEntryPrinter;
+import com.nfsdb.journal.export.RecordSourcePrinter;
 import com.nfsdb.journal.export.StringSink;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.journal.lang.cst.EntrySource;
 import com.nfsdb.journal.lang.cst.RowSource;
 import com.nfsdb.journal.lang.cst.impl.fltr.DoubleGreaterThanRowFilter;
 import com.nfsdb.journal.lang.cst.impl.fltr.SymbolEqualsRowFilter;
@@ -29,6 +28,8 @@ import com.nfsdb.journal.lang.cst.impl.ksrc.PartialSymbolKeySource;
 import com.nfsdb.journal.lang.cst.impl.ksrc.SymbolKeySource;
 import com.nfsdb.journal.lang.cst.impl.psrc.IntervalPartitionSource;
 import com.nfsdb.journal.lang.cst.impl.psrc.JournalPartitionSource;
+import com.nfsdb.journal.lang.cst.impl.qry.Record;
+import com.nfsdb.journal.lang.cst.impl.qry.RecordSource;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 import com.nfsdb.journal.lang.cst.impl.rsrc.FilteredRowSource;
 import com.nfsdb.journal.lang.cst.impl.rsrc.KvIndexHeadRowSource;
@@ -175,9 +176,8 @@ public class SingleJournalSearchTest {
 
     }
 
-    private void assertEquals(CharSequence expected, EntrySource src) {
-        JournalEntryPrinter p = new JournalEntryPrinter(sink, true);
-        p.print(src);
+    private void assertEquals(CharSequence expected, RecordSource<? extends Record> src) {
+        new RecordSourcePrinter(sink).print(src);
         Assert.assertEquals(expected, sink.toString());
         sink.flush();
     }

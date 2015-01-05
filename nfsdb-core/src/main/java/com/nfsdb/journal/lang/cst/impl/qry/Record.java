@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,15 +14,12 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.lang.cst;
-
-import com.nfsdb.journal.column.ColumnType;
+package com.nfsdb.journal.lang.cst.impl.qry;
 
 import java.io.InputStream;
 import java.io.OutputStream;
 
-public interface DataRow {
-    int getColumnIndex(String column);
+public interface Record {
 
     byte get(String column);
 
@@ -64,9 +61,7 @@ public interface DataRow {
 
     InputStream getBin(int col);
 
-    DataRow getSlave();
+    Record getSlave();
 
-    int getColumnCount();
-
-    ColumnType getColumnType(int column);
+    void setSlave(Record slave);
 }

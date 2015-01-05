@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,9 +29,9 @@ import com.nfsdb.journal.factory.configuration.JournalMetadata;
 import com.nfsdb.journal.iterators.ConcurrentIterator;
 import com.nfsdb.journal.iterators.JournalPeekingIterator;
 import com.nfsdb.journal.iterators.JournalRowBufferedIterator;
-import com.nfsdb.journal.lang.cst.JournalSource;
 import com.nfsdb.journal.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.psrc.JournalPartitionSource;
+import com.nfsdb.journal.lang.cst.impl.qry.JournalRecordSource;
 import com.nfsdb.journal.lang.cst.impl.rsrc.AllRowSource;
 import com.nfsdb.journal.query.api.Query;
 import com.nfsdb.journal.query.spi.QueryImpl;
@@ -547,7 +547,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         return new TempPartition<>(this, interval, nonLagPartitionCount(), name);
     }
 
-    public JournalSource rows() {
+    public JournalRecordSource rows() {
         return new JournalSourceImpl(
                 new JournalPartitionSource(this, true)
                 , new AllRowSource()

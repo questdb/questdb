@@ -16,13 +16,14 @@
 
 package com.nfsdb.journal;
 
-import com.nfsdb.journal.collections.MultiMap;
+import com.nfsdb.journal.collections.mmap.MapValues;
+import com.nfsdb.journal.collections.mmap.MultiMap;
 import com.nfsdb.journal.column.ColumnType;
 import com.nfsdb.journal.export.CharSink;
-import com.nfsdb.journal.export.JournalEntryPrinter;
+import com.nfsdb.journal.export.RecordSourcePrinter;
 import com.nfsdb.journal.export.StringSink;
 import com.nfsdb.journal.factory.configuration.ColumnMetadata;
-import com.nfsdb.journal.lang.cst.JournalEntry;
+import com.nfsdb.journal.lang.cst.impl.qry.JournalRecord;
 import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.test.tools.TestUtils;
@@ -118,10 +119,10 @@ public class MultiMapTest extends AbstractTest {
                 .setLoadFactor(0.5f)
                 .build();
 
-        for (JournalEntry e : w.rows()) {
+        for (JournalRecord e : w.rows()) {
             long ts = e.getLong(tsIndex);
 
-            MultiMap.Values val = map.claimSlot(
+            MapValues val = map.claimSlot(
                     map.claimKey()
                             .putLong(Dates.floorMI(ts))
                             .putStr(e.getSym(symIndex))
@@ -131,7 +132,7 @@ public class MultiMapTest extends AbstractTest {
             val.putInt(0, val.isNew() ? 1 : val.getInt(0) + 1);
         }
 
-        JournalEntryPrinter out = new JournalEntryPrinter(sink, true);
+        RecordSourcePrinter out = new RecordSourcePrinter(sink);
         out.print(map.iterator());
         map.free();
 

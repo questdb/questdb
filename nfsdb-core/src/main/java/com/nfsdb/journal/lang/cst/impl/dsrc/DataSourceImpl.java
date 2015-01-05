@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,34 +18,34 @@ package com.nfsdb.journal.lang.cst.impl.dsrc;
 
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.lang.cst.DataSource;
-import com.nfsdb.journal.lang.cst.JournalEntry;
-import com.nfsdb.journal.lang.cst.JournalSource;
+import com.nfsdb.journal.lang.cst.impl.qry.JournalRecord;
+import com.nfsdb.journal.lang.cst.impl.qry.JournalRecordSource;
 
 public class DataSourceImpl<T> extends AbstractImmutableIterator<T> implements DataSource<T> {
-    private final JournalSource journalSource;
+    private final JournalRecordSource journalRowSource;
     private final T container;
 
-    public DataSourceImpl(JournalSource journalSource, T container) {
-        this.journalSource = journalSource;
+    public DataSourceImpl(JournalRecordSource journalRowSource, T container) {
+        this.journalRowSource = journalRowSource;
         this.container = container;
     }
 
     @Override
     public boolean hasNext() {
-        return journalSource.hasNext();
+        return journalRowSource.hasNext();
     }
 
     @SuppressWarnings("unchecked")
     @Override
     public T next() {
-        JournalEntry item = journalSource.next();
+        JournalRecord item = journalRowSource.next();
         item.partition.read(item.rowid, container);
         return container;
     }
 
     @Override
     public DataSource<T> $new() {
-        journalSource.reset();
+        journalRowSource.reset();
         return this;
     }
 

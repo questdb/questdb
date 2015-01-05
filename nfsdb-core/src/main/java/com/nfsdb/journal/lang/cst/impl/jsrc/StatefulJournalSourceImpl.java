@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,20 +18,21 @@ package com.nfsdb.journal.lang.cst.impl.jsrc;
 
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
-import com.nfsdb.journal.lang.cst.JournalEntry;
-import com.nfsdb.journal.lang.cst.JournalSource;
 import com.nfsdb.journal.lang.cst.StatefulJournalSource;
+import com.nfsdb.journal.lang.cst.impl.qry.JournalRecord;
+import com.nfsdb.journal.lang.cst.impl.qry.JournalRecordSource;
+import com.nfsdb.journal.lang.cst.impl.qry.RecordMetadata;
 
-public class StatefulJournalSourceImpl extends AbstractImmutableIterator<JournalEntry> implements StatefulJournalSource {
-    private final JournalSource delegate;
-    private JournalEntry current;
+public class StatefulJournalSourceImpl extends AbstractImmutableIterator<JournalRecord> implements StatefulJournalSource {
+    private final JournalRecordSource delegate;
+    private JournalRecord current;
 
-    public StatefulJournalSourceImpl(JournalSource delegate) {
+    public StatefulJournalSourceImpl(JournalRecordSource delegate) {
         this.delegate = delegate;
     }
 
     @Override
-    public JournalEntry current() {
+    public JournalRecord current() {
         return current;
     }
 
@@ -51,7 +52,12 @@ public class StatefulJournalSourceImpl extends AbstractImmutableIterator<Journal
     }
 
     @Override
-    public JournalEntry next() {
+    public JournalRecord next() {
         return current = delegate.next();
+    }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return delegate.getMetadata();
     }
 }

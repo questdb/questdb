@@ -14,35 +14,29 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.collections;
+package com.nfsdb.journal.collections.mmap;
 
-import com.nfsdb.journal.column.ColumnType;
+import com.nfsdb.journal.collections.AbstractDirectList;
+import com.nfsdb.journal.collections.DirectLongList;
+import com.nfsdb.journal.collections.Primes;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
 import com.nfsdb.journal.factory.configuration.ColumnMetadata;
-import com.nfsdb.journal.lang.cst.AbstractDataRow;
-import com.nfsdb.journal.lang.cst.DataRow;
+import com.nfsdb.journal.lang.cst.impl.qry.Record;
+import com.nfsdb.journal.lang.cst.impl.qry.RecordSource;
 import com.nfsdb.journal.utils.Hash;
 import com.nfsdb.journal.utils.Unsafe;
 
 import java.io.Closeable;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 
-public class MultiMap implements Closeable, Iterable<MultiMap.Record> {
+public class MultiMap implements Closeable, Iterable<Record> {
 
     private static final int seed = 0xdeadbeef;
     private final float loadFactor;
     private final Key key = new Key();
-    private final Values values0 = new Values();
-    private final Record record = new Record();
-    private final RecordIterator iterator = new RecordIterator();
-    private final List<ColumnMetadata> keyColumns;
-    private final List<ColumnMetadata> valueColumns;
-    private final int valueOffsets[];
-    private final int columnSplit;
+    private final MapRecordSource recordSource;
+    private final MapValues mapValues0;
     private int keyBlockOffset;
     private int keyDataOffset;
     private DirectLongList keyOffsets;
@@ -65,14 +59,9 @@ public class MultiMap implements Closeable, Iterable<MultiMap.Record> {
         this.keyOffsets = new DirectLongList(keyCapacity);
         this.keyOffsets.zero((byte) -1);
         this.keyOffsets.setPos(keyCapacity);
-        this.keyColumns = keyColumns;
-        this.valueColumns = valueColumns;
-        this.columnSplit = valueColumns.size();
-        this.valueOffsets = new int[columnSplit];
-        calValueOffsets();
-    }
+        int columnSplit = valueColumns.size();
+        int[] valueOffsets = new int[columnSplit];
 
-    private void calValueOffsets() {
         int offset = 4;
         for (int i = 0; i < valueOffsets.length; i++) {
             valueOffsets[i] = offset;
@@ -89,12 +78,17 @@ public class MultiMap implements Closeable, Iterable<MultiMap.Record> {
                     throw new JournalRuntimeException("value type is not supported: " + valueColumns.get(i));
             }
         }
+
+        this.mapValues0 = new MapValues(valueOffsets);
+        MapMetadata metadata = new MapMetadata(valueColumns, keyColumns);
         this.keyBlockOffset = offset;
         this.keyDataOffset = this.keyBlockOffset + 4 * keyColumns.size();
+        MapRecord record = new MapRecord(metadata, valueOffsets, keyDataOffset, keyBlockOffset);
+        this.recordSource = new MapRecordSource(record, metadata);
     }
 
 
-    public Values claimSlot(Key key) {
+    public MapValues claimSlot(Key key) {
         // calculate hash remembering "key" structure
         // [ len | value block | key offset block | key data block ]
         int index = Hash.hashXX(key.startAddr + keyBlockOffset, key.len - keyBlockOffset, seed) % keyCapacity;
@@ -106,22 +100,22 @@ public class MultiMap implements Closeable, Iterable<MultiMap.Record> {
                 rehash();
             }
             size++;
-            return values0.beginRead(key.startAddr, true);
+            return mapValues0.beginRead(key.startAddr, true);
         } else if (eq(key, offset)) {
             // rollback added key
             kPos = key.startAddr;
-            return values0.beginRead(kStart + offset, false);
+            return mapValues0.beginRead(kStart + offset, false);
         } else {
             return probe0(key, index);
         }
     }
 
-    private Values probe0(Key key, int index) {
+    private MapValues probe0(Key key, int index) {
         long offset;
         while ((offset = keyOffsets.get(index = (++index % keyCapacity))) != -1) {
             if (eq(key, offset)) {
                 kPos = key.startAddr;
-                return values0.beginRead(kStart + offset, false);
+                return mapValues0.beginRead(kStart + offset, false);
             }
         }
         keyOffsets.set(index, key.startAddr - kStart);
@@ -131,7 +125,7 @@ public class MultiMap implements Closeable, Iterable<MultiMap.Record> {
         }
 
         size++;
-        return values0.beginRead(key.startAddr, true);
+        return mapValues0.beginRead(key.startAddr, true);
     }
 
     private boolean eq(Key key, long offset) {
@@ -219,10 +213,8 @@ public class MultiMap implements Closeable, Iterable<MultiMap.Record> {
     }
 
     @Override
-    public Iterator<Record> iterator() {
-        iterator.address = kStart;
-        iterator.count = size;
-        return iterator;
+    public RecordSource<Record> iterator() {
+        return recordSource.init(kStart, size);
     }
 
     @Override
@@ -341,183 +333,6 @@ public class MultiMap implements Closeable, Iterable<MultiMap.Record> {
             appendAddr = startAddr + keyDataOffset;
             nextColOffset = startAddr + keyBlockOffset;
             return this;
-        }
-    }
-
-    public class Values {
-        public long address;
-        private boolean _new;
-
-        public void putDouble(int index, double value) {
-            Unsafe.getUnsafe().putDouble(address0(index), value);
-        }
-
-        public double getDouble(int index) {
-            return Unsafe.getUnsafe().getDouble(address0(index));
-        }
-
-        public void putInt(int index, int value) {
-            Unsafe.getUnsafe().putInt(address0(index), value);
-        }
-
-        public int getInt(int index) {
-            return Unsafe.getUnsafe().getInt(address0(index));
-        }
-
-        private long address0(int index) {
-            return address + valueOffsets[index];
-        }
-
-        private Values beginRead(long address, boolean _new) {
-            this.address = address;
-            this._new = _new;
-            return this;
-        }
-
-        public boolean isNew() {
-            return _new;
-        }
-    }
-
-    public class Record extends AbstractDataRow {
-        private long address;
-        private char[] strBuf = null;
-        private ObjIntHashMap<String> nameCache;
-
-        private long address0(int index) {
-
-            if (index < columnSplit) {
-                return address + valueOffsets[index];
-            }
-
-            if (index == columnSplit) {
-                return address + keyDataOffset;
-            }
-
-            return Unsafe.getUnsafe().getInt(address + keyBlockOffset + (index - columnSplit - 1) * 4) + address;
-        }
-
-        private Record init(long address) {
-            this.address = address;
-            return this;
-        }
-
-        @Override
-        public int getColumnCount() {
-            return valueColumns.size() + keyColumns.size();
-        }
-
-        @Override
-        public double getDouble(int index) {
-            return Unsafe.getUnsafe().getDouble(address0(index));
-        }
-
-        @Override
-        public long getLong(int index) {
-            return Unsafe.getUnsafe().getLong(address0(index));
-        }
-
-        @Override
-        public int getInt(int index) {
-            return Unsafe.getUnsafe().getInt(address0(index));
-        }
-
-        @Override
-        public String getStr(int index) {
-            long address = address0(index);
-            int len = (int) (address0(index + 1) - address) >> 1;
-            if (strBuf == null || strBuf.length < len) {
-                strBuf = new char[len];
-            }
-            Unsafe.getUnsafe().copyMemory(null, address, strBuf, sun.misc.Unsafe.ARRAY_CHAR_BASE_OFFSET, ((long) len) << 1);
-            return new String(strBuf, 0, len);
-        }
-
-        @Override
-        public int getColumnIndex(String column) {
-            if (nameCache == null) {
-                populateNameCache();
-            }
-            return nameCache.get(column);
-        }
-
-        private void populateNameCache() {
-            nameCache = new ObjIntHashMap<>();
-            for (int i = 0, valueColumnsSize = valueColumns.size(); i < valueColumnsSize; i++) {
-                nameCache.put(valueColumns.get(i).name, i);
-            }
-
-            for (int i = 0, keyColumnsSize = keyColumns.size(); i < keyColumnsSize; i++) {
-                ColumnMetadata m = keyColumns.get(i);
-                nameCache.put(m.name, i + columnSplit);
-            }
-        }
-
-        @Override
-        protected ColumnType getColumnTypeInternal(int x) {
-            if (x < columnSplit) {
-                return valueColumns.get(x).type;
-            } else {
-                return keyColumns.get(x - columnSplit).type;
-            }
-        }
-
-        @Override
-        public long getDate(int index) {
-            return Unsafe.getUnsafe().getLong(address0(index));
-        }
-
-        @Override
-        public boolean getBool(int index) {
-            return Unsafe.getUnsafe().getByte(address0(index)) == 1;
-        }
-
-        @Override
-        public short getShort(int index) {
-            return Unsafe.getUnsafe().getShort(address0(index));
-        }
-
-        @Override
-        public DataRow getSlave() {
-            return null;
-        }
-
-        @Override
-        public byte get(int index) {
-            return Unsafe.getUnsafe().getByte(address0(index));
-        }
-
-        @Override
-        public void getBin(int col, OutputStream s) {
-            throw new JournalRuntimeException("Not implemented");
-        }
-
-        @Override
-        public InputStream getBin(int col) {
-            throw new JournalRuntimeException("Not implemented");
-        }
-
-        @Override
-        public String getSym(int index) {
-            return getStr(index);
-        }
-    }
-
-    public class RecordIterator extends AbstractImmutableIterator<Record> {
-        private int count;
-        private long address;
-
-        @Override
-        public boolean hasNext() {
-            return count > 0;
-        }
-
-        @Override
-        public Record next() {
-            long address = this.address;
-            this.address = address + Unsafe.getUnsafe().getInt(address);
-            count--;
-            return record.init(address);
         }
     }
 }

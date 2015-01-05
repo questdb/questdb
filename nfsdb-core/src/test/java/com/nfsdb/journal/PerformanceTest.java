@@ -19,8 +19,8 @@ package com.nfsdb.journal;
 import com.nfsdb.journal.collections.DirectLongList;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.index.KVIndex;
-import com.nfsdb.journal.lang.cst.JournalEntry;
-import com.nfsdb.journal.lang.cst.JournalSource;
+import com.nfsdb.journal.lang.cst.impl.qry.JournalRecord;
+import com.nfsdb.journal.lang.cst.impl.qry.JournalRecordSource;
 import com.nfsdb.journal.logging.Logger;
 import com.nfsdb.journal.model.Quote;
 import com.nfsdb.journal.query.api.QueryAllBuilder;
@@ -91,9 +91,9 @@ public class PerformanceTest extends AbstractTest {
             if (i == 0) {
                 t = System.nanoTime();
             }
-            JournalSource s = w.rows();
+            JournalRecordSource s = w.rows();
             int cnt = 0;
-            for (JournalEntry r : s) {
+            for (JournalRecord r : s) {
                 r.getLong(0);
                 r.getSym(1);
                 r.getDouble(2);

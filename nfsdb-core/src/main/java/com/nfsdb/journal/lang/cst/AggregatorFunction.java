@@ -16,9 +16,10 @@
 
 package com.nfsdb.journal.lang.cst;
 
-import com.nfsdb.journal.lang.cst.impl.qry.JournalRecord;
-import com.nfsdb.journal.lang.cst.impl.qry.JournalRecordSource;
+import com.nfsdb.journal.factory.configuration.ColumnMetadata;
 
-public interface StatefulJournalSource extends JournalRecordSource {
-    JournalRecord current();
+public interface AggregatorFunction {
+    ColumnMetadata[] getColumns();
+
+    void mapColumn(int k, int i);
 }

@@ -14,10 +14,13 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.lang.cst;
+package com.nfsdb.journal.lang.cst.impl.qry;
 
-import com.nfsdb.journal.Journal;
+import com.nfsdb.journal.collections.ImmutableIterator;
 
-public interface JournalSource extends EntrySource {
-    Journal getJournal();
+public interface RecordSource<T extends Record> extends ImmutableIterator<T> {
+
+    RecordMetadata getMetadata();
+
+    void reset();
 }

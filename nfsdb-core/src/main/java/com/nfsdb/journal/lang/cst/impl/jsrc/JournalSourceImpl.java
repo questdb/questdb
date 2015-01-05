@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,13 +17,17 @@
 package com.nfsdb.journal.lang.cst.impl.jsrc;
 
 import com.nfsdb.journal.Journal;
-import com.nfsdb.journal.collections.AbstractImmutableIterator;
-import com.nfsdb.journal.lang.cst.*;
+import com.nfsdb.journal.lang.cst.PartitionSlice;
+import com.nfsdb.journal.lang.cst.PartitionSource;
+import com.nfsdb.journal.lang.cst.RowCursor;
+import com.nfsdb.journal.lang.cst.RowSource;
+import com.nfsdb.journal.lang.cst.impl.qry.AbstractJournalSource;
+import com.nfsdb.journal.lang.cst.impl.qry.JournalRecord;
 
-public class JournalSourceImpl extends AbstractImmutableIterator<JournalEntry> implements JournalSource {
+public class JournalSourceImpl extends AbstractJournalSource {
     private final PartitionSource partitionSource;
     private final RowSource rowSource;
-    private final JournalEntry item = new JournalEntry();
+    private final JournalRecord item = new JournalRecord(this);
     private RowCursor cursor;
 
     public JournalSourceImpl(PartitionSource partitionSource, RowSource rowSource) {
@@ -37,7 +41,7 @@ public class JournalSourceImpl extends AbstractImmutableIterator<JournalEntry> i
     }
 
     @Override
-    public JournalEntry next() {
+    public JournalRecord next() {
         item.rowid = cursor.next();
         return item;
     }

@@ -19,22 +19,24 @@ package com.nfsdb.journal.lang.experimental;
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.Partition;
-import com.nfsdb.journal.collections.MultiMap;
+import com.nfsdb.journal.collections.mmap.MapValues;
+import com.nfsdb.journal.collections.mmap.MultiMap;
 import com.nfsdb.journal.column.ColumnType;
 import com.nfsdb.journal.column.FixedColumn;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.factory.JournalFactory;
 import com.nfsdb.journal.factory.configuration.ColumnMetadata;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.journal.lang.cst.EntrySource;
-import com.nfsdb.journal.lang.cst.JournalEntry;
-import com.nfsdb.journal.lang.cst.JournalSource;
 import com.nfsdb.journal.lang.cst.StatefulJournalSource;
 import com.nfsdb.journal.lang.cst.impl.join.SlaveResetOuterJoin;
 import com.nfsdb.journal.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.jsrc.StatefulJournalSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.ksrc.SingleKeySource;
 import com.nfsdb.journal.lang.cst.impl.psrc.JournalPartitionSource;
+import com.nfsdb.journal.lang.cst.impl.qry.GenericRecordSource;
+import com.nfsdb.journal.lang.cst.impl.qry.JournalRecord;
+import com.nfsdb.journal.lang.cst.impl.qry.JournalRecordSource;
+import com.nfsdb.journal.lang.cst.impl.qry.Record;
 import com.nfsdb.journal.lang.cst.impl.ref.MutableIntVariableSource;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 import com.nfsdb.journal.lang.cst.impl.ref.SymbolXTabVariableSource;
@@ -102,7 +104,7 @@ public class CstTest {
 
         MutableIntVariableSource key = new MutableIntVariableSource();
         StringRef sym = new StringRef(joinColumn);
-        JournalSource src = new JournalSourceImpl(new JournalPartitionSource(slave, false), new KvIndexHeadRowSource(sym, new SingleKeySource(key), 1000, 0, null));
+        JournalRecordSource src = new JournalSourceImpl(new JournalPartitionSource(slave, false), new KvIndexHeadRowSource(sym, new SingleKeySource(key), 1000, 0, null));
         SymbolTable slaveTab = src.getJournal().getSymbolTable(joinColumn);
         ////////////////////
 
@@ -118,7 +120,7 @@ public class CstTest {
 
             Arrays.fill(map, -1);
 
-            for (JournalEntry d : new JournalSourceImpl(new JournalPartitionSource(master, false), new AllRowSource())) {
+            for (JournalRecord d : new JournalSourceImpl(new JournalPartitionSource(master, false), new AllRowSource())) {
 
                 if (last != d.partition) {
                     last = d.partition;
@@ -141,7 +143,7 @@ public class CstTest {
                 key.setValue(slaveKey);
                 src.reset();
                 int count = 0;
-                for (JournalEntry di : src) {
+                for (JournalRecord di : src) {
                     count++;
                 }
 //                System.out.println(count);
@@ -163,7 +165,7 @@ public class CstTest {
 
         StringRef sym = new StringRef("sym");
         StatefulJournalSource m;
-        EntrySource src = new SlaveResetOuterJoin(
+        GenericRecordSource src = new SlaveResetOuterJoin(
                 m = new StatefulJournalSourceImpl(
                         new JournalSourceImpl(new JournalPartitionSource(master, false), new AllRowSource())
                 )
@@ -179,7 +181,7 @@ public class CstTest {
                 count = 0;
             }
             src.reset();
-            for (JournalEntry d : src) {
+            for (Record d : src) {
                 count++;
             }
         }
@@ -201,7 +203,7 @@ public class CstTest {
 
         StringRef sym = new StringRef("sym");
         StatefulJournalSource m;
-        EntrySource src = new SlaveResetOuterJoin(
+        GenericRecordSource src = new SlaveResetOuterJoin(
                 m = new StatefulJournalSourceImpl(
                         new JournalSourceImpl(new JournalPartitionSource(master, false), new AllRowSource())
                 )
@@ -217,7 +219,7 @@ public class CstTest {
                 count = 0;
             }
             src.reset();
-            for (JournalEntry d : src) {
+            for (Record d : src) {
                 d.getDate(0);
                 d.getDouble(2);
                 d.getDouble(3);
@@ -255,7 +257,7 @@ public class CstTest {
                     .build();
 
             long prev = -1;
-            for (JournalEntry e : w.rows()) {
+            for (JournalRecord e : w.rows()) {
                 long ts = Dates.floorMI(e.getLong(tsIndex));
 
                 if (ts != prev) {
@@ -263,7 +265,7 @@ public class CstTest {
                     prev = ts;
                 }
 
-                MultiMap.Values val = map.claimSlot(
+                MapValues val = map.claimSlot(
                         map.claimKey()
                                 .putLong(ts)
                                 .putInt(e.getInt(symIndex))

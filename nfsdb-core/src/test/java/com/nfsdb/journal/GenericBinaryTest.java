@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@ package com.nfsdb.journal;
 
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.factory.configuration.JournalStructure;
-import com.nfsdb.journal.lang.cst.JournalEntry;
+import com.nfsdb.journal.lang.cst.impl.qry.JournalRecord;
 import com.nfsdb.journal.test.tools.AbstractTest;
 import com.nfsdb.journal.utils.Rnd;
 import org.junit.Assert;
@@ -76,7 +76,7 @@ public class GenericBinaryTest extends AbstractTest {
 
     private List<byte[]> readOutputStream(Journal reader) {
         List<byte[]> result = new ArrayList<>();
-        for (JournalEntry e : reader.rows()) {
+        for (JournalRecord e : reader.rows()) {
             ByteArrayOutputStream o = new ByteArrayOutputStream();
             e.getBin(0, o);
             result.add(o.toByteArray());
@@ -145,7 +145,7 @@ public class GenericBinaryTest extends AbstractTest {
         writeOutputStream(writer, expected);
 
         List<byte[]> actual = new ArrayList<>();
-        for (JournalEntry e : writer.rows()) {
+        for (JournalRecord e : writer.rows()) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             InputStream in = e.getBin(0);
 

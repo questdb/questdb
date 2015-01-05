@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,60 +16,72 @@
 
 package com.nfsdb.journal.lang.cst.impl.join;
 
+import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.Partition;
-import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.column.FixedColumn;
 import com.nfsdb.journal.column.SymbolTable;
 import com.nfsdb.journal.exceptions.JournalException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
-import com.nfsdb.journal.lang.cst.EntrySource;
-import com.nfsdb.journal.lang.cst.JournalEntry;
-import com.nfsdb.journal.lang.cst.JournalSource;
 import com.nfsdb.journal.lang.cst.RowCursor;
-import com.nfsdb.journal.lang.cst.impl.dfrm.DataFrame;
-import com.nfsdb.journal.lang.cst.impl.dfrm.DataFrameSource;
+import com.nfsdb.journal.lang.cst.impl.dfrm.JournalRowSourceHash;
+import com.nfsdb.journal.lang.cst.impl.qry.AbstractJournalSource;
+import com.nfsdb.journal.lang.cst.impl.qry.JournalRecord;
+import com.nfsdb.journal.lang.cst.impl.qry.JournalRecordSource;
+import com.nfsdb.journal.lang.cst.impl.qry.RecordMetadata;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 import com.nfsdb.journal.utils.Rows;
 
 import java.util.Arrays;
 
-public class SymbolToFrameOuterJoin extends AbstractImmutableIterator<JournalEntry> implements EntrySource {
-    private final JournalSource masterSource;
-    private final DataFrameSource slaveSource;
+public class SymbolOuterHashJoin extends AbstractJournalSource implements JournalRecordSource {
+    private final JournalRecordSource masterSource;
+    private final JournalRowSourceHash hash;
     private final StringRef masterSymbol;
     private final StringRef slaveSymbol;
-    private final JournalEntry journalEntry = new JournalEntry();
-    private JournalEntry joinedData;
-    private DataFrame frame;
+    private final JournalRecord journalRecord = new JournalRecord(this);
+    private JournalRecord joinedData;
     private int columnIndex;
     private SymbolTable masterTab;
     private SymbolTable slaveTab;
-    private Partition lastPartition;
+    private Partition lastMasterPartition;
+    private int lastSlavePartIndex = -1;
     private FixedColumn column;
     private boolean nextSlave = false;
-    private boolean initMap = true;
     private int[] map;
     private RowCursor slaveCursor;
 
-    public SymbolToFrameOuterJoin(JournalSource masterSource, StringRef masterSymbol, DataFrameSource frameSource, StringRef slaveSymbol) {
+    public SymbolOuterHashJoin(JournalRecordSource masterSource, StringRef masterSymbol, JournalRowSourceHash hash, StringRef slaveSymbol) {
         this.masterSource = masterSource;
-        this.slaveSource = frameSource;
+        this.hash = hash;
         this.masterSymbol = masterSymbol;
         this.slaveSymbol = slaveSymbol;
-        this.columnIndex = masterSource.getJournal().getMetadata().getColumnIndex(masterSymbol.value);
-        this.masterTab = masterSource.getJournal().getSymbolTable(masterSymbol.value);
-        this.slaveTab = slaveSource.getJournal().getSymbolTable(slaveSymbol.value);
+        init();
     }
 
     @Override
     public void reset() {
         masterSource.reset();
-        slaveSource.reset();
+        hash.reset();
         nextSlave = false;
-        initMap = true;
+        init();
+    }
+
+    private void init() {
         this.columnIndex = masterSource.getJournal().getMetadata().getColumnIndex(masterSymbol.value);
         this.masterTab = masterSource.getJournal().getSymbolTable(masterSymbol.value);
-        this.slaveTab = slaveSource.getJournal().getSymbolTable(slaveSymbol.value);
+        this.slaveTab = hash.getJournal().getSymbolTable(slaveSymbol.value);
+        int sz = masterTab.size();
+        if (map == null || map.length < sz) {
+            map = new int[sz];
+        }
+        Arrays.fill(map, -1);
+        lastSlavePartIndex = -1;
+        lastMasterPartition = null;
+    }
+
+    @Override
+    public Journal getJournal() {
+        return masterSource.getJournal();
     }
 
     @Override
@@ -79,7 +91,7 @@ public class SymbolToFrameOuterJoin extends AbstractImmutableIterator<JournalEnt
 
     @Override
     @SuppressWarnings("unchecked")
-    public JournalEntry next() {
+    public JournalRecord next() {
 
         if (!nextSlave) {
             nextMaster();
@@ -87,13 +99,17 @@ public class SymbolToFrameOuterJoin extends AbstractImmutableIterator<JournalEnt
 
         if (nextSlave || slaveCursor.hasNext()) {
             long rowid = slaveCursor.next();
-            try {
-                journalEntry.partition = slaveSource.getJournal().getPartition(Rows.toPartitionIndex(rowid), false);
-                journalEntry.rowid = Rows.toLocalRowID(rowid);
-            } catch (JournalException e) {
-                throw new JournalRuntimeException(e);
+            int pind = Rows.toPartitionIndex(rowid);
+            if (lastSlavePartIndex != pind) {
+                try {
+                    journalRecord.partition = hash.getJournal().getPartition(pind, false);
+                    lastSlavePartIndex = pind;
+                } catch (JournalException e) {
+                    throw new JournalRuntimeException(e);
+                }
             }
-            joinedData.setSlave(journalEntry);
+            journalRecord.rowid = Rows.toLocalRowID(rowid);
+            joinedData.setSlave(journalRecord);
             nextSlave = slaveCursor.hasNext();
         } else {
             joinedData.setSlave(null);
@@ -105,33 +121,23 @@ public class SymbolToFrameOuterJoin extends AbstractImmutableIterator<JournalEnt
 
     private void nextMaster() {
 
-        if (frame == null) {
-            frame = slaveSource.getFrame();
-        }
-
-        JournalEntry m = masterSource.next();
-        if (lastPartition != m.partition) {
-            lastPartition = m.partition;
+        JournalRecord m = masterSource.next();
+        if (lastMasterPartition != m.partition) {
+            lastMasterPartition = m.partition;
             column = (FixedColumn) m.partition.getAbstractColumn(columnIndex);
         }
-
-        joinedData = m;
-
-        if (initMap) {
-            int sz = masterTab.size();
-            if (map == null || map.length < sz) {
-                map = new int[sz];
-            }
-            Arrays.fill(map, -1);
-            initMap = false;
-        }
-
-        int masterKey = column.getInt(joinedData.rowid);
+        int masterKey = column.getInt(m.rowid);
 
         if (map[masterKey] == -1) {
             map[masterKey] = slaveTab.getQuick(masterTab.value(masterKey));
         }
 
-        slaveCursor = frame.cursor(map[masterKey]);
+        slaveCursor = hash.cursor(map[masterKey]);
+        joinedData = m;
+    }
+
+    @Override
+    public RecordMetadata nextMetadata() {
+        return hash.getMetadata();
     }
 }

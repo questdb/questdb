@@ -16,9 +16,8 @@
 
 package com.nfsdb.journal.lang.cst;
 
-import com.nfsdb.journal.lang.cst.impl.qry.JournalRecord;
-import com.nfsdb.journal.lang.cst.impl.qry.JournalRecordSource;
+import com.nfsdb.journal.collections.ImmutableIterator;
 
-public interface StatefulJournalSource extends JournalRecordSource {
-    JournalRecord current();
+public interface ResettableIterator<T> extends ImmutableIterator<T> {
+    void reset();
 }

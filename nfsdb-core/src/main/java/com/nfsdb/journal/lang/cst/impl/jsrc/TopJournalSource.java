@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,16 +18,17 @@ package com.nfsdb.journal.lang.cst.impl.jsrc;
 
 import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
-import com.nfsdb.journal.lang.cst.JournalEntry;
-import com.nfsdb.journal.lang.cst.JournalSource;
+import com.nfsdb.journal.lang.cst.impl.qry.JournalRecord;
+import com.nfsdb.journal.lang.cst.impl.qry.JournalRecordSource;
+import com.nfsdb.journal.lang.cst.impl.qry.RecordMetadata;
 
-public class TopJournalSource extends AbstractImmutableIterator<JournalEntry> implements JournalSource {
+public class TopJournalSource extends AbstractImmutableIterator<JournalRecord> implements JournalRecordSource {
 
-    private final JournalSource delegate;
+    private final JournalRecordSource delegate;
     private final int count;
     private int remaining;
 
-    public TopJournalSource(int count, JournalSource delegate) {
+    public TopJournalSource(int count, JournalRecordSource delegate) {
         this.delegate = delegate;
         this.count = count;
         this.remaining = count;
@@ -45,7 +46,7 @@ public class TopJournalSource extends AbstractImmutableIterator<JournalEntry> im
     }
 
     @Override
-    public JournalEntry next() {
+    public JournalRecord next() {
         remaining--;
         return delegate.next();
     }
@@ -53,5 +54,10 @@ public class TopJournalSource extends AbstractImmutableIterator<JournalEntry> im
     @Override
     public Journal getJournal() {
         return delegate.getJournal();
+    }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return delegate.getMetadata();
     }
 }

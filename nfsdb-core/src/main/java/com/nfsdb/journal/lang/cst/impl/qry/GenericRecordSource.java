@@ -14,11 +14,7 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.lang.cst;
+package com.nfsdb.journal.lang.cst.impl.qry;
 
-import com.nfsdb.journal.lang.cst.impl.qry.JournalRecord;
-import com.nfsdb.journal.lang.cst.impl.qry.JournalRecordSource;
-
-public interface StatefulJournalSource extends JournalRecordSource {
-    JournalRecord current();
+public interface GenericRecordSource extends RecordSource<Record> {
 }

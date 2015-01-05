@@ -14,54 +14,50 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.lang.cst.impl.join;
+package com.nfsdb.journal.collections.mmap;
 
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
-import com.nfsdb.journal.lang.cst.impl.qry.GenericRecordSource;
 import com.nfsdb.journal.lang.cst.impl.qry.Record;
 import com.nfsdb.journal.lang.cst.impl.qry.RecordMetadata;
 import com.nfsdb.journal.lang.cst.impl.qry.RecordSource;
+import com.nfsdb.journal.utils.Unsafe;
 
-import java.util.NoSuchElementException;
+public class MapRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record> {
+    private final MapRecord record;
+    private final RecordMetadata metadata;
+    private int count;
+    private long address;
 
-public class InnerSkipJoin extends AbstractImmutableIterator<Record> implements GenericRecordSource {
+    public MapRecordSource(MapRecord record, RecordMetadata metadata) {
+        this.record = record;
+        this.metadata = metadata;
+    }
 
-    private final RecordSource<? extends Record> delegate;
-    private Record data;
-
-    public InnerSkipJoin(RecordSource<? extends Record> delegate) {
-        this.delegate = delegate;
+    MapRecordSource init(long address, int count) {
+        this.address = address;
+        this.count = count;
+        return this;
     }
 
     @Override
     public RecordMetadata getMetadata() {
-        return delegate.getMetadata();
-    }
-
-    @Override
-    public boolean hasNext() {
-        Record data;
-
-        while (delegate.hasNext()) {
-            if ((data = delegate.next()).getSlave() != null) {
-                this.data = data;
-                return true;
-            }
-        }
-        this.data = null;
-        return false;
-    }
-
-    @Override
-    public Record next() {
-        if (data == null) {
-            throw new NoSuchElementException();
-        }
-        return data;
+        return metadata;
     }
 
     @Override
     public void reset() {
-        delegate.reset();
+    }
+
+    @Override
+    public boolean hasNext() {
+        return count > 0;
+    }
+
+    @Override
+    public Record next() {
+        long address = this.address;
+        this.address = address + Unsafe.getUnsafe().getInt(address);
+        count--;
+        return record.init(address);
     }
 }

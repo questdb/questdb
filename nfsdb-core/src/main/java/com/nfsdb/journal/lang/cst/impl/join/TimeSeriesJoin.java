@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,41 +20,44 @@ import com.nfsdb.journal.Partition;
 import com.nfsdb.journal.collections.AbstractImmutableIterator;
 import com.nfsdb.journal.collections.RingQueue;
 import com.nfsdb.journal.column.FixedColumn;
-import com.nfsdb.journal.lang.cst.EntrySource;
-import com.nfsdb.journal.lang.cst.JournalEntry;
+import com.nfsdb.journal.lang.cst.impl.qry.JoinedRecordMetadata;
+import com.nfsdb.journal.lang.cst.impl.qry.JournalRecord;
+import com.nfsdb.journal.lang.cst.impl.qry.RecordMetadata;
+import com.nfsdb.journal.lang.cst.impl.qry.RecordSource;
 
 import java.util.NoSuchElementException;
 
-public class TimeSeriesJoin extends AbstractImmutableIterator<JournalEntry> implements EntrySource {
-    private final EntrySource masterSource;
-    private final EntrySource slaveSource;
+public class TimeSeriesJoin extends AbstractImmutableIterator<JournalRecord> implements RecordSource<JournalRecord> {
+    private final RecordSource<JournalRecord> masterSource;
+    private final RecordSource<JournalRecord> slaveSource;
     private final long depth;
-    private final RingQueue<CachedJournalEntry> ringQueue;
+    private final RingQueue<CachedJournalRecord> ringQueue;
     private final int masterTimestampIndex;
     private final int slaveTimestampIndex;
-    private JournalEntry joinedData;
+    private final RecordMetadata metadata;
+    private JournalRecord joinedData;
     private Partition lastMasterPartition;
     private Partition lastSlavePartition;
     private boolean nextSlave = false;
     private FixedColumn masterColumn;
     private FixedColumn slaveColumn;
     private long masterTimestamp;
-    private JournalEntry nextData;
+    private JournalRecord nextData;
     private boolean useQueue;
     private boolean queueMarked = false;
 
-    public TimeSeriesJoin(EntrySource masterSource, int masterTsIndex, EntrySource slaveSource, int slaveTsIndex, long depth, int cacheSize) {
+    public TimeSeriesJoin(RecordSource<JournalRecord> masterSource, int masterTsIndex, RecordSource<JournalRecord> slaveSource, int slaveTsIndex, long depth, int cacheSize) {
         this.masterSource = masterSource;
         this.slaveSource = slaveSource;
         this.depth = depth;
         this.masterTimestampIndex = masterTsIndex;
         this.slaveTimestampIndex = slaveTsIndex;
-        this.ringQueue = new RingQueue<>(CachedJournalEntry.class, cacheSize);
+        this.ringQueue = new RingQueue<>(CachedJournalRecord.class, cacheSize);
+        this.metadata = new JoinedRecordMetadata(masterSource, slaveSource);
     }
 
     @Override
     public void reset() {
-
     }
 
     @Override
@@ -78,7 +81,7 @@ public class TimeSeriesJoin extends AbstractImmutableIterator<JournalEntry> impl
             if (useQueue) {
 
                 while ((useQueue = ringQueue.hasNext())) {
-                    CachedJournalEntry data = ringQueue.next();
+                    CachedJournalRecord data = ringQueue.next();
 
                     if (data.timestamp < masterTimestamp) {
                         continue;
@@ -104,7 +107,7 @@ public class TimeSeriesJoin extends AbstractImmutableIterator<JournalEntry> impl
             if (!useQueue) {
 
                 while ((nextSlave = slaveSource.hasNext())) {
-                    JournalEntry s = slaveSource.next();
+                    JournalRecord s = slaveSource.next();
 
                     if (lastSlavePartition != s.partition) {
                         lastSlavePartition = s.partition;
@@ -117,9 +120,9 @@ public class TimeSeriesJoin extends AbstractImmutableIterator<JournalEntry> impl
                         continue;
                     } else {
                         long pos = ringQueue.nextWritePos();
-                        CachedJournalEntry data = ringQueue.get(pos);
+                        CachedJournalRecord data = ringQueue.get(pos);
                         if (data == null) {
-                            data = new CachedJournalEntry();
+                            data = new CachedJournalRecord(metadata);
                             ringQueue.put(pos, data);
                         }
                         data.timestamp = slaveTimestamp;
@@ -150,17 +153,17 @@ public class TimeSeriesJoin extends AbstractImmutableIterator<JournalEntry> impl
     }
 
     @Override
-    public JournalEntry next() {
+    public JournalRecord next() {
         if (nextData == null) {
             throw new NoSuchElementException();
         }
-        JournalEntry d = nextData;
+        JournalRecord d = nextData;
         nextData = null;
         return d;
     }
 
     private void nextMaster() {
-        JournalEntry m = masterSource.next();
+        JournalRecord m = masterSource.next();
         if (lastMasterPartition != m.partition) {
             lastMasterPartition = m.partition;
             masterColumn = (FixedColumn) m.partition.getAbstractColumn(masterTimestampIndex);
@@ -169,8 +172,17 @@ public class TimeSeriesJoin extends AbstractImmutableIterator<JournalEntry> impl
         masterTimestamp = masterColumn.getLong(m.rowid);
     }
 
-    public static class CachedJournalEntry extends JournalEntry {
+    @Override
+    public RecordMetadata getMetadata() {
+        return metadata;
+    }
+
+    public static class CachedJournalRecord extends JournalRecord {
         private long timestamp;
+
+        public CachedJournalRecord(RecordMetadata metadata) {
+            super(metadata);
+        }
 
         @Override
         public String toString() {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,87 +14,71 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.lang.cst;
-
-import com.nfsdb.journal.column.ColumnType;
+package com.nfsdb.journal.lang.cst.impl.qry;
 
 import java.io.InputStream;
 import java.io.OutputStream;
 
-public abstract class AbstractDataRow implements DataRow {
+public abstract class AbstractRecord implements Record {
 
-    private ColumnType[] types;
-    private DataRow slave;
+    private final RecordMetadata metadata;
+    private Record slave;
 
+    public AbstractRecord(RecordMetadata metadata) {
+        this.metadata = metadata;
+    }
 
     @Override
     public byte get(String column) {
-        return get(getColumnIndex(column));
+        return get(metadata.getColumnIndex(column));
     }
 
     @Override
     public int getInt(String column) {
-        return getInt(getColumnIndex(column));
+        return getInt(metadata.getColumnIndex(column));
     }
 
     @Override
     public long getLong(String column) {
-        return getLong(getColumnIndex(column));
+        return getLong(metadata.getColumnIndex(column));
     }
 
     @Override
     public double getDouble(String column) {
-        return getDouble(getColumnIndex(column));
+        return getDouble(metadata.getColumnIndex(column));
     }
 
     @Override
     public CharSequence getStr(String column) {
-        return getStr(getColumnIndex(column));
+        return getStr(metadata.getColumnIndex(column));
     }
 
     @Override
     public String getSym(String column) {
-        return getSym(getColumnIndex(column));
+        return getSym(metadata.getColumnIndex(column));
     }
 
     @Override
     public boolean getBool(String column) {
-        return getBool(getColumnIndex(column));
+        return getBool(metadata.getColumnIndex(column));
     }
 
     @Override
     public void getBin(String column, OutputStream s) {
-        getBin(getColumnIndex(column), s);
+        getBin(metadata.getColumnIndex(column), s);
     }
 
     @Override
     public InputStream getBin(String column) {
-        return getBin(getColumnIndex(column));
+        return getBin(metadata.getColumnIndex(column));
     }
 
     @Override
-    public ColumnType getColumnType(int x) {
-        if (types == null) {
-            types = new ColumnType[getColumnCount()];
-        }
-
-        if (types[x] != null) {
-            return types[x];
-        }
-
-
-        return types[x] = getColumnTypeInternal(x);
-    }
-
-    protected abstract ColumnType getColumnTypeInternal(int x);
-
-    @Override
-    public DataRow getSlave() {
+    public Record getSlave() {
         return slave;
     }
 
-    public void setSlave(DataRow slave) {
+    public void setSlave(Record slave) {
         this.slave = slave;
     }
-
 }

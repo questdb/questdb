@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,20 +20,20 @@ import com.nfsdb.journal.Journal;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
-import com.nfsdb.journal.export.JournalEntryPrinter;
+import com.nfsdb.journal.export.RecordSourcePrinter;
 import com.nfsdb.journal.export.StringSink;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.journal.lang.cst.EntrySource;
 import com.nfsdb.journal.lang.cst.StatefulJournalSource;
-import com.nfsdb.journal.lang.cst.impl.dfrm.MapHeadDataFrameSource;
+import com.nfsdb.journal.lang.cst.impl.dfrm.JournalRowSourceHash;
 import com.nfsdb.journal.lang.cst.impl.join.InnerSkipJoin;
 import com.nfsdb.journal.lang.cst.impl.join.SlaveResetOuterJoin;
-import com.nfsdb.journal.lang.cst.impl.join.SymbolToFrameOuterJoin;
+import com.nfsdb.journal.lang.cst.impl.join.SymbolOuterHashJoin;
 import com.nfsdb.journal.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.jsrc.StatefulJournalSourceImpl;
 import com.nfsdb.journal.lang.cst.impl.ksrc.SingleKeySource;
 import com.nfsdb.journal.lang.cst.impl.ksrc.SymbolKeySource;
 import com.nfsdb.journal.lang.cst.impl.psrc.JournalPartitionSource;
+import com.nfsdb.journal.lang.cst.impl.qry.GenericRecordSource;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 import com.nfsdb.journal.lang.cst.impl.ref.SymbolXTabVariableSource;
 import com.nfsdb.journal.lang.cst.impl.rsrc.*;
@@ -51,7 +51,7 @@ public class JoinSymbolOnSymbolTest {
     @Rule
     public final JournalTestFactory factory;
     private final StringSink sink = new StringSink();
-    private final JournalEntryPrinter out = new JournalEntryPrinter(sink, true);
+    private final RecordSourcePrinter out = new RecordSourcePrinter(sink);
     private JournalWriter<Band> bw;
     private JournalWriter<Album> aw;
 
@@ -159,7 +159,8 @@ public class JoinSymbolOnSymbolTest {
         // from album join band head by name
         StringRef name = new StringRef("name");
         StatefulJournalSource master;
-        EntrySource src = new SlaveResetOuterJoin(
+
+        out.print(new SlaveResetOuterJoin(
                 master = new StatefulJournalSourceImpl(
                         new JournalSourceImpl(new JournalPartitionSource(aw, false), new AllRowSource())
                 )
@@ -169,9 +170,7 @@ public class JoinSymbolOnSymbolTest {
                         , new SingleKeySource(new SymbolXTabVariableSource(master, "band", "name"))
                         , null
                 ))
-        );
-
-        out.print(src);
+        ));
 
         Assert.assertEquals(expected, sink.toString());
     }
@@ -211,21 +210,22 @@ public class JoinSymbolOnSymbolTest {
         StringRef name = new StringRef("name");
 
         StatefulJournalSource master;
-        EntrySource src = new SlaveResetOuterJoin(
-                master = new StatefulJournalSourceImpl(
-                        new JournalSourceImpl(new JournalPartitionSource(bw, false), new AllRowSource())
-                )
-                ,
-                new JournalSourceImpl(new JournalPartitionSource(aw, false), new SkipSymbolRowSource(
-                        new KvIndexRowSource(
-                                band
-                                , new SingleKeySource(new SymbolXTabVariableSource(master, "name", "band"))
-                        )
-                        , name
-                ))
-        );
 
-        out.print(src);
+        out.print(
+                new SlaveResetOuterJoin(
+                        master = new StatefulJournalSourceImpl(
+                                new JournalSourceImpl(new JournalPartitionSource(bw, false), new AllRowSource())
+                        )
+                        ,
+                        new JournalSourceImpl(new JournalPartitionSource(aw, false), new SkipSymbolRowSource(
+                                new KvIndexRowSource(
+                                        band
+                                        , new SingleKeySource(new SymbolXTabVariableSource(master, "name", "band"))
+                                )
+                                , name
+                        ))
+                )
+        );
         Assert.assertEquals(expected, sink.toString());
     }
 
@@ -260,18 +260,17 @@ public class JoinSymbolOnSymbolTest {
         // **generally this query can be presented as:
         //
         // from band outer join album +[1:0]head by name
-        EntrySource src = new SymbolToFrameOuterJoin(
+
+        out.print(new SymbolOuterHashJoin(
                 new JournalSourceImpl(new JournalPartitionSource(bw, false), new AllRowSource())
                 , name
                 ,
-                new MapHeadDataFrameSource(
+                new JournalRowSourceHash(
                         new JournalSourceImpl(new JournalPartitionSource(aw, false), new KvIndexHeadRowSource(name, new SymbolKeySource(name), 1, 0, null))
                         , band
                 )
                 , band
-        );
-
-        out.print(src);
+        ));
         Assert.assertEquals(expected, sink.toString());
     }
 
@@ -306,20 +305,20 @@ public class JoinSymbolOnSymbolTest {
         StringRef band = new StringRef("band");
         StringRef name = new StringRef("name");
 
-        EntrySource src = new InnerSkipJoin(
-                new SymbolToFrameOuterJoin(
-                        new JournalSourceImpl(new JournalPartitionSource(bw, false), new AllRowSource())
-                        , name
-                        ,
-                        new MapHeadDataFrameSource(
-                                new JournalSourceImpl(new JournalPartitionSource(aw, false), new KvIndexHeadRowSource(name, new SymbolKeySource(name), 1, 0, null))
+        out.print(
+                new InnerSkipJoin(
+                        new SymbolOuterHashJoin(
+                                new JournalSourceImpl(new JournalPartitionSource(bw, false), new AllRowSource())
+                                , name
+                                ,
+                                new JournalRowSourceHash(
+                                        new JournalSourceImpl(new JournalPartitionSource(aw, false), new KvIndexHeadRowSource(name, new SymbolKeySource(name), 1, 0, null))
+                                        , band
+                                )
                                 , band
                         )
-                        , band
                 )
         );
-
-        out.print(src);
         Assert.assertEquals(expected, sink.toString());
     }
 
@@ -350,23 +349,24 @@ public class JoinSymbolOnSymbolTest {
         // **inner join
         // **join first head after
         StatefulJournalSourceImpl master;
-        EntrySource src = new InnerSkipJoin(
-                new SlaveResetOuterJoin(
-                        master = new StatefulJournalSourceImpl(
-                                new JournalSourceImpl(new JournalPartitionSource(bw, false), new AllRowSource())
-                        )
-                        ,
-                        new JournalSourceImpl(new JournalPartitionSource(aw, false), new SkipSymbolRowSource(
-                                new KvIndexRowSource(
-                                        band
-                                        , new SingleKeySource(new SymbolXTabVariableSource(master, "name", "band"))
+
+        out.print(
+                new InnerSkipJoin(
+                        new SlaveResetOuterJoin(
+                                master = new StatefulJournalSourceImpl(
+                                        new JournalSourceImpl(new JournalPartitionSource(bw, false), new AllRowSource())
                                 )
-                                , name
-                        ))
+                                ,
+                                new JournalSourceImpl(new JournalPartitionSource(aw, false), new SkipSymbolRowSource(
+                                        new KvIndexRowSource(
+                                                band
+                                                , new SingleKeySource(new SymbolXTabVariableSource(master, "name", "band"))
+                                        )
+                                        , name
+                                ))
+                        )
                 )
         );
-
-        out.print(src);
         Assert.assertEquals(expected, sink.toString());
     }
 
@@ -395,24 +395,25 @@ public class JoinSymbolOnSymbolTest {
 
         // from band join album head by name
         StatefulJournalSource master;
-        EntrySource src = new InnerSkipJoin(
-                new SlaveResetOuterJoin(
-                        master = new StatefulJournalSourceImpl(
-                                new JournalSourceImpl(new JournalPartitionSource(bw, false), new AllRowSource())
+
+        out.print(
+                new InnerSkipJoin(
+                        new SlaveResetOuterJoin(
+                                master = new StatefulJournalSourceImpl(
+                                        new JournalSourceImpl(new JournalPartitionSource(bw, false), new AllRowSource())
+                                )
+                                ,
+                                new JournalSourceImpl(new JournalPartitionSource(aw, false), new KvIndexRowSource(
+                                        band
+                                        , new SingleKeySource(new SymbolXTabVariableSource(master, "name", "band"))
+                                ))
                         )
-                        ,
-                        new JournalSourceImpl(new JournalPartitionSource(aw, false), new KvIndexRowSource(
-                                band
-                                , new SingleKeySource(new SymbolXTabVariableSource(master, "name", "band"))
-                        ))
                 )
         );
-
-        out.print(src);
         Assert.assertEquals(expected, sink.toString());
     }
 
-    private EntrySource buildSource(Journal<Band> bw, Journal<Album> aw) {
+    private GenericRecordSource buildSource(Journal<Band> bw, Journal<Album> aw) {
         StringRef band = new StringRef("band");
         StatefulJournalSource master;
         return new SlaveResetOuterJoin(

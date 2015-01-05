@@ -17,66 +17,44 @@
 package com.nfsdb.journal.lang.cst.impl.dfrm;
 
 import com.nfsdb.journal.Journal;
-import com.nfsdb.journal.Partition;
 import com.nfsdb.journal.collections.DirectLongList;
 import com.nfsdb.journal.collections.IntObjHashMap;
-import com.nfsdb.journal.column.FixedColumn;
-import com.nfsdb.journal.lang.cst.JournalEntry;
-import com.nfsdb.journal.lang.cst.JournalSource;
 import com.nfsdb.journal.lang.cst.RowCursor;
+import com.nfsdb.journal.lang.cst.impl.qry.JournalRecord;
+import com.nfsdb.journal.lang.cst.impl.qry.JournalRecordSource;
+import com.nfsdb.journal.lang.cst.impl.qry.RecordMetadata;
 import com.nfsdb.journal.lang.cst.impl.ref.StringRef;
 import com.nfsdb.journal.utils.Rows;
 
-public class MapHeadDataFrameSource implements DataFrameSource, DataFrame, RowCursor {
+public class JournalRowSourceHash implements RowCursor {
 
-    private final JournalSource source;
-    private final StringRef symbol;
-    private final IntObjHashMap<DirectLongList> frame = new IntObjHashMap<>();
+    private final JournalRecordSource source;
+    private final IntObjHashMap<DirectLongList> map = new IntObjHashMap<>();
     private DirectLongList series;
     private int seriesPos;
 
-    public MapHeadDataFrameSource(JournalSource source, StringRef symbol) {
+    public JournalRowSourceHash(JournalRecordSource source, StringRef symbol) {
         this.source = source;
-        this.symbol = symbol;
-    }
-
-    @Override
-    public DataFrame getFrame() {
-        int columnIndex = source.getJournal().getMetadata().getColumnIndex(symbol.value);
-        FixedColumn column = null;
-        Partition p = null;
-        int pIndex = 0;
-        for (JournalEntry d : source) {
-            if (p != d.partition) {
-                column = (FixedColumn) d.partition.getAbstractColumn(columnIndex);
-                p = d.partition;
-                pIndex = d.partition.getPartitionIndex();
-            }
-
-            assert column != null;
-
-            int key;
-            DirectLongList series = frame.get(key = column.getInt(d.rowid));
+        int columnIndex = source.getMetadata().getColumnIndex(symbol.value);
+        for (JournalRecord d : source) {
+            int key = d.get(columnIndex);
+            DirectLongList series = map.get(key);
             if (series == null) {
                 series = new DirectLongList();
-                frame.put(key, series);
+                map.put(key, series);
             }
-
-            series.add(Rows.toRowID(pIndex, d.rowid));
+            series.add(Rows.toRowID(d.partition.getPartitionIndex(), d.rowid));
         }
-
-        return this;
     }
 
     public void reset() {
-        for (DirectLongList list : frame.values()) {
+        for (DirectLongList list : map.values()) {
             list.reset();
         }
     }
 
-    @Override
     public RowCursor cursor(int key) {
-        series = frame.get(key);
+        series = map.get(key);
         seriesPos = 0;
         return this;
     }
@@ -91,7 +69,10 @@ public class MapHeadDataFrameSource implements DataFrameSource, DataFrame, RowCu
         return series.get(seriesPos++);
     }
 
-    @Override
+    public RecordMetadata getMetadata() {
+        return source.getMetadata();
+    }
+
     public Journal getJournal() {
         return source.getJournal();
     }

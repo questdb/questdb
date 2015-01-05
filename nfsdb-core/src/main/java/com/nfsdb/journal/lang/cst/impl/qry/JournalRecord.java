@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,22 +14,20 @@
  * limitations under the License.
  */
 
-package com.nfsdb.journal.lang.cst;
+package com.nfsdb.journal.lang.cst.impl.qry;
 
 import com.nfsdb.journal.Partition;
-import com.nfsdb.journal.column.ColumnType;
 import com.nfsdb.journal.column.FixedColumn;
 
 import java.io.InputStream;
 import java.io.OutputStream;
 
-public class JournalEntry extends AbstractDataRow {
+public class JournalRecord extends AbstractRecord {
     public Partition<Object> partition;
     public long rowid;
 
-    @Override
-    public int getColumnIndex(String column) {
-        return partition.getJournal().getMetadata().getColumnIndex(column);
+    public JournalRecord(RecordMetadata metadata) {
+        super(metadata);
     }
 
     @Override
@@ -85,16 +83,6 @@ public class JournalEntry extends AbstractDataRow {
     @Override
     public InputStream getBin(int col) {
         return partition.getBin(rowid, col);
-    }
-
-    @Override
-    public int getColumnCount() {
-        return partition.getJournal().getMetadata().getColumnCount();
-    }
-
-    @Override
-    public ColumnType getColumnTypeInternal(int column) {
-        return partition.getJournal().getMetadata().getColumnMetadata(column).type;
     }
 
     @Override

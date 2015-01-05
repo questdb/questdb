@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,10 +19,9 @@ package com.nfsdb.journal.lang;
 import com.nfsdb.journal.JournalWriter;
 import com.nfsdb.journal.exceptions.JournalConfigurationException;
 import com.nfsdb.journal.exceptions.JournalRuntimeException;
-import com.nfsdb.journal.export.JournalEntryPrinter;
+import com.nfsdb.journal.export.RecordSourcePrinter;
 import com.nfsdb.journal.export.StringSink;
 import com.nfsdb.journal.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.journal.lang.cst.EntrySource;
 import com.nfsdb.journal.lang.cst.StatefulJournalSource;
 import com.nfsdb.journal.lang.cst.impl.join.SlaveResetOuterJoin;
 import com.nfsdb.journal.lang.cst.impl.jsrc.JournalSourceImpl;
@@ -100,7 +99,11 @@ public class JoinStringToSymbolTest {
 
         StringRef name = new StringRef("name");
         StatefulJournalSource master;
-        EntrySource src =
+
+
+        StringSink sink = new StringSink();
+        RecordSourcePrinter p = new RecordSourcePrinter(sink);
+        p.print(
                 new SlaveResetOuterJoin(
                         master = new StatefulJournalSourceImpl(
                                 new JournalSourceImpl(
@@ -114,12 +117,8 @@ public class JoinStringToSymbolTest {
                                         , new SingleKeySource(new StringXTabVariableSource(master, "band", "name"))
                                         , null
                                 ))
-                );
-
-
-        StringSink sink = new StringSink();
-        JournalEntryPrinter p = new JournalEntryPrinter(sink, true);
-        p.print(src);
+                )
+        );
         Assert.assertEquals(expected, sink.toString());
     }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,10 +17,7 @@
 package com.nfsdb.journal.lang.cst;
 
 import com.nfsdb.journal.Journal;
-import com.nfsdb.journal.collections.ImmutableIterator;
 
-public interface PartitionSource extends ImmutableIterator<PartitionSlice> {
-    void reset();
-
+public interface PartitionSource extends ResettableIterator<PartitionSlice> {
     Journal getJournal();
 }

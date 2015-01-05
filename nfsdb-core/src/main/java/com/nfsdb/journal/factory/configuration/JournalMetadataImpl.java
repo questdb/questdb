@@ -43,7 +43,7 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
     private final int ioBlockTxCount;
     private final String key;
     private final ColumnMetadata[] columnMetadata;
-    private final ObjIntHashMap<String> columnIndexLookup;
+    private final ObjIntHashMap<CharSequence> columnIndexLookup;
     private final int timestampColumnIndex;
     private final int lag;
     private final boolean partialMapping;
@@ -151,7 +151,7 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
     }
 
     @Override
-    public int getColumnIndex(String columnName) {
+    public int getColumnIndex(CharSequence columnName) {
         int result = columnIndexLookup.get(columnName);
         if (result == -1) {
             throw new JournalRuntimeException("Invalid column name: %s", columnName);
