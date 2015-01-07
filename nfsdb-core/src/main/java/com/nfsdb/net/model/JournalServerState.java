@@ -16,7 +16,7 @@
 
 package com.nfsdb.net.model;
 
-import com.nfsdb.utils.Lists;
+import com.nfsdb.collections.Lists;
 
 import java.util.ArrayList;
 

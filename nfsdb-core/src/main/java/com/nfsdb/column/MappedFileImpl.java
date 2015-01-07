@@ -17,13 +17,13 @@
 package com.nfsdb.column;
 
 import com.nfsdb.JournalMode;
+import com.nfsdb.collections.Lists;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNoSuchFileException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Files;
-import com.nfsdb.utils.Lists;
 import com.nfsdb.utils.Unsafe;
 import sun.nio.ch.DirectBuffer;
 

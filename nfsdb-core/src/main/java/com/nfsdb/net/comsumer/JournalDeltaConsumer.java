@@ -18,13 +18,13 @@ package com.nfsdb.net.comsumer;
 
 import com.nfsdb.JournalWriter;
 import com.nfsdb.Partition;
+import com.nfsdb.collections.Lists;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.net.AbstractChannelConsumer;
 import com.nfsdb.net.model.JournalServerState;
 import com.nfsdb.utils.Interval;
-import com.nfsdb.utils.Lists;
 
 import java.nio.channels.ReadableByteChannel;
 import java.util.ArrayList;

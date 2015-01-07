@@ -22,7 +22,9 @@
  * https://code.google.com/p/lz4/source/browse/trunk/xxhash.c
  *
  */
-package com.nfsdb.utils;
+package com.nfsdb.collections;
+
+import com.nfsdb.utils.Unsafe;
 
 public class Hash {
 

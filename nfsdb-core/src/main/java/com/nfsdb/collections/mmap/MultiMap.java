@@ -18,12 +18,12 @@ package com.nfsdb.collections.mmap;
 
 import com.nfsdb.collections.AbstractDirectList;
 import com.nfsdb.collections.DirectLongList;
+import com.nfsdb.collections.Hash;
 import com.nfsdb.collections.Primes;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.lang.cst.impl.qry.Record;
 import com.nfsdb.lang.cst.impl.qry.RecordSource;
-import com.nfsdb.utils.Hash;
 import com.nfsdb.utils.Unsafe;
 
 import java.io.Closeable;

@@ -18,6 +18,7 @@ package com.nfsdb.test.tools;
 
 import com.nfsdb.*;
 import com.nfsdb.collections.DirectLongList;
+import com.nfsdb.collections.Lists;
 import com.nfsdb.column.ColumnType;
 import com.nfsdb.column.SymbolTable;
 import com.nfsdb.exceptions.JournalException;
@@ -30,7 +31,10 @@ import com.nfsdb.model.TestEntity;
 import com.nfsdb.printer.JournalPrinter;
 import com.nfsdb.printer.appender.AssertingAppender;
 import com.nfsdb.printer.converter.DateConverter;
-import com.nfsdb.utils.*;
+import com.nfsdb.utils.Dates;
+import com.nfsdb.utils.Interval;
+import com.nfsdb.utils.Rnd;
+import com.nfsdb.utils.Unsafe;
 import org.junit.Assert;
 
 import java.io.IOException;

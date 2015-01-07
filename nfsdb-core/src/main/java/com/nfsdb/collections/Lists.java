@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.nfsdb.utils;
+package com.nfsdb.collections;
 
 import java.util.List;
 

@@ -18,13 +18,13 @@ package com.nfsdb.net.producer;
 
 import com.nfsdb.Journal;
 import com.nfsdb.Partition;
+import com.nfsdb.collections.Lists;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.net.ChannelProducer;
 import com.nfsdb.net.model.JournalClientState;
 import com.nfsdb.net.model.JournalServerState;
-import com.nfsdb.utils.Lists;
 import com.nfsdb.utils.Rows;
 
 import java.nio.channels.WritableByteChannel;

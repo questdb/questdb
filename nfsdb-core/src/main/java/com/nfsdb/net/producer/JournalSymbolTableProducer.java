@@ -17,12 +17,12 @@
 package com.nfsdb.net.producer;
 
 import com.nfsdb.Journal;
+import com.nfsdb.collections.Lists;
 import com.nfsdb.column.SymbolTable;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.net.ChannelProducer;
 import com.nfsdb.net.model.JournalClientState;
 import com.nfsdb.utils.ByteBuffers;
-import com.nfsdb.utils.Lists;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;

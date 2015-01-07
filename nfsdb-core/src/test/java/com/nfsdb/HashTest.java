@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.experimental;
+package com.nfsdb;
 
+import com.nfsdb.collections.Hash;
 import com.nfsdb.collections.IntHashSet;
-import com.nfsdb.utils.Hash;
 import com.nfsdb.utils.Rnd;
 import com.nfsdb.utils.Unsafe;
 import org.junit.Assert;

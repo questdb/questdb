@@ -14,9 +14,8 @@
  * limitations under the License.
  */
 
-package com.nfsdb.utils;
+package com.nfsdb.collections;
 
-import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.iterators.PeekingIterator;
 
 import java.util.Iterator;

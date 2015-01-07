@@ -18,11 +18,11 @@ package com.nfsdb.net.comsumer;
 
 import com.nfsdb.Journal;
 import com.nfsdb.collections.DirectIntList;
+import com.nfsdb.collections.Lists;
 import com.nfsdb.column.SymbolTable;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.net.AbstractChannelConsumer;
 import com.nfsdb.utils.ByteBuffers;
-import com.nfsdb.utils.Lists;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;

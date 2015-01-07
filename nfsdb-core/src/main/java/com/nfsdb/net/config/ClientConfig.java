@@ -90,14 +90,17 @@ public class ClientConfig extends NetworkConfig {
             SocketChannel channel = SocketChannel.open(address)
                     .setOption(StandardSocketOptions.TCP_NODELAY, isTcpNoDelay())
                     .setOption(StandardSocketOptions.SO_KEEPALIVE, getKeepAlive())
-                    .setOption(StandardSocketOptions.SO_SNDBUF, getSoRcvBuf())
+                    .setOption(StandardSocketOptions.SO_SNDBUF, getSoSndBuf())
                     .setOption(StandardSocketOptions.SO_RCVBUF, getSoRcvBuf())
                     .setOption(StandardSocketOptions.SO_LINGER, getLinger());
 
-            if (channel.getOption(StandardSocketOptions.SO_SNDBUF) != getSoSndBuf()) {
+            // linux doubles buffer size, which is returned
+            if (channel.getOption(StandardSocketOptions.SO_SNDBUF) != getSoSndBuf()
+                    && channel.getOption(StandardSocketOptions.SO_SNDBUF) != getSoSndBuf() * 2) {
                 LOGGER.warn("SO_SNDBUF value is ignored");
             }
-            if (channel.getOption(StandardSocketOptions.SO_RCVBUF) != getSoRcvBuf()) {
+            if (channel.getOption(StandardSocketOptions.SO_RCVBUF) != getSoRcvBuf()
+                    && channel.getOption(StandardSocketOptions.SO_RCVBUF) != getSoRcvBuf() * 2) {
                 LOGGER.warn("SO_RCVBUF value is ignored");
             }
 

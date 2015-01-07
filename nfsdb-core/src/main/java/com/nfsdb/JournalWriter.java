@@ -16,6 +16,7 @@
 
 package com.nfsdb;
 
+import com.nfsdb.collections.PeekingListIterator;
 import com.nfsdb.column.FixedColumn;
 import com.nfsdb.column.HugeBuffer;
 import com.nfsdb.column.SymbolTable;
@@ -32,7 +33,10 @@ import com.nfsdb.locks.Lock;
 import com.nfsdb.locks.LockManager;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.tx.*;
-import com.nfsdb.utils.*;
+import com.nfsdb.utils.Dates;
+import com.nfsdb.utils.Files;
+import com.nfsdb.utils.Interval;
+import com.nfsdb.utils.Rows;
 
 import java.io.File;
 import java.io.FileFilter;

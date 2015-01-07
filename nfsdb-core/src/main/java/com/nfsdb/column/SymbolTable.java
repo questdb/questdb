@@ -18,6 +18,7 @@ package com.nfsdb.column;
 
 import com.nfsdb.JournalMode;
 import com.nfsdb.collections.AbstractImmutableIterator;
+import com.nfsdb.collections.Lists;
 import com.nfsdb.collections.ObjIntHashMap;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalInvalidSymbolValueException;
@@ -26,7 +27,6 @@ import com.nfsdb.index.Cursor;
 import com.nfsdb.index.KVIndex;
 import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Checksum;
-import com.nfsdb.utils.Lists;
 
 import java.io.Closeable;
 import java.io.File;
