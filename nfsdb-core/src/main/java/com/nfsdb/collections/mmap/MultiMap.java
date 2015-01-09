@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,15 +22,14 @@ import com.nfsdb.collections.Hash;
 import com.nfsdb.collections.Primes;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
-import com.nfsdb.lang.cst.impl.qry.Record;
-import com.nfsdb.lang.cst.impl.qry.RecordSource;
+import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
 import com.nfsdb.utils.Unsafe;
 
 import java.io.Closeable;
 import java.util.ArrayList;
 import java.util.List;
 
-public class MultiMap implements Closeable, Iterable<Record> {
+public class MultiMap implements Closeable {
 
     private static final int seed = 0xdeadbeef;
     private final float loadFactor;
@@ -212,9 +211,12 @@ public class MultiMap implements Closeable, Iterable<Record> {
         keyOffsets.free();
     }
 
-    @Override
-    public RecordSource<Record> iterator() {
+    public MapRecordSource getRecordSource() {
         return recordSource.init(kStart, size);
+    }
+
+    public RecordMetadata getMetadata() {
+        return recordSource.getMetadata();
     }
 
     @Override

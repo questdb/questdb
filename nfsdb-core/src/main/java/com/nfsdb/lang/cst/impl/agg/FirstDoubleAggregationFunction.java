@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,12 +14,22 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst;
+package com.nfsdb.lang.cst.impl.agg;
 
+import com.nfsdb.collections.mmap.MapValues;
 import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.lang.cst.impl.qry.Record;
 
-public interface AggregatorFunction {
-    ColumnMetadata[] getColumns();
+public class FirstDoubleAggregationFunction extends AbstractSingleColumnAggregatorFunction {
 
-    void mapColumn(int k, int i);
+    public FirstDoubleAggregationFunction(ColumnMetadata meta) {
+        super(meta);
+    }
+
+    @Override
+    public void calculate(Record rec, MapValues values) {
+        if (values.isNew()) {
+            values.putDouble(map(0), rec.getDouble(getColumnIndex()));
+        }
+    }
 }
