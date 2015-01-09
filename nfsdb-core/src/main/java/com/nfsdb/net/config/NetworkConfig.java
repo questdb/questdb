@@ -28,7 +28,7 @@ public class NetworkConfig {
     private static final int DEFAULT_MULTICAST_PORT = 4446;
     private static final String DEFAULT_MULTICAST_ADDRESS_IPV4 = "230.100.12.4";
     private static final String DEFAULT_MULTICAST_ADDRESS_IPV6_1 = "FF02:231::4500";
-    private static final int DEFAULT_SO_RCVBUF = 1024 * 1024;
+    private static final int DEFAULT_SO_RCVBUF = 32768;
     private static final NetworkInterface defaultInterface;
 
     static {
