@@ -21,11 +21,7 @@ import com.nfsdb.JournalWriter;
 import com.nfsdb.export.RecordSourcePrinter;
 import com.nfsdb.export.StringSink;
 import com.nfsdb.factory.configuration.ColumnMetadata;
-import com.nfsdb.lang.cst.impl.Resampler;
-import com.nfsdb.lang.cst.impl.agg.AggregatorFunction;
-import com.nfsdb.lang.cst.impl.agg.CountIntAggregatorFunction;
-import com.nfsdb.lang.cst.impl.agg.FirstDoubleAggregationFunction;
-import com.nfsdb.lang.cst.impl.agg.LastDoubleAggregationFunction;
+import com.nfsdb.lang.cst.impl.agg.*;
 import com.nfsdb.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.lang.cst.impl.psrc.JournalPartitionSource;
 import com.nfsdb.lang.cst.impl.rsrc.AllRowSource;
@@ -38,7 +34,7 @@ import org.junit.Test;
 
 import java.util.ArrayList;
 
-public class ResamplerTest extends AbstractTest {
+public class ResampledSourceTest extends AbstractTest {
 
     @Test
     public void testResampleWithCount() throws Exception {
@@ -222,7 +218,7 @@ public class ResamplerTest extends AbstractTest {
         final Journal r = factory.reader(Quote.class.getName());
 
 
-        Resampler resampler = new Resampler(
+            ResampledSource resampledSource = new ResampledSource(
                 new JournalSourceImpl(
                         new JournalPartitionSource(r, false)
                         , new AllRowSource()
@@ -238,12 +234,12 @@ public class ResamplerTest extends AbstractTest {
                     add(new LastDoubleAggregationFunction(r.getMetadata().getColumnMetadata("ask")));
                 }}
                 , r.getMetadata().getTimestampMetadata()
-                , Resampler.SampleBy.MINUTE
+                    , ResampledSource.SampleBy.MINUTE
         );
 
         StringSink sink = new StringSink();
         RecordSourcePrinter out = new RecordSourcePrinter(sink);
-        out.print(resampler);
+            out.print(resampledSource);
         Assert.assertEquals(expected, sink.toString());
     }
 }

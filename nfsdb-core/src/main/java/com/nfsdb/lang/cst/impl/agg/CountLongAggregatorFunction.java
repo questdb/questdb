@@ -22,12 +22,14 @@ import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.lang.cst.impl.qry.Record;
 import com.nfsdb.lang.cst.impl.qry.RecordSource;
 
-public class CountIntAggregatorFunction extends AbstractAggregatorFunction {
+public class CountLongAggregatorFunction extends AbstractAggregatorFunction {
 
     private final ColumnMetadata[] meta = new ColumnMetadata[1];
 
-    public CountIntAggregatorFunction(String name) {
-        this.meta[0] = new ColumnMetadata().setName(name).setType(ColumnType.INT);
+    public CountLongAggregatorFunction(String name) {
+        this.meta[0] = new ColumnMetadata();
+        this.meta[0].name = name;
+        this.meta[0].type = ColumnType.LONG;
     }
 
     @Override
@@ -38,9 +40,9 @@ public class CountIntAggregatorFunction extends AbstractAggregatorFunction {
     @Override
     public void calculate(Record rec, MapValues values) {
         if (values.isNew()) {
-            values.putInt(map(0), 1);
+            values.putLong(map(0), 1);
         } else {
-            values.putInt(map(0), values.getInt(map(0)) + 1);
+            values.putLong(map(0), values.getLong(map(0)) + 1);
         }
     }
 

@@ -269,7 +269,7 @@ public class CstTest {
                         map.claimKey()
                                 .putLong(ts)
                                 .putInt(e.getInt(symIndex))
-                                .$()
+                                .commit()
                 );
 
                 val.putInt(0, val.isNew() ? 1 : val.getInt(0) + 1);

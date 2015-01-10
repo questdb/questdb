@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,16 +14,16 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl;
+package com.nfsdb.lang.cst.impl.agg;
 
 
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.collections.mmap.MapRecordSource;
+import com.nfsdb.collections.mmap.MapRecordValueInterceptor;
 import com.nfsdb.collections.mmap.MapValues;
 import com.nfsdb.collections.mmap.MultiMap;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
-import com.nfsdb.lang.cst.impl.agg.AggregatorFunction;
 import com.nfsdb.lang.cst.impl.qry.GenericRecordSource;
 import com.nfsdb.lang.cst.impl.qry.Record;
 import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
@@ -32,7 +32,7 @@ import com.nfsdb.utils.Dates;
 
 import java.util.List;
 
-public class Resampler extends AbstractImmutableIterator<Record> implements GenericRecordSource {
+public class ResampledSource extends AbstractImmutableIterator<Record> implements GenericRecordSource {
 
     private final MultiMap map;
     private final RecordSource<? extends Record> rowSource;
@@ -43,7 +43,7 @@ public class Resampler extends AbstractImmutableIterator<Record> implements Gene
     private MapRecordSource mapRecordSource;
     private Record nextRecord = null;
 
-    public Resampler(RecordSource<? extends Record> rowSource, List<ColumnMetadata> keyColumns, List<AggregatorFunction> aggregators, ColumnMetadata timestampMetadata, SampleBy sampleBy) {
+    public ResampledSource(RecordSource<? extends Record> rowSource, List<ColumnMetadata> keyColumns, List<AggregatorFunction> aggregators, ColumnMetadata timestampMetadata, SampleBy sampleBy) {
 
         MultiMap.Builder builder = new MultiMap.Builder();
         int keyColumnsSize = keyColumns.size();
@@ -70,6 +70,10 @@ public class Resampler extends AbstractImmutableIterator<Record> implements Gene
             for (int k = 0, len = columns.length; k < len; k++) {
                 builder.valueColumn(columns[k]);
                 func.mapColumn(k, index++);
+            }
+
+            if (func instanceof MapRecordValueInterceptor) {
+                builder.interceptor((MapRecordValueInterceptor) func);
             }
         }
 
@@ -163,7 +167,7 @@ public class Resampler extends AbstractImmutableIterator<Record> implements Gene
                         throw new JournalRuntimeException("Unsupported type: " + rowSource.getMetadata().getColumnType(i + 1));
                 }
             }
-            key.$();
+            key.commit();
 
             MapValues values = map.claimSlot(key);
 

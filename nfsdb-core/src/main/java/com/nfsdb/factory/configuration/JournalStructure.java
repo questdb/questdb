@@ -63,10 +63,8 @@ public class JournalStructure implements JMetadataBuilder<Object> {
         this.openFileTTL = model.getOpenFileTTL();
         this.lag = model.getLag();
         for (int i = 0; i < model.getColumnCount(); i++) {
-            ColumnMetadata from = model.getColumnMetadata(i);
             ColumnMetadata to = new ColumnMetadata();
-            to.copy(from);
-            metadata.add(to);
+            metadata.add(to.copy(model.getColumnMetadata(i)));
             nameToIndexMap.put(to.name, i);
         }
     }
@@ -273,8 +271,7 @@ public class JournalStructure implements JMetadataBuilder<Object> {
     private ColumnMetadata newMeta(String name) {
         int index = nameToIndexMap.get(name);
         if (index == -1) {
-            ColumnMetadata meta = new ColumnMetadata();
-            meta.name = name;
+            ColumnMetadata meta = new ColumnMetadata().setName(name);
             metadata.add(meta);
             nameToIndexMap.put(name, metadata.size() - 1);
             return meta;

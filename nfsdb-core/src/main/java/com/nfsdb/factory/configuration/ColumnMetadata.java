@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,7 +51,7 @@ public class ColumnMetadata {
                 '}';
     }
 
-    public void copy(ColumnMetadata from) {
+    public ColumnMetadata copy(ColumnMetadata from) {
         this.name = from.name;
         this.type = from.type;
         this.offset = from.offset;
@@ -63,6 +63,17 @@ public class ColumnMetadata {
         this.distinctCountHint = from.distinctCountHint;
         this.sameAs = from.sameAs;
         this.noCache = from.noCache;
+        return this;
+    }
+
+    public ColumnMetadata setType(ColumnType type) {
+        this.type = type;
+        return this;
+    }
+
+    public ColumnMetadata setName(String name) {
+        this.name = name;
+        return this;
     }
 
     public void write(HugeBuffer buf) {

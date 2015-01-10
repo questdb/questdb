@@ -20,32 +20,19 @@ import com.nfsdb.collections.mmap.MapValues;
 import com.nfsdb.column.ColumnType;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.lang.cst.impl.qry.Record;
-import com.nfsdb.lang.cst.impl.qry.RecordSource;
 
-public class CountIntAggregatorFunction extends AbstractAggregatorFunction {
-
-    private final ColumnMetadata[] meta = new ColumnMetadata[1];
-
-    public CountIntAggregatorFunction(String name) {
-        this.meta[0] = new ColumnMetadata().setName(name).setType(ColumnType.INT);
-    }
-
-    @Override
-    protected ColumnMetadata[] getColumnsInternal() {
-        return meta;
+public class SumIntToLongAggregationFunction extends AbstractSingleColumnAggregatorFunction {
+    public SumIntToLongAggregationFunction(ColumnMetadata meta) {
+        super(new ColumnMetadata().copy(meta).setType(ColumnType.LONG));
     }
 
     @Override
     public void calculate(Record rec, MapValues values) {
         if (values.isNew()) {
-            values.putInt(map(0), 1);
+            values.putLong(map(0), rec.getInt(getColumnIndex()));
         } else {
-            values.putInt(map(0), values.getInt(map(0)) + 1);
+            int c = map(0);
+            values.putLong(c, values.getLong(c) + rec.getInt(getColumnIndex()));
         }
-    }
-
-    @Override
-    public void prepareSource(RecordSource<? extends Record> source) {
-
     }
 }

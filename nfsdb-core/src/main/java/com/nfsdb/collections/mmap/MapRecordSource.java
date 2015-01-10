@@ -22,15 +22,23 @@ import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
 import com.nfsdb.lang.cst.impl.qry.RecordSource;
 import com.nfsdb.utils.Unsafe;
 
-public class MapRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record> {
+import java.util.List;
+
+public final class MapRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record> {
     private final MapRecord record;
     private final RecordMetadata metadata;
+    private final MapValues values;
+    private final List<MapRecordValueInterceptor> interceptors;
+    private final int interceptorsLen;
     private int count;
     private long address;
 
-    public MapRecordSource(MapRecord record, RecordMetadata metadata) {
+    MapRecordSource(MapRecord record, RecordMetadata metadata, MapValues values, List<MapRecordValueInterceptor> interceptors) {
         this.record = record;
         this.metadata = metadata;
+        this.values = values;
+        this.interceptors = interceptors;
+        this.interceptorsLen = interceptors != null ? interceptors.size() : 0;
     }
 
     MapRecordSource init(long address, int count) {
@@ -58,6 +66,15 @@ public class MapRecordSource extends AbstractImmutableIterator<Record> implement
         long address = this.address;
         this.address = address + Unsafe.getUnsafe().getInt(address);
         count--;
+        if (interceptorsLen > 0) {
+            notifyInterceptors(address);
+        }
         return record.init(address);
+    }
+
+    private void notifyInterceptors(long address) {
+        for (int i = 0; i < interceptorsLen; i++) {
+            interceptors.get(i).beforeRecord(values.init(address, false));
+        }
     }
 }

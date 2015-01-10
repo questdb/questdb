@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ import com.nfsdb.utils.Unsafe;
 import java.io.InputStream;
 import java.io.OutputStream;
 
-public class MapRecord extends AbstractRecord {
+public final class MapRecord extends AbstractRecord {
     private final int split;
     private final int keyDataOffset;
     private final int keyBlockOffset;

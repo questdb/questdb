@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"EI_EXPOSE_REP2"})
-public class MapValues {
+public final class MapValues {
     private final int valueOffsets[];
     public long address;
     private boolean _new;
@@ -37,6 +37,14 @@ public class MapValues {
         return Unsafe.getUnsafe().getDouble(address0(index));
     }
 
+    public void putLong(int index, long value) {
+        Unsafe.getUnsafe().putLong(address0(index), value);
+    }
+
+    public long getLong(int index) {
+        return Unsafe.getUnsafe().getLong(address0(index));
+    }
+
     public void putInt(int index, int value) {
         Unsafe.getUnsafe().putInt(address0(index), value);
     }
@@ -49,7 +57,7 @@ public class MapValues {
         return address + valueOffsets[index];
     }
 
-    MapValues beginRead(long address, boolean _new) {
+    MapValues init(long address, boolean _new) {
         this.address = address;
         this._new = _new;
         return this;

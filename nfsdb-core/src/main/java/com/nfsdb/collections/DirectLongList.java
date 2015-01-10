@@ -178,8 +178,10 @@ public class DirectLongList extends AbstractDirectList {
         // Check if the array is nearly sorted
         for (int k = left; k < right; run[count] = k) {
             if (get(k) < get(k + 1)) { // ascending
+                //noinspection StatementWithEmptyBody
                 while (++k <= right && get(k - 1) <= get(k)) ;
             } else if (get(k) > get(k + 1)) { // descending
+                //noinspection StatementWithEmptyBody
                 while (++k <= right && get(k - 1) >= get(k)) ;
                 for (int lo = run[count] - 1, hi = k; ++lo < --hi; ) {
                     swap(lo, hi);
@@ -220,12 +222,14 @@ public class DirectLongList extends AbstractDirectList {
 
         //long[] b;
         byte odd = 0;
+        //noinspection StatementWithEmptyBody
         for (int n = 1; (n <<= 1) < count; odd ^= 1) ;
 
         if (odd == 0) {
             b = this;
             a = new DirectLongList(this.size());
 
+            //noinspection StatementWithEmptyBody
             for (int i = left - 1; ++i < right; a.set(i, b.get(i))) ;
         } else {
             a = this;
@@ -246,6 +250,7 @@ public class DirectLongList extends AbstractDirectList {
                 run[++last] = hi;
             }
             if ((count & 1) != 0) {
+                //noinspection StatementWithEmptyBody
                 for (int i = right, lo = run[count - 1]; --i >= lo; b.set(i, a.get(i))) ;
                 run[++last] = right;
             }
@@ -414,7 +419,9 @@ public class DirectLongList extends AbstractDirectList {
             /*
              * Skip elements, which are less or greater than pivot values.
              */
+            //noinspection StatementWithEmptyBody
             while (get(++less) < pivot1) ;
+            //noinspection StatementWithEmptyBody
             while (get(--great) > pivot2) ;
 
             /*

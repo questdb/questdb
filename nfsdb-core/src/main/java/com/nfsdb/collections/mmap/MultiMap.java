@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,10 +35,10 @@ public class MultiMap implements Closeable {
     private final float loadFactor;
     private final Key key = new Key();
     private final MapRecordSource recordSource;
-    private final MapValues mapValues0;
+    private final MapValues values;
     private int keyBlockOffset;
     private int keyDataOffset;
-    private DirectLongList keyOffsets;
+    private DirectLongList offsets;
     private long kAddress;
     private long kStart;
     private long kLimit;
@@ -47,7 +47,7 @@ public class MultiMap implements Closeable {
     private int keyCapacity;
     private int size = 0;
 
-    private MultiMap(int capacity, long dataSize, float loadFactor, List<ColumnMetadata> valueColumns, List<ColumnMetadata> keyColumns) {
+    private MultiMap(int capacity, long dataSize, float loadFactor, List<ColumnMetadata> valueColumns, List<ColumnMetadata> keyColumns, List<MapRecordValueInterceptor> interceptors) {
         this.loadFactor = loadFactor;
         this.kAddress = Unsafe.getUnsafe().allocateMemory(dataSize + AbstractDirectList.CACHE_LINE_SIZE);
         this.kStart = kPos = this.kAddress + (this.kAddress & (AbstractDirectList.CACHE_LINE_SIZE - 1));
@@ -55,9 +55,9 @@ public class MultiMap implements Closeable {
 
         this.keyCapacity = Primes.next((int) (capacity / loadFactor));
         this.free = (int) (keyCapacity * loadFactor);
-        this.keyOffsets = new DirectLongList(keyCapacity);
-        this.keyOffsets.zero((byte) -1);
-        this.keyOffsets.setPos(keyCapacity);
+        this.offsets = new DirectLongList(keyCapacity);
+        this.offsets.zero((byte) -1);
+        this.offsets.setPos(keyCapacity);
         int columnSplit = valueColumns.size();
         int[] valueOffsets = new int[columnSplit];
 
@@ -78,12 +78,12 @@ public class MultiMap implements Closeable {
             }
         }
 
-        this.mapValues0 = new MapValues(valueOffsets);
+        this.values = new MapValues(valueOffsets);
         MapMetadata metadata = new MapMetadata(valueColumns, keyColumns);
         this.keyBlockOffset = offset;
         this.keyDataOffset = this.keyBlockOffset + 4 * keyColumns.size();
         MapRecord record = new MapRecord(metadata, valueOffsets, keyDataOffset, keyBlockOffset);
-        this.recordSource = new MapRecordSource(record, metadata);
+        this.recordSource = new MapRecordSource(record, metadata, this.values, interceptors);
     }
 
 
@@ -91,19 +91,19 @@ public class MultiMap implements Closeable {
         // calculate hash remembering "key" structure
         // [ len | value block | key offset block | key data block ]
         int index = Hash.hashXX(key.startAddr + keyBlockOffset, key.len - keyBlockOffset, seed) % keyCapacity;
-        long offset = keyOffsets.get(index);
+        long offset = offsets.get(index);
 
         if (offset == -1) {
-            keyOffsets.set(index, key.startAddr - kStart);
+            offsets.set(index, key.startAddr - kStart);
             if (--free == 0) {
                 rehash();
             }
             size++;
-            return mapValues0.beginRead(key.startAddr, true);
+            return values.init(key.startAddr, true);
         } else if (eq(key, offset)) {
             // rollback added key
             kPos = key.startAddr;
-            return mapValues0.beginRead(kStart + offset, false);
+            return values.init(kStart + offset, false);
         } else {
             return probe0(key, index);
         }
@@ -111,20 +111,20 @@ public class MultiMap implements Closeable {
 
     private MapValues probe0(Key key, int index) {
         long offset;
-        while ((offset = keyOffsets.get(index = (++index % keyCapacity))) != -1) {
+        while ((offset = offsets.get(index = (++index % keyCapacity))) != -1) {
             if (eq(key, offset)) {
                 kPos = key.startAddr;
-                return mapValues0.beginRead(kStart + offset, false);
+                return values.init(kStart + offset, false);
             }
         }
-        keyOffsets.set(index, key.startAddr - kStart);
+        offsets.set(index, key.startAddr - kStart);
         free--;
         if (free == 0) {
             rehash();
         }
 
         size++;
-        return mapValues0.beginRead(key.startAddr, true);
+        return values.init(key.startAddr, true);
     }
 
     private boolean eq(Key key, long offset) {
@@ -159,7 +159,7 @@ public class MultiMap implements Closeable {
     }
 
     public Key claimKey() {
-        return key.beginWrite();
+        return key.init();
     }
 
     private void resize() {
@@ -170,9 +170,10 @@ public class MultiMap implements Closeable {
         Unsafe.getUnsafe().copyMemory(this.kStart, kStart, kCapacity >> 1);
         Unsafe.getUnsafe().freeMemory(this.kAddress);
 
-        key.startAddr = kStart + (key.startAddr - this.kStart);
-        key.appendAddr = kStart + (key.appendAddr - this.kStart);
-        key.nextColOffset = kStart + (key.nextColOffset - this.kStart);
+        long d = kStart - this.kStart;
+        key.startAddr += d;
+        key.appendAddr += d;
+        key.nextColOffset += d;
 
 
         this.kAddress = kAddress;
@@ -186,8 +187,8 @@ public class MultiMap implements Closeable {
         pointers.zero((byte) -1);
         pointers.setPos(capacity);
 
-        for (int i = 0, sz = this.keyOffsets.size(); i < sz; i++) {
-            long offset = this.keyOffsets.get(i);
+        for (int i = 0, sz = this.offsets.size(); i < sz; i++) {
+            long offset = this.offsets.get(i);
             if (offset == -1) {
                 continue;
             }
@@ -197,8 +198,8 @@ public class MultiMap implements Closeable {
             }
             pointers.set(index, offset);
         }
-        this.keyOffsets.free();
-        this.keyOffsets = pointers;
+        this.offsets.free();
+        this.offsets = pointers;
         this.free += (capacity - keyCapacity) * loadFactor;
         this.keyCapacity = capacity;
     }
@@ -208,7 +209,7 @@ public class MultiMap implements Closeable {
             Unsafe.getUnsafe().freeMemory(kAddress);
             kAddress = 0;
         }
-        keyOffsets.free();
+        offsets.free();
     }
 
     public MapRecordSource getRecordSource() {
@@ -232,12 +233,13 @@ public class MultiMap implements Closeable {
         kPos = kStart;
         free = (int) (keyCapacity * loadFactor);
         size = 0;
-        keyOffsets.clear((byte) -1);
+        offsets.clear((byte) -1);
     }
 
     public static class Builder {
         private final List<ColumnMetadata> valueColumns = new ArrayList<>();
         private final List<ColumnMetadata> keyColumns = new ArrayList<>();
+        private final List<MapRecordValueInterceptor> interceptors = new ArrayList<>();
         private int capacity = 67;
         private long dataSize = 4096;
         private float loadFactor = 0.5f;
@@ -267,8 +269,13 @@ public class MultiMap implements Closeable {
             return this;
         }
 
+        public Builder interceptor(MapRecordValueInterceptor interceptor) {
+            interceptors.add(interceptor);
+            return this;
+        }
+
         public MultiMap build() {
-            return new MultiMap(capacity, dataSize, loadFactor, valueColumns, keyColumns);
+            return new MultiMap(capacity, dataSize, loadFactor, valueColumns, keyColumns, interceptors);
         }
     }
 
@@ -324,13 +331,13 @@ public class MultiMap implements Closeable {
             return this;
         }
 
-        public Key $() {
+        public Key commit() {
             Unsafe.getUnsafe().putInt(startAddr, len = (int) (appendAddr - startAddr));
             kPos = appendAddr;
             return this;
         }
 
-        public Key beginWrite() {
+        public Key init() {
             startAddr = kPos;
             appendAddr = startAddr + keyDataOffset;
             nextColOffset = startAddr + keyBlockOffset;

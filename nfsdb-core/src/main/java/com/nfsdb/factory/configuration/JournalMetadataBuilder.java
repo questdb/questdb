@@ -62,8 +62,7 @@ public class JournalMetadataBuilder<T> implements JMetadataBuilder<T> {
         this.lag = model.getLag();
         for (int i = 0; i < model.getColumnCount(); i++) {
             ColumnMetadata from = model.getColumnMetadata(i);
-            ColumnMetadata to = columnMetadata.get(from.name);
-            to.copy(from);
+            columnMetadata.get(from.name).copy(from);
         }
     }
 

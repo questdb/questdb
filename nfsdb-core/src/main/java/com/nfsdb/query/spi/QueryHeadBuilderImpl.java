@@ -119,6 +119,7 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
         zone2Keys.reset(symbolKeys.size());
         zone1Keys.add(symbolKeys);
 
+        //noinspection ConstantConditions
         return journal.iteratePartitionsDesc(
                 new UnorderedResultSetBuilder<T>(interval) {
                     private final KVIndex filterKVIndexes[] = new KVIndex[filterSymbolKeys.size()];
