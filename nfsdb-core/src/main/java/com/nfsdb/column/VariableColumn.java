@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.nfsdb.column;
 
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.export.CharSink;
 import com.nfsdb.utils.Unsafe;
 
 import java.io.IOException;
@@ -90,6 +91,22 @@ public class VariableColumn extends AbstractColumn {
             return null;
         }
         return getStr0(mappedFile.getAddress(offset + 4, len * 2), len);
+    }
+
+
+    public void getStr(long localRowID, CharSink sink) {
+        long offset = indexColumn.getLong(localRowID);
+        int len = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
+
+        if (len == -1) {
+            return;
+        }
+
+        long address = mappedFile.getAddress(offset + 4, len * 2);
+        for (int i = 0; i < len; i++) {
+            sink.put(Unsafe.getUnsafe().getChar(address));
+            address += 2;
+        }
     }
 
     public boolean cmpStr(long localRowID, String value) {

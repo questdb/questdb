@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.nfsdb.factory.configuration;
 
 import com.nfsdb.column.ColumnType;
 import com.nfsdb.column.HugeBuffer;
+import com.nfsdb.column.SymbolTable;
 
 public class ColumnMetadata {
     public String name;
@@ -31,6 +32,7 @@ public class ColumnMetadata {
     public int distinctCountHint;
     public String sameAs;
     public boolean noCache = false;
+    public SymbolTable symbolTable;
 
     @Override
     public String toString() {

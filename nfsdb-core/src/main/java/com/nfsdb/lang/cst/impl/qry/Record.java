@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,8 @@
  */
 
 package com.nfsdb.lang.cst.impl.qry;
+
+import com.nfsdb.export.CharSink;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -42,6 +44,8 @@ public interface Record {
     CharSequence getStr(String column);
 
     CharSequence getStr(int col);
+
+    void getStr(int col, CharSink sink);
 
     String getSym(String column);
 

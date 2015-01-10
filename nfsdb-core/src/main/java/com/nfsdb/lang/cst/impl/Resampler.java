@@ -157,7 +157,7 @@ public class Resampler extends AbstractImmutableIterator<Record> implements Gene
                         key.putStr(rec.getStr(keyIndices[i]));
                         break;
                     case SYMBOL:
-                        key.putStr(rec.getSym(keyIndices[i]));
+                        key.putInt(rec.getInt(keyIndices[i]));
                         break;
                     default:
                         throw new JournalRuntimeException("Unsupported type: " + rowSource.getMetadata().getColumnType(i + 1));

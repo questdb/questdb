@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ package com.nfsdb;
 import com.nfsdb.collections.DirectLongList;
 import com.nfsdb.column.SymbolTable;
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.factory.configuration.ColumnMetaWithSymTab;
+import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.iterators.ConcurrentIterator;
 import com.nfsdb.iterators.ResultSetBufferedIterator;
 import com.nfsdb.iterators.ResultSetConcurrentIterator;
@@ -47,7 +47,7 @@ public class ResultSet<T> implements Iterable<T> {
         Partition<T> rightPart = journal.getPartition(Rows.toPartitionIndex(rightRowID), true);
 
         for (int column : columns) {
-            ColumnMetaWithSymTab meta = journal.getColumnMetadata(column);
+            ColumnMetadata meta = journal.getMetadata().getColumnMetadata(column);
 
             String leftStr;
             String rightStr;

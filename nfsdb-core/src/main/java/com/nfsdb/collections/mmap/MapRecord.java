@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.nfsdb.collections.mmap;
 
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.export.CharSink;
 import com.nfsdb.lang.cst.impl.qry.AbstractRecord;
 import com.nfsdb.lang.cst.impl.qry.Record;
 import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
@@ -90,6 +91,16 @@ public class MapRecord extends AbstractRecord {
     }
 
     @Override
+    public void getStr(int index, CharSink sink) {
+        long address = address0(index);
+        int len = (int) (address0(index + 1) - address) >> 1;
+        for (int i = 0; i < len; i++) {
+            sink.put(Unsafe.getUnsafe().getChar(address));
+            address += 2;
+        }
+    }
+
+    @Override
     public long getDate(int index) {
         return Unsafe.getUnsafe().getLong(address0(index));
     }
@@ -126,6 +137,6 @@ public class MapRecord extends AbstractRecord {
 
     @Override
     public String getSym(int index) {
-        return getStr(index);
+        return metadata.getSymbolTable(index).value(getInt(index));
     }
 }

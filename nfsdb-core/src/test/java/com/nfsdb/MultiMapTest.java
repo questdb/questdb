@@ -125,7 +125,7 @@ public class MultiMapTest extends AbstractTest {
             MapValues val = map.claimSlot(
                     map.claimKey()
                             .putLong(Dates.floorMI(ts))
-                            .putStr(e.getSym(symIndex))
+                            .putInt(e.getInt(symIndex))
                             .$()
             );
 

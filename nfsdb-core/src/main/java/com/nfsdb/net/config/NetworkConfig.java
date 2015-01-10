@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ public class NetworkConfig {
     private static final int DEFAULT_MULTICAST_PORT = 4446;
     private static final String DEFAULT_MULTICAST_ADDRESS_IPV4 = "230.100.12.4";
     private static final String DEFAULT_MULTICAST_ADDRESS_IPV6_1 = "FF02:231::4500";
-    private static final int DEFAULT_SO_RCVBUF = 32768;
+    private static final int DEFAULT_SO_RCVBUF = 1024 * 1024;
     private static final NetworkInterface defaultInterface;
 
     static {

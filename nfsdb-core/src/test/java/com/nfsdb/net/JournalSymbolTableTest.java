@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 package com.nfsdb.net;
 
 import com.nfsdb.JournalWriter;
-import com.nfsdb.column.SymbolTable;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.model.Quote;
 import com.nfsdb.net.comsumer.JournalClientStateConsumer;
@@ -26,6 +25,7 @@ import com.nfsdb.net.model.IndexedJournal;
 import com.nfsdb.net.producer.JournalClientStateProducer;
 import com.nfsdb.net.producer.JournalSymbolTableProducer;
 import com.nfsdb.test.tools.AbstractTest;
+import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -100,18 +100,6 @@ public class JournalSymbolTableTest extends AbstractTest {
         executeSequence(true);
     }
 
-    private void compareSymbolTables() {
-        for (int i = 0; i < master.getMetadata().getColumnCount(); i++) {
-            SymbolTable m = master.getColumnMetadata(i).symbolTable;
-            if (m != null) {
-                SymbolTable s = slave.getColumnMetadata(i).symbolTable;
-                for (String value : m.values()) {
-                    Assert.assertEquals(m.getQuick(value), s.getQuick(value));
-                }
-            }
-        }
-    }
-
     private void executeSequence(boolean expectContent) throws JournalNetworkException {
         journalClientStateProducer.write(channel, new IndexedJournal(0, slave));
         journalClientStateConsumer.reset();
@@ -124,7 +112,7 @@ public class JournalSymbolTableTest extends AbstractTest {
             journalSymbolTableConsumer.reset();
             journalSymbolTableConsumer.read(channel);
             Assert.assertTrue(journalSymbolTableConsumer.isComplete());
-            compareSymbolTables();
+            TestUtils.compareSymbolTables(master, slave);
         }
     }
 }

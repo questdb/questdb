@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ package com.nfsdb;
 import com.nfsdb.column.*;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.factory.configuration.ColumnMetaWithSymTab;
+import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.utils.Checksum;
 
 import java.io.InputStream;
@@ -28,7 +28,7 @@ import java.util.BitSet;
 
 public class JournalEntryWriterImpl implements JournalEntryWriter {
     private final JournalWriter journal;
-    private final ColumnMetaWithSymTab meta[];
+    private final ColumnMetadata meta[];
     private final int timestampIndex;
     private final BitSet updated = new BitSet();
     private final long[] koTuple;
@@ -39,7 +39,8 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
 
     public JournalEntryWriterImpl(JournalWriter journal) {
         this.journal = journal;
-        this.meta = journal.columnMetadata;
+        this.meta = new ColumnMetadata[journal.getMetadata().getColumnCount()];
+        journal.getMetadata().copyColumnMetadata(meta);
         this.timestampIndex = journal.getMetadata().getTimestampIndex();
         koTuple = new long[meta.length * 2];
     }

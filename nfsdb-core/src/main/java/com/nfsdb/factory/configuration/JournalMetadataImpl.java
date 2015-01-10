@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -183,6 +183,15 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
     @Override
     public int getTimestampIndex() {
         return timestampColumnIndex;
+    }
+
+    @Override
+    public void copyColumnMetadata(ColumnMetadata[] meta) {
+
+        if (meta.length != columnCount) {
+            throw new JournalRuntimeException("Invalid length for column metadata array");
+        }
+        System.arraycopy(columnMetadata, 0, meta, 0, meta.length);
     }
 
     @Override
