@@ -43,7 +43,7 @@ public class ReplayIterator<T> extends AbstractImmutableIterator<T> {
         this.clock = MilliClock.INSTANCE;
         this.speed = speed;
         this.timeSource = new TimeSource<T>() {
-            private final long timestampOffset = underlying.getJournal().getMetadata().getTimestampColumnMetadata().offset;
+            private final long timestampOffset = underlying.getJournal().getMetadata().getTimestampMetadata().offset;
 
             @Override
             public long getTicks(T object) {

@@ -19,6 +19,7 @@ package com.nfsdb;
 import com.nfsdb.column.*;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.factory.configuration.ColumnMetaWithSymTab;
 import com.nfsdb.utils.Checksum;
 
 import java.io.InputStream;
@@ -27,7 +28,7 @@ import java.util.BitSet;
 
 public class JournalEntryWriterImpl implements JournalEntryWriter {
     private final JournalWriter journal;
-    private final Journal.ColumnMetadata meta[];
+    private final ColumnMetaWithSymTab meta[];
     private final int timestampIndex;
     private final BitSet updated = new BitSet();
     private final long[] koTuple;
@@ -39,7 +40,7 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
     public JournalEntryWriterImpl(JournalWriter journal) {
         this.journal = journal;
         this.meta = journal.columnMetadata;
-        this.timestampIndex = journal.getMetadata().getTimestampColumnIndex();
+        this.timestampIndex = journal.getMetadata().getTimestampIndex();
         koTuple = new long[meta.length * 2];
     }
 
@@ -140,7 +141,7 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
             }
             columns[i].commit();
 
-            if (meta[i].meta.indexed) {
+            if (meta[i].indexed) {
                 indexProxies[i].getIndex().add((int) koTuple[i * 2], koTuple[i * 2 + 1]);
             }
         }
@@ -162,14 +163,14 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
     }
 
     private void assertType(int index, ColumnType t) {
-        if (meta[index].meta.type != t) {
-            throw new JournalRuntimeException("Expected type: " + meta[index].meta.type);
+        if (meta[index].type != t) {
+            throw new JournalRuntimeException("Expected type: " + meta[index].type);
         }
     }
 
     private void putString0(int index, CharSequence value) {
-        if (meta[index].meta.indexed) {
-            koTuple[index * 2] = value == null ? SymbolTable.VALUE_IS_NULL : Checksum.hash(value, meta[index].meta.distinctCountHint);
+        if (meta[index].indexed) {
+            koTuple[index * 2] = value == null ? SymbolTable.VALUE_IS_NULL : Checksum.hash(value, meta[index].distinctCountHint);
             koTuple[index * 2 + 1] = ((VariableColumn) columns[index]).putStr(value);
         } else {
             ((VariableColumn) columns[index]).putStr(value);
@@ -183,7 +184,7 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
         } else {
             key = meta[index].symbolTable.put(value);
         }
-        if (meta[index].meta.indexed) {
+        if (meta[index].indexed) {
             koTuple[index * 2] = key;
             koTuple[index * 2 + 1] = ((FixedColumn) columns[index]).putInt(key);
         } else {
@@ -192,7 +193,7 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
     }
 
     private void putNull0(int index) {
-        switch (meta[index].meta.type) {
+        switch (meta[index].type) {
             case STRING:
                 putString0(index, null);
                 break;
@@ -211,8 +212,8 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
     }
 
     private void putInt0(int index, int value) {
-        if (meta[index].meta.indexed) {
-            koTuple[index * 2] = value % meta[index].meta.distinctCountHint;
+        if (meta[index].indexed) {
+            koTuple[index * 2] = value % meta[index].distinctCountHint;
             koTuple[index * 2 + 1] = ((FixedColumn) columns[index]).putInt(value);
         } else {
             ((FixedColumn) columns[index]).putInt(value);

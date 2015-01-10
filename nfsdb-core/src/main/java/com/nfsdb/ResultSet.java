@@ -19,6 +19,7 @@ package com.nfsdb;
 import com.nfsdb.collections.DirectLongList;
 import com.nfsdb.column.SymbolTable;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.configuration.ColumnMetaWithSymTab;
 import com.nfsdb.iterators.ConcurrentIterator;
 import com.nfsdb.iterators.ResultSetBufferedIterator;
 import com.nfsdb.iterators.ResultSetConcurrentIterator;
@@ -46,12 +47,12 @@ public class ResultSet<T> implements Iterable<T> {
         Partition<T> rightPart = journal.getPartition(Rows.toPartitionIndex(rightRowID), true);
 
         for (int column : columns) {
-            Journal.ColumnMetadata meta = journal.getColumnMetadata(column);
+            ColumnMetaWithSymTab meta = journal.getColumnMetadata(column);
 
             String leftStr;
             String rightStr;
 
-            switch (meta.meta.type) {
+            switch (meta.type) {
                 case STRING:
                     leftStr = leftPart.getStr(leftLocalRowID, column);
                     rightStr = rightPart.getStr(rightLocalRowID, column);
@@ -67,7 +68,7 @@ public class ResultSet<T> implements Iterable<T> {
                     }
                     break;
                 default:
-                    switch (meta.meta.type) {
+                    switch (meta.type) {
                         case INT:
                             result = compare(rightPart.getInt(rightLocalRowID, column), leftPart.getInt(leftLocalRowID, column));
                             break;
@@ -100,7 +101,7 @@ public class ResultSet<T> implements Iterable<T> {
                             }
                             break;
                         default:
-                            throw new JournalException("Unsupported type: " + meta.meta.type);
+                            throw new JournalException("Unsupported type: " + meta.type);
                     }
             }
 
@@ -179,7 +180,7 @@ public class ResultSet<T> implements Iterable<T> {
     }
 
     public long[] readTimestamps() throws JournalException {
-        int timestampColIndex = journal.getMetadata().getTimestampColumnIndex();
+        int timestampColIndex = journal.getMetadata().getTimestampIndex();
         long[] result = new long[size()];
 
         for (int i = 0, rowIDsLength = rowIDs.size(); i < rowIDsLength; i++) {

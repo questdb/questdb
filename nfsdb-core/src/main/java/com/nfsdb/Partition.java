@@ -19,6 +19,7 @@ package com.nfsdb;
 import com.nfsdb.column.*;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.factory.configuration.ColumnMetaWithSymTab;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.index.KVIndex;
@@ -75,7 +76,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
                 open(i);
             }
 
-            int tsIndex = journal.getMetadata().getTimestampColumnIndex();
+            int tsIndex = journal.getMetadata().getTimestampIndex();
             if (tsIndex >= 0) {
                 timestampColumn = getFixedWidthColumn(tsIndex);
             }
@@ -214,47 +215,46 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
     public void read(long localRowID, T obj) {
         for (int i = 0; i < columnCount; i++) {
-            Journal.ColumnMetadata m;
-            if (journal.getInactiveColumns().get(i) || (m = journal.columnMetadata[i]).meta.offset == 0) {
+            ColumnMetaWithSymTab m;
+            if (journal.getInactiveColumns().get(i) || (m = journal.columnMetadata[i]).offset == 0) {
                 continue;
             }
 
-            switch (m.meta.type) {
+            switch (m.type) {
                 case BOOLEAN:
-                    Unsafe.getUnsafe().putBoolean(obj, m.meta.offset, ((FixedColumn) columns[i]).getBool(localRowID));
+                    Unsafe.getUnsafe().putBoolean(obj, m.offset, ((FixedColumn) columns[i]).getBool(localRowID));
                     break;
                 case BYTE:
-                    Unsafe.getUnsafe().putByte(obj, m.meta.offset, ((FixedColumn) columns[i]).getByte(localRowID));
+                    Unsafe.getUnsafe().putByte(obj, m.offset, ((FixedColumn) columns[i]).getByte(localRowID));
                     break;
                 case DOUBLE:
-                    Unsafe.getUnsafe().putDouble(obj, m.meta.offset, ((FixedColumn) columns[i]).getDouble(localRowID));
+                    Unsafe.getUnsafe().putDouble(obj, m.offset, ((FixedColumn) columns[i]).getDouble(localRowID));
                     break;
                 case INT:
-                    Unsafe.getUnsafe().putInt(obj, m.meta.offset, ((FixedColumn) columns[i]).getInt(localRowID));
+                    Unsafe.getUnsafe().putInt(obj, m.offset, ((FixedColumn) columns[i]).getInt(localRowID));
                     break;
                 case LONG:
                 case DATE:
-                    Unsafe.getUnsafe().putLong(obj, m.meta.offset, ((FixedColumn) columns[i]).getLong(localRowID));
+                    Unsafe.getUnsafe().putLong(obj, m.offset, ((FixedColumn) columns[i]).getLong(localRowID));
                     break;
                 case SHORT:
-                    Unsafe.getUnsafe().putShort(obj, m.meta.offset, ((FixedColumn) columns[i]).getShort(localRowID));
+                    Unsafe.getUnsafe().putShort(obj, m.offset, ((FixedColumn) columns[i]).getShort(localRowID));
                     break;
                 case STRING:
-                    Unsafe.getUnsafe().putObject(obj, m.meta.offset, ((VariableColumn) columns[i]).getStr(localRowID));
+                    Unsafe.getUnsafe().putObject(obj, m.offset, ((VariableColumn) columns[i]).getStr(localRowID));
                     break;
                 case SYMBOL:
-                    Unsafe.getUnsafe().putObject(obj, m.meta.offset, m.symbolTable.value(((FixedColumn) columns[i]).getInt(localRowID)));
+                    Unsafe.getUnsafe().putObject(obj, m.offset, m.symbolTable.value(((FixedColumn) columns[i]).getInt(localRowID)));
                     break;
                 case BINARY:
                     readBin(localRowID, obj, i, m);
-
             }
         }
     }
 
-    private void readBin(long localRowID, T obj, int i, Journal.ColumnMetadata m) {
+    private void readBin(long localRowID, T obj, int i, ColumnMetadata m) {
         int size = ((VariableColumn) columns[i]).getBinSize(localRowID);
-        ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, m.meta.offset);
+        ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, m.offset);
         if (size == -1) {
             if (buf != null) {
                 buf.clear();
@@ -262,7 +262,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
         } else {
             if (buf == null || buf.capacity() < size) {
                 buf = ByteBuffer.allocate(size);
-                Unsafe.getUnsafe().putObject(obj, m.meta.offset, buf);
+                Unsafe.getUnsafe().putObject(obj, m.offset, buf);
             }
 
             if (buf.remaining() < size) {
@@ -309,7 +309,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
     }
 
     public FixedColumn getTimestampColumn() {
-        return getFixedWidthColumn(journal.getMetadata().getTimestampColumnIndex());
+        return getFixedWidthColumn(journal.getMetadata().getTimestampIndex());
     }
 
     public void rebuildIndexes() throws JournalException {
@@ -351,7 +351,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
         getIndexForColumn(columnIndex).close();
 
-        File base = journal.getMetadata().getColumnIndexBase(partitionDir, columnIndex);
+        File base = new File(partitionDir, journal.getMetadata().getColumnMetadata(columnIndex).name);
         KVIndex.delete(base);
 
         try (KVIndex index = new KVIndex(base, keyCountHint, recordCountHint, txCountHint, JournalMode.APPEND, 0)) {
@@ -474,36 +474,36 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
         try {
             for (int i = 0; i < columnCount; i++) {
-                Journal.ColumnMetadata meta = journal.getColumnMetadata(i);
+                ColumnMetaWithSymTab meta = journal.getColumnMetadata(i);
 
-                switch (meta.meta.type) {
+                switch (meta.type) {
                     case INT:
-                        int v = Unsafe.getUnsafe().getInt(obj, meta.meta.offset);
-                        if (meta.meta.indexed) {
-                            sparseIndexProxies[i].getIndex().add(v % meta.meta.distinctCountHint, ((FixedColumn) columns[i]).putInt(v));
+                        int v = Unsafe.getUnsafe().getInt(obj, meta.offset);
+                        if (meta.indexed) {
+                            sparseIndexProxies[i].getIndex().add(v % meta.distinctCountHint, ((FixedColumn) columns[i]).putInt(v));
                         } else {
                             ((FixedColumn) columns[i]).putInt(v);
                         }
                         break;
                     case STRING:
-                        String s = (String) Unsafe.getUnsafe().getObject(obj, meta.meta.offset);
+                        String s = (String) Unsafe.getUnsafe().getObject(obj, meta.offset);
                         long offset = ((VariableColumn) columns[i]).putStr(s);
-                        if (meta.meta.indexed) {
+                        if (meta.indexed) {
                             sparseIndexProxies[i].getIndex().add(
-                                    s == null ? SymbolTable.VALUE_IS_NULL : Checksum.hash(s, meta.meta.distinctCountHint)
+                                    s == null ? SymbolTable.VALUE_IS_NULL : Checksum.hash(s, meta.distinctCountHint)
                                     , offset
                             );
                         }
                         break;
                     case SYMBOL:
                         int key;
-                        String sym = (String) Unsafe.getUnsafe().getObject(obj, meta.meta.offset);
+                        String sym = (String) Unsafe.getUnsafe().getObject(obj, meta.offset);
                         if (sym == null) {
                             key = SymbolTable.VALUE_IS_NULL;
                         } else {
                             key = meta.symbolTable.put(sym);
                         }
-                        if (meta.meta.indexed) {
+                        if (meta.indexed) {
                             sparseIndexProxies[i].getIndex().add(key, ((FixedColumn) columns[i]).putInt(key));
                         } else {
                             ((FixedColumn) columns[i]).putInt(key);
@@ -513,7 +513,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
                         appendBin(obj, i, meta);
                         break;
                     default:
-                        ((FixedColumn) columns[i]).copy(obj, meta.meta.offset);
+                        ((FixedColumn) columns[i]).copy(obj, meta.offset);
                         break;
                 }
 
@@ -527,8 +527,8 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
     }
 
-    private void appendBin(T obj, int i, Journal.ColumnMetadata meta) {
-        ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, meta.meta.offset);
+    private void appendBin(T obj, int i, ColumnMetadata meta) {
+        ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, meta.offset);
         if (buf == null || buf.remaining() == 0) {
             ((VariableColumn) columns[i]).putNull();
         } else {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -237,7 +237,7 @@ public class ResamplerTest extends AbstractTest {
                     add(new FirstDoubleAggregationFunction(r.getMetadata().getColumnMetadata("ask")));
                     add(new LastDoubleAggregationFunction(r.getMetadata().getColumnMetadata("ask")));
                 }}
-                , r.getMetadata().getTimestampColumnMetadata()
+                , r.getMetadata().getTimestampMetadata()
                 , Resampler.SampleBy.MINUTE
         );
 

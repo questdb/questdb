@@ -18,12 +18,14 @@ package com.nfsdb;
 
 import com.nfsdb.concurrent.TimerCache;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.index.KVIndex;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.utils.Dates;
 
 import java.io.Closeable;
+import java.io.File;
 
 class SymbolIndexProxy<T> implements Closeable {
 
@@ -78,9 +80,15 @@ class SymbolIndexProxy<T> implements Closeable {
         lastAccessed = timerCache.getCachedMillis();
         if (index == null) {
             JournalMetadata<T> meta = partition.getJournal().getMetadata();
+            ColumnMetadata columnMetadata = meta.getColumnMetadata(columnIndex);
+
+            if (!columnMetadata.indexed) {
+                throw new JournalException("There is no index for column: %s", columnMetadata.name);
+            }
+
             index = new KVIndex(
-                    meta.getColumnIndexBase(partition.getPartitionDir(), columnIndex),
-                    meta.getColumnMetadata(columnIndex).distinctCountHint,
+                    new File(partition.getPartitionDir(), columnMetadata.name),
+                    columnMetadata.distinctCountHint,
                     meta.getRecordHint(),
                     meta.getTxCountHint(),
                     partition.getJournal().getMode(),

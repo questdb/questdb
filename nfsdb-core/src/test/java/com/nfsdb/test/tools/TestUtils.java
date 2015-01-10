@@ -162,7 +162,7 @@ public final class TestUtils {
     }
 
     public static <T> void assertOrder(JournalIterator<T> rs) {
-        ColumnMetadata meta = rs.getJournal().getMetadata().getTimestampColumnMetadata();
+        ColumnMetadata meta = rs.getJournal().getMetadata().getTimestampMetadata();
         long max = 0;
         for (T obj : rs) {
             long timestamp = Unsafe.getUnsafe().getLong(obj, meta.offset);
@@ -174,7 +174,7 @@ public final class TestUtils {
     }
 
     public static <T> void assertOrderDesc(JournalIterator<T> rs) {
-        ColumnMetadata meta = rs.getJournal().getMetadata().getTimestampColumnMetadata();
+        ColumnMetadata meta = rs.getJournal().getMetadata().getTimestampMetadata();
         long max = Long.MAX_VALUE;
         for (T obj : rs) {
             long timestamp = Unsafe.getUnsafe().getLong(obj, meta.offset);
@@ -302,7 +302,7 @@ public final class TestUtils {
             }
 
             for (int k = 0; k < expected.getMetadata().getColumnCount(); k++) {
-                if (expected.getColumnMetadata(k).meta.indexed) {
+                if (expected.getColumnMetadata(k).indexed) {
                     KVIndex ei = ep.getIndexForColumn(k);
                     KVIndex ai = ap.getIndexForColumn(k);
 
@@ -314,7 +314,7 @@ public final class TestUtils {
                         ei.getValues(j, ev);
                         ai.getValues(j, av);
 
-                        Assert.assertEquals("Values mismatch. partition=" + i + ",column=" + expected.getColumnMetadata(k).meta.name + ", key=" + j + ": ", ev.size(), av.size());
+                        Assert.assertEquals("Values mismatch. partition=" + i + ",column=" + expected.getColumnMetadata(k).name + ", key=" + j + ": ", ev.size(), av.size());
                         for (int l = 0; l < ev.size(); l++) {
                             Assert.assertEquals(ev.get(l), av.get(l));
                         }

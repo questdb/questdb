@@ -53,7 +53,7 @@ public class JournalMetadataBuilder<T> implements JMetadataBuilder<T> {
         this.modelClass = model.getModelClass();
         parseClass();
         this.location = model.getLocation();
-        this.tsColumnIndex = model.getTimestampColumnIndex();
+        this.tsColumnIndex = model.getTimestampIndex();
         this.partitionBy = model.getPartitionType();
         this.recordCountHint = model.getRecordHint();
         this.txCountHint = model.getTxCountHint();

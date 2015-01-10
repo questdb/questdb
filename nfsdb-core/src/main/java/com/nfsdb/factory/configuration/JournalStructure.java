@@ -55,7 +55,7 @@ public class JournalStructure implements JMetadataBuilder<Object> {
 
     public JournalStructure(JournalMetadata model) {
         this.location = model.getLocation();
-        this.tsColumnIndex = model.getTimestampColumnIndex();
+        this.tsColumnIndex = model.getTimestampIndex();
         this.partitionBy = model.getPartitionType();
         this.recordCountHint = model.getRecordHint();
         this.txCountHint = model.getTxCountHint();

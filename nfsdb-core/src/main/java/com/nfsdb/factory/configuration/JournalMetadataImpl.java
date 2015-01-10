@@ -24,8 +24,8 @@ import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.utils.Base64;
 import com.nfsdb.utils.Checksum;
+import org.jetbrains.annotations.NotNull;
 
-import java.io.File;
 import java.lang.reflect.Constructor;
 import java.util.Arrays;
 
@@ -141,7 +141,8 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
     }
 
     @Override
-    public ColumnMetadata getColumnMetadata(String name) {
+    @NotNull
+    public ColumnMetadata getColumnMetadata(CharSequence name) {
         return getColumnMetadata(getColumnIndex(name));
     }
 
@@ -175,12 +176,12 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
     }
 
     @Override
-    public ColumnMetadata getTimestampColumnMetadata() {
+    public ColumnMetadata getTimestampMetadata() {
         return timestampMetadata;
     }
 
     @Override
-    public int getTimestampColumnIndex() {
+    public int getTimestampIndex() {
         return timestampColumnIndex;
     }
 
@@ -196,15 +197,6 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
     @Override
     public Class<T> getModelClass() {
         return modelClass;
-    }
-
-    @Override
-    public File getColumnIndexBase(File partitionDir, int columnIndex) {
-        ColumnMetadata meta = getColumnMetadata(columnIndex);
-        if (!meta.indexed) {
-            throw new JournalRuntimeException("There is no index for column: %s", meta.name);
-        }
-        return new File(partitionDir, meta.name);
     }
 
     @Override
@@ -245,7 +237,7 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
     }
 
     @Override
-    public boolean isPartialMapping() {
+    public boolean isPartialMapped() {
         return partialMapping;
     }
 

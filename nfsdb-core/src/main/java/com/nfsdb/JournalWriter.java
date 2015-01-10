@@ -70,7 +70,7 @@ public class JournalWriter<T> extends Journal<T> {
 
     public JournalWriter(JournalMetadata<T> metadata, JournalKey<T> key, TimerCache timerCache) throws JournalException {
         super(metadata, key, timerCache);
-        if (metadata.isPartialMapping()) {
+        if (metadata.isPartialMapped()) {
             close();
             throw new JournalException("Metadata is unusable for writer. Partially mapped?");
         }

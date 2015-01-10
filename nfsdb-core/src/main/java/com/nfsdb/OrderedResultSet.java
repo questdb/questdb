@@ -30,7 +30,7 @@ public class OrderedResultSet<T> extends ResultSet<T> {
             return 0;
         }
         long rowID = getRowID(size() - 1);
-        int timestampColumnIndex = getJournal().getMetadata().getTimestampColumnIndex();
+        int timestampColumnIndex = getJournal().getMetadata().getTimestampIndex();
         return getJournal().getPartition(Rows.toPartitionIndex(rowID), true).getLong(Rows.toLocalRowID(rowID), timestampColumnIndex);
     }
 }

@@ -20,34 +20,62 @@ import com.nfsdb.JournalKey;
 import com.nfsdb.PartitionType;
 import com.nfsdb.column.HugeBuffer;
 import com.nfsdb.exceptions.JournalRuntimeException;
-
-import java.io.File;
+import org.jetbrains.annotations.NotNull;
 
 public interface JournalMetadata<T> {
 
     JournalKey<T> deriveKey();
 
-    ColumnMetadata getColumnMetadata(String name);
+    /**
+     * Number of columns in Journal.
+     *
+     * @return column count
+     */
+    int getColumnCount();
 
+    /**
+     * Lookup column metadata by name. This method is slower than
+     * simple array de-reference of index lookup. Column names are case-sensitive.
+     * <p/>
+     * This method cannot return null. An exception is thrown if column name is invalid.
+     *
+     * @param name of column
+     * @return column metadata
+     */
+    @NotNull
+    ColumnMetadata getColumnMetadata(CharSequence name);
+
+    /**
+     * Lookup column metadata by index. This method does unchecked exception and
+     * will throw ArrayIndexOutOfBoundsException.
+     * <p/>
+     * To obtain column index and validate column name {@see #getColumnIndex}
+     *
+     * @param columnIndex index of column
+     * @return column metadata
+     */
     ColumnMetadata getColumnMetadata(int columnIndex);
 
+    /**
+     * Lookup column index and validate column name. Column names are case-sensitive and {#JournalRuntimeException} is
+     * thrown if column name is invalid.
+     *
+     * @param columnName the name
+     * @return 0-based column index
+     */
     int getColumnIndex(CharSequence columnName);
+
+    ColumnMetadata getTimestampMetadata();
+
+    int getTimestampIndex();
 
     String getLocation();
 
     PartitionType getPartitionType();
 
-    int getColumnCount();
-
-    ColumnMetadata getTimestampColumnMetadata();
-
-    int getTimestampColumnIndex();
-
     Object newObject() throws JournalRuntimeException;
 
     Class<T> getModelClass();
-
-    File getColumnIndexBase(File partitionDir, int columnIndex);
 
     long getOpenFileTTL();
 
@@ -65,5 +93,5 @@ public interface JournalMetadata<T> {
 
     void write(HugeBuffer buf);
 
-    boolean isPartialMapping();
+    boolean isPartialMapped();
 }

@@ -24,6 +24,7 @@ import com.nfsdb.concurrent.TimerCache;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.JournalClosingListener;
+import com.nfsdb.factory.configuration.ColumnMetaWithSymTab;
 import com.nfsdb.factory.configuration.Constants;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.iterators.ConcurrentIterator;
@@ -73,7 +74,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
     private final BitSet inactiveColumns;
     TxLog txLog;
     boolean open;
-    ColumnMetadata[] columnMetadata;
+    ColumnMetaWithSymTab[] columnMetadata;
     private Partition<T> irregularPartition;
     private JournalClosingListener closeListener;
 
@@ -85,7 +86,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         this.timerCache = timerCache;
         this.txLog = new TxLog(location, getMode());
         this.open = true;
-        this.timestampOffset = getMetadata().getTimestampColumnMetadata() == null ? -1 : getMetadata().getTimestampColumnMetadata().offset;
+        this.timestampOffset = getMetadata().getTimestampMetadata() == null ? -1 : getMetadata().getTimestampMetadata().offset;
         this.inactiveColumns = new BitSet(metadata.getColumnCount());
 
         configure();
@@ -367,7 +368,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      * @param columnIndex the column index (0-indexed)
      * @return the specified column's metadata
      */
-    public ColumnMetadata getColumnMetadata(int columnIndex) {
+    public ColumnMetaWithSymTab getColumnMetadata(int columnIndex) {
         return columnMetadata[columnIndex];
     }
 
@@ -594,10 +595,10 @@ public class Journal<T> implements Iterable<T>, Closeable {
 
     private void configureColumns() throws JournalException {
         int columnCount = getMetadata().getColumnCount();
-        columnMetadata = new ColumnMetadata[columnCount];
+        columnMetadata = new ColumnMetaWithSymTab[columnCount];
         for (int i = 0; i < columnCount; i++) {
-            columnMetadata[i] = new ColumnMetadata();
             com.nfsdb.factory.configuration.ColumnMetadata meta = metadata.getColumnMetadata(i);
+            columnMetadata[i] = new ColumnMetaWithSymTab(meta);
             if (meta.type == ColumnType.SYMBOL && meta.sameAs == null) {
                 int tabIndex = symbolTables.size();
                 int tabSize = tx.symbolTableSizes.length > tabIndex ? tx.symbolTableSizes[tabIndex] : 0;
@@ -607,7 +608,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
                 symbolTableMap.put(meta.name, tab);
                 columnMetadata[i].symbolTable = tab;
             }
-            columnMetadata[i].meta = meta;
         }
     }
 
@@ -708,10 +708,5 @@ public class Journal<T> implements Iterable<T>, Closeable {
             partition.applyTx(txPartitionSize, tx.indexPointers);
             configureIrregularPartition();
         }
-    }
-
-    public static class ColumnMetadata {
-        public SymbolTable symbolTable;
-        public com.nfsdb.factory.configuration.ColumnMetadata meta;
     }
 }
