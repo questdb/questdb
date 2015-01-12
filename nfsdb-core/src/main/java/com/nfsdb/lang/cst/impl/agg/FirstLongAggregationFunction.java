@@ -29,7 +29,7 @@ public class FirstLongAggregationFunction extends AbstractSingleColumnAggregator
     @Override
     public void calculate(Record rec, MapValues values) {
         if (values.isNew()) {
-            values.putLong(map(0), rec.getLong(getColumnIndex()));
+            values.putLong(valueIndex, rec.getLong(recordIndex));
         }
     }
 }

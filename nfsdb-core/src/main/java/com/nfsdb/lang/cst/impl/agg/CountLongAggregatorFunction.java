@@ -22,32 +22,23 @@ import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.lang.cst.impl.qry.Record;
 import com.nfsdb.lang.cst.impl.qry.RecordSource;
 
-public class CountLongAggregatorFunction extends AbstractAggregatorFunction {
-
-    private final ColumnMetadata[] meta = new ColumnMetadata[1];
+public class CountLongAggregatorFunction extends AbstractSingleColumnAggregatorFunction {
 
     public CountLongAggregatorFunction(String name) {
-        this.meta[0] = new ColumnMetadata();
-        this.meta[0].name = name;
-        this.meta[0].type = ColumnType.LONG;
-    }
-
-    @Override
-    protected ColumnMetadata[] getColumnsInternal() {
-        return meta;
+        super(new ColumnMetadata().setName(name).setType(ColumnType.LONG));
     }
 
     @Override
     public void calculate(Record rec, MapValues values) {
         if (values.isNew()) {
-            values.putLong(map(0), 1);
+            values.putLong(valueIndex, 1);
         } else {
-            values.putLong(map(0), values.getLong(map(0)) + 1);
+            values.putLong(valueIndex, values.getLong(valueIndex) + 1);
         }
     }
 
     @Override
     public void prepareSource(RecordSource<? extends Record> source) {
-
+        // do not call parent method, which will be trying to lookup column in record source.
     }
 }

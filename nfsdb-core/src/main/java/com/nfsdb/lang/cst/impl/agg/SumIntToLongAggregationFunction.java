@@ -29,10 +29,9 @@ public class SumIntToLongAggregationFunction extends AbstractSingleColumnAggrega
     @Override
     public void calculate(Record rec, MapValues values) {
         if (values.isNew()) {
-            values.putLong(map(0), rec.getInt(getColumnIndex()));
+            values.putLong(valueIndex, rec.getInt(recordIndex));
         } else {
-            int c = map(0);
-            values.putLong(c, values.getLong(c) + rec.getInt(getColumnIndex()));
+            values.putLong(valueIndex, values.getLong(valueIndex) + rec.getInt(recordIndex));
         }
     }
 }

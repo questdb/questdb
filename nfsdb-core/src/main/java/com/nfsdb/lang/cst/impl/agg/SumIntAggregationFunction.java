@@ -28,10 +28,9 @@ public class SumIntAggregationFunction extends AbstractSingleColumnAggregatorFun
     @Override
     public void calculate(Record rec, MapValues values) {
         if (values.isNew()) {
-            values.putInt(map(0), rec.getInt(getColumnIndex()));
+            values.putInt(valueIndex, rec.getInt(recordIndex));
         } else {
-            int c = map(0);
-            values.putInt(c, values.getInt(c) + rec.getInt(getColumnIndex()));
+            values.putInt(valueIndex, values.getInt(valueIndex) + rec.getInt(recordIndex));
         }
     }
 }

@@ -28,6 +28,6 @@ public class LastLongAggregationFunction extends AbstractSingleColumnAggregatorF
 
     @Override
     public void calculate(Record rec, MapValues values) {
-        values.putLong(map(0), rec.getLong(getColumnIndex()));
+        values.putLong(valueIndex, rec.getLong(recordIndex));
     }
 }

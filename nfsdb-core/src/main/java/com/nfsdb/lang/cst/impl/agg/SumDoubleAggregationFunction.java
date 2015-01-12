@@ -28,10 +28,9 @@ public class SumDoubleAggregationFunction extends AbstractSingleColumnAggregator
     @Override
     public void calculate(Record rec, MapValues values) {
         if (values.isNew()) {
-            values.putDouble(map(0), rec.getDouble(getColumnIndex()));
+            values.putDouble(valueIndex, rec.getDouble(recordIndex));
         } else {
-            int c = map(0);
-            values.putDouble(c, values.getDouble(c) + rec.getDouble(getColumnIndex()));
+            values.putDouble(valueIndex, values.getDouble(valueIndex) + rec.getDouble(recordIndex));
         }
     }
 }

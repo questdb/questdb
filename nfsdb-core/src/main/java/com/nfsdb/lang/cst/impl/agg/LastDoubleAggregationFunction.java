@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,6 +28,6 @@ public class LastDoubleAggregationFunction extends AbstractSingleColumnAggregato
 
     @Override
     public void calculate(Record rec, MapValues values) {
-        values.putDouble(map(0), rec.getDouble(getColumnIndex()));
+        values.putDouble(valueIndex, rec.getDouble(recordIndex));
     }
 }
