@@ -16,9 +16,7 @@
 
 package com.nfsdb.lang.cst.impl.ref;
 
-import com.nfsdb.Partition;
 import com.nfsdb.column.SymbolTable;
-import com.nfsdb.column.VariableColumn;
 import com.nfsdb.lang.cst.IntVariable;
 import com.nfsdb.lang.cst.IntVariableSource;
 import com.nfsdb.lang.cst.PartitionSlice;
@@ -32,15 +30,12 @@ public class StringXTabVariableSource implements IntVariableSource, IntVariable 
     private final String slaveSymbol;
     private final int masterColumnIndex;
     private SymbolTable slaveTab;
-    private VariableColumn column;
-    private Partition partition;
     private int slaveKey;
-    private long rowid = -1;
 
     public StringXTabVariableSource(StatefulJournalSource masterSource, String masterSymbol, String slaveSymbol) {
         this.masterSource = masterSource;
         this.slaveSymbol = slaveSymbol;
-        this.masterColumnIndex = masterSource.getJournal().getMetadata().getColumnIndex(masterSymbol);
+        this.masterColumnIndex = masterSource.getMetadata().getColumnIndex(masterSymbol);
     }
 
     @Override
@@ -53,19 +48,14 @@ public class StringXTabVariableSource implements IntVariableSource, IntVariable 
 
     @Override
     public int getValue() {
-        if (switchPartition() || masterSource.current().rowid != rowid) {
-            rowid = masterSource.current().rowid;
-            slaveKey = slaveTab.getQuick(column.getStr(rowid));
+        if (slaveKey == -3) {
+            slaveKey = slaveTab.getQuick(masterSource.current().getStr(masterColumnIndex).toString());
         }
         return slaveKey;
     }
 
-    private boolean switchPartition() {
-        if (masterSource.current().partition == partition) {
-            return false;
-        }
-        partition = masterSource.current().partition;
-        column = (VariableColumn) partition.getAbstractColumn(masterColumnIndex);
-        return true;
+    @Override
+    public void reset() {
+        slaveKey = -3;
     }
 }

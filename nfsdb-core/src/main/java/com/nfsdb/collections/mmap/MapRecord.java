@@ -19,7 +19,6 @@ package com.nfsdb.collections.mmap;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.export.CharSink;
 import com.nfsdb.lang.cst.impl.qry.AbstractRecord;
-import com.nfsdb.lang.cst.impl.qry.Record;
 import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
 import com.nfsdb.utils.Unsafe;
 
@@ -113,11 +112,6 @@ public final class MapRecord extends AbstractRecord {
     @Override
     public short getShort(int index) {
         return Unsafe.getUnsafe().getShort(address0(index));
-    }
-
-    @Override
-    public Record getSlave() {
-        return null;
     }
 
     @Override

@@ -18,16 +18,13 @@ package com.nfsdb.collections;
 
 import com.nfsdb.utils.Unsafe;
 
-import java.io.Closeable;
-
-public class AbstractDirectList implements Closeable {
+public class AbstractDirectList extends DirectMemory {
     public static final int CACHE_LINE_SIZE = 64;
     private final int pow2;
     private final int onePow2;
     protected long pos;
     protected long start;
     protected long limit;
-    private long address;
 
     public AbstractDirectList(int pow2, long capacity) {
         this.pow2 = pow2;
@@ -100,12 +97,6 @@ public class AbstractDirectList implements Closeable {
         return (int) ((pos - start) >> pow2);
     }
 
-    public void free() {
-        if (address != 0) {
-            Unsafe.getUnsafe().freeMemory(address);
-            address = 0;
-        }
-    }
 
     public void clear() {
         clear((byte) 0);
@@ -118,15 +109,5 @@ public class AbstractDirectList implements Closeable {
 
     public void zero(byte v) {
         Unsafe.getUnsafe().setMemory(start, limit - start + onePow2, v);
-    }
-
-    public void close() {
-        free();
-    }
-
-    @Override
-    protected void finalize() throws Throwable {
-        free();
-        super.finalize();
     }
 }

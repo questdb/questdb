@@ -16,22 +16,17 @@
 
 package com.nfsdb.collections.mmap;
 
-import com.nfsdb.collections.AbstractDirectList;
-import com.nfsdb.collections.DirectLongList;
-import com.nfsdb.collections.Hash;
-import com.nfsdb.collections.Primes;
+import com.nfsdb.collections.*;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
 import com.nfsdb.utils.Unsafe;
 
-import java.io.Closeable;
 import java.util.ArrayList;
 import java.util.List;
 
-public class MultiMap implements Closeable {
+public class MultiMap extends DirectMemory {
 
-    private static final int seed = 0xdeadbeef;
     private final float loadFactor;
     private final Key key = new Key();
     private final MapRecordSource recordSource;
@@ -39,7 +34,6 @@ public class MultiMap implements Closeable {
     private int keyBlockOffset;
     private int keyDataOffset;
     private DirectLongList offsets;
-    private long kAddress;
     private long kStart;
     private long kLimit;
     private long kPos;
@@ -49,8 +43,8 @@ public class MultiMap implements Closeable {
 
     private MultiMap(int capacity, long dataSize, float loadFactor, List<ColumnMetadata> valueColumns, List<ColumnMetadata> keyColumns, List<MapRecordValueInterceptor> interceptors) {
         this.loadFactor = loadFactor;
-        this.kAddress = Unsafe.getUnsafe().allocateMemory(dataSize + AbstractDirectList.CACHE_LINE_SIZE);
-        this.kStart = kPos = this.kAddress + (this.kAddress & (AbstractDirectList.CACHE_LINE_SIZE - 1));
+        this.address = Unsafe.getUnsafe().allocateMemory(dataSize + AbstractDirectList.CACHE_LINE_SIZE);
+        this.kStart = kPos = this.address + (this.address & (AbstractDirectList.CACHE_LINE_SIZE - 1));
         this.kLimit = kStart + dataSize;
 
         this.keyCapacity = Primes.next((int) (capacity / loadFactor));
@@ -90,7 +84,7 @@ public class MultiMap implements Closeable {
     public MapValues claimSlot(Key key) {
         // calculate hash remembering "key" structure
         // [ len | value block | key offset block | key data block ]
-        int index = Hash.hashXX(key.startAddr + keyBlockOffset, key.len - keyBlockOffset, seed) % keyCapacity;
+        int index = Hash.hash(key.startAddr + keyBlockOffset, key.len - keyBlockOffset) % keyCapacity;
         long offset = offsets.get(index);
 
         if (offset == -1) {
@@ -168,7 +162,7 @@ public class MultiMap implements Closeable {
         long kStart = kAddress + (kAddress & (AbstractDirectList.CACHE_LINE_SIZE - 1));
 
         Unsafe.getUnsafe().copyMemory(this.kStart, kStart, kCapacity >> 1);
-        Unsafe.getUnsafe().freeMemory(this.kAddress);
+        Unsafe.getUnsafe().freeMemory(this.address);
 
         long d = kStart - this.kStart;
         key.startAddr += d;
@@ -176,7 +170,7 @@ public class MultiMap implements Closeable {
         key.nextColOffset += d;
 
 
-        this.kAddress = kAddress;
+        this.address = kAddress;
         this.kStart = kStart;
         this.kLimit = kStart + kCapacity;
     }
@@ -192,7 +186,7 @@ public class MultiMap implements Closeable {
             if (offset == -1) {
                 continue;
             }
-            long index = Hash.hashXX(kStart + offset + keyBlockOffset, Unsafe.getUnsafe().getInt(kStart + offset) - keyBlockOffset, seed) % capacity;
+            long index = Hash.hash(kStart + offset + keyBlockOffset, Unsafe.getUnsafe().getInt(kStart + offset) - keyBlockOffset) % capacity;
             while (pointers.get(index) != -1) {
                 index = (index + 1) % capacity;
             }
@@ -204,11 +198,8 @@ public class MultiMap implements Closeable {
         this.keyCapacity = capacity;
     }
 
-    public void free() {
-        if (kAddress != 0) {
-            Unsafe.getUnsafe().freeMemory(kAddress);
-            kAddress = 0;
-        }
+    @Override
+    protected void freeInternal() {
         offsets.free();
     }
 
@@ -218,11 +209,6 @@ public class MultiMap implements Closeable {
 
     public RecordMetadata getMetadata() {
         return recordSource.getMetadata();
-    }
-
-    @Override
-    public void close() {
-        free();
     }
 
     public int size() {

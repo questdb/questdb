@@ -14,31 +14,42 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.ref;
+package com.nfsdb.collections;
 
-import com.nfsdb.lang.cst.IntVariable;
-import com.nfsdb.lang.cst.IntVariableSource;
-import com.nfsdb.lang.cst.PartitionSlice;
+import com.nfsdb.utils.Unsafe;
+import sun.misc.Cleaner;
 
-public class MutableIntVariableSource implements IntVariableSource, IntVariable {
+import java.io.Closeable;
 
-    private int value;
+public class DirectMemory implements Closeable {
 
-    @Override
-    public IntVariable getVariable(PartitionSlice slice) {
-        return this;
+    private final Cleaner cleaner = Cleaner.create(this, new Runnable() {
+        @Override
+        public void run() {
+            free0();
+        }
+    });
+    protected long address;
+
+    private void free0() {
+        if (address != 0) {
+            Unsafe.getUnsafe().freeMemory(address);
+            address = 0;
+
+            freeInternal();
+        }
+    }
+
+    protected void freeInternal() {
+
+    }
+
+    public void free() {
+        cleaner.clean();
     }
 
     @Override
-    public int getValue() {
-        return value;
-    }
-
-    public void setValue(int value) {
-        this.value = value;
-    }
-
-    @Override
-    public void reset() {
+    public void close() {
+        free();
     }
 }

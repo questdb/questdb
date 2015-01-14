@@ -31,6 +31,7 @@ public class JournalSourceImpl extends AbstractJournalSource {
     private RowCursor cursor;
 
     public JournalSourceImpl(PartitionSource partitionSource, RowSource rowSource) {
+        super(partitionSource.getJournal().getMetadata());
         this.partitionSource = partitionSource;
         this.rowSource = rowSource;
     }

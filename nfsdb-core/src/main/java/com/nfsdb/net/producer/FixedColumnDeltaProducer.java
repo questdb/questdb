@@ -39,8 +39,9 @@ public class FixedColumnDeltaProducer implements ColumnDeltaProducer {
     }
 
     public void configure(long localRowID, long limit) {
-        this.offset = localRowID >= column.size() ? column.getOffset() : column.getOffset(localRowID);
-        this.targetOffset = limit >= column.size() ? column.getOffset() : column.getOffset(limit);
+        long sz = column.size();
+        this.offset = localRowID >= sz ? column.getOffset() : column.getOffset(localRowID);
+        this.targetOffset = limit >= sz ? column.getOffset() : column.getOffset(limit);
         this.header.rewind();
         this.header.putLong(targetOffset - offset);
         this.header.flip();

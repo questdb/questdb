@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,11 +32,6 @@ public class RecordSourcePrinter {
     }
 
     public void print(Record r, RecordMetadata m) {
-        if (r == null) {
-            sink.put("\n");
-            sink.flush();
-            return;
-        }
 
         for (int i = 0, sz = m.getColumnCount(); i < sz; i++) {
             switch (m.getColumnType(i)) {
@@ -72,7 +67,8 @@ public class RecordSourcePrinter {
             }
             sink.put('\t');
         }
-        print(r.getSlave(), m.nextMetadata());
+        sink.put("\n");
+        sink.flush();
     }
 
     public void print(RecordSource<? extends Record> src) {

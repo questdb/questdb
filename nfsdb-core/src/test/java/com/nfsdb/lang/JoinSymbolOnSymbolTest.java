@@ -24,19 +24,20 @@ import com.nfsdb.export.RecordSourcePrinter;
 import com.nfsdb.export.StringSink;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.lang.cst.StatefulJournalSource;
-import com.nfsdb.lang.cst.impl.dfrm.JournalRowSourceHash;
 import com.nfsdb.lang.cst.impl.join.InnerSkipJoin;
-import com.nfsdb.lang.cst.impl.join.SlaveResetOuterJoin;
-import com.nfsdb.lang.cst.impl.join.SymbolOuterHashJoin;
+import com.nfsdb.lang.cst.impl.join.NestedLoopLeftOuterJoin;
 import com.nfsdb.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.lang.cst.impl.jsrc.StatefulJournalSourceImpl;
 import com.nfsdb.lang.cst.impl.ksrc.SingleKeySource;
-import com.nfsdb.lang.cst.impl.ksrc.SymbolKeySource;
 import com.nfsdb.lang.cst.impl.psrc.JournalPartitionSource;
-import com.nfsdb.lang.cst.impl.qry.GenericRecordSource;
+import com.nfsdb.lang.cst.impl.qry.Record;
+import com.nfsdb.lang.cst.impl.qry.RecordSource;
 import com.nfsdb.lang.cst.impl.ref.StringRef;
 import com.nfsdb.lang.cst.impl.ref.SymbolXTabVariableSource;
-import com.nfsdb.lang.cst.impl.rsrc.*;
+import com.nfsdb.lang.cst.impl.rsrc.AllRowSource;
+import com.nfsdb.lang.cst.impl.rsrc.KvIndexRowSource;
+import com.nfsdb.lang.cst.impl.rsrc.KvIndexTopRowSource;
+import com.nfsdb.lang.cst.impl.rsrc.SkipSymbolRowSource;
 import com.nfsdb.model.Album;
 import com.nfsdb.model.Band;
 import com.nfsdb.test.tools.JournalTestFactory;
@@ -90,7 +91,7 @@ public class JoinSymbolOnSymbolTest {
     public void testOuterOneToOne() throws Exception {
 
         final String expected = "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t\n" +
-                "1970-01-01T00:00:00.000Z\tband2\thttp://band2.com\thiphop\t\t\n" +
+                "1970-01-01T00:00:00.000Z\tband2\thttp://band2.com\thiphop\t\tnull\tnull\t\t1970-01-01T00:00:00.000Z\t\n" +
                 "1970-01-01T00:00:00.000Z\tband3\thttp://band3.com\tjazz\t\tband3\talbum Y\tmetal\t1970-01-01T00:00:00.000Z\t\n";
 
 
@@ -115,7 +116,7 @@ public class JoinSymbolOnSymbolTest {
 
         final String expected = "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum BZ\trock\t1970-01-01T00:00:00.000Z\t\n" +
                 "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t\n" +
-                "1970-01-01T00:00:00.000Z\tband2\thttp://band2.com\thiphop\t\t\n" +
+                "1970-01-01T00:00:00.000Z\tband2\thttp://band2.com\thiphop\t\tnull\tnull\t\t1970-01-01T00:00:00.000Z\t\n" +
                 "1970-01-01T00:00:00.000Z\tband3\thttp://band3.com\tjazz\t\tband3\talbum Y\tmetal\t1970-01-01T00:00:00.000Z\t\n";
 
         bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
@@ -160,7 +161,7 @@ public class JoinSymbolOnSymbolTest {
         StringRef name = new StringRef("name");
         StatefulJournalSource master;
 
-        out.print(new SlaveResetOuterJoin(
+        out.print(new NestedLoopLeftOuterJoin(
                 master = new StatefulJournalSourceImpl(
                         new JournalSourceImpl(new JournalPartitionSource(aw, false), new AllRowSource())
                 )
@@ -187,7 +188,7 @@ public class JoinSymbolOnSymbolTest {
 
         final String expected = "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum BZ\tpop\t1970-01-01T00:00:00.000Z\t\n" +
                 "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t\n" +
-                "1970-01-01T00:00:00.000Z\tband2\thttp://band2.com\thiphop\t\t\n" +
+                "1970-01-01T00:00:00.000Z\tband2\thttp://band2.com\thiphop\t\tnull\tnull\t\t1970-01-01T00:00:00.000Z\t\n" +
                 "1970-01-01T00:00:00.000Z\tband3\thttp://band3.com\tjazz\t\tband3\talbum Y\tmetal\t1970-01-01T00:00:00.000Z\t\n";
 
         bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
@@ -212,7 +213,7 @@ public class JoinSymbolOnSymbolTest {
         StatefulJournalSource master;
 
         out.print(
-                new SlaveResetOuterJoin(
+                new NestedLoopLeftOuterJoin(
                         master = new StatefulJournalSourceImpl(
                                 new JournalSourceImpl(new JournalPartitionSource(bw, false), new AllRowSource())
                         )
@@ -224,99 +225,6 @@ public class JoinSymbolOnSymbolTest {
                                 )
                                 , name
                         ))
-                )
-        );
-        Assert.assertEquals(expected, sink.toString());
-    }
-
-    @Test
-    public void testOuterOneToManyMapHead() throws Exception {
-
-        final String expected = "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t\n" +
-                "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum BZ\tpop\t1970-01-01T00:00:00.000Z\t\n" +
-                "1970-01-01T00:00:00.000Z\tband2\thttp://band2.com\thiphop\t\tband2\talbum Y\tmetal\t1970-01-01T00:00:00.000Z\t\n" +
-                "1970-01-01T00:00:00.000Z\tband3\thttp://band3.com\tjazz\t\t\n";
-
-        bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
-        bw.append(new Band().setName("band2").setType("hiphop").setUrl("http://band2.com"));
-        bw.append(new Band().setName("band3").setType("jazz").setUrl("http://band3.com"));
-
-        bw.commit();
-
-        aw.append(new Album().setName("album X").setBand("band1").setGenre("pop"));
-        aw.append(new Album().setName("album BZ").setBand("band1").setGenre("rock"));
-        aw.append(new Album().setName("album BZ").setBand("band1").setGenre("pop"));
-        aw.append(new Album().setName("album Y").setBand("band3").setGenre("metal"));
-        aw.append(new Album().setName("album Y").setBand("band2").setGenre("metal"));
-
-        aw.commit();
-
-        StringRef band = new StringRef("band");
-        StringRef name = new StringRef("name");
-
-        // from band outer join album +head by name
-        // **this is "head by name" first is joined to band
-        // **here a variation possible to specify head count and offset
-        // **generally this query can be presented as:
-        //
-        // from band outer join album +[1:0]head by name
-
-        out.print(new SymbolOuterHashJoin(
-                new JournalSourceImpl(new JournalPartitionSource(bw, false), new AllRowSource())
-                , name
-                ,
-                new JournalRowSourceHash(
-                        new JournalSourceImpl(new JournalPartitionSource(aw, false), new KvIndexHeadRowSource(name, new SymbolKeySource(name), 1, 0, null))
-                        , band
-                )
-                , band
-        ));
-        Assert.assertEquals(expected, sink.toString());
-    }
-
-    @Test
-    public void testInnerOneToManyMapHead() throws Exception {
-
-        final String expected = "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t\n" +
-                "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum BZ\tpop\t1970-01-01T00:00:00.000Z\t\n" +
-                "1970-01-01T00:00:00.000Z\tband2\thttp://band2.com\thiphop\t\tband2\talbum Y\tmetal\t1970-01-01T00:00:00.000Z\t\n";
-
-        bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
-        bw.append(new Band().setName("band2").setType("hiphop").setUrl("http://band2.com"));
-        bw.append(new Band().setName("band3").setType("jazz").setUrl("http://band3.com"));
-
-        bw.commit();
-
-        aw.append(new Album().setName("album X").setBand("band1").setGenre("pop"));
-        aw.append(new Album().setName("album BZ").setBand("band1").setGenre("rock"));
-        aw.append(new Album().setName("album BZ").setBand("band1").setGenre("pop"));
-        aw.append(new Album().setName("album Y").setBand("band3").setGenre("metal"));
-        aw.append(new Album().setName("album Y").setBand("band2").setGenre("metal"));
-
-        aw.commit();
-
-        // from band join album +head by name
-        // **inner join
-        // **this is "head by name" first is joined to band
-        // **here a variation possible to specify head count and offset
-        // **generally this query can be presented as:
-        //
-        // from band join album +[1:0]head by name
-        StringRef band = new StringRef("band");
-        StringRef name = new StringRef("name");
-
-        out.print(
-                new InnerSkipJoin(
-                        new SymbolOuterHashJoin(
-                                new JournalSourceImpl(new JournalPartitionSource(bw, false), new AllRowSource())
-                                , name
-                                ,
-                                new JournalRowSourceHash(
-                                        new JournalSourceImpl(new JournalPartitionSource(aw, false), new KvIndexHeadRowSource(name, new SymbolKeySource(name), 1, 0, null))
-                                        , band
-                                )
-                                , band
-                        )
                 )
         );
         Assert.assertEquals(expected, sink.toString());
@@ -352,7 +260,7 @@ public class JoinSymbolOnSymbolTest {
 
         out.print(
                 new InnerSkipJoin(
-                        new SlaveResetOuterJoin(
+                        new NestedLoopLeftOuterJoin(
                                 master = new StatefulJournalSourceImpl(
                                         new JournalSourceImpl(new JournalPartitionSource(bw, false), new AllRowSource())
                                 )
@@ -398,7 +306,7 @@ public class JoinSymbolOnSymbolTest {
 
         out.print(
                 new InnerSkipJoin(
-                        new SlaveResetOuterJoin(
+                        new NestedLoopLeftOuterJoin(
                                 master = new StatefulJournalSourceImpl(
                                         new JournalSourceImpl(new JournalPartitionSource(bw, false), new AllRowSource())
                                 )
@@ -413,10 +321,10 @@ public class JoinSymbolOnSymbolTest {
         Assert.assertEquals(expected, sink.toString());
     }
 
-    private GenericRecordSource buildSource(Journal<Band> bw, Journal<Album> aw) {
+    private RecordSource<? extends Record> buildSource(Journal<Band> bw, Journal<Album> aw) {
         StringRef band = new StringRef("band");
         StatefulJournalSource master;
-        return new SlaveResetOuterJoin(
+        return new NestedLoopLeftOuterJoin(
                 master = new StatefulJournalSourceImpl(
                         new JournalSourceImpl(new JournalPartitionSource(bw, false), new AllRowSource())
                 )
@@ -426,5 +334,4 @@ public class JoinSymbolOnSymbolTest {
                 ))
         );
     }
-
 }

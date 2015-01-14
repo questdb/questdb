@@ -52,6 +52,7 @@ public class SingleKeySource implements KeySource, KeyCursor {
 
     @Override
     public void reset() {
+        this.variableSource.reset();
         hasNext = true;
     }
 }

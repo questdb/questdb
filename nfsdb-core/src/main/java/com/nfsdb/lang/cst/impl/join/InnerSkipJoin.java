@@ -17,19 +17,14 @@
 package com.nfsdb.lang.cst.impl.join;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.lang.cst.impl.qry.GenericRecordSource;
-import com.nfsdb.lang.cst.impl.qry.Record;
-import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
-import com.nfsdb.lang.cst.impl.qry.RecordSource;
-
-import java.util.NoSuchElementException;
+import com.nfsdb.lang.cst.impl.qry.*;
 
 public class InnerSkipJoin extends AbstractImmutableIterator<Record> implements GenericRecordSource {
 
-    private final RecordSource<? extends Record> delegate;
+    private final RecordSource<? extends SplitRecord> delegate;
     private Record data;
 
-    public InnerSkipJoin(RecordSource<? extends Record> delegate) {
+    public InnerSkipJoin(RecordSource<? extends SplitRecord> delegate) {
         this.delegate = delegate;
     }
 
@@ -40,10 +35,10 @@ public class InnerSkipJoin extends AbstractImmutableIterator<Record> implements 
 
     @Override
     public boolean hasNext() {
-        Record data;
+        SplitRecord data;
 
         while (delegate.hasNext()) {
-            if ((data = delegate.next()).getSlave() != null) {
+            if ((data = delegate.next()).hasB()) {
                 this.data = data;
                 return true;
             }
@@ -54,9 +49,6 @@ public class InnerSkipJoin extends AbstractImmutableIterator<Record> implements 
 
     @Override
     public Record next() {
-        if (data == null) {
-            throw new NoSuchElementException();
-        }
         return data;
     }
 

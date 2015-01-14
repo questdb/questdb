@@ -16,9 +16,9 @@
 
 package com.nfsdb.lang.cst;
 
-import com.nfsdb.lang.cst.impl.qry.JournalRecord;
-import com.nfsdb.lang.cst.impl.qry.JournalRecordSource;
+import com.nfsdb.lang.cst.impl.qry.GenericRecordSource;
+import com.nfsdb.lang.cst.impl.qry.Record;
 
-public interface StatefulJournalSource extends JournalRecordSource {
-    JournalRecord current();
+public interface StatefulJournalSource extends GenericRecordSource {
+    Record current();
 }

@@ -16,8 +16,6 @@
 
 package com.nfsdb.lang.cst.impl.ref;
 
-import com.nfsdb.Partition;
-import com.nfsdb.column.FixedColumn;
 import com.nfsdb.column.SymbolTable;
 import com.nfsdb.lang.cst.IntVariable;
 import com.nfsdb.lang.cst.IntVariableSource;
@@ -36,16 +34,13 @@ public class SymbolXTabVariableSource implements IntVariableSource, IntVariable 
     private final int map[];
     private final SymbolTable masterTab;
     private SymbolTable slaveTab;
-    private FixedColumn column;
-    private Partition partition;
-    private long rowid = -1;
     private int slaveKey;
 
     public SymbolXTabVariableSource(StatefulJournalSource masterSource, String masterSymbol, String slaveSymbol) {
         this.masterSource = masterSource;
         this.slaveSymbol = slaveSymbol;
-        this.masterColumnIndex = masterSource.getJournal().getMetadata().getColumnIndex(masterSymbol);
-        this.masterTab = masterSource.getJournal().getSymbolTable(masterSymbol);
+        this.masterColumnIndex = masterSource.getMetadata().getColumnIndex(masterSymbol);
+        this.masterTab = masterSource.getMetadata().getSymbolTable(masterColumnIndex);
         map = new int[masterTab.size()];
         Arrays.fill(map, -1);
     }
@@ -60,9 +55,8 @@ public class SymbolXTabVariableSource implements IntVariableSource, IntVariable 
 
     @Override
     public int getValue() {
-        if (switchPartition() || masterSource.current().rowid != rowid) {
-            rowid = masterSource.current().rowid;
-            int masterKey = column.getInt(rowid);
+        if (slaveKey == -3) {
+            int masterKey = masterSource.current().getInt(masterColumnIndex);
             if (map[masterKey] == -1) {
                 map[masterKey] = slaveTab.getQuick(masterTab.value(masterKey));
             }
@@ -71,12 +65,8 @@ public class SymbolXTabVariableSource implements IntVariableSource, IntVariable 
         return slaveKey;
     }
 
-    private boolean switchPartition() {
-        if (masterSource.current().partition == partition) {
-            return false;
-        }
-        partition = masterSource.current().partition;
-        column = (FixedColumn) partition.getAbstractColumn(masterColumnIndex);
-        return true;
+    @Override
+    public void reset() {
+        slaveKey = -3;
     }
 }

@@ -23,7 +23,7 @@ import com.nfsdb.export.RecordSourcePrinter;
 import com.nfsdb.export.StringSink;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.lang.cst.StatefulJournalSource;
-import com.nfsdb.lang.cst.impl.join.SlaveResetOuterJoin;
+import com.nfsdb.lang.cst.impl.join.NestedLoopLeftOuterJoin;
 import com.nfsdb.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.lang.cst.impl.jsrc.StatefulJournalSourceImpl;
 import com.nfsdb.lang.cst.impl.ksrc.SingleKeySource;
@@ -104,7 +104,7 @@ public class JoinStringToSymbolTest {
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
         p.print(
-                new SlaveResetOuterJoin(
+                new NestedLoopLeftOuterJoin(
                         master = new StatefulJournalSourceImpl(
                                 new JournalSourceImpl(
                                         new JournalPartitionSource(aw, false), new AllRowSource()

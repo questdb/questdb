@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@ import java.io.OutputStream;
 public abstract class AbstractRecord implements Record {
 
     protected final RecordMetadata metadata;
-    private Record slave;
 
     public AbstractRecord(RecordMetadata metadata) {
         this.metadata = metadata;
@@ -74,11 +73,7 @@ public abstract class AbstractRecord implements Record {
     }
 
     @Override
-    public Record getSlave() {
-        return slave;
-    }
-
-    public void setSlave(Record slave) {
-        this.slave = slave;
+    public RecordMetadata getMetadata() {
+        return metadata;
     }
 }

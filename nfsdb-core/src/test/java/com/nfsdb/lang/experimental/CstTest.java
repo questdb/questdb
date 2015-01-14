@@ -28,15 +28,15 @@ import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.lang.cst.StatefulJournalSource;
-import com.nfsdb.lang.cst.impl.join.SlaveResetOuterJoin;
+import com.nfsdb.lang.cst.impl.join.NestedLoopLeftOuterJoin;
 import com.nfsdb.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.lang.cst.impl.jsrc.StatefulJournalSourceImpl;
 import com.nfsdb.lang.cst.impl.ksrc.SingleKeySource;
 import com.nfsdb.lang.cst.impl.psrc.JournalPartitionSource;
-import com.nfsdb.lang.cst.impl.qry.GenericRecordSource;
 import com.nfsdb.lang.cst.impl.qry.JournalRecord;
 import com.nfsdb.lang.cst.impl.qry.JournalRecordSource;
 import com.nfsdb.lang.cst.impl.qry.Record;
+import com.nfsdb.lang.cst.impl.qry.RecordSource;
 import com.nfsdb.lang.cst.impl.ref.MutableIntVariableSource;
 import com.nfsdb.lang.cst.impl.ref.StringRef;
 import com.nfsdb.lang.cst.impl.ref.SymbolXTabVariableSource;
@@ -165,7 +165,7 @@ public class CstTest {
 
         StringRef sym = new StringRef("sym");
         StatefulJournalSource m;
-        GenericRecordSource src = new SlaveResetOuterJoin(
+        RecordSource<? extends Record> src = new NestedLoopLeftOuterJoin(
                 m = new StatefulJournalSourceImpl(
                         new JournalSourceImpl(new JournalPartitionSource(master, false), new AllRowSource())
                 )
@@ -203,7 +203,7 @@ public class CstTest {
 
         StringRef sym = new StringRef("sym");
         StatefulJournalSource m;
-        GenericRecordSource src = new SlaveResetOuterJoin(
+        RecordSource<? extends Record> src = new NestedLoopLeftOuterJoin(
                 m = new StatefulJournalSourceImpl(
                         new JournalSourceImpl(new JournalPartitionSource(master, false), new AllRowSource())
                 )

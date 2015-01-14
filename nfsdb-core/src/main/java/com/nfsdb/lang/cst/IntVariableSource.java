@@ -18,4 +18,6 @@ package com.nfsdb.lang.cst;
 
 public interface IntVariableSource {
     IntVariable getVariable(PartitionSlice slice);
+
+    void reset();
 }

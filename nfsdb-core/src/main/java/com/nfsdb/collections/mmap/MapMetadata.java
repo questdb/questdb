@@ -31,6 +31,7 @@ public final class MapMetadata implements RecordMetadata {
     private final int columnCount;
     private final ColumnType[] types;
     private final SymbolTable[] symbolTables;
+    private final String[] columnNames;
 
 
     public MapMetadata(List<ColumnMetadata> valueColumns, List<ColumnMetadata> keyColumns) {
@@ -38,24 +39,22 @@ public final class MapMetadata implements RecordMetadata {
         this.types = new ColumnType[columnCount];
         this.nameCache = new ObjIntHashMap<>(columnCount);
         this.symbolTables = new SymbolTable[columnCount];
+        this.columnNames = new String[columnCount];
         int split = valueColumns.size();
 
         for (int i = 0; i < split; i++) {
-            types[i] = valueColumns.get(i).type;
-            symbolTables[i] = valueColumns.get(i).symbolTable;
-            nameCache.put(valueColumns.get(i).name, i);
+            ColumnMetadata m = valueColumns.get(i);
+            types[i] = m.type;
+            symbolTables[i] = m.symbolTable;
+            nameCache.put(columnNames[i] = m.name, i);
         }
 
         for (int i = 0, sz = keyColumns.size(); i < sz; i++) {
-            types[split + i] = keyColumns.get(i).type;
-            symbolTables[split + i] = keyColumns.get(i).symbolTable;
-            nameCache.put(keyColumns.get(i).name, split + i);
+            ColumnMetadata m = keyColumns.get(i);
+            types[split + i] = m.type;
+            symbolTables[split + i] = m.symbolTable;
+            nameCache.put(columnNames[split + i] = m.name, split + i);
         }
-    }
-
-    @Override
-    public RecordMetadata nextMetadata() {
-        return null;
     }
 
     @Override
@@ -70,7 +69,6 @@ public final class MapMetadata implements RecordMetadata {
 
     @Override
     public int getColumnIndex(CharSequence name) {
-
         int index = nameCache.get(name);
         if (index == -1) {
             throw new JournalRuntimeException("No such column: " + name);
@@ -81,5 +79,10 @@ public final class MapMetadata implements RecordMetadata {
     @Override
     public SymbolTable getSymbolTable(int index) {
         return symbolTables[index];
+    }
+
+    @Override
+    public String getColumnName(int index) {
+        return columnNames[index];
     }
 }

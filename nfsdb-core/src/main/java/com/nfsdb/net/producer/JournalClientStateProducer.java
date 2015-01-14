@@ -16,8 +16,8 @@
 
 package com.nfsdb.net.producer;
 
+import com.nfsdb.Journal;
 import com.nfsdb.Partition;
-import com.nfsdb.column.SymbolTable;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.net.AbstractObjectProducer;
@@ -42,31 +42,31 @@ public class JournalClientStateProducer extends AbstractObjectProducer<IndexedJo
     @Override
     protected void write(IndexedJournal value, ByteBuffer buffer) {
         try {
+            Partition p;
+            Journal j = value.getJournal();
+
             // journal index
             buffer.putInt(value.getIndex());
             // max rowid for non-lag partitions
-            Partition p = value.getJournal().lastNonEmptyNonLag();
-            if (p == null) {
+            if ((p = j.lastNonEmptyNonLag()) == null) {
                 buffer.putLong(-1);
             } else {
                 buffer.putLong(Rows.toRowID(p.getPartitionIndex(), p.size() - 1));
             }
             // size and name of lag partition
-            Partition lag = value.getJournal().getIrregularPartition();
-            if (lag != null) {
-                buffer.putLong(lag.size());
-                ByteBuffers.putStringW(buffer, lag.getName());
+            if ((p = j.getIrregularPartition()) != null) {
+                buffer.putLong(p.size());
+                ByteBuffers.putStringW(buffer, p.getName());
             } else {
                 buffer.putLong(-1L);
                 ByteBuffers.putStringW(buffer, null);
             }
             // symbol table count and their indexes and sizes
             int c;
-            buffer.putChar((char) (c = value.getJournal().getSymbolTableCount()));
+            buffer.putChar((char) (c = j.getSymbolTableCount()));
             for (int i = 0; i < c; i++) {
-                SymbolTable tab = value.getJournal().getSymbolTable(i);
                 buffer.putChar((char) i);
-                buffer.putInt(tab.size());
+                buffer.putInt(j.getSymbolTable(i).size());
             }
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);

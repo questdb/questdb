@@ -19,17 +19,18 @@ package com.nfsdb.lang.cst.impl.join;
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.lang.cst.impl.qry.*;
 
-public class SlaveResetOuterJoin extends AbstractImmutableIterator<Record> implements GenericRecordSource {
+public class NestedLoopLeftOuterJoin extends AbstractImmutableIterator<SplitRecord> implements RecordSource<SplitRecord> {
     private final RecordSource<? extends Record> masterSource;
     private final RecordSource<? extends Record> slaveSource;
-    private final JoinedRecordMetadata metadata;
-    private Record joinedData;
+    private final SplitRecordMetadata metadata;
+    private final SplitRecord record;
     private boolean nextSlave = false;
 
-    public SlaveResetOuterJoin(RecordSource<? extends Record> masterSource, RecordSource<? extends Record> slaveSource) {
+    public NestedLoopLeftOuterJoin(RecordSource<? extends Record> masterSource, RecordSource<? extends Record> slaveSource) {
         this.masterSource = masterSource;
         this.slaveSource = slaveSource;
-        this.metadata = new JoinedRecordMetadata(masterSource, slaveSource);
+        this.metadata = new SplitRecordMetadata(masterSource.getMetadata(), slaveSource.getMetadata());
+        this.record = new SplitRecord(metadata, masterSource.getMetadata().getColumnCount());
     }
 
     @Override
@@ -50,19 +51,19 @@ public class SlaveResetOuterJoin extends AbstractImmutableIterator<Record> imple
     }
 
     @Override
-    public Record next() {
+    public SplitRecord next() {
         if (!nextSlave) {
-            joinedData = masterSource.next();
+            record.setA(masterSource.next());
             slaveSource.reset();
         }
 
         if (nextSlave || slaveSource.hasNext()) {
-            joinedData.setSlave(slaveSource.next());
+            record.setB(slaveSource.next());
             nextSlave = slaveSource.hasNext();
         } else {
-            joinedData.setSlave(null);
+            record.setB(null);
             nextSlave = false;
         }
-        return joinedData;
+        return record;
     }
 }

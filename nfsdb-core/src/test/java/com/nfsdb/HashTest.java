@@ -35,7 +35,7 @@ public class HashTest {
 
         for (int i = 0; i < 100000; i++) {
             rnd.nextChars(address, LEN);
-            hashes.add(Hash.hashXX(address, LEN, rnd.nextInt()));
+            hashes.add(Hash.hash(address, LEN));
         }
         Assert.assertTrue("Hash function distribution dropped", hashes.size() > 99990);
     }
