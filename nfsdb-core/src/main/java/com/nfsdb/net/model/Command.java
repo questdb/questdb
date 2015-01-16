@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ public enum Command {
     PROTOCOL_VERSION(0x08),
     HANDSHAKE_COMPLETE(0x09),
     AUTHORIZATION(0x0a),
+    CLUSTER_WIN(0x0b),
     UNAUTHENTIC(0xFC),
     UNKNOWN_CMD(0xFE);
 

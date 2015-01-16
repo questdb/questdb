@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.nfsdb.Journal;
 import com.nfsdb.JournalKey;
 import com.nfsdb.collections.DirectIntList;
 import com.nfsdb.collections.Lists;
+import com.nfsdb.exceptions.ClusterLossException;
 import com.nfsdb.exceptions.JournalDisconnectedChannelException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
@@ -97,6 +98,22 @@ public class JournalServerAgent {
                         checkProtocolVersion(channel, intResponseConsumer.getValue());
                         intResponseConsumer.reset();
                         commandConsumer.reset();
+                    }
+                    break;
+                case CLUSTER_WIN:
+                    checkAuthorized(channel);
+                    intResponseConsumer.read(channel);
+                    if (intResponseConsumer.isComplete()) {
+                        boolean loss = intResponseConsumer.getValue() > server.getClusterInstance();
+                        intResponseConsumer.reset();
+                        commandConsumer.reset();
+
+                        if (loss) {
+                            ok(channel);
+                            throw new ClusterLossException();
+                        } else {
+                            error(channel, "WIN");
+                        }
                     }
                     break;
                 case HANDSHAKE_COMPLETE:
@@ -184,7 +201,6 @@ public class JournalServerAgent {
         } else {
             error(channel, "Unsupported protocol version. Client: " + version + ", Server: " + Version.PROTOCOL_VERSION);
         }
-
     }
 
     private <T> void createReader(int index, JournalKey<T> key) throws JournalException {

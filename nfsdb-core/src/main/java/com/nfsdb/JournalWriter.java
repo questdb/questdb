@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -729,7 +729,6 @@ public class JournalWriter<T> extends Journal<T> {
         Partition<T> partition = lastNonEmptyNonLag();
         Partition<T> lag = getIrregularPartition();
 
-        Tx tx = new Tx();
         tx.command = command;
         tx.prevTxAddress = txLog.getTxAddress();
         tx.journalMaxRowID = partition == null ? 0 : Rows.toRowID(partition.getPartitionIndex(), partition.size());

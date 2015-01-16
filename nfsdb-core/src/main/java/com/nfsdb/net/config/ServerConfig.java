@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ public class ServerConfig extends NetworkConfig {
     private static final Logger LOGGER = Logger.getLogger(ServerConfig.class);
     private long heartbeatFrequency = DEFAULT_HEARTBEAT_FREQUENCY;
     private int eventBufferSize = RING_BUFFER_SIZE;
+    private int clusterInstance = 0;
 
     public long getHeartbeatFrequency() {
         return heartbeatFrequency;
@@ -66,5 +67,13 @@ public class ServerConfig extends NetworkConfig {
         } catch (IOException e) {
             throw new JournalNetworkException("Cannot open server socket", e);
         }
+    }
+
+    public int getClusterInstance() {
+        return clusterInstance;
+    }
+
+    public void setClusterInstance(int clusterInstance) {
+        this.clusterInstance = clusterInstance;
     }
 }

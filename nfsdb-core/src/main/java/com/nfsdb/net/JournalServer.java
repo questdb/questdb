@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.nfsdb.net;
 import com.nfsdb.JournalKey;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.concurrent.NamedDaemonThreadFactory;
+import com.nfsdb.exceptions.ClusterLossException;
 import com.nfsdb.exceptions.JournalDisconnectedChannelException;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.factory.JournalReaderFactory;
@@ -161,6 +162,10 @@ public class JournalServer {
         return channels.size();
     }
 
+    public int getClusterInstance() {
+        return config.getClusterInstance();
+    }
+
     int getWriterIndex(JournalKey key) {
         for (int i = 0, sz = writers.size(); i < sz; i++) {
             JournalKey jk = writers.get(i).getKey();
@@ -232,6 +237,7 @@ public class JournalServer {
 
         @Override
         public void run() {
+            boolean haltServer = false;
             try {
                 while (true) {
                     if (!running.get()) {
@@ -240,6 +246,10 @@ public class JournalServer {
                     try {
                         agent.process(holder.byteChannel);
                     } catch (JournalDisconnectedChannelException e) {
+                        break;
+                    } catch (ClusterLossException e) {
+                        haltServer = true;
+                        LOGGER.info(e.getMessage());
                         break;
                     } catch (JournalNetworkException e) {
                         if (running.get()) {
@@ -262,6 +272,10 @@ public class JournalServer {
             } finally {
                 agent.close();
                 removeChannel(holder);
+            }
+
+            if (haltServer) {
+                halt();
             }
         }
     }

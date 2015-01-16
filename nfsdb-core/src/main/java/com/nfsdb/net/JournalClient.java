@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -198,21 +198,49 @@ public class JournalClient {
         intResponseConsumer.reset();
     }
 
-    private void handshake() throws JournalNetworkException {
-        SocketChannel channel = config.openSocketChannel();
+    public boolean pingServer() {
         try {
-            statsChannel = new StatsCollectingReadableByteChannel(channel.getRemoteAddress());
-        } catch (IOException e) {
-            throw new JournalNetworkException("Cannot get remote address", e);
+            openChannel();
+            sendProtocolVersion();
+            return true;
+        } catch (JournalNetworkException e) {
+            return false;
         }
+    }
 
-        SslConfig sslConfig = config.getSslConfig();
-        if (sslConfig.isSecure()) {
-            this.channel = new SecureByteChannel(channel, sslConfig);
-        } else {
-            this.channel = channel;
+    boolean sendClusterWin(int instance) throws JournalNetworkException {
+        openChannel();
+        commandProducer.write(channel, Command.CLUSTER_WIN);
+        intResponseProducer.write(channel, instance);
+        stringResponseConsumer.reset();
+        stringResponseConsumer.read(channel);
+        if (!stringResponseConsumer.isComplete()) {
+            LOGGER.info("Received incomplete response from cluster member.");
+            return false;
         }
+        return "OK".equals(stringResponseConsumer.getValue());
+    }
 
+    private void openChannel() throws JournalNetworkException {
+        if (this.channel == null) {
+            SocketChannel channel = config.openSocketChannel();
+            try {
+                statsChannel = new StatsCollectingReadableByteChannel(channel.getRemoteAddress());
+            } catch (IOException e) {
+                throw new JournalNetworkException("Cannot get remote address", e);
+            }
+
+            SslConfig sslConfig = config.getSslConfig();
+            if (sslConfig.isSecure()) {
+                this.channel = new SecureByteChannel(channel, sslConfig);
+            } else {
+                this.channel = channel;
+            }
+        }
+    }
+
+    private void handshake() throws JournalNetworkException {
+        openChannel();
         sendProtocolVersion();
         sendKeys();
         checkAuthAndSendCredential();
