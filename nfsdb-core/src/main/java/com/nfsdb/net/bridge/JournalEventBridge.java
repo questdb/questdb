@@ -91,6 +91,9 @@ public class JournalEventBridge {
 
     public void halt() {
         executor.shutdown();
+        while (inRingBuffer.getCursor() < inRingBuffer.getMinimumGatingSequence()) {
+            Thread.yield();
+        }
         while (batchEventProcessor.isRunning()) {
             batchEventProcessor.halt();
         }

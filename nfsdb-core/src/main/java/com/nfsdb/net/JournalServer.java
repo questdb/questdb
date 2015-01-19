@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,13 +18,14 @@ package com.nfsdb.net;
 
 import com.nfsdb.JournalKey;
 import com.nfsdb.JournalWriter;
+import com.nfsdb.collections.ObjIntHashMap;
 import com.nfsdb.concurrent.NamedDaemonThreadFactory;
 import com.nfsdb.exceptions.ClusterLossException;
 import com.nfsdb.exceptions.JournalDisconnectedChannelException;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.logging.Logger;
-import com.nfsdb.net.auth.Authorizer;
+import com.nfsdb.net.auth.AuthorizationHandler;
 import com.nfsdb.net.bridge.JournalEventBridge;
 import com.nfsdb.net.config.ServerConfig;
 import com.nfsdb.net.mcast.OnDemandAddressSender;
@@ -33,19 +34,18 @@ import java.io.IOException;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class JournalServer {
 
     public static final int JOURNAL_KEY_NOT_FOUND = -1;
     private static final Logger LOGGER = Logger.getLogger(JournalServer.class);
-    private static final ThreadFactory AGENT_THREAD_FACTORY = new NamedDaemonThreadFactory("journal-agent", true);
-    private final List<JournalWriter> writers = new ArrayList<>();
+    private final AtomicInteger writerIdGenerator = new AtomicInteger(0);
+    private final ObjIntHashMap<JournalWriter> writers = new ObjIntHashMap<>();
     private final JournalReaderFactory factory;
     private final JournalEventBridge bridge;
     private final ServerConfig config;
@@ -53,32 +53,39 @@ public class JournalServer {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final ArrayList<SocketChannelHolder> channels = new ArrayList<>();
     private final OnDemandAddressSender addressSender;
-    private final Authorizer authorizer;
+    private final AuthorizationHandler authorizationHandler;
+    private final JournalServerLogger serverLogger = new JournalServerLogger();
+    private final int serverInstance;
     private ServerSocketChannel serverSocketChannel;
 
     public JournalServer(JournalReaderFactory factory) throws JournalNetworkException {
         this(new ServerConfig(), factory);
     }
 
-    public JournalServer(JournalReaderFactory factory, Authorizer authorizer) throws JournalNetworkException {
-        this(new ServerConfig(), factory, authorizer);
+    public JournalServer(JournalReaderFactory factory, AuthorizationHandler authorizationHandler) throws JournalNetworkException {
+        this(new ServerConfig(), factory, authorizationHandler);
     }
 
     public JournalServer(ServerConfig config, JournalReaderFactory factory) throws JournalNetworkException {
         this(config, factory, null);
     }
 
-    public JournalServer(ServerConfig config, JournalReaderFactory factory, Authorizer authorizer) throws JournalNetworkException {
+    public JournalServer(ServerConfig config, JournalReaderFactory factory, AuthorizationHandler authorizationHandler) throws JournalNetworkException {
+        this(config, factory, authorizationHandler, 0);
+    }
+
+    public JournalServer(ServerConfig config, JournalReaderFactory factory, AuthorizationHandler authorizationHandler, int instance) throws JournalNetworkException {
         this.config = config;
         this.factory = factory;
-        this.service = Executors.newCachedThreadPool(AGENT_THREAD_FACTORY);
+        this.service = Executors.newCachedThreadPool(new NamedDaemonThreadFactory("nfsdb-server-" + instance + "-agent", true));
         this.bridge = new JournalEventBridge(config.getHeartbeatFrequency(), TimeUnit.MILLISECONDS, config.getEventBufferSize());
         if (config.isEnableMulticast()) {
-            this.addressSender = new OnDemandAddressSender(config, 230, 235);
+            this.addressSender = new OnDemandAddressSender(config, 230, 235, instance);
         } else {
             this.addressSender = null;
         }
-        this.authorizer = authorizer;
+        this.authorizationHandler = authorizationHandler;
+        this.serverInstance = instance;
     }
 
     private static void closeChannel(SocketChannelHolder holder, boolean force) {
@@ -98,8 +105,12 @@ public class JournalServer {
         }
     }
 
+    public JournalServerLogger getLogger() {
+        return serverLogger;
+    }
+
     public void publish(JournalWriter journal) {
-        writers.add(journal);
+        writers.put(journal, writerIdGenerator.getAndIncrement());
     }
 
     public JournalReaderFactory getFactory() {
@@ -111,13 +122,13 @@ public class JournalServer {
     }
 
     public void start() throws JournalNetworkException {
-        for (int i = 0, sz = writers.size(); i < sz; i++) {
-            JournalEventPublisher publisher = new JournalEventPublisher(i, bridge);
-            JournalWriter w = writers.get(i);
-            w.setTxListener(publisher);
-            w.setTxAsyncListener(publisher);
-
+        serverLogger.start();
+        for (ObjIntHashMap.Entry<JournalWriter> e : writers) {
+            JournalEventPublisher publisher = new JournalEventPublisher(e.value, bridge);
+            e.key.setTxListener(publisher);
+            e.key.setTxAsyncListener(publisher);
         }
+
         serverSocketChannel = config.openServerSocketChannel();
         if (config.isEnableMulticast()) {
             addressSender.start();
@@ -127,31 +138,59 @@ public class JournalServer {
         service.execute(new Acceptor());
     }
 
-    public void halt() {
+    public void halt(long timeout, TimeUnit unit) {
+        if (!running.get()) {
+            return;
+        }
+        LOGGER.trace("Stopping agent services");
         service.shutdown();
         running.set(false);
-        for (int i = 0, sz = writers.size(); i < sz; i++) {
-            writers.get(i).setTxListener(null);
-        }
-        bridge.halt();
-
-        if (addressSender != null) {
-            addressSender.halt();
+        for (ObjIntHashMap.Entry<JournalWriter> e : writers) {
+            e.key.setTxAsyncListener(null);
         }
 
+        LOGGER.trace("Stopping acceptor");
         try {
-            closeChannels();
             serverSocketChannel.close();
         } catch (IOException e) {
             LOGGER.debug(e);
         }
 
+        if (timeout > 0) {
+            try {
+                service.awaitTermination(timeout, unit);
+            } catch (InterruptedException e) {
+                LOGGER.debug(e);
+            }
+        }
+
+
+        LOGGER.trace("Stopping bridge");
+        bridge.halt();
+
+        LOGGER.trace("Stopping mcast sender");
+        if (addressSender != null) {
+            addressSender.halt();
+        }
+
+        LOGGER.trace("Closing channels");
+        closeChannels();
+
+        LOGGER.trace("Stopping logger");
+        serverLogger.halt();
+
         try {
+            LOGGER.trace("Waiting for agent services to stop");
             service.awaitTermination(30, TimeUnit.SECONDS);
             LOGGER.info("Server is shutdown");
         } catch (InterruptedException e) {
             LOGGER.info("Server is shutdown, but some connections are still lingering.");
         }
+
+    }
+
+    public void halt() {
+        halt(30, TimeUnit.SECONDS);
     }
 
     public boolean isRunning() {
@@ -162,24 +201,16 @@ public class JournalServer {
         return channels.size();
     }
 
-    public int getClusterInstance() {
-        return config.getClusterInstance();
-    }
-
     int getWriterIndex(JournalKey key) {
-        for (int i = 0, sz = writers.size(); i < sz; i++) {
-            JournalKey jk = writers.get(i).getKey();
+        for (ObjIntHashMap.Entry<JournalWriter> e : writers) {
+            JournalKey jk = e.key.getKey();
             if (jk.getId().equals(key.getId()) && (
                     (jk.getLocation() == null && key.getLocation() == null)
                             || (jk.getLocation() != null && jk.getLocation().equals(key.getLocation())))) {
-                return i;
+                return e.value;
             }
         }
         return JOURNAL_KEY_NOT_FOUND;
-    }
-
-    int getMaxWriterIndex() {
-        return writers.size() - 1;
     }
 
     private synchronized void addChannel(SocketChannelHolder holder) {
@@ -197,6 +228,10 @@ public class JournalServer {
         }
     }
 
+    public int getServerInstance() {
+        return serverInstance;
+    }
+
     private class Acceptor implements Runnable {
         @Override
         public void run() {
@@ -212,8 +247,13 @@ public class JournalServer {
                                 , channel.getRemoteAddress()
                         );
                         addChannel(holder);
-                        service.submit(new Handler(holder));
-                        LOGGER.info("Connected: %s", holder.socketAddress);
+                        if (!service.isShutdown()) {
+                            service.submit(new Handler(holder));
+                            LOGGER.info("Connected: %s", holder.socketAddress);
+                        } else {
+                            LOGGER.info("Ignoring connection from %s. Server is shutting down.", holder.socketAddress);
+                        }
+
                     }
                 }
             } catch (IOException | JournalNetworkException e) {
@@ -232,7 +272,7 @@ public class JournalServer {
 
         Handler(SocketChannelHolder holder) {
             this.holder = holder;
-            this.agent = new JournalServerAgent(JournalServer.this, holder.socketAddress, authorizer);
+            this.agent = new JournalServerAgent(JournalServer.this, holder.socketAddress, authorizationHandler);
         }
 
         @Override
@@ -249,7 +289,7 @@ public class JournalServer {
                         break;
                     } catch (ClusterLossException e) {
                         haltServer = true;
-                        LOGGER.info(e.getMessage());
+                        LOGGER.info("Server lost cluster vote to " + holder.socketAddress);
                         break;
                     } catch (JournalNetworkException e) {
                         if (running.get()) {
@@ -275,7 +315,7 @@ public class JournalServer {
             }
 
             if (haltServer) {
-                halt();
+                halt(0, TimeUnit.SECONDS);
             }
         }
     }

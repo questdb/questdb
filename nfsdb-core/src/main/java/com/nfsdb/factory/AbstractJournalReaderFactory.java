@@ -54,11 +54,6 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
     }
 
     @Override
-    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        return new Journal<>(getOrCreateMetadata(key), key, getTimerCache());
-    }
-
-    @Override
     public <T> JournalBulkReader<T> bulkReader(Class<T> clazz, String location) throws JournalException {
         return bulkReader(new JournalKey<>(clazz, location));
     }
@@ -83,11 +78,6 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
         return bulkReader(new JournalKey<>(location));
     }
 
-    @Override
-    public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
-        return new JournalBulkReader<>(getOrCreateMetadata(key), key, getTimerCache());
-    }
-
     public JournalConfiguration getConfiguration() {
         return configuration;
     }
@@ -103,7 +93,7 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
         return timerCache;
     }
 
-    private <T> JournalMetadata<T> getOrCreateMetadata(JournalKey<T> key) throws JournalException {
+    protected <T> JournalMetadata<T> getOrCreateMetadata(JournalKey<T> key) throws JournalException {
         JournalMetadata<T> metadata = configuration.createMetadata(key);
         File location = new File(metadata.getLocation());
         if (!location.exists()) {

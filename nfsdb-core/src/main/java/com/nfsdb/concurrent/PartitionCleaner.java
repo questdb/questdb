@@ -32,7 +32,7 @@ public class PartitionCleaner {
     private boolean started = false;
 
     public PartitionCleaner(JournalWriter writer, String name) {
-        this.executor = Executors.newCachedThreadPool(new NamedDaemonThreadFactory("jj-cleaner-" + name, true));
+        this.executor = Executors.newCachedThreadPool(new NamedDaemonThreadFactory("nfsdb-journal-cleaner-" + name, true));
         this.batchEventProcessor = new BatchEventProcessor<>(ringBuffer, ringBuffer.newBarrier(), h = new PartitionCleanerEventHandler(writer));
         ringBuffer.addGatingSequences(batchEventProcessor.getSequence());
     }

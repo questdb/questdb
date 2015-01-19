@@ -19,7 +19,9 @@ package com.nfsdb.lang.cst.impl.agg;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.lang.cst.impl.qry.Record;
 import com.nfsdb.lang.cst.impl.qry.RecordSource;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+@SuppressFBWarnings({"EI_EXPOSE_REP"})
 public abstract class AbstractSingleColumnAggregatorFunction implements AggregatorFunction {
     private final ColumnMetadata[] meta = new ColumnMetadata[1];
     protected int recordIndex;

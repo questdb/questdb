@@ -21,7 +21,7 @@ import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.net.JournalServer;
-import com.nfsdb.net.auth.Authorizer;
+import com.nfsdb.net.auth.AuthorizationHandler;
 import org.nfsdb.examples.model.Price;
 
 import java.util.List;
@@ -41,7 +41,7 @@ public class AuthReplicationServerMain {
 
     public void start() throws Exception {
         JournalFactory factory = new JournalFactory(location);
-        JournalServer server = new JournalServer(factory, new Authorizer() {
+        JournalServer server = new JournalServer(factory, new AuthorizationHandler() {
             @Override
             public boolean isAuthorized(byte[] token, List<JournalKey> requestedKeys) throws Exception {
                 return "MY SECRET".equals(new String(token, "UTF8"));

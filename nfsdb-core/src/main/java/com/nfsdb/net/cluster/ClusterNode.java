@@ -14,12 +14,30 @@
  * limitations under the License.
  */
 
-package com.nfsdb.net.auth;
+package com.nfsdb.net.cluster;
 
-import com.nfsdb.JournalKey;
+public class ClusterNode {
+    private final int id;
+    private final String address;
 
-import java.util.List;
+    public ClusterNode(int id, String address) {
+        this.id = id;
+        this.address = address;
+    }
 
-public interface Authorizer {
-    boolean isAuthorized(byte[] token, List<JournalKey> requestedKeys) throws Exception;
+    public int getId() {
+        return id;
+    }
+
+    public String getAddress() {
+        return address;
+    }
+
+    @Override
+    public String toString() {
+        return "ClusterNode{" +
+                "id=" + id +
+                ", address='" + address + '\'' +
+                '}';
+    }
 }

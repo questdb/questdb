@@ -32,8 +32,7 @@ public class JournalEventPublisher implements TxListener, TxAsyncListener {
 
     @Override
     public void onCommit() {
-        long timestamp = System.currentTimeMillis();
-        bridge.publish(journalIndex, timestamp);
+        bridge.publish(journalIndex, System.currentTimeMillis());
     }
 
     @Override

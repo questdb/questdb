@@ -174,7 +174,6 @@ public class IntegrationTest extends AbstractTest {
     @Test
     public void testServerStartStop() throws Exception {
         server.start();
-        Thread.sleep(TimeUnit.SECONDS.toMillis(1));
         server.halt();
         Assert.assertFalse(server.isRunning());
     }

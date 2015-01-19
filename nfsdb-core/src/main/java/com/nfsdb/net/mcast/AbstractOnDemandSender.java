@@ -20,6 +20,7 @@ import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.net.config.NetworkConfig;
+import com.nfsdb.utils.ByteBuffers;
 
 import java.net.*;
 import java.nio.ByteBuffer;
@@ -37,27 +38,33 @@ public abstract class AbstractOnDemandSender {
     private final InetSocketAddress socketAddress;
     private final int inMessageCode;
     private final int outMessageCode;
+    private final String threadName;
     private Selector selector;
     private volatile boolean running = false;
+    private volatile boolean selecting = false;
+
     private CountDownLatch latch;
 
-    public AbstractOnDemandSender(NetworkConfig networkConfig, int inMessageCode, int outMessageCode) throws JournalNetworkException {
+    public AbstractOnDemandSender(NetworkConfig networkConfig, int inMessageCode, int outMessageCode, int instance) throws JournalNetworkException {
         this.networkConfig = networkConfig;
         this.socketAddress = new InetSocketAddress(networkConfig.getMulticastAddress(), networkConfig.getMulticastPort());
         this.inMessageCode = inMessageCode;
         this.outMessageCode = outMessageCode;
+        this.threadName = "nfsdb-mcast-sender-" + instance;
     }
 
     public void start() {
         if (!running) {
             running = true;
             latch = new CountDownLatch(1);
-            new Thread(new Runnable() {
+            Thread thread = new Thread(new Runnable() {
                 @Override
                 public void run() {
                     start0();
                 }
-            }).start();
+            });
+            thread.setName(threadName);
+            thread.start();
         }
     }
 
@@ -76,33 +83,38 @@ public abstract class AbstractOnDemandSender {
                 dc.join(multicastAddress, networkConfig.getNetworkInterface());
 
                 selector = Selector.open();
+                selecting = true;
                 dc.configureBlocking(false);
                 dc.register(selector, SelectionKey.OP_READ);
                 ByteBuffer buf = ByteBuffer.allocateDirect(4096);
-                while (true) {
-                    int updated = selector.select();
-                    if (!running) {
-                        break;
-                    }
-                    if (updated > 0) {
-                        Iterator<SelectionKey> iter = selector.selectedKeys().iterator();
-                        while (iter.hasNext()) {
-                            SelectionKey sk = iter.next();
-                            iter.remove();
-                            DatagramChannel ch = (DatagramChannel) sk.channel();
-                            buf.clear();
-                            SocketAddress sa = ch.receive(buf);
-                            if (sa != null) {
-                                buf.flip();
-                                if (buf.remaining() >= 4 && inMessageCode == buf.getInt(0)) {
-                                    buf.clear();
-                                    buf.putInt(outMessageCode);
-                                    prepareBuffer(buf);
-                                    dc.send(buf, socketAddress);
+                try {
+                    while (running) {
+                        int updated = selector.select();
+                        if (!running) {
+                            break;
+                        }
+                        if (updated > 0) {
+                            Iterator<SelectionKey> iter = selector.selectedKeys().iterator();
+                            while (iter.hasNext()) {
+                                SelectionKey sk = iter.next();
+                                iter.remove();
+                                DatagramChannel ch = (DatagramChannel) sk.channel();
+                                buf.clear();
+                                SocketAddress sa = ch.receive(buf);
+                                if (sa != null) {
+                                    buf.flip();
+                                    if (buf.remaining() >= 4 && inMessageCode == buf.getInt(0)) {
+                                        buf.clear();
+                                        buf.putInt(outMessageCode);
+                                        prepareBuffer(buf);
+                                        dc.send(buf, socketAddress);
+                                    }
                                 }
                             }
                         }
                     }
+                } finally {
+                    ByteBuffers.release(buf);
                 }
             }
         } catch (Throwable e) {
@@ -116,10 +128,11 @@ public abstract class AbstractOnDemandSender {
 
     public void halt() {
         if (running) {
-            running = false;
-            if (selector != null) {
-                selector.wakeup();
+            while (!selecting) {
+                Thread.yield();
             }
+            selector.wakeup();
+            running = false;
             try {
                 latch.await();
             } catch (InterruptedException e) {

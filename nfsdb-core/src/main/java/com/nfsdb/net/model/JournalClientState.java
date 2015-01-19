@@ -24,7 +24,7 @@ public class JournalClientState {
     private long maxRowID;
     private long lagSize;
     private boolean clientStateInvalid = true;
-    private boolean writerUpdateReceived = true;
+    private boolean waitingOnEvents = false;
     private long clientStateSyncTime = 0;
 
     private String lagPartitionName;
@@ -69,12 +69,12 @@ public class JournalClientState {
         this.clientStateInvalid = true;
     }
 
-    public boolean noCommitNotification() {
-        return !writerUpdateReceived;
+    public boolean isWaitingOnEvents() {
+        return waitingOnEvents;
     }
 
-    public void setWriterUpdateReceived(boolean writerUpdateReceived) {
-        this.writerUpdateReceived = writerUpdateReceived;
+    public void setWaitingOnEvents(boolean waitingOnEvents) {
+        this.waitingOnEvents = waitingOnEvents;
     }
 
     @Override
@@ -85,7 +85,7 @@ public class JournalClientState {
                 ", lagSize=" + lagSize +
                 ", symbolTabKeys=" + symbolTabKeys +
                 ", clientStateInvalid=" + clientStateInvalid +
-                ", writerUpdateReceived=" + writerUpdateReceived +
+                ", waitingOnEvents=" + waitingOnEvents +
                 ", clientStateSyncTime=" + clientStateSyncTime +
                 ", lagPartitionName='" + lagPartitionName + '\'' +
                 '}';

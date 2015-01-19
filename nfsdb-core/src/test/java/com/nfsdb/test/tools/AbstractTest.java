@@ -23,8 +23,4 @@ import org.junit.Rule;
 public abstract class AbstractTest {
     @Rule
     public final JournalTestFactory factory = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
-
-    public AbstractTest() {
-        //System.out.println(this + "created: " + factory.getConfiguration().getJournalBase());
-    }
 }

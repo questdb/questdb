@@ -22,7 +22,7 @@ import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.model.Quote;
-import com.nfsdb.net.auth.Authorizer;
+import com.nfsdb.net.auth.AuthorizationHandler;
 import com.nfsdb.net.auth.CredentialProvider;
 import com.nfsdb.net.config.ClientConfig;
 import com.nfsdb.net.config.ServerConfig;
@@ -52,7 +52,7 @@ public class AuthorizationTest extends AbstractTest {
                 }}
                 , factory
                 ,
-                new Authorizer() {
+                new AuthorizationHandler() {
                     @Override
                     public boolean isAuthorized(byte[] token, List<JournalKey> requestedKeys) {
                         return "SECRET".equals(new String(token));
@@ -80,7 +80,7 @@ public class AuthorizationTest extends AbstractTest {
                 }}
                 , factory
                 ,
-                new Authorizer() {
+                new AuthorizationHandler() {
                     @Override
                     public boolean isAuthorized(byte[] token, List<JournalKey> requestedKeys) {
                         return "SECRET".equals(new String(token));
@@ -112,7 +112,7 @@ public class AuthorizationTest extends AbstractTest {
                 }}
                 , factory
                 ,
-                new Authorizer() {
+                new AuthorizationHandler() {
                     @Override
                     public boolean isAuthorized(byte[] token, List<JournalKey> requestedKeys) {
                         throw new RuntimeException("BANG!");
@@ -144,7 +144,7 @@ public class AuthorizationTest extends AbstractTest {
                 }}
                 , factory
                 ,
-                new Authorizer() {
+                new AuthorizationHandler() {
                     @Override
                     public boolean isAuthorized(byte[] token, List<JournalKey> requestedKeys) {
                         return "SECRET".equals(new String(token));
@@ -171,7 +171,7 @@ public class AuthorizationTest extends AbstractTest {
                 }}
                 , factory
                 ,
-                new Authorizer() {
+                new AuthorizationHandler() {
                     @Override
                     public boolean isAuthorized(byte[] token, List<JournalKey> requestedKeys) {
                         return "SECRET".equals(new String(token));
@@ -216,7 +216,7 @@ public class AuthorizationTest extends AbstractTest {
                 client.halt();
             }
         } finally {
-            server.halt();
+            server.halt(0, TimeUnit.SECONDS);
         }
     }
 }

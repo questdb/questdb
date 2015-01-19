@@ -102,7 +102,7 @@ public class MulticastTest extends AbstractTest {
     }
 
     private void assertMulticast(ServerConfig serverConfig) throws JournalNetworkException {
-        AbstractOnDemandSender sender = new OnDemandAddressSender(serverConfig, 120, 150);
+        AbstractOnDemandSender sender = new OnDemandAddressSender(serverConfig, 120, 150, 0);
         sender.start();
 
         OnDemandAddressPoller poller = new OnDemandAddressPoller(serverConfig, 150, 120);

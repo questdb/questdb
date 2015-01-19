@@ -36,7 +36,7 @@ public abstract class AbstractConcurrentIterator<T> extends AbstractImmutableIte
 
     AbstractConcurrentIterator(int bufferSize) {
         this.bufferSize = bufferSize;
-        this.service = Executors.newCachedThreadPool(new NamedDaemonThreadFactory("jj-iterator", false));
+        this.service = Executors.newCachedThreadPool(new NamedDaemonThreadFactory("nfsdb-iterator", false));
     }
 
     @Override

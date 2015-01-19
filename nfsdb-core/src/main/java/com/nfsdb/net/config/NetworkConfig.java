@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.nfsdb.net.config;
 
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.utils.Numbers;
 
 import java.lang.reflect.Field;
 import java.net.*;
@@ -61,7 +62,29 @@ public class NetworkConfig {
     }
 
     public void setHostname(String hostname) {
-        this.hostname = hostname;
+        if (hostname == null) {
+            this.hostname = null;
+            return;
+        }
+
+        String parts[] = hostname.split(":");
+        switch (parts.length) {
+            case 1:
+            case 8:
+                this.hostname = hostname;
+                break;
+            case 2:
+                this.hostname = parts[0];
+                port = Numbers.parseInt(parts[1]);
+                break;
+            case 9:
+                int col = hostname.lastIndexOf(':');
+                this.hostname = hostname.substring(0, col);
+                this.port = Numbers.parseInt(hostname.subSequence(col + 1, hostname.length()));
+                break;
+            default:
+                throw new JournalRuntimeException("Unknown host format: " + hostname);
+        }
     }
 
     public int getPort() {

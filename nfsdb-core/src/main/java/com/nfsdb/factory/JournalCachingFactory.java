@@ -17,6 +17,7 @@
 package com.nfsdb.factory;
 
 import com.nfsdb.Journal;
+import com.nfsdb.JournalBulkReader;
 import com.nfsdb.JournalKey;
 import com.nfsdb.concurrent.TimerCache;
 import com.nfsdb.exceptions.JournalException;
@@ -29,7 +30,8 @@ import java.util.Map;
 
 public class JournalCachingFactory extends AbstractJournalReaderFactory implements JournalClosingListener {
 
-    private final Map<JournalKey, Journal> journals = new HashMap<>();
+    private final Map<JournalKey, Journal> readers = new HashMap<>();
+    private final Map<JournalKey, JournalBulkReader> bulkReaders = new HashMap<>();
     private final List<Journal> journalList = new ArrayList<>();
     private JournalPool pool;
 
@@ -52,7 +54,8 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
                 journal.setCloseListener(null);
                 journal.close();
             }
-            journals.clear();
+            readers.clear();
+            bulkReaders.clear();
         }
         super.close();
     }
@@ -65,11 +68,11 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
     @Override
     @SuppressWarnings("unchecked")
     public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        Journal<T> result = journals.get(key);
+        Journal<T> result = readers.get(key);
         if (result == null) {
-            result = super.reader(key);
+            result = new Journal<>(getOrCreateMetadata(key), key, getTimerCache());
             result.setCloseListener(this);
-            journals.put(key, result);
+            readers.put(key, result);
             journalList.add(result);
         }
         return result;
@@ -89,5 +92,18 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
         for (int i = 0, sz = journalList.size(); i < sz; i++) {
             journalList.get(i).expireOpenFiles();
         }
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
+        JournalBulkReader<T> result = bulkReaders.get(key);
+        if (result == null) {
+            result = new JournalBulkReader<>(getOrCreateMetadata(key), key, getTimerCache());
+            result.setCloseListener(this);
+            bulkReaders.put(key, result);
+            journalList.add(result);
+        }
+        return result;
     }
 }

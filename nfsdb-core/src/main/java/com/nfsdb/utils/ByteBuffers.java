@@ -215,21 +215,6 @@ public final class ByteBuffers {
         }
     }
 
-    public static int copy(ByteBuffer from, int fromPos, ByteBuffer to, int toPos, int count) {
-        if (to != null && to.limit() > toPos) {
-            int toRem = to.limit() - toPos;
-            int fromRem = from.limit() - fromPos;
-
-            int c = fromRem < count ? fromRem : count;
-            c = toRem < c ? toRem : c;
-            for (int i = 0; i < c; i++) {
-                to.put(toPos + i, from.get(fromPos + i));
-            }
-            return c;
-        }
-        return 0;
-    }
-
     public static void putStr(ByteBuffer buffer, String value) {
         int p = buffer.position();
         for (int i = 0; i < value.length(); i++) {

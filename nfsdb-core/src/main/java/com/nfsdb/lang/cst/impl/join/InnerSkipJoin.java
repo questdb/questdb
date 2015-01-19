@@ -18,7 +18,9 @@ package com.nfsdb.lang.cst.impl.join;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.lang.cst.impl.qry.*;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+@SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
 public class InnerSkipJoin extends AbstractImmutableIterator<Record> implements GenericRecordSource {
 
     private final RecordSource<? extends SplitRecord> delegate;

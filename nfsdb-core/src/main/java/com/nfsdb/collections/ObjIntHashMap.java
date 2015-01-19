@@ -16,14 +16,18 @@
 
 package com.nfsdb.collections;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+
 import java.util.Arrays;
+import java.util.Iterator;
 
 
-public class ObjIntHashMap<V> {
+public class ObjIntHashMap<V> implements Iterable<ObjIntHashMap.Entry<V>> {
 
     private static final Object FREE = new Object();
     private final int noKeyValue;
     private final double loadFactor;
+    private final EntryIterator iterator = new EntryIterator();
     private V[] keys;
     private int[] values;
     private int free;
@@ -182,5 +186,42 @@ public class ObjIntHashMap<V> {
 
     public int size() {
         return capacity - free;
+    }
+
+    @Override
+    public Iterator<Entry<V>> iterator() {
+        iterator.index = 0;
+        return iterator;
+    }
+
+    public static class Entry<V> {
+        public V key;
+        public int value;
+    }
+
+    public class EntryIterator extends AbstractImmutableIterator<Entry<V>> {
+
+        private final Entry<V> entry = new Entry<>();
+        private int index;
+
+        @Override
+        public boolean hasNext() {
+            return index < values.length && (keys[index] != FREE || scan());
+        }
+
+        private boolean scan() {
+            while (index < values.length && keys[index] == FREE) {
+                index++;
+            }
+            return index < values.length;
+        }
+
+        @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
+        @Override
+        public Entry<V> next() {
+            entry.key = keys[index];
+            entry.value = values[index++];
+            return entry;
+        }
     }
 }

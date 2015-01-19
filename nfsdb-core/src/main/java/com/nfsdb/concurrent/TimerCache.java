@@ -23,7 +23,7 @@ import java.util.concurrent.locks.LockSupport;
 
 public class TimerCache {
     private final long updateFrequency;
-    private final ExecutorService service = Executors.newCachedThreadPool(new NamedDaemonThreadFactory("jj-timer-cache", true));
+    private final ExecutorService service = Executors.newCachedThreadPool(new NamedDaemonThreadFactory("nfsdb-timer-cache", true));
     private volatile long millis = System.currentTimeMillis();
 
     public TimerCache() {

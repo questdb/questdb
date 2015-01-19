@@ -26,8 +26,8 @@ import java.nio.ByteBuffer;
 public class OnDemandAddressSender extends AbstractOnDemandSender {
     private final ServerConfig serverConfig;
 
-    public OnDemandAddressSender(ServerConfig networkConfig, int inMessageCode, int outMessageCode) throws JournalNetworkException {
-        super(networkConfig, inMessageCode, outMessageCode);
+    public OnDemandAddressSender(ServerConfig networkConfig, int inMessageCode, int outMessageCode, int instance) throws JournalNetworkException {
+        super(networkConfig, inMessageCode, outMessageCode, instance);
         this.serverConfig = networkConfig;
     }
 

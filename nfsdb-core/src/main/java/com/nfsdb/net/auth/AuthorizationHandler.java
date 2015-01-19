@@ -14,10 +14,12 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.dfrm;
+package com.nfsdb.net.auth;
 
-import com.nfsdb.lang.cst.RowCursor;
+import com.nfsdb.JournalKey;
 
-public interface DataFrame {
-    RowCursor cursor(int key);
+import java.util.List;
+
+public interface AuthorizationHandler {
+    boolean isAuthorized(byte[] token, List<JournalKey> requestedKeys) throws Exception;
 }

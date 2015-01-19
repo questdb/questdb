@@ -19,6 +19,7 @@ package com.nfsdb.lang.cst.impl.agg;
 import com.nfsdb.collections.mmap.MapRecordValueInterceptor;
 import com.nfsdb.collections.mmap.MapValues;
 import com.nfsdb.column.ColumnType;
+import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.lang.cst.impl.qry.Record;
 import com.nfsdb.lang.cst.impl.qry.RecordSource;
@@ -60,6 +61,9 @@ public class AvgDoubleAggregationFunction implements AggregatorFunction, MapReco
                 break;
             case 2:
                 avgIdx = i;
+                break;
+            default:
+                throw new JournalRuntimeException("Internal bug. Column mismatch");
         }
     }
 

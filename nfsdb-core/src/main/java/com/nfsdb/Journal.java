@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -695,5 +695,15 @@ public class Journal<T> implements Iterable<T>, Closeable {
             partition.applyTx(txPartitionSize, tx.indexPointers);
             configureIrregularPartition();
         }
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        return this == o || !(o == null || getClass() != o.getClass()) && key.equals(((Journal) o).key);
+    }
+
+    @Override
+    public int hashCode() {
+        return key.hashCode();
     }
 }

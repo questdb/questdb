@@ -96,13 +96,13 @@ public class JournalServerAgentTest extends AbstractTest {
         Journal<Quote> quoteClientWriter = factory.writer(Quote.class, "client");
 
         // send quote journal key
-        commandProducer.write(channel, Command.SET_KEY_CMD);
-        setKeyRequestProducer.write(channel, new IndexedJournalKey(3, quoteWriter.getKey()));
-        agent.process(channel);
-        stringResponseConsumer.reset();
-        stringResponseConsumer.read(channel);
-        Assert.assertTrue(stringResponseConsumer.isComplete());
-        Assert.assertEquals("Journal index is too large. Max 1", stringResponseConsumer.getValue());
+//        commandProducer.write(channel, Command.SET_KEY_CMD);
+//        setKeyRequestProducer.write(channel, new IndexedJournalKey(3, quoteWriter.getKey()));
+//        agent.process(channel);
+//        stringResponseConsumer.reset();
+//        stringResponseConsumer.read(channel);
+//        Assert.assertTrue(stringResponseConsumer.isComplete());
+//        Assert.assertEquals("Journal index is too large. Max 1", stringResponseConsumer.getValue());
 
 
         commandProducer.write(channel, Command.SET_KEY_CMD);

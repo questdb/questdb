@@ -43,7 +43,7 @@ public class ScenarioTest extends AbstractTest {
 
     private static void iteration(String expected, Journal<Quote> origin, JournalWriter<Quote> remote, Journal<Quote> local, int lo, int hi) throws Exception {
         remote.append(origin.query().all().asResultSet().subset(lo, hi));
-        remote.commit();
+        remote.commitAsync().waitFor(5, TimeUnit.SECONDS);
 
         Thread.sleep(100);
 
@@ -96,8 +96,6 @@ public class ScenarioTest extends AbstractTest {
                 origin, remote, local, 20, 30
         );
 
-        Thread.sleep(100);
-
         client.halt();
         server.halt();
     }
@@ -138,10 +136,10 @@ public class ScenarioTest extends AbstractTest {
         lagIteration(randomOrigin, remote, 200, 300);
         lagIteration(randomOrigin, remote, 300, 400);
 
-        Thread.sleep(1000);
+        Thread.sleep(100);
 
-        client.halt();
         server.halt();
+        client.halt();
 
         local.refresh();
         remoteReader.refresh();

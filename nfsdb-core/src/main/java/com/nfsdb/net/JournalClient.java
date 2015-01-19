@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -76,7 +76,7 @@ public class JournalClient {
     private final ExecutorService service;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final CredentialProvider credentialProvider;
-    private final DisconnectCallback disconnectCallback = new DisconnectCallback();
+    private final DisconnectCallbackImpl disconnectCallback = new DisconnectCallbackImpl();
     private ByteChannel channel;
     private StatsCollectingReadableByteChannel statsChannel;
     private Future handlerFuture;
@@ -100,6 +100,11 @@ public class JournalClient {
         this.credentialProvider = credentialProvider;
     }
 
+    public JournalClient setDisconnectCallback(DisconnectCallback callback) {
+        this.disconnectCallback.next = callback;
+        return this;
+    }
+
     public <T> void subscribe(Class<T> clazz) throws JournalException {
         subscribe(clazz, (TxListener) null);
     }
@@ -117,7 +122,7 @@ public class JournalClient {
      * @throws com.nfsdb.exceptions.JournalException if local writer cannot be opened.
      */
     public <T> void subscribe(Class<T> clazz, TxListener txListener) throws JournalException {
-        add(new JournalKey<>(clazz), factory.writer(clazz), txListener);
+        subscribe(new JournalKey<>(clazz), factory.writer(clazz), txListener);
     }
 
     @SuppressWarnings("unused")
@@ -126,7 +131,7 @@ public class JournalClient {
     }
 
     public <T> void subscribe(Class<T> clazz, String location, TxListener txListener) throws JournalException {
-        add(new JournalKey<>(clazz, location), factory.writer(clazz, location), txListener);
+        subscribe(new JournalKey<>(clazz, location), factory.writer(clazz, location), txListener);
     }
 
     public <T> void subscribe(Class<T> clazz, String remote, String local) throws JournalException {
@@ -134,7 +139,7 @@ public class JournalClient {
     }
 
     public <T> void subscribe(Class<T> clazz, String remote, String local, TxListener txListener) throws JournalException {
-        add(new JournalKey<>(clazz, remote), factory.writer(clazz, local), txListener);
+        subscribe(new JournalKey<>(clazz, remote), factory.writer(clazz, local), txListener);
     }
 
     public <T> void subscribe(Class<T> clazz, String remote, String local, int recordHint) throws JournalException {
@@ -142,7 +147,7 @@ public class JournalClient {
     }
 
     public <T> void subscribe(Class<T> clazz, String remote, String local, int recordHint, TxListener txListener) throws JournalException {
-        add(new JournalKey<>(clazz, remote, PartitionType.DEFAULT, recordHint), factory.writer(clazz, local, recordHint), txListener);
+        subscribe(new JournalKey<>(clazz, remote, PartitionType.DEFAULT, recordHint), factory.writer(clazz, local, recordHint), txListener);
     }
 
     public void start() throws JournalNetworkException {
@@ -208,9 +213,9 @@ public class JournalClient {
         }
     }
 
-    boolean sendClusterWin(int instance) throws JournalNetworkException {
+    public boolean voteInstance(int instance) throws JournalNetworkException {
         openChannel();
-        commandProducer.write(channel, Command.CLUSTER_WIN);
+        commandProducer.write(channel, Command.CLUSTER_VOTE);
         intResponseProducer.write(channel, instance);
         stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
@@ -292,7 +297,7 @@ public class JournalClient {
         checkAck();
     }
 
-    private <T> void add(JournalKey<T> remoteKey, JournalWriter<T> writer, TxListener txListener) {
+    public <T> void subscribe(JournalKey<T> remoteKey, JournalWriter<T> writer, TxListener txListener) {
         remoteKeys.add(remoteKey);
         localKeys.add(writer.getKey());
         listeners.add(txListener);
@@ -360,12 +365,18 @@ public class JournalClient {
     }
 
 
-    private enum DisconnectReason {
+    public enum DisconnectReason {
         UNKNOWN, CLIENT_HALT, CLIENT_EXCEPTION, BROKEN_CHANNEL, CLIENT_ERROR
     }
 
-    private final class DisconnectCallback {
-        private void onDisconnect(DisconnectReason reason) {
+    public interface DisconnectCallback {
+        void onDisconnect(DisconnectReason reason);
+    }
+
+    private final class DisconnectCallbackImpl implements DisconnectCallback {
+        private DisconnectCallback next;
+
+        public void onDisconnect(DisconnectReason reason) {
             switch (reason) {
                 case BROKEN_CHANNEL:
                 case UNKNOWN:
@@ -389,21 +400,25 @@ public class JournalClient {
                     if (connected) {
                         handlerFuture = service.submit(new Handler());
                     } else {
-                        disconnect();
+                        disconnect(reason);
                     }
                     break;
                 default:
-                    disconnect();
+                    disconnect(reason);
             }
         }
 
-        private void disconnect() {
+        private void disconnect(DisconnectReason reason) {
             LOGGER.info("Client disconnecting");
             counter.decrementAndGet();
             running.set(false);
             // set future to null to prevent deadlock
             handlerFuture = null;
             service.shutdown();
+
+            if (next != null) {
+                next.onDisconnect(reason);
+            }
         }
     }
 
@@ -448,6 +463,9 @@ public class JournalClient {
                                     break OUT;
                                 }
                                 break;
+                            case SERVER_SHUTDOWN:
+                                reason = DisconnectReason.BROKEN_CHANNEL;
+                                break OUT;
                             default:
                                 LOGGER.warn("Unknown command: ", commandConsumer.getValue());
                         }

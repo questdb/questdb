@@ -42,8 +42,7 @@ public class JournalEventProcessor {
             long availableSequence = blocking ? this.barrier.waitFor(nextSequence) : this.barrier.getCursor();
             try {
                 while (nextSequence <= availableSequence) {
-                    JournalEvent event = ringBuffer.get(nextSequence);
-                    handler.handle(event);
+                    handler.handle(ringBuffer.get(nextSequence));
                     nextSequence++;
                 }
                 sequence.set(availableSequence);

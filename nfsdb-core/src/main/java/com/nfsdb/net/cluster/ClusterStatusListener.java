@@ -14,14 +14,12 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.dfrm;
+package com.nfsdb.net.cluster;
 
-import com.nfsdb.Journal;
+public interface ClusterStatusListener {
+    void onNodeActive();
 
-public interface DataFrameSource {
-    DataFrame getFrame();
+    void onNodeStandingBy(ClusterNode activeNode);
 
-    void reset();
-
-    Journal getJournal();
+    void onShutdown();
 }

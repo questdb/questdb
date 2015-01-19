@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,13 +19,13 @@ package com.nfsdb.net;
 import com.nfsdb.Journal;
 import com.nfsdb.JournalKey;
 import com.nfsdb.collections.DirectIntList;
+import com.nfsdb.collections.IntIntHashMap;
 import com.nfsdb.collections.Lists;
 import com.nfsdb.exceptions.ClusterLossException;
 import com.nfsdb.exceptions.JournalDisconnectedChannelException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
-import com.nfsdb.logging.Logger;
-import com.nfsdb.net.auth.Authorizer;
+import com.nfsdb.net.auth.AuthorizationHandler;
 import com.nfsdb.net.bridge.JournalEvent;
 import com.nfsdb.net.bridge.JournalEventHandler;
 import com.nfsdb.net.bridge.JournalEventProcessor;
@@ -49,9 +49,8 @@ import java.util.List;
 public class JournalServerAgent {
 
     private static final byte JOURNAL_INDEX_NOT_FOUND = -1;
-    private final DirectIntList writerToReaderMap = new DirectIntList();
+    private final IntIntHashMap writerToReaderMap = new IntIntHashMap();
     private final DirectIntList readerToWriterMap = new DirectIntList();
-    private final Logger LOGGER = Logger.getLogger(JournalServerAgent.class);
     private final JournalServer server;
     private final CommandConsumer commandConsumer = new CommandConsumer();
     private final CommandProducer commandProducer = new CommandProducer();
@@ -66,25 +65,23 @@ public class JournalServerAgent {
     private final StatsCollectingWritableByteChannel statsChannel;
     private final JournalEventProcessor eventProcessor;
     private final EventHandler handler = new EventHandler();
-    private final Authorizer authorizer;
+    private final AuthorizationHandler authorizationHandler;
     private final ByteArrayResponseConsumer byteArrayResponseConsumer = new ByteArrayResponseConsumer();
     private final SocketAddress socketAddress;
     private boolean authorized;
 
-    public JournalServerAgent(JournalServer server, SocketAddress socketAddress, Authorizer authorizer) {
+    public JournalServerAgent(JournalServer server, SocketAddress socketAddress, AuthorizationHandler authorizationHandler) {
         this.server = server;
         this.socketAddress = socketAddress;
         this.statsChannel = new StatsCollectingWritableByteChannel(socketAddress);
         this.eventProcessor = new JournalEventProcessor(server.getBridge());
-        this.authorizer = authorizer;
-        this.authorized = authorizer == null;
-        writerToReaderMap.zero(JOURNAL_INDEX_NOT_FOUND);
+        this.authorizationHandler = authorizationHandler;
+        this.authorized = authorizationHandler == null;
         readerToWriterMap.zero(JOURNAL_INDEX_NOT_FOUND);
     }
 
     public void close() {
         server.getBridge().removeAgentSequence(eventProcessor.getSequence());
-        writerToReaderMap.free();
         readerToWriterMap.free();
     }
 
@@ -92,19 +89,11 @@ public class JournalServerAgent {
         commandConsumer.read(channel);
         if (commandConsumer.isComplete()) {
             switch (commandConsumer.getValue()) {
-                case PROTOCOL_VERSION:
-                    intResponseConsumer.read(channel);
-                    if (intResponseConsumer.isComplete()) {
-                        checkProtocolVersion(channel, intResponseConsumer.getValue());
-                        intResponseConsumer.reset();
-                        commandConsumer.reset();
-                    }
-                    break;
-                case CLUSTER_WIN:
+                case CLUSTER_VOTE:
                     checkAuthorized(channel);
                     intResponseConsumer.read(channel);
                     if (intResponseConsumer.isComplete()) {
-                        boolean loss = intResponseConsumer.getValue() > server.getClusterInstance();
+                        boolean loss = intResponseConsumer.getValue() > server.getServerInstance();
                         intResponseConsumer.reset();
                         commandConsumer.reset();
 
@@ -114,6 +103,50 @@ public class JournalServerAgent {
                         } else {
                             error(channel, "WIN");
                         }
+                    }
+                    break;
+                case SET_KEY_CMD:
+                    server.getLogger().msg()
+                            .setLevel(ServerLogMsg.Level.TRACE)
+                            .setSocketAddress(socketAddress)
+                            .setMessage("SetKey command received")
+                            .send();
+                    setKeyRequestConsumer.read(channel);
+                    if (setKeyRequestConsumer.isComplete()) {
+                        setClientKey(channel, setKeyRequestConsumer.getValue());
+                        setKeyRequestConsumer.reset();
+                        commandConsumer.reset();
+                    }
+                    break;
+                case DELTA_REQUEST_CMD:
+                    checkAuthorized(channel);
+                    server.getLogger().msg()
+                            .setLevel(ServerLogMsg.Level.TRACE)
+                            .setSocketAddress(socketAddress)
+                            .setMessage("DeltaRequest command received")
+                            .send();
+                    journalClientStateConsumer.read(channel);
+                    if (journalClientStateConsumer.isComplete()) {
+                        storeDeltaRequest(channel, journalClientStateConsumer.getValue());
+                        journalClientStateConsumer.reset();
+                        commandConsumer.reset();
+                    }
+                    break;
+                case CLIENT_READY_CMD:
+                    checkAuthorized(channel);
+                    statsChannel.setDelegate(channel);
+                    dispatch(statsChannel);
+                    statsChannel.logStats();
+                    commandConsumer.reset();
+                    break;
+                case CLIENT_DISCONNECT:
+                    throw new JournalDisconnectedChannelException();
+                case PROTOCOL_VERSION:
+                    intResponseConsumer.read(channel);
+                    if (intResponseConsumer.isComplete()) {
+                        checkProtocolVersion(channel, intResponseConsumer.getValue());
+                        intResponseConsumer.reset();
+                        commandConsumer.reset();
                     }
                     break;
                 case HANDSHAKE_COMPLETE:
@@ -132,34 +165,6 @@ public class JournalServerAgent {
                     byteArrayResponseConsumer.reset();
                     commandConsumer.reset();
                     break;
-                case SET_KEY_CMD:
-                    LOGGER.trace("SetKey command received");
-                    setKeyRequestConsumer.read(channel);
-                    if (setKeyRequestConsumer.isComplete()) {
-                        setClientKey(channel, setKeyRequestConsumer.getValue());
-                        setKeyRequestConsumer.reset();
-                        commandConsumer.reset();
-                    }
-                    break;
-                case DELTA_REQUEST_CMD:
-                    checkAuthorized(channel);
-                    LOGGER.trace("DeltaRequest command received");
-                    journalClientStateConsumer.read(channel);
-                    if (journalClientStateConsumer.isComplete()) {
-                        storeDeltaRequest(channel, journalClientStateConsumer.getValue());
-                        journalClientStateConsumer.reset();
-                        commandConsumer.reset();
-                    }
-                    break;
-                case CLIENT_READY_CMD:
-                    checkAuthorized(channel);
-                    statsChannel.setDelegate(channel);
-                    dispatchData2(statsChannel);
-                    statsChannel.logStats();
-                    commandConsumer.reset();
-                    break;
-                case CLIENT_DISCONNECT:
-                    throw new JournalDisconnectedChannelException();
                 default:
                     throw new JournalNetworkException("Corrupt channel");
             }
@@ -173,9 +178,14 @@ public class JournalServerAgent {
                 for (int i = 0, sz = readers.size(); i < sz; i++) {
                     keys.add(readers.get(i).getKey());
                 }
-                authorized = authorizer.isAuthorized(value, keys);
+                authorized = authorizationHandler.isAuthorized(value, keys);
             } catch (Throwable e) {
-                LOGGER.error("Exception in authorizer: ", e);
+                server.getLogger().msg()
+                        .setLevel(ServerLogMsg.Level.ERROR)
+                        .setSocketAddress(socketAddress)
+                        .setMessage("Exception in authorization handler:")
+                        .setException(e)
+                        .send();
                 authorized = false;
             }
         }
@@ -224,22 +234,17 @@ public class JournalServerAgent {
 
     private void setClientKey(ByteChannel channel, IndexedJournalKey indexedKey) throws JournalNetworkException {
         JournalKey<?> readerKey = indexedKey.getKey();
-        int maxIndex = server.getMaxWriterIndex();
-        if (indexedKey.getIndex() > maxIndex) {
-            error(channel, "Journal index is too large. Max " + maxIndex);
+        int writerIndex = server.getWriterIndex(readerKey);
+        if (writerIndex == JournalServer.JOURNAL_KEY_NOT_FOUND) {
+            error(channel, "Requested key not exported: " + readerKey);
         } else {
-            int writerIndex = server.getWriterIndex(readerKey);
-            if (writerIndex == JournalServer.JOURNAL_KEY_NOT_FOUND) {
-                error(channel, "Requested key not exported: " + readerKey);
-            } else {
-                writerToReaderMap.extendAndSet(writerIndex, indexedKey.getIndex());
-                readerToWriterMap.extendAndSet(indexedKey.getIndex(), writerIndex);
-                try {
-                    createReader(indexedKey.getIndex(), readerKey);
-                    ok(channel);
-                } catch (JournalException e) {
-                    error(channel, "Could not created reader for key: " + readerKey, e);
-                }
+            writerToReaderMap.put(writerIndex, indexedKey.getIndex());
+            readerToWriterMap.extendAndSet(indexedKey.getIndex(), writerIndex);
+            try {
+                createReader(indexedKey.getIndex(), readerKey);
+                ok(channel);
+            } catch (JournalException e) {
+                error(channel, "Could not created reader for key: " + readerKey, e);
             }
         }
     }
@@ -260,7 +265,7 @@ public class JournalServerAgent {
             request.deepCopy(r);
             r.invalidateClientState();
             r.setClientStateSyncTime(0);
-            r.setWriterUpdateReceived(false);
+            r.setWaitingOnEvents(true);
 
             ok(channel);
         }
@@ -276,7 +281,12 @@ public class JournalServerAgent {
 
     private void error(WritableByteChannel channel, String message, Exception e) throws JournalNetworkException {
         stringResponseProducer.write(channel, message);
-        LOGGER.info(message, e);
+        server.getLogger().msg()
+                .setLevel(ServerLogMsg.Level.INFO)
+                .setSocketAddress(socketAddress)
+                .setMessage(message)
+                .setException(e)
+                .send();
     }
 
     private boolean processJournalEvents(final WritableByteChannel channel, boolean blocking) throws JournalNetworkException {
@@ -288,29 +298,41 @@ public class JournalServerAgent {
 
             // handler would have dispatched those journals, which received updates
             // this loop does two things:
-            // 1. attempts to dispatch journals that didn't receive updates, dispatch method would check timeout and decide.
+            // 1. attempts to dispatch0 journals that didn't receive updates, dispatch0 method would check timeout and decide.
             // 2. reset writer update received status
             for (int i = 0, sz = clientStates.size(); i < sz; i++) {
                 JournalClientState state = clientStates.get(i);
-                if (state.noCommitNotification()) {
-                    dataSent = dispatch(channel, i) || dataSent;
+                if (state.isWaitingOnEvents()) {
+                    dataSent = dispatch0(channel, i) || dataSent;
                 }
-                state.setWriterUpdateReceived(false);
+                state.setWaitingOnEvents(true);
             }
 
             if (dataSent) {
                 commandProducer.write(channel, Command.SERVER_READY_CMD);
             } else if (blocking) {
-                LOGGER.error("Client appears to be refusing new data from server, corrupt client? [" + socketAddress + "]");
+                server.getLogger().msg()
+                        .setLevel(ServerLogMsg.Level.INFO)
+                        .setSocketAddress(socketAddress)
+                        .setMessage("Client appears to be refusing new data from server, corrupt client")
+                        .send();
             }
         } else {
-            commandProducer.write(channel, Command.SERVER_HEARTBEAT);
-            LOGGER.debug("Heartbeat: %s", channel);
+            if (server.isRunning()) {
+                commandProducer.write(channel, Command.SERVER_HEARTBEAT);
+                server.getLogger().msg()
+                        .setLevel(ServerLogMsg.Level.INFO)
+                        .setSocketAddress(socketAddress)
+                        .setMessage("Heartbeat")
+                        .send();
+            } else {
+                commandProducer.write(channel, Command.SERVER_SHUTDOWN);
+            }
         }
         return dataSent;
     }
 
-    private boolean dispatch(WritableByteChannel channel, int journalIndex) {
+    private boolean dispatch0(WritableByteChannel channel, int journalIndex) {
         long time = System.currentTimeMillis();
         JournalClientState state = clientStates.get(journalIndex);
         JournalDeltaProducer journalDeltaProducer = getProducer(journalIndex);
@@ -326,7 +348,7 @@ public class JournalServerAgent {
         // x1 = 1 && x2 = 1 ->  send (either new request, or previously validated but not sent with and update)
 
         if (journalDeltaProducer == null || state == null || state.isClientStateInvalid() ||
-                (state.noCommitNotification() && time - state.getClientStateSyncTime() <= ServerConfig.SYNC_TIMEOUT)) {
+                (state.isWaitingOnEvents() && time - state.getClientStateSyncTime() <= ServerConfig.SYNC_TIMEOUT)) {
             return false;
         }
 
@@ -340,12 +362,17 @@ public class JournalServerAgent {
             }
             return dataSent;
         } catch (Exception e) {
-            LOGGER.error("Cannot produce delta", e);
+            server.getLogger().msg()
+                    .setLevel(ServerLogMsg.Level.ERROR)
+                    .setSocketAddress(socketAddress)
+                    .setMessage("Client appears to be refusing new data from server, corrupt client")
+                    .setException(e)
+                    .send();
             return false;
         }
     }
 
-    private void dispatchData2(WritableByteChannel channel) throws JournalNetworkException {
+    private void dispatch(WritableByteChannel channel) throws JournalNetworkException {
         if (!processJournalEvents(channel, false)) {
             processJournalEvents(channel, true);
         }
@@ -364,6 +391,7 @@ public class JournalServerAgent {
                                      int index) throws JournalNetworkException, JournalException {
         journalDeltaProducer.configure(state);
         if (journalDeltaProducer.hasContent()) {
+            server.getLogger().msg().setMessage("Sending data").setSocketAddress(socketAddress).send();
             commandProducer.write(channel, Command.JOURNAL_DELTA_CMD);
             intResponseProducer.write(channel, index);
             journalDeltaProducer.write(channel);
@@ -392,9 +420,9 @@ public class JournalServerAgent {
             int journalIndex = writerToReaderMap.get(event.getIndex());
             if (journalIndex != JOURNAL_INDEX_NOT_FOUND) {
                 JournalClientState status = clientStates.get(journalIndex);
-                if (status != null && status.noCommitNotification()) {
-                    status.setWriterUpdateReceived(true);
-                    dataSent = dispatch(channel, journalIndex) || dataSent;
+                if (status != null && status.isWaitingOnEvents()) {
+                    status.setWaitingOnEvents(false);
+                    dataSent = dispatch0(channel, journalIndex) || dataSent;
                 }
             }
         }

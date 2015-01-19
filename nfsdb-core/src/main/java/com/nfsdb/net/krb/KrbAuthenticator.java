@@ -17,11 +17,11 @@
 package com.nfsdb.net.krb;
 
 import com.nfsdb.JournalKey;
-import com.nfsdb.net.auth.Authorizer;
+import com.nfsdb.net.auth.AuthorizationHandler;
 
 import java.util.List;
 
-public class KrbAuthenticator implements Authorizer {
+public class KrbAuthenticator implements AuthorizationHandler {
 
     private final String krb5Conf;
     private final String principal;
