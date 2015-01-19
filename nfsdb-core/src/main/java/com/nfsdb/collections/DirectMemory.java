@@ -17,35 +17,29 @@
 package com.nfsdb.collections;
 
 import com.nfsdb.utils.Unsafe;
-import sun.misc.Cleaner;
 
 import java.io.Closeable;
 
 public class DirectMemory implements Closeable {
 
-    private final Cleaner cleaner = Cleaner.create(this, new Runnable() {
-        @Override
-        public void run() {
-            free0();
-        }
-    });
     protected long address;
-
-    private void free0() {
-        if (address != 0) {
-            Unsafe.getUnsafe().freeMemory(address);
-            address = 0;
-
-            freeInternal();
-        }
-    }
 
     protected void freeInternal() {
 
     }
 
+    @Override
+    protected void finalize() throws Throwable {
+        free();
+        super.finalize();
+    }
+
     public void free() {
-        cleaner.clean();
+        if (address != 0) {
+            Unsafe.getUnsafe().freeMemory(address);
+            address = 0;
+            freeInternal();
+        }
     }
 
     @Override
