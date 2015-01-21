@@ -118,6 +118,7 @@ public class ClusterController {
 
         server = new JournalServer(new ServerConfig() {{
             setHostname(thisNode().getAddress());
+            setEnableMulticast(false);
         }}, factory, null, thisNode().getId());
 
         for (int i = 0, writersSize = writers.size(); i < writersSize; i++) {
@@ -149,6 +150,7 @@ public class ClusterController {
 
                 client = new JournalClient(new ClientConfig() {{
                     setHostname(node.getAddress());
+                    setEnableMulticast(false);
                 }}, factory);
 
                 if (client.pingServer()) {
