@@ -62,15 +62,32 @@ public class ClusterController {
             return thread;
         }
     });
+    private final ServerConfig serverConfig;
+    private final ClientConfig clientConfig;
     private JournalClient client;
     private JournalServer server;
 
-    public ClusterController(List<ClusterNode> nodes, int instance, ClusterStatusListener listener, JournalFactory factory, List<JournalWriter> writers) {
+    public ClusterController(
+            ServerConfig serverConfig
+            , ClientConfig clientConfig
+            , JournalFactory factory
+            , List<ClusterNode> nodes
+            , int instance
+            , List<JournalWriter> writers
+            , ClusterStatusListener listener
+    ) {
+        this.serverConfig = serverConfig;
+        this.clientConfig = clientConfig;
+        this.factory = factory;
         this.nodes = nodes;
         this.instance = instance;
-        this.listener = listener;
-        this.factory = factory;
         this.writers = writers;
+        this.listener = listener;
+
+
+    }
+    public ClusterController(List<ClusterNode> nodes, int instance, ClusterStatusListener listener, JournalFactory factory, List<JournalWriter> writers) {
+        this(new ServerConfig(), new ClientConfig(), factory, nodes, instance, writers, listener);
     }
 
     public void start() {
@@ -118,10 +135,9 @@ public class ClusterController {
         }
 
         LOGGER.info(thisNode() + " Starting server");
-        server = new JournalServer(new ServerConfig() {{
-            setHostname(thisNode().getAddress());
-            setEnableMulticast(false);
-        }}, factory, null, thisNode().getId());
+        serverConfig.setHostname(thisNode().getAddress());
+        serverConfig.setEnableMulticast(false);
+        server = new JournalServer(serverConfig, factory, null, thisNode().getId());
 
         for (int i = 0, writersSize = writers.size(); i < writersSize; i++) {
             server.publish(writers.get(i));
@@ -156,10 +172,9 @@ public class ClusterController {
 
     private void waitTillDies(final ClusterNode node) {
         try {
-            JournalClient client = new JournalClient(new ClientConfig() {{
-                setHostname(node.getAddress());
-                setEnableMulticast(false);
-            }}, factory);
+            clientConfig.setHostname(node.getAddress());
+            clientConfig.setEnableMulticast(false);
+            JournalClient client = new JournalClient(clientConfig, factory);
 
             try {
                 while (client.pingServer()) {
@@ -181,10 +196,9 @@ public class ClusterController {
                     continue;
                 }
 
-                client = new JournalClient(new ClientConfig() {{
-                    setHostname(node.getAddress());
-                    setEnableMulticast(false);
-                }}, factory);
+                clientConfig.setHostname(node.getAddress());
+                clientConfig.setEnableMulticast(false);
+                client = new JournalClient(clientConfig, factory);
 
                 if (client.pingServer()) {
                     return node;
@@ -199,6 +213,7 @@ public class ClusterController {
         return null;
     }
 
+    @SuppressWarnings("unchecked")
     private void setupClient(ClusterNode node) throws JournalNetworkException {
 
         LOGGER.info(thisNode() + " Subscribing journals");
