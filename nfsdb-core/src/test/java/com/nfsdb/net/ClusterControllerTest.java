@@ -81,8 +81,12 @@ public class ClusterControllerTest extends AbstractTest {
         active2Latch.await(10, TimeUnit.SECONDS);
         Assert.assertEquals("Node 2 is expected to become active", 0, active2Latch.getCount());
 
-        active1Latch.await(1, TimeUnit.SECONDS);
-        Assert.assertEquals("Node 1 active() callback should not have been called", 1, active1Latch.getCount());
+        // on slow servers controller 1 can go all the way to activation
+        // only to become standby after controller 2 comes online.
+        // however active1Latch becomes set irreversibly.
+
+//        active1Latch.await(1, TimeUnit.SECONDS);
+//        Assert.assertEquals("Node 1 active() callback should not have been called", 1, active1Latch.getCount());
 
         standby1Latch.await(200, TimeUnit.MILLISECONDS);
         Assert.assertEquals("Node 1 is expected to be on standby", 0, standby1Latch.getCount());
