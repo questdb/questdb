@@ -109,6 +109,7 @@ public class ClusterController {
 
         try {
             if (activeNode != null) {
+                LOGGER.info(thisNode() + " There is active node already %s. Yielding");
                 setupClient(activeNode);
                 return;
             }
@@ -116,6 +117,7 @@ public class ClusterController {
             LOGGER.info("Exception during initial server acquisition. It is safe to ignore: %s", ignore.getMessage());
         }
 
+        LOGGER.info(thisNode() + " Starting server");
         server = new JournalServer(new ServerConfig() {{
             setHostname(thisNode().getAddress());
             setEnableMulticast(false);
@@ -126,16 +128,20 @@ public class ClusterController {
         }
         server.start();
 
+
         if ((activeNode = getActiveNode()) != null && !client.voteInstance(instance)) {
+            LOGGER.info(thisNode() + " Lost tie-break vote, becoming a client");
             // don't stop server explicitly, it wil shut down after being voted out
             setupClient(activeNode);
             return;
         }
 
         if (client != null) {
+            LOGGER.info(thisNode() + " Stopping client remnants");
             client.halt();
             client = null;
         }
+        LOGGER.info(thisNode() + " Activating callback");
         listener.onNodeActive();
     }
 
@@ -167,11 +173,14 @@ public class ClusterController {
     }
 
     private void setupClient(ClusterNode node) throws JournalNetworkException {
+
+        LOGGER.info(thisNode() + " Subscribing journals");
         for (int i = 0, sz = writers.size(); i < sz; i++) {
             JournalWriter w = writers.get(i);
             client.subscribe(w.getKey(), w, null);
         }
 
+        LOGGER.info(thisNode() + " Starting client");
         client.setDisconnectCallback(new JournalClient.DisconnectCallback() {
             @Override
             public void onDisconnect(JournalClient.DisconnectReason reason) {
@@ -183,6 +192,7 @@ public class ClusterController {
         }).start();
 
         if (listener != null) {
+            LOGGER.info(thisNode() + " Notifying callback of standby state");
             listener.onNodeStandingBy(node);
         }
 

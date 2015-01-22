@@ -321,7 +321,7 @@ public class JournalServerAgent {
             if (server.isRunning()) {
                 commandProducer.write(channel, Command.SERVER_HEARTBEAT);
                 server.getLogger().msg()
-                        .setLevel(ServerLogMsg.Level.INFO)
+                        .setLevel(ServerLogMsg.Level.TRACE)
                         .setSocketAddress(socketAddress)
                         .setMessage("Heartbeat")
                         .send();

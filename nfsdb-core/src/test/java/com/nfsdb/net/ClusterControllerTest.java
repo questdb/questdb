@@ -81,7 +81,7 @@ public class ClusterControllerTest extends AbstractTest {
         active2Latch.await(10, TimeUnit.SECONDS);
         Assert.assertEquals("Node 2 is expected to become active", 0, active2Latch.getCount());
 
-        active1Latch.await(200, TimeUnit.MILLISECONDS);
+        active1Latch.await(1, TimeUnit.SECONDS);
         Assert.assertEquals("Node 1 active() callback should not have been called", 1, active1Latch.getCount());
 
         standby1Latch.await(200, TimeUnit.MILLISECONDS);
@@ -94,7 +94,7 @@ public class ClusterControllerTest extends AbstractTest {
         controller2.halt();
 
 
-        shutdown2.await(1, TimeUnit.SECONDS);
+        shutdown2.await(5, TimeUnit.SECONDS);
         Assert.assertEquals("Controller 2 should have shut down", 0, shutdown2.getCount());
 
         active1Latch.await(10, TimeUnit.SECONDS);
@@ -201,14 +201,14 @@ public class ClusterControllerTest extends AbstractTest {
                     @Override
                     public void onNodeActive() {
                         try {
-                            TestUtils.generateQuoteData(writer1, 1000000);
-                            TestUtils.generateQuoteData(writer1, 1000000, writer1.getMaxTimestamp());
+                            TestUtils.generateQuoteData(writer1, 100000);
+                            TestUtils.generateQuoteData(writer1, 100000, writer1.getMaxTimestamp());
                             writer1.commit();
-                            TestUtils.generateQuoteData(writer1, 1000000, writer1.getMaxTimestamp());
+                            TestUtils.generateQuoteData(writer1, 100000, writer1.getMaxTimestamp());
                             writer1.commit();
-                            TestUtils.generateQuoteData(writer1, 1000000, writer1.getMaxTimestamp());
+                            TestUtils.generateQuoteData(writer1, 100000, writer1.getMaxTimestamp());
                             writer1.commit();
-                            TestUtils.generateQuoteData(writer1, 1000000, writer1.getMaxTimestamp());
+                            TestUtils.generateQuoteData(writer1, 100000, writer1.getMaxTimestamp());
                             writer1.commit();
                             expected.set(writer1.size());
                             active1.countDown();

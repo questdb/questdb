@@ -94,16 +94,6 @@ public class ClientConfig extends NetworkConfig {
                     .setOption(StandardSocketOptions.SO_RCVBUF, getSoRcvBuf())
                     .setOption(StandardSocketOptions.SO_LINGER, getLinger());
 
-            // linux doubles buffer size, which is returned
-            if (channel.getOption(StandardSocketOptions.SO_SNDBUF) != getSoSndBuf()
-                    && channel.getOption(StandardSocketOptions.SO_SNDBUF) != getSoSndBuf() * 2) {
-                LOGGER.warn("SO_SNDBUF value is ignored");
-            }
-            if (channel.getOption(StandardSocketOptions.SO_RCVBUF) != getSoRcvBuf()
-                    && channel.getOption(StandardSocketOptions.SO_RCVBUF) != getSoRcvBuf() * 2) {
-                LOGGER.warn("SO_RCVBUF value is ignored");
-            }
-
             LOGGER.info("Connected to %s", address);
             return channel;
         } catch (UnresolvedAddressException e) {
