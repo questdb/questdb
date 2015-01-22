@@ -267,7 +267,7 @@ public class ClusterControllerTest extends AbstractTest {
         );
 
         controller1.start();
-        active1.await(10, TimeUnit.SECONDS);
+        active1.await(30, TimeUnit.SECONDS);
         Assert.assertEquals(0, active1.getCount());
 
         controller2.start();

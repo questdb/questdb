@@ -214,6 +214,7 @@ public class JournalClient {
     }
 
     public boolean voteInstance(int instance) throws JournalNetworkException {
+        LOGGER.info("Instance %s is sending vote", instance);
         openChannel();
         commandProducer.write(channel, Command.CLUSTER_VOTE);
         intResponseProducer.write(channel, instance);

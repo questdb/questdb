@@ -109,7 +109,7 @@ public class ClusterController {
 
         try {
             if (activeNode != null) {
-                LOGGER.info(thisNode() + " There is active node already %s. Yielding");
+                LOGGER.info(thisNode() + " There is active node already %s. Yielding", activeNode);
                 setupClient(activeNode);
                 return;
             }
