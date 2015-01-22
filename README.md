@@ -4,7 +4,16 @@
 
 ## News
 
-14 Oct 2014. [Release 2.1.0](http://github.nfsdb.org/release-notes/) is out.
+22 Jan 2015
+
+3.0.0-SNAPSHOT is available for testing.
+
+There is a number of exciting features planned for 3.0 release. Although main focus is on super-fast, functional query language and data accessibility, we have some interesting features ready to go:
+
+- generic data access; for on-the-fly data definition and non-ORM data access
+- write cluster and automatic failover for data producers
+
+14 Oct 2014. [Release 2.1.0](http://github.nfsdb.org/release-notes/) - stable
 
 This is security-centric release aimed at having replication meet security standards. Features supported in this release are: SSL, Certificate auth (Mutual-auth), Shared Key Auth, Kerberso Auth, Kerberos SSO Auth (Windows only) and client auto-reconnect.
 
