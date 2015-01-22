@@ -17,7 +17,14 @@
 package com.nfsdb.exceptions;
 
 public class ClusterLossException extends JournalNetworkException {
-    public ClusterLossException() {
+    private final int instance;
+
+    public ClusterLossException(int instance) {
         super("Cluster loss");
+        this.instance = instance;
+    }
+
+    public int getInstance() {
+        return instance;
     }
 }

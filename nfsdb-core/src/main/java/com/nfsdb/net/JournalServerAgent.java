@@ -93,13 +93,14 @@ public class JournalServerAgent {
                     checkAuthorized(channel);
                     intResponseConsumer.read(channel);
                     if (intResponseConsumer.isComplete()) {
-                        boolean loss = intResponseConsumer.getValue() > server.getServerInstance();
+                        int inst = intResponseConsumer.getValue();
+                        boolean loss = inst > server.getServerInstance();
                         intResponseConsumer.reset();
                         commandConsumer.reset();
 
                         if (loss) {
                             ok(channel);
-                            throw new ClusterLossException();
+                            throw new ClusterLossException(inst);
                         } else {
                             error(channel, "WIN");
                         }

@@ -289,7 +289,7 @@ public class JournalServer {
                         break;
                     } catch (ClusterLossException e) {
                         haltServer = true;
-                        LOGGER.info("Server lost cluster vote to " + holder.socketAddress);
+                        LOGGER.info("Server lost cluster vote to %s [%s]", e.getInstance(), holder.socketAddress);
                         break;
                     } catch (JournalNetworkException e) {
                         if (running.get()) {
