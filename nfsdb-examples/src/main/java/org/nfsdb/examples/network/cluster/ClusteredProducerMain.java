@@ -18,6 +18,7 @@ package org.nfsdb.examples.network.cluster;
 
 import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.net.cluster.ClusterController;
@@ -58,6 +59,17 @@ public class ClusteredProducerMain {
         );
 
         cc.start();
+
+        Runtime.getRuntime().addShutdownHook(new Thread() {
+            @Override
+            public void run() {
+                try {
+                    cc.halt();
+                } catch (JournalNetworkException e) {
+                    e.printStackTrace();
+                }
+            }
+        });
     }
 
     /**
