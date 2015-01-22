@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -136,13 +136,40 @@ public class ClusterController {
             return;
         }
 
+        // after this point server cannot be voted out
+        server.setIgnoreVoting(true);
+
         if (client != null) {
             LOGGER.info(thisNode() + " Stopping client remnants");
             client.halt();
             client = null;
         }
+
+        if (activeNode != null) {
+            LOGGER.info("%s is waiting for %s to shutdown", thisNode(), activeNode);
+            waitTillDies(activeNode);
+        }
+
         LOGGER.info(thisNode() + " Activating callback");
         listener.onNodeActive();
+    }
+
+    private void waitTillDies(final ClusterNode node) {
+        try {
+            JournalClient client = new JournalClient(new ClientConfig() {{
+                setHostname(node.getAddress());
+                setEnableMulticast(false);
+            }}, factory);
+
+            try {
+                while (client.pingServer()) {
+                    Thread.yield();
+                }
+            } finally {
+                client.halt();
+            }
+        } catch (JournalNetworkException ignore) {
+        }
     }
 
     private ClusterNode getActiveNode() {

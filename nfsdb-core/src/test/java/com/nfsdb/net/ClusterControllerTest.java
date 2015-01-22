@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -78,22 +78,26 @@ public class ClusterControllerTest extends AbstractTest {
         controller1.start();
         controller2.start();
 
-        active2Latch.await(10, TimeUnit.SECONDS);
-        Assert.assertEquals("Node 2 is expected to become active", 0, active2Latch.getCount());
+        do {
+            active1Latch.await(1, TimeUnit.MICROSECONDS);
+            active2Latch.await(1, TimeUnit.MICROSECONDS);
+        } while (active1Latch.getCount() > 0 && active2Latch.getCount() > 0);
 
-        // on slow servers controller 1 can go all the way to activation
-        // only to become standby after controller 2 comes online.
-        // however active1Latch becomes set irreversibly.
+        Assert.assertFalse("Two nodes are active simultaneously", active1Latch.getCount() == 0 && active2Latch.getCount() == 0);
 
-//        active1Latch.await(1, TimeUnit.SECONDS);
-//        Assert.assertEquals("Node 1 active() callback should not have been called", 1, active1Latch.getCount());
+        if (active1Latch.getCount() == 0) {
+            standby2Latch.await(200, TimeUnit.MILLISECONDS);
+            Assert.assertEquals("Node 2 is expected to be on standby", 0, standby2Latch.getCount());
 
-        standby1Latch.await(200, TimeUnit.MILLISECONDS);
-        Assert.assertEquals("Node 1 is expected to be on standby", 0, standby1Latch.getCount());
+            standby1Latch.await(200, TimeUnit.MILLISECONDS);
+            Assert.assertEquals("Node 1 is NOT expected to be on standby", 1, standby1Latch.getCount());
+        } else {
+            standby1Latch.await(200, TimeUnit.MILLISECONDS);
+            Assert.assertEquals("Node 1 is expected to be on standby", 0, standby1Latch.getCount());
 
-        standby2Latch.await(200, TimeUnit.MILLISECONDS);
-        Assert.assertEquals("Node 2 onNodeStandingBy() is not expected to be called", 0, standby1Latch.getCount());
-
+            standby2Latch.await(200, TimeUnit.MILLISECONDS);
+            Assert.assertEquals("Node 2 is NOT expected to be on standby", 1, standby2Latch.getCount());
+        }
 
         controller2.halt();
 

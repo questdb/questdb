@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -56,6 +56,7 @@ public class JournalServer {
     private final AuthorizationHandler authorizationHandler;
     private final JournalServerLogger serverLogger = new JournalServerLogger();
     private final int serverInstance;
+    private final AtomicBoolean ignoreVoting = new AtomicBoolean(false);
     private ServerSocketChannel serverSocketChannel;
 
     public JournalServer(JournalReaderFactory factory) throws JournalNetworkException {
@@ -230,6 +231,15 @@ public class JournalServer {
 
     public int getServerInstance() {
         return serverInstance;
+    }
+
+
+    public boolean isIgnoreVoting() {
+        return ignoreVoting.get();
+    }
+
+    public void setIgnoreVoting(boolean ignore) {
+        ignoreVoting.set(ignore);
     }
 
     private class Acceptor implements Runnable {
