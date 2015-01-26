@@ -62,8 +62,11 @@ public class ClusterControllerTest extends AbstractTest {
                 new ServerConfig() {{
                     addNode(new ServerNode(1, "localhost:7080"));
                     addNode(new ServerNode(2, "localhost:7090"));
+                    setEnableMultiCast(false);
                 }},
-                new ClientConfig(),
+                new ClientConfig() {{
+                    setEnableMultiCast(false);
+                }},
                 factory,
                 1,
                 new ArrayList<JournalWriter>() {{
@@ -103,8 +106,11 @@ public class ClusterControllerTest extends AbstractTest {
                 new ServerConfig() {{
                     addNode(new ServerNode(1, "localhost:7080"));
                     addNode(new ServerNode(2, "localhost:7090"));
+                    setEnableMultiCast(false);
                 }},
-                new ClientConfig(),
+                new ClientConfig() {{
+                    setEnableMultiCast(false);
+                }},
                 factory2,
                 2,
                 new ArrayList<JournalWriter>() {{
@@ -299,8 +305,11 @@ public class ClusterControllerTest extends AbstractTest {
                 new ServerConfig() {{
                     addNode(new ServerNode(1, "localhost:7080"));
                     addNode(new ServerNode(2, "localhost:7090"));
+                    setEnableMultiCast(false);
                 }},
-                new ClientConfig(),
+                new ClientConfig() {{
+                    setEnableMultiCast(false);
+                }},
                 fact,
                 instance,
                 new ArrayList<JournalWriter>() {{
