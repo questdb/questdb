@@ -41,11 +41,47 @@ public class IntegrationTest extends AbstractTest {
     @Before
     public void setUp() throws Exception {
         server = new JournalServer(new ServerConfig() {{
-            setHostname("localhost");
             setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(100));
-            setEnableMulticast(false);
+            setEnableMultiCast(false);
         }}, factory);
         client = new JournalClient(new ClientConfig("localhost"), factory);
+    }
+
+    @Test(expected = JournalNetworkException.class)
+    public void testClientConnect() throws Exception {
+        client.start();
+    }
+
+    @Test
+    public void testClientConnectServerHalt() throws Exception {
+        server.start();
+        client.start();
+        Thread.sleep(TimeUnit.SECONDS.toMillis(1));
+        server.halt();
+        Assert.assertEquals(0, server.getConnectedClients());
+        Assert.assertFalse(server.isRunning());
+        Thread.sleep(500);
+        Assert.assertFalse(client.isRunning());
+        client.halt();
+    }
+
+    @Test
+    public void testClientDisconnect() throws Exception {
+        server.start();
+        client.start();
+        Thread.sleep(100);
+        client.halt();
+        Assert.assertFalse(client.isRunning());
+        Thread.sleep(100);
+        Assert.assertEquals(0, server.getConnectedClients());
+        server.halt();
+    }
+
+    @Test
+    public void testServerStartStop() throws Exception {
+        server.start();
+        server.halt();
+        Assert.assertFalse(server.isRunning());
     }
 
     @Test
@@ -72,47 +108,6 @@ public class IntegrationTest extends AbstractTest {
         server.halt();
         Journal<Quote> local = factory.reader(Quote.class, "local");
         TestUtils.assertDataEquals(remote, local);
-    }
-
-    @Test
-    public void testTwoJournalsSync() throws Exception {
-        int size = 10000;
-        JournalWriter<Quote> remote1 = factory.writer(Quote.class, "remote1", 2 * size);
-        JournalWriter<TestEntity> remote2 = factory.writer(TestEntity.class, "remote2", 2 * size);
-        server.publish(remote1);
-        server.publish(remote2);
-        server.start();
-
-        final CountDownLatch latch = new CountDownLatch(2);
-        client.subscribe(Quote.class, "remote1", "local1", 2 * size, new TxListener() {
-            @Override
-            public void onCommit() {
-                latch.countDown();
-            }
-        });
-
-        client.subscribe(TestEntity.class, "remote2", "local2", 2 * size, new TxListener() {
-            @Override
-            public void onCommit() {
-                latch.countDown();
-            }
-        });
-        client.start();
-
-        TestUtils.generateQuoteData(remote1, size);
-        TestUtils.generateTestEntityData(remote2, size);
-
-        latch.await();
-
-        client.halt();
-        server.halt();
-
-        Journal<Quote> local1 = factory.reader(Quote.class, "local1");
-        Assert.assertEquals("Local1 has wrong size", size, local1.size());
-
-        Journal<TestEntity> local2 = factory.reader(TestEntity.class, "local2");
-        Assert.assertEquals("Remote2 has wrong size", size, remote2.size());
-        Assert.assertEquals("Local2 has wrong size", size, local2.size());
     }
 
     @Test
@@ -172,40 +167,44 @@ public class IntegrationTest extends AbstractTest {
     }
 
     @Test
-    public void testServerStartStop() throws Exception {
+    public void testTwoJournalsSync() throws Exception {
+        int size = 10000;
+        JournalWriter<Quote> remote1 = factory.writer(Quote.class, "remote1", 2 * size);
+        JournalWriter<TestEntity> remote2 = factory.writer(TestEntity.class, "remote2", 2 * size);
+        server.publish(remote1);
+        server.publish(remote2);
         server.start();
-        server.halt();
-        Assert.assertFalse(server.isRunning());
-    }
 
-    @Test(expected = JournalNetworkException.class)
-    public void testClientConnect() throws Exception {
-        client.start();
-    }
+        final CountDownLatch latch = new CountDownLatch(2);
+        client.subscribe(Quote.class, "remote1", "local1", 2 * size, new TxListener() {
+            @Override
+            public void onCommit() {
+                latch.countDown();
+            }
+        });
 
-    @Test
-    public void testClientConnectServerHalt() throws Exception {
-        server.start();
+        client.subscribe(TestEntity.class, "remote2", "local2", 2 * size, new TxListener() {
+            @Override
+            public void onCommit() {
+                latch.countDown();
+            }
+        });
         client.start();
-        Thread.sleep(TimeUnit.SECONDS.toMillis(1));
-        server.halt();
-        Assert.assertEquals(0, server.getConnectedClients());
-        Assert.assertFalse(server.isRunning());
-        Thread.sleep(500);
-        Assert.assertFalse(client.isRunning());
+
+        TestUtils.generateQuoteData(remote1, size);
+        TestUtils.generateTestEntityData(remote2, size);
+
+        latch.await();
+
         client.halt();
-    }
-
-    @Test
-    public void testClientDisconnect() throws Exception {
-        server.start();
-        client.start();
-        Thread.sleep(100);
-        client.halt();
-        Assert.assertFalse(client.isRunning());
-        Thread.sleep(100);
-        Assert.assertEquals(0, server.getConnectedClients());
         server.halt();
+
+        Journal<Quote> local1 = factory.reader(Quote.class, "local1");
+        Assert.assertEquals("Local1 has wrong size", size, local1.size());
+
+        Journal<TestEntity> local2 = factory.reader(TestEntity.class, "local2");
+        Assert.assertEquals("Remote2 has wrong size", size, remote2.size());
+        Assert.assertEquals("Local2 has wrong size", size, local2.size());
     }
 
     @Test

@@ -16,120 +16,36 @@
 
 package com.nfsdb.net.config;
 
+import com.nfsdb.collections.Lists;
 import com.nfsdb.exceptions.JournalNetworkException;
-import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.utils.Numbers;
 
-import java.lang.reflect.Field;
+import java.io.IOException;
 import java.net.*;
+import java.nio.channels.DatagramChannel;
+import java.util.ArrayList;
 import java.util.List;
 
 public class NetworkConfig {
     public static final int DEFAULT_DATA_PORT = 7075;
+    protected static final String DEFAULT_MULTICAST_ADDRESS_IPV4 = "230.100.12.4";
+    protected static final String DEFAULT_MULTICAST_ADDRESS_IPV6_1 = "FF02:231::4500";
+
     private static final int DEFAULT_MULTICAST_PORT = 4446;
-    private static final String DEFAULT_MULTICAST_ADDRESS_IPV4 = "230.100.12.4";
-    private static final String DEFAULT_MULTICAST_ADDRESS_IPV6_1 = "FF02:231::4500";
     private static final int DEFAULT_SO_RCVBUF = 1024 * 1024;
-    private static final NetworkInterface defaultInterface;
-
-    static {
-        try {
-            Field f = NetworkInterface.class.getDeclaredField("defaultInterface");
-            f.setAccessible(true);
-            defaultInterface = (NetworkInterface) f.get(null);
-        } catch (Exception e) {
-            throw new JournalRuntimeException("Cannot lookup default network interface", e);
-        }
-    }
-
+    protected final List<ServerNode> nodes = new ArrayList<>();
     private final SslConfig sslConfig = new SslConfig();
-    protected InetAddress hostAddress;
-    private int port = DEFAULT_DATA_PORT;
-    private int multicastPort = DEFAULT_MULTICAST_PORT;
-    private InetAddress multicastAddress;
+    protected InetAddress multiCastAddress;
+    private int multiCastPort = DEFAULT_MULTICAST_PORT;
     private int soRcvBuf = DEFAULT_SO_RCVBUF;
+    private boolean enableMultiCast = true;
     private String ifName = null;
-    private String hostname = "0.0.0.0";
-    private boolean enableMulticast = true;
-    private NetworkInterface networkInterface;
 
     public static boolean isInet6(InetAddress address) {
         return address instanceof Inet6Address;
     }
 
-    public String getHostname() {
-        return hostname;
-    }
-
-    public void setHostname(String hostname) {
-        if (hostname == null) {
-            this.hostname = null;
-            return;
-        }
-
-        String parts[] = hostname.split(":");
-        switch (parts.length) {
-            case 1:
-            case 8:
-                this.hostname = hostname;
-                break;
-            case 2:
-                this.hostname = parts[0];
-                port = Numbers.parseInt(parts[1]);
-                break;
-            case 9:
-                int col = hostname.lastIndexOf(':');
-                this.hostname = hostname.substring(0, col);
-                this.port = Numbers.parseInt(hostname.subSequence(col + 1, hostname.length()));
-                break;
-            default:
-                throw new JournalRuntimeException("Unknown host format: " + hostname);
-        }
-    }
-
-    public int getPort() {
-        return port;
-    }
-
-    public void setPort(int port) {
-        this.port = port;
-    }
-
-    public int getMulticastPort() {
-        return multicastPort;
-    }
-
-    public void setMulticastPort(int multicastPort) {
-        this.multicastPort = multicastPort;
-    }
-
-    public InetAddress getMulticastAddress() throws JournalNetworkException {
-        if (multicastAddress == null) {
-            NetworkInterface ifn = getNetworkInterface();
-            try {
-                if (!ifn.supportsMulticast()) {
-                    throw new JournalNetworkException("Multicast is not supported on " + ifn.getName());
-                }
-
-                if (ifn.getInterfaceAddresses().size() == 0) {
-                    throw new JournalNetworkException("No IP addresses assigned to " + ifn.getName());
-                }
-
-                if (isInet6(ifn.getInterfaceAddresses().get(0).getAddress())) {
-                    multicastAddress = InetAddress.getByName(DEFAULT_MULTICAST_ADDRESS_IPV6_1);
-                } else {
-                    multicastAddress = InetAddress.getByName(DEFAULT_MULTICAST_ADDRESS_IPV4);
-                }
-            } catch (Exception e) {
-                throw new JournalNetworkException(e);
-            }
-        }
-
-        return multicastAddress;
-    }
-
-    public void setMulticastAddress(InetAddress multicastAddress) {
-        this.multicastAddress = multicastAddress;
+    public void addNode(ServerNode node) {
+        nodes.add(node);
     }
 
     public String getIfName() {
@@ -140,6 +56,33 @@ public class NetworkConfig {
         this.ifName = ifName;
     }
 
+    public InetAddress getMultiCastAddress() {
+        return multiCastAddress;
+    }
+
+    public void setMultiCastAddress(InetAddress multiCastAddress) {
+        this.multiCastAddress = multiCastAddress;
+    }
+
+    public int getMultiCastPort() {
+        return multiCastPort;
+    }
+
+    public void setMultiCastPort(int multiCastPort) {
+        this.multiCastPort = multiCastPort;
+    }
+
+    // todo: this is naive impl, optimise (hash map?)
+    public ServerNode getNode(int instance) {
+        for (int i = 0; i < nodes.size(); i++) {
+            ServerNode node = nodes.get(i);
+            if (node.getId() == instance) {
+                return node;
+            }
+        }
+        return null;
+    }
+
     public int getSoRcvBuf() {
         return soRcvBuf;
     }
@@ -148,84 +91,59 @@ public class NetworkConfig {
         this.soRcvBuf = soRcvBuf;
     }
 
-    private NetworkInterface checkNetworkInterface(NetworkInterface ifn, String message) throws JournalNetworkException {
-        if (ifn == null) {
-            throw new JournalNetworkException(message);
-        }
-
-        try {
-            if (!ifn.isUp()) {
-                throw new JournalNetworkException("Network interface is DOWN: " + ifn);
-            }
-        } catch (SocketException e) {
-            throw new JournalNetworkException("Cannot validate network interface", e);
-        }
-        return networkInterface = ifn;
-    }
-
-    public NetworkInterface getNetworkInterface() throws JournalNetworkException {
-        if (networkInterface != null) {
-            return networkInterface;
-        }
-
-        try {
-            if (hostname != null) {
-                hostAddress = InetAddress.getByName(hostname);
-            }
-
-            if (ifName != null) {
-                return checkNetworkInterface(NetworkInterface.getByName(ifName), "Cannot find interface: " + ifName);
-            }
-
-            if (hostAddress != null && !hostAddress.isAnyLocalAddress()) {
-                return checkNetworkInterface(NetworkInterface.getByInetAddress(hostAddress), "Cannot find network interface for host: " + hostname);
-            }
-
-            NetworkInterface ifn = NetworkInterface.getByInetAddress(InetAddress.getByName(InetAddress.getLocalHost().getHostName()));
-            if (ifn != null && ifn.isUp()) {
-                return networkInterface = ifn;
-            }
-            return checkNetworkInterface(defaultInterface, "System does not have default network interface");
-
-        } catch (SocketException e) {
-            throw new JournalNetworkException("Cannot get network interface", e);
-        } catch (UnknownHostException e) {
-            throw new JournalNetworkException(e);
-        }
-    }
-
-    public InetSocketAddress getInterfaceSocketAddress() throws JournalNetworkException {
-        NetworkInterface ifn = getNetworkInterface();
-        List<InterfaceAddress> address = ifn.getInterfaceAddresses();
-        if (address.size() == 0) {
-            throw new JournalNetworkException("Interface does not have addresses: " + ifn);
-        }
-
-        if (hostAddress == null) {
-            return new InetSocketAddress(address.get(0).getAddress(), getPort());
-        } else {
-            for (int i = 0, sz = address.size(); i < sz; i++) {
-                InetAddress addr = address.get(i).getAddress();
-                if (addr.getClass().equals(hostAddress.getClass())) {
-                    return new InetSocketAddress(addr, getPort());
-                }
-            }
-
-            throw new JournalNetworkException("Network interface " + ifn + " does not have " + (isInet6(hostAddress) ? "IPV6" : "IPV4") + " address");
-        }
-
-
-    }
-
     public SslConfig getSslConfig() {
         return sslConfig;
     }
 
-    public boolean isEnableMulticast() {
-        return enableMulticast;
+    public boolean isMultiCastEnabled() {
+        return enableMultiCast;
     }
 
-    public void setEnableMulticast(boolean enableMulticast) {
-        this.enableMulticast = enableMulticast;
+    public Lists.ImmutableIteratorWrapper<ServerNode> nodes() {
+        return Lists.immutableIterator(nodes).reset();
+    }
+
+    public void setEnableMultiCast(boolean enableMultiCast) {
+        this.enableMultiCast = enableMultiCast;
+    }
+
+    protected InetAddress getDefaultMultiCastAddress(NetworkInterface ifn) throws JournalNetworkException {
+        try {
+            if (!ifn.supportsMulticast()) {
+                throw new JournalNetworkException("Multicast is not supported on " + ifn.getName());
+            }
+
+            if (ifn.getInterfaceAddresses().size() == 0) {
+                throw new JournalNetworkException("No IP addresses assigned to " + ifn.getName());
+            }
+
+            if (isInet6(ifn.getInterfaceAddresses().get(0).getAddress())) {
+                return InetAddress.getByName(DEFAULT_MULTICAST_ADDRESS_IPV6_1);
+            } else {
+                return InetAddress.getByName(DEFAULT_MULTICAST_ADDRESS_IPV4);
+            }
+        } catch (Exception e) {
+            throw new JournalNetworkException(e);
+        }
+    }
+
+    protected DatagramChannelWrapper openDatagramChannel(NetworkInterface ifn) throws JournalNetworkException {
+        InetAddress address = getMultiCastAddress();
+        if (address == null) {
+            address = getDefaultMultiCastAddress(ifn);
+        }
+        ProtocolFamily family = NetworkConfig.isInet6(address) ? StandardProtocolFamily.INET6 : StandardProtocolFamily.INET;
+
+        try {
+            DatagramChannel dc = DatagramChannel.open(family)
+                    .setOption(StandardSocketOptions.SO_REUSEADDR, true)
+                    .setOption(StandardSocketOptions.IP_MULTICAST_IF, ifn)
+                    .bind(new InetSocketAddress(getMultiCastPort()));
+
+            dc.join(address, ifn);
+            return new DatagramChannelWrapper(dc, new InetSocketAddress(address, getMultiCastPort()));
+        } catch (IOException e) {
+            throw new JournalNetworkException(e);
+        }
     }
 }

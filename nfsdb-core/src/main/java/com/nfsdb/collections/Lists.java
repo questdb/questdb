@@ -16,6 +16,7 @@
 
 package com.nfsdb.collections;
 
+import java.util.Iterator;
 import java.util.List;
 
 public final class Lists {
@@ -26,6 +27,34 @@ public final class Lists {
     public static void advance(List<?> list, int index) {
         while (list.size() <= index) {
             list.add(null);
+        }
+    }
+
+    public static <T> ImmutableIteratorWrapper<T> immutableIterator(Iterable<T> source) {
+        return new ImmutableIteratorWrapper<>(source);
+    }
+
+    public static class ImmutableIteratorWrapper<T> extends AbstractImmutableIterator<T> {
+        private final Iterable<T> source;
+        private Iterator<T> underlying;
+
+        public ImmutableIteratorWrapper(Iterable<T> source) {
+            this.source = source;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return underlying.hasNext();
+        }
+
+        @Override
+        public T next() {
+            return underlying.next();
+        }
+
+        public ImmutableIteratorWrapper<T> reset() {
+            underlying = source.iterator();
+            return this;
         }
     }
 }

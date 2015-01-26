@@ -46,7 +46,8 @@ public class JournalEventBridge {
 
     private static final AtomicReferenceFieldUpdater<JournalEventBridge, AgentBarrierHolder> AGENT_SEQUENCES_UPDATER =
             AtomicReferenceFieldUpdater.newUpdater(JournalEventBridge.class, AgentBarrierHolder.class, "agentBarrierHolder");
-    private final ExecutorService executor = Executors.newFixedThreadPool(1, new NamedDaemonThreadFactory("jj-event-bridge", false));
+    private static final int BUFFER_SIZE = 1024;
+    private final ExecutorService executor = Executors.newFixedThreadPool(1, new NamedDaemonThreadFactory("nfsdb-evt-bridge", false));
     private final RingBuffer<JournalEvent> inRingBuffer;
     private final BatchEventProcessor<JournalEvent> batchEventProcessor;
     private final RingBuffer<JournalEvent> outRingBuffer;
@@ -66,11 +67,10 @@ public class JournalEventBridge {
      *
      * @param timeout         for out buffer wait.
      * @param unit            time unit for timeout value
-     * @param eventBufferSize size of ring buffer
      */
-    public JournalEventBridge(long timeout, TimeUnit unit, int eventBufferSize) {
-        this.inRingBuffer = RingBuffer.createMultiProducer(JournalEvent.EVENT_FACTORY, eventBufferSize, new BlockingWaitStrategy());
-        this.outRingBuffer = RingBuffer.createSingleProducer(JournalEvent.EVENT_FACTORY, eventBufferSize, new com.nfsdb.net.bridge.TimeoutBlockingWaitStrategy(timeout, unit));
+    public JournalEventBridge(long timeout, TimeUnit unit) {
+        this.inRingBuffer = RingBuffer.createMultiProducer(JournalEvent.EVENT_FACTORY, BUFFER_SIZE, new BlockingWaitStrategy());
+        this.outRingBuffer = RingBuffer.createSingleProducer(JournalEvent.EVENT_FACTORY, BUFFER_SIZE, new com.nfsdb.net.bridge.TimeoutBlockingWaitStrategy(timeout, unit));
         this.outBarrier = outRingBuffer.newBarrier();
         this.batchEventProcessor = new BatchEventProcessor<>(inRingBuffer, inRingBuffer.newBarrier(), new EventHandler<JournalEvent>() {
             @Override
@@ -83,36 +83,6 @@ public class JournalEventBridge {
             }
         });
         inRingBuffer.addGatingSequences(batchEventProcessor.getSequence());
-    }
-
-    public void start() {
-        executor.submit(batchEventProcessor);
-    }
-
-    public void halt() {
-        executor.shutdown();
-        while (inRingBuffer.getCursor() < inRingBuffer.getMinimumGatingSequence()) {
-            Thread.yield();
-        }
-        while (batchEventProcessor.isRunning()) {
-            batchEventProcessor.halt();
-        }
-    }
-
-    public void publish(final int journalIndex, final long timestamp) {
-        long sequence = inRingBuffer.next();
-        JournalEvent event = inRingBuffer.get(sequence);
-        event.setIndex(journalIndex);
-        event.setTimestamp(timestamp);
-        inRingBuffer.publish(sequence);
-    }
-
-    public RingBuffer<JournalEvent> getOutRingBuffer() {
-        return outRingBuffer;
-    }
-
-    public SequenceBarrier getOutBarrier() {
-        return outBarrier;
     }
 
     public Sequence createAgentSequence() {
@@ -131,6 +101,36 @@ public class JournalEventBridge {
         while (!AGENT_SEQUENCES_UPDATER.compareAndSet(this, currentHolder, updatedHolder));
 
         return sequence;
+    }
+
+    public TxFuture createRemoteCommitFuture(int journalIndex, long timestamp) {
+        return new RemoteCommitFuture(outRingBuffer, agentBarrierHolder.barrier, journalIndex, timestamp);
+    }
+
+    public SequenceBarrier getOutBarrier() {
+        return outBarrier;
+    }
+
+    public RingBuffer<JournalEvent> getOutRingBuffer() {
+        return outRingBuffer;
+    }
+
+    public void halt() {
+        executor.shutdown();
+        while (inRingBuffer.getCursor() < inRingBuffer.getMinimumGatingSequence()) {
+            Thread.yield();
+        }
+        while (batchEventProcessor.isRunning()) {
+            batchEventProcessor.halt();
+        }
+    }
+
+    public void publish(final int journalIndex, final long timestamp) {
+        long sequence = inRingBuffer.next();
+        JournalEvent event = inRingBuffer.get(sequence);
+        event.setIndex(journalIndex);
+        event.setTimestamp(timestamp);
+        inRingBuffer.publish(sequence);
     }
 
     public void removeAgentSequence(Sequence sequence) {
@@ -169,7 +169,7 @@ public class JournalEventBridge {
         outRingBuffer.removeGatingSequence(sequence);
     }
 
-    public TxFuture createRemoteCommitFuture(int journalIndex, long timestamp) {
-        return new RemoteCommitFuture(outRingBuffer, agentBarrierHolder.barrier, journalIndex, timestamp);
+    public void start() {
+        executor.submit(batchEventProcessor);
     }
 }

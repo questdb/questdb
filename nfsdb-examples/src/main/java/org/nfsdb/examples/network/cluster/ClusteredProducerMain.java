@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,8 +22,10 @@ import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.net.cluster.ClusterController;
-import com.nfsdb.net.cluster.ClusterNode;
 import com.nfsdb.net.cluster.ClusterStatusListener;
+import com.nfsdb.net.config.ClientConfig;
+import com.nfsdb.net.config.ServerConfig;
+import com.nfsdb.net.config.ServerNode;
 import com.nfsdb.utils.Numbers;
 import org.nfsdb.examples.model.Price;
 
@@ -45,17 +47,17 @@ public class ClusteredProducerMain {
         final WorkerController wc = new WorkerController(writer);
 
         final ClusterController cc = new ClusterController(
-                new ArrayList<ClusterNode>() {{
-                    add(new ClusterNode(1, "localhost:7080"));
-                    add(new ClusterNode(2, "localhost:7090"));
-                }}
-                , instance
-                , wc
-                , factory
-                ,
+                new ServerConfig() {{
+                    addNode(new ServerNode(1, "localhost:7080"));
+                    addNode(new ServerNode(2, "localhost:7090"));
+                }},
+                new ClientConfig(),
+                factory,
+                instance,
                 new ArrayList<JournalWriter>() {{
                     add(writer);
-                }}
+                }},
+                wc
         );
 
         cc.start();
@@ -91,15 +93,8 @@ public class ClusteredProducerMain {
             (worker = new Worker(writer)).start();
         }
 
-        private void stopWorker() {
-            if (worker != null) {
-                worker.halt();
-                worker = null;
-            }
-        }
-
         @Override
-        public void onNodeStandingBy(ClusterNode activeNode) {
+        public void onNodeStandingBy(ServerNode activeNode) {
             System.out.println("This node is standing by");
             stopWorker();
         }
@@ -108,6 +103,13 @@ public class ClusteredProducerMain {
         public void onShutdown() {
             stopWorker();
             writer.close();
+        }
+
+        private void stopWorker() {
+            if (worker != null) {
+                worker.halt();
+                worker = null;
+            }
         }
     }
 
@@ -119,6 +121,14 @@ public class ClusteredProducerMain {
 
         public Worker(JournalWriter<Price> writer) {
             this.writer = writer;
+        }
+
+        public void halt() {
+            try {
+                breakLatch.countDown();
+                haltLatch.await();
+            } catch (InterruptedException ignore) {
+            }
         }
 
         public void start() {
@@ -141,8 +151,7 @@ public class ClusteredProducerMain {
                             }
                             writer.commit();
 
-                            breakLatch.await(2, TimeUnit.SECONDS);
-                            if (breakLatch.getCount() == 0) {
+                            if (breakLatch.await(2, TimeUnit.SECONDS)) {
                                 break;
                             }
 
@@ -154,14 +163,6 @@ public class ClusteredProducerMain {
                     }
                 }
             }.start();
-        }
-
-        public void halt() {
-            try {
-                breakLatch.countDown();
-                haltLatch.await();
-            } catch (InterruptedException ignore) {
-            }
         }
     }
 }

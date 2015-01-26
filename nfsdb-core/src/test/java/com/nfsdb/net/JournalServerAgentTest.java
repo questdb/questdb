@@ -61,75 +61,12 @@ public class JournalServerAgentTest extends AbstractTest {
         tradeWriter = factory.writer(Trade.class);
         ServerConfig config = new ServerConfig() {{
             setHeartbeatFrequency(100);
-            setEnableMulticast(false);
+            setEnableMultiCast(false);
         }};
 
         server = new JournalServer(config, factory);
         server.publish(quoteWriter);
         agent = new JournalServerAgent(server, new InetSocketAddress(NetworkConfig.DEFAULT_DATA_PORT), null);
-    }
-
-    @Test
-    public void testSetKeyRequestResponse() throws Exception {
-        commandProducer.write(channel, Command.SET_KEY_CMD);
-        setKeyRequestProducer.write(channel, new IndexedJournalKey(0, quoteWriter.getKey()));
-        agent.process(channel);
-        stringResponseConsumer.reset();
-        stringResponseConsumer.read(channel);
-        Assert.assertTrue(stringResponseConsumer.isComplete());
-        Assert.assertEquals("OK", stringResponseConsumer.getValue());
-
-        commandProducer.write(channel, Command.SET_KEY_CMD);
-        setKeyRequestProducer.write(channel, new IndexedJournalKey(0, tradeWriter.getKey()));
-        agent.process(channel);
-        stringResponseConsumer.reset();
-        stringResponseConsumer.read(channel);
-        Assert.assertTrue(stringResponseConsumer.isComplete());
-        Assert.assertEquals("Requested key not exported: JournalKey{id=com.nfsdb.model.Trade, location='null', partitionType=DEFAULT, recordHint=0, ordered=true}", stringResponseConsumer.getValue());
-    }
-
-    @Test
-    public void testJournalIndexCorrectness() throws Exception {
-        server.publish(tradeWriter);
-        server.start();
-
-        Journal<Quote> quoteClientWriter = factory.writer(Quote.class, "client");
-
-        // send quote journal key
-//        commandProducer.write(channel, Command.SET_KEY_CMD);
-//        setKeyRequestProducer.write(channel, new IndexedJournalKey(3, quoteWriter.getKey()));
-//        agent.process(channel);
-//        stringResponseConsumer.reset();
-//        stringResponseConsumer.read(channel);
-//        Assert.assertTrue(stringResponseConsumer.isComplete());
-//        Assert.assertEquals("Journal index is too large. Max 1", stringResponseConsumer.getValue());
-
-
-        commandProducer.write(channel, Command.SET_KEY_CMD);
-        setKeyRequestProducer.write(channel, new IndexedJournalKey(0, quoteWriter.getKey()));
-        agent.process(channel);
-        stringResponseConsumer.reset();
-        stringResponseConsumer.read(channel);
-        Assert.assertTrue(stringResponseConsumer.isComplete());
-        Assert.assertEquals("OK", stringResponseConsumer.getValue());
-
-        commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
-        journalClientStateProducer.write(channel, new IndexedJournal(1, quoteClientWriter));
-        agent.process(channel);
-        stringResponseConsumer.reset();
-        stringResponseConsumer.read(channel);
-        Assert.assertTrue(stringResponseConsumer.isComplete());
-        Assert.assertEquals("Journal index does not match key request", stringResponseConsumer.getValue());
-
-        commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
-        journalClientStateProducer.write(channel, new IndexedJournal(0, quoteClientWriter));
-        agent.process(channel);
-        stringResponseConsumer.reset();
-        stringResponseConsumer.read(channel);
-        Assert.assertTrue(stringResponseConsumer.isComplete());
-        Assert.assertEquals("OK", stringResponseConsumer.getValue());
-
-        server.halt();
     }
 
     @Test
@@ -214,5 +151,68 @@ public class JournalServerAgentTest extends AbstractTest {
         Assert.assertEquals(Command.SERVER_READY_CMD, commandConsumer.getValue());
 
         server.halt();
+    }
+
+    @Test
+    public void testJournalIndexCorrectness() throws Exception {
+        server.publish(tradeWriter);
+        server.start();
+
+        Journal<Quote> quoteClientWriter = factory.writer(Quote.class, "client");
+
+        // send quote journal key
+//        commandProducer.write(channel, Command.SET_KEY_CMD);
+//        setKeyRequestProducer.write(channel, new IndexedJournalKey(3, quoteWriter.getKey()));
+//        agent.process(channel);
+//        stringResponseConsumer.reset();
+//        stringResponseConsumer.read(channel);
+//        Assert.assertTrue(stringResponseConsumer.isComplete());
+//        Assert.assertEquals("Journal index is too large. Max 1", stringResponseConsumer.getValue());
+
+
+        commandProducer.write(channel, Command.SET_KEY_CMD);
+        setKeyRequestProducer.write(channel, new IndexedJournalKey(0, quoteWriter.getKey()));
+        agent.process(channel);
+        stringResponseConsumer.reset();
+        stringResponseConsumer.read(channel);
+        Assert.assertTrue(stringResponseConsumer.isComplete());
+        Assert.assertEquals("OK", stringResponseConsumer.getValue());
+
+        commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
+        journalClientStateProducer.write(channel, new IndexedJournal(1, quoteClientWriter));
+        agent.process(channel);
+        stringResponseConsumer.reset();
+        stringResponseConsumer.read(channel);
+        Assert.assertTrue(stringResponseConsumer.isComplete());
+        Assert.assertEquals("Journal index does not match key request", stringResponseConsumer.getValue());
+
+        commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
+        journalClientStateProducer.write(channel, new IndexedJournal(0, quoteClientWriter));
+        agent.process(channel);
+        stringResponseConsumer.reset();
+        stringResponseConsumer.read(channel);
+        Assert.assertTrue(stringResponseConsumer.isComplete());
+        Assert.assertEquals("OK", stringResponseConsumer.getValue());
+
+        server.halt();
+    }
+
+    @Test
+    public void testSetKeyRequestResponse() throws Exception {
+        commandProducer.write(channel, Command.SET_KEY_CMD);
+        setKeyRequestProducer.write(channel, new IndexedJournalKey(0, quoteWriter.getKey()));
+        agent.process(channel);
+        stringResponseConsumer.reset();
+        stringResponseConsumer.read(channel);
+        Assert.assertTrue(stringResponseConsumer.isComplete());
+        Assert.assertEquals("OK", stringResponseConsumer.getValue());
+
+        commandProducer.write(channel, Command.SET_KEY_CMD);
+        setKeyRequestProducer.write(channel, new IndexedJournalKey(0, tradeWriter.getKey()));
+        agent.process(channel);
+        stringResponseConsumer.reset();
+        stringResponseConsumer.read(channel);
+        Assert.assertTrue(stringResponseConsumer.isComplete());
+        Assert.assertEquals("Requested key not exported: JournalKey{id=com.nfsdb.model.Trade, location='null', partitionType=DEFAULT, recordHint=0, ordered=true}", stringResponseConsumer.getValue());
     }
 }

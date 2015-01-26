@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -80,230 +80,6 @@ public class JournalWriter<T> extends Journal<T> {
         this.journalEntryWriter = new JournalEntryWriterImpl(this);
     }
 
-    @Override
-    public void close() {
-        if (open) {
-            if (partitionCleaner != null) {
-                partitionCleaner.halt();
-                partitionCleaner = null;
-            }
-            try {
-                if (isCommitOnClose()) {
-                    commit();
-                    purgeUnusedTempPartitions(txLog);
-                }
-                super.close();
-                if (writeLock != null) {
-                    LockManager.release(writeLock);
-                    writeLock = null;
-                }
-            } catch (JournalException e) {
-                throw new JournalRuntimeException(e);
-            }
-        }
-    }
-
-    public TxFuture commitAsync() throws JournalException {
-        TxFuture future = null;
-        if (txActive) {
-            commit(Tx.TX_NORMAL);
-            if (txAsyncListener != null) {
-                future = txAsyncListener.onCommitAsync();
-            }
-            txActive = false;
-        }
-        return future;
-    }
-
-    public void rollback() throws JournalException {
-        if (txActive) {
-            rollback(txLog.headAddress());
-            txActive = false;
-        }
-    }
-
-    public void rollback(long address) throws JournalException {
-
-        txLog.get(address, tx);
-
-        if (tx.address == 0) {
-            throw new JournalException("Invalid transaction address");
-        }
-        // partitions need to be dealt with first to make sure new lag is assigned a correct partitionIndex
-        rollbackPartitions(tx);
-
-        Partition<T> lag = getIrregularPartition();
-        if (tx.lagName != null && tx.lagName.length() > 0 && (lag == null || !tx.lagName.equals(lag.getName()))) {
-            Partition<T> newLag = createTempPartition(tx.lagName);
-            setIrregularPartition(newLag);
-            newLag.applyTx(tx.lagSize, tx.lagIndexPointers);
-        } else if (lag != null && tx.lagName == null) {
-            removeIrregularPartitionInternal();
-        } else if (lag != null) {
-            lag.truncate(tx.lagSize);
-        }
-
-
-        if (tx.symbolTableSizes.length == 0) {
-            for (int i = 0, sz = getSymbolTableCount(); i < sz; i++) {
-                getSymbolTable(i).truncate();
-            }
-        } else {
-            for (int i = 0, sz = getSymbolTableCount(); i < sz; i++) {
-                getSymbolTable(i).truncate(tx.symbolTableSizes[i]);
-            }
-        }
-        appendTimestampLo = -1;
-        appendTimestampHi = -1;
-        appendPartition = null;
-        txLog.setTxAddress(tx.address);
-        txActive = false;
-    }
-
-    public void setTxListener(TxListener txListener) {
-        this.txListener = txListener;
-    }
-
-    public void setTxAsyncListener(TxAsyncListener txAsyncListener) {
-        this.txAsyncListener = txAsyncListener;
-    }
-
-    public Partition<T> getPartitionForTimestamp(long timestamp) {
-        int sz = partitions.size();
-        for (int i = 0; i < sz; i++) {
-            Partition<T> result = partitions.get(i);
-            if (result.getInterval() == null || result.getInterval().contains(timestamp)) {
-                return result.access();
-            }
-        }
-
-        if (partitions.get(0).getInterval().isAfter(timestamp)) {
-            return partitions.get(0).access();
-        } else {
-            return partitions.get(sz - 1).access();
-        }
-    }
-
-    /**
-     * Opens existing lag partition if it exists or creates new one if parent journal is configured to
-     * have lag partitions.
-     *
-     * @return Lag partition instance.
-     * @throws com.nfsdb.exceptions.JournalException
-     */
-    public Partition<T> openOrCreateLagPartition() throws JournalException {
-        Partition<T> result = getIrregularPartition();
-        if (result == null) {
-            result = createTempPartition();
-            setIrregularPartition(result);
-        }
-        return result.open();
-    }
-
-    public void removeIrregularPartition() {
-        beginTx();
-        removeIrregularPartitionInternal();
-    }
-
-    public void beginTx() {
-        if (!txActive) {
-            this.txActive = true;
-            this.txPartitionIndex = nonLagPartitionCount() - 1;
-        }
-    }
-
-    public void purgeUnusedTempPartitions(TxLog txLog) throws JournalException {
-        final Tx tx = new Tx();
-        final String lagPartitionName = hasIrregularPartition() ? getIrregularPartition().getName() : null;
-
-        File[] files = getLocation().listFiles(new FileFilter() {
-            public boolean accept(File f) {
-                return f.isDirectory() && f.getName().startsWith(Constants.TEMP_DIRECTORY_PREFIX) &&
-                        (lagPartitionName == null || !lagPartitionName.equals(f.getName()));
-            }
-        });
-
-        if (files != null) {
-
-            Arrays.sort(files);
-
-            for (int i = 0; i < files.length; i++) {
-
-                if (!txLog.isEmpty() && files[i].getName().equals(txLog.head(tx).lagName)) {
-                    continue;
-                }
-
-                // get exclusive lock
-                Lock lock = LockManager.lockExclusive(files[i]);
-                try {
-                    if (lock != null && lock.isValid()) {
-                        LOGGER.trace("Purging : %s", files[i]);
-                        if (!Files.delete(files[i])) {
-                            LOGGER.info("Could not purge: %s", files[i]);
-                        }
-                    } else {
-                        LOGGER.trace("Partition in use: %s", files[i]);
-                    }
-                } finally {
-                    LockManager.release(lock);
-                }
-            }
-        }
-    }
-
-    public void rebuildIndexes() throws JournalException {
-        int partitionCount = getPartitionCount();
-        for (int i = 0; i < partitionCount; i++) {
-            getPartition(i, true).rebuildIndexes();
-        }
-    }
-
-    public void compact() throws JournalException {
-        int partitionCount = getPartitionCount();
-        for (int i = 0; i < partitionCount; i++) {
-            getPartition(i, true).compact();
-        }
-    }
-
-    public void truncate() throws JournalException {
-        beginTx();
-        int partitionCount = getPartitionCount();
-        for (int i = 0; i < partitionCount; i++) {
-            Partition<T> partition = getPartition(i, true);
-            partition.truncate(0);
-            partition.close();
-            Files.deleteOrException(partition.getPartitionDir());
-        }
-
-        closePartitions();
-
-        for (int i = 0, sz = getSymbolTableCount(); i < sz; i++) {
-            getSymbolTable(i).truncate();
-        }
-        appendTimestampLo = -1;
-        commitDurable();
-    }
-
-    public void commit() throws JournalException {
-        commit(false);
-    }
-
-    public void commitDurable() throws JournalException {
-        commit(true);
-    }
-
-    /**
-     * Deletes entire Journal.
-     *
-     * @throws com.nfsdb.exceptions.JournalException if the Journal is open (must be closed)
-     */
-    public void delete() throws JournalException {
-        if (isOpen()) {
-            throw new JournalException("Cannot delete open journal: %s", this);
-        }
-        Files.deleteOrException(getLocation());
-    }
-
     /**
      * Add objects to the end of the Journal.
      *
@@ -351,80 +127,6 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
-    public JournalEntryWriter entryWriter() throws JournalException {
-        return entryWriter(0);
-    }
-
-    public JournalEntryWriter entryWriter(long timestamp) throws JournalException {
-        if (!txActive) {
-            beginTx();
-        }
-
-        if (checkOrder) {
-            if (timestamp > appendTimestampHi) {
-                switchAppendPartition(timestamp);
-            }
-
-            if (timestamp < appendTimestampLo) {
-                throw new JournalException("Cannot insert records out of order. maxHardTimestamp=%d (%s), timestamp=%d (%s): %s"
-                        , appendTimestampLo, Dates.toString(appendTimestampLo), timestamp, Dates.toString(timestamp), this);
-            }
-
-            journalEntryWriter.setPartition(appendPartition, timestamp);
-            return journalEntryWriter;
-
-        } else {
-            journalEntryWriter.setPartition(getAppendPartition(), timestamp);
-            return journalEntryWriter;
-        }
-    }
-
-    /**
-     * Max timestamp in journal for append operation. Objects with timestamp older then
-     * this will always be rejected.
-     *
-     * @return max timestamp older then which append is impossible.
-     * @throws com.nfsdb.exceptions.JournalException if journal cannot calculate timestamp.
-     */
-    public long getAppendTimestampLo() throws JournalException {
-        if (appendTimestampLo == -1) {
-            if (nonLagPartitionCount() == 0) {
-                return 0;
-            }
-
-            FixedColumn column = lastNonEmptyNonLag().getTimestampColumn();
-            long sz;
-            if ((sz = column.size()) > 0) {
-                appendTimestampLo = column.getLong(sz - 1);
-            } else {
-                return 0;
-            }
-        }
-        return appendTimestampLo;
-    }
-
-    public Partition<T> getAppendPartition(long timestamp) throws JournalException {
-        int sz = partitions.size();
-        if (sz > 0) {
-            Partition<T> result = partitions.get(sz - 1);
-            if (result.getInterval() == null || result.getInterval().contains(timestamp)) {
-                return result.open().access();
-            } else if (result.getInterval().isBefore(timestamp)) {
-                return createPartition(new Interval(timestamp, getMetadata().getPartitionType()), sz);
-            } else {
-                throw new JournalException("%s cannot be appended to %s", Dates.toString(timestamp), this);
-            }
-        } else {
-            return createPartition(new Interval(timestamp, getMetadata().getPartitionType()), 0);
-        }
-    }
-
-    public Partition<T> createPartition(Interval interval, int partitionIndex) throws JournalException {
-        Partition<T> result = new Partition<>(this, interval, partitionIndex, TX_LIMIT_EVAL, null).open();
-        partitions.add(result);
-        return result;
-    }
-
     /**
      * Add objects to the end of the Journal.
      *
@@ -462,8 +164,178 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
-    public boolean isTxActive() {
-        return txActive;
+    public void beginTx() {
+        if (!txActive) {
+            this.txActive = true;
+            this.txPartitionIndex = nonLagPartitionCount() - 1;
+        }
+    }
+
+    @Override
+    public void close() {
+        if (open) {
+            if (partitionCleaner != null) {
+                partitionCleaner.halt();
+                partitionCleaner = null;
+            }
+            try {
+                if (isCommitOnClose()) {
+                    commit();
+                    purgeUnusedTempPartitions(txLog);
+                }
+                super.close();
+                if (writeLock != null) {
+                    LockManager.release(writeLock);
+                    writeLock = null;
+                }
+            } catch (JournalException e) {
+                throw new JournalRuntimeException(e);
+            }
+        }
+    }
+
+    public void commit() throws JournalException {
+        commit(false);
+    }
+
+    public TxFuture commitAsync() throws JournalException {
+        TxFuture future = null;
+        if (txActive) {
+            commit(Tx.TX_NORMAL);
+            if (txAsyncListener != null) {
+                future = txAsyncListener.onCommitAsync();
+            }
+            txActive = false;
+        }
+        return future;
+    }
+
+    public void commitDurable() throws JournalException {
+        commit(true);
+    }
+
+    public void compact() throws JournalException {
+        int partitionCount = getPartitionCount();
+        for (int i = 0; i < partitionCount; i++) {
+            getPartition(i, true).compact();
+        }
+    }
+
+    public Partition<T> createPartition(Interval interval, int partitionIndex) throws JournalException {
+        Partition<T> result = new Partition<>(this, interval, partitionIndex, TX_LIMIT_EVAL, null).open();
+        partitions.add(result);
+        return result;
+    }
+
+    /**
+     * Deletes entire Journal.
+     *
+     * @throws com.nfsdb.exceptions.JournalException if the Journal is open (must be closed)
+     */
+    public void delete() throws JournalException {
+        if (isOpen()) {
+            throw new JournalException("Cannot delete open journal: %s", this);
+        }
+        Files.deleteOrException(getLocation());
+    }
+
+    public JournalEntryWriter entryWriter() throws JournalException {
+        return entryWriter(0);
+    }
+
+    public JournalEntryWriter entryWriter(long timestamp) throws JournalException {
+        if (!txActive) {
+            beginTx();
+        }
+
+        if (checkOrder) {
+            if (timestamp > appendTimestampHi) {
+                switchAppendPartition(timestamp);
+            }
+
+            if (timestamp < appendTimestampLo) {
+                throw new JournalException("Cannot insert records out of order. maxHardTimestamp=%d (%s), timestamp=%d (%s): %s"
+                        , appendTimestampLo, Dates.toString(appendTimestampLo), timestamp, Dates.toString(timestamp), this);
+            }
+
+            journalEntryWriter.setPartition(appendPartition, timestamp);
+            return journalEntryWriter;
+
+        } else {
+            journalEntryWriter.setPartition(getAppendPartition(), timestamp);
+            return journalEntryWriter;
+        }
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        return this == o || !(o == null || getClass() != o.getClass()) && getKey().equals(((Journal) o).getKey());
+    }
+
+    public Partition<T> getAppendPartition(long timestamp) throws JournalException {
+        int sz = partitions.size();
+        if (sz > 0) {
+            Partition<T> result = partitions.get(sz - 1);
+            if (result.getInterval() == null || result.getInterval().contains(timestamp)) {
+                return result.open().access();
+            } else if (result.getInterval().isBefore(timestamp)) {
+                return createPartition(new Interval(timestamp, getMetadata().getPartitionType()), sz);
+            } else {
+                throw new JournalException("%s cannot be appended to %s", Dates.toString(timestamp), this);
+            }
+        } else {
+            return createPartition(new Interval(timestamp, getMetadata().getPartitionType()), 0);
+        }
+    }
+
+    /**
+     * Max timestamp in journal for append operation. Objects with timestamp older then
+     * this will always be rejected.
+     *
+     * @return max timestamp older then which append is impossible.
+     * @throws com.nfsdb.exceptions.JournalException if journal cannot calculate timestamp.
+     */
+    public long getAppendTimestampLo() throws JournalException {
+        if (appendTimestampLo == -1) {
+            if (nonLagPartitionCount() == 0) {
+                return 0;
+            }
+
+            FixedColumn column = lastNonEmptyNonLag().getTimestampColumn();
+            long sz;
+            if ((sz = column.size()) > 0) {
+                appendTimestampLo = column.getLong(sz - 1);
+            } else {
+                return 0;
+            }
+        }
+        return appendTimestampLo;
+    }
+
+    @Override
+    public JournalMode getMode() {
+        return JournalMode.APPEND;
+    }
+
+    public Partition<T> getPartitionForTimestamp(long timestamp) {
+        int sz = partitions.size();
+        for (int i = 0; i < sz; i++) {
+            Partition<T> result = partitions.get(i);
+            if (result.getInterval() == null || result.getInterval().contains(timestamp)) {
+                return result.access();
+            }
+        }
+
+        if (partitions.get(0).getInterval().isAfter(timestamp)) {
+            return partitions.get(0).access();
+        } else {
+            return partitions.get(sz - 1).access();
+        }
+    }
+
+    @Override
+    public int hashCode() {
+        return getKey().hashCode();
     }
 
     public boolean isCommitOnClose() {
@@ -475,13 +347,8 @@ public class JournalWriter<T> extends Journal<T> {
         return this;
     }
 
-    public void purgeTempPartitions() {
-        partitionCleaner.purge();
-    }
-
-    @Override
-    public JournalMode getMode() {
-        return JournalMode.APPEND;
+    public boolean isTxActive() {
+        return txActive;
     }
 
     public void mergeAppend(List<T> list) throws JournalException {
@@ -616,6 +483,182 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
+    /**
+     * Opens existing lag partition if it exists or creates new one if parent journal is configured to
+     * have lag partitions.
+     *
+     * @return Lag partition instance.
+     * @throws com.nfsdb.exceptions.JournalException
+     */
+    public Partition<T> openOrCreateLagPartition() throws JournalException {
+        Partition<T> result = getIrregularPartition();
+        if (result == null) {
+            result = createTempPartition();
+            setIrregularPartition(result);
+        }
+        return result.open();
+    }
+
+    public void purgeTempPartitions() {
+        partitionCleaner.purge();
+    }
+
+    public void purgeUnusedTempPartitions(TxLog txLog) throws JournalException {
+        final Tx tx = new Tx();
+        final String lagPartitionName = hasIrregularPartition() ? getIrregularPartition().getName() : null;
+
+        File[] files = getLocation().listFiles(new FileFilter() {
+            public boolean accept(File f) {
+                return f.isDirectory() && f.getName().startsWith(Constants.TEMP_DIRECTORY_PREFIX) &&
+                        (lagPartitionName == null || !lagPartitionName.equals(f.getName()));
+            }
+        });
+
+        if (files != null) {
+
+            Arrays.sort(files);
+
+            for (int i = 0; i < files.length; i++) {
+
+                if (!txLog.isEmpty() && files[i].getName().equals(txLog.head(tx).lagName)) {
+                    continue;
+                }
+
+                // get exclusive lock
+                Lock lock = LockManager.lockExclusive(files[i]);
+                try {
+                    if (lock != null && lock.isValid()) {
+                        LOGGER.trace("Purging : %s", files[i]);
+                        if (!Files.delete(files[i])) {
+                            LOGGER.info("Could not purge: %s", files[i]);
+                        }
+                    } else {
+                        LOGGER.trace("Partition in use: %s", files[i]);
+                    }
+                } finally {
+                    LockManager.release(lock);
+                }
+            }
+        }
+    }
+
+    public void rebuildIndexes() throws JournalException {
+        int partitionCount = getPartitionCount();
+        for (int i = 0; i < partitionCount; i++) {
+            getPartition(i, true).rebuildIndexes();
+        }
+    }
+
+    public void removeIrregularPartition() {
+        beginTx();
+        removeIrregularPartitionInternal();
+    }
+
+    public void rollback() throws JournalException {
+        if (txActive) {
+            rollback(txLog.headAddress());
+            txActive = false;
+        }
+    }
+
+    public void rollback(long address) throws JournalException {
+
+        txLog.get(address, tx);
+
+        if (tx.address == 0) {
+            throw new JournalException("Invalid transaction address");
+        }
+        // partitions need to be dealt with first to make sure new lag is assigned a correct partitionIndex
+        rollbackPartitions(tx);
+
+        Partition<T> lag = getIrregularPartition();
+        if (tx.lagName != null && tx.lagName.length() > 0 && (lag == null || !tx.lagName.equals(lag.getName()))) {
+            Partition<T> newLag = createTempPartition(tx.lagName);
+            setIrregularPartition(newLag);
+            newLag.applyTx(tx.lagSize, tx.lagIndexPointers);
+        } else if (lag != null && tx.lagName == null) {
+            removeIrregularPartitionInternal();
+        } else if (lag != null) {
+            lag.truncate(tx.lagSize);
+        }
+
+
+        if (tx.symbolTableSizes.length == 0) {
+            for (int i = 0, sz = getSymbolTableCount(); i < sz; i++) {
+                getSymbolTable(i).truncate();
+            }
+        } else {
+            for (int i = 0, sz = getSymbolTableCount(); i < sz; i++) {
+                getSymbolTable(i).truncate(tx.symbolTableSizes[i]);
+            }
+        }
+        appendTimestampLo = -1;
+        appendTimestampHi = -1;
+        appendPartition = null;
+        txLog.setTxAddress(tx.address);
+        txActive = false;
+    }
+
+    public void setTxAsyncListener(TxAsyncListener txAsyncListener) {
+        this.txAsyncListener = txAsyncListener;
+    }
+
+    public void setTxListener(TxListener txListener) {
+        this.txListener = txListener;
+    }
+
+    public void truncate() throws JournalException {
+        beginTx();
+        int partitionCount = getPartitionCount();
+        for (int i = 0; i < partitionCount; i++) {
+            Partition<T> partition = getPartition(i, true);
+            partition.truncate(0);
+            partition.close();
+            Files.deleteOrException(partition.getPartitionDir());
+        }
+
+        closePartitions();
+
+        for (int i = 0, sz = getSymbolTableCount(); i < sz; i++) {
+            getSymbolTable(i).truncate();
+        }
+        appendTimestampLo = -1;
+        commitDurable();
+    }
+
+    void updateTsLo(long ts) {
+        if (checkOrder) {
+            appendTimestampLo = ts;
+        }
+    }
+
+    @Override
+    void closePartitions() {
+        super.closePartitions();
+        appendPartition = null;
+        appendTimestampHi = -1;
+    }
+
+    Partition<T> createTempPartition() throws JournalException {
+        return createTempPartition(Constants.TEMP_DIRECTORY_PREFIX + "." + System.currentTimeMillis() + "." + UUID.randomUUID().toString());
+    }
+
+    Partition<T> getAppendPartition() throws JournalException {
+        if (this.appendPartition != null) {
+            return appendPartition;
+        }
+
+        int count = nonLagPartitionCount();
+        if (count > 0) {
+            return appendPartition = getPartition(count - 1, true);
+        } else {
+            if (getMetadata().getPartitionType() != PartitionType.NONE) {
+                throw new JournalException("getAppendPartition() without timestamp on partitioned journal: %s", this);
+            }
+            return appendPartition = createPartition(new Interval((long) 0, getMetadata().getPartitionType()), 0);
+        }
+    }
+
     @Override
     protected void configure() throws JournalException {
         writeLock = LockManager.lockExclusive(getLocation());
@@ -650,19 +693,6 @@ public class JournalWriter<T> extends Journal<T> {
             this.partitionCleaner.start();
         }
 
-    }
-
-    void updateTsLo(long ts) {
-        if (checkOrder) {
-            appendTimestampLo = ts;
-        }
-    }
-
-    @Override
-    void closePartitions() {
-        super.closePartitions();
-        appendPartition = null;
-        appendTimestampHi = -1;
     }
 
     private void switchAppendPartition(long timestamp) throws JournalException {
@@ -700,27 +730,6 @@ public class JournalWriter<T> extends Journal<T> {
     private void notifyTxListener() {
         if (txListener != null) {
             txListener.onCommit();
-        }
-    }
-
-
-    Partition<T> createTempPartition() throws JournalException {
-        return createTempPartition(Constants.TEMP_DIRECTORY_PREFIX + "." + System.currentTimeMillis() + "." + UUID.randomUUID().toString());
-    }
-
-    Partition<T> getAppendPartition() throws JournalException {
-        if (this.appendPartition != null) {
-            return appendPartition;
-        }
-
-        int count = nonLagPartitionCount();
-        if (count > 0) {
-            return appendPartition = getPartition(count - 1, true);
-        } else {
-            if (getMetadata().getPartitionType() != PartitionType.NONE) {
-                throw new JournalException("getAppendPartition() without timestamp on partitioned journal: %s", this);
-            }
-            return appendPartition = createPartition(new Interval((long) 0, getMetadata().getPartitionType()), 0);
         }
     }
 

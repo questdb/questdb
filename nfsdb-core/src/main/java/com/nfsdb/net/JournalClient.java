@@ -31,6 +31,7 @@ import com.nfsdb.net.auth.AuthFailureException;
 import com.nfsdb.net.auth.CredentialProvider;
 import com.nfsdb.net.comsumer.JournalDeltaConsumer;
 import com.nfsdb.net.config.ClientConfig;
+import com.nfsdb.net.config.ServerNode;
 import com.nfsdb.net.config.SslConfig;
 import com.nfsdb.net.model.Command;
 import com.nfsdb.net.model.IndexedJournal;
@@ -100,9 +101,44 @@ public class JournalClient {
         this.credentialProvider = credentialProvider;
     }
 
+    public void halt() throws JournalNetworkException {
+        running.set(false);
+        try {
+            if (handlerFuture != null) {
+                handlerFuture.get();
+                handlerFuture = null;
+            }
+            close0();
+            free();
+        } catch (Exception e) {
+            throw new JournalNetworkException(e);
+        }
+    }
+
+    public boolean isRunning() {
+        return running.get();
+    }
+
+    public boolean pingServer(ServerNode node) {
+        try {
+            openChannel(node);
+            sendProtocolVersion();
+            return true;
+        } catch (JournalNetworkException e) {
+            return false;
+        }
+    }
+
     public JournalClient setDisconnectCallback(DisconnectCallback callback) {
         this.disconnectCallback.next = callback;
         return this;
+    }
+
+    public void start() throws JournalNetworkException {
+        if (!isRunning()) {
+            handshake();
+            handlerFuture = service.submit(new Handler());
+        }
     }
 
     public <T> void subscribe(Class<T> clazz) throws JournalException {
@@ -150,25 +186,25 @@ public class JournalClient {
         subscribe(new JournalKey<>(clazz, remote, PartitionType.DEFAULT, recordHint), factory.writer(clazz, local, recordHint), txListener);
     }
 
-    public void start() throws JournalNetworkException {
-        if (!isRunning()) {
-            handshake();
-            handlerFuture = service.submit(new Handler());
-        }
+    public <T> void subscribe(JournalKey<T> remoteKey, JournalWriter<T> writer, TxListener txListener) {
+        remoteKeys.add(remoteKey);
+        localKeys.add(writer.getKey());
+        listeners.add(txListener);
+        add0(writer, txListener);
     }
 
-    public void halt() throws JournalNetworkException {
-        running.set(false);
-        try {
-            if (handlerFuture != null) {
-                handlerFuture.get();
-                handlerFuture = null;
-            }
-            close0();
-            free();
-        } catch (Exception e) {
-            throw new JournalNetworkException(e);
+    public boolean voteInstance(int instance) throws JournalNetworkException {
+        LOGGER.info("Instance %s is sending vote", instance);
+        openChannel(null);
+        commandProducer.write(channel, Command.CLUSTER_VOTE);
+        intResponseProducer.write(channel, instance);
+        stringResponseConsumer.reset();
+        stringResponseConsumer.read(channel);
+        if (!stringResponseConsumer.isComplete()) {
+            LOGGER.info("Received incomplete response from cluster member.");
+            return false;
         }
+        return "OK".equals(stringResponseConsumer.getValue());
     }
 
     private void free() {
@@ -179,10 +215,6 @@ public class JournalClient {
         stringResponseConsumer.free();
         intResponseConsumer.free();
         statusSentList.free();
-    }
-
-    public boolean isRunning() {
-        return running.get();
     }
 
     private void close0() throws IOException {
@@ -203,33 +235,9 @@ public class JournalClient {
         intResponseConsumer.reset();
     }
 
-    public boolean pingServer() {
-        try {
-            openChannel();
-            sendProtocolVersion();
-            return true;
-        } catch (JournalNetworkException e) {
-            return false;
-        }
-    }
-
-    public boolean voteInstance(int instance) throws JournalNetworkException {
-        LOGGER.info("Instance %s is sending vote", instance);
-        openChannel();
-        commandProducer.write(channel, Command.CLUSTER_VOTE);
-        intResponseProducer.write(channel, instance);
-        stringResponseConsumer.reset();
-        stringResponseConsumer.read(channel);
-        if (!stringResponseConsumer.isComplete()) {
-            LOGGER.info("Received incomplete response from cluster member.");
-            return false;
-        }
-        return "OK".equals(stringResponseConsumer.getValue());
-    }
-
-    private void openChannel() throws JournalNetworkException {
-        if (this.channel == null) {
-            SocketChannel channel = config.openSocketChannel();
+    private void openChannel(ServerNode node) throws JournalNetworkException {
+        if (this.channel == null || node != null) {
+            SocketChannel channel = node == null ? config.openSocketChannel() : config.openSocketChannel(node);
             try {
                 statsChannel = new StatsCollectingReadableByteChannel(channel.getRemoteAddress());
             } catch (IOException e) {
@@ -246,7 +254,7 @@ public class JournalClient {
     }
 
     private void handshake() throws JournalNetworkException {
-        openChannel();
+        openChannel(null);
         sendProtocolVersion();
         sendKeys();
         checkAuthAndSendCredential();
@@ -296,13 +304,6 @@ public class JournalClient {
         commandProducer.write(channel, Command.PROTOCOL_VERSION);
         intResponseProducer.write(channel, Version.PROTOCOL_VERSION);
         checkAck();
-    }
-
-    public <T> void subscribe(JournalKey<T> remoteKey, JournalWriter<T> writer, TxListener txListener) {
-        remoteKeys.add(remoteKey);
-        localKeys.add(writer.getKey());
-        listeners.add(txListener);
-        add0(writer, txListener);
     }
 
     private <T> void add0(JournalWriter<T> writer, TxListener txListener) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ import com.nfsdb.net.JournalClient;
 import com.nfsdb.net.JournalServer;
 import com.nfsdb.net.config.ClientConfig;
 import com.nfsdb.net.config.ServerConfig;
+import com.nfsdb.net.config.ServerNode;
 
 import javax.annotation.Nonnull;
 import java.util.List;
@@ -47,7 +48,6 @@ public class ClusterController {
         }
     };
     private final AtomicBoolean running = new AtomicBoolean(false);
-    private final List<ClusterNode> nodes;
     private final int instance;
     private final ClusterStatusListener listener;
     private final JournalFactory factory;
@@ -71,7 +71,6 @@ public class ClusterController {
             ServerConfig serverConfig
             , ClientConfig clientConfig
             , JournalFactory factory
-            , List<ClusterNode> nodes
             , int instance
             , List<JournalWriter> writers
             , ClusterStatusListener listener
@@ -79,20 +78,13 @@ public class ClusterController {
         this.serverConfig = serverConfig;
         this.clientConfig = clientConfig;
         this.factory = factory;
-        this.nodes = nodes;
         this.instance = instance;
         this.writers = writers;
         this.listener = listener;
-
-
-    }
-    public ClusterController(List<ClusterNode> nodes, int instance, ClusterStatusListener listener, JournalFactory factory, List<JournalWriter> writers) {
-        this(new ServerConfig(), new ClientConfig(), factory, nodes, instance, writers, listener);
-    }
-
-    public void start() {
-        if (running.compareAndSet(false, true)) {
-            service.submit(up);
+        for (ServerNode node : serverConfig.nodes()) {
+            if (node.getId() != instance) {
+                clientConfig.addNode(node);
+            }
         }
     }
 
@@ -112,17 +104,18 @@ public class ClusterController {
         }
     }
 
-    private ClusterNode thisNode() {
-        for (int i = 0; i < nodes.size(); i++) {
-            if (nodes.get(i).getId() == instance) {
-                return nodes.get(i);
-            }
+    public void start() {
+        if (running.compareAndSet(false, true)) {
+            service.submit(up);
         }
-        return null;
+    }
+
+    private ServerNode thisNode() {
+        return serverConfig.getNode(instance);
     }
 
     private void up() throws JournalNetworkException {
-        ClusterNode activeNode = getActiveNode();
+        ServerNode activeNode = getActiveNode();
 
         try {
             if (activeNode != null) {
@@ -135,8 +128,7 @@ public class ClusterController {
         }
 
         LOGGER.info(thisNode() + " Starting server");
-        serverConfig.setHostname(thisNode().getAddress());
-        serverConfig.setEnableMulticast(false);
+//        serverConfig.setEnableMultiCast(false);
         server = new JournalServer(serverConfig, factory, null, thisNode().getId());
 
         for (int i = 0, writersSize = writers.size(); i < writersSize; i++) {
@@ -170,14 +162,13 @@ public class ClusterController {
         listener.onNodeActive();
     }
 
-    private void waitTillDies(final ClusterNode node) {
+    private void waitTillDies(final ServerNode node) {
         try {
-            clientConfig.setHostname(node.getAddress());
-            clientConfig.setEnableMulticast(false);
+//          clientConfig.setEnableMultiCast(false);
             JournalClient client = new JournalClient(clientConfig, factory);
 
             try {
-                while (client.pingServer()) {
+                while (client.pingServer(node)) {
                     Thread.yield();
                 }
             } finally {
@@ -187,20 +178,18 @@ public class ClusterController {
         }
     }
 
-    private ClusterNode getActiveNode() {
+    private ServerNode getActiveNode() {
         // ping each cluster node except for current one
         try {
-            for (int i = 0; i < nodes.size(); i++) {
-                final ClusterNode node = nodes.get(i);
+//            clientConfig.setEnableMultiCast(false);
+            for (ServerNode node : clientConfig.nodes()) {
                 if (node.getId() == instance) {
                     continue;
                 }
 
-                clientConfig.setHostname(node.getAddress());
-                clientConfig.setEnableMulticast(false);
                 client = new JournalClient(clientConfig, factory);
 
-                if (client.pingServer()) {
+                if (client.pingServer(node)) {
                     return node;
                 }
 
@@ -214,7 +203,7 @@ public class ClusterController {
     }
 
     @SuppressWarnings("unchecked")
-    private void setupClient(ClusterNode node) throws JournalNetworkException {
+    private void setupClient(ServerNode node) throws JournalNetworkException {
 
         LOGGER.info(thisNode() + " Subscribing journals");
         for (int i = 0, sz = writers.size(); i < sz; i++) {

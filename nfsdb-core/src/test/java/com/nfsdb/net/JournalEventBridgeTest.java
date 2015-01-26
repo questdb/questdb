@@ -29,7 +29,7 @@ import java.util.concurrent.*;
 public class JournalEventBridgeTest {
     @Test
     public void testStartStop() throws Exception {
-        JournalEventBridge bridge = new JournalEventBridge(2, TimeUnit.SECONDS, 16);
+        JournalEventBridge bridge = new JournalEventBridge(2, TimeUnit.SECONDS);
         bridge.start();
         for (int i = 0; i < 10000; i++) {
             bridge.publish(10, System.currentTimeMillis());
@@ -40,7 +40,7 @@ public class JournalEventBridgeTest {
     @Test
     public void testTwoPublishersThreeConsumers() throws Exception {
         ExecutorService service = Executors.newCachedThreadPool();
-        final JournalEventBridge bridge = new JournalEventBridge(50, TimeUnit.MILLISECONDS, 2048);
+        final JournalEventBridge bridge = new JournalEventBridge(50, TimeUnit.MILLISECONDS);
         bridge.start();
         final Future[] publishers = new Future[2];
         final Handler[] consumers = new Handler[3];
@@ -141,15 +141,15 @@ public class JournalEventBridgeTest {
             this.index = index;
         }
 
+        public int getCounter() {
+            return counter;
+        }
+
         @Override
         public void handle(JournalEvent event) {
             if (event.getIndex() == index) {
                 counter++;
             }
-        }
-
-        public int getCounter() {
-            return counter;
         }
     }
 }

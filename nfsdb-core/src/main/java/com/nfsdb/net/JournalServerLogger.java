@@ -48,20 +48,24 @@ public class JournalServerLogger {
                     LOGGER.trace(sink);
                 } else {
                     switch (msg.getLevel()) {
-                        case TRACE:
-                            LOGGER.trace(sink);
-                            break;
                         case INFO:
                             LOGGER.info(sink);
                             break;
                         case ERROR:
                             LOGGER.error(sink);
                             break;
+                        default:
+                            LOGGER.trace(sink);
+                            break;
                     }
                 }
             }
         });
         ringBuffer.addGatingSequences(eventProcessor.getSequence());
+    }
+
+    public void halt() {
+        eventProcessor.halt();
     }
 
     public ServerLogMsg msg() {
@@ -80,9 +84,5 @@ public class JournalServerLogger {
         Thread thread = new Thread(eventProcessor);
         thread.setName("nfsdb-server-logger");
         thread.start();
-    }
-
-    public void halt() {
-        eventProcessor.halt();
     }
 }

@@ -35,8 +35,7 @@ public class ScenarioTest extends AbstractTest {
 
     private final ServerConfig serverConfig = new ServerConfig() {{
         setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(300));
-        setHostname("localhost");
-        setEnableMulticast(false);
+        setEnableMultiCast(false);
     }};
 
     private final ClientConfig clientConfig = new ClientConfig("localhost");
@@ -49,6 +48,52 @@ public class ScenarioTest extends AbstractTest {
 
         local.refresh();
         TestUtils.assertEquals(expected, local.query().head().withKeys().asResultSet());
+    }
+
+    @Test
+    public void testLagTrickle() throws Exception {
+
+        // prepare test data
+        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
+        TestData.appendQuoteData2(origin);
+
+        final JournalWriter<Quote> randomOrigin = factory.writer(new JournalKey<>(Quote.class, "origin-rnd", PartitionType.NONE, false));
+        randomOrigin.append(origin.query().all().asResultSet().shuffle(new Rnd(System.currentTimeMillis(), System.nanoTime())));
+        origin.close();
+
+        final JournalWriter<Quote> remote = factory.writer(Quote.class, "remote");
+        final Journal<Quote> remoteReader = factory.reader(Quote.class, "remote");
+
+        // create empty journal
+        Journal<Quote> local = factory.writer(Quote.class, "local");
+        local.close();
+
+        // setup local where data should be trickling from client
+        local = factory.reader(Quote.class, "local");
+        Assert.assertEquals(0, local.size());
+
+        JournalServer server = new JournalServer(serverConfig, factory);
+        JournalClient client = new JournalClient(clientConfig, factory);
+
+        server.publish(remote);
+        server.start();
+
+        client.subscribe(Quote.class, "remote", "local");
+        client.start();
+
+        lagIteration(randomOrigin, remote, 0, 100);
+        lagIteration(randomOrigin, remote, 100, 200);
+        lagIteration(randomOrigin, remote, 200, 300);
+        lagIteration(randomOrigin, remote, 300, 400);
+
+        Thread.sleep(100);
+
+        server.halt();
+        client.halt();
+
+        local.refresh();
+        remoteReader.refresh();
+        assertEquals(remoteReader, local);
     }
 
     @Test
@@ -98,52 +143,6 @@ public class ScenarioTest extends AbstractTest {
 
         client.halt();
         server.halt();
-    }
-
-    @Test
-    public void testLagTrickle() throws Exception {
-
-        // prepare test data
-        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
-        TestData.appendQuoteData2(origin);
-
-        final JournalWriter<Quote> randomOrigin = factory.writer(new JournalKey<>(Quote.class, "origin-rnd", PartitionType.NONE, false));
-        randomOrigin.append(origin.query().all().asResultSet().shuffle(new Rnd(System.currentTimeMillis(), System.nanoTime())));
-        origin.close();
-
-        final JournalWriter<Quote> remote = factory.writer(Quote.class, "remote");
-        final Journal<Quote> remoteReader = factory.reader(Quote.class, "remote");
-
-        // create empty journal
-        Journal<Quote> local = factory.writer(Quote.class, "local");
-        local.close();
-
-        // setup local where data should be trickling from client
-        local = factory.reader(Quote.class, "local");
-        Assert.assertEquals(0, local.size());
-
-        JournalServer server = new JournalServer(serverConfig, factory);
-        JournalClient client = new JournalClient(clientConfig, factory);
-
-        server.publish(remote);
-        server.start();
-
-        client.subscribe(Quote.class, "remote", "local");
-        client.start();
-
-        lagIteration(randomOrigin, remote, 0, 100);
-        lagIteration(randomOrigin, remote, 100, 200);
-        lagIteration(randomOrigin, remote, 200, 300);
-        lagIteration(randomOrigin, remote, 300, 400);
-
-        Thread.sleep(100);
-
-        server.halt();
-        client.halt();
-
-        local.refresh();
-        remoteReader.refresh();
-        assertEquals(remoteReader, local);
     }
 
     private void lagIteration(final Journal<Quote> origin, final JournalWriter<Quote> remote, final int lo, final int hi) throws JournalException {

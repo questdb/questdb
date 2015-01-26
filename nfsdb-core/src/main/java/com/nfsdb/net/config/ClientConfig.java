@@ -21,7 +21,9 @@ import com.nfsdb.logging.Logger;
 import com.nfsdb.net.mcast.OnDemandAddressPoller;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.NetworkInterface;
 import java.net.StandardSocketOptions;
 import java.nio.channels.SocketChannel;
 import java.nio.channels.UnresolvedAddressException;
@@ -40,18 +42,12 @@ public class ClientConfig extends NetworkConfig {
         this(null);
     }
 
-    public ClientConfig(String hostname) {
+    public ClientConfig(String hosts) {
+        super();
         getSslConfig().setClient(true);
-        setHostname(hostname);
-    }
-
-
-    public int getSoSndBuf() {
-        return soSndBuf;
-    }
-
-    public void setSoSndBuf(int soSndBuf) {
-        this.soSndBuf = soSndBuf;
+        if (hosts != null && hosts.length() > 0) {
+            ServerNode.parse(hosts, nodes);
+        }
     }
 
     public boolean getKeepAlive() {
@@ -60,14 +56,6 @@ public class ClientConfig extends NetworkConfig {
 
     public void setKeepAlive(boolean keepAlive) {
         this.keepAlive = keepAlive;
-    }
-
-    public boolean isTcpNoDelay() {
-        return tcpNoDelay;
-    }
-
-    public void setTcpNoDelay(boolean tcpNoDelay) {
-        this.tcpNoDelay = tcpNoDelay;
     }
 
     public int getLinger() {
@@ -82,28 +70,84 @@ public class ClientConfig extends NetworkConfig {
         return reconnectPolicy;
     }
 
+    public int getSoSndBuf() {
+        return soSndBuf;
+    }
+
+    public void setSoSndBuf(int soSndBuf) {
+        this.soSndBuf = soSndBuf;
+    }
+
+    public boolean isTcpNoDelay() {
+        return tcpNoDelay;
+    }
+
+    public void setTcpNoDelay(boolean tcpNoDelay) {
+        this.tcpNoDelay = tcpNoDelay;
+    }
+
+    public DatagramChannelWrapper openDatagramChannel() throws JournalNetworkException {
+        return openDatagramChannel(getMultiCastInterface());
+    }
+
     public SocketChannel openSocketChannel() throws JournalNetworkException {
-        String host = getHostname();
-        InetSocketAddress address = host != null ? new InetSocketAddress(host, getPort()) : pollServerAddress();
+        if (nodes.size() == 0) {
+            if (isMultiCastEnabled()) {
+                nodes.add(pollServerAddress());
+            } else {
+                throw new JournalNetworkException("No server nodes");
+            }
+        }
 
+        for (int i = 0; i < nodes.size(); i++) {
+            ServerNode node = nodes.get(i);
+            try {
+                return openSocketChannel0(node);
+            } catch (UnresolvedAddressException | IOException e) {
+                LOGGER.info("Node %s is unavailable [%s]", node, e.getMessage());
+            }
+        }
+
+        throw new JournalNetworkException("Could not connect to any node");
+    }
+
+    public SocketChannel openSocketChannel(ServerNode node) throws JournalNetworkException {
         try {
-            SocketChannel channel = SocketChannel.open(address)
-                    .setOption(StandardSocketOptions.TCP_NODELAY, isTcpNoDelay())
-                    .setOption(StandardSocketOptions.SO_KEEPALIVE, getKeepAlive())
-                    .setOption(StandardSocketOptions.SO_SNDBUF, getSoSndBuf())
-                    .setOption(StandardSocketOptions.SO_RCVBUF, getSoRcvBuf())
-                    .setOption(StandardSocketOptions.SO_LINGER, getLinger());
-
-            LOGGER.info("Connected to %s", address);
-            return channel;
-        } catch (UnresolvedAddressException e) {
-            throw new JournalNetworkException("DNS lookup error: " + address);
-        } catch (IOException e) {
-            throw new JournalNetworkException(address.toString(), e);
+            return openSocketChannel0(node);
+        } catch (UnresolvedAddressException | IOException e) {
+            throw new JournalNetworkException(e);
         }
     }
 
-    private InetSocketAddress pollServerAddress() throws JournalNetworkException {
+    public SocketChannel openSocketChannel0(ServerNode node) throws IOException {
+        InetSocketAddress address = new InetSocketAddress(node.getHostname(), node.getPort());
+        SocketChannel channel = SocketChannel.open(address)
+                .setOption(StandardSocketOptions.TCP_NODELAY, isTcpNoDelay())
+                .setOption(StandardSocketOptions.SO_KEEPALIVE, getKeepAlive())
+                .setOption(StandardSocketOptions.SO_SNDBUF, getSoSndBuf())
+                .setOption(StandardSocketOptions.SO_RCVBUF, getSoRcvBuf())
+                .setOption(StandardSocketOptions.SO_LINGER, getLinger());
+
+        LOGGER.info("Connected to %s", node);
+        return channel;
+    }
+
+    private NetworkInterface getMultiCastInterface() throws JournalNetworkException {
+        try {
+            if (getIfName() == null) {
+                return NetworkInterface.getByInetAddress(
+                        InetAddress.getByName(InetAddress.getLocalHost().getHostName()
+                        )
+                );
+            }
+
+            return NetworkInterface.getByName(getIfName());
+        } catch (IOException e) {
+            throw new JournalNetworkException(e);
+        }
+    }
+
+    private ServerNode pollServerAddress() throws JournalNetworkException {
         return new OnDemandAddressPoller(this, 235, 230).poll(3, 500, TimeUnit.MILLISECONDS);
     }
 }

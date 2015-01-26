@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,8 +34,9 @@ import java.io.IOException;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.util.ArrayList;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -49,7 +50,7 @@ public class JournalServer {
     private final JournalReaderFactory factory;
     private final JournalEventBridge bridge;
     private final ServerConfig config;
-    private final ExecutorService service;
+    private final ThreadPoolExecutor service;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final ArrayList<SocketChannelHolder> channels = new ArrayList<>();
     private final OnDemandAddressSender addressSender;
@@ -59,28 +60,35 @@ public class JournalServer {
     private final AtomicBoolean ignoreVoting = new AtomicBoolean(false);
     private ServerSocketChannel serverSocketChannel;
 
-    public JournalServer(JournalReaderFactory factory) throws JournalNetworkException {
+    public JournalServer(JournalReaderFactory factory) {
         this(new ServerConfig(), factory);
     }
 
-    public JournalServer(JournalReaderFactory factory, AuthorizationHandler authorizationHandler) throws JournalNetworkException {
+    public JournalServer(JournalReaderFactory factory, AuthorizationHandler authorizationHandler) {
         this(new ServerConfig(), factory, authorizationHandler);
     }
 
-    public JournalServer(ServerConfig config, JournalReaderFactory factory) throws JournalNetworkException {
+    public JournalServer(ServerConfig config, JournalReaderFactory factory) {
         this(config, factory, null);
     }
 
-    public JournalServer(ServerConfig config, JournalReaderFactory factory, AuthorizationHandler authorizationHandler) throws JournalNetworkException {
+    public JournalServer(ServerConfig config, JournalReaderFactory factory, AuthorizationHandler authorizationHandler) {
         this(config, factory, authorizationHandler, 0);
     }
 
-    public JournalServer(ServerConfig config, JournalReaderFactory factory, AuthorizationHandler authorizationHandler, int instance) throws JournalNetworkException {
+    public JournalServer(ServerConfig config, JournalReaderFactory factory, AuthorizationHandler authorizationHandler, int instance) {
         this.config = config;
         this.factory = factory;
-        this.service = Executors.newCachedThreadPool(new NamedDaemonThreadFactory("nfsdb-server-" + instance + "-agent", true));
-        this.bridge = new JournalEventBridge(config.getHeartbeatFrequency(), TimeUnit.MILLISECONDS, config.getEventBufferSize());
-        if (config.isEnableMulticast()) {
+        this.service = new ThreadPoolExecutor(
+                0
+                , Integer.MAX_VALUE
+                , 60L
+                , TimeUnit.SECONDS
+                , new SynchronousQueue<Runnable>()
+                , new NamedDaemonThreadFactory("nfsdb-server-" + instance + "-agent", true)
+        );
+        this.bridge = new JournalEventBridge(config.getHeartbeatFrequency(), TimeUnit.MILLISECONDS);
+        if (config.isMultiCastEnabled()) {
             this.addressSender = new OnDemandAddressSender(config, 230, 235, instance);
         } else {
             this.addressSender = null;
@@ -106,37 +114,24 @@ public class JournalServer {
         }
     }
 
-    public JournalServerLogger getLogger() {
-        return serverLogger;
+    public JournalEventBridge getBridge() {
+        return bridge;
     }
 
-    public void publish(JournalWriter journal) {
-        writers.put(journal, writerIdGenerator.getAndIncrement());
+    public synchronized int getConnectedClients() {
+        return channels.size();
     }
 
     public JournalReaderFactory getFactory() {
         return factory;
     }
 
-    public JournalEventBridge getBridge() {
-        return bridge;
+    public JournalServerLogger getLogger() {
+        return serverLogger;
     }
 
-    public void start() throws JournalNetworkException {
-        serverLogger.start();
-        for (ObjIntHashMap.Entry<JournalWriter> e : writers) {
-            JournalEventPublisher publisher = new JournalEventPublisher(e.value, bridge);
-            e.key.setTxListener(publisher);
-            e.key.setTxAsyncListener(publisher);
-        }
-
-        serverSocketChannel = config.openServerSocketChannel();
-        if (config.isEnableMulticast()) {
-            addressSender.start();
-        }
-        bridge.start();
-        running.set(true);
-        service.execute(new Acceptor());
+    public int getServerInstance() {
+        return serverInstance;
     }
 
     public void halt(long timeout, TimeUnit unit) {
@@ -194,12 +189,37 @@ public class JournalServer {
         halt(30, TimeUnit.SECONDS);
     }
 
+    public boolean isIgnoreVoting() {
+        return ignoreVoting.get();
+    }
+
+    public void setIgnoreVoting(boolean ignore) {
+        ignoreVoting.set(ignore);
+    }
+
     public boolean isRunning() {
         return running.get();
     }
 
-    public synchronized int getConnectedClients() {
-        return channels.size();
+    public void publish(JournalWriter journal) {
+        writers.put(journal, writerIdGenerator.getAndIncrement());
+    }
+
+    public void start() throws JournalNetworkException {
+        serverLogger.start();
+        for (ObjIntHashMap.Entry<JournalWriter> e : writers) {
+            JournalEventPublisher publisher = new JournalEventPublisher(e.value, bridge);
+            e.key.setTxListener(publisher);
+            e.key.setTxAsyncListener(publisher);
+        }
+
+        serverSocketChannel = config.openServerSocketChannel(serverInstance);
+        if (config.isMultiCastEnabled()) {
+            addressSender.start();
+        }
+        bridge.start();
+        running.set(true);
+        service.execute(new Acceptor());
     }
 
     int getWriterIndex(JournalKey key) {
@@ -229,19 +249,6 @@ public class JournalServer {
         }
     }
 
-    public int getServerInstance() {
-        return serverInstance;
-    }
-
-
-    public boolean isIgnoreVoting() {
-        return ignoreVoting.get();
-    }
-
-    public void setIgnoreVoting(boolean ignore) {
-        ignoreVoting.set(ignore);
-    }
-
     private class Acceptor implements Runnable {
         @Override
         public void run() {
@@ -257,13 +264,12 @@ public class JournalServer {
                                 , channel.getRemoteAddress()
                         );
                         addChannel(holder);
-                        if (!service.isShutdown()) {
+                        try {
                             service.submit(new Handler(holder));
                             LOGGER.info("Connected: %s", holder.socketAddress);
-                        } else {
+                        } catch (RejectedExecutionException e) {
                             LOGGER.info("Ignoring connection from %s. Server is shutting down.", holder.socketAddress);
                         }
-
                     }
                 }
             } catch (IOException | JournalNetworkException e) {
