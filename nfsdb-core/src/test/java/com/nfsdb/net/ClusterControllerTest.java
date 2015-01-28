@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -189,7 +189,7 @@ public class ClusterControllerTest extends AbstractTest {
         long t;
 
         t = System.currentTimeMillis();
-        while (standby.get() < 4 && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 2) {
+        while (standby.get() < 4 && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 30) {
             Thread.yield();
         }
 
@@ -207,7 +207,7 @@ public class ClusterControllerTest extends AbstractTest {
 //        c1.halt();
 //
         t = System.currentTimeMillis();
-        while (standby.get() < 3 && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 2) {
+        while (standby.get() < 3 && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 30) {
             Thread.yield();
         }
 //
