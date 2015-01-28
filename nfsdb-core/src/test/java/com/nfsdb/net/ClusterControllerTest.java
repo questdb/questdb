@@ -31,6 +31,7 @@ import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Files;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 
@@ -168,6 +169,7 @@ public class ClusterControllerTest extends AbstractTest {
     }
 
     @Test
+    @Ignore
     public void testFiveNodesVoting() throws Exception {
         AtomicInteger active = new AtomicInteger();
         AtomicInteger standby = new AtomicInteger();

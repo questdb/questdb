@@ -158,7 +158,7 @@ public class ClusterController {
             @Override
             public void onDisconnect(JournalClient.DisconnectReason reason) {
                 if (running.get()) {
-                    LOGGER.info("Cluster is re-voting");
+                    LOGGER.info("Server is re-voting %d", instance);
                     service.submit(up);
                 }
             }
@@ -176,6 +176,7 @@ public class ClusterController {
     }
 
     private void vote(boolean startup) throws JournalNetworkException {
+        System.out.println("VOTE " + startup);
 
         // this method can be called during both, standalone start and cluster re-vote
         // during re-vote all members scramble to become ALPHA so checking for sever presence
