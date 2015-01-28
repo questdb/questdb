@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -94,7 +94,7 @@ public class JournalServerAgent {
                     intResponseConsumer.read(channel);
                     if (intResponseConsumer.isComplete()) {
                         int inst = intResponseConsumer.getValue();
-                        boolean loss = !server.isIgnoreVoting() && inst > server.getServerInstance();
+                        boolean loss = !server.isAlpha() && inst > server.getServerInstance();
                         intResponseConsumer.reset();
                         commandConsumer.reset();
 
@@ -102,7 +102,7 @@ public class JournalServerAgent {
                             ok(channel);
                             throw new ClusterLossException(inst);
                         } else {
-                            error(channel, server.isIgnoreVoting() ? "WIN" : "OUT");
+                            error(channel, server.isAlpha() ? "WIN" : "OUT");
                         }
                     }
                     break;

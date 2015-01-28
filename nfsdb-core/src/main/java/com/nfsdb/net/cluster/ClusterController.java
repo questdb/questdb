@@ -32,6 +32,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.LockSupport;
 
 public class ClusterController {
 
@@ -40,6 +41,7 @@ public class ClusterController {
     private final Runnable up = new Runnable() {
 
         private boolean startup = true;
+
         @Override
         public void run() {
             try {
@@ -107,6 +109,10 @@ public class ClusterController {
         }
     }
 
+    public boolean isAlpha() {
+        return server != null && server.isAlpha();
+    }
+
     public void start() {
         if (running.compareAndSet(false, true)) {
             service.submit(up);
@@ -120,7 +126,6 @@ public class ClusterController {
                 if (node.getId() == instance) {
                     continue;
                 }
-
 
                 client = new JournalClient(clientConfig, factory);
                 if (client.pingServer(node)) {
@@ -172,18 +177,21 @@ public class ClusterController {
     }
 
     private ServerNode thisNode() {
-        return serverConfig.getNode(instance);
+        ServerNode node = serverConfig.getNode(instance);
+        if (node == null) {
+            System.out.println("NULL node for " + instance);
+        }
+        return node;
     }
 
     private void vote(boolean startup) throws JournalNetworkException {
-        System.out.println("VOTE " + startup);
 
         // this method can be called during both, standalone start and cluster re-vote
         // during re-vote all members scramble to become ALPHA so checking for sever presence
         // is only appropriate during standalone start, where new server node will always assume
         // slave role if there is existing server.
-        ServerNode activeNode;
         if (startup) {
+            ServerNode activeNode;
             try {
                 if ((activeNode = getActiveNodeAndSetupClient()) != null) {
                     LOGGER.info(thisNode() + " There is active node already %s. Yielding", activeNode);
@@ -213,32 +221,54 @@ public class ClusterController {
         //
         // on other hand, if this node loses, it is enough to become a slave, so give up voting in this case.
         boolean isClient = false;
-        while (!isClient && server.isRunning() && (activeNode = getActiveNodeAndSetupClient()) != null && client != null) {
-            LOGGER.info("%s thinks that %s is present", thisNode(), activeNode);
-            switch (client.voteInstance(instance, activeNode)) {
-                case ALPHA:
-                    LOGGER.info(thisNode() + " Lost tie-break vote, becoming a client");
-                    server.halt();
-                    // don't stop server explicitly, it wil shut down after being voted out
-                    setupClient(activeNode);
-                    return;
-                case THEM:
-                    LOGGER.info("%s lost tie-break against %s, wait for ALPHA node", thisNode(), activeNode);
-                    isClient = true;
-                    server.halt();
-                    break;
-                default:
-                    LOGGER.info("%s WON tie-break against %s", thisNode(), activeNode);
-            }
+        boolean nodesLeft = true;
+        while (!isClient && nodesLeft) {
 
-            // always stop client because we will create new one when looking for ALPHA
-            haltClient();
-            Thread.yield();
+            nodesLeft = false;
+            for (ServerNode node : clientConfig.nodes()) {
+
+                if (!server.isRunning()) {
+                    isClient = true;
+                    break;
+                }
+
+                if (node.getId() == instance) {
+                    continue;
+                }
+
+                client = new JournalClient(clientConfig, factory);
+                LOGGER.info("%s is probing %s", thisNode(), node);
+                JournalClient.VoteResult vote = client.voteInstance(instance, node);
+                LOGGER.info("%s got %s from %s", thisNode(), vote, node);
+                switch (vote) {
+                    case ALPHA:
+                        LOGGER.info(thisNode() + " Lost tie-break vote, becoming a client");
+                        server.halt();
+                        // don't stop server explicitly, it wil shut down after being voted out
+                        setupClient(node);
+                        return;
+                    case THEM:
+                        LOGGER.info("%s lost tie-break against %s, wait for ALPHA node", thisNode(), node);
+                        isClient = true;
+                        server.halt();
+                        break;
+                    case ME_BY_DEFAULT:
+                        LOGGER.info("%s WON by default against %s", thisNode(), node);
+                        break;
+                    default:
+                        LOGGER.info("%s WON tie-break against %s", thisNode(), node);
+                        nodesLeft = true;
+                }
+
+                // always stop client because we will create new one when looking for ALPHA
+                haltClient();
+                Thread.yield();
+            }
         }
 
         if (!isClient) {
             // after this point server cannot be voted out and it becomes the ALPHA
-            server.setIgnoreVoting(true);
+            server.setAlpha(true);
             LOGGER.info(thisNode() + " Activating callback");
             listener.onNodeActive();
             return;
@@ -247,16 +277,18 @@ public class ClusterController {
         // look for ALPHA in a loop
         // this loop cannot exit unless it finds ALPHA or runs out of nodes to check and errors out
         while (true) {
-            activeNode = getActiveNodeAndSetupClient();
+            ServerNode activeNode = getActiveNodeAndSetupClient();
             if (activeNode == null || client == null) {
                 throw new JournalNetworkException("Expected ALPHA node but got none");
             }
 
+            LOGGER.info("%s is checking if %s has become ALPHA", thisNode(), activeNode);
             if (client.voteInstance(instance, activeNode) == JournalClient.VoteResult.ALPHA) {
                 setupClient(activeNode);
                 return;
             }
             haltClient();
+            LockSupport.parkNanos(500000000L);
         }
 
     }

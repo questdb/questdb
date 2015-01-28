@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -198,7 +198,6 @@ public class JournalClient {
 
     public VoteResult voteInstance(int instance, ServerNode remote) {
         try {
-            LOGGER.info("Instance %s is sending vote to %s", instance, remote);
             openChannel(null);
             commandProducer.write(channel, Command.CLUSTER_VOTE);
             intResponseProducer.write(channel, instance);
@@ -218,8 +217,7 @@ public class JournalClient {
                     return VoteResult.ME;
             }
         } catch (JournalNetworkException e) {
-            LOGGER.info("Remote side bailed out. WIN by default.");
-            return VoteResult.ME;
+            return VoteResult.ME_BY_DEFAULT;
         }
     }
 
@@ -394,7 +392,7 @@ public class JournalClient {
     }
 
     public static enum VoteResult {
-        ME, THEM, ALPHA
+        ME, THEM, ALPHA, ME_BY_DEFAULT
     }
 
 

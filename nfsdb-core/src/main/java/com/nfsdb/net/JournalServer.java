@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,7 +54,7 @@ public class JournalServer {
     private final AuthorizationHandler authorizationHandler;
     private final JournalServerLogger serverLogger = new JournalServerLogger();
     private final int serverInstance;
-    private final AtomicBoolean ignoreVoting = new AtomicBoolean(false);
+    private final AtomicBoolean alpha = new AtomicBoolean(false);
     private ServerSocketChannel serverSocketChannel;
 
     public JournalServer(JournalReaderFactory factory) {
@@ -118,13 +118,13 @@ public class JournalServer {
         if (!running.compareAndSet(true, false)) {
             return;
         }
-        LOGGER.trace("Stopping agent services");
+        LOGGER.info("Stopping agent services %d", serverInstance);
         service.shutdown();
         for (ObjIntHashMap.Entry<JournalWriter> e : writers) {
             e.key.setTxAsyncListener(null);
         }
 
-        LOGGER.trace("Stopping acceptor");
+        LOGGER.info("Stopping acceptor");
         try {
             serverSocketChannel.close();
         } catch (IOException e) {
@@ -134,24 +134,25 @@ public class JournalServer {
 
         if (timeout > 0) {
             try {
+                LOGGER.info("Waiting for %s agent services to conplete data exchange on %s", service.getActiveCount(), serverInstance);
                 service.awaitTermination(timeout, unit);
             } catch (InterruptedException e) {
                 LOGGER.debug(e);
             }
         }
 
-        LOGGER.trace("Stopping bridge");
+        LOGGER.info("Stopping bridge on %d", serverInstance);
         bridge.halt();
 
         if (addressSender != null) {
-            LOGGER.trace("Stopping mcast sender");
+            LOGGER.info("Stopping mcast sender on %d", serverInstance);
             addressSender.halt();
         }
 
-        LOGGER.trace("Closing channels");
+        LOGGER.info("Closing channels on %d", serverInstance);
         closeChannels();
 
-        LOGGER.trace("Stopping logger");
+        LOGGER.info("Stopping logger on %d", serverInstance);
         serverLogger.halt();
 
         try {
@@ -170,12 +171,12 @@ public class JournalServer {
         halt(30, TimeUnit.SECONDS);
     }
 
-    public boolean isIgnoreVoting() {
-        return ignoreVoting.get();
+    public boolean isAlpha() {
+        return alpha.get();
     }
 
-    public void setIgnoreVoting(boolean ignore) {
-        ignoreVoting.set(ignore);
+    public void setAlpha(boolean ignore) {
+        alpha.set(ignore);
     }
 
     public boolean isRunning() {
@@ -201,6 +202,18 @@ public class JournalServer {
         bridge.start();
         running.set(true);
         service.execute(new Acceptor());
+    }
+
+    int getWriterIndex(JournalKey key) {
+        for (ObjIntHashMap.Entry<JournalWriter> e : writers.immutableIterator()) {
+            JournalKey jk = e.key.getKey();
+            if (jk.getId().equals(key.getId()) && (
+                    (jk.getLocation() == null && key.getLocation() == null)
+                            || (jk.getLocation() != null && jk.getLocation().equals(key.getLocation())))) {
+                return e.value;
+            }
+        }
+        return JOURNAL_KEY_NOT_FOUND;
     }
 
     private void addChannel(SocketChannelHolder holder) {
@@ -229,18 +242,6 @@ public class JournalServer {
         while (channels.size() > 0) {
             closeChannel(channels.remove(0), true);
         }
-    }
-
-    int getWriterIndex(JournalKey key) {
-        for (ObjIntHashMap.Entry<JournalWriter> e : writers.immutableIterator()) {
-            JournalKey jk = e.key.getKey();
-            if (jk.getId().equals(key.getId()) && (
-                    (jk.getLocation() == null && key.getLocation() == null)
-                            || (jk.getLocation() != null && jk.getLocation().equals(key.getLocation())))) {
-                return e.value;
-            }
-        }
-        return JOURNAL_KEY_NOT_FOUND;
     }
 
     private void removeChannel(SocketChannelHolder holder) {

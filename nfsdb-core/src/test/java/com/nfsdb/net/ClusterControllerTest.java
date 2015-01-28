@@ -31,7 +31,6 @@ import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Files;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 
@@ -169,7 +168,6 @@ public class ClusterControllerTest extends AbstractTest {
     }
 
     @Test
-    @Ignore
     public void testFiveNodesVoting() throws Exception {
         AtomicInteger active = new AtomicInteger();
         AtomicInteger standby = new AtomicInteger();
@@ -191,31 +189,47 @@ public class ClusterControllerTest extends AbstractTest {
         long t;
 
         t = System.currentTimeMillis();
-        while (standby.get() < 4 && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 120) {
+        while (standby.get() < 4 && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 600) {
             Thread.yield();
         }
-
         Assert.assertEquals(4, standby.get());
+
+
+        t = System.currentTimeMillis();
+        while (active.get() < 1 && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 600) {
+            Thread.yield();
+        }
         Assert.assertEquals(1, active.get());
 
         standby.set(0);
         active.set(0);
 
         System.out.println("--------------------------");
-        c5.halt();
-//        c4.halt();
-//        c3.halt();
-//        c2.halt();
-//        c1.halt();
-//
+
+        if (c5.isAlpha()) {
+            c5.halt();
+        } else if (c4.isAlpha()) {
+            c4.halt();
+        } else if (c3.isAlpha()) {
+            c3.halt();
+        } else if (c2.isAlpha()) {
+            c2.halt();
+        } else if (c1.isAlpha()) {
+            c1.halt();
+        } else {
+            Assert.fail("No ALPHA cluster");
+        }
+
+        System.out.println("=========================");
         t = System.currentTimeMillis();
         while (standby.get() < 3 && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 120) {
             Thread.yield();
         }
-//
+
         Assert.assertEquals(3, standby.get());
         Assert.assertEquals(1, active.get());
-//
+
+        System.out.println("+++++++++++++++++++++++++++++");
 
         c1.halt();
         c2.halt();
@@ -311,6 +325,7 @@ public class ClusterControllerTest extends AbstractTest {
         controller.halt();
         shutdown.await(5, TimeUnit.SECONDS);
         Assert.assertEquals(0, shutdown.getCount());
+        controller.halt();
     }
 
     @Test
