@@ -102,7 +102,7 @@ public class JournalServerAgent {
                             ok(channel);
                             throw new ClusterLossException(inst);
                         } else {
-                            error(channel, "WIN");
+                            error(channel, server.isIgnoreVoting() ? "WIN" : "OUT");
                         }
                     }
                     break;
@@ -233,47 +233,65 @@ public class JournalServerAgent {
         }
     }
 
-    private void setClientKey(ByteChannel channel, IndexedJournalKey indexedKey) throws JournalNetworkException {
-        JournalKey<?> readerKey = indexedKey.getKey();
-        int writerIndex = server.getWriterIndex(readerKey);
-        if (writerIndex == JournalServer.JOURNAL_KEY_NOT_FOUND) {
-            error(channel, "Requested key not exported: " + readerKey);
-        } else {
-            writerToReaderMap.put(writerIndex, indexedKey.getIndex());
-            readerToWriterMap.extendAndSet(indexedKey.getIndex(), writerIndex);
-            try {
-                createReader(indexedKey.getIndex(), readerKey);
-                ok(channel);
-            } catch (JournalException e) {
-                error(channel, "Could not created reader for key: " + readerKey, e);
-            }
+    private void dispatch(WritableByteChannel channel) throws JournalNetworkException {
+        if (!processJournalEvents(channel, false)) {
+            processJournalEvents(channel, true);
         }
     }
 
-    private void storeDeltaRequest(WritableByteChannel channel, JournalClientState request) throws JournalNetworkException {
-        int index = request.getJournalIndex();
+    private boolean dispatch0(WritableByteChannel channel, int journalIndex) {
+        long time = System.currentTimeMillis();
+        JournalClientState state = clientStates.get(journalIndex);
+        JournalDeltaProducer journalDeltaProducer = getProducer(journalIndex);
 
-        if (readerToWriterMap.get(index) == JOURNAL_INDEX_NOT_FOUND) {
-            error(channel, "Journal index does not match key request");
-        } else {
-            Lists.advance(clientStates, index);
+        // x1 is clientStateValid
+        // x2 is writerUpdateReceived
+        // x3 is clientStateSynchronised
+        // 1 is true
+        // 0 is false
+        //
+        // x1 = 1 && x3 = 0 -> send (brand new, unvalidated request)
+        // x1 = 0 - don't send (not client state, don't know what to send)
+        // x1 = 1 && x2 = 1 ->  send (either new request, or previously validated but not sent with and update)
 
-            JournalClientState r = clientStates.get(index);
-            if (r == null) {
-                r = new JournalClientState();
-                clientStates.set(index, r);
+        if (journalDeltaProducer == null || state == null || state.isClientStateInvalid() ||
+                (state.isWaitingOnEvents() && time - state.getClientStateSyncTime() <= ServerConfig.SYNC_TIMEOUT)) {
+            return false;
+        }
+
+
+        try {
+            boolean dataSent = dispatchProducer(channel, state, journalDeltaProducer, journalIndex);
+            if (dataSent) {
+                state.invalidateClientState();
+            } else {
+                state.setClientStateSyncTime(time);
             }
-            request.deepCopy(r);
-            r.invalidateClientState();
-            r.setClientStateSyncTime(0);
-            r.setWaitingOnEvents(true);
-
-            ok(channel);
+            return dataSent;
+        } catch (Exception e) {
+            server.getLogger().msg()
+                    .setLevel(ServerLogMsg.Level.ERROR)
+                    .setSocketAddress(socketAddress)
+                    .setMessage("Client appears to be refusing new data from server, corrupt client")
+                    .setException(e)
+                    .send();
+            return false;
         }
     }
 
-    private void ok(WritableByteChannel channel) throws JournalNetworkException {
-        stringResponseProducer.write(channel, "OK");
+    private boolean dispatchProducer(WritableByteChannel channel,
+                                     JournalClientState state, JournalDeltaProducer journalDeltaProducer,
+                                     int index) throws JournalNetworkException, JournalException {
+        journalDeltaProducer.configure(state);
+        if (journalDeltaProducer.hasContent()) {
+            server.getLogger().msg().setMessage("Sending data").setSocketAddress(socketAddress).send();
+            commandProducer.write(channel, Command.JOURNAL_DELTA_CMD);
+            intResponseProducer.write(channel, index);
+            journalDeltaProducer.write(channel);
+            return true;
+        }
+        return false;
+
     }
 
     private void error(WritableByteChannel channel, String message) throws JournalNetworkException {
@@ -288,6 +306,18 @@ public class JournalServerAgent {
                 .setMessage(message)
                 .setException(e)
                 .send();
+    }
+
+    private JournalDeltaProducer getProducer(int index) {
+        if (index < producers.size()) {
+            return producers.get(index);
+        } else {
+            return null;
+        }
+    }
+
+    private void ok(WritableByteChannel channel) throws JournalNetworkException {
+        stringResponseProducer.write(channel, "OK");
     }
 
     private boolean processJournalEvents(final WritableByteChannel channel, boolean blocking) throws JournalNetworkException {
@@ -333,88 +363,49 @@ public class JournalServerAgent {
         return dataSent;
     }
 
-    private boolean dispatch0(WritableByteChannel channel, int journalIndex) {
-        long time = System.currentTimeMillis();
-        JournalClientState state = clientStates.get(journalIndex);
-        JournalDeltaProducer journalDeltaProducer = getProducer(journalIndex);
-
-        // x1 is clientStateValid
-        // x2 is writerUpdateReceived
-        // x3 is clientStateSynchronised
-        // 1 is true
-        // 0 is false
-        //
-        // x1 = 1 && x3 = 0 -> send (brand new, unvalidated request)
-        // x1 = 0 - don't send (not client state, don't know what to send)
-        // x1 = 1 && x2 = 1 ->  send (either new request, or previously validated but not sent with and update)
-
-        if (journalDeltaProducer == null || state == null || state.isClientStateInvalid() ||
-                (state.isWaitingOnEvents() && time - state.getClientStateSyncTime() <= ServerConfig.SYNC_TIMEOUT)) {
-            return false;
-        }
-
-
-        try {
-            boolean dataSent = dispatchProducer(channel, state, journalDeltaProducer, journalIndex);
-            if (dataSent) {
-                state.invalidateClientState();
-            } else {
-                state.setClientStateSyncTime(time);
-            }
-            return dataSent;
-        } catch (Exception e) {
-            server.getLogger().msg()
-                    .setLevel(ServerLogMsg.Level.ERROR)
-                    .setSocketAddress(socketAddress)
-                    .setMessage("Client appears to be refusing new data from server, corrupt client")
-                    .setException(e)
-                    .send();
-            return false;
-        }
-    }
-
-    private void dispatch(WritableByteChannel channel) throws JournalNetworkException {
-        if (!processJournalEvents(channel, false)) {
-            processJournalEvents(channel, true);
-        }
-    }
-
-    private JournalDeltaProducer getProducer(int index) {
-        if (index < producers.size()) {
-            return producers.get(index);
+    private void setClientKey(ByteChannel channel, IndexedJournalKey indexedKey) throws JournalNetworkException {
+        JournalKey<?> readerKey = indexedKey.getKey();
+        int writerIndex = server.getWriterIndex(readerKey);
+        if (writerIndex == JournalServer.JOURNAL_KEY_NOT_FOUND) {
+            error(channel, "Requested key not exported: " + readerKey);
         } else {
-            return null;
+            writerToReaderMap.put(writerIndex, indexedKey.getIndex());
+            readerToWriterMap.extendAndSet(indexedKey.getIndex(), writerIndex);
+            try {
+                createReader(indexedKey.getIndex(), readerKey);
+                ok(channel);
+            } catch (JournalException e) {
+                error(channel, "Could not created reader for key: " + readerKey, e);
+            }
         }
     }
 
-    private boolean dispatchProducer(WritableByteChannel channel,
-                                     JournalClientState state, JournalDeltaProducer journalDeltaProducer,
-                                     int index) throws JournalNetworkException, JournalException {
-        journalDeltaProducer.configure(state);
-        if (journalDeltaProducer.hasContent()) {
-            server.getLogger().msg().setMessage("Sending data").setSocketAddress(socketAddress).send();
-            commandProducer.write(channel, Command.JOURNAL_DELTA_CMD);
-            intResponseProducer.write(channel, index);
-            journalDeltaProducer.write(channel);
-            return true;
-        }
-        return false;
+    private void storeDeltaRequest(WritableByteChannel channel, JournalClientState request) throws JournalNetworkException {
+        int index = request.getJournalIndex();
 
+        if (readerToWriterMap.get(index) == JOURNAL_INDEX_NOT_FOUND) {
+            error(channel, "Journal index does not match key request");
+        } else {
+            Lists.advance(clientStates, index);
+
+            JournalClientState r = clientStates.get(index);
+            if (r == null) {
+                r = new JournalClientState();
+                clientStates.set(index, r);
+            }
+            request.deepCopy(r);
+            r.invalidateClientState();
+            r.setClientStateSyncTime(0);
+            r.setWaitingOnEvents(true);
+
+            ok(channel);
+        }
     }
 
     private class EventHandler implements JournalEventHandler {
 
         private WritableByteChannel channel;
         private boolean dataSent = false;
-
-        public void setChannel(WritableByteChannel channel) {
-            this.channel = channel;
-            this.dataSent = false;
-        }
-
-        public boolean isDataSent() {
-            return dataSent;
-        }
 
         @Override
         public void handle(JournalEvent event) {
@@ -426,6 +417,15 @@ public class JournalServerAgent {
                     dataSent = dispatch0(channel, journalIndex) || dataSent;
                 }
             }
+        }
+
+        public boolean isDataSent() {
+            return dataSent;
+        }
+
+        public void setChannel(WritableByteChannel channel) {
+            this.channel = channel;
+            this.dataSent = false;
         }
     }
 }

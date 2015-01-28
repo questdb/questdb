@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -102,16 +102,19 @@ public class JournalClient {
     }
 
     public void halt() throws JournalNetworkException {
-        running.set(false);
-        try {
-            if (handlerFuture != null) {
-                handlerFuture.get();
-                handlerFuture = null;
+        if (running.compareAndSet(true, false)) {
+            try {
+                if (handlerFuture != null) {
+                    handlerFuture.get();
+                    handlerFuture = null;
+                }
+                close0();
+                free();
+            } catch (Exception e) {
+                throw new JournalNetworkException(e);
             }
-            close0();
-            free();
-        } catch (Exception e) {
-            throw new JournalNetworkException(e);
+        } else {
+            closeChannel();
         }
     }
 
@@ -135,7 +138,7 @@ public class JournalClient {
     }
 
     public void start() throws JournalNetworkException {
-        if (!isRunning()) {
+        if (running.compareAndSet(false, true)) {
             handshake();
             handlerFuture = service.submit(new Handler());
         }
@@ -193,74 +196,47 @@ public class JournalClient {
         add0(writer, txListener);
     }
 
-    public boolean voteInstance(int instance) throws JournalNetworkException {
-        LOGGER.info("Instance %s is sending vote", instance);
-        openChannel(null);
-        commandProducer.write(channel, Command.CLUSTER_VOTE);
-        intResponseProducer.write(channel, instance);
+    public VoteResult voteInstance(int instance, ServerNode remote) {
+        try {
+            LOGGER.info("Instance %s is sending vote to %s", instance, remote);
+            openChannel(null);
+            commandProducer.write(channel, Command.CLUSTER_VOTE);
+            intResponseProducer.write(channel, instance);
+            stringResponseConsumer.reset();
+            stringResponseConsumer.read(channel);
+            if (!stringResponseConsumer.isComplete()) {
+                LOGGER.info("Received incomplete response from cluster member %s", remote);
+                return VoteResult.THEM;
+            }
+
+            switch (stringResponseConsumer.getValue()) {
+                case "WIN":
+                    return VoteResult.ALPHA;
+                case "OUT":
+                    return VoteResult.THEM;
+                default:
+                    return VoteResult.ME;
+            }
+        } catch (JournalNetworkException e) {
+            LOGGER.info("Remote side bailed out. WIN by default.");
+            return VoteResult.ME;
+        }
+    }
+
+    private <T> void add0(JournalWriter<T> writer, TxListener txListener) {
+        deltaConsumers.add(new JournalDeltaConsumer(writer.setCommitOnClose(false)));
+        writers.add(writer);
+        statusSentList.add(0);
+        if (txListener != null) {
+            writer.setTxListener(txListener);
+        }
+    }
+
+    private void checkAck() throws JournalNetworkException {
         stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
-        if (!stringResponseConsumer.isComplete()) {
-            LOGGER.info("Received incomplete response from cluster member.");
-            return false;
-        }
-        return "OK".equals(stringResponseConsumer.getValue());
-    }
-
-    private void free() {
-        for (int i = 0; i < deltaConsumers.size(); i++) {
-            deltaConsumers.get(i).free();
-        }
-        commandConsumer.free();
-        stringResponseConsumer.free();
-        intResponseConsumer.free();
-        statusSentList.free();
-    }
-
-    private void close0() throws IOException {
-        if (channel != null && channel.isOpen()) {
-            channel.close();
-        }
-        channel = null;
-
-        for (int i = 0, sz = writers.size(); i < sz; i++) {
-            writers.get(i).close();
-        }
-
-        writers.clear();
-        statusSentList.clear();
-        deltaConsumers.clear();
-        commandConsumer.reset();
-        stringResponseConsumer.reset();
-        intResponseConsumer.reset();
-    }
-
-    private void openChannel(ServerNode node) throws JournalNetworkException {
-        if (this.channel == null || node != null) {
-            SocketChannel channel = node == null ? config.openSocketChannel() : config.openSocketChannel(node);
-            try {
-                statsChannel = new StatsCollectingReadableByteChannel(channel.getRemoteAddress());
-            } catch (IOException e) {
-                throw new JournalNetworkException("Cannot get remote address", e);
-            }
-
-            SslConfig sslConfig = config.getSslConfig();
-            if (sslConfig.isSecure()) {
-                this.channel = new SecureByteChannel(channel, sslConfig);
-            } else {
-                this.channel = channel;
-            }
-        }
-    }
-
-    private void handshake() throws JournalNetworkException {
-        openChannel(null);
-        sendProtocolVersion();
-        sendKeys();
-        checkAuthAndSendCredential();
-        sendState();
-        running.set(true);
-        counter.incrementAndGet();
+        fail(stringResponseConsumer.isComplete(), "Incomplete response");
+        fail("OK".equals(stringResponseConsumer.getValue()), stringResponseConsumer.getValue());
     }
 
     private void checkAuthAndSendCredential() throws JournalNetworkException {
@@ -284,12 +260,85 @@ public class JournalClient {
         }
     }
 
+    private void close0() {
+
+        closeChannel();
+        for (int i = 0, sz = writers.size(); i < sz; i++) {
+            writers.get(i).close();
+        }
+
+        writers.clear();
+        statusSentList.clear();
+        deltaConsumers.clear();
+        commandConsumer.reset();
+        stringResponseConsumer.reset();
+        intResponseConsumer.reset();
+    }
+
+    private void closeChannel() {
+        if (channel != null && channel.isOpen()) {
+            try {
+                channel.close();
+            } catch (IOException e) {
+                LOGGER.error("Error closing channel", e);
+            } finally {
+                channel = null;
+            }
+        }
+    }
+
+    private void fail(boolean condition, String message) throws JournalNetworkException {
+        if (!condition) {
+            throw new JournalNetworkException(message);
+        }
+    }
+
+    private void free() {
+        for (int i = 0; i < deltaConsumers.size(); i++) {
+            deltaConsumers.get(i).free();
+        }
+        commandConsumer.free();
+        stringResponseConsumer.free();
+        intResponseConsumer.free();
+        statusSentList.free();
+    }
+
     private byte[] getToken() throws JournalNetworkException {
         try {
             return credentialProvider.createToken();
         } catch (Exception e) {
             halt();
             throw new JournalNetworkException(e);
+        }
+    }
+
+    private void handshake() throws JournalNetworkException {
+        openChannel(null);
+        sendProtocolVersion();
+        sendKeys();
+        checkAuthAndSendCredential();
+        sendState();
+        counter.incrementAndGet();
+    }
+
+    private void openChannel(ServerNode node) throws JournalNetworkException {
+        if (this.channel == null || node != null) {
+            if (channel != null) {
+                closeChannel();
+            }
+            SocketChannel channel = node == null ? config.openSocketChannel() : config.openSocketChannel(node);
+            try {
+                statsChannel = new StatsCollectingReadableByteChannel(channel.getRemoteAddress());
+            } catch (IOException e) {
+                throw new JournalNetworkException("Cannot get remote address", e);
+            }
+
+            SslConfig sslConfig = config.getSslConfig();
+            if (sslConfig.isSecure()) {
+                this.channel = new SecureByteChannel(channel, sslConfig);
+            } else {
+                this.channel = channel;
+            }
         }
     }
 
@@ -300,21 +349,6 @@ public class JournalClient {
         return stringResponseConsumer.getValue();
     }
 
-    private void sendProtocolVersion() throws JournalNetworkException {
-        commandProducer.write(channel, Command.PROTOCOL_VERSION);
-        intResponseProducer.write(channel, Version.PROTOCOL_VERSION);
-        checkAck();
-    }
-
-    private <T> void add0(JournalWriter<T> writer, TxListener txListener) {
-        deltaConsumers.add(new JournalDeltaConsumer(writer.setCommitOnClose(false)));
-        writers.add(writer);
-        statusSentList.add(0);
-        if (txListener != null) {
-            writer.setTxListener(txListener);
-        }
-    }
-
     @SuppressWarnings("unchecked")
     private void reopenWriters() throws JournalException {
         for (int i = 0, sz = localKeys.size(); i < sz; i++) {
@@ -322,17 +356,8 @@ public class JournalClient {
         }
     }
 
-    private void fail(boolean condition, String message) throws JournalNetworkException {
-        if (!condition) {
-            throw new JournalNetworkException(message);
-        }
-    }
-
-    private void checkAck() throws JournalNetworkException {
-        stringResponseConsumer.reset();
-        stringResponseConsumer.read(channel);
-        fail(stringResponseConsumer.isComplete(), "Incomplete response");
-        fail("OK".equals(stringResponseConsumer.getValue()), stringResponseConsumer.getValue());
+    private void sendDisconnect() throws JournalNetworkException {
+        commandProducer.write(channel, Command.CLIENT_DISCONNECT);
     }
 
     private void sendKeys() throws JournalNetworkException {
@@ -342,6 +367,17 @@ public class JournalClient {
             setKeyRequestProducer.write(channel, new IndexedJournalKey(i, key));
             checkAck();
         }
+    }
+
+    private void sendProtocolVersion() throws JournalNetworkException {
+        commandProducer.write(channel, Command.PROTOCOL_VERSION);
+        intResponseProducer.write(channel, Version.PROTOCOL_VERSION);
+        checkAck();
+    }
+
+    private void sendReady() throws JournalNetworkException {
+        commandProducer.write(channel, Command.CLIENT_READY_CMD);
+        LOGGER.debug("Client ready: " + channel);
     }
 
     private void sendState() throws JournalNetworkException {
@@ -357,13 +393,8 @@ public class JournalClient {
         sendReady();
     }
 
-    private void sendDisconnect() throws JournalNetworkException {
-        commandProducer.write(channel, Command.CLIENT_DISCONNECT);
-    }
-
-    private void sendReady() throws JournalNetworkException {
-        commandProducer.write(channel, Command.CLIENT_READY_CMD);
-        LOGGER.debug("Client ready: " + channel);
+    public static enum VoteResult {
+        ME, THEM, ALPHA
     }
 
 
@@ -395,7 +426,8 @@ public class JournalClient {
                             connected = true;
                         } catch (AuthConfigurationException | AuthFailureException e) {
                             loginRetryCount--;
-                        } catch (IOException | JournalNetworkException | JournalException ignored) {
+                        } catch (JournalNetworkException | JournalException ignored) {
+                            LOGGER.warn("Error during disconnect", ignored);
                         }
                     }
 

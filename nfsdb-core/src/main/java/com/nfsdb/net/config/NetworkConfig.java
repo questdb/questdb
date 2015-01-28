@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,14 +16,12 @@
 
 package com.nfsdb.net.config;
 
-import com.nfsdb.collections.Lists;
+import com.nfsdb.collections.IntObjHashMap;
 import com.nfsdb.exceptions.JournalNetworkException;
 
 import java.io.IOException;
 import java.net.*;
 import java.nio.channels.DatagramChannel;
-import java.util.ArrayList;
-import java.util.List;
 
 public class NetworkConfig {
     public static final int DEFAULT_DATA_PORT = 7075;
@@ -32,7 +30,7 @@ public class NetworkConfig {
 
     private static final int DEFAULT_MULTICAST_PORT = 4446;
     private static final int DEFAULT_SO_RCVBUF = 1024 * 1024;
-    protected final List<ServerNode> nodes = new ArrayList<>();
+    protected final IntObjHashMap<ServerNode> nodes = new IntObjHashMap<>();
     private final SslConfig sslConfig = new SslConfig();
     protected InetAddress multiCastAddress;
     private int multiCastPort = DEFAULT_MULTICAST_PORT;
@@ -45,7 +43,7 @@ public class NetworkConfig {
     }
 
     public void addNode(ServerNode node) {
-        nodes.add(node);
+        nodes.put(node.getId(), node);
     }
 
     public String getIfName() {
@@ -72,15 +70,8 @@ public class NetworkConfig {
         this.multiCastPort = multiCastPort;
     }
 
-    // todo: this is naive impl, optimise (hash map?)
     public ServerNode getNode(int instance) {
-        for (int i = 0; i < nodes.size(); i++) {
-            ServerNode node = nodes.get(i);
-            if (node.getId() == instance) {
-                return node;
-            }
-        }
-        return null;
+        return nodes.get(instance);
     }
 
     public int getSoRcvBuf() {
@@ -99,8 +90,8 @@ public class NetworkConfig {
         return enableMultiCast;
     }
 
-    public Lists.ImmutableIteratorWrapper<ServerNode> nodes() {
-        return Lists.immutableIterator(nodes).reset();
+    public Iterable<ServerNode> nodes() {
+        return nodes.values();
     }
 
     public void setEnableMultiCast(boolean enableMultiCast) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -92,13 +92,15 @@ public class ServerConfig extends NetworkConfig {
     }
 
     public ServerSocketChannel openServerSocketChannel(int instance) throws JournalNetworkException {
+        InetSocketAddress address = null;
         try {
-            InetSocketAddress address = getSocketAddress(instance);
+            address = getSocketAddress(instance);
             ServerSocketChannel channel = ServerSocketChannel.open().bind(address).setOption(StandardSocketOptions.SO_RCVBUF, getSoRcvBuf());
             LOGGER.info("Server is now listening on %s", address);
             return channel;
         } catch (IOException e) {
-            throw new JournalNetworkException("Cannot open server socket", e);
+
+            throw new JournalNetworkException("Cannot open server socket [" + address + "]", e);
         }
     }
 

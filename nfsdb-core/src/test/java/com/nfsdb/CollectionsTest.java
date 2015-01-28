@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,6 +27,27 @@ public class CollectionsTest {
 
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
+
+    @Test
+    public void testCapacityReset() throws Exception {
+        final int N = 372;
+        final int M = 518;
+
+        DirectLongList list = new DirectLongList(N);
+        int count = 0;
+        for (int i = 0; i < N; i++) {
+            list.add(count++);
+        }
+
+        list.setCapacity(M);
+        for (int i = 0; i < M; i++) {
+            list.add(count++);
+        }
+
+        for (int i = 0; i < list.size(); i++) {
+            Assert.assertEquals("at " + i, i, list.get(i));
+        }
+    }
 
     @Test
     public void testDirectIntList() throws Exception {
@@ -65,13 +86,6 @@ public class CollectionsTest {
     }
 
     @Test
-    public void testMemoryLeak() throws Exception {
-        for (int i = 0; i < 10000; i++) {
-            new DirectIntList(1000000);
-        }
-    }
-
-    @Test
     public void testDirectLongList() throws Exception {
         DirectLongList list = new DirectLongList();
         final int N = 1000;
@@ -105,6 +119,36 @@ public class CollectionsTest {
 
         list.add(list3);
         Assert.assertEquals(2 * N + 2, list.size());
+    }
+
+    @Test
+    public void testIntHash() throws Exception {
+        IntHashSet set = new IntHashSet(10);
+
+        for (int i = 0; i < 1000; i++) {
+            Assert.assertTrue(set.add(i));
+        }
+
+        for (int i = 0; i < 1000; i++) {
+            Assert.assertFalse(set.add(i));
+        }
+    }
+
+    @Test
+    public void testIntObjHashMap() throws Exception {
+        IntObjHashMap<String> map = new IntObjHashMap<>();
+        Rnd rnd = new Rnd();
+
+        for (int i = 0; i < 1000; i++) {
+            map.put(i, rnd.nextString(25));
+        }
+
+        Assert.assertEquals(1000, map.size());
+
+        Rnd rnd2 = new Rnd();
+        for (int i = 0; i < 1000; i++) {
+            Assert.assertEquals(rnd2.nextString(25), map.get(i));
+        }
     }
 
     @Test
@@ -148,68 +192,10 @@ public class CollectionsTest {
         }
     }
 
-    private void populate(DirectLongList list, Rnd rnd, int count) {
-        for (int i = 0; i < count; i++) {
-            list.add(rnd.nextLong());
-        }
-
-        list.sort();
-    }
-
-    private void assertOrder(DirectLongList list) {
-        long last = Long.MIN_VALUE;
-        for (int i = 0; i < list.size(); i++) {
-            Assert.assertTrue("at " + i, last <= list.get(i));
-            last = list.get(i);
-        }
-    }
-
     @Test
-    public void testCapacityReset() throws Exception {
-        final int N = 372;
-        final int M = 518;
-
-        DirectLongList list = new DirectLongList(N);
-        int count = 0;
-        for (int i = 0; i < N; i++) {
-            list.add(count++);
-        }
-
-        list.setCapacity(M);
-        for (int i = 0; i < M; i++) {
-            list.add(count++);
-        }
-
-        for (int i = 0; i < list.size(); i++) {
-            Assert.assertEquals("at " + i, i, list.get(i));
-        }
-    }
-
-    @Test
-    public void testIntObjHashMap() throws Exception {
-        IntObjHashMap<String> map = new IntObjHashMap<>();
-        Rnd rnd = new Rnd();
-
-        for (int i = 0; i < 1000; i++) {
-            map.put(i, rnd.nextString(25));
-        }
-
-        Rnd rnd2 = new Rnd();
-        for (int i = 0; i < 1000; i++) {
-            Assert.assertEquals(rnd2.nextString(25), map.get(i));
-        }
-    }
-
-    @Test
-    public void testIntHash() throws Exception {
-        IntHashSet set = new IntHashSet(10);
-
-        for (int i = 0; i < 1000; i++) {
-            Assert.assertTrue(set.add(i));
-        }
-
-        for (int i = 0; i < 1000; i++) {
-            Assert.assertFalse(set.add(i));
+    public void testMemoryLeak() throws Exception {
+        for (int i = 0; i < 10000; i++) {
+            new DirectIntList(1000000);
         }
     }
 
@@ -231,5 +217,21 @@ public class CollectionsTest {
 
         Assert.assertTrue(map.putIfAbsent("ABC", 100));
         Assert.assertFalse(map.putIfAbsent("ABC", 100));
+    }
+
+    private void assertOrder(DirectLongList list) {
+        long last = Long.MIN_VALUE;
+        for (int i = 0; i < list.size(); i++) {
+            Assert.assertTrue("at " + i, last <= list.get(i));
+            last = list.get(i);
+        }
+    }
+
+    private void populate(DirectLongList list, Rnd rnd, int count) {
+        for (int i = 0; i < count; i++) {
+            list.add(rnd.nextLong());
+        }
+
+        list.sort();
     }
 }

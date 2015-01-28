@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -75,6 +75,18 @@ public class IntegrationTest extends AbstractTest {
         Thread.sleep(100);
         Assert.assertEquals(0, server.getConnectedClients());
         server.halt();
+    }
+
+    @Test
+    public void testServerIdleStartStop() throws Exception {
+        JournalWriter<Quote> remote = factory.writer(Quote.class, "remote");
+        server.publish(remote);
+        server.start();
+        client.subscribe(Quote.class, "remote", "local");
+        client.start();
+        Thread.sleep(100);
+        server.halt();
+        Assert.assertFalse(server.isRunning());
     }
 
     @Test

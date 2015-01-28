@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ public class IntObjHashMap<V> {
     private V[] values;
     private int[] keys;
     private int free;
+    private int capacity;
 
     public IntObjHashMap() {
         this(11);
@@ -44,28 +45,12 @@ public class IntObjHashMap<V> {
         this.loadFactor = loadFactor;
         values = (V[]) new Object[capacity];
         keys = new int[capacity];
-        free = initialCapacity;
+        free = this.capacity = initialCapacity;
         clear();
     }
 
-    @SuppressWarnings({"unchecked"})
-    protected void rehash() {
-
-        int newCapacity = Primes.next(values.length << 1);
-
-        free = (int) (newCapacity * loadFactor);
-
-        V[] oldValues = values;
-        int[] oldKeys = keys;
-        this.keys = new int[newCapacity];
-        this.values = (V[]) new Object[newCapacity];
-        Arrays.fill(values, 0, values.length, FREE);
-
-        for (int i = oldKeys.length; i-- > 0; ) {
-            if (oldValues[i] != FREE) {
-                insertKey(oldKeys[i], oldValues[i]);
-            }
-        }
+    public void clear() {
+        Arrays.fill(values, FREE);
     }
 
     public V get(int key) {
@@ -81,24 +66,21 @@ public class IntObjHashMap<V> {
         return probe(key, index);
     }
 
-    private V probe(int key, int index) {
-        do {
-            index = (index + 1) % keys.length;
-            if (values[index] == FREE) {
-                return null;
-            }
-            if (key == keys[index]) {
-                return values[index];
-            }
-        } while (true);
-    }
-
     public V put(int key, V value) {
         V old = insertKey(key, value);
         if (free == 0) {
             rehash();
         }
         return old;
+    }
+
+    public int size() {
+        return capacity - free;
+    }
+
+    public ValuesIterator values() {
+        valuesIterator.index = 0;
+        return valuesIterator;
     }
 
     private V insertKey(int key, V value) {
@@ -119,6 +101,18 @@ public class IntObjHashMap<V> {
         return probeInsert(key, index, value);
     }
 
+    private V probe(int key, int index) {
+        do {
+            index = (index + 1) % keys.length;
+            if (values[index] == FREE) {
+                return null;
+            }
+            if (key == keys[index]) {
+                return values[index];
+            }
+        } while (true);
+    }
+
     private V probeInsert(int key, int index, V value) {
         do {
             index = (index + 1) % keys.length;
@@ -137,13 +131,24 @@ public class IntObjHashMap<V> {
         } while (true);
     }
 
-    public ValuesIterator values() {
-        valuesIterator.index = 0;
-        return valuesIterator;
-    }
+    @SuppressWarnings({"unchecked"})
+    protected void rehash() {
 
-    public void clear() {
-        Arrays.fill(values, FREE);
+        int newCapacity = Primes.next(values.length << 1);
+
+        free = this.capacity = (int) (newCapacity * loadFactor);
+
+        V[] oldValues = values;
+        int[] oldKeys = keys;
+        this.keys = new int[newCapacity];
+        this.values = (V[]) new Object[newCapacity];
+        Arrays.fill(values, 0, values.length, FREE);
+
+        for (int i = oldKeys.length; i-- > 0; ) {
+            if (oldValues[i] != FREE) {
+                insertKey(oldKeys[i], oldValues[i]);
+            }
+        }
     }
 
     public class ValuesIterator extends AbstractImmutableIterator<V> {
@@ -154,17 +159,17 @@ public class IntObjHashMap<V> {
             return index < values.length && (values[index] != FREE || scan());
         }
 
+        @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
+        @Override
+        public V next() {
+            return values[index++];
+        }
+
         private boolean scan() {
             while (index < values.length && values[index] == FREE) {
                 index++;
             }
             return index < values.length;
-        }
-
-        @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
-        @Override
-        public V next() {
-            return values[index++];
         }
     }
 }

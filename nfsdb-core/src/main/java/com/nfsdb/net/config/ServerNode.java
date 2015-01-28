@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,10 @@
 
 package com.nfsdb.net.config;
 
+import com.nfsdb.collections.IntObjHashMap;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.utils.Numbers;
 import org.jetbrains.annotations.NotNull;
-
-import java.util.List;
 
 public class ServerNode {
     private final int id;
@@ -66,10 +65,10 @@ public class ServerNode {
         this.address = hostname + ":" + port;
     }
 
-    public static void parse(String nodes, List<ServerNode> to) {
+    public static void parse(String nodes, IntObjHashMap<ServerNode> to) {
         String parts[] = nodes.split(",");
         for (int i = 0; i < parts.length; i++) {
-            to.add(new ServerNode(i + 1, parts[i]));
+            to.put(i, new ServerNode(i, parts[i]));
         }
     }
 
@@ -91,7 +90,7 @@ public class ServerNode {
 
     @Override
     public String toString() {
-        return "ClusterNode{" +
+        return "ServerNode{" +
                 "id=" + id +
                 ", address='" + address + '\'' +
                 '}';

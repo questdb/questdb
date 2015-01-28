@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,12 +37,23 @@ import org.junit.Test;
 import java.util.ArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class ClusterControllerTest extends AbstractTest {
 
     @Rule
     public final JournalTestFactory factory2 = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
+    @Rule
+    public final JournalTestFactory fact1 = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
+    @Rule
+    public final JournalTestFactory fact2 = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
+    @Rule
+    public final JournalTestFactory fact3 = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
+    @Rule
+    public final JournalTestFactory fact4 = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
+    @Rule
+    public final JournalTestFactory fact5 = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
 
     @Test
     public void testBusyFailOver() throws Exception {
@@ -154,6 +165,60 @@ public class ClusterControllerTest extends AbstractTest {
         controller2.halt();
         Assert.assertTrue(expected.get() > 0);
         Assert.assertEquals(expected.get(), actual.get());
+    }
+
+    @Test
+    public void testFiveNodesVoting() throws Exception {
+        AtomicInteger active = new AtomicInteger();
+        AtomicInteger standby = new AtomicInteger();
+        AtomicInteger shutdown = new AtomicInteger();
+
+        ClusterController c1 = createController2(0, fact1, active, standby, shutdown);
+        ClusterController c2 = createController2(1, fact2, active, standby, shutdown);
+        ClusterController c3 = createController2(2, fact3, active, standby, shutdown);
+        ClusterController c4 = createController2(3, fact4, active, standby, shutdown);
+        ClusterController c5 = createController2(4, fact5, active, standby, shutdown);
+
+
+        c1.start();
+        c2.start();
+        c3.start();
+        c4.start();
+        c5.start();
+
+        long t;
+
+        t = System.currentTimeMillis();
+        while (standby.get() < 4 && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 2) {
+            Thread.yield();
+        }
+
+        Assert.assertEquals(4, standby.get());
+        Assert.assertEquals(1, active.get());
+
+        standby.set(0);
+        active.set(0);
+
+        System.out.println("--------------------------");
+        c5.halt();
+//        c4.halt();
+//        c3.halt();
+//        c2.halt();
+//        c1.halt();
+//
+        t = System.currentTimeMillis();
+        while (standby.get() < 3 && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 2) {
+            Thread.yield();
+        }
+//
+        Assert.assertEquals(3, standby.get());
+        Assert.assertEquals(1, active.get());
+//
+
+        c1.halt();
+        c2.halt();
+        c3.halt();
+        c4.halt();
     }
 
     @Test
@@ -329,6 +394,43 @@ public class ClusterControllerTest extends AbstractTest {
                     @Override
                     public void onShutdown() {
                         shutdown.countDown();
+                    }
+                }
+        );
+    }
+
+    private ClusterController createController2(int instance, final JournalFactory fact, final AtomicInteger active, final AtomicInteger standby, final AtomicInteger shutdown) throws JournalException {
+        return new ClusterController(
+                new ServerConfig() {{
+                    addNode(new ServerNode(0, "localhost:7040"));
+                    addNode(new ServerNode(1, "localhost:7041"));
+                    addNode(new ServerNode(2, "localhost:7042"));
+                    addNode(new ServerNode(3, "localhost:7043"));
+                    addNode(new ServerNode(4, "localhost:7044"));
+                    setEnableMultiCast(false);
+                }},
+                new ClientConfig() {{
+                    setEnableMultiCast(false);
+                }},
+                fact,
+                instance,
+                new ArrayList<JournalWriter>() {{
+                    add(fact.writer(Quote.class));
+                }},
+                new ClusterStatusListener() {
+                    @Override
+                    public void onNodeActive() {
+                        active.incrementAndGet();
+                    }
+
+                    @Override
+                    public void onNodeStandingBy(ServerNode activeNode) {
+                        standby.incrementAndGet();
+                    }
+
+                    @Override
+                    public void onShutdown() {
+                        shutdown.incrementAndGet();
                     }
                 }
         );

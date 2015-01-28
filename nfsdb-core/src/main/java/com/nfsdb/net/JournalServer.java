@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,11 +33,8 @@ import com.nfsdb.net.mcast.OnDemandAddressSender;
 import java.io.IOException;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
-import java.util.ArrayList;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.SynchronousQueue;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
+import java.util.List;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -52,7 +49,7 @@ public class JournalServer {
     private final ServerConfig config;
     private final ThreadPoolExecutor service;
     private final AtomicBoolean running = new AtomicBoolean(false);
-    private final ArrayList<SocketChannelHolder> channels = new ArrayList<>();
+    private final List<SocketChannelHolder> channels = new CopyOnWriteArrayList<>();
     private final OnDemandAddressSender addressSender;
     private final AuthorizationHandler authorizationHandler;
     private final JournalServerLogger serverLogger = new JournalServerLogger();
@@ -97,28 +94,11 @@ public class JournalServer {
         this.serverInstance = instance;
     }
 
-    private static void closeChannel(SocketChannelHolder holder, boolean force) {
-        if (holder != null) {
-            try {
-                if (holder.socketAddress != null) {
-                    if (force) {
-                        LOGGER.info("Client forced out: %s", holder.socketAddress);
-                    } else {
-                        LOGGER.info("Client disconnected: %s", holder.socketAddress);
-                    }
-                }
-                holder.byteChannel.close();
-            } catch (IOException e) {
-                LOGGER.error("Cannot close channel [%s]: %s", holder.byteChannel, e.getMessage());
-            }
-        }
-    }
-
     public JournalEventBridge getBridge() {
         return bridge;
     }
 
-    public synchronized int getConnectedClients() {
+    public int getConnectedClients() {
         return channels.size();
     }
 
@@ -135,12 +115,11 @@ public class JournalServer {
     }
 
     public void halt(long timeout, TimeUnit unit) {
-        if (!running.get()) {
+        if (!running.compareAndSet(true, false)) {
             return;
         }
         LOGGER.trace("Stopping agent services");
         service.shutdown();
-        running.set(false);
         for (ObjIntHashMap.Entry<JournalWriter> e : writers) {
             e.key.setTxAsyncListener(null);
         }
@@ -152,6 +131,7 @@ public class JournalServer {
             LOGGER.debug(e);
         }
 
+
         if (timeout > 0) {
             try {
                 service.awaitTermination(timeout, unit);
@@ -160,12 +140,11 @@ public class JournalServer {
             }
         }
 
-
         LOGGER.trace("Stopping bridge");
         bridge.halt();
 
-        LOGGER.trace("Stopping mcast sender");
         if (addressSender != null) {
+            LOGGER.trace("Stopping mcast sender");
             addressSender.halt();
         }
 
@@ -176,11 +155,13 @@ public class JournalServer {
         serverLogger.halt();
 
         try {
-            LOGGER.trace("Waiting for agent services to stop");
-            service.awaitTermination(30, TimeUnit.SECONDS);
-            LOGGER.info("Server is shutdown");
+            if (timeout > 0) {
+                LOGGER.info("Waiting for %s  agent services to stop on %s", service.getActiveCount(), serverInstance);
+                service.awaitTermination(timeout, unit);
+            }
+            LOGGER.info("Server %d is shutdown", serverInstance);
         } catch (InterruptedException e) {
-            LOGGER.info("Server is shutdown, but some connections are still lingering.");
+            LOGGER.info("Server %d is shutdown, but some connections are still lingering.", serverInstance);
         }
 
     }
@@ -222,8 +203,36 @@ public class JournalServer {
         service.execute(new Acceptor());
     }
 
+    private void addChannel(SocketChannelHolder holder) {
+        channels.add(holder);
+    }
+
+    private void closeChannel(SocketChannelHolder holder, boolean force) {
+        if (holder != null) {
+            try {
+                if (holder.socketAddress != null) {
+                    if (force) {
+                        LOGGER.info("Client forced out: %s", holder.socketAddress);
+                    } else {
+                        LOGGER.info("Client disconnected: %s", holder.socketAddress);
+                    }
+                }
+                holder.byteChannel.close();
+
+            } catch (IOException e) {
+                LOGGER.error("Cannot close channel [%s]: %s", holder.byteChannel, e.getMessage());
+            }
+        }
+    }
+
+    private void closeChannels() {
+        while (channels.size() > 0) {
+            closeChannel(channels.remove(0), true);
+        }
+    }
+
     int getWriterIndex(JournalKey key) {
-        for (ObjIntHashMap.Entry<JournalWriter> e : writers) {
+        for (ObjIntHashMap.Entry<JournalWriter> e : writers.immutableIterator()) {
             JournalKey jk = e.key.getKey();
             if (jk.getId().equals(key.getId()) && (
                     (jk.getLocation() == null && key.getLocation() == null)
@@ -234,18 +243,9 @@ public class JournalServer {
         return JOURNAL_KEY_NOT_FOUND;
     }
 
-    private synchronized void addChannel(SocketChannelHolder holder) {
-        channels.add(holder);
-    }
-
-    private synchronized void removeChannel(SocketChannelHolder holder) {
-        channels.remove(holder);
-        closeChannel(holder, false);
-    }
-
-    private synchronized void closeChannels() {
-        for (int i = 0, sz = channels.size(); i < sz; i++) {
-            closeChannel(channels.get(i), true);
+    private void removeChannel(SocketChannelHolder holder) {
+        if (channels.remove(holder)) {
+            closeChannel(holder, false);
         }
     }
 
@@ -277,7 +277,7 @@ public class JournalServer {
                     LOGGER.error("Acceptor dying", e);
                 }
             }
-            LOGGER.debug("Acceptor shutdown");
+            LOGGER.info("Acceptor shutdown on %s", serverInstance);
         }
     }
 
@@ -305,7 +305,7 @@ public class JournalServer {
                         break;
                     } catch (ClusterLossException e) {
                         haltServer = true;
-                        LOGGER.info("Server lost cluster vote to %s [%s]", e.getInstance(), holder.socketAddress);
+                        LOGGER.info("Server node %s lost cluster vote to %s", serverInstance, e.getInstance());
                         break;
                     } catch (JournalNetworkException e) {
                         if (running.get()) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -93,14 +93,13 @@ public class ClientConfig extends NetworkConfig {
     public SocketChannel openSocketChannel() throws JournalNetworkException {
         if (nodes.size() == 0) {
             if (isMultiCastEnabled()) {
-                nodes.add(pollServerAddress());
+                addNode(pollServerAddress());
             } else {
                 throw new JournalNetworkException("No server nodes");
             }
         }
 
-        for (int i = 0; i < nodes.size(); i++) {
-            ServerNode node = nodes.get(i);
+        for (ServerNode node : nodes.values()) {
             try {
                 return openSocketChannel0(node);
             } catch (UnresolvedAddressException | IOException e) {
@@ -128,7 +127,7 @@ public class ClientConfig extends NetworkConfig {
                 .setOption(StandardSocketOptions.SO_RCVBUF, getSoRcvBuf())
                 .setOption(StandardSocketOptions.SO_LINGER, getLinger());
 
-        LOGGER.info("Connected to %s", node);
+        LOGGER.info("Connected to %s [%s]", node, channel.getLocalAddress());
         return channel;
     }
 
