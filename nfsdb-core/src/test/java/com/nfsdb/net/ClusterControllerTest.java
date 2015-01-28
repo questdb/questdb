@@ -189,7 +189,7 @@ public class ClusterControllerTest extends AbstractTest {
         long t;
 
         t = System.currentTimeMillis();
-        while (standby.get() < 4 && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 30) {
+        while (standby.get() < 4 && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 120) {
             Thread.yield();
         }
 
@@ -207,7 +207,7 @@ public class ClusterControllerTest extends AbstractTest {
 //        c1.halt();
 //
         t = System.currentTimeMillis();
-        while (standby.get() < 3 && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 30) {
+        while (standby.get() < 3 && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 120) {
             Thread.yield();
         }
 //
@@ -402,11 +402,11 @@ public class ClusterControllerTest extends AbstractTest {
     private ClusterController createController2(int instance, final JournalFactory fact, final AtomicInteger active, final AtomicInteger standby, final AtomicInteger shutdown) throws JournalException {
         return new ClusterController(
                 new ServerConfig() {{
-                    addNode(new ServerNode(0, "localhost:7040"));
-                    addNode(new ServerNode(1, "localhost:7041"));
+                    addNode(new ServerNode(4, "localhost:7040"));
+                    addNode(new ServerNode(3, "localhost:7041"));
                     addNode(new ServerNode(2, "localhost:7042"));
-                    addNode(new ServerNode(3, "localhost:7043"));
-                    addNode(new ServerNode(4, "localhost:7044"));
+                    addNode(new ServerNode(1, "localhost:7043"));
+                    addNode(new ServerNode(0, "localhost:7044"));
                     setEnableMultiCast(false);
                 }},
                 new ClientConfig() {{
