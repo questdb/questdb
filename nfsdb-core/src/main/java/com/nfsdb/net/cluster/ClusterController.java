@@ -217,12 +217,14 @@ public class ClusterController {
             switch (client.voteInstance(instance, activeNode)) {
                 case ALPHA:
                     LOGGER.info(thisNode() + " Lost tie-break vote, becoming a client");
+                    server.halt();
                     // don't stop server explicitly, it wil shut down after being voted out
                     setupClient(activeNode);
                     return;
                 case THEM:
                     LOGGER.info("%s lost tie-break against %s, wait for ALPHA node", thisNode(), activeNode);
                     isClient = true;
+                    server.halt();
                     break;
                 default:
                     LOGGER.info("%s WON tie-break against %s", thisNode(), activeNode);
