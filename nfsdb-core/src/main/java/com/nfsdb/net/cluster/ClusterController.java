@@ -18,6 +18,7 @@ package com.nfsdb.net.cluster;
 
 import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalNetworkException;
+import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.net.JournalClient;
@@ -61,6 +62,7 @@ public class ClusterController {
     private final ExecutorService service;
     private final ServerConfig serverConfig;
     private final ClientConfig clientConfig;
+    private final ServerNode thisNode;
     private JournalClient client;
     private JournalServer server;
 
@@ -93,6 +95,11 @@ public class ClusterController {
                 return thread;
             }
         });
+
+        this.thisNode = serverConfig.getNode(instance);
+        if (thisNode == null) {
+            throw new JournalRuntimeException("Instance " + instance + " is not found in server config");
+        }
     }
 
     public void halt() throws JournalNetworkException {
@@ -115,6 +122,7 @@ public class ClusterController {
 
     public void start() {
         if (running.compareAndSet(false, true)) {
+
             service.submit(up);
         }
     }
@@ -152,13 +160,13 @@ public class ClusterController {
     @SuppressWarnings("unchecked")
     private void setupClient(ServerNode node) throws JournalNetworkException {
 
-        LOGGER.info(thisNode() + " Subscribing journals");
+        LOGGER.info("%s Subscribing journals", thisNode);
         for (int i = 0, sz = writers.size(); i < sz; i++) {
             JournalWriter w = writers.get(i);
             client.subscribe(w.getKey(), w, null);
         }
 
-        LOGGER.info(thisNode() + " Starting client");
+        LOGGER.info("%s Starting client", thisNode);
         client.setDisconnectCallback(new JournalClient.DisconnectCallback() {
             @Override
             public void onDisconnect(JournalClient.DisconnectReason reason) {
@@ -170,18 +178,10 @@ public class ClusterController {
         }).start();
 
         if (listener != null) {
-            LOGGER.info(thisNode() + " Notifying callback of standby state");
+            LOGGER.info("%s Notifying callback of standby state", thisNode);
             listener.onNodeStandingBy(node);
         }
 
-    }
-
-    private ServerNode thisNode() {
-        ServerNode node = serverConfig.getNode(instance);
-        if (node == null) {
-            System.out.println("NULL node for " + instance);
-        }
-        return node;
     }
 
     private void vote(boolean startup) throws JournalNetworkException {
@@ -194,7 +194,7 @@ public class ClusterController {
             ServerNode activeNode;
             try {
                 if ((activeNode = getActiveNodeAndSetupClient()) != null) {
-                    LOGGER.info(thisNode() + " There is active node already %s. Yielding", activeNode);
+                    LOGGER.info("%s: there is active node already %s. Yielding", thisNode, activeNode);
                     setupClient(activeNode);
                     return;
                 }
@@ -206,8 +206,8 @@ public class ClusterController {
         }
 
         // scramble server to get noticed by other cluster controllers.
-        LOGGER.info(thisNode() + " Starting server");
-        server = new JournalServer(serverConfig, factory, null, thisNode().getId());
+        LOGGER.info("%s Starting server", thisNode);
+        server = new JournalServer(serverConfig, factory, null, thisNode.getId());
 
         for (int i = 0, writersSize = writers.size(); i < writersSize; i++) {
             server.publish(writers.get(i));
@@ -237,26 +237,26 @@ public class ClusterController {
                 }
 
                 client = new JournalClient(clientConfig, factory);
-                LOGGER.info("%s is probing %s", thisNode(), node);
+                LOGGER.info("%s is probing %s", thisNode, node);
                 JournalClient.VoteResult vote = client.voteInstance(instance, node);
-                LOGGER.info("%s got %s from %s", thisNode(), vote, node);
+                LOGGER.info("%s got %s from %s", thisNode, vote, node);
                 switch (vote) {
                     case ALPHA:
-                        LOGGER.info(thisNode() + " Lost tie-break vote, becoming a client");
+                        LOGGER.info("%s Lost tie-break to %s, becoming a client", thisNode, node);
                         server.halt();
                         // don't stop server explicitly, it wil shut down after being voted out
                         setupClient(node);
                         return;
                     case THEM:
-                        LOGGER.info("%s lost tie-break against %s, wait for ALPHA node", thisNode(), node);
+                        LOGGER.info("%s lost tie-break to %s, wait for ALPHA node", thisNode, node);
                         isClient = true;
                         server.halt();
                         break;
                     case ME_BY_DEFAULT:
-                        LOGGER.info("%s WON by default against %s", thisNode(), node);
+                        LOGGER.info("%s WON by default against %s", thisNode, node);
                         break;
                     default:
-                        LOGGER.info("%s WON tie-break against %s", thisNode(), node);
+                        LOGGER.info("%s WON tie-break against %s", thisNode, node);
                         nodesLeft = true;
                 }
 
@@ -269,7 +269,7 @@ public class ClusterController {
         if (!isClient) {
             // after this point server cannot be voted out and it becomes the ALPHA
             server.setAlpha(true);
-            LOGGER.info(thisNode() + " Activating callback");
+            LOGGER.info("%s Activating callback", thisNode);
             listener.onNodeActive();
             return;
         }
@@ -282,7 +282,7 @@ public class ClusterController {
                 throw new JournalNetworkException("Expected ALPHA node but got none");
             }
 
-            LOGGER.info("%s is checking if %s has become ALPHA", thisNode(), activeNode);
+            LOGGER.info("%s is checking if %s has become ALPHA", thisNode, activeNode);
             if (client.voteInstance(instance, activeNode) == JournalClient.VoteResult.ALPHA) {
                 setupClient(activeNode);
                 return;
