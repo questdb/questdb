@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,10 @@
 
 package com.nfsdb.lang.cst.impl.psrc;
 
-import com.nfsdb.BinarySearch;
 import com.nfsdb.Journal;
 import com.nfsdb.Partition;
 import com.nfsdb.collections.AbstractImmutableIterator;
+import com.nfsdb.column.BSearchType;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.lang.cst.PartitionSlice;
@@ -40,6 +40,11 @@ public class IntervalPartitionSource extends AbstractImmutableIterator<Partition
     }
 
     @Override
+    public Journal getJournal() {
+        return delegate.getJournal();
+    }
+
+    @Override
     public boolean hasNext() {
         try {
 
@@ -53,10 +58,10 @@ public class IntervalPartitionSource extends AbstractImmutableIterator<Partition
                 if (partition.getInterval().overlaps(interval)) {
 
                     long hi = slice.calcHi ? partition.open().size() - 1 : slice.hi;
-                    long lo = partition.indexOf(interval.getLo(), BinarySearch.SearchType.NEWER_OR_SAME, slice.lo, hi);
+                    long lo = partition.indexOf(interval.getLo(), BSearchType.NEWER_OR_SAME, slice.lo, hi);
 
                     if (lo >= 0) {
-                        hi = partition.indexOf(interval.getHi(), BinarySearch.SearchType.OLDER_OR_SAME, lo, hi);
+                        hi = partition.indexOf(interval.getHi(), BSearchType.OLDER_OR_SAME, lo, hi);
                         if (hi >= 0) {
                             this.slice.partition = slice.partition;
                             this.slice.lo = lo;
@@ -87,10 +92,5 @@ public class IntervalPartitionSource extends AbstractImmutableIterator<Partition
     public void reset() {
         delegate.reset();
         calNextSlice = true;
-    }
-
-    @Override
-    public Journal getJournal() {
-        return delegate.getJournal();
     }
 }

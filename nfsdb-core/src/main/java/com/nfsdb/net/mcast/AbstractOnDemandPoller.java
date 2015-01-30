@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,7 +39,7 @@ public abstract class AbstractOnDemandPoller<T> {
     private final int inMessageCode;
     private final int outMessageCode;
 
-    public AbstractOnDemandPoller(ClientConfig networkConfig, int inMessageCode, int outMessageCode) {
+    AbstractOnDemandPoller(ClientConfig networkConfig, int inMessageCode, int outMessageCode) {
         this.networkConfig = networkConfig;
         this.inMessageCode = inMessageCode;
         this.outMessageCode = outMessageCode;
@@ -76,8 +76,6 @@ public abstract class AbstractOnDemandPoller<T> {
         }
     }
 
-    protected abstract T transform(ByteBuffer buf, InetSocketAddress sa);
-
     private InetSocketAddress poll0(DatagramChannel dc, SocketAddress group, Selector selector, ByteBuffer buf, long timeoutMillis) throws IOException {
         while (true) {
             buf.putInt(outMessageCode);
@@ -110,4 +108,6 @@ public abstract class AbstractOnDemandPoller<T> {
             }
         }
     }
+
+    protected abstract T transform(ByteBuffer buf, InetSocketAddress sa);
 }

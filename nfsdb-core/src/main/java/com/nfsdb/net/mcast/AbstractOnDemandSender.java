@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ import java.util.concurrent.CountDownLatch;
 public abstract class AbstractOnDemandSender {
 
     private static final Logger LOGGER = Logger.getLogger(AbstractOnDemandSender.class);
-    protected final int instance;
+    final int instance;
     private final ServerConfig serverConfig;
     private final int inMessageCode;
     private final int outMessageCode;
@@ -45,7 +45,7 @@ public abstract class AbstractOnDemandSender {
     private volatile boolean selecting = false;
     private CountDownLatch latch;
 
-    public AbstractOnDemandSender(ServerConfig serverConfig, int inMessageCode, int outMessageCode, int instance) {
+    AbstractOnDemandSender(ServerConfig serverConfig, int inMessageCode, int outMessageCode, int instance) {
         this.serverConfig = serverConfig;
         this.inMessageCode = inMessageCode;
         this.outMessageCode = outMessageCode;

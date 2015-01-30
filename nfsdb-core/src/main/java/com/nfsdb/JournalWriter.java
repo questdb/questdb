@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.nfsdb;
 
 import com.nfsdb.collections.PeekingListIterator;
+import com.nfsdb.column.BSearchType;
 import com.nfsdb.column.FixedColumn;
 import com.nfsdb.column.HugeBuffer;
 import com.nfsdb.column.SymbolTable;
@@ -194,6 +195,64 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
+    @Override
+    public JournalMode getMode() {
+        return JournalMode.APPEND;
+    }
+
+    @Override
+    void closePartitions() {
+        super.closePartitions();
+        appendPartition = null;
+        appendTimestampHi = -1;
+    }
+
+    @Override
+    protected void configure() throws JournalException {
+        writeLock = LockManager.lockExclusive(getLocation());
+        if (writeLock == null || !writeLock.isValid()) {
+            close();
+            throw new JournalException("Journal is already open for APPEND at %s", getLocation());
+        }
+        if (txLog.isEmpty()) {
+            commit(Tx.TX_NORMAL);
+        }
+        txLog.head(tx);
+
+        File meta = new File(getLocation(), "_meta2");
+        if (!meta.exists()) {
+            try (HugeBuffer hb = new HugeBuffer(meta, 12, JournalMode.APPEND)) {
+                getMetadata().write(hb);
+            }
+        }
+
+        super.configure();
+
+        beginTx();
+        rollback();
+        rollbackPartitionDirs();
+
+        if (tx.journalMaxRowID > 0 && getPartitionCount() <= Rows.toPartitionIndex(tx.journalMaxRowID)) {
+            beginTx();
+            commit();
+        }
+        if (getMetadata().getLag() != -1) {
+            this.partitionCleaner = new PartitionCleaner(this, getLocation().getName());
+            this.partitionCleaner.start();
+        }
+
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        return this == o || !(o == null || getClass() != o.getClass()) && getKey().equals(((Journal) o).getKey());
+    }
+
+    @Override
+    public int hashCode() {
+        return getKey().hashCode();
+    }
+
     public void commit() throws JournalException {
         commit(false);
     }
@@ -267,11 +326,6 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
-    @Override
-    public boolean equals(Object o) {
-        return this == o || !(o == null || getClass() != o.getClass()) && getKey().equals(((Journal) o).getKey());
-    }
-
     public Partition<T> getAppendPartition(long timestamp) throws JournalException {
         int sz = partitions.size();
         if (sz > 0) {
@@ -312,11 +366,6 @@ public class JournalWriter<T> extends Journal<T> {
         return appendTimestampLo;
     }
 
-    @Override
-    public JournalMode getMode() {
-        return JournalMode.APPEND;
-    }
-
     public Partition<T> getPartitionForTimestamp(long timestamp) {
         int sz = partitions.size();
         for (int i = 0; i < sz; i++) {
@@ -331,11 +380,6 @@ public class JournalWriter<T> extends Journal<T> {
         } else {
             return partitions.get(sz - 1).access();
         }
-    }
-
-    @Override
-    public int hashCode() {
-        return getKey().hashCode();
     }
 
     public boolean isCommitOnClose() {
@@ -424,8 +468,8 @@ public class JournalWriter<T> extends Journal<T> {
                 //
 
                 // calc boundaries of lag that intersects with data
-                long lagMid1 = lagPartition.indexOf(dataMinTimestamp, BinarySearch.SearchType.OLDER_OR_SAME);
-                long lagMid2 = lagPartition.indexOf(dataMaxTimestamp, BinarySearch.SearchType.NEWER_OR_SAME);
+                long lagMid1 = lagPartition.indexOf(dataMinTimestamp, BSearchType.OLDER_OR_SAME);
+                long lagMid2 = lagPartition.indexOf(dataMaxTimestamp, BSearchType.NEWER_OR_SAME);
 
                 // copy part of lag above data
                 splitAppend(lagPartition.bufferedIterator(0, lagMid1), hard, soft, tempPartition);
@@ -448,7 +492,7 @@ public class JournalWriter<T> extends Journal<T> {
                 //
 
                 // calc overlap line
-                long split = lagPartition.indexOf(dataMaxTimestamp, BinarySearch.SearchType.NEWER_OR_SAME);
+                long split = lagPartition.indexOf(dataMaxTimestamp, BSearchType.NEWER_OR_SAME);
 
                 // merge lag with data and copy result to temp partition
                 splitAppendMerge(data, lagPartition.bufferedIterator(0, split - 1), hard, soft, tempPartition);
@@ -459,7 +503,7 @@ public class JournalWriter<T> extends Journal<T> {
                 //
                 // overlap scenario 4: top part of data overlaps with bottom part of lag
                 //
-                long split = lagPartition.indexOf(dataMinTimestamp, BinarySearch.SearchType.OLDER_OR_SAME);
+                long split = lagPartition.indexOf(dataMinTimestamp, BSearchType.OLDER_OR_SAME);
 
                 // copy part of lag above overlap
                 splitAppend(lagPartition.bufferedIterator(0, split), hard, soft, tempPartition);
@@ -626,110 +670,12 @@ public class JournalWriter<T> extends Journal<T> {
         commitDurable();
     }
 
-    void updateTsLo(long ts) {
-        if (checkOrder) {
-            appendTimestampLo = ts;
-        }
-    }
-
-    @Override
-    void closePartitions() {
-        super.closePartitions();
-        appendPartition = null;
-        appendTimestampHi = -1;
-    }
-
-    Partition<T> createTempPartition() throws JournalException {
-        return createTempPartition(Constants.TEMP_DIRECTORY_PREFIX + "." + System.currentTimeMillis() + "." + UUID.randomUUID().toString());
-    }
-
-    Partition<T> getAppendPartition() throws JournalException {
-        if (this.appendPartition != null) {
-            return appendPartition;
-        }
-
-        int count = nonLagPartitionCount();
-        if (count > 0) {
-            return appendPartition = getPartition(count - 1, true);
-        } else {
-            if (getMetadata().getPartitionType() != PartitionType.NONE) {
-                throw new JournalException("getAppendPartition() without timestamp on partitioned journal: %s", this);
-            }
-            return appendPartition = createPartition(new Interval((long) 0, getMetadata().getPartitionType()), 0);
-        }
-    }
-
-    @Override
-    protected void configure() throws JournalException {
-        writeLock = LockManager.lockExclusive(getLocation());
-        if (writeLock == null || !writeLock.isValid()) {
-            close();
-            throw new JournalException("Journal is already open for APPEND at %s", getLocation());
-        }
-        if (txLog.isEmpty()) {
-            commit(Tx.TX_NORMAL);
-        }
-        txLog.head(tx);
-
-        File meta = new File(getLocation(), "_meta2");
-        if (!meta.exists()) {
-            try (HugeBuffer hb = new HugeBuffer(meta, 12, JournalMode.APPEND)) {
-                getMetadata().write(hb);
-            }
-        }
-
-        super.configure();
-
-        beginTx();
-        rollback();
-        rollbackPartitionDirs();
-
-        if (tx.journalMaxRowID > 0 && getPartitionCount() <= Rows.toPartitionIndex(tx.journalMaxRowID)) {
-            beginTx();
-            commit();
-        }
-        if (getMetadata().getLag() != -1) {
-            this.partitionCleaner = new PartitionCleaner(this, getLocation().getName());
-            this.partitionCleaner.start();
-        }
-
-    }
-
-    private void switchAppendPartition(long timestamp) throws JournalException {
-        boolean computeTimestampLo = appendPartition == null;
-
-        appendPartition = getAppendPartition(timestamp);
-
-        Interval interval = appendPartition.getInterval();
-        if (interval == null) {
-            appendTimestampHi = Long.MAX_VALUE;
-        } else {
-            appendTimestampHi = interval.getHi();
-        }
-
-        if (computeTimestampLo) {
-            FixedColumn column = appendPartition.getTimestampColumn();
-            long sz;
-            if ((sz = column.size()) > 0) {
-                appendTimestampLo = column.getLong(sz - 1);
-            }
-        } else {
-            appendTimestampLo = appendPartition.getInterval().getLo();
-        }
-    }
-
     private void commit(boolean force) throws JournalException {
         if (txActive) {
             commit(force ? Tx.TX_FORCE : Tx.TX_NORMAL);
             notifyTxListener();
             expireOpenFiles();
             txActive = false;
-        }
-    }
-
-    private void notifyTxListener() {
-        if (txListener != null) {
-            txListener.onCommit();
         }
     }
 
@@ -785,6 +731,37 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
+    Partition<T> createTempPartition() throws JournalException {
+        return createTempPartition(Constants.TEMP_DIRECTORY_PREFIX + "." + System.currentTimeMillis() + "." + UUID.randomUUID().toString());
+    }
+
+    Partition<T> getAppendPartition() throws JournalException {
+        if (this.appendPartition != null) {
+            return appendPartition;
+        }
+
+        int count = nonLagPartitionCount();
+        if (count > 0) {
+            return appendPartition = getPartition(count - 1, true);
+        } else {
+            if (getMetadata().getPartitionType() != PartitionType.NONE) {
+                throw new JournalException("getAppendPartition() without timestamp on partitioned journal: %s", this);
+            }
+            return appendPartition = createPartition(new Interval((long) 0, getMetadata().getPartitionType()), 0);
+        }
+    }
+
+    private void notifyTxListener() {
+        if (txListener != null) {
+            txListener.onCommit();
+        }
+    }
+
+    private void replaceIrregularPartition(Partition<T> temp) {
+        setIrregularPartition(temp);
+        purgeTempPartitions();
+    }
+
     private void rollbackPartitionDirs() throws JournalException {
         File[] files = getLocation().listFiles(new FileFilter() {
             public boolean accept(File f) {
@@ -836,12 +813,36 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
-    private void replaceIrregularPartition(Partition<T> temp) {
-        setIrregularPartition(temp);
-        purgeTempPartitions();
-    }
-
     private void splitAppendMerge(Iterator<T> a, Iterator<T> b, long hard, long soft, Partition<T> temp) throws JournalException {
         splitAppend(mergingIterator.$new(a, b, getTimestampComparator()), hard, soft, temp);
+    }
+
+    private void switchAppendPartition(long timestamp) throws JournalException {
+        boolean computeTimestampLo = appendPartition == null;
+
+        appendPartition = getAppendPartition(timestamp);
+
+        Interval interval = appendPartition.getInterval();
+        if (interval == null) {
+            appendTimestampHi = Long.MAX_VALUE;
+        } else {
+            appendTimestampHi = interval.getHi();
+        }
+
+        if (computeTimestampLo) {
+            FixedColumn column = appendPartition.getTimestampColumn();
+            long sz;
+            if ((sz = column.size()) > 0) {
+                appendTimestampLo = column.getLong(sz - 1);
+            }
+        } else {
+            appendTimestampLo = appendPartition.getInterval().getLo();
+        }
+    }
+
+    void updateTsLo(long ts) {
+        if (checkOrder) {
+            appendTimestampLo = ts;
+        }
     }
 }

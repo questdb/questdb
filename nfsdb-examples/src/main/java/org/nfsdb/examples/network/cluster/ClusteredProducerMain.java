@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,12 +27,14 @@ import com.nfsdb.net.config.ClientConfig;
 import com.nfsdb.net.config.ServerConfig;
 import com.nfsdb.net.config.ServerNode;
 import com.nfsdb.utils.Numbers;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.nfsdb.examples.model.Price;
 
 import java.util.ArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+@SuppressFBWarnings({"SE_BAD_FIELD"})
 public class ClusteredProducerMain {
 
     public static void main(String[] args) throws JournalException {

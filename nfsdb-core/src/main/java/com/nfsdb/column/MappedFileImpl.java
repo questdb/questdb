@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -69,6 +69,11 @@ public class MappedFileImpl implements MappedFile {
         this.stitches = new ArrayList<>(buffers.size());
     }
 
+    public void delete() {
+        close();
+        Files.delete(file);
+    }
+
     @Override
     public MappedByteBuffer getBuffer(long offset, int size) {
         if (offset >= cachedBufferLo && offset + size <= cachedBufferHi) {
@@ -99,11 +104,6 @@ public class MappedFileImpl implements MappedFile {
         }
     }
 
-    public void delete() {
-        close();
-        Files.delete(file);
-    }
-
     @Override
     public void close() {
         try {
@@ -115,11 +115,6 @@ public class MappedFileImpl implements MappedFile {
         } catch (IOException e) {
             throw new JournalRuntimeException("Cannot close file", e);
         }
-    }
-
-    @Override
-    public String toString() {
-        return this.getClass().getName() + "[file=" + file + ", appendOffset=" + getAppendOffset() + "]";
     }
 
     public long getAppendOffset() {
@@ -157,10 +152,6 @@ public class MappedFileImpl implements MappedFile {
         }
     }
 
-    public String getFullFileName() {
-        return this.file.getAbsolutePath();
-    }
-
     public void force() {
         int stitchesSize = stitches.size();
         offsetBuffer.force();
@@ -177,6 +168,11 @@ public class MappedFileImpl implements MappedFile {
                 }
             }
         }
+    }
+
+    @Override
+    public String toString() {
+        return this.getClass().getName() + "[file=" + file + ", appendOffset=" + getAppendOffset() + "]";
     }
 
     private long allocateAddress(long offset, int size) {
@@ -264,11 +260,37 @@ public class MappedFileImpl implements MappedFile {
         return buffer;
     }
 
-    private long size() throws JournalException {
+    String getFullFileName() {
+        return this.file.getAbsolutePath();
+    }
+
+    private MappedByteBuffer mapBufferInternal(long offset, int size) {
+        long actualOffset = offset + dataOffset;
+
         try {
-            return channel.size();
+            MappedByteBuffer buf;
+            switch (mode) {
+                case READ:
+                case BULK_READ:
+                    // make sure size does not extend beyond actual file size, otherwise
+                    // java would assume we want to write and throw an exception
+                    long sz;
+                    if (actualOffset + size > channel.size()) {
+                        sz = channel.size() - actualOffset;
+                    } else {
+                        sz = size;
+                    }
+                    assert sz > 0;
+                    buf = channel.map(FileChannel.MapMode.READ_ONLY, actualOffset, sz);
+                    break;
+                default:
+                    buf = channel.map(FileChannel.MapMode.READ_WRITE, actualOffset, size);
+                    break;
+            }
+            buf.order(ByteOrder.LITTLE_ENDIAN);
+            return buf;
         } catch (IOException e) {
-            throw new JournalException("Could not get channel size", e);
+            throw new JournalRuntimeException("Failed to memory map: %s", e, file.getAbsolutePath());
         }
     }
 
@@ -313,33 +335,11 @@ public class MappedFileImpl implements MappedFile {
         }
     }
 
-    private MappedByteBuffer mapBufferInternal(long offset, int size) {
-        long actualOffset = offset + dataOffset;
-
+    private long size() throws JournalException {
         try {
-            MappedByteBuffer buf;
-            switch (mode) {
-                case READ:
-                case BULK_READ:
-                    // make sure size does not extend beyond actual file size, otherwise
-                    // java would assume we want to write and throw an exception
-                    long sz;
-                    if (actualOffset + size > channel.size()) {
-                        sz = channel.size() - actualOffset;
-                    } else {
-                        sz = size;
-                    }
-                    assert sz > 0;
-                    buf = channel.map(FileChannel.MapMode.READ_ONLY, actualOffset, sz);
-                    break;
-                default:
-                    buf = channel.map(FileChannel.MapMode.READ_WRITE, actualOffset, size);
-                    break;
-            }
-            buf.order(ByteOrder.LITTLE_ENDIAN);
-            return buf;
+            return channel.size();
         } catch (IOException e) {
-            throw new JournalRuntimeException("Failed to memory map: %s", e, file.getAbsolutePath());
+            throw new JournalException("Could not get channel size", e);
         }
     }
 

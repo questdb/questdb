@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,62 @@ public class FixedColumn extends AbstractColumn {
     public FixedColumn(MappedFile mappedFile, int width) {
         super(mappedFile);
         this.width = width;
+    }
+
+    public long bsearchAny(long val, BSearchType type, long lo, long hi) {
+        long _lo = lo;
+        long _hi = hi;
+        while (_lo < _hi) {
+            long mid = _lo + (_hi - _lo) / 2;
+            long res = val - getLong(mid);
+
+            if (res < 0) {
+                _hi = mid;
+            } else if (res > 0) {
+                _lo = mid + 1;
+            } else {
+                return mid;
+            }
+        }
+
+        switch (type) {
+            case NEWER_OR_SAME:
+                return val < getLong(_lo) ? _lo : -2;
+            default:
+                return val > getLong(_hi) ? _hi : -1;
+        }
+    }
+
+    public long bsearchEdge(long val, BSearchType type) {
+        return bsearchEdge(val, type, 0, size() - 1);
+    }
+
+    public long bsearchEdge(long val, BSearchType type, long lo, long hi) {
+        if (hi == -1) {
+            return -1;
+        }
+
+        long res = bsearchAny(val, type, lo, hi);
+        switch (type) {
+            case NEWER_OR_SAME:
+                while (res > lo) {
+                    if (getLong(--res) < val) {
+                        return res + 1;
+                    }
+                }
+                break;
+            default:
+                while (res < hi) {
+                    if (getLong(++res) > val) {
+                        return res - 1;
+                    }
+                }
+        }
+        return res;
+    }
+
+    public void copy(Object obj, long offset) {
+        Unsafe.getUnsafe().copyMemory(obj, offset, null, getAddress(), width);
     }
 
     public boolean getBool(long localRowID) {
@@ -62,14 +118,6 @@ public class FixedColumn extends AbstractColumn {
         Unsafe.getUnsafe().putByte(getAddress(), b);
     }
 
-    public void copy(Object obj, long offset) {
-        Unsafe.getUnsafe().copyMemory(obj, offset, null, getAddress(), width);
-    }
-
-    public void putNull() {
-        Unsafe.getUnsafe().setMemory(getAddress(), width, (byte) 0);
-    }
-
     public void putDouble(double value) {
         Unsafe.getUnsafe().putDouble(getAddress(), value);
     }
@@ -88,8 +136,20 @@ public class FixedColumn extends AbstractColumn {
         return txAppendOffset / width - 1;
     }
 
+    public void putNull() {
+        Unsafe.getUnsafe().setMemory(getAddress(), width, (byte) 0);
+    }
+
     public void putShort(short value) {
         Unsafe.getUnsafe().putShort(getAddress(), value);
+    }
+
+    @Override
+    public void truncate(long size) {
+        if (size < 0) {
+            size = 0;
+        }
+        preCommit(size * width);
     }
 
     @Override
@@ -102,17 +162,10 @@ public class FixedColumn extends AbstractColumn {
         return getOffset() / width;
     }
 
-    @Override
-    public void truncate(long size) {
-        if (size < 0) {
-            size = 0;
-        }
-        preCommit(size * width);
-    }
-
     long getAddress() {
         long appendOffset = mappedFile.getAppendOffset();
         preCommit(appendOffset + width);
         return mappedFile.getAddress(appendOffset, width);
     }
+
 }

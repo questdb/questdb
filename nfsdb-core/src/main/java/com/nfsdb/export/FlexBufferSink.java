@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,18 +18,38 @@ package com.nfsdb.export;
 
 import com.nfsdb.utils.ByteBuffers;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.WritableByteChannel;
 
-public class FlexBufferSink implements CharSink {
-    private final WritableByteChannel channel;
+public class FlexBufferSink implements CharSink, Closeable {
+    protected WritableByteChannel channel;
     private ByteBuffer buffer;
-    private int capacity = 1024;
+    private int capacity;
 
     public FlexBufferSink(WritableByteChannel channel) {
+        this();
         this.channel = channel;
-        this.buffer = ByteBuffer.allocateDirect(capacity);
+    }
+
+    public FlexBufferSink() {
+        this(1024);
+    }
+
+    protected FlexBufferSink(int capacity) {
+        this.buffer = ByteBuffer.allocateDirect(this.capacity = capacity);
+    }
+
+    @Override
+    public void close() throws IOException {
+        free();
+    }
+
+    public void free() {
+        if (buffer != null) {
+            ByteBuffers.release(buffer);
+        }
     }
 
     @Override
@@ -39,14 +59,6 @@ public class FlexBufferSink implements CharSink {
         }
         buffer.put((byte) c);
         return this;
-    }
-
-    private void resize() {
-        ByteBuffer buf = ByteBuffer.allocateDirect(capacity = capacity << 1);
-        this.buffer.flip();
-        ByteBuffers.copy(this.buffer, buf);
-        ByteBuffers.release(this.buffer);
-        this.buffer = buf;
     }
 
     @Override
@@ -66,5 +78,13 @@ public class FlexBufferSink implements CharSink {
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    private void resize() {
+        ByteBuffer buf = ByteBuffer.allocateDirect(capacity = capacity << 1);
+        this.buffer.flip();
+        ByteBuffers.copy(this.buffer, buf);
+        ByteBuffers.release(this.buffer);
+        this.buffer = buf;
     }
 }
