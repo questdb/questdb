@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,43 +33,20 @@ public class JournalTest extends AbstractJournalTest {
     }
 
     @Test
-    public void testConsumerSmallerThanProducer() throws Exception {
-        master.append(origin);
-        master.commit();
-        slave.append(origin.query().all().asResultSet().subset(0, 655));
-        slave.commit();
-        Assert.assertEquals(655, slave.size());
-        executeSequence(true);
-    }
-
-    @Test
     public void testConsumerEqualToProducer() throws Exception {
         master.append(origin);
-        master.commit();
+        master.commit(false, 101L, 10);
         slave.append(origin);
-        slave.commit();
+        slave.commit(false, 101L, 10);
         executeSequence(false);
-    }
-
-    @Test
-    public void testEmptyConsumerAndProducer() throws Exception {
-        executeSequence(false);
-    }
-
-    @Test
-    public void testEmptyConsumerAndPopulatedProducer() throws Exception {
-        master.append(origin);
-        master.commit();
-        executeSequence(true);
-        Assert.assertEquals(1000, slave.size());
     }
 
     @Test
     public void testConsumerLargerThanProducer() throws Exception {
         master.append(origin.query().all().asResultSet().subset(0, 550));
-        master.commit();
+        master.commit(false, 101L, 10);
         slave.append(origin);
-        slave.commit();
+        slave.commit(false, 101L, 10);
         executeSequence(false);
     }
 
@@ -81,24 +58,64 @@ public class JournalTest extends AbstractJournalTest {
         TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2013-11-01T00:00:00.000Z"));
         TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2013-12-01T00:00:00.000Z"));
 
-        master.append(origin);
-        master.commit();
+        master.append(origin.query().all().asResultSet().subset(0, 500));
+        master.commit(false, 101L, 10);
+        master.append(origin.query().all().asResultSet().subset(500, 1500));
+        master.commit(false, 102L, 20);
         slave.append(origin.query().all().asResultSet().subset(0, 500));
-        slave.commit();
+        slave.commit(false, 101L, 10);
         Assert.assertEquals(1, slave.getPartitionCount());
         executeSequence(true);
     }
 
     @Test
     public void testConsumerReset() throws Exception {
-        master.append(origin.query().all().asResultSet().subset(0, 550));
-        master.commit();
+        master.append(origin.query().all().asResultSet().subset(0, 200));
+        master.commit(false, 101L, 10);
+        master.append(origin.query().all().asResultSet().subset(200, 550));
+        master.commit(false, 102L, 20);
         slave.append(origin.query().all().asResultSet().subset(0, 200));
-        slave.commit();
+        slave.commit(false, 101L, 10);
         executeSequence(true);
         master.append(origin.query().all().asResultSet().subset(550, 1000));
+        master.commit(false, 103L, 30);
+        executeSequence(true);
+    }
+
+    @Test
+    public void testConsumerSmallerThanProducer() throws Exception {
+        master.append(origin.query().all().asResultSet().subset(0, 655));
+        master.commit(false, 101L, 10);
+        master.append(origin.query().all().asResultSet().subset(655, (int) origin.size()));
+        master.commit(false, 102L, 20);
+
+        slave.append(origin.query().all().asResultSet().subset(0, 655));
+        slave.commit(false, 101L, 10);
+        Assert.assertEquals(655, slave.size());
+        executeSequence(true);
+    }
+
+    @Test
+    public void testEmptyConsumerAndPopulatedProducer() throws Exception {
+        master.append(origin);
         master.commit();
         executeSequence(true);
+        Assert.assertEquals(1000, slave.size());
+    }
+
+    @Test
+    public void testEmptyConsumerAndProducer() throws Exception {
+        executeSequence(false);
+    }
+
+    @Test
+    public void testEmptyPartitionAdd() throws Exception {
+        master.append(origin);
+        master.getAppendPartition(Dates.parseDateTime("2013-12-01T00:00:00.000Z"));
+        master.append(new Quote().setTimestamp(Dates.parseDateTime("2014-01-01T00:00:00.000Z")));
+        master.commit();
+        executeSequence(true);
+        Assert.assertEquals(master.getPartitionCount(), slave.getPartitionCount());
     }
 
     @Test
@@ -113,24 +130,14 @@ public class JournalTest extends AbstractJournalTest {
     public void testLagReplace() throws Exception {
         master.append(origin.query().all().asResultSet().subset(0, 350));
         master.mergeAppend(origin.query().all().asResultSet().subset(350, 600));
-        master.commit();
+        master.commit(false, 101L, 10);
 
         slave.append(origin.query().all().asResultSet().subset(0, 350));
         slave.mergeAppend(origin.query().all().asResultSet().subset(350, 600));
-        slave.commit();
+        slave.commit(false, 101L, 10);
 
         master.mergeAppend(origin.query().all().asResultSet().subset(600, 1000));
-        master.commit();
+        master.commit(false, 102L, 20);
         executeSequence(true);
-    }
-
-    @Test
-    public void testEmptyPartitionAdd() throws Exception {
-        master.append(origin);
-        master.getAppendPartition(Dates.parseDateTime("2013-12-01T00:00:00.000Z"));
-        master.append(new Quote().setTimestamp(Dates.parseDateTime("2014-01-01T00:00:00.000Z")));
-        master.commit();
-        executeSequence(true);
-        Assert.assertEquals(master.getPartitionCount(), slave.getPartitionCount());
     }
 }

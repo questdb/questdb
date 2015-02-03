@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,23 +38,27 @@ import java.util.concurrent.locks.LockSupport;
 public class ClusterController {
 
     private final Logger LOGGER = Logger.getLogger(ClusterController.class);
-
+    private final AtomicBoolean running = new AtomicBoolean(false);
+    private final AtomicBoolean voting = new AtomicBoolean(false);
     private final Runnable up = new Runnable() {
 
         private boolean startup = true;
 
         @Override
         public void run() {
-            try {
-                vote(startup);
-                startup = false;
-            } catch (Throwable e) {
-                e.printStackTrace();
+            if (voting.compareAndSet(false, true)) {
+                try {
+                    vote(startup);
+                    startup = false;
+                } catch (Throwable e) {
+                    LOGGER.error("Unhandled voting error: ", e);
+                } finally {
+                    voting.set(false);
+                }
             }
         }
 
     };
-    private final AtomicBoolean running = new AtomicBoolean(false);
     private final int instance;
     private final ClusterStatusListener listener;
     private final JournalFactory factory;
@@ -105,6 +109,11 @@ public class ClusterController {
     public void halt() throws JournalNetworkException {
         if (!running.compareAndSet(true, false)) {
             return;
+        }
+
+        // wait until in-flight voting ends
+        while (voting.get()) {
+            LockSupport.parkNanos(10000L);
         }
 
         listener.onShutdown();

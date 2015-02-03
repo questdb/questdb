@@ -28,8 +28,8 @@ public class FlexBufferSink implements CharSink, Closeable {
     private ByteBuffer buffer;
     private int capacity;
 
-    public FlexBufferSink(WritableByteChannel channel) {
-        this();
+    public FlexBufferSink(WritableByteChannel channel, int bufferSize) {
+        this(bufferSize);
         this.channel = channel;
     }
 

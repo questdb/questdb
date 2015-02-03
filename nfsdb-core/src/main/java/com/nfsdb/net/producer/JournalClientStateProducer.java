@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,14 +16,8 @@
 
 package com.nfsdb.net.producer;
 
-import com.nfsdb.Journal;
-import com.nfsdb.Partition;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.net.AbstractObjectProducer;
 import com.nfsdb.net.model.IndexedJournal;
-import com.nfsdb.utils.ByteBuffers;
-import com.nfsdb.utils.Rows;
 
 import java.nio.ByteBuffer;
 
@@ -31,45 +25,15 @@ public class JournalClientStateProducer extends AbstractObjectProducer<IndexedJo
 
     @Override
     protected int getBufferSize(IndexedJournal value) {
-        // journal index + journal max rowid + journal lag rowid
-        // + lag partition name length + lag partition name
-        // + symbol table count + symbol tables x ( symbol table index + size ).
-        return 4 + 8 + 8
-                + 2 + 2 * (value.getJournal().getIrregularPartition() == null ? 0 : value.getJournal().getIrregularPartition().getName().length())
-                + 2 + value.getJournal().getSymbolTableCount() * (2 + 4);
+        return 4 + 8 + 8;
     }
 
     @Override
     protected void write(IndexedJournal value, ByteBuffer buffer) {
-        try {
-            Partition p;
-            Journal j = value.getJournal();
-
-            // journal index
-            buffer.putInt(value.getIndex());
-            // max rowid for non-lag partitions
-            if ((p = j.lastNonEmptyNonLag()) == null) {
-                buffer.putLong(-1);
-            } else {
-                buffer.putLong(Rows.toRowID(p.getPartitionIndex(), p.size() - 1));
-            }
-            // size and name of lag partition
-            if ((p = j.getIrregularPartition()) != null) {
-                buffer.putLong(p.size());
-                ByteBuffers.putStringW(buffer, p.getName());
-            } else {
-                buffer.putLong(-1L);
-                ByteBuffers.putStringW(buffer, null);
-            }
-            // symbol table count and their indexes and sizes
-            int c;
-            buffer.putChar((char) (c = j.getSymbolTableCount()));
-            for (int i = 0; i < c; i++) {
-                buffer.putChar((char) i);
-                buffer.putInt(j.getSymbolTable(i).size());
-            }
-        } catch (JournalException e) {
-            throw new JournalRuntimeException(e);
-        }
+        // journal index
+        buffer.putInt(value.getIndex());
+        // txn
+        buffer.putLong(value.getJournal().getTxn());
+        buffer.putLong(value.getJournal().getTxPin());
     }
 }

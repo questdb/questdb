@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,8 +23,8 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.net.ChannelProducer;
-import com.nfsdb.net.model.JournalClientState;
 import com.nfsdb.net.model.JournalServerState;
+import com.nfsdb.tx.Tx;
 import com.nfsdb.utils.Rows;
 
 import java.nio.channels.WritableByteChannel;
@@ -40,16 +40,57 @@ public class JournalDeltaProducer implements ChannelProducer {
     private final List<PartitionDeltaProducer> partitionDeltaProducerCache = new ArrayList<>();
     private final JournalSymbolTableProducer journalSymbolTableProducer;
     private PartitionDeltaProducer lagPartitionDeltaProducer;
+    private boolean rollback;
 
     public JournalDeltaProducer(Journal journal) {
         this.journal = journal;
         journalSymbolTableProducer = new JournalSymbolTableProducer(journal);
     }
 
-    public void configure(JournalClientState status) throws JournalException {
+    public void configure(long txn, long txPin) throws JournalException {
+
+        journalServerState.reset();
+
+        // ignore return value because client can be significantly behind server
+        // even though journal has not refreshed we have to compare client and server txns
 
         journal.refresh();
+        long thisTxn = journal.getTxn();
+        this.rollback = thisTxn < txn;
+        journalServerState.setTxn(thisTxn);
+        journalServerState.setTxPin(journal.getTxPin());
 
+        if (thisTxn > txn) {
+            configure0(journal.find(txn, txPin));
+        }
+    }
+
+    @Override
+    public boolean hasContent() {
+        return rollback || journalServerState.notEmpty();
+    }
+
+    @Override
+    public void write(WritableByteChannel channel) throws JournalNetworkException {
+        journalServerStateProducer.write(channel, journalServerState);
+
+        if (journalSymbolTableProducer.hasContent()) {
+            journalSymbolTableProducer.write(channel);
+        }
+
+        for (int i = 0, sz = partitionDeltaProducers.size(); i < sz; i++) {
+            partitionDeltaProducers.get(i).write(channel);
+        }
+
+        if (lagPartitionDeltaProducer != null && lagPartitionDeltaProducer.hasContent()) {
+            lagPartitionDeltaProducer.write(channel);
+        }
+
+        journalServerState.reset();
+        journal.expireOpenFiles();
+    }
+
+    private void configure0(Tx tx) throws JournalException {
         if (LOGGER.isDebugEnabled()) {
             LOGGER.debug("Journal %s size: %d", journal.getLocation(), journal.size());
         }
@@ -57,20 +98,19 @@ public class JournalDeltaProducer implements ChannelProducer {
         int startPartitionIndex;
         long localRowID;
 
-        // get symbol table information
-        journalServerState.reset();
-        journalSymbolTableProducer.configure(status);
+        journalSymbolTableProducer.configure(tx);
         journalServerState.setSymbolTables(journalSymbolTableProducer.hasContent());
 
         // get non lag partition information
         int nonLagPartitionCount = journal.nonLagPartitionCount();
-        if (status.getMaxRowID() == -1) {
+
+        if (tx.journalMaxRowID == -1) {
             startPartitionIndex = 0;
             localRowID = 0;
             journalServerState.setNonLagPartitionCount(nonLagPartitionCount);
         } else {
-            startPartitionIndex = Rows.toPartitionIndex(status.getMaxRowID());
-            localRowID = Rows.toLocalRowID(status.getMaxRowID()) + 1;
+            startPartitionIndex = Rows.toPartitionIndex(tx.journalMaxRowID);
+            localRowID = Rows.toLocalRowID(tx.journalMaxRowID);
 
             if (startPartitionIndex < nonLagPartitionCount) {
                 // if slave partition is exactly the same as master partition, advance one partition forward
@@ -111,8 +151,8 @@ public class JournalDeltaProducer implements ChannelProducer {
                 lagPartitionDeltaProducer = new PartitionDeltaProducer(lag.open());
             }
 
-            if (lag.getName().equals(status.getLagPartitionName())) {
-                lagPartitionDeltaProducer.configure(status.getLagSize());
+            if (lag.getName().equals(tx.lagName)) {
+                lagPartitionDeltaProducer.configure(tx.lagSize);
             } else {
                 lagPartitionDeltaProducer.configure(0);
             }
@@ -121,35 +161,8 @@ public class JournalDeltaProducer implements ChannelProducer {
                 journalServerState.setLagPartitionName(lag.getName());
                 journalServerState.setLagPartitionMetadata(lag.getPartitionIndex(), lag.getInterval().getLo(), lag.getInterval().getHi(), (byte) 0);
             }
-        } else if (status.getLagPartitionName() != null) {
+        } else if (tx.lagName != null) {
             journalServerState.setDetachLag(true);
-        }
-    }
-
-    @Override
-    public boolean hasContent() {
-        return journalServerState.notEmpty();
-    }
-
-    @Override
-    public void write(WritableByteChannel channel) throws JournalNetworkException {
-        if (hasContent()) {
-            journalServerStateProducer.write(channel, journalServerState);
-
-            if (journalSymbolTableProducer.hasContent()) {
-                journalSymbolTableProducer.write(channel);
-            }
-
-            for (int i = 0, sz = partitionDeltaProducers.size(); i < sz; i++) {
-                partitionDeltaProducers.get(i).write(channel);
-            }
-
-            if (lagPartitionDeltaProducer != null && lagPartitionDeltaProducer.hasContent()) {
-                lagPartitionDeltaProducer.write(channel);
-            }
-
-            journalServerState.reset();
-            journal.expireOpenFiles();
         }
     }
 

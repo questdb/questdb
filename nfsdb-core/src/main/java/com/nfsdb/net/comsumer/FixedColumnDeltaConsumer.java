@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -79,5 +79,11 @@ public class FixedColumnDeltaConsumer extends AbstractChannelConsumer {
     @Override
     protected void commit() {
         column.preCommit(targetOffset);
+    }
+
+    @Override
+    public void free() {
+        ByteBuffers.release(header);
+        super.free();
     }
 }

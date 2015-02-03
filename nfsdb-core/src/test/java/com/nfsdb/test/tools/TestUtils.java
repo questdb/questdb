@@ -41,10 +41,22 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
 
 public final class TestUtils {
 
     private TestUtils() {
+    }
+
+    public static void assertCounter(AtomicInteger counter, int value, long timeout, TimeUnit unit) {
+        long t = System.currentTimeMillis();
+        while (counter.get() < value && (System.currentTimeMillis() - t) < unit.toMillis(timeout)) {
+            LockSupport.parkNanos(10000L);
+        }
+
+        Assert.assertEquals(value, counter.get());
     }
 
     public static <T> void assertDataEquals(Journal<T> expected, Journal<T> actual) throws JournalException {
@@ -215,7 +227,7 @@ public final class TestUtils {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
         long timestamps[] = {Dates.parseDateTime("2013-09-04T10:00:00.000Z"), Dates.parseDateTime("2013-10-04T10:00:00.000Z"), Dates.parseDateTime("2013-11-04T10:00:00.000Z")};
         Quote q = new Quote();
-        Rnd r = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
+        Rnd r = new Rnd();
         for (int i = 0; i < count; i++) {
             q.clear();
             q.setSym(symbols[Math.abs(r.nextInt() % (symbols.length))]);
@@ -290,7 +302,7 @@ public final class TestUtils {
     public static void generateQuoteData(int count, long timestamp, int increment) {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
         String exchanges[] = {"LXE", "GR", "SK", "LN"};
-        Rnd r = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
+        Rnd r = new Rnd();
         for (int i = 0; i < count; i++) {
             Quote q = new Quote();
             q.setSym(symbols[Math.abs(r.nextInt() % (symbols.length - 1))]);
@@ -326,7 +338,7 @@ public final class TestUtils {
 
     public static void generateTestEntityData(JournalWriter<TestEntity> w, int count, long timetamp, int increment) throws JournalException {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L", null};
-        Rnd r = new Rnd(System.currentTimeMillis(), System.nanoTime());
+        Rnd r = new Rnd();
         for (int i = 0; i < count; i++) {
             TestEntity e = new TestEntity();
             e.setSym(symbols[Math.abs(r.nextInt() % (symbols.length))]);
@@ -376,5 +388,4 @@ public final class TestUtils {
         sb.append(";");
         System.out.println(sb);
     }
-
 }

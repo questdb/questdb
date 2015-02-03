@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,18 +16,27 @@
 
 package com.nfsdb.net.model;
 
-import com.nfsdb.collections.DirectIntList;
-
 public class JournalClientState {
-    private final DirectIntList symbolTabKeys = new DirectIntList();
     private int journalIndex;
-    private long maxRowID;
-    private long lagSize;
     private boolean clientStateInvalid = true;
     private boolean waitingOnEvents = false;
     private long clientStateSyncTime = 0;
+    private long txn;
+    private long txPin;
 
-    private String lagPartitionName;
+    public void deepCopy(JournalClientState request) {
+        request.setJournalIndex(this.getJournalIndex());
+        request.setTxn(this.getTxn());
+        request.setTxPin(this.getTxPin());
+    }
+
+    public long getClientStateSyncTime() {
+        return clientStateSyncTime;
+    }
+
+    public void setClientStateSyncTime(long clientStateSyncTime) {
+        this.clientStateSyncTime = clientStateSyncTime;
+    }
 
     public int getJournalIndex() {
         return journalIndex;
@@ -37,36 +46,28 @@ public class JournalClientState {
         this.journalIndex = journalIndex;
     }
 
-    public long getMaxRowID() {
-        return maxRowID;
+    public long getTxPin() {
+        return txPin;
     }
 
-    public void setMaxRowID(long maxRowID) {
-        this.maxRowID = maxRowID;
+    public void setTxPin(long txPin) {
+        this.txPin = txPin;
     }
 
-    public long getLagSize() {
-        return lagSize;
+    public long getTxn() {
+        return txn;
     }
 
-    public void setLagSize(long lagSize) {
-        this.lagSize = lagSize;
-    }
-
-    public void addSymbolTabKey(int key) {
-        symbolTabKeys.add(key);
-    }
-
-    public DirectIntList getSymbolTabKeys() {
-        return symbolTabKeys;
-    }
-
-    public boolean isClientStateInvalid() {
-        return !clientStateInvalid;
+    public void setTxn(long txn) {
+        this.txn = txn;
     }
 
     public void invalidateClientState() {
         this.clientStateInvalid = true;
+    }
+
+    public boolean isClientStateInvalid() {
+        return !clientStateInvalid;
     }
 
     public boolean isWaitingOnEvents() {
@@ -81,51 +82,11 @@ public class JournalClientState {
     public String toString() {
         return "JournalClientState{" +
                 "journalIndex=" + journalIndex +
-                ", maxRowID=" + maxRowID +
-                ", lagSize=" + lagSize +
-                ", symbolTabKeys=" + symbolTabKeys +
                 ", clientStateInvalid=" + clientStateInvalid +
                 ", waitingOnEvents=" + waitingOnEvents +
                 ", clientStateSyncTime=" + clientStateSyncTime +
-                ", lagPartitionName='" + lagPartitionName + '\'' +
+                ", txn=" + txn +
+                ", txPin=" + txPin +
                 '}';
-    }
-
-    public void deepCopy(JournalClientState request) {
-        request.setJournalIndex(this.getJournalIndex());
-        request.setMaxRowID(this.getMaxRowID());
-        request.setLagPartitionName(this.getLagPartitionName());
-        request.setLagSize(this.getLagSize());
-        request.reset();
-        for (int i = 0, sz = symbolTabKeys.size(); i < sz; i++) {
-            request.addSymbolTabKey(symbolTabKeys.get(i));
-        }
-    }
-
-    public void reset() {
-        symbolTabKeys.reset();
-    }
-
-    public void setSymbolTableKey(int columnIndex, int key) {
-        while (symbolTabKeys.size() <= columnIndex) {
-            symbolTabKeys.add(-1);
-        }
-        symbolTabKeys.set(columnIndex, key);
-    }
-
-    public String getLagPartitionName() {
-        return lagPartitionName;
-    }
-
-    public void setLagPartitionName(String lagPartitionName) {
-        this.lagPartitionName = lagPartitionName;
-    }
-
-    public long getClientStateSyncTime() {
-        return clientStateSyncTime;
-    }
-
-    public void setClientStateSyncTime(long clientStateSyncTime) {
-        this.clientStateSyncTime = clientStateSyncTime;
     }
 }

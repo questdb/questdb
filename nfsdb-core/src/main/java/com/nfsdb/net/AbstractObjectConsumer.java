@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,6 +31,11 @@ public abstract class AbstractObjectConsumer extends AbstractChannelConsumer {
     private boolean readValue = false;
 
     @Override
+    public final boolean isComplete() {
+        return complete;
+    }
+
+    @Override
     public final void reset() {
         super.reset();
         complete = false;
@@ -39,11 +44,6 @@ public abstract class AbstractObjectConsumer extends AbstractChannelConsumer {
         if (valueBuffer != null) {
             valueBuffer.rewind();
         }
-    }
-
-    @Override
-    public final boolean isComplete() {
-        return complete;
     }
 
     @Override
@@ -67,6 +67,13 @@ public abstract class AbstractObjectConsumer extends AbstractChannelConsumer {
                 complete = true;
             }
         }
+    }
+
+    @Override
+    public void free() {
+        valueBuffer = ByteBuffers.release(valueBuffer);
+        ByteBuffers.release(header);
+        super.free();
     }
 
     final ByteBuffer getValueBuffer() {

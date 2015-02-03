@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -89,13 +89,16 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
         journalServerStateConsumer.read(channel);
         if (journalServerStateConsumer.isComplete()) {
 
-            journal.beginTx();
+            this.state = journalServerStateConsumer.getValue();
 
             try {
-                if (state == null) {
-                    state = journalServerStateConsumer.getValue();
-                    createPartitions(state);
+                if (state.getTxn() < journal.getTxn()) {
+                    journal.rollback(state.getTxn(), state.getTxPin());
+                    return;
                 }
+
+                journal.beginTx();
+                createPartitions(state);
 
                 if (state.isSymbolTables()) {
                     journalSymbolTableConsumer.read(channel);
@@ -151,9 +154,22 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
     @Override
     protected void commit() throws JournalNetworkException {
         try {
-            journal.commit();
+            journal.commit(false, state.getTxn(), state.getTxPin());
         } catch (JournalException e) {
             throw new JournalNetworkException(e);
+        }
+    }
+
+    @Override
+    public void free() {
+        super.free();
+        journalServerStateConsumer.free();
+        journalSymbolTableConsumer.free();
+        for (int i = 0; i < partitionDeltaConsumers.size(); i++) {
+            partitionDeltaConsumers.get(i).free();
+        }
+        if (lagPartitionDeltaConsumer != null) {
+            lagPartitionDeltaConsumer.free();
         }
     }
 
@@ -178,18 +194,5 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
         }
 
         return consumer;
-    }
-
-    @Override
-    public void free() {
-        super.free();
-        journalServerStateConsumer.free();
-        journalSymbolTableConsumer.free();
-        for (int i = 0; i < partitionDeltaConsumers.size(); i++) {
-            partitionDeltaConsumers.get(i).free();
-        }
-        if (lagPartitionDeltaConsumer != null) {
-            lagPartitionDeltaConsumer.free();
-        }
     }
 }

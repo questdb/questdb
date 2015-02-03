@@ -32,6 +32,7 @@ import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class IntegrationTest extends AbstractTest {
 
@@ -123,59 +124,69 @@ public class IntegrationTest extends AbstractTest {
     }
 
     @Test
-    public void testTwoClientsSync() throws Exception {
+    public void testTwoClientSync() throws Exception {
         int size = 10000;
         JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
         TestUtils.generateQuoteData(origin, size);
 
         JournalWriter<Quote> remote = factory.writer(Quote.class, "remote");
-        remote.append(origin.query().all().asResultSet().subset(0, 3000));
+        remote.append(origin.query().all().asResultSet().subset(0, 1000));
+        remote.commit();
+
         server.publish(remote);
         server.start();
 
-        try (JournalWriter<Quote> local1 = factory.writer(Quote.class, "local1")) {
-            local1.append(origin.query().all().asResultSet().subset(0, 1000));
-        }
-
-        try (JournalWriter<Quote> local2 = factory.writer(Quote.class, "local2")) {
-            local2.append(origin.query().all().asResultSet().subset(0, 1500));
-        }
-
-        final CountDownLatch latch = new CountDownLatch(2);
-
-        client.subscribe(Quote.class, "remote", "local1", new TxListener() {
+        final AtomicInteger counter = new AtomicInteger();
+        JournalClient client1 = new JournalClient(new ClientConfig("localhost"), factory);
+        client1.subscribe(Quote.class, "remote", "local1", new TxListener() {
             @Override
             public void onCommit() {
-                latch.countDown();
+                counter.incrementAndGet();
             }
         });
+        client1.start();
 
         JournalClient client2 = new JournalClient(new ClientConfig("localhost"), factory);
-
         client2.subscribe(Quote.class, "remote", "local2", new TxListener() {
             @Override
             public void onCommit() {
-                latch.countDown();
+                counter.incrementAndGet();
             }
         });
-
-        client.start();
         client2.start();
 
-        remote.append(origin.query().all().asResultSet().subset(3000, 10000));
+        TestUtils.assertCounter(counter, 2, 2, TimeUnit.SECONDS);
+        client1.halt();
+
+        remote.append(origin.query().all().asResultSet().subset(1000, 1500));
         remote.commit();
 
-        latch.await();
+        TestUtils.assertCounter(counter, 3, 2, TimeUnit.SECONDS);
 
-        client.halt();
-        client2.halt();
-        server.halt();
+
+        client1 = new JournalClient(new ClientConfig("localhost"), factory);
+        client1.subscribe(Quote.class, "remote", "local1", new TxListener() {
+            @Override
+            public void onCommit() {
+                counter.incrementAndGet();
+            }
+        });
+        client1.start();
+
+        remote.append(origin.query().all().asResultSet().subset(1500, size));
+        remote.commit();
+
+        TestUtils.assertCounter(counter, 6, 2, TimeUnit.SECONDS);
 
         Journal<Quote> local1r = factory.reader(Quote.class, "local1");
         Journal<Quote> local2r = factory.reader(Quote.class, "local2");
 
         Assert.assertEquals(size, local1r.size());
         Assert.assertEquals(size, local2r.size());
+
+        client1.halt();
+        client2.halt();
+        server.halt();
     }
 
     @Test

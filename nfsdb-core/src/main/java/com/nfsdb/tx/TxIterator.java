@@ -14,24 +14,38 @@
  * limitations under the License.
  */
 
-package com.nfsdb.net.comsumer;
+package com.nfsdb.tx;
 
-import com.nfsdb.net.AbstractMutableObjectConsumer;
-import com.nfsdb.net.model.JournalClientState;
+import com.nfsdb.collections.AbstractImmutableIterator;
 
-import java.nio.ByteBuffer;
+public class TxIterator extends AbstractImmutableIterator<Tx> {
+    private final TxLog txLog;
+    private final Tx tx = new Tx();
+    private long txAddress = -1;
 
-public class JournalClientStateConsumer extends AbstractMutableObjectConsumer<JournalClientState> {
-
-    @Override
-    protected JournalClientState newInstance() {
-        return new JournalClientState();
+    public TxIterator(TxLog txLog) {
+        this.txLog = txLog;
+        reset();
     }
 
     @Override
-    protected void read(ByteBuffer buffer, JournalClientState status) {
-        status.setJournalIndex(buffer.getInt());
-        status.setTxn(buffer.getLong());
-        status.setTxPin(buffer.getLong());
+    public boolean hasNext() {
+        if (txAddress == 0) {
+            return false;
+        }
+
+        txLog.read(txAddress, tx);
+
+        txAddress = tx.prevTxAddress;
+        return true;
+    }
+
+    @Override
+    public Tx next() {
+        return tx;
+    }
+
+    public void reset() {
+        txAddress = txLog.readCurrentTxAddress();
     }
 }

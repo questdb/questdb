@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -120,9 +120,6 @@ public class JournalServer {
         }
         LOGGER.info("Stopping agent services %d", serverInstance);
         service.shutdown();
-        for (ObjIntHashMap.Entry<JournalWriter> e : writers) {
-            e.key.setTxAsyncListener(null);
-        }
 
         LOGGER.info("Stopping acceptor");
         try {
@@ -192,7 +189,6 @@ public class JournalServer {
         for (ObjIntHashMap.Entry<JournalWriter> e : writers) {
             JournalEventPublisher publisher = new JournalEventPublisher(e.value, bridge);
             e.key.setTxListener(publisher);
-            e.key.setTxAsyncListener(publisher);
         }
 
         serverSocketChannel = config.openServerSocketChannel(serverInstance);
@@ -202,18 +198,6 @@ public class JournalServer {
         bridge.start();
         running.set(true);
         service.execute(new Acceptor());
-    }
-
-    int getWriterIndex(JournalKey key) {
-        for (ObjIntHashMap.Entry<JournalWriter> e : writers.immutableIterator()) {
-            JournalKey jk = e.key.getKey();
-            if (jk.getId().equals(key.getId()) && (
-                    (jk.getLocation() == null && key.getLocation() == null)
-                            || (jk.getLocation() != null && jk.getLocation().equals(key.getLocation())))) {
-                return e.value;
-            }
-        }
-        return JOURNAL_KEY_NOT_FOUND;
     }
 
     private void addChannel(SocketChannelHolder holder) {
@@ -242,6 +226,18 @@ public class JournalServer {
         while (channels.size() > 0) {
             closeChannel(channels.remove(0), true);
         }
+    }
+
+    int getWriterIndex(JournalKey key) {
+        for (ObjIntHashMap.Entry<JournalWriter> e : writers.immutableIterator()) {
+            JournalKey jk = e.key.getKey();
+            if (jk.getId().equals(key.getId()) && (
+                    (jk.getLocation() == null && key.getLocation() == null)
+                            || (jk.getLocation() != null && jk.getLocation().equals(key.getLocation())))) {
+                return e.value;
+            }
+        }
+        return JOURNAL_KEY_NOT_FOUND;
     }
 
     private void removeChannel(SocketChannelHolder holder) {

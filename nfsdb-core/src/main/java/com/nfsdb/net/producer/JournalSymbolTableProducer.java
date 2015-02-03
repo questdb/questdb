@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ import com.nfsdb.collections.Lists;
 import com.nfsdb.column.SymbolTable;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.net.ChannelProducer;
-import com.nfsdb.net.model.JournalClientState;
+import com.nfsdb.tx.Tx;
 import com.nfsdb.utils.ByteBuffers;
 
 import java.nio.ByteBuffer;
@@ -48,14 +48,14 @@ public class JournalSymbolTableProducer implements ChannelProducer {
         buffer = ByteBuffer.allocateDirect(journal.getMetadata().getColumnCount()).order(ByteOrder.LITTLE_ENDIAN);
     }
 
-    public void configure(JournalClientState status) {
+    public void configure(Tx tx) {
         hasContent = false;
         buffer.rewind();
         for (int i = 0, sz = symbolTables.size(); i < sz; i++) {
             SymbolTable tab = symbolTables.get(i);
             if (tab != null) {
                 VariableColumnDeltaProducer p = symbolTableProducers.get(i);
-                p.configure(status.getSymbolTabKeys().get(i), tab.size());
+                p.configure(i < tx.symbolTableSizes.length ? tx.symbolTableSizes[i] : 0, tab.size());
                 if (p.hasContent()) {
                     buffer.put((byte) 1);
                     hasContent = true;

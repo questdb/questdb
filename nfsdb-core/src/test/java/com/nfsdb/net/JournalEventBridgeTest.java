@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ import com.nfsdb.net.bridge.JournalEvent;
 import com.nfsdb.net.bridge.JournalEventBridge;
 import com.nfsdb.net.bridge.JournalEventHandler;
 import com.nfsdb.net.bridge.JournalEventProcessor;
-import com.nfsdb.tx.TxFuture;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -45,7 +44,6 @@ public class JournalEventBridgeTest {
         final Future[] publishers = new Future[2];
         final Handler[] consumers = new Handler[3];
         final int batchSize = 1000;
-        final int ackTimeoutMs = 50;
 
         final CyclicBarrier barrier = new CyclicBarrier(publishers.length + consumers.length);
         final CountDownLatch latch = new CountDownLatch(publishers.length + consumers.length);
@@ -60,13 +58,8 @@ public class JournalEventBridgeTest {
                         barrier.await();
                         for (int k = 0; k < batchSize; k++) {
                             long ts = System.nanoTime();
-                            TxFuture future = bridge.createRemoteCommitFuture(index, ts);
                             bridge.publish(index, ts);
-                            if (future.waitFor(ackTimeoutMs, TimeUnit.MILLISECONDS)) {
-                                count++;
-                            } else {
-                                break;
-                            }
+                            count++;
                         }
                     } catch (Exception e) {
                         e.printStackTrace();

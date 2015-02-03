@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -83,6 +83,11 @@ public class JournalServerAgent {
     public void close() {
         server.getBridge().removeAgentSequence(eventProcessor.getSequence());
         readerToWriterMap.free();
+        journalClientStateConsumer.free();
+        commandConsumer.free();
+        setKeyRequestConsumer.free();
+        intResponseConsumer.free();
+        byteArrayResponseConsumer.free();
     }
 
     public void process(ByteChannel channel) throws JournalNetworkException {
@@ -242,7 +247,6 @@ public class JournalServerAgent {
     private boolean dispatch0(WritableByteChannel channel, int journalIndex) {
         long time = System.currentTimeMillis();
         JournalClientState state = clientStates.get(journalIndex);
-        JournalDeltaProducer journalDeltaProducer = getProducer(journalIndex);
 
         // x1 is clientStateValid
         // x2 is writerUpdateReceived
@@ -254,14 +258,14 @@ public class JournalServerAgent {
         // x1 = 0 - don't send (not client state, don't know what to send)
         // x1 = 1 && x2 = 1 ->  send (either new request, or previously validated but not sent with and update)
 
-        if (journalDeltaProducer == null || state == null || state.isClientStateInvalid() ||
+        if (state == null || state.isClientStateInvalid() ||
                 (state.isWaitingOnEvents() && time - state.getClientStateSyncTime() <= ServerConfig.SYNC_TIMEOUT)) {
             return false;
         }
 
 
         try {
-            boolean dataSent = dispatchProducer(channel, state, journalDeltaProducer, journalIndex);
+            boolean dataSent = dispatchProducer(channel, state.getTxn(), state.getTxPin(), getProducer(journalIndex), journalIndex);
             if (dataSent) {
                 state.invalidateClientState();
             } else {
@@ -279,10 +283,14 @@ public class JournalServerAgent {
         }
     }
 
-    private boolean dispatchProducer(WritableByteChannel channel,
-                                     JournalClientState state, JournalDeltaProducer journalDeltaProducer,
-                                     int index) throws JournalNetworkException, JournalException {
-        journalDeltaProducer.configure(state);
+    private boolean dispatchProducer(
+            WritableByteChannel channel
+            , long txn
+            , long txPin
+            , JournalDeltaProducer journalDeltaProducer
+            , int index) throws JournalNetworkException, JournalException {
+
+        journalDeltaProducer.configure(txn, txPin);
         if (journalDeltaProducer.hasContent()) {
             server.getLogger().msg().setMessage("Sending data").setSocketAddress(socketAddress).send();
             commandProducer.write(channel, Command.JOURNAL_DELTA_CMD);
@@ -309,11 +317,7 @@ public class JournalServerAgent {
     }
 
     private JournalDeltaProducer getProducer(int index) {
-        if (index < producers.size()) {
-            return producers.get(index);
-        } else {
-            return null;
-        }
+        return producers.get(index);
     }
 
     private void ok(WritableByteChannel channel) throws JournalNetworkException {

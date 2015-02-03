@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,16 +39,6 @@ public class ScenarioTest extends AbstractTest {
     }};
 
     private final ClientConfig clientConfig = new ClientConfig("localhost");
-
-    private static void iteration(String expected, Journal<Quote> origin, JournalWriter<Quote> remote, Journal<Quote> local, int lo, int hi) throws Exception {
-        remote.append(origin.query().all().asResultSet().subset(lo, hi));
-        remote.commitAsync().waitFor(5, TimeUnit.SECONDS);
-
-        Thread.sleep(100);
-
-        local.refresh();
-        TestUtils.assertEquals(expected, local.query().head().withKeys().asResultSet());
-    }
 
     @Test
     public void testLagTrickle() throws Exception {
@@ -145,13 +135,14 @@ public class ScenarioTest extends AbstractTest {
         server.halt();
     }
 
-    private void lagIteration(final Journal<Quote> origin, final JournalWriter<Quote> remote, final int lo, final int hi) throws JournalException {
-        remote.mergeAppend(new ArrayList<Quote>() {{
-            for (Quote q : origin.query().all().asResultSet().subset(lo, hi).sort("timestamp")) {
-                add(q);
-            }
-        }});
+    private static void iteration(String expected, Journal<Quote> origin, JournalWriter<Quote> remote, Journal<Quote> local, int lo, int hi) throws Exception {
+        remote.append(origin.query().all().asResultSet().subset(lo, hi));
         remote.commit();
+
+        Thread.sleep(100);
+
+        local.refresh();
+        TestUtils.assertEquals(expected, local.query().head().withKeys().asResultSet());
     }
 
     private <T> void assertEquals(Journal<T> expected, Journal<T> actual) throws JournalException {
@@ -162,5 +153,14 @@ public class ScenarioTest extends AbstractTest {
         for (int i = 0; i < rsExpected.size(); i++) {
             Assert.assertEquals(rsExpected.read(i), rsActual.read(i));
         }
+    }
+
+    private void lagIteration(final Journal<Quote> origin, final JournalWriter<Quote> remote, final int lo, final int hi) throws JournalException {
+        remote.mergeAppend(new ArrayList<Quote>() {{
+            for (Quote q : origin.query().all().asResultSet().subset(lo, hi).sort("timestamp")) {
+                add(q);
+            }
+        }});
+        remote.commit();
     }
 }
