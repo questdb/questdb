@@ -44,6 +44,7 @@ public class DataLossTest extends AbstractTest {
         JournalServer server = new JournalServer(
                 new ServerConfig() {{
                     addNode(new ServerNode(0, "localhost"));
+                    setEnableMultiCast(false);
                 }}
                 , factory);
         server.publish(master);
@@ -52,7 +53,9 @@ public class DataLossTest extends AbstractTest {
         final AtomicInteger counter = new AtomicInteger();
 
         // equalize slave
-        JournalClient client = new JournalClient(new ClientConfig("localhost"), factory);
+        JournalClient client = new JournalClient(new ClientConfig("localhost") {{
+            setEnableMultiCast(false);
+        }}, factory);
         client.subscribe(Quote.class, "master", "slave", new TxListener() {
             @Override
             public void onCommit() {
