@@ -100,10 +100,10 @@ public class VariableColumnTest {
         try (MappedFile smallFile = new MappedFileImpl(new File(temporaryFolder.getRoot(), "small.d"), bitHint, JournalMode.APPEND)) {
             VariableColumn col1 = new VariableColumn(smallFile, indexFile);
 
-            int max = (int) Math.pow(2, bitHint) * 10;
+            int max = (int) Math.pow(2, bitHint) * 10 + 1;
             OutputStream writeStream = col1.putBin();
             for (int i = 0; i < max; i++) {
-                writeStream.write((byte) ((i % 255) - 128));
+                writeStream.write(i % 255);
             }
             writeStream.flush();
             col1.commit();
@@ -113,7 +113,7 @@ public class VariableColumnTest {
             byte[] result = new byte[max];
             readStream.read(result);
             for (int i = 0; i < max; i++) {
-                byte expected = (byte) ((i % 255) - 128);
+                byte expected = (byte) (i % 255);
                 byte actual = result[i];
                 Assert.assertEquals(String.format("difference at index %d", i), expected, actual);
             }
@@ -126,10 +126,10 @@ public class VariableColumnTest {
         try (MappedFile smallFile = new MappedFileImpl(new File(temporaryFolder.getRoot(), "small.d"), bitHint, JournalMode.APPEND)) {
             VariableColumn col1 = new VariableColumn(smallFile, indexFile);
 
-            int max = (int) Math.pow(2, bitHint) * 10;
+            int max = (int) Math.pow(2, bitHint) * 10 + 1;
             OutputStream writeStream = col1.putBin();
             for (int i = 0; i < max; i++) {
-                writeStream.write((byte) ((i % 255) - 128));
+                writeStream.write(i % 255);
             }
             writeStream.flush();
             col1.commit();
@@ -142,11 +142,8 @@ public class VariableColumnTest {
                 long readAddress = Unsafe.getUnsafe().allocateMemory(readLen);
                 readStream.copyTo(readAddress, offset, readLen);
                 for (int i = 0; i < readLen; i++) {
-                    byte expected = (byte) ((offset + i) % 255 - 128);
+                    byte expected = (byte) ((offset + i) % 255);
                     byte actual = Unsafe.getUnsafe().getByte(readAddress + i);
-                    if (expected != actual) {
-                        int  ii = 0;
-                    }
                     Assert.assertEquals(String.format("difference at index %n with read offset %n", i, offset), expected, actual);
                 }
                 Unsafe.getUnsafe().freeMemory(readAddress);

@@ -396,31 +396,31 @@ public class VariableColumn extends AbstractColumn {
         @Override
         public long copyTo(long address, long start, long length) {
             skipOffset(start);
-            long totalLen, currentLen;
-            totalLen = currentLen = Math.min(remaining, length);
+            long totalLen = Math.min(remaining, length);
             long targetAddress = address + totalLen;
 
             while(address < targetAddress) {
-                long blockLen = Math.min(targetAddress - address, blockRemaining);
-                long readBlockLen = blockLen;
+                // copy to the block end.
+                long readBlockLen = Math.min(targetAddress - address, blockRemaining);
+                long targetBlockAddress = blockAddress + readBlockLen;
 
-                while (blockLen >= 8) {
+                // address to do long copies up to.
+                long longTargetBlockAddress = blockAddress + ((readBlockLen >> 3) << 3);
+
+                // long copies.
+                while (blockAddress < longTargetBlockAddress) {
                     Unsafe.getUnsafe().putLong(address, Unsafe.getUnsafe().getLong(blockAddress));
-                    blockLen -= 8;
                     blockAddress += 8;
                     address += 8;
                 }
 
-                while (blockLen > 0) {
-                    Unsafe.getUnsafe().putByte(address, Unsafe.getUnsafe().getByte(blockAddress));
-                    blockLen--;
-                    blockAddress++;
-                    address++;
+                // byte copies.
+                while (blockAddress < targetBlockAddress) {
+                    Unsafe.getUnsafe().putByte(address++, Unsafe.getUnsafe().getByte(blockAddress++));
                 }
 
                 workOffset += readBlockLen;
-                currentLen -= readBlockLen;
-                if (currentLen > 0) {
+                if (targetAddress - address > 0) {
                     renew();
                 }
             }
