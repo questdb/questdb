@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -369,14 +369,15 @@ public class JournalServerAgent {
 
     private void setClientKey(ByteChannel channel, IndexedJournalKey indexedKey) throws JournalNetworkException {
         JournalKey<?> readerKey = indexedKey.getKey();
-        int writerIndex = server.getWriterIndex(readerKey);
-        if (writerIndex == JournalServer.JOURNAL_KEY_NOT_FOUND) {
+        IndexedJournalKey augmentedReaderKey = server.getWriterIndex0(readerKey);
+//        int writerIndex = server.getWriterIndex(readerKey);
+        if (augmentedReaderKey == null) {
             error(channel, "Requested key not exported: " + readerKey);
         } else {
-            writerToReaderMap.put(writerIndex, indexedKey.getIndex());
-            readerToWriterMap.extendAndSet(indexedKey.getIndex(), writerIndex);
+            writerToReaderMap.put(augmentedReaderKey.getIndex(), indexedKey.getIndex());
+            readerToWriterMap.extendAndSet(indexedKey.getIndex(), augmentedReaderKey.getIndex());
             try {
-                createReader(indexedKey.getIndex(), readerKey);
+                createReader(indexedKey.getIndex(), augmentedReaderKey.getKey());
                 ok(channel);
             } catch (JournalException e) {
                 error(channel, "Could not created reader for key: " + readerKey, e);

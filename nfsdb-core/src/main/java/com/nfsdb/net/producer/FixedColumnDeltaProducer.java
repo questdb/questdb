@@ -55,18 +55,6 @@ public class FixedColumnDeltaProducer implements ColumnDeltaProducer {
     }
 
     @Override
-    public void write(WritableByteChannel channel) throws JournalNetworkException {
-        if (hasContent()) {
-            ByteBuffers.copy(header, channel);
-            while (offset < targetOffset) {
-                ByteBuffer b = column.getBuffer(offset, 1);
-                offset += ByteBuffers.copy(b, channel, (int) (targetOffset - offset));
-            }
-            hasContent = false;
-        }
-    }
-
-    @Override
     public String toString() {
         return "ColumnDelta{" +
                 "offset=" + offset +
@@ -74,5 +62,16 @@ public class FixedColumnDeltaProducer implements ColumnDeltaProducer {
                 ", nextOffset=" + nextOffset +
                 ", column=" + column +
                 '}';
+    }
+
+    @Override
+    public void write(WritableByteChannel channel) throws JournalNetworkException {
+        if (hasContent()) {
+            ByteBuffers.copy(header, channel);
+            while (offset < targetOffset) {
+                offset += ByteBuffers.copy(column.getBuffer(offset, 1), channel, targetOffset - offset);
+            }
+            hasContent = false;
+        }
     }
 }

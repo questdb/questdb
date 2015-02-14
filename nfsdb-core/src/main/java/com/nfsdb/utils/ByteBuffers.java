@@ -44,7 +44,7 @@ public final class ByteBuffers {
         }
     }
 
-    public static int copy(ByteBuffer from, WritableByteChannel to, int count) throws JournalNetworkException {
+    public static int copy(ByteBuffer from, WritableByteChannel to, long count) throws JournalNetworkException {
         if (count <= 0 || !from.hasRemaining()) {
             return 0;
         }
@@ -61,7 +61,7 @@ public final class ByteBuffers {
 
             int limit = from.limit();
             try {
-                from.limit(from.position() + count);
+                from.limit((int) (from.position() + count));
                 if ((result = to.write(from)) <= 0) {
                     throw new JournalNetworkException("Write to closed channel");
                 }
@@ -77,106 +77,25 @@ public final class ByteBuffers {
 
     public static int copy(ReadableByteChannel from, ByteBuffer to) throws JournalNetworkException {
         try {
-            int result = from.read(to);
-            if (result == -1) {
-                throw new JournalDisconnectedChannelException();
+            int count = 0;
+            while (to.hasRemaining()) {
+                int result = from.read(to);
+                if (result == -1) {
+                    throw new JournalDisconnectedChannelException();
+                }
+                count += result;
             }
-            return result;
+            return count;
         } catch (IOException e) {
             throw new JournalNetworkException(e);
         }
     }
 
-    public static int copy(ReadableByteChannel from, ByteBuffer to, int count) throws JournalNetworkException {
+    public static int copy(ReadableByteChannel from, ByteBuffer to, long count) throws JournalNetworkException {
         if (count >= to.remaining()) {
             return copy(from, to);
         }
-
-        int result = 0;
-        int limit = to.limit();
-        try {
-            to.limit(to.position() + count);
-            try {
-                result = from.read(to);
-            } catch (IOException e) {
-                throw new JournalNetworkException(e);
-            }
-            if (result == -1) {
-                throw new JournalDisconnectedChannelException();
-            }
-        } finally {
-            to.limit(limit);
-        }
-        return result;
-    }
-
-    /**
-     * Releases ByteBuffer is possible. Call semantics should be as follows:
-     * <p/>
-     * ByteBuffer buffer = ....
-     * <p/>
-     * buffer = release(buffer);
-     *
-     * @param buffer direct byte buffer
-     * @return null if buffer is released or same buffer if release is not possible.
-     */
-    public static <T extends ByteBuffer> T release(final T buffer) {
-        if (buffer != null) {
-            if (buffer instanceof DirectBuffer) {
-                Cleaner cleaner = ((DirectBuffer) buffer).cleaner();
-                if (cleaner != null) {
-                    cleaner.clean();
-                    return null;
-                }
-            }
-        }
-        return buffer;
-    }
-
-    public static void putStringW(ByteBuffer buffer, String value) {
-        if (value == null) {
-            buffer.putChar((char) 0);
-        } else {
-            buffer.putChar((char) value.length());
-            putStr(buffer, value);
-        }
-    }
-
-    public static void putStringDW(ByteBuffer buffer, String value) {
-        if (value == null) {
-            buffer.putInt(0);
-        } else {
-            buffer.putInt(value.length());
-            putStr(buffer, value);
-        }
-    }
-
-    public static int getBitHint(int recSize, int recCount) {
-//                return Math.min(30, 32 - Integer.numberOfLeadingZeros(recSize * recCount));
-        long target = ((long) recSize) * recCount;
-        long minDeviation = Long.MAX_VALUE;
-        int resultBits = 0;
-        for (int i = 0; i < multipliers.length; i++) {
-            int m = multipliers[i];
-            int bits = Math.min(30, 32 - Integer.numberOfLeadingZeros(recSize * recCount / m));
-            long actual = (1 << bits) * m;
-
-            long deviation;
-            if (target / actual > multipliers[multipliers.length - 1]) {
-                return bits;
-            }
-
-            if (actual <= target) {
-                deviation = 100 + ((target % actual) * 100 / (1 << bits));
-            } else {
-                deviation = (actual * 100) / target;
-            }
-            if (deviation < minDeviation) {
-                minDeviation = deviation;
-                resultBits = bits;
-            }
-        }
-        return resultBits;
+        return copy0(from, to, count);
     }
 
     public static int copy(ByteBuffer from, ByteBuffer to) {
@@ -215,6 +134,34 @@ public final class ByteBuffers {
         }
     }
 
+    public static int getBitHint(int recSize, int recCount) {
+//                return Math.min(30, 32 - Integer.numberOfLeadingZeros(recSize * recCount));
+        long target = ((long) recSize) * recCount;
+        long minDeviation = Long.MAX_VALUE;
+        int resultBits = 0;
+        for (int i = 0; i < multipliers.length; i++) {
+            int m = multipliers[i];
+            int bits = Math.min(30, 32 - Integer.numberOfLeadingZeros(recSize * recCount / m));
+            long actual = (1 << bits) * m;
+
+            long deviation;
+            if (target / actual > multipliers[multipliers.length - 1]) {
+                return bits;
+            }
+
+            if (actual <= target) {
+                deviation = 100 + ((target % actual) * 100 / (1 << bits));
+            } else {
+                deviation = (actual * 100) / target;
+            }
+            if (deviation < minDeviation) {
+                minDeviation = deviation;
+                resultBits = bits;
+            }
+        }
+        return resultBits;
+    }
+
     public static void putStr(ByteBuffer buffer, String value) {
         int p = buffer.position();
         for (int i = 0; i < value.length(); i++) {
@@ -222,5 +169,65 @@ public final class ByteBuffers {
             p += 2;
         }
         buffer.position(p);
+    }
+
+    public static void putStringDW(ByteBuffer buffer, String value) {
+        if (value == null) {
+            buffer.putInt(0);
+        } else {
+            buffer.putInt(value.length());
+            putStr(buffer, value);
+        }
+    }
+
+    public static void putStringW(ByteBuffer buffer, String value) {
+        if (value == null) {
+            buffer.putChar((char) 0);
+        } else {
+            buffer.putChar((char) value.length());
+            putStr(buffer, value);
+        }
+    }
+
+    /**
+     * Releases ByteBuffer is possible. Call semantics should be as follows:
+     * <p/>
+     * ByteBuffer buffer = ....
+     * <p/>
+     * buffer = release(buffer);
+     *
+     * @param buffer direct byte buffer
+     * @return null if buffer is released or same buffer if release is not possible.
+     */
+    public static <T extends ByteBuffer> T release(final T buffer) {
+        if (buffer != null) {
+            if (buffer instanceof DirectBuffer) {
+                Cleaner cleaner = ((DirectBuffer) buffer).cleaner();
+                if (cleaner != null) {
+                    cleaner.clean();
+                    return null;
+                }
+            }
+        }
+        return buffer;
+    }
+
+    private static int copy0(ReadableByteChannel from, ByteBuffer to, long count) throws JournalNetworkException {
+        int result = 0;
+        int limit = to.limit();
+        try {
+            to.limit((int) (to.position() + count));
+            try {
+                result = from.read(to);
+            } catch (IOException e) {
+                throw new JournalNetworkException(e);
+            }
+            if (result == -1) {
+                throw new JournalDisconnectedChannelException();
+            }
+        } finally {
+            to.limit(limit);
+        }
+        return result;
     }
 }

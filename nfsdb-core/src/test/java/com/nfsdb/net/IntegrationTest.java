@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -122,6 +122,48 @@ public class IntegrationTest extends AbstractTest {
         Journal<Quote> local = factory.reader(Quote.class, "local");
         TestUtils.assertDataEquals(remote, local);
     }
+
+/*
+    @Test
+    public void testSingleJournalSync2() throws Exception {
+
+        int size = 100000;
+        JournalWriter<Price> remote = factory.writer(Price.class, "remote");
+        server.publish(remote);
+        server.start();
+
+
+
+        final AtomicInteger counter = new AtomicInteger();
+        client.subscribe(Price.class, "remote", "local", new TxListener() {
+            @Override
+            public void onCommit() {
+                counter.incrementAndGet();
+            }
+        });
+        client.start();
+
+        Price p = new Price();
+        long t = remote.getMaxTimestamp();
+        for (int i = 0; i < size; i++) {
+            p.setTimestamp(t += i);
+            p.setNanos(System.currentTimeMillis());
+            p.setSym(String.valueOf(i % 20));
+            p.setPrice(i * 1.04598 + i);
+            remote.append(p);
+        }
+        remote.commit();
+
+        TestUtils.assertCounter(counter, 1, 2, TimeUnit.SECONDS);
+
+        Journal<Price> r = factory.bulkReader(Price.class, "local");
+        for (Price v: r.bufferedIterator()) {
+            System.out.println(v.getSym());
+        }
+        client.halt();
+        server.halt();
+    }
+*/
 
     @Test
     public void testTwoClientSync() throws Exception {

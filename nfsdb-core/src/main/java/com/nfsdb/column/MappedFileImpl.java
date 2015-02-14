@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -69,41 +69,6 @@ public class MappedFileImpl implements MappedFile {
         this.stitches = new ArrayList<>(buffers.size());
     }
 
-    public void delete() {
-        close();
-        Files.delete(file);
-    }
-
-    @Override
-    public MappedByteBuffer getBuffer(long offset, int size) {
-        if (offset >= cachedBufferLo && offset + size <= cachedBufferHi) {
-            cachedBuffer.position((int) (offset - cachedBufferLo));
-        } else {
-            cachedBuffer = getBufferInternal(offset, size);
-            cachedBufferLo = offset - cachedBuffer.position();
-            cachedBufferHi = cachedBufferLo + cachedBuffer.limit();
-            cachedAddress = ((DirectBuffer) cachedBuffer).address();
-        }
-        return cachedBuffer;
-    }
-
-    public long getAddress(long offset, int size) {
-        if (offset >= cachedBufferLo && offset + size <= cachedBufferHi) {
-            return cachedAddress + offset - cachedBufferLo;
-        } else {
-            return allocateAddress(offset, size);
-        }
-    }
-
-    @Override
-    public int getAddressSize(long offset) {
-        if (offset >= cachedBufferLo && offset <= cachedBufferHi) {
-            return (int) (cachedBufferHi - offset);
-        } else {
-            return 0;
-        }
-    }
-
     @Override
     public void close() {
         try {
@@ -115,21 +80,6 @@ public class MappedFileImpl implements MappedFile {
         } catch (IOException e) {
             throw new JournalRuntimeException("Cannot close file", e);
         }
-    }
-
-    public long getAppendOffset() {
-        if (cachedAppendOffset != -1 && (mode == JournalMode.APPEND || mode == JournalMode.BULK_APPEND)) {
-            return cachedAppendOffset;
-        } else {
-            if (offsetBuffer != null) {
-                return cachedAppendOffset = Unsafe.getUnsafe().getLong(offsetDirectAddr);
-            }
-            return -1L;
-        }
-    }
-
-    public void setAppendOffset(long offset) {
-        Unsafe.getUnsafe().putLong(offsetDirectAddr, cachedAppendOffset = offset);
     }
 
     @Override
@@ -152,6 +102,11 @@ public class MappedFileImpl implements MappedFile {
         }
     }
 
+    public void delete() {
+        close();
+        Files.delete(file);
+    }
+
     public void force() {
         int stitchesSize = stitches.size();
         offsetBuffer.force();
@@ -170,9 +125,71 @@ public class MappedFileImpl implements MappedFile {
         }
     }
 
+    public long getAddress(long offset, int size) {
+        if (offset >= cachedBufferLo && offset + size <= cachedBufferHi) {
+            return cachedAddress + offset - cachedBufferLo;
+        } else {
+            return allocateAddress(offset, size);
+        }
+    }
+
+    @Override
+    public int getAddressSize(long offset) {
+        if (offset >= cachedBufferLo && offset <= cachedBufferHi) {
+            return (int) (cachedBufferHi - offset);
+        } else {
+            return 0;
+        }
+    }
+
+    public long getAppendOffset() {
+        if (cachedAppendOffset != -1 && (mode == JournalMode.APPEND || mode == JournalMode.BULK_APPEND)) {
+            return cachedAppendOffset;
+        } else {
+            if (offsetBuffer != null) {
+                return cachedAppendOffset = Unsafe.getUnsafe().getLong(offsetDirectAddr);
+            }
+            return -1L;
+        }
+    }
+
+    public void setAppendOffset(long offset) {
+        Unsafe.getUnsafe().putLong(offsetDirectAddr, cachedAppendOffset = offset);
+    }
+
+    @Override
+    public MappedByteBuffer getBuffer(long offset, int size) {
+        if (offset >= cachedBufferLo && offset + size <= cachedBufferHi) {
+            cachedBuffer.position((int) (offset - cachedBufferLo));
+        } else {
+            cachedBuffer = getBufferInternal(offset, size);
+            cachedBufferLo = offset - cachedBuffer.position();
+            cachedBufferHi = cachedBufferLo + cachedBuffer.limit();
+            cachedAddress = ((DirectBuffer) cachedBuffer).address();
+        }
+        return cachedBuffer;
+    }
+
     @Override
     public String toString() {
         return this.getClass().getName() + "[file=" + file + ", appendOffset=" + getAppendOffset() + "]";
+    }
+
+    String getFullFileName() {
+        return this.file.getAbsolutePath();
+    }
+
+    void open() throws JournalException {
+        String m;
+        switch (mode) {
+            case READ:
+            case BULK_READ:
+                m = "r";
+                break;
+            default:
+                m = "rw";
+        }
+        openInternal(m);
     }
 
     private long allocateAddress(long offset, int size) {
@@ -260,10 +277,6 @@ public class MappedFileImpl implements MappedFile {
         return buffer;
     }
 
-    String getFullFileName() {
-        return this.file.getAbsolutePath();
-    }
-
     private MappedByteBuffer mapBufferInternal(long offset, int size) {
         long actualOffset = offset + dataOffset;
 
@@ -275,7 +288,7 @@ public class MappedFileImpl implements MappedFile {
                     // make sure size does not extend beyond actual file size, otherwise
                     // java would assume we want to write and throw an exception
                     long sz;
-                    if (actualOffset + size > channel.size()) {
+                    if (actualOffset + ((long) size) > channel.size()) {
                         sz = channel.size() - actualOffset;
                     } else {
                         sz = size;
@@ -292,19 +305,6 @@ public class MappedFileImpl implements MappedFile {
         } catch (IOException e) {
             throw new JournalRuntimeException("Failed to memory map: %s", e, file.getAbsolutePath());
         }
-    }
-
-    void open() throws JournalException {
-        String m;
-        switch (mode) {
-            case READ:
-            case BULK_READ:
-                m = "r";
-                break;
-            default:
-                m = "rw";
-        }
-        openInternal(m);
     }
 
     private void openInternal(String mode) throws JournalException {

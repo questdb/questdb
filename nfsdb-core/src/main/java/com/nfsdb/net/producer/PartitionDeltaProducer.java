@@ -20,7 +20,9 @@ import com.nfsdb.Partition;
 import com.nfsdb.column.AbstractColumn;
 import com.nfsdb.column.VariableColumn;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.JournalNetworkException;
 
+import java.nio.channels.WritableByteChannel;
 import java.util.List;
 
 public class PartitionDeltaProducer extends ChannelProducerGroup<ColumnDeltaProducer> {
@@ -47,5 +49,18 @@ public class PartitionDeltaProducer extends ChannelProducerGroup<ColumnDeltaProd
 
     public Partition getPartition() {
         return partition;
+    }
+
+    @Override
+    public void write(WritableByteChannel channel) throws JournalNetworkException {
+        super.write(channel);
+        // long running sync operation may make partition look like it hasn't been
+        // accessed for a while. We need to make sure partition remains open after
+        // being delivered to client
+        try {
+            partition.open();
+        } catch (JournalException e) {
+            throw new JournalNetworkException(e);
+        }
     }
 }

@@ -17,6 +17,8 @@
 package org.nfsdb.examples.network.cluster;
 
 import com.nfsdb.Journal;
+import com.nfsdb.JournalKey;
+import com.nfsdb.PartitionType;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.net.JournalClient;
 import com.nfsdb.net.config.ClientConfig;
@@ -26,15 +28,15 @@ import org.nfsdb.examples.model.Price;
 public class ClusterConsumerMain {
     public static void main(String[] args) throws Exception {
         JournalFactory factory = new JournalFactory(args[0]);
-        final JournalClient client = new JournalClient(new ClientConfig("localhost:7080,localhost:7090") {{
+        final JournalClient client = new JournalClient(new ClientConfig("192.168.1.81:7080,192.168.1.81:7090") {{
             getReconnectPolicy().setRetryCount(6);
             getReconnectPolicy().setSleepBetweenRetriesMillis(1);
             getReconnectPolicy().setLoginRetryCount(2);
         }}, factory);
 
-        final Journal<Price> reader = factory.bulkReader(Price.class, "price-copy");
+        final Journal<Price> reader = factory.bulkReader(new JournalKey<>(Price.class, "price-copy", PartitionType.NONE, 1000000000));
 
-        client.subscribe(Price.class, null, "price-copy", new TxListener() {
+        client.subscribe(Price.class, null, "price-copy", 1000000000, new TxListener() {
             @Override
             public void onCommit() {
                 int count = 0;
@@ -45,7 +47,11 @@ public class ClusterConsumerMain {
                     }
                     count++;
                 }
-                System.out.println("took: " + (System.nanoTime() - t) + ", count=" + count);
+                if (t == 0) {
+                    System.out.println("no data received");
+                } else {
+                    System.out.println("took: " + (System.currentTimeMillis() - t) + ", count=" + count);
+                }
             }
         });
         client.start();

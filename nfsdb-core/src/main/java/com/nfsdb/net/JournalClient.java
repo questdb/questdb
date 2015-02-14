@@ -186,7 +186,7 @@ public class JournalClient {
     }
 
     public <T> void subscribe(Class<T> clazz, String remote, String local, int recordHint, TxListener txListener) throws JournalException {
-        subscribe(new JournalKey<>(clazz, remote, PartitionType.DEFAULT, recordHint), factory.writer(clazz, local, recordHint), txListener);
+        subscribe(new JournalKey<>(clazz, remote, PartitionType.DEFAULT, recordHint), factory.bulkWriter(clazz, local, recordHint), txListener);
     }
 
     public <T> void subscribe(JournalKey<T> remoteKey, JournalWriter<T> writer, TxListener txListener) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import com.nfsdb.net.auth.AuthorizationHandler;
 import com.nfsdb.net.bridge.JournalEventBridge;
 import com.nfsdb.net.config.ServerConfig;
 import com.nfsdb.net.mcast.OnDemandAddressSender;
+import com.nfsdb.net.model.IndexedJournalKey;
 
 import java.io.IOException;
 import java.nio.channels.ServerSocketChannel;
@@ -200,6 +201,30 @@ public class JournalServer {
         service.execute(new Acceptor());
     }
 
+    int getWriterIndex(JournalKey key) {
+        for (ObjIntHashMap.Entry<JournalWriter> e : writers.immutableIterator()) {
+            JournalKey jk = e.key.getKey();
+            if (jk.getId().equals(key.getId()) && (
+                    (jk.getLocation() == null && key.getLocation() == null)
+                            || (jk.getLocation() != null && jk.getLocation().equals(key.getLocation())))) {
+                return e.value;
+            }
+        }
+        return JOURNAL_KEY_NOT_FOUND;
+    }
+
+    IndexedJournalKey getWriterIndex0(JournalKey key) {
+        for (ObjIntHashMap.Entry<JournalWriter> e : writers.immutableIterator()) {
+            JournalKey jk = e.key.getKey();
+            if (jk.getId().equals(key.getId()) && (
+                    (jk.getLocation() == null && key.getLocation() == null)
+                            || (jk.getLocation() != null && jk.getLocation().equals(key.getLocation())))) {
+                return new IndexedJournalKey(e.value, new JournalKey(jk.getId(), jk.getClass(), jk.getLocation(), jk.getRecordHint()));
+            }
+        }
+        return null;
+    }
+
     private void addChannel(SocketChannelHolder holder) {
         channels.add(holder);
     }
@@ -226,18 +251,6 @@ public class JournalServer {
         while (channels.size() > 0) {
             closeChannel(channels.remove(0), true);
         }
-    }
-
-    int getWriterIndex(JournalKey key) {
-        for (ObjIntHashMap.Entry<JournalWriter> e : writers.immutableIterator()) {
-            JournalKey jk = e.key.getKey();
-            if (jk.getId().equals(key.getId()) && (
-                    (jk.getLocation() == null && key.getLocation() == null)
-                            || (jk.getLocation() != null && jk.getLocation().equals(key.getLocation())))) {
-                return e.value;
-            }
-        }
-        return JOURNAL_KEY_NOT_FOUND;
     }
 
     private void removeChannel(SocketChannelHolder holder) {
