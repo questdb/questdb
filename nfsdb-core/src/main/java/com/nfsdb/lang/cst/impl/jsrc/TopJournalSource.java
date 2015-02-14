@@ -60,4 +60,8 @@ public class TopJournalSource extends AbstractImmutableIterator<JournalRecord> i
     public RecordMetadata getMetadata() {
         return delegate.getMetadata();
     }
+
+    public JournalRecord getByRowId(long rowId) {
+        return delegate.getByRowId(rowId);
+    }
 }

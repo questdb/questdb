@@ -16,9 +16,8 @@
 
 package com.nfsdb.lang.cst.impl.qry;
 
+import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.export.CharSink;
-
-import java.io.InputStream;
 import java.io.OutputStream;
 
 public class SplitRecord extends AbstractRecord {
@@ -37,6 +36,11 @@ public class SplitRecord extends AbstractRecord {
 
     public void setB(Record b) {
         this.b = b;
+    }
+
+    @Override
+    public long getRowId() {
+        return 0;
     }
 
     @Override
@@ -139,7 +143,7 @@ public class SplitRecord extends AbstractRecord {
     }
 
     @Override
-    public InputStream getBin(int col) {
+    public DirectInputStream getBin(int col) {
         if (col < split) {
             return a.getBin(col);
         } else {

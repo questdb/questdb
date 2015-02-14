@@ -18,6 +18,7 @@ package com.nfsdb.lang.cst.impl.qry;
 
 import com.nfsdb.column.ColumnType;
 import com.nfsdb.column.SymbolTable;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
 
 public interface RecordMetadata {
     int getColumnCount();
@@ -28,5 +29,7 @@ public interface RecordMetadata {
 
     int getColumnIndex(CharSequence name);
 
-    String getColumnName(int index);
+    RecordColumnMetadata getColumn(int index);
+
+    RecordColumnMetadata getColumn(CharSequence name);
 }

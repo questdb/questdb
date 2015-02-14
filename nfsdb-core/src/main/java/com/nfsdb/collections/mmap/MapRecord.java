@@ -16,13 +16,12 @@
 
 package com.nfsdb.collections.mmap;
 
+import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.export.CharSink;
 import com.nfsdb.lang.cst.impl.qry.AbstractRecord;
 import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
 import com.nfsdb.utils.Unsafe;
-
-import java.io.InputStream;
 import java.io.OutputStream;
 
 public final class MapRecord extends AbstractRecord {
@@ -115,6 +114,11 @@ public final class MapRecord extends AbstractRecord {
     }
 
     @Override
+    public long getRowId() {
+        return address0;
+    }
+
+    @Override
     public byte get(int index) {
         return Unsafe.getUnsafe().getByte(address0(index));
     }
@@ -125,7 +129,7 @@ public final class MapRecord extends AbstractRecord {
     }
 
     @Override
-    public InputStream getBin(int col) {
+    public DirectInputStream getBin(int col) {
         throw new JournalRuntimeException("Not implemented");
     }
 

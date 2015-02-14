@@ -17,11 +17,15 @@
 package com.nfsdb.collections.mmap;
 
 import com.nfsdb.collections.*;
+import com.nfsdb.column.ColumnType;
+import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
+import com.nfsdb.lang.cst.impl.qry.Record;
 import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
 import com.nfsdb.utils.Unsafe;
 
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -41,7 +45,7 @@ public class MultiMap extends DirectMemory {
     private int keyCapacity;
     private int size = 0;
 
-    private MultiMap(int capacity, long dataSize, float loadFactor, List<ColumnMetadata> valueColumns, List<ColumnMetadata> keyColumns, List<MapRecordValueInterceptor> interceptors) {
+    private MultiMap(int capacity, long dataSize, float loadFactor, List<RecordColumnMetadata> valueColumns, List<RecordColumnMetadata> keyColumns, List<MapRecordValueInterceptor> interceptors) {
         this.loadFactor = loadFactor;
         this.address = Unsafe.getUnsafe().allocateMemory(dataSize + AbstractDirectList.CACHE_LINE_SIZE);
         this.kStart = kPos = this.address + (this.address & (AbstractDirectList.CACHE_LINE_SIZE - 1));
@@ -58,7 +62,7 @@ public class MultiMap extends DirectMemory {
         int offset = 4;
         for (int i = 0; i < valueOffsets.length; i++) {
             valueOffsets[i] = offset;
-            switch (valueColumns.get(i).type) {
+            switch (valueColumns.get(i).getType()) {
                 case INT:
                     offset += 4;
                     break;
@@ -222,20 +226,55 @@ public class MultiMap extends DirectMemory {
         offsets.clear((byte) -1);
     }
 
+    public static void putKey(Key key, Record r, int columnIndex, ColumnType type) {
+        switch (type) {
+            case BOOLEAN:
+                key.putBoolean(r.getBool(columnIndex));
+                break;
+            case BYTE:
+                key.putByte(r.get(columnIndex));
+                break;
+            case DOUBLE:
+                key.putDouble(r.getDouble(columnIndex));
+                break;
+            case INT:
+                key.putInt(r.getInt(columnIndex));
+                break;
+            case LONG:
+                key.putLong(r.getLong(columnIndex));
+                break;
+            case SHORT:
+                key.putShort(r.getShort(columnIndex));
+                break;
+            case STRING:
+                key.putStr(r.getStr(columnIndex));
+                break;
+            case SYMBOL:
+                key.putStr(r.getStr(columnIndex));
+                break;
+            case BINARY:
+                key.putBin(r.getBin(columnIndex));
+                break;
+            case DATE:
+                key.putLong(r.getDate(columnIndex));
+                break;
+        }
+    }
+
     public static class Builder {
-        private final List<ColumnMetadata> valueColumns = new ArrayList<>();
-        private final List<ColumnMetadata> keyColumns = new ArrayList<>();
+        private final List<RecordColumnMetadata> valueColumns = new ArrayList<>();
+        private final List<RecordColumnMetadata> keyColumns = new ArrayList<>();
         private final List<MapRecordValueInterceptor> interceptors = new ArrayList<>();
         private int capacity = 67;
         private long dataSize = 4096;
         private float loadFactor = 0.5f;
 
-        public Builder valueColumn(ColumnMetadata metadata) {
+        public Builder valueColumn(RecordColumnMetadata metadata) {
             valueColumns.add(metadata);
             return this;
         }
 
-        public Builder keyColumn(ColumnMetadata metadata) {
+        public Builder keyColumn(RecordColumnMetadata metadata) {
             keyColumns.add(metadata);
             return this;
         }
@@ -294,6 +333,38 @@ public class MultiMap extends DirectMemory {
             return this;
         }
 
+        public Key putByte(byte value) {
+            checkSize(1);
+            Unsafe.getUnsafe().putByte(appendAddr, value);
+            appendAddr += 1;
+            writeOffset();
+            return this;
+        }
+
+        public Key putBoolean(boolean value) {
+            checkSize(1);
+            Unsafe.getUnsafe().putByte(appendAddr, (byte) (value ? 1 : 0));
+            appendAddr += 1;
+            writeOffset();
+            return this;
+        }
+
+        public Key putDouble(double value) {
+            checkSize(8);
+            Unsafe.getUnsafe().putDouble(appendAddr, value);
+            appendAddr += 8;
+            writeOffset();
+            return this;
+        }
+
+        public Key putShort(short value) {
+            checkSize(2);
+            Unsafe.getUnsafe().putShort(appendAddr, value);
+            appendAddr += 2;
+            writeOffset();
+            return this;
+        }
+
         public void put(long address, int len) {
             checkSize(len);
             Unsafe.getUnsafe().copyMemory(address, appendAddr, len);
@@ -314,6 +385,14 @@ public class MultiMap extends DirectMemory {
             }
             appendAddr += len << 1;
             writeOffset();
+            return this;
+        }
+
+        public Key putBin(DirectInputStream stream) {
+            long length = stream.getLength();
+            checkSize((int)length);
+            length = stream.copyTo(appendAddr, 0, length);
+            appendAddr += length;
             return this;
         }
 

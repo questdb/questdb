@@ -16,7 +16,7 @@
 
 package com.nfsdb.lang.cst.impl.qry;
 
-import java.io.InputStream;
+import com.nfsdb.column.DirectInputStream;
 import java.io.OutputStream;
 
 public abstract class AbstractRecord implements Record {
@@ -68,7 +68,7 @@ public abstract class AbstractRecord implements Record {
     }
 
     @Override
-    public InputStream getBin(String column) {
+    public DirectInputStream getBin(String column) {
         return getBin(metadata.getColumnIndex(column));
     }
 

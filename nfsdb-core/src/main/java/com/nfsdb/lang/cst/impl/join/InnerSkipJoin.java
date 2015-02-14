@@ -21,7 +21,7 @@ import com.nfsdb.lang.cst.impl.qry.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
-public class InnerSkipJoin extends AbstractImmutableIterator<Record> implements GenericRecordSource {
+public class InnerSkipJoin extends AbstractImmutableIterator<Record> implements GenericRandomAccessRecordSource {
 
     private final RecordSource<? extends SplitRecord> delegate;
     private Record data;
@@ -33,6 +33,11 @@ public class InnerSkipJoin extends AbstractImmutableIterator<Record> implements 
     @Override
     public RecordMetadata getMetadata() {
         return delegate.getMetadata();
+    }
+
+    @Override
+    public Record getByRowId(long rowId) {
+        return null;
     }
 
     @Override

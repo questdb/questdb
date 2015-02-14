@@ -16,12 +16,15 @@
 
 package com.nfsdb.lang.cst.impl.qry;
 
+import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.export.CharSink;
 
 import java.io.InputStream;
 import java.io.OutputStream;
 
 public interface Record {
+
+    long getRowId();
 
     RecordMetadata getMetadata();
 
@@ -63,7 +66,7 @@ public interface Record {
 
     short getShort(int col);
 
-    InputStream getBin(String column);
+    DirectInputStream getBin(String column);
 
-    InputStream getBin(int col);
+    DirectInputStream getBin(int col);
 }

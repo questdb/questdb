@@ -20,7 +20,7 @@ import com.nfsdb.column.ColumnType;
 import com.nfsdb.column.HugeBuffer;
 import com.nfsdb.column.SymbolTable;
 
-public class ColumnMetadata {
+public class ColumnMetadata implements RecordColumnMetadata {
     public String name;
     public ColumnType type;
     public long offset;
@@ -135,5 +135,20 @@ public class ColumnMetadata {
         result = 31 * result + (sameAs != null ? sameAs.hashCode() : 0);
         result = 31 * result + (noCache ? 1 : 0);
         return result;
+    }
+
+    @Override
+    public ColumnType getType() {
+        return type;
+    }
+
+    @Override
+    public SymbolTable getSymbolTable() {
+        return symbolTable;
+    }
+
+    @Override
+    public String getName() {
+        return name;
     }
 }

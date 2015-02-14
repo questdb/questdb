@@ -285,7 +285,7 @@ public class VariableColumn extends AbstractColumn {
         }
     }
 
-    public InputStream getBin(long localRowID) {
+    public DirectInputStream getBin(long localRowID) {
         binIn.reset(getOffset(localRowID));
         return binIn;
     }
@@ -355,7 +355,7 @@ public class VariableColumn extends AbstractColumn {
         }
     }
 
-    private class BinaryInputStream extends InputStream {
+    private class BinaryInputStream extends DirectInputStream {
         private long workOffset;
         private long blockAddress;
         private int remaining;
@@ -386,6 +386,65 @@ public class VariableColumn extends AbstractColumn {
         private void renew() {
             blockAddress = mappedFile.getAddress(workOffset, 1);
             blockRemaining = mappedFile.getAddressSize(workOffset);
+        }
+
+        @Override
+        public int getLength() {
+            return remaining;
+        }
+
+        @Override
+        public long copyTo(long address, long start, long length) {
+            skipOffset(start);
+            long totalLen, currentLen;
+            totalLen = currentLen = Math.min(remaining, length);
+            long targetAddress = address + totalLen;
+
+            while(address < targetAddress) {
+                long blockLen = Math.min(targetAddress - address, blockRemaining);
+                long readBlockLen = blockLen;
+
+                while (blockLen >= 8) {
+                    Unsafe.getUnsafe().putLong(address, Unsafe.getUnsafe().getLong(blockAddress));
+                    blockLen -= 8;
+                    blockAddress += 8;
+                    address += 8;
+                }
+
+                while (blockLen > 0) {
+                    Unsafe.getUnsafe().putByte(address, Unsafe.getUnsafe().getByte(blockAddress));
+                    blockLen--;
+                    blockAddress++;
+                    address++;
+                }
+
+                workOffset += readBlockLen;
+                currentLen -= readBlockLen;
+                if (currentLen > 0) {
+                    renew();
+                }
+            }
+            remaining -= totalLen;
+            return totalLen;
+        }
+
+        private void skipOffset(long offset) {
+            if (offset > remaining ) {
+                throw new IndexOutOfBoundsException(String.format("Offset %d is greater than remaining length %d", offset, remaining));
+            }
+            remaining -= offset;
+            long targetWorkOffset = workOffset + offset;
+
+            while (targetWorkOffset > workOffset) {
+                long blockSkip = Math.min(targetWorkOffset - workOffset, blockRemaining);
+                workOffset += blockSkip;
+                blockRemaining -= blockSkip;
+                blockAddress += blockSkip;
+
+                if (blockRemaining == 0) {
+                    renew();
+                }
+            }
         }
     }
 }

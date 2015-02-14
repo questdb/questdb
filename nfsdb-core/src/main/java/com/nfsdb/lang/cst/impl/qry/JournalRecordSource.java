@@ -18,6 +18,6 @@ package com.nfsdb.lang.cst.impl.qry;
 
 import com.nfsdb.Journal;
 
-public interface JournalRecordSource extends RecordSource<JournalRecord> {
+public interface JournalRecordSource extends RandomAccessRecordSource<JournalRecord> {
     Journal getJournal();
 }

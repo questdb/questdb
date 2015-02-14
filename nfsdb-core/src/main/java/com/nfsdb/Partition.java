@@ -160,7 +160,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
         ((VariableColumn) columns[columnIndex]).getBin(localRowID, s);
     }
 
-    public InputStream getBin(long localRowID, int columnIndex) {
+    public DirectInputStream getBin(long localRowID, int columnIndex) {
         checkColumnIndex(columnIndex);
         return ((VariableColumn) columns[columnIndex]).getBin(localRowID);
     }

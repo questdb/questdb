@@ -20,7 +20,7 @@ import com.nfsdb.collections.ObjIntHashMap;
 import com.nfsdb.column.ColumnType;
 import com.nfsdb.column.SymbolTable;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
 
 import java.util.List;
@@ -29,31 +29,22 @@ public final class MapMetadata implements RecordMetadata {
 
     private final ObjIntHashMap<CharSequence> nameCache;
     private final int columnCount;
-    private final ColumnType[] types;
-    private final SymbolTable[] symbolTables;
-    private final String[] columnNames;
+    private final RecordColumnMetadata[] columns;
 
-
-    public MapMetadata(List<ColumnMetadata> valueColumns, List<ColumnMetadata> keyColumns) {
+    public MapMetadata(List<RecordColumnMetadata> valueColumns, List<RecordColumnMetadata> keyColumns) {
         this.columnCount = valueColumns.size() + keyColumns.size();
-        this.types = new ColumnType[columnCount];
         this.nameCache = new ObjIntHashMap<>(columnCount);
-        this.symbolTables = new SymbolTable[columnCount];
-        this.columnNames = new String[columnCount];
+        this.columns = new RecordColumnMetadata[columnCount];
         int split = valueColumns.size();
 
         for (int i = 0; i < split; i++) {
-            ColumnMetadata m = valueColumns.get(i);
-            types[i] = m.type;
-            symbolTables[i] = m.symbolTable;
-            nameCache.put(columnNames[i] = m.name, i);
+            columns[i] = valueColumns.get(i);
+            nameCache.put(columns[i].getName(), i);
         }
 
         for (int i = 0, sz = keyColumns.size(); i < sz; i++) {
-            ColumnMetadata m = keyColumns.get(i);
-            types[split + i] = m.type;
-            symbolTables[split + i] = m.symbolTable;
-            nameCache.put(columnNames[split + i] = m.name, split + i);
+            columns[i] = keyColumns.get(i);
+            nameCache.put(columns[i].getName(), split + i);
         }
     }
 
@@ -64,7 +55,7 @@ public final class MapMetadata implements RecordMetadata {
 
     @Override
     public ColumnType getColumnType(int x) {
-        return types[x];
+        return getColumn(x).getType();
     }
 
     @Override
@@ -78,11 +69,16 @@ public final class MapMetadata implements RecordMetadata {
 
     @Override
     public SymbolTable getSymbolTable(int index) {
-        return symbolTables[index];
+        return getColumn(index).getSymbolTable();
     }
 
     @Override
-    public String getColumnName(int index) {
-        return columnNames[index];
+    public RecordColumnMetadata getColumn(int index) {
+        return columns[index];
+    }
+
+    @Override
+    public RecordColumnMetadata getColumn(CharSequence name) {
+        return columns[getColumnIndex(name)];
     }
 }

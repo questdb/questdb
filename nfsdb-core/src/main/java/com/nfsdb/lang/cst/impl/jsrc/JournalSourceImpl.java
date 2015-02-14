@@ -48,6 +48,12 @@ public class JournalSourceImpl extends AbstractJournalSource {
     }
 
     @Override
+    public JournalRecord getByRowId(long rowId) {
+        item.rowid = rowId;
+        return item;
+    }
+
+    @Override
     public void reset() {
         partitionSource.reset();
         rowSource.reset();

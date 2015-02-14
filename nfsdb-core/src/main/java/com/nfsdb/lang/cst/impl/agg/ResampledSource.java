@@ -29,6 +29,7 @@ import com.nfsdb.lang.cst.impl.qry.Record;
 import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
 import com.nfsdb.lang.cst.impl.qry.RecordSource;
 import com.nfsdb.utils.Dates;
+import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 
 import java.util.List;
 

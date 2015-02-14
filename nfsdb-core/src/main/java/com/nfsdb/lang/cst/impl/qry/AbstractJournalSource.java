@@ -20,9 +20,9 @@ import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.column.ColumnType;
 import com.nfsdb.column.SymbolTable;
 import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
 
 public abstract class AbstractJournalSource extends AbstractImmutableIterator<JournalRecord> implements JournalRecordSource, RecordMetadata {
-
     private final JournalMetadata metadata;
 
     public AbstractJournalSource(JournalMetadata metadata) {
@@ -55,7 +55,12 @@ public abstract class AbstractJournalSource extends AbstractImmutableIterator<Jo
     }
 
     @Override
-    public String getColumnName(int index) {
-        return metadata.getColumnMetadata(index).name;
+    public RecordColumnMetadata getColumn(int index) {
+        return metadata.getColumnMetadata(index);
+    }
+
+    @Override
+    public RecordColumnMetadata getColumn(CharSequence name) {
+        return metadata.getColumnMetadata(name);
     }
 }
