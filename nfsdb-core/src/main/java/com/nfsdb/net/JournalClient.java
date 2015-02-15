@@ -217,6 +217,7 @@ public class JournalClient {
                     return VoteResult.ME;
             }
         } catch (JournalNetworkException e) {
+            LOGGER.info("Voting error", e);
             return VoteResult.ME_BY_DEFAULT;
         }
     }
