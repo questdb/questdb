@@ -57,40 +57,6 @@ public class FixedColumnTest {
     }
 
     @Test
-    public void testConsumerSmallerThanProducer() throws Exception {
-        FixedColumn col1 = new FixedColumn(file, 4);
-        FixedColumn col2 = new FixedColumn(file2, 4);
-
-        FixedColumnDeltaProducer producer = new FixedColumnDeltaProducer(col1);
-        ChannelConsumer consumer = new FixedColumnDeltaConsumer(col2);
-
-        int max = 1500000;
-
-        for (int i = 0; i < max; i++) {
-            col1.putInt(max - i);
-            col1.commit();
-        }
-
-        for (int i = 0; i < max - 500000; i++) {
-            col2.putInt(max - i);
-            col2.commit();
-        }
-
-        consumer.reset();
-        producer.configure(col2.size(), col1.size());
-        Assert.assertTrue(producer.hasContent());
-        producer.write(channel);
-        consumer.read(channel);
-        col2.commit();
-
-        Assert.assertEquals(col1.size(), col2.size());
-
-        for (int i = 0; i < max; i++) {
-            Assert.assertEquals(max - i, col2.getInt(i));
-        }
-    }
-
-    @Test
     public void testConsumerEqualToProducer() throws Exception {
         FixedColumn col1 = new FixedColumn(file, 4);
         FixedColumn col2 = new FixedColumn(file2, 4);
@@ -116,55 +82,6 @@ public class FixedColumnTest {
         // hasNext() can be true, because of compulsory header
         // however, if column doesn't have data, hasContent() must be false.
         Assert.assertFalse(producer.hasContent());
-        Assert.assertEquals(col1.size(), col2.size());
-
-        for (int i = 0; i < max; i++) {
-            Assert.assertEquals(max - i, col2.getInt(i));
-        }
-    }
-
-    @Test
-    public void testEmptyConsumerAndProducer() throws Exception {
-        FixedColumn col1 = new FixedColumn(file, 4);
-        FixedColumn col2 = new FixedColumn(file2, 4);
-
-        FixedColumnDeltaProducer producer = new FixedColumnDeltaProducer(col1);
-        ChannelConsumer consumer = new FixedColumnDeltaConsumer(col2);
-
-        consumer.reset();
-        producer.configure(col2.size(), col1.size());
-
-        // hasNext() can be true, because of compulsory header
-        // however, if column doesn't have data, hasContent() must be false.
-        Assert.assertFalse(producer.hasContent());
-        Assert.assertEquals(col1.size(), col2.size());
-    }
-
-    @Test
-    public void testEmptyConsumerAndPopulatedProducer() throws Exception {
-        FixedColumn col1 = new FixedColumn(file, 4);
-        FixedColumn col2 = new FixedColumn(file2, 4);
-
-        FixedColumnDeltaProducer producer = new FixedColumnDeltaProducer(col1);
-        ChannelConsumer consumer = new FixedColumnDeltaConsumer(col2);
-
-        int max = 1500000;
-
-        for (int i = 0; i < max; i++) {
-            col1.putInt(max - i);
-            col1.commit();
-        }
-
-        consumer.reset();
-        producer.configure(col2.size(), col1.size());
-
-        // hasNext() can be true, because of compulsory header
-        // however, if column doesn't have data, hasContent() must be false.
-        Assert.assertTrue(producer.hasContent());
-        producer.write(channel);
-        consumer.read(channel);
-        col2.commit();
-
         Assert.assertEquals(col1.size(), col2.size());
 
         for (int i = 0; i < max; i++) {
@@ -250,7 +167,7 @@ public class FixedColumnTest {
     }
 
     @Test
-    public void testNonBlockingConsumer() throws Exception {
+    public void testConsumerSmallerThanProducer() throws Exception {
         FixedColumn col1 = new FixedColumn(file, 4);
         FixedColumn col2 = new FixedColumn(file2, 4);
 
@@ -272,11 +189,7 @@ public class FixedColumnTest {
         consumer.reset();
         producer.configure(col2.size(), col1.size());
         Assert.assertTrue(producer.hasContent());
-        channel.setBlocking(false);
         producer.write(channel);
-        consumer.read(channel);
-
-        Assert.assertFalse(consumer.isComplete());
         consumer.read(channel);
         col2.commit();
 
@@ -287,4 +200,52 @@ public class FixedColumnTest {
         }
     }
 
+    @Test
+    public void testEmptyConsumerAndPopulatedProducer() throws Exception {
+        FixedColumn col1 = new FixedColumn(file, 4);
+        FixedColumn col2 = new FixedColumn(file2, 4);
+
+        FixedColumnDeltaProducer producer = new FixedColumnDeltaProducer(col1);
+        ChannelConsumer consumer = new FixedColumnDeltaConsumer(col2);
+
+        int max = 1500000;
+
+        for (int i = 0; i < max; i++) {
+            col1.putInt(max - i);
+            col1.commit();
+        }
+
+        consumer.reset();
+        producer.configure(col2.size(), col1.size());
+
+        // hasNext() can be true, because of compulsory header
+        // however, if column doesn't have data, hasContent() must be false.
+        Assert.assertTrue(producer.hasContent());
+        producer.write(channel);
+        consumer.read(channel);
+        col2.commit();
+
+        Assert.assertEquals(col1.size(), col2.size());
+
+        for (int i = 0; i < max; i++) {
+            Assert.assertEquals(max - i, col2.getInt(i));
+        }
+    }
+
+    @Test
+    public void testEmptyConsumerAndProducer() throws Exception {
+        FixedColumn col1 = new FixedColumn(file, 4);
+        FixedColumn col2 = new FixedColumn(file2, 4);
+
+        FixedColumnDeltaProducer producer = new FixedColumnDeltaProducer(col1);
+        ChannelConsumer consumer = new FixedColumnDeltaConsumer(col2);
+
+        consumer.reset();
+        producer.configure(col2.size(), col1.size());
+
+        // hasNext() can be true, because of compulsory header
+        // however, if column doesn't have data, hasContent() must be false.
+        Assert.assertFalse(producer.hasContent());
+        Assert.assertEquals(col1.size(), col2.size());
+    }
 }

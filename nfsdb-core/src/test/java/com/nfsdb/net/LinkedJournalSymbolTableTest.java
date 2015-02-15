@@ -60,8 +60,14 @@ public class LinkedJournalSymbolTableTest extends AbstractTest {
 
     @Test
     public void testSameAsSymbolTable() throws Exception {
-        master.append(origin);
+        master.append(origin.query().all().asResultSet().subset(0, 2));
+        master.commit(false, 101L, 10);
+
+        master.append(origin.query().all().asResultSet().subset(2, 4));
+        master.commit(false, 102L, 20);
+
         slave.append(origin.query().all().asResultSet().subset(0, 2));
+        slave.commit(false, 101L, 10);
         executeSequence(true);
     }
 
@@ -70,7 +76,9 @@ public class LinkedJournalSymbolTableTest extends AbstractTest {
         journalClientStateConsumer.reset();
         journalClientStateConsumer.read(channel);
 
-        journalSymbolTableProducer.configure(journalClientStateConsumer.getValue());
+//        journalSymbolTableProducer.configure(journalClientStateConsumer.getValue());
+        journalSymbolTableProducer.configure(master.find(journalClientStateConsumer.getValue().getTxn(), journalClientStateConsumer.getValue().getTxPin()));
+
         Assert.assertEquals(expectContent, journalSymbolTableProducer.hasContent());
         if (expectContent) {
             journalSymbolTableProducer.write(channel);

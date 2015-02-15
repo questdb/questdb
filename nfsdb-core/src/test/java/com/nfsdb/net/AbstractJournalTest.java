@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -65,7 +65,7 @@ public abstract class AbstractJournalTest extends AbstractTest {
 
         Assert.assertTrue(journalClientStateConsumer.isComplete());
 
-        journalDeltaProducer.configure(journalClientStateConsumer.getValue());
+        journalDeltaProducer.configure(journalClientStateConsumer.getValue().getTxn(), journalClientStateConsumer.getValue().getTxPin());
         Assert.assertEquals(expectContent, journalDeltaProducer.hasContent());
         if (expectContent) {
             journalDeltaProducer.write(channel);

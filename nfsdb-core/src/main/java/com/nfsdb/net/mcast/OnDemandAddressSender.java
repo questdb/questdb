@@ -26,15 +26,15 @@ import java.nio.ByteBuffer;
 public class OnDemandAddressSender extends AbstractOnDemandSender {
     private final ServerConfig serverConfig;
 
-    public OnDemandAddressSender(ServerConfig networkConfig, int inMessageCode, int outMessageCode, int instance) throws JournalNetworkException {
+    public OnDemandAddressSender(ServerConfig networkConfig, int inMessageCode, int outMessageCode, int instance) {
         super(networkConfig, inMessageCode, outMessageCode, instance);
         this.serverConfig = networkConfig;
     }
 
     @Override
     protected void prepareBuffer(ByteBuffer buf) throws JournalNetworkException {
-        InetSocketAddress address = serverConfig.getInterfaceSocketAddress();
-        ByteBuffers.putStringW(buf, address.getAddress().toString());
+        InetSocketAddress address = serverConfig.getSocketAddress(instance);
+        ByteBuffers.putStringW(buf, address.getAddress().getHostAddress());
         buf.put((byte) (serverConfig.getSslConfig().isSecure() ? 1 : 0));
         buf.putInt(address.getPort());
         buf.flip();

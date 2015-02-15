@@ -70,41 +70,6 @@ public class MappedFileImpl implements MappedFile {
     }
 
     @Override
-    public MappedByteBuffer getBuffer(long offset, int size) {
-        if (offset >= cachedBufferLo && offset + size <= cachedBufferHi) {
-            cachedBuffer.position((int) (offset - cachedBufferLo));
-        } else {
-            cachedBuffer = getBufferInternal(offset, size);
-            cachedBufferLo = offset - cachedBuffer.position();
-            cachedBufferHi = cachedBufferLo + cachedBuffer.limit();
-            cachedAddress = ((DirectBuffer) cachedBuffer).address();
-        }
-        return cachedBuffer;
-    }
-
-    public long getAddress(long offset, int size) {
-        if (offset >= cachedBufferLo && offset + size <= cachedBufferHi) {
-            return cachedAddress + offset - cachedBufferLo;
-        } else {
-            return allocateAddress(offset, size);
-        }
-    }
-
-    @Override
-    public int getAddressSize(long offset) {
-        if (offset >= cachedBufferLo && offset <= cachedBufferHi) {
-            return (int) (cachedBufferHi - offset);
-        } else {
-            return 0;
-        }
-    }
-
-    public void delete() {
-        close();
-        Files.delete(file);
-    }
-
-    @Override
     public void close() {
         try {
             unmap();
@@ -115,26 +80,6 @@ public class MappedFileImpl implements MappedFile {
         } catch (IOException e) {
             throw new JournalRuntimeException("Cannot close file", e);
         }
-    }
-
-    @Override
-    public String toString() {
-        return this.getClass().getName() + "[file=" + file + ", appendOffset=" + getAppendOffset() + "]";
-    }
-
-    public long getAppendOffset() {
-        if (cachedAppendOffset != -1 && (mode == JournalMode.APPEND || mode == JournalMode.BULK_APPEND)) {
-            return cachedAppendOffset;
-        } else {
-            if (offsetBuffer != null) {
-                return cachedAppendOffset = Unsafe.getUnsafe().getLong(offsetDirectAddr);
-            }
-            return -1L;
-        }
-    }
-
-    public void setAppendOffset(long offset) {
-        Unsafe.getUnsafe().putLong(offsetDirectAddr, cachedAppendOffset = offset);
     }
 
     @Override
@@ -157,8 +102,9 @@ public class MappedFileImpl implements MappedFile {
         }
     }
 
-    public String getFullFileName() {
-        return this.file.getAbsolutePath();
+    public void delete() {
+        close();
+        Files.delete(file);
     }
 
     public void force() {
@@ -177,6 +123,73 @@ public class MappedFileImpl implements MappedFile {
                 }
             }
         }
+    }
+
+    public long getAddress(long offset, int size) {
+        if (offset >= cachedBufferLo && offset + size <= cachedBufferHi) {
+            return cachedAddress + offset - cachedBufferLo;
+        } else {
+            return allocateAddress(offset, size);
+        }
+    }
+
+    @Override
+    public int getAddressSize(long offset) {
+        if (offset >= cachedBufferLo && offset <= cachedBufferHi) {
+            return (int) (cachedBufferHi - offset);
+        } else {
+            return 0;
+        }
+    }
+
+    public long getAppendOffset() {
+        if (cachedAppendOffset != -1 && (mode == JournalMode.APPEND || mode == JournalMode.BULK_APPEND)) {
+            return cachedAppendOffset;
+        } else {
+            if (offsetBuffer != null) {
+                return cachedAppendOffset = Unsafe.getUnsafe().getLong(offsetDirectAddr);
+            }
+            return -1L;
+        }
+    }
+
+    public void setAppendOffset(long offset) {
+        Unsafe.getUnsafe().putLong(offsetDirectAddr, cachedAppendOffset = offset);
+    }
+
+    @Override
+    public MappedByteBuffer getBuffer(long offset, int size) {
+        if (offset >= cachedBufferLo && offset + size <= cachedBufferHi) {
+            cachedBuffer.position((int) (offset - cachedBufferLo));
+        } else {
+            cachedBuffer = getBufferInternal(offset, size);
+            cachedBufferLo = offset - cachedBuffer.position();
+            cachedBufferHi = cachedBufferLo + cachedBuffer.limit();
+            cachedAddress = ((DirectBuffer) cachedBuffer).address();
+        }
+        return cachedBuffer;
+    }
+
+    @Override
+    public String toString() {
+        return this.getClass().getName() + "[file=" + file + ", appendOffset=" + getAppendOffset() + "]";
+    }
+
+    String getFullFileName() {
+        return this.file.getAbsolutePath();
+    }
+
+    void open() throws JournalException {
+        String m;
+        switch (mode) {
+            case READ:
+            case BULK_READ:
+                m = "r";
+                break;
+            default:
+                m = "rw";
+        }
+        openInternal(m);
     }
 
     private long allocateAddress(long offset, int size) {
@@ -264,25 +277,34 @@ public class MappedFileImpl implements MappedFile {
         return buffer;
     }
 
-    private long size() throws JournalException {
-        try {
-            return channel.size();
-        } catch (IOException e) {
-            throw new JournalException("Could not get channel size", e);
-        }
-    }
+    private MappedByteBuffer mapBufferInternal(long offset, int size) {
+        long actualOffset = offset + dataOffset;
 
-    void open() throws JournalException {
-        String m;
-        switch (mode) {
-            case READ:
-            case BULK_READ:
-                m = "r";
-                break;
-            default:
-                m = "rw";
+        try {
+            MappedByteBuffer buf;
+            switch (mode) {
+                case READ:
+                case BULK_READ:
+                    // make sure size does not extend beyond actual file size, otherwise
+                    // java would assume we want to write and throw an exception
+                    long sz;
+                    if (actualOffset + ((long) size) > channel.size()) {
+                        sz = channel.size() - actualOffset;
+                    } else {
+                        sz = size;
+                    }
+                    assert sz > 0;
+                    buf = channel.map(FileChannel.MapMode.READ_ONLY, actualOffset, sz);
+                    break;
+                default:
+                    buf = channel.map(FileChannel.MapMode.READ_WRITE, actualOffset, size);
+                    break;
+            }
+            buf.order(ByteOrder.LITTLE_ENDIAN);
+            return buf;
+        } catch (IOException e) {
+            throw new JournalRuntimeException("Failed to memory map: %s", e, file.getAbsolutePath());
         }
-        openInternal(m);
     }
 
     private void openInternal(String mode) throws JournalException {
@@ -313,33 +335,11 @@ public class MappedFileImpl implements MappedFile {
         }
     }
 
-    private MappedByteBuffer mapBufferInternal(long offset, int size) {
-        long actualOffset = offset + dataOffset;
-
+    private long size() throws JournalException {
         try {
-            MappedByteBuffer buf;
-            switch (mode) {
-                case READ:
-                case BULK_READ:
-                    // make sure size does not extend beyond actual file size, otherwise
-                    // java would assume we want to write and throw an exception
-                    long sz;
-                    if (actualOffset + size > channel.size()) {
-                        sz = channel.size() - actualOffset;
-                    } else {
-                        sz = size;
-                    }
-                    assert sz > 0;
-                    buf = channel.map(FileChannel.MapMode.READ_ONLY, actualOffset, sz);
-                    break;
-                default:
-                    buf = channel.map(FileChannel.MapMode.READ_WRITE, actualOffset, size);
-                    break;
-            }
-            buf.order(ByteOrder.LITTLE_ENDIAN);
-            return buf;
+            return channel.size();
         } catch (IOException e) {
-            throw new JournalRuntimeException("Failed to memory map: %s", e, file.getAbsolutePath());
+            throw new JournalException("Could not get channel size", e);
         }
     }
 

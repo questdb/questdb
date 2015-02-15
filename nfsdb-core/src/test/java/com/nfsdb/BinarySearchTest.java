@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,65 +16,56 @@
 
 package com.nfsdb;
 
-import org.junit.Assert;
-import org.junit.Test;
+import com.nfsdb.column.BSearchType;
+import com.nfsdb.column.FixedColumn;
+import com.nfsdb.column.MappedFileImpl;
+import org.junit.*;
+import org.junit.rules.TemporaryFolder;
 
 public class BinarySearchTest {
 
+    @Rule
+    public final TemporaryFolder temp = new TemporaryFolder();
+
+    private FixedColumn column;
+
+    @Before
+    public void setUp() throws Exception {
+        column = new FixedColumn(new MappedFileImpl(temp.newFile(), 16, JournalMode.APPEND), 8);
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        column.close();
+    }
+
     @Test
     public void testSearchGreaterOrEquals() throws Exception {
-        Assert.assertEquals(6, BinarySearch.indexOf(new ArraySeriesProvider(new long[]{1, 2, 3, 4, 5, 6, 9, 12, 17, 23}),
-                7, BinarySearch.SearchType.NEWER_OR_SAME));
-
-        Assert.assertEquals(5, BinarySearch.indexOf(new ArraySeriesProvider(new long[]{1, 2, 3, 4, 5, 6, 6, 6, 7, 12, 17, 23}),
-                6, BinarySearch.SearchType.NEWER_OR_SAME));
-
-        Assert.assertEquals(0, BinarySearch.indexOf(new ArraySeriesProvider(new long[]{2, 2, 3, 4, 5, 6, 6, 6, 7, 12, 17, 23}),
-                1, BinarySearch.SearchType.NEWER_OR_SAME));
-
-        Assert.assertEquals(0, BinarySearch.indexOf(new ArraySeriesProvider(new long[]{2, 2, 3, 4, 5, 6, 6, 6, 7, 12, 17, 23}),
-                2, BinarySearch.SearchType.NEWER_OR_SAME));
-
-        Assert.assertEquals(-2, BinarySearch.indexOf(new ArraySeriesProvider(new long[]{2, 2, 3, 4, 5, 6, 6, 6, 7, 12, 17, 23}),
-                25, BinarySearch.SearchType.NEWER_OR_SAME));
-
-        Assert.assertEquals(-2, BinarySearch.indexOf(new ArraySeriesProvider(new long[]{2, 2}),
-                25, BinarySearch.SearchType.NEWER_OR_SAME));
+        assertEquals(new long[]{1, 2, 3, 4, 5, 6, 9, 12, 17, 23}, BSearchType.NEWER_OR_SAME, 7, 6);
+        assertEquals(new long[]{1, 2, 3, 4, 5, 6, 6, 6, 7, 12, 17, 23}, BSearchType.NEWER_OR_SAME, 6, 5);
+        assertEquals(new long[]{2, 2, 3, 4, 5, 6, 6, 6, 7, 12, 17, 23}, BSearchType.NEWER_OR_SAME, 1, 0);
+        assertEquals(new long[]{2, 2, 3, 4, 5, 6, 6, 6, 7, 12, 17, 23}, BSearchType.NEWER_OR_SAME, 2, 0);
+        assertEquals(new long[]{2, 2, 3, 4, 5, 6, 6, 6, 7, 12, 17, 23}, BSearchType.NEWER_OR_SAME, 25, -2);
+        assertEquals(new long[]{2, 2}, BSearchType.NEWER_OR_SAME, 25, -2);
     }
 
     @Test
     public void testSearchLessOrEquals() throws Exception {
-        Assert.assertEquals(6, BinarySearch.indexOf(new ArraySeriesProvider(new long[]{1, 2, 3, 4, 5, 6, 9, 12, 17, 23}),
-                11, BinarySearch.SearchType.OLDER_OR_SAME));
-
-        Assert.assertEquals(6, BinarySearch.indexOf(new ArraySeriesProvider(new long[]{1, 2, 3, 4, 9, 9, 9, 12, 17, 23}),
-                9, BinarySearch.SearchType.OLDER_OR_SAME));
-
-        Assert.assertEquals(9, BinarySearch.indexOf(new ArraySeriesProvider(new long[]{1, 2, 3, 4, 9, 9, 9, 12, 17, 23}),
-                25, BinarySearch.SearchType.OLDER_OR_SAME));
-
-        Assert.assertEquals(-1, BinarySearch.indexOf(new ArraySeriesProvider(new long[]{3, 3, 3, 4, 9, 9, 9, 12, 17, 23}),
-                1, BinarySearch.SearchType.OLDER_OR_SAME));
-
-        Assert.assertEquals(-1, BinarySearch.indexOf(new ArraySeriesProvider(new long[]{3, 3}),
-                1, BinarySearch.SearchType.OLDER_OR_SAME));
+        assertEquals(new long[]{1, 2, 3, 4, 5, 6, 9, 12, 17, 23}, BSearchType.OLDER_OR_SAME, 11, 6);
+        assertEquals(new long[]{1, 2, 3, 4, 9, 9, 9, 12, 17, 23}, BSearchType.OLDER_OR_SAME, 9, 6);
+        assertEquals(new long[]{1, 2, 3, 4, 9, 9, 9, 12, 17, 23}, BSearchType.OLDER_OR_SAME, 25, 9);
+        assertEquals(new long[]{3, 3, 3, 4, 9, 9, 9, 12, 17, 23}, BSearchType.OLDER_OR_SAME, 1, -1);
+        assertEquals(new long[]{3, 3}, BSearchType.OLDER_OR_SAME, 1, -1);
     }
 
-    private static class ArraySeriesProvider implements BinarySearch.LongTimeSeriesProvider {
-        private final long data[];
-
-        private ArraySeriesProvider(long[] data) {
-            this.data = data;
+    private void assertEquals(long[] src, BSearchType type, long val, long expected) {
+        column.truncate(0);
+        column.commit();
+        for (long l : src) {
+            column.putLong(l);
+            column.commit();
         }
 
-        @Override
-        public long readLong(long index) {
-            return data[((int) index)];
-        }
-
-        @Override
-        public long size() {
-            return data.length;
-        }
+        Assert.assertEquals(expected, column.bsearchEdge(val, type));
     }
 }

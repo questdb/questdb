@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.nfsdb;
 
+import com.nfsdb.column.BSearchType;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.model.Quote;
 import com.nfsdb.test.tools.AbstractTest;
@@ -66,15 +67,15 @@ public class PartitionTest extends AbstractTest {
         Partition<Quote> partition1 = journal.getPartitionForTimestamp(tsA).open();
         Assert.assertNotNull("getPartition(timestamp) failed", partition1);
 
-        Assert.assertEquals(-2, partition1.indexOf(tsA, BinarySearch.SearchType.NEWER_OR_SAME));
-        Assert.assertEquals(-1, partition1.indexOf(Dates.parseDateTime("2012-06-03T00:00:00.000"), BinarySearch.SearchType.OLDER_OR_SAME));
-        Assert.assertEquals(0, partition1.indexOf(Dates.parseDateTime("2012-06-03T00:00:00.000"), BinarySearch.SearchType.NEWER_OR_SAME));
+        Assert.assertEquals(-2, partition1.indexOf(tsA, BSearchType.NEWER_OR_SAME));
+        Assert.assertEquals(-1, partition1.indexOf(Dates.parseDateTime("2012-06-03T00:00:00.000"), BSearchType.OLDER_OR_SAME));
+        Assert.assertEquals(0, partition1.indexOf(Dates.parseDateTime("2012-06-03T00:00:00.000"), BSearchType.NEWER_OR_SAME));
 
-        Assert.assertEquals(4, partition1.indexOf(ts1, BinarySearch.SearchType.OLDER_OR_SAME));
-        Assert.assertEquals(1, partition1.indexOf(ts1, BinarySearch.SearchType.NEWER_OR_SAME));
+        Assert.assertEquals(4, partition1.indexOf(ts1, BSearchType.OLDER_OR_SAME));
+        Assert.assertEquals(1, partition1.indexOf(ts1, BSearchType.NEWER_OR_SAME));
 
         Partition<Quote> p = journal.openOrCreateLagPartition();
-        long result = p.indexOf(Dates.parseDateTime("2012-06-15T00:00:00.000"), BinarySearch.SearchType.OLDER_OR_SAME);
+        long result = p.indexOf(Dates.parseDateTime("2012-06-15T00:00:00.000"), BSearchType.OLDER_OR_SAME);
         Assert.assertEquals(-1, result);
     }
 }

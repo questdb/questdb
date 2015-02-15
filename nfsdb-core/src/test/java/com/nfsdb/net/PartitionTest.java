@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -65,24 +65,6 @@ public class PartitionTest extends AbstractTest {
     }
 
     @Test
-    public void testConsumerSmallerThanProducer() throws Exception {
-        master.append(origin);
-        slave.append(origin.query().all().asResultSet().subset(0, 700));
-
-        Assert.assertEquals(1000, masterPartition.size());
-        Assert.assertEquals(700, slavePartition.size());
-
-        consumer.reset();
-        producer.configure(slave.size());
-
-        Assert.assertTrue(producer.hasContent());
-        producer.write(channel);
-        consumer.read(channel);
-
-        comparePartitions();
-    }
-
-    @Test
     public void testConsumerEqualToProducer() throws Exception {
         master.append(origin);
         slave.append(origin);
@@ -93,27 +75,6 @@ public class PartitionTest extends AbstractTest {
         consumer.reset();
         producer.configure(slave.size());
         Assert.assertFalse(producer.hasContent());
-    }
-
-    @Test
-    public void testEmptyConsumerAndProducer() throws Exception {
-        consumer.reset();
-        producer.configure(slave.size());
-        Assert.assertFalse(producer.hasContent());
-    }
-
-    @Test
-    public void testEmptyConsumerAndPopulatedProducer() throws Exception {
-        master.append(origin);
-        consumer.reset();
-        producer.configure(slave.size());
-        Assert.assertTrue(producer.hasContent());
-
-        syncSymbolTables();
-
-        producer.write(channel);
-        consumer.read(channel);
-        comparePartitions();
     }
 
     @Test
@@ -147,6 +108,53 @@ public class PartitionTest extends AbstractTest {
         comparePartitions();
     }
 
+    @Test
+    public void testConsumerSmallerThanProducer() throws Exception {
+        master.append(origin);
+        slave.append(origin.query().all().asResultSet().subset(0, 700));
+
+        Assert.assertEquals(1000, masterPartition.size());
+        Assert.assertEquals(700, slavePartition.size());
+
+        consumer.reset();
+        producer.configure(slave.size());
+
+        Assert.assertTrue(producer.hasContent());
+        producer.write(channel);
+        consumer.read(channel);
+
+        comparePartitions();
+    }
+
+    @Test
+    public void testEmptyConsumerAndPopulatedProducer() throws Exception {
+        master.append(origin);
+        consumer.reset();
+        producer.configure(slave.size());
+        Assert.assertTrue(producer.hasContent());
+
+        syncSymbolTables();
+
+        producer.write(channel);
+        consumer.read(channel);
+        comparePartitions();
+    }
+
+    @Test
+    public void testEmptyConsumerAndProducer() throws Exception {
+        consumer.reset();
+        producer.configure(slave.size());
+        Assert.assertFalse(producer.hasContent());
+    }
+
+    private void comparePartitions() {
+        Assert.assertEquals(masterPartition.size(), slavePartition.size());
+
+        for (int i = 0; i < slavePartition.size(); i++) {
+            Assert.assertEquals(masterPartition.read(i), slavePartition.read(i));
+        }
+    }
+
     private void syncSymbolTables() throws JournalNetworkException {
 
         JournalClientStateProducer sp = new JournalClientStateProducer();
@@ -159,17 +167,10 @@ public class PartitionTest extends AbstractTest {
         JournalSymbolTableProducer p = new JournalSymbolTableProducer(master);
         JournalSymbolTableConsumer c = new JournalSymbolTableConsumer(slave);
 
-        p.configure(sc.getValue());
+        p.configure(master.find(sc.getValue().getTxn(), sc.getValue().getTxPin()));
+
         p.write(channel);
         c.reset();
         c.read(channel);
-    }
-
-    private void comparePartitions() {
-        Assert.assertEquals(masterPartition.size(), slavePartition.size());
-
-        for (int i = 0; i < slavePartition.size(); i++) {
-            Assert.assertEquals(masterPartition.read(i), slavePartition.read(i));
-        }
     }
 }

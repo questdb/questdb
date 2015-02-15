@@ -39,6 +39,12 @@ public class FixedColumnDeltaConsumer extends AbstractChannelConsumer {
     }
 
     @Override
+    public void free() {
+        ByteBuffers.release(header);
+        super.free();
+    }
+
+    @Override
     public boolean isComplete() {
         return appendOffset == targetOffset;
     }
@@ -66,7 +72,7 @@ public class FixedColumnDeltaConsumer extends AbstractChannelConsumer {
 
         while (!isComplete()) {
             ByteBuffer target = column.getBuffer(appendOffset, 1);
-            int sz = ByteBuffers.copy(channel, target, (int) (targetOffset - appendOffset));
+            int sz = ByteBuffers.copy(channel, target, targetOffset - appendOffset);
             // using non-blocking IO it should be possible not to read anything
             // we need to give up here and let the rest of execution continue
             if (sz == 0) {

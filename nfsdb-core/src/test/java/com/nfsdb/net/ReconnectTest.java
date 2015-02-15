@@ -19,7 +19,6 @@ package com.nfsdb.net;
 import com.nfsdb.Journal;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.model.Quote;
 import com.nfsdb.net.config.ClientConfig;
@@ -39,8 +38,7 @@ public class ReconnectTest extends AbstractTest {
     @Before
     public void setUp() throws Exception {
         client = new JournalClient(
-                new ClientConfig() {{
-                    setHostname("localhost");
+                new ClientConfig("localhost") {{
                     getReconnectPolicy().setLoginRetryCount(3);
                     getReconnectPolicy().setRetryCount(5);
                     getReconnectPolicy().setSleepBetweenRetriesMillis(TimeUnit.SECONDS.toMillis(1));
@@ -107,11 +105,10 @@ public class ReconnectTest extends AbstractTest {
         TestUtils.assertDataEquals(remote, local);
     }
 
-    private JournalServer newServer() throws JournalNetworkException {
+    private JournalServer newServer() {
         return new JournalServer(new ServerConfig() {{
-            setHostname("localhost");
             setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(100));
-            setEnableMulticast(false);
+            setEnableMultiCast(false);
         }}, factory);
     }
 }

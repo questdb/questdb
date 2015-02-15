@@ -22,30 +22,19 @@ public class Tx {
 
     public static final byte TX_NORMAL = 0;
     public static final byte TX_FORCE = 1;
-    public static final byte TX_PRECOMMIT = 2;
-    // transient
     public long address;
-    // 8
     public long prevTxAddress;
-    // 1
     public byte command;
-    // 8
     public long timestamp;
-    // 8
+    public long txn;
+    public long txPin;
     public long journalMaxRowID;
-    // 8
     public long lastPartitionTimestamp;
-    // 8
     public long lagSize;
-    // 1 + 1 + 64
     public String lagName;
-    // 2 + 4 * symbolTableSizes.len
     public int symbolTableSizes[];
-    // 2 + 8 * symbolTableIndexPointers.len
     public long symbolTableIndexPointers[];
-    // 2 + 8 * indexPointers.len
     public long indexPointers[];
-    // 2 + 8 * lagIndexPointers.len
     public long lagIndexPointers[];
 
     @Override
@@ -55,6 +44,8 @@ public class Tx {
                 ", prevTxAddress=" + prevTxAddress +
                 ", command=" + command +
                 ", timestamp=" + timestamp +
+                ", txn=" + txn +
+                ", txPin=" + txPin +
                 ", journalMaxRowID=" + journalMaxRowID +
                 ", lastPartitionTimestamp=" + lastPartitionTimestamp +
                 ", lagSize=" + lagSize +
@@ -63,6 +54,6 @@ public class Tx {
                 ", symbolTableIndexPointers=" + Arrays.toString(symbolTableIndexPointers) +
                 ", indexPointers=" + Arrays.toString(indexPointers) +
                 ", lagIndexPointers=" + Arrays.toString(lagIndexPointers) +
-                "}";
+                '}';
     }
 }

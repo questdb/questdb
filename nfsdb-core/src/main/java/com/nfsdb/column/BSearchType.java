@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,10 +14,8 @@
  * limitations under the License.
  */
 
-package com.nfsdb.tx;
+package com.nfsdb.column;
 
-import java.util.concurrent.TimeUnit;
-
-public interface TxFuture {
-    boolean waitFor(long time, TimeUnit unit);
+public enum BSearchType {
+    NEWER_OR_SAME, OLDER_OR_SAME
 }

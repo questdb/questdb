@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,14 +29,27 @@ public class JournalServerState {
     private int addIndex = 0;
     private String lagPartitionName;
     private boolean detachLag = false;
+    private long txn;
+    private long txPin;
 
-    public int getNonLagPartitionCount() {
-        return nonLagPartitionCount;
+    public void addPartitionMetadata(int partitionIndex, long intervalStart, long intervalEnd, byte empty) {
+        PartitionMetadata partitionMetadata = getMeta(addIndex++);
+        partitionMetadata.partitionIndex = partitionIndex;
+        partitionMetadata.intervalStart = intervalStart;
+        partitionMetadata.intervalEnd = intervalEnd;
+        partitionMetadata.empty = empty;
     }
 
-    public void setNonLagPartitionCount(int nonLagPartitionCount) {
-        this.nonLagPartitionCount = nonLagPartitionCount;
-        Lists.advance(partitionMetadata, nonLagPartitionCount - 1);
+    public PartitionMetadata getLagPartitionMetadata() {
+        return lagPartitionMetadata;
+    }
+
+    public String getLagPartitionName() {
+        return lagPartitionName;
+    }
+
+    public void setLagPartitionName(String lagPartitionName) {
+        this.lagPartitionName = lagPartitionName;
     }
 
     public PartitionMetadata getMeta(int index) {
@@ -52,33 +65,29 @@ public class JournalServerState {
         return result;
     }
 
-    public void addPartitionMetadata(int partitionIndex, long intervalStart, long intervalEnd, byte empty) {
-        PartitionMetadata partitionMetadata = getMeta(addIndex++);
-        partitionMetadata.partitionIndex = partitionIndex;
-        partitionMetadata.intervalStart = intervalStart;
-        partitionMetadata.intervalEnd = intervalEnd;
-        partitionMetadata.empty = empty;
+    public int getNonLagPartitionCount() {
+        return nonLagPartitionCount;
     }
 
-    public void setLagPartitionMetadata(int partitionIndex, long intervalStart, long intervalEnd, byte empty) {
-        lagPartitionMetadata.partitionIndex = partitionIndex;
-        lagPartitionMetadata.intervalStart = intervalStart;
-        lagPartitionMetadata.intervalEnd = intervalEnd;
-        lagPartitionMetadata.empty = empty;
+    public void setNonLagPartitionCount(int nonLagPartitionCount) {
+        this.nonLagPartitionCount = nonLagPartitionCount;
+        Lists.advance(partitionMetadata, nonLagPartitionCount - 1);
     }
 
-    public PartitionMetadata getLagPartitionMetadata() {
-        return lagPartitionMetadata;
+    public long getTxPin() {
+        return txPin;
     }
 
-    public void reset() {
-        nonLagPartitionCount = 0;
-        addIndex = 0;
-        symbolTables = false;
-        lagPartitionMetadata.partitionIndex = -1;
-        lagPartitionMetadata.intervalStart = 0;
-        lagPartitionMetadata.intervalEnd = 0;
-        detachLag = false;
+    public void setTxPin(long txPin) {
+        this.txPin = txPin;
+    }
+
+    public long getTxn() {
+        return txn;
+    }
+
+    public void setTxn(long txn) {
+        this.txn = txn;
     }
 
     public boolean isSymbolTables() {
@@ -93,16 +102,28 @@ public class JournalServerState {
         return nonLagPartitionCount != 0 || symbolTables || lagPartitionName != null || detachLag;
     }
 
-    public String getLagPartitionName() {
-        return lagPartitionName;
-    }
-
-    public void setLagPartitionName(String lagPartitionName) {
-        this.lagPartitionName = lagPartitionName;
+    public void reset() {
+        nonLagPartitionCount = 0;
+        addIndex = 0;
+        symbolTables = false;
+        lagPartitionMetadata.partitionIndex = -1;
+        lagPartitionMetadata.intervalStart = 0;
+        lagPartitionMetadata.intervalEnd = 0;
+        detachLag = false;
+        txn = 0;
+        txPin = 0;
+        lagPartitionName = null;
     }
 
     public void setDetachLag(boolean detachLag) {
         this.detachLag = detachLag;
+    }
+
+    public void setLagPartitionMetadata(int partitionIndex, long intervalStart, long intervalEnd, byte empty) {
+        lagPartitionMetadata.partitionIndex = partitionIndex;
+        lagPartitionMetadata.intervalStart = intervalStart;
+        lagPartitionMetadata.intervalEnd = intervalEnd;
+        lagPartitionMetadata.empty = empty;
     }
 
     public static final class PartitionMetadata {
@@ -111,20 +132,20 @@ public class JournalServerState {
         private long intervalEnd;
         private byte empty = 0;
 
-        public int getPartitionIndex() {
-            return partitionIndex;
-        }
-
-        public long getIntervalStart() {
-            return intervalStart;
+        public byte getEmpty() {
+            return empty;
         }
 
         public long getIntervalEnd() {
             return intervalEnd;
         }
 
-        public byte getEmpty() {
-            return empty;
+        public long getIntervalStart() {
+            return intervalStart;
+        }
+
+        public int getPartitionIndex() {
+            return partitionIndex;
         }
     }
 }

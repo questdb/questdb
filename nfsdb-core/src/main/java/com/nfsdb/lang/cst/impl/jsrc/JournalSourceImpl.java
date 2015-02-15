@@ -23,6 +23,7 @@ import com.nfsdb.lang.cst.RowCursor;
 import com.nfsdb.lang.cst.RowSource;
 import com.nfsdb.lang.cst.impl.qry.AbstractJournalSource;
 import com.nfsdb.lang.cst.impl.qry.JournalRecord;
+import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
 
 public class JournalSourceImpl extends AbstractJournalSource {
     private final PartitionSource partitionSource;
@@ -51,6 +52,11 @@ public class JournalSourceImpl extends AbstractJournalSource {
     public JournalRecord getByRowId(long rowId) {
         item.rowid = rowId;
         return item;
+    }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return this;
     }
 
     @Override

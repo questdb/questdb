@@ -31,7 +31,6 @@ import org.junit.runners.model.Statement;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.locks.LockSupport;
 
 public class JournalTestFactory extends JournalFactory implements TestRule, JournalClosingListener {
 
@@ -40,11 +39,6 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
 
     public JournalTestFactory(JournalConfiguration configuration) throws JournalConfigurationException {
         super(configuration, null);
-    }
-
-    @Override
-    protected TimerCache getTimerCache() {
-        return timerCache;
     }
 
     @Override
@@ -68,7 +62,6 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
                         }
                     }
                     journals.clear();
-                    LockSupport.parkNanos(10000);
                     Files.deleteOrException(getConfiguration().getJournalBase());
                     timerCache.halt();
                 }
@@ -78,6 +71,28 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
                 }
             }
         };
+    }
+
+    @Override
+    public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
+        JournalBulkReader<T> reader = super.bulkReader(key);
+        journals.add(reader);
+        reader.setCloseListener(this);
+        return reader;
+    }
+
+    @Override
+    public <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException {
+        JournalBulkWriter<T> writer = super.bulkWriter(key);
+        journals.add(writer);
+        writer.setCloseListener(this);
+        return writer;
+    }
+
+    @Override
+    public boolean closing(Journal journal) {
+        journals.remove(journal);
+        return true;
     }
 
     @Override
@@ -96,14 +111,6 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
         return writer;
     }
 
-    @Override
-    public <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException {
-        JournalBulkWriter<T> writer = super.bulkWriter(key);
-        journals.add(writer);
-        writer.setCloseListener(this);
-        return writer;
-    }
-
     public <T> JournalWriter<T> writer(JMetadataBuilder<T> b) throws JournalException {
         JournalWriter<T> writer = super.writer(b);
         journals.add(writer);
@@ -111,18 +118,8 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
         return writer;
     }
 
-
     @Override
-    public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
-        JournalBulkReader<T> reader = super.bulkReader(key);
-        journals.add(reader);
-        reader.setCloseListener(this);
-        return reader;
-    }
-
-    @Override
-    public boolean closing(Journal journal) {
-        journals.remove(journal);
-        return true;
+    protected TimerCache getTimerCache() {
+        return timerCache;
     }
 }

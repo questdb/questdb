@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,11 +17,9 @@
 package com.nfsdb.net;
 
 import com.nfsdb.net.bridge.JournalEventBridge;
-import com.nfsdb.tx.TxAsyncListener;
-import com.nfsdb.tx.TxFuture;
 import com.nfsdb.tx.TxListener;
 
-public class JournalEventPublisher implements TxListener, TxAsyncListener {
+public class JournalEventPublisher implements TxListener {
     private final int journalIndex;
     private final JournalEventBridge bridge;
 
@@ -33,13 +31,5 @@ public class JournalEventPublisher implements TxListener, TxAsyncListener {
     @Override
     public void onCommit() {
         bridge.publish(journalIndex, System.currentTimeMillis());
-    }
-
-    @Override
-    public TxFuture onCommitAsync() {
-        long timestamp = System.currentTimeMillis();
-        TxFuture future = bridge.createRemoteCommitFuture(journalIndex, timestamp);
-        bridge.publish(journalIndex, timestamp);
-        return future;
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.nfsdb;
 
 import com.nfsdb.collections.DirectLongList;
+import com.nfsdb.column.BSearchType;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.utils.Interval;
 
@@ -33,9 +34,12 @@ public abstract class AbstractResultSetBuilder<T, X> {
     protected AbstractResultSetBuilder() {
     }
 
-    public void setJournal(Journal<T> journal) {
-        this.journal = journal;
+    public Accept accept(Partition<T> partition) throws JournalException {
+        this.partition = partition;
+        return Accept.CONTINUE;
     }
+
+    public abstract X getResult();
 
     public boolean next(Partition<T> partition, boolean desc) throws JournalException {
 
@@ -67,7 +71,7 @@ public abstract class AbstractResultSetBuilder<T, X> {
 
             if (interval != null && partition.getInterval() != null) {
                 if (partition.getInterval().getLo() < interval.getLo()) {
-                    long _lo = partition.indexOf(interval.getLo(), BinarySearch.SearchType.NEWER_OR_SAME);
+                    long _lo = partition.indexOf(interval.getLo(), BSearchType.NEWER_OR_SAME);
 
                     // there are no data with timestamp later then start date of interval, skip partition
                     if (_lo == -2) {
@@ -78,7 +82,7 @@ public abstract class AbstractResultSetBuilder<T, X> {
                 }
 
                 if (partition.getInterval().getHi() > interval.getHi()) {
-                    long _hi = partition.indexOf(interval.getHi(), BinarySearch.SearchType.OLDER_OR_SAME);
+                    long _hi = partition.indexOf(interval.getHi(), BSearchType.OLDER_OR_SAME);
 
                     // there are no data with timestamp earlier then end date of interval, skip partition
                     if (_hi == -1) {
@@ -96,14 +100,11 @@ public abstract class AbstractResultSetBuilder<T, X> {
         return false;
     }
 
-    public Accept accept(Partition<T> partition) throws JournalException {
-        this.partition = partition;
-        return Accept.CONTINUE;
-    }
-
     public abstract void read(long lo, long hi) throws JournalException;
 
-    public abstract X getResult();
+    public void setJournal(Journal<T> journal) {
+        this.journal = journal;
+    }
 
     public enum Accept {
         CONTINUE, SKIP, BREAK

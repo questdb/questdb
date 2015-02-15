@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,13 +44,25 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
     }
 
     @Override
-    public <T> Journal<T> reader(Class<T> clazz, String location) throws JournalException {
-        return reader(new JournalKey<>(clazz, location));
+    public void close() {
+        if (ownTimerCache) {
+            timerCache.halt();
+        }
     }
 
     @Override
     public <T> Journal<T> reader(Class<T> clazz) throws JournalException {
         return reader(new JournalKey<>(clazz));
+    }
+
+    @Override
+    public <T> Journal<T> reader(Class<T> clazz, String location) throws JournalException {
+        return reader(new JournalKey<>(clazz, location));
+    }
+
+    @Override
+    public Journal reader(String location) throws JournalException {
+        return reader(new JournalKey<>(location));
     }
 
     @Override
@@ -69,11 +81,6 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
     }
 
     @Override
-    public Journal reader(String location) throws JournalException {
-        return reader(new JournalKey<>(location));
-    }
-
-    @Override
     public JournalBulkReader bulkReader(String location) throws JournalException {
         return bulkReader(new JournalKey<>(location));
     }
@@ -82,24 +89,17 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
         return configuration;
     }
 
-    @Override
-    public void close() {
-        if (ownTimerCache) {
-            timerCache.halt();
-        }
-    }
-
-    protected TimerCache getTimerCache() {
-        return timerCache;
-    }
-
-    protected <T> JournalMetadata<T> getOrCreateMetadata(JournalKey<T> key) throws JournalException {
+    <T> JournalMetadata<T> getOrCreateMetadata(JournalKey<T> key) throws JournalException {
         JournalMetadata<T> metadata = configuration.createMetadata(key);
         File location = new File(metadata.getLocation());
         if (!location.exists()) {
             new JournalWriter<>(metadata, key, timerCache).close();
         }
         return metadata;
+    }
+
+    protected TimerCache getTimerCache() {
+        return timerCache;
     }
 
 }

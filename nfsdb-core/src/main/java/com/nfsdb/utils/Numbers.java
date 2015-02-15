@@ -16,7 +16,7 @@
 
 package com.nfsdb.utils;
 
-import com.nfsdb.export.CharSink;
+import com.nfsdb.exp.CharSink;
 
 public class Numbers {
 
@@ -203,37 +203,6 @@ public class Numbers {
         }
     }
 
-    public static void appendLong11(CharSink sink, long i) {
-        long c;
-        sink.put((char) ('0' + i / 10000000000L));
-        sink.put((char) ('0' + (c = i % 10000000000L) / 1000000000));
-        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
-        sink.put((char) ('0' + (c %= 100000000) / 10000000));
-        sink.put((char) ('0' + (c %= 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
-    }
-
-    public static void appendLong12(CharSink sink, long i) {
-        long c;
-        sink.put((char) ('0' + i / 100000000000L));
-        sink.put((char) ('0' + (c = i % 100000000000L) / 10000000000L));
-        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
-        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
-        sink.put((char) ('0' + (c %= 100000000) / 10000000));
-        sink.put((char) ('0' + (c %= 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
-    }
-
     public static void append(CharSink sink, long i) {
         if (i <= Integer.MAX_VALUE && i >= Integer.MIN_VALUE) {
             append(sink, (int) i);
@@ -266,146 +235,6 @@ public class Numbers {
                 appendLong19(sink, i);
             }
         }
-    }
-
-    private static void appendLong19(CharSink sink, long i) {
-        long c;
-        sink.put((char) ('0' + i / 1000000000000000000L));
-        sink.put((char) ('0' + (c = i % 1000000000000000000L) / 100000000000000000L));
-        sink.put((char) ('0' + (c %= 100000000000000000L) / 10000000000000000L));
-        sink.put((char) ('0' + (c %= 10000000000000000L) / 1000000000000000L));
-        sink.put((char) ('0' + (c %= 1000000000000000L) / 100000000000000L));
-        sink.put((char) ('0' + (c %= 100000000000000L) / 10000000000000L));
-        sink.put((char) ('0' + (c %= 10000000000000L) / 1000000000000L));
-        sink.put((char) ('0' + (c %= 1000000000000L) / 100000000000L));
-        sink.put((char) ('0' + (c %= 100000000000L) / 10000000000L));
-        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
-        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
-        sink.put((char) ('0' + (c %= 100000000) / 10000000));
-        sink.put((char) ('0' + (c %= 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
-    }
-
-    private static void appendLong18(CharSink sink, long i) {
-        long c;
-        sink.put((char) ('0' + i / 100000000000000000L));
-        sink.put((char) ('0' + (c = i % 100000000000000000L) / 10000000000000000L));
-        sink.put((char) ('0' + (c %= 10000000000000000L) / 1000000000000000L));
-        sink.put((char) ('0' + (c %= 1000000000000000L) / 100000000000000L));
-        sink.put((char) ('0' + (c %= 100000000000000L) / 10000000000000L));
-        sink.put((char) ('0' + (c %= 10000000000000L) / 1000000000000L));
-        sink.put((char) ('0' + (c %= 1000000000000L) / 100000000000L));
-        sink.put((char) ('0' + (c %= 100000000000L) / 10000000000L));
-        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
-        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
-        sink.put((char) ('0' + (c %= 100000000) / 10000000));
-        sink.put((char) ('0' + (c %= 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
-    }
-
-    private static void appendLong17(CharSink sink, long i) {
-        long c;
-        sink.put((char) ('0' + i / 10000000000000000L));
-        sink.put((char) ('0' + (c = i % 10000000000000000L) / 1000000000000000L));
-        sink.put((char) ('0' + (c %= 1000000000000000L) / 100000000000000L));
-        sink.put((char) ('0' + (c %= 100000000000000L) / 10000000000000L));
-        sink.put((char) ('0' + (c %= 10000000000000L) / 1000000000000L));
-        sink.put((char) ('0' + (c %= 1000000000000L) / 100000000000L));
-        sink.put((char) ('0' + (c %= 100000000000L) / 10000000000L));
-        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
-        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
-        sink.put((char) ('0' + (c %= 100000000) / 10000000));
-        sink.put((char) ('0' + (c %= 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
-    }
-
-    private static void appendLong16(CharSink sink, long i) {
-        long c;
-        sink.put((char) ('0' + i / 1000000000000000L));
-        sink.put((char) ('0' + (c = i % 1000000000000000L) / 100000000000000L));
-        sink.put((char) ('0' + (c %= 100000000000000L) / 10000000000000L));
-        sink.put((char) ('0' + (c %= 10000000000000L) / 1000000000000L));
-        sink.put((char) ('0' + (c %= 1000000000000L) / 100000000000L));
-        sink.put((char) ('0' + (c %= 100000000000L) / 10000000000L));
-        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
-        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
-        sink.put((char) ('0' + (c %= 100000000) / 10000000));
-        sink.put((char) ('0' + (c %= 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
-    }
-
-    private static void appendLong15(CharSink sink, long i) {
-        long c;
-        sink.put((char) ('0' + i / 100000000000000L));
-        sink.put((char) ('0' + (c = i % 100000000000000L) / 10000000000000L));
-        sink.put((char) ('0' + (c %= 10000000000000L) / 1000000000000L));
-        sink.put((char) ('0' + (c %= 1000000000000L) / 100000000000L));
-        sink.put((char) ('0' + (c %= 100000000000L) / 10000000000L));
-        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
-        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
-        sink.put((char) ('0' + (c %= 100000000) / 10000000));
-        sink.put((char) ('0' + (c %= 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
-    }
-
-    private static void appendLong14(CharSink sink, long i) {
-        long c;
-        sink.put((char) ('0' + i / 10000000000000L));
-        sink.put((char) ('0' + (c = i % 10000000000000L) / 1000000000000L));
-        sink.put((char) ('0' + (c %= 1000000000000L) / 100000000000L));
-        sink.put((char) ('0' + (c %= 100000000000L) / 10000000000L));
-        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
-        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
-        sink.put((char) ('0' + (c %= 100000000) / 10000000));
-        sink.put((char) ('0' + (c %= 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
-    }
-
-    private static void appendLong13(CharSink sink, long i) {
-        long c;
-        sink.put((char) ('0' + i / 1000000000000L));
-        sink.put((char) ('0' + (c = i % 1000000000000L) / 100000000000L));
-        sink.put((char) ('0' + (c %= 100000000000L) / 10000000000L));
-        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
-        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
-        sink.put((char) ('0' + (c %= 100000000) / 10000000));
-        sink.put((char) ('0' + (c %= 10000000) / 1000000));
-        sink.put((char) ('0' + (c %= 1000000) / 100000));
-        sink.put((char) ('0' + (c %= 100000) / 10000));
-        sink.put((char) ('0' + (c %= 10000) / 1000));
-        sink.put((char) ('0' + (c %= 1000) / 100));
-        sink.put((char) ('0' + (c %= 100) / 10));
-        sink.put((char) ('0' + (c % 10)));
     }
 
     public static double parseDouble(CharSequence sequence) {
@@ -482,149 +311,6 @@ public class Numbers {
         }
     }
 
-    private static double parseConst(CharSequence sequence, int p, int lim, String target, double value) {
-
-        if (lim - p > target.length()) {
-            throw new NumberFormatException("String is too long for NaN");
-        }
-
-        for (int i = 0; i < target.length(); i++) {
-            if (p + i >= lim) {
-                throw new NumberFormatException("Unexpected end of string at " + p);
-            }
-
-            if (sequence.charAt(p + i) != target.charAt(i)) {
-                throw new NumberFormatException();
-            }
-        }
-        return value;
-    }
-
-    private static float parseFloatConst(CharSequence sequence, int p, int lim, String target, float value) {
-
-        if (lim - p > target.length()) {
-            throw new NumberFormatException("String is too long for");
-        }
-
-        for (int i = 0; i < target.length(); i++) {
-            if (p + i >= lim) {
-                throw new NumberFormatException("Unexpected end of string at " + p);
-            }
-
-            if (sequence.charAt(p + i) != target.charAt(i)) {
-                throw new NumberFormatException();
-            }
-        }
-        return value;
-    }
-
-
-    //////////////////////
-
-
-    public static int parseInt(CharSequence sequence) {
-        if (sequence == null) {
-            throw new NumberFormatException("null");
-        }
-
-        return parseInt0(sequence, 0, sequence.length());
-    }
-
-    public static int parseInt(CharSequence sequence, int p, int lim) {
-        if (sequence == null) {
-            throw new NumberFormatException("null");
-        }
-
-        return parseInt0(sequence, p, lim);
-
-    }
-
-    private static int parseInt0(CharSequence sequence, int p, int lim) {
-
-
-        if (lim == p) {
-            throw new NumberFormatException("empty string");
-        }
-
-        boolean negative = sequence.charAt(p) == '-';
-        if (negative) {
-            p++;
-        }
-
-        if (p >= lim) {
-            throw new NumberFormatException("Expect some numbers after sign");
-        }
-
-        int val = 0;
-        for (; p < lim; p++) {
-            int c = sequence.charAt(p);
-            if (c < '0' || c > '9') {
-                throw new NumberFormatException("Illegal character at " + p);
-            }
-            // val * 10 + (c - '0')
-            int r = (val << 3) + (val << 1) - (c - '0');
-            if (r > val) {
-                throw new NumberFormatException("Number overflow: " + sequence);
-            }
-            val = r;
-        }
-
-        if (val == Integer.MIN_VALUE && !negative) {
-            throw new NumberFormatException("Number overflow: " + sequence);
-        }
-        return negative ? val : -val;
-    }
-
-    public static long parseLong(CharSequence sequence) {
-        if (sequence == null) {
-            throw new NumberFormatException("null");
-        }
-
-        return parseLong0(sequence, 0, sequence.length());
-    }
-
-    public static long parseLong(CharSequence sequence, int p, int lim) {
-        if (sequence == null) {
-            throw new NumberFormatException("null");
-        }
-        return parseLong0(sequence, p, lim);
-    }
-
-    private static long parseLong0(CharSequence sequence, int p, int lim) {
-
-        if (lim == p) {
-            throw new NumberFormatException("empty string");
-        }
-
-        boolean negative = sequence.charAt(p) == '-';
-        if (negative) {
-            p++;
-        }
-
-        if (p >= lim) {
-            throw new NumberFormatException("Expect some numbers after sign");
-        }
-
-        long val = 0;
-        for (; p < lim; p++) {
-            int c = sequence.charAt(p);
-            if (c < '0' || c > '9') {
-                throw new NumberFormatException("Illegal character at " + p);
-            }
-            // val * 10 + (c - '0')
-            long r = (val << 3) + (val << 1) - (c - '0');
-            if (r > val) {
-                throw new NumberFormatException("Number overflow: " + sequence);
-            }
-            val = r;
-        }
-
-        if (val == Long.MIN_VALUE && !negative) {
-            throw new NumberFormatException("Number overflow: " + sequence);
-        }
-        return negative ? val : -val;
-    }
-
     public static float parseFloat(CharSequence sequence) {
         return parseFloat(sequence, 0, sequence.length());
     }
@@ -697,5 +383,318 @@ public class Numbers {
         } else {
             return (negative ? -val : val) / pow10f[-exp];
         }
+    }
+
+    public static int parseInt(CharSequence sequence) {
+        if (sequence == null) {
+            throw new NumberFormatException("null");
+        }
+
+        return parseInt0(sequence, 0, sequence.length());
+    }
+
+    public static int parseInt(CharSequence sequence, int p, int lim) {
+        if (sequence == null) {
+            throw new NumberFormatException("null");
+        }
+
+        return parseInt0(sequence, p, lim);
+
+    }
+
+    public static long parseLong(CharSequence sequence) {
+        if (sequence == null) {
+            throw new NumberFormatException("null");
+        }
+
+        return parseLong0(sequence, 0, sequence.length());
+    }
+
+    public static long parseLong(CharSequence sequence, int p, int lim) {
+        if (sequence == null) {
+            throw new NumberFormatException("null");
+        }
+        return parseLong0(sequence, p, lim);
+    }
+
+    private static void appendLong11(CharSink sink, long i) {
+        long c;
+        sink.put((char) ('0' + i / 10000000000L));
+        sink.put((char) ('0' + (c = i % 10000000000L) / 1000000000));
+        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
+        sink.put((char) ('0' + (c %= 100000000) / 10000000));
+        sink.put((char) ('0' + (c %= 10000000) / 1000000));
+        sink.put((char) ('0' + (c %= 1000000) / 100000));
+        sink.put((char) ('0' + (c %= 100000) / 10000));
+        sink.put((char) ('0' + (c %= 10000) / 1000));
+        sink.put((char) ('0' + (c %= 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+    private static void appendLong12(CharSink sink, long i) {
+        long c;
+        sink.put((char) ('0' + i / 100000000000L));
+        sink.put((char) ('0' + (c = i % 100000000000L) / 10000000000L));
+        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
+        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
+        sink.put((char) ('0' + (c %= 100000000) / 10000000));
+        sink.put((char) ('0' + (c %= 10000000) / 1000000));
+        sink.put((char) ('0' + (c %= 1000000) / 100000));
+        sink.put((char) ('0' + (c %= 100000) / 10000));
+        sink.put((char) ('0' + (c %= 10000) / 1000));
+        sink.put((char) ('0' + (c %= 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+    private static void appendLong19(CharSink sink, long i) {
+        long c;
+        sink.put((char) ('0' + i / 1000000000000000000L));
+        sink.put((char) ('0' + (c = i % 1000000000000000000L) / 100000000000000000L));
+        sink.put((char) ('0' + (c %= 100000000000000000L) / 10000000000000000L));
+        sink.put((char) ('0' + (c %= 10000000000000000L) / 1000000000000000L));
+        sink.put((char) ('0' + (c %= 1000000000000000L) / 100000000000000L));
+        sink.put((char) ('0' + (c %= 100000000000000L) / 10000000000000L));
+        sink.put((char) ('0' + (c %= 10000000000000L) / 1000000000000L));
+        sink.put((char) ('0' + (c %= 1000000000000L) / 100000000000L));
+        sink.put((char) ('0' + (c %= 100000000000L) / 10000000000L));
+        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
+        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
+        sink.put((char) ('0' + (c %= 100000000) / 10000000));
+        sink.put((char) ('0' + (c %= 10000000) / 1000000));
+        sink.put((char) ('0' + (c %= 1000000) / 100000));
+        sink.put((char) ('0' + (c %= 100000) / 10000));
+        sink.put((char) ('0' + (c %= 10000) / 1000));
+        sink.put((char) ('0' + (c %= 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+    private static void appendLong18(CharSink sink, long i) {
+        long c;
+        sink.put((char) ('0' + i / 100000000000000000L));
+        sink.put((char) ('0' + (c = i % 100000000000000000L) / 10000000000000000L));
+        sink.put((char) ('0' + (c %= 10000000000000000L) / 1000000000000000L));
+        sink.put((char) ('0' + (c %= 1000000000000000L) / 100000000000000L));
+        sink.put((char) ('0' + (c %= 100000000000000L) / 10000000000000L));
+        sink.put((char) ('0' + (c %= 10000000000000L) / 1000000000000L));
+        sink.put((char) ('0' + (c %= 1000000000000L) / 100000000000L));
+        sink.put((char) ('0' + (c %= 100000000000L) / 10000000000L));
+        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
+        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
+        sink.put((char) ('0' + (c %= 100000000) / 10000000));
+        sink.put((char) ('0' + (c %= 10000000) / 1000000));
+        sink.put((char) ('0' + (c %= 1000000) / 100000));
+        sink.put((char) ('0' + (c %= 100000) / 10000));
+        sink.put((char) ('0' + (c %= 10000) / 1000));
+        sink.put((char) ('0' + (c %= 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+    private static void appendLong17(CharSink sink, long i) {
+        long c;
+        sink.put((char) ('0' + i / 10000000000000000L));
+        sink.put((char) ('0' + (c = i % 10000000000000000L) / 1000000000000000L));
+        sink.put((char) ('0' + (c %= 1000000000000000L) / 100000000000000L));
+        sink.put((char) ('0' + (c %= 100000000000000L) / 10000000000000L));
+        sink.put((char) ('0' + (c %= 10000000000000L) / 1000000000000L));
+        sink.put((char) ('0' + (c %= 1000000000000L) / 100000000000L));
+        sink.put((char) ('0' + (c %= 100000000000L) / 10000000000L));
+        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
+        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
+        sink.put((char) ('0' + (c %= 100000000) / 10000000));
+        sink.put((char) ('0' + (c %= 10000000) / 1000000));
+        sink.put((char) ('0' + (c %= 1000000) / 100000));
+        sink.put((char) ('0' + (c %= 100000) / 10000));
+        sink.put((char) ('0' + (c %= 10000) / 1000));
+        sink.put((char) ('0' + (c %= 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+
+    //////////////////////
+
+    private static void appendLong16(CharSink sink, long i) {
+        long c;
+        sink.put((char) ('0' + i / 1000000000000000L));
+        sink.put((char) ('0' + (c = i % 1000000000000000L) / 100000000000000L));
+        sink.put((char) ('0' + (c %= 100000000000000L) / 10000000000000L));
+        sink.put((char) ('0' + (c %= 10000000000000L) / 1000000000000L));
+        sink.put((char) ('0' + (c %= 1000000000000L) / 100000000000L));
+        sink.put((char) ('0' + (c %= 100000000000L) / 10000000000L));
+        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
+        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
+        sink.put((char) ('0' + (c %= 100000000) / 10000000));
+        sink.put((char) ('0' + (c %= 10000000) / 1000000));
+        sink.put((char) ('0' + (c %= 1000000) / 100000));
+        sink.put((char) ('0' + (c %= 100000) / 10000));
+        sink.put((char) ('0' + (c %= 10000) / 1000));
+        sink.put((char) ('0' + (c %= 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+    private static void appendLong15(CharSink sink, long i) {
+        long c;
+        sink.put((char) ('0' + i / 100000000000000L));
+        sink.put((char) ('0' + (c = i % 100000000000000L) / 10000000000000L));
+        sink.put((char) ('0' + (c %= 10000000000000L) / 1000000000000L));
+        sink.put((char) ('0' + (c %= 1000000000000L) / 100000000000L));
+        sink.put((char) ('0' + (c %= 100000000000L) / 10000000000L));
+        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
+        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
+        sink.put((char) ('0' + (c %= 100000000) / 10000000));
+        sink.put((char) ('0' + (c %= 10000000) / 1000000));
+        sink.put((char) ('0' + (c %= 1000000) / 100000));
+        sink.put((char) ('0' + (c %= 100000) / 10000));
+        sink.put((char) ('0' + (c %= 10000) / 1000));
+        sink.put((char) ('0' + (c %= 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+    private static void appendLong14(CharSink sink, long i) {
+        long c;
+        sink.put((char) ('0' + i / 10000000000000L));
+        sink.put((char) ('0' + (c = i % 10000000000000L) / 1000000000000L));
+        sink.put((char) ('0' + (c %= 1000000000000L) / 100000000000L));
+        sink.put((char) ('0' + (c %= 100000000000L) / 10000000000L));
+        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
+        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
+        sink.put((char) ('0' + (c %= 100000000) / 10000000));
+        sink.put((char) ('0' + (c %= 10000000) / 1000000));
+        sink.put((char) ('0' + (c %= 1000000) / 100000));
+        sink.put((char) ('0' + (c %= 100000) / 10000));
+        sink.put((char) ('0' + (c %= 10000) / 1000));
+        sink.put((char) ('0' + (c %= 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+    private static void appendLong13(CharSink sink, long i) {
+        long c;
+        sink.put((char) ('0' + i / 1000000000000L));
+        sink.put((char) ('0' + (c = i % 1000000000000L) / 100000000000L));
+        sink.put((char) ('0' + (c %= 100000000000L) / 10000000000L));
+        sink.put((char) ('0' + (c %= 10000000000L) / 1000000000));
+        sink.put((char) ('0' + (c %= 1000000000) / 100000000));
+        sink.put((char) ('0' + (c %= 100000000) / 10000000));
+        sink.put((char) ('0' + (c %= 10000000) / 1000000));
+        sink.put((char) ('0' + (c %= 1000000) / 100000));
+        sink.put((char) ('0' + (c %= 100000) / 10000));
+        sink.put((char) ('0' + (c %= 10000) / 1000));
+        sink.put((char) ('0' + (c %= 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+    private static double parseConst(CharSequence sequence, int p, int lim, String target, double value) {
+
+        if (lim - p > target.length()) {
+            throw new NumberFormatException("String is too long for NaN");
+        }
+
+        for (int i = 0; i < target.length(); i++) {
+            if (p + i >= lim) {
+                throw new NumberFormatException("Unexpected end of string at " + p);
+            }
+
+            if (sequence.charAt(p + i) != target.charAt(i)) {
+                throw new NumberFormatException();
+            }
+        }
+        return value;
+    }
+
+    private static float parseFloatConst(CharSequence sequence, int p, int lim, String target, float value) {
+
+        if (lim - p > target.length()) {
+            throw new NumberFormatException("String is too long for");
+        }
+
+        for (int i = 0; i < target.length(); i++) {
+            if (p + i >= lim) {
+                throw new NumberFormatException("Unexpected end of string at " + p);
+            }
+
+            if (sequence.charAt(p + i) != target.charAt(i)) {
+                throw new NumberFormatException();
+            }
+        }
+        return value;
+    }
+
+    private static int parseInt0(CharSequence sequence, int p, int lim) {
+
+
+        if (lim == p) {
+            throw new NumberFormatException("empty string");
+        }
+
+        boolean negative = sequence.charAt(p) == '-';
+        if (negative) {
+            p++;
+        }
+
+        if (p >= lim) {
+            throw new NumberFormatException("Expect some numbers after sign");
+        }
+
+        int val = 0;
+        for (; p < lim; p++) {
+            int c = sequence.charAt(p);
+            if (c < '0' || c > '9') {
+                throw new NumberFormatException("Illegal character at " + p);
+            }
+            // val * 10 + (c - '0')
+            int r = (val << 3) + (val << 1) - (c - '0');
+            if (r > val) {
+                throw new NumberFormatException("Number overflow: " + sequence);
+            }
+            val = r;
+        }
+
+        if (val == Integer.MIN_VALUE && !negative) {
+            throw new NumberFormatException("Number overflow: " + sequence);
+        }
+        return negative ? val : -val;
+    }
+
+    private static long parseLong0(CharSequence sequence, int p, int lim) {
+
+        if (lim == p) {
+            throw new NumberFormatException("empty string");
+        }
+
+        boolean negative = sequence.charAt(p) == '-';
+        if (negative) {
+            p++;
+        }
+
+        if (p >= lim) {
+            throw new NumberFormatException("Expect some numbers after sign");
+        }
+
+        long val = 0;
+        for (; p < lim; p++) {
+            int c = sequence.charAt(p);
+            if (c < '0' || c > '9') {
+                throw new NumberFormatException("Illegal character at " + p);
+            }
+            // val * 10 + (c - '0')
+            long r = (val << 3) + (val << 1) - (c - '0');
+            if (r > val) {
+                throw new NumberFormatException("Number overflow: " + sequence);
+            }
+            val = r;
+        }
+
+        if (val == Long.MIN_VALUE && !negative) {
+            throw new NumberFormatException("Number overflow: " + sequence);
+        }
+        return negative ? val : -val;
     }
 }

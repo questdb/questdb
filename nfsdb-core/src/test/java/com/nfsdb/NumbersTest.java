@@ -16,7 +16,7 @@
 
 package com.nfsdb;
 
-import com.nfsdb.export.StringSink;
+import com.nfsdb.exp.StringSink;
 import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Rnd;
 import org.junit.Assert;
@@ -36,15 +36,25 @@ public class NumbersTest {
     }
 
     @Test
-    public void testFormatSpecialDouble() throws Exception {
-        double d = -1.040218505859375E10d;
-        Numbers.append(sink, d, 8);
-        Assert.assertEquals(Double.toString(d), sink.toString());
+    public void testFormatByte() throws Exception {
+        for (int i = 0; i < 1000; i++) {
+            byte n = (byte) rnd.nextInt();
 
-        sink.clear();
-        d = -1.040218505859375E-10d;
-        Numbers.append(sink, d, 18);
-        Assert.assertEquals(Double.toString(d), sink.toString());
+            sink.clear();
+            Numbers.append(sink, n);
+            Assert.assertEquals(Byte.toString(n), sink.toString());
+        }
+    }
+
+    @Test
+    public void testFormatChar() throws Exception {
+        for (int i = 0; i < 1000; i++) {
+            char n = (char) rnd.nextInt();
+
+            sink.clear();
+            Numbers.append(sink, n);
+            Assert.assertEquals(Integer.toString(n), sink.toString());
+        }
     }
 
     @Test
@@ -106,24 +116,12 @@ public class NumbersTest {
     }
 
     @Test
-    public void testFormatByte() throws Exception {
+    public void testFormatLong() throws Exception {
         for (int i = 0; i < 1000; i++) {
-            byte n = (byte) rnd.nextInt();
-
+            long n = rnd.nextLong();
             sink.clear();
             Numbers.append(sink, n);
-            Assert.assertEquals(Byte.toString(n), sink.toString());
-        }
-    }
-
-    @Test
-    public void testFormatChar() throws Exception {
-        for (int i = 0; i < 1000; i++) {
-            char n = (char) rnd.nextInt();
-
-            sink.clear();
-            Numbers.append(sink, n);
-            Assert.assertEquals(Integer.toString(n), sink.toString());
+            Assert.assertEquals(Long.toString(n), sink.toString());
         }
     }
 
@@ -139,34 +137,15 @@ public class NumbersTest {
     }
 
     @Test
-    public void testFormatLong() throws Exception {
-        for (int i = 0; i < 1000; i++) {
-            long n = rnd.nextLong();
-            sink.clear();
-            Numbers.append(sink, n);
-            Assert.assertEquals(Long.toString(n), sink.toString());
-        }
-    }
+    public void testFormatSpecialDouble() throws Exception {
+        double d = -1.040218505859375E10d;
+        Numbers.append(sink, d, 8);
+        Assert.assertEquals(Double.toString(d), sink.toString());
 
-    @Test
-    public void testParseInt() throws Exception {
-        Assert.assertEquals(567963, Numbers.parseInt("567963"));
-        Assert.assertEquals(-23346346, Numbers.parseInt("-23346346"));
-    }
-
-    @Test(expected = NumberFormatException.class)
-    public void testParseIntSignOnly() throws Exception {
-        Numbers.parseInt("-");
-    }
-
-    @Test(expected = NumberFormatException.class)
-    public void testParseIntNull() throws Exception {
-        Numbers.parseInt(null);
-    }
-
-    @Test(expected = NumberFormatException.class)
-    public void testParseIntEmpty() throws Exception {
-        Numbers.parseInt("");
+        sink.clear();
+        d = -1.040218505859375E-10d;
+        Numbers.append(sink, d, 18);
+        Assert.assertEquals(Double.toString(d), sink.toString());
     }
 
     @Test
@@ -180,42 +159,6 @@ public class NumbersTest {
         Assert.assertEquals(Integer.MIN_VALUE, Numbers.parseInt(sink));
     }
 
-    @Test(expected = NumberFormatException.class)
-    public void testParseIntWrongChars() throws Exception {
-        Numbers.parseInt("123ab");
-    }
-
-    @Test(expected = NumberFormatException.class)
-    public void testParseIntOverflow1() throws Exception {
-        String i1 = "12345566787";
-        Numbers.parseInt(i1);
-    }
-
-    @Test(expected = NumberFormatException.class)
-    public void testParseIntOverflow2() throws Exception {
-        Numbers.parseInt("2147483648");
-    }
-
-    @Test(expected = NumberFormatException.class)
-    public void testParseLongSignOnly() throws Exception {
-        Numbers.parseLong("-");
-    }
-
-    @Test(expected = NumberFormatException.class)
-    public void testParseLongNull() throws Exception {
-        Numbers.parseLong(null);
-    }
-
-    @Test(expected = NumberFormatException.class)
-    public void testParseLongNull2() throws Exception {
-        Numbers.parseLong(null, 0, 10);
-    }
-
-    @Test(expected = NumberFormatException.class)
-    public void testParseLongEmpty() throws Exception {
-        Numbers.parseLong("");
-    }
-
     @Test
     public void testLongEdge() throws Exception {
         Numbers.append(sink, Long.MAX_VALUE);
@@ -225,27 +168,6 @@ public class NumbersTest {
 
         Numbers.append(sink, Long.MIN_VALUE);
         Assert.assertEquals(Long.MIN_VALUE, Numbers.parseLong(sink));
-    }
-
-    @Test(expected = NumberFormatException.class)
-    public void testParseLongWrongChars() throws Exception {
-        Numbers.parseLong("123ab");
-    }
-
-    @Test(expected = NumberFormatException.class)
-    public void testParseLongOverflow1() throws Exception {
-        String i1 = "1234556678723234234234234234234";
-        Numbers.parseLong(i1);
-    }
-
-    @Test(expected = NumberFormatException.class)
-    public void testParseLongOverflow2() throws Exception {
-        Numbers.parseLong("9223372036854775808");
-    }
-
-    @Test(expected = NumberFormatException.class)
-    public void testParseWrongNan() throws Exception {
-        Numbers.parseDouble("NaN1");
     }
 
     @Test
@@ -310,6 +232,84 @@ public class NumbersTest {
 
         String s8 = "-Infinity";
         Assert.assertEquals(Float.parseFloat(s8), Numbers.parseFloat(s8), 0.000000001);
+    }
+
+    @Test
+    public void testParseInt() throws Exception {
+        Assert.assertEquals(567963, Numbers.parseInt("567963"));
+        Assert.assertEquals(-23346346, Numbers.parseInt("-23346346"));
+    }
+
+    @Test(expected = NumberFormatException.class)
+    public void testParseIntEmpty() throws Exception {
+        Numbers.parseInt("");
+    }
+
+    @Test(expected = NumberFormatException.class)
+    public void testParseIntNull() throws Exception {
+        Numbers.parseInt(null);
+    }
+
+    @Test(expected = NumberFormatException.class)
+    public void testParseIntOverflow1() throws Exception {
+        String i1 = "12345566787";
+        Numbers.parseInt(i1);
+    }
+
+    @Test(expected = NumberFormatException.class)
+    public void testParseIntOverflow2() throws Exception {
+        Numbers.parseInt("2147483648");
+    }
+
+    @Test(expected = NumberFormatException.class)
+    public void testParseIntSignOnly() throws Exception {
+        Numbers.parseInt("-");
+    }
+
+    @Test(expected = NumberFormatException.class)
+    public void testParseIntWrongChars() throws Exception {
+        Numbers.parseInt("123ab");
+    }
+
+    @Test(expected = NumberFormatException.class)
+    public void testParseLongEmpty() throws Exception {
+        Numbers.parseLong("");
+    }
+
+    @Test(expected = NumberFormatException.class)
+    public void testParseLongNull() throws Exception {
+        Numbers.parseLong(null);
+    }
+
+    @Test(expected = NumberFormatException.class)
+    public void testParseLongNull2() throws Exception {
+        Numbers.parseLong(null, 0, 10);
+    }
+
+    @Test(expected = NumberFormatException.class)
+    public void testParseLongOverflow1() throws Exception {
+        String i1 = "1234556678723234234234234234234";
+        Numbers.parseLong(i1);
+    }
+
+    @Test(expected = NumberFormatException.class)
+    public void testParseLongOverflow2() throws Exception {
+        Numbers.parseLong("9223372036854775808");
+    }
+
+    @Test(expected = NumberFormatException.class)
+    public void testParseLongSignOnly() throws Exception {
+        Numbers.parseLong("-");
+    }
+
+    @Test(expected = NumberFormatException.class)
+    public void testParseLongWrongChars() throws Exception {
+        Numbers.parseLong("123ab");
+    }
+
+    @Test(expected = NumberFormatException.class)
+    public void testParseWrongNan() throws Exception {
+        Numbers.parseDouble("NaN1");
     }
 
 }

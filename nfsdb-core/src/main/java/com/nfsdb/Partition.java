@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ package com.nfsdb;
 import com.nfsdb.column.*;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.export.CharSink;
+import com.nfsdb.exp.CharSink;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.index.KVIndex;
@@ -56,7 +56,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
     private long lastAccessed = System.currentTimeMillis();
     private long txLimit;
     private FixedColumn timestampColumn;
-    private BinarySearch.LongTimeSeriesProvider indexOfVisitor;
 
     Partition(Journal<T> journal, Interval interval, int partitionIndex, long txLimit, long[] indexTxAddresses) {
         this.journal = journal;
@@ -69,60 +68,22 @@ public class Partition<T> implements Iterable<T>, Closeable {
         setPartitionDir(new File(this.journal.getLocation(), interval.getDirName(journal.getMetadata().getPartitionType())), indexTxAddresses);
     }
 
-    public Partition<T> open() throws JournalException {
-        access();
-        if (columns == null) {
-
-            columns = new AbstractColumn[journal.getMetadata().getColumnCount()];
-
-            for (int i = 0; i < columns.length; i++) {
-                open(i);
-            }
-
-            int tsIndex = journal.getMetadata().getTimestampIndex();
-            if (tsIndex >= 0) {
-                timestampColumn = getFixedWidthColumn(tsIndex);
-            }
-
-            if (timestampColumn != null) {
-                this.indexOfVisitor = new BinarySearch.LongTimeSeriesProvider() {
-                    @Override
-                    public long readLong(long index) {
-                        return timestampColumn.getLong(index);
-                    }
-
-                    @Override
-                    public long size() {
-                        return timestampColumn.size();
-                    }
-                };
+    public void applyTx(long txLimit, long[] indexTxAddresses) {
+        if (this.txLimit != txLimit) {
+            this.txLimit = txLimit;
+            for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
+                SymbolIndexProxy<T> proxy = indexProxies.get(i);
+                proxy.setTxAddress(indexTxAddresses == null ? 0 : indexTxAddresses[proxy.getColumnIndex()]);
             }
         }
-        return this;
     }
 
-    public Journal<T> getJournal() {
-        return journal;
+    public PartitionBufferedIterator<T> bufferedIterator() {
+        return new PartitionBufferedIterator<>(this, 0, size() - 1);
     }
 
-    public Interval getInterval() {
-        return interval;
-    }
-
-    public int getPartitionIndex() {
-        return partitionIndex;
-    }
-
-    public void setPartitionIndex(int partitionIndex) {
-        this.partitionIndex = partitionIndex;
-    }
-
-    public File getPartitionDir() {
-        return partitionDir;
-    }
-
-    public String getName() {
-        return partitionDir.getName();
+    public PartitionBufferedIterator<T> bufferedIterator(long lo, long hi) {
+        return new PartitionBufferedIterator<>(this, lo, hi);
     }
 
     public void close() {
@@ -141,18 +102,38 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
     }
 
-    public boolean isOpen() {
-        return columns != null;
+    public void commitColumns() {
+        // have to commit columns from first to last
+        // this is because size of partition is calculated by size of
+        // last column. If below loop is to break in the middle partition will assume smallest
+        // column size.
+        for (int i = 0; i < columnCount; i++) {
+            AbstractColumn col = columns[i];
+            if (col != null) {
+                col.commit();
+            }
+        }
     }
 
-    public String getStr(long localRowID, int columnIndex) {
-        checkColumnIndex(columnIndex);
-        return ((VariableColumn) columns[columnIndex]).getStr(localRowID);
+    public void compact() throws JournalException {
+        if (columns == null || columns.length == 0) {
+            throw new JournalException("Cannot compact closed partition: %s", this);
+        }
+
+        for (int i1 = 0; i1 < columns.length; i1++) {
+            if (columns[i1] != null) {
+                columns[i1].compact();
+            }
+        }
+
+        for (int i = 0, sz = indexProxies.size(); i < sz; i++) {
+            indexProxies.get(i).getIndex().compact();
+        }
     }
 
-    public void getStr(long localRowID, int columnIndex, CharSink sink) {
-        checkColumnIndex(columnIndex);
-        ((VariableColumn) columns[columnIndex]).getStr(localRowID, sink);
+    public AbstractColumn getAbstractColumn(int i) {
+        checkColumnIndex(i);
+        return columns[i];
     }
 
     public void getBin(long localRowID, int columnIndex, OutputStream s) {
@@ -163,6 +144,76 @@ public class Partition<T> implements Iterable<T>, Closeable {
     public DirectInputStream getBin(long localRowID, int columnIndex) {
         checkColumnIndex(columnIndex);
         return ((VariableColumn) columns[columnIndex]).getBin(localRowID);
+    }
+
+    public boolean getBoolean(long localRowID, int columnIndex) {
+        return getFixedWidthColumn(columnIndex).getBool(localRowID);
+    }
+
+    public double getDouble(long localRowID, int columnIndex) {
+        return getFixedWidthColumn(columnIndex).getDouble(localRowID);
+    }
+
+    public KVIndex getIndexForColumn(String columnName) throws JournalException {
+        return getIndexForColumn(journal.getMetadata().getColumnIndex(columnName));
+    }
+
+    public KVIndex getIndexForColumn(final int columnIndex) throws JournalException {
+        SymbolIndexProxy h = sparseIndexProxies[columnIndex];
+        if (h == null) {
+            throw new JournalException("There is no index for column '%s' in %s", columnMetadata[columnIndex].name, this);
+        }
+        return h.getIndex();
+    }
+
+    public int getInt(long localRowID, int columnIndex) {
+        return getFixedWidthColumn(columnIndex).getInt(localRowID);
+    }
+
+    public Interval getInterval() {
+        return interval;
+    }
+
+    public Journal<T> getJournal() {
+        return journal;
+    }
+
+    public long getLastAccessed() {
+        return lastAccessed;
+    }
+
+    public long getLong(long localRowID, int columnIndex) {
+        return getFixedWidthColumn(columnIndex).getLong(localRowID);
+    }
+
+    public String getName() {
+        return partitionDir.getName();
+    }
+
+    public File getPartitionDir() {
+        return partitionDir;
+    }
+
+    public int getPartitionIndex() {
+        return partitionIndex;
+    }
+
+    public void setPartitionIndex(int partitionIndex) {
+        this.partitionIndex = partitionIndex;
+    }
+
+    public short getShort(long localRowID, int columnIndex) {
+        return getFixedWidthColumn(columnIndex).getShort(localRowID);
+    }
+
+    public String getStr(long localRowID, int columnIndex) {
+        checkColumnIndex(columnIndex);
+        return ((VariableColumn) columns[columnIndex]).getStr(localRowID);
+    }
+
+    public void getStr(long localRowID, int columnIndex, CharSink sink) {
+        checkColumnIndex(columnIndex);
+        ((VariableColumn) columns[columnIndex]).getStr(localRowID, sink);
     }
 
     public String getSym(long localRowID, int columnIndex) {
@@ -177,41 +228,61 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
     }
 
-    public long getLong(long localRowID, int columnIndex) {
-        return getFixedWidthColumn(columnIndex).getLong(localRowID);
-    }
-
-    public short getShort(long localRowID, int columnIndex) {
-        return getFixedWidthColumn(columnIndex).getShort(localRowID);
-    }
-
-    public int getInt(long localRowID, int columnIndex) {
-        return getFixedWidthColumn(columnIndex).getInt(localRowID);
-    }
-
-    public double getDouble(long localRowID, int columnIndex) {
-        return getFixedWidthColumn(columnIndex).getDouble(localRowID);
-    }
-
-    public boolean getBoolean(long localRowID, int columnIndex) {
-        return getFixedWidthColumn(columnIndex).getBool(localRowID);
-    }
-
-    public AbstractColumn getAbstractColumn(int i) {
-        checkColumnIndex(i);
-        return columns[i];
-    }
-
-    public KVIndex getIndexForColumn(String columnName) throws JournalException {
-        return getIndexForColumn(journal.getMetadata().getColumnIndex(columnName));
-    }
-
-    public KVIndex getIndexForColumn(final int columnIndex) throws JournalException {
-        SymbolIndexProxy h = sparseIndexProxies[columnIndex];
-        if (h == null) {
-            throw new JournalException("There is no index for column '%s' in %s", columnMetadata[columnIndex].name, this);
+    public FixedColumn getTimestampColumn() {
+        if (timestampColumn == null) {
+            throw new JournalRuntimeException("There is no timestamp column in: " + this);
         }
-        return h.getIndex();
+        return timestampColumn;
+    }
+
+    public long indexOf(long timestamp, BSearchType type) {
+        return getTimestampColumn().bsearchEdge(timestamp, type);
+    }
+
+    public long indexOf(long timestamp, BSearchType type, long lo, long hi) {
+        return getTimestampColumn().bsearchEdge(timestamp, type, lo, hi);
+    }
+
+    public boolean isOpen() {
+        return columns != null;
+    }
+
+    public Iterator<T> iterator() {
+        return iterator(0, size() - 1);
+    }
+
+    public Iterator<T> iterator(long start, long end) {
+        return new PartitionIterator<>(this, start, end);
+    }
+
+    public Partition<T> open() throws JournalException {
+        access();
+        if (columns == null) {
+
+            columns = new AbstractColumn[journal.getMetadata().getColumnCount()];
+
+            for (int i = 0; i < columns.length; i++) {
+                open(i);
+            }
+
+            int tsIndex = journal.getMetadata().getTimestampIndex();
+            if (tsIndex >= 0) {
+                timestampColumn = getFixedWidthColumn(tsIndex);
+            }
+        }
+        return this;
+    }
+
+    public ConcurrentIterator<T> parallelIterator() {
+        return parallelIterator(0, size() - 1);
+    }
+
+    public ConcurrentIterator<T> parallelIterator(long lo, long hi) {
+        return parallelIterator(lo, hi, 1024);
+    }
+
+    public ConcurrentIterator<T> parallelIterator(long lo, long hi, int bufferSize) {
+        return new PartitionConcurrentIterator<>(this, lo, hi, bufferSize);
     }
 
     public T read(long localRowID) {
@@ -259,77 +330,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
     }
 
-    private void readBin(long localRowID, T obj, int i, ColumnMetadata m) {
-        int size = ((VariableColumn) columns[i]).getBinSize(localRowID);
-        ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, m.offset);
-        if (size == -1) {
-            if (buf != null) {
-                buf.clear();
-            }
-        } else {
-            if (buf == null || buf.capacity() < size) {
-                buf = ByteBuffer.allocate(size);
-                Unsafe.getUnsafe().putObject(obj, m.offset, buf);
-            }
-
-            if (buf.remaining() < size) {
-                buf.rewind();
-            }
-            buf.limit(size);
-            ((VariableColumn) columns[i]).getBin(localRowID, buf);
-            buf.flip();
-        }
-    }
-
-    public void commitColumns() {
-        // have to commit columns from first to last
-        // this is because size of partition is calculated by size of
-        // last column. If below loop is to break in the middle partition will assume smallest
-        // column size.
-        for (int i = 0; i < columnCount; i++) {
-            AbstractColumn col = columns[i];
-            if (col != null) {
-                col.commit();
-            }
-        }
-    }
-
-    public void applyTx(long txLimit, long[] indexTxAddresses) {
-        if (this.txLimit != txLimit) {
-            this.txLimit = txLimit;
-            for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
-                SymbolIndexProxy<T> proxy = indexProxies.get(i);
-                proxy.setTxAddress(indexTxAddresses == null ? 0 : indexTxAddresses[proxy.getColumnIndex()]);
-            }
-        }
-    }
-
-    public long indexOf(long timestamp, BinarySearch.SearchType type) {
-        return indexOf(timestamp, type, 0, size() - 1);
-    }
-
-    public long indexOf(long timestamp, BinarySearch.SearchType type, long lo, long hi) {
-        if (indexOfVisitor == null) {
-            throw new JournalRuntimeException("There is no timestamp column in: " + this);
-        }
-        return BinarySearch.indexOf(indexOfVisitor, timestamp, type, lo, hi);
-    }
-
-    public FixedColumn getTimestampColumn() {
-        return getFixedWidthColumn(journal.getMetadata().getTimestampIndex());
-    }
-
-    public void rebuildIndexes() throws JournalException {
-        if (!isOpen()) {
-            throw new JournalException("Cannot rebuild indexes in closed partition: %s", this);
-        }
-        for (int i = 0; i < columnCount; i++) {
-            if (columnMetadata[i].indexed) {
-                rebuildIndex(i);
-            }
-        }
-    }
-
     /**
      * Rebuild the index of a column using the default keyCountHint and recordCountHint values.
      *
@@ -371,6 +371,17 @@ public class Partition<T> implements Iterable<T>, Closeable {
         LOGGER.debug("REBUILT %s [%dms]", base, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - time));
     }
 
+    public void rebuildIndexes() throws JournalException {
+        if (!isOpen()) {
+            throw new JournalException("Cannot rebuild indexes in closed partition: %s", this);
+        }
+        for (int i = 0; i < columnCount; i++) {
+            if (columnMetadata[i].indexed) {
+                rebuildIndex(i);
+            }
+        }
+    }
+
     public long size() {
         if (!isOpen()) {
             throw new JournalRuntimeException("Closed partition: %s", this);
@@ -393,38 +404,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
         return sz;
     }
 
-    public long getLastAccessed() {
-        return lastAccessed;
-    }
-
-    public Iterator<T> iterator() {
-        return iterator(0, size() - 1);
-    }
-
-    public Iterator<T> iterator(long start, long end) {
-        return new PartitionIterator<>(this, start, end);
-    }
-
-    public PartitionBufferedIterator<T> bufferedIterator() {
-        return new PartitionBufferedIterator<>(this, 0, size() - 1);
-    }
-
-    public PartitionBufferedIterator<T> bufferedIterator(long lo, long hi) {
-        return new PartitionBufferedIterator<>(this, lo, hi);
-    }
-
-    public ConcurrentIterator<T> parallelIterator() {
-        return parallelIterator(0, size() - 1);
-    }
-
-    public ConcurrentIterator<T> parallelIterator(long lo, long hi) {
-        return parallelIterator(lo, hi, 1024);
-    }
-
-    public ConcurrentIterator<T> parallelIterator(long lo, long hi, int bufferSize) {
-        return new PartitionConcurrentIterator<>(this, lo, hi, bufferSize);
-    }
-
     @Override
     public String toString() {
         return "Partition{" +
@@ -434,22 +413,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
                 ", interval=" + interval +
                 ", lastAccessed=" + Dates.toString(lastAccessed) +
                 '}';
-    }
-
-    public void compact() throws JournalException {
-        if (columns == null || columns.length == 0) {
-            throw new JournalException("Cannot compact closed partition: %s", this);
-        }
-
-        for (int i1 = 0; i1 < columns.length; i1++) {
-            if (columns[i1] != null) {
-                columns[i1].compact();
-            }
-        }
-
-        for (int i = 0, sz = indexProxies.size(); i < sz; i++) {
-            indexProxies.get(i).getIndex().compact();
-        }
     }
 
     public void updateIndexes(long oldSize, long newSize) {
@@ -468,6 +431,11 @@ public class Partition<T> implements Iterable<T>, Closeable {
                 throw new JournalRuntimeException(e);
             }
         }
+    }
+
+    Partition<T> access() {
+        this.lastAccessed = getJournal().getTimerCache().getCachedMillis();
+        return this;
     }
 
     void append(Iterator<T> it) throws JournalException {
@@ -532,22 +500,48 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
     }
 
-    private void appendBin(T obj, int i, ColumnMetadata meta) {
-        ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, meta.offset);
-        if (buf == null || buf.remaining() == 0) {
-            ((VariableColumn) columns[i]).putNull();
-        } else {
-            ((VariableColumn) columns[i]).putBin(buf);
+    void clearTx() {
+        applyTx(Journal.TX_LIMIT_EVAL, null);
+    }
+
+    void commit() throws JournalException {
+        for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
+            SymbolIndexProxy<T> proxy = indexProxies.get(i);
+            proxy.getIndex().commit();
         }
     }
 
-    private FixedColumn getFixedWidthColumn(int i) {
-        checkColumnIndex(i);
-        return (FixedColumn) columns[i];
+    void expireOpenIndices() {
+        long expiry = System.currentTimeMillis() - journal.getMetadata().getOpenFileTTL();
+        for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
+            SymbolIndexProxy<T> proxy = indexProxies.get(i);
+            if (expiry > proxy.getLastAccessed()) {
+                proxy.close();
+            }
+        }
     }
 
-    void clearTx() {
-        applyTx(Journal.TX_LIMIT_EVAL, null);
+    void force() throws JournalException {
+        for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
+            SymbolIndexProxy<T> proxy = indexProxies.get(i);
+            proxy.getIndex().force();
+        }
+
+        if (columns != null) {
+            for (int i = 0; i < columns.length; i++) {
+                AbstractColumn column = columns[i];
+                if (column != null) {
+                    column.force();
+                }
+            }
+        }
+    }
+
+    void getIndexPointers(long[] pointers) throws JournalException {
+        for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
+            SymbolIndexProxy<T> proxy = indexProxies.get(i);
+            pointers[proxy.getColumnIndex()] = proxy.getIndex().getTxAddress();
+        }
     }
 
     void setPartitionDir(File partitionDir, long[] indexTxAddresses) {
@@ -555,36 +549,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
         this.partitionDir = partitionDir;
         if (create) {
             createSymbolIndexProxies(indexTxAddresses);
-        }
-    }
-
-    private void open(int idx) throws JournalException {
-
-        switch (columnMetadata[idx].type) {
-            case STRING:
-            case BINARY:
-                columns[idx] = new VariableColumn(
-                        new MappedFileImpl(new File(partitionDir, columnMetadata[idx].name + ".d"), columnMetadata[idx].bitHint, journal.getMode())
-                        , new MappedFileImpl(new File(partitionDir, columnMetadata[idx].name + ".i"), columnMetadata[idx].indexBitHint, journal.getMode()));
-                break;
-            default:
-                columns[idx] = new FixedColumn(
-                        new MappedFileImpl(new File(partitionDir, columnMetadata[idx].name + ".d"), columnMetadata[idx].bitHint, journal.getMode()), columnMetadata[idx].size);
-        }
-    }
-
-    Partition<T> access() {
-        this.lastAccessed = getJournal().getTimerCache().getCachedMillis();
-        return this;
-    }
-
-    private void checkColumnIndex(int i) {
-        if (columns == null) {
-            throw new JournalRuntimeException("Partition is closed: %s", this);
-        }
-
-        if (i < 0 || i >= columns.length) {
-            throw new JournalRuntimeException("Invalid column index: %d in %s", i, this);
         }
     }
 
@@ -605,43 +569,22 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
     }
 
-    void expireOpenIndices() {
-        long expiry = System.currentTimeMillis() - journal.getMetadata().getOpenFileTTL();
-        for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
-            SymbolIndexProxy<T> proxy = indexProxies.get(i);
-            if (expiry > proxy.getLastAccessed()) {
-                proxy.close();
-            }
+    private void appendBin(T obj, int i, ColumnMetadata meta) {
+        ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, meta.offset);
+        if (buf == null || buf.remaining() == 0) {
+            ((VariableColumn) columns[i]).putNull();
+        } else {
+            ((VariableColumn) columns[i]).putBin(buf);
         }
     }
 
-    void getIndexPointers(long[] pointers) throws JournalException {
-        for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
-            SymbolIndexProxy<T> proxy = indexProxies.get(i);
-            pointers[proxy.getColumnIndex()] = proxy.getIndex().getTxAddress();
-        }
-    }
-
-    void commit() throws JournalException {
-        for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
-            SymbolIndexProxy<T> proxy = indexProxies.get(i);
-            proxy.getIndex().commit();
-        }
-    }
-
-    void force() throws JournalException {
-        for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
-            SymbolIndexProxy<T> proxy = indexProxies.get(i);
-            proxy.getIndex().force();
+    private void checkColumnIndex(int i) {
+        if (columns == null) {
+            throw new JournalRuntimeException("Partition is closed: %s", this);
         }
 
-        if (columns != null) {
-            for (int i = 0; i < columns.length; i++) {
-                AbstractColumn column = columns[i];
-                if (column != null) {
-                    column.force();
-                }
-            }
+        if (i < 0 || i >= columns.length) {
+            throw new JournalRuntimeException("Invalid column index: %d in %s", i, this);
         }
     }
 
@@ -660,6 +603,48 @@ public class Partition<T> implements Iterable<T>, Closeable {
             } else {
                 sparseIndexProxies[i] = null;
             }
+        }
+    }
+
+    private FixedColumn getFixedWidthColumn(int i) {
+        checkColumnIndex(i);
+        return (FixedColumn) columns[i];
+    }
+
+    private void open(int idx) throws JournalException {
+
+        switch (columnMetadata[idx].type) {
+            case STRING:
+            case BINARY:
+                columns[idx] = new VariableColumn(
+                        new MappedFileImpl(new File(partitionDir, columnMetadata[idx].name + ".d"), columnMetadata[idx].bitHint, journal.getMode())
+                        , new MappedFileImpl(new File(partitionDir, columnMetadata[idx].name + ".i"), columnMetadata[idx].indexBitHint, journal.getMode()));
+                break;
+            default:
+                columns[idx] = new FixedColumn(
+                        new MappedFileImpl(new File(partitionDir, columnMetadata[idx].name + ".d"), columnMetadata[idx].bitHint, journal.getMode()), columnMetadata[idx].size);
+        }
+    }
+
+    private void readBin(long localRowID, T obj, int i, ColumnMetadata m) {
+        int size = ((VariableColumn) columns[i]).getBinSize(localRowID);
+        ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, m.offset);
+        if (size == -1) {
+            if (buf != null) {
+                buf.clear();
+            }
+        } else {
+            if (buf == null || buf.capacity() < size) {
+                buf = ByteBuffer.allocate(size);
+                Unsafe.getUnsafe().putObject(obj, m.offset, buf);
+            }
+
+            if (buf.remaining() < size) {
+                buf.rewind();
+            }
+            buf.limit(size);
+            ((VariableColumn) columns[i]).getBin(localRowID, buf);
+            buf.flip();
         }
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,11 +22,11 @@ public class AbstractDirectList extends DirectMemory {
     public static final int CACHE_LINE_SIZE = 64;
     private final int pow2;
     private final int onePow2;
-    protected long pos;
-    protected long start;
-    protected long limit;
+    long pos;
+    long start;
+    long limit;
 
-    public AbstractDirectList(int pow2, long capacity) {
+    AbstractDirectList(int pow2, long capacity) {
         this.pow2 = pow2;
         this.address = Unsafe.getUnsafe().allocateMemory((capacity << pow2) + CACHE_LINE_SIZE);
         this.start = this.pos = address + (address & (CACHE_LINE_SIZE - 1));
@@ -34,7 +34,7 @@ public class AbstractDirectList extends DirectMemory {
         this.onePow2 = (1 << pow2);
     }
 
-    public AbstractDirectList(int pow2, AbstractDirectList that) {
+    AbstractDirectList(int pow2, AbstractDirectList that) {
         this(pow2, (int) ((that.pos - that.start) >> pow2));
         add(that);
     }
@@ -47,6 +47,21 @@ public class AbstractDirectList extends DirectMemory {
         Unsafe.getUnsafe().copyMemory(that.start, this.pos, count);
         this.pos += count;
 
+    }
+
+    public void addCapacity(long capacity) {
+        if (capacity << pow2 > limit - pos + onePow2) {
+            extend((int) (((limit - start + onePow2) >> pow2) + capacity));
+        }
+    }
+
+    public void clear() {
+        clear((byte) 0);
+    }
+
+    public void clear(byte b) {
+        pos = start;
+        zero(b);
     }
 
     public void reset() {
@@ -64,17 +79,19 @@ public class AbstractDirectList extends DirectMemory {
         }
     }
 
-    public void addCapacity(long capacity) {
-        if (capacity << pow2 > limit - pos + onePow2) {
-            extend((int) (((limit - start + onePow2) >> pow2) + capacity));
-        }
-    }
-
     public void setPos(long p) {
         pos = start + (p << pow2);
     }
 
-    protected void ensureCapacity() {
+    public int size() {
+        return (int) ((pos - start) >> pow2);
+    }
+
+    public void zero(byte v) {
+        Unsafe.getUnsafe().setMemory(start, limit - start + onePow2, v);
+    }
+
+    void ensureCapacity() {
         if (this.pos > limit) {
             extend((int) ((limit - start + onePow2) >> (pow2 - 1)));
         }
@@ -91,23 +108,5 @@ public class AbstractDirectList extends DirectMemory {
         this.limit = start + ((capacity - 1) << pow2);
         this.address = address;
         this.start = start;
-    }
-
-    public int size() {
-        return (int) ((pos - start) >> pow2);
-    }
-
-
-    public void clear() {
-        clear((byte) 0);
-    }
-
-    public void clear(byte b) {
-        pos = start;
-        zero(b);
-    }
-
-    public void zero(byte v) {
-        Unsafe.getUnsafe().setMemory(start, limit - start + onePow2, v);
     }
 }

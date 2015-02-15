@@ -20,7 +20,7 @@ import com.lmax.disruptor.BatchEventProcessor;
 import com.lmax.disruptor.BlockingWaitStrategy;
 import com.lmax.disruptor.EventHandler;
 import com.lmax.disruptor.RingBuffer;
-import com.nfsdb.export.StringSink;
+import com.nfsdb.exp.StringSink;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.utils.Dates;
 
@@ -48,20 +48,24 @@ public class JournalServerLogger {
                     LOGGER.trace(sink);
                 } else {
                     switch (msg.getLevel()) {
-                        case TRACE:
-                            LOGGER.trace(sink);
-                            break;
                         case INFO:
                             LOGGER.info(sink);
                             break;
                         case ERROR:
                             LOGGER.error(sink);
                             break;
+                        default:
+                            LOGGER.trace(sink);
+                            break;
                     }
                 }
             }
         });
         ringBuffer.addGatingSequences(eventProcessor.getSequence());
+    }
+
+    public void halt() {
+        eventProcessor.halt();
     }
 
     public ServerLogMsg msg() {
@@ -80,9 +84,5 @@ public class JournalServerLogger {
         Thread thread = new Thread(eventProcessor);
         thread.setName("nfsdb-server-logger");
         thread.start();
-    }
-
-    public void halt() {
-        eventProcessor.halt();
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,12 +29,77 @@ public class HugeBuffer extends MappedFileImpl {
         super(file, bitHint, mode);
     }
 
+    public int[] get(int[] container) {
+        int len = getInt();
+        if (len == -1) {
+            return null;
+        } else {
+            if (container == null || len != container.length) {
+                container = new int[len];
+            }
+            long address = nextAddress(len * 4);
+            for (int i = 0; i < len; i++) {
+                container[i] = Unsafe.getUnsafe().getInt(address);
+                address += 4;
+            }
+            return container;
+        }
+    }
+
+    public long[] get(long[] container) {
+        int len = getInt();
+        if (len == -1) {
+            return null;
+        } else {
+            if (container == null || len != container.length) {
+                container = new long[len];
+            }
+            long address = nextAddress(len * 8);
+            for (int i = 0; i < len; i++) {
+                container[i] = Unsafe.getUnsafe().getInt(address);
+                address += 8;
+            }
+            return container;
+        }
+    }
+
+    public byte get() {
+        return Unsafe.getUnsafe().getByte(nextAddress(1));
+    }
+
+    public boolean getBool() {
+        return get() == 1;
+    }
+
+    public int getInt() {
+        return Unsafe.getUnsafe().getInt(nextAddress(4));
+    }
+
+    public long getLong() {
+        return Unsafe.getUnsafe().getLong(nextAddress(8));
+    }
+
     public long getPos() {
         return pos;
     }
 
     public void setPos(long pos) {
         this.pos = pos;
+    }
+
+    public String getStr() {
+        int len = Unsafe.getUnsafe().getInt(nextAddress(4));
+        if (len == -1) {
+            return null;
+        } else {
+            long address = nextAddress(len * 2);
+            char c[] = new char[len];
+            for (int i = 0; i < len; i++) {
+                c[i] = Unsafe.getUnsafe().getChar(address);
+                address += 2;
+            }
+            return new String(c);
+        }
     }
 
     public void put(CharSequence value) {
@@ -80,40 +145,6 @@ public class HugeBuffer extends MappedFileImpl {
         }
     }
 
-    public int[] get(int[] container) {
-        int len = getInt();
-        if (len == -1) {
-            return null;
-        } else {
-            if (container == null || len > container.length) {
-                container = new int[len];
-            }
-            long address = nextAddress(len * 4);
-            for (int i = 0; i < len; i++) {
-                container[i] = Unsafe.getUnsafe().getInt(address);
-                address += 4;
-            }
-            return container;
-        }
-    }
-
-    public long[] get(long[] container) {
-        int len = getInt();
-        if (len == -1) {
-            return null;
-        } else {
-            if (container == null || len > container.length) {
-                container = new long[len];
-            }
-            long address = nextAddress(len * 8);
-            for (int i = 0; i < len; i++) {
-                container[i] = Unsafe.getUnsafe().getInt(address);
-                address += 8;
-            }
-            return container;
-        }
-    }
-
     public void put(int value) {
         Unsafe.getUnsafe().putInt(nextAddress(4), value);
     }
@@ -128,37 +159,6 @@ public class HugeBuffer extends MappedFileImpl {
 
     public void put(boolean value) {
         Unsafe.getUnsafe().putByte(nextAddress(1), (byte) (value ? 1 : 0));
-    }
-
-    public String getStr() {
-        int len = Unsafe.getUnsafe().getInt(nextAddress(4));
-        if (len == -1) {
-            return null;
-        } else {
-            long address = nextAddress(len * 2);
-            char c[] = new char[len];
-            for (int i = 0; i < len; i++) {
-                c[i] = Unsafe.getUnsafe().getChar(address);
-                address += 2;
-            }
-            return new String(c);
-        }
-    }
-
-    public int getInt() {
-        return Unsafe.getUnsafe().getInt(nextAddress(4));
-    }
-
-    public long getLong() {
-        return Unsafe.getUnsafe().getLong(nextAddress(8));
-    }
-
-    public boolean getBool() {
-        return get() == 1;
-    }
-
-    public byte get() {
-        return Unsafe.getUnsafe().getByte(nextAddress(1));
     }
 
     private long nextAddress(int len) {

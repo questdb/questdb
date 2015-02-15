@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,10 +18,14 @@ package com.nfsdb.net.mcast;
 
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.logging.Logger;
-import com.nfsdb.net.config.NetworkConfig;
+import com.nfsdb.net.config.ClientConfig;
+import com.nfsdb.net.config.DatagramChannelWrapper;
+import com.nfsdb.utils.ByteBuffers;
 
 import java.io.IOException;
-import java.net.*;
+import java.net.InetSocketAddress;
+import java.net.SocketAddress;
+import java.net.StandardSocketOptions;
 import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
 import java.nio.channels.SelectionKey;
@@ -31,62 +35,58 @@ import java.util.concurrent.TimeUnit;
 
 public abstract class AbstractOnDemandPoller<T> {
     private static final Logger LOGGER = Logger.getLogger(AbstractOnDemandPoller.class);
-    private final NetworkConfig networkConfig;
-    private final InetSocketAddress socketAddress;
+    private final ClientConfig networkConfig;
     private final int inMessageCode;
     private final int outMessageCode;
 
-    public AbstractOnDemandPoller(NetworkConfig networkConfig, int inMessageCode, int outMessageCode) throws JournalNetworkException {
+    AbstractOnDemandPoller(ClientConfig networkConfig, int inMessageCode, int outMessageCode) {
         this.networkConfig = networkConfig;
         this.inMessageCode = inMessageCode;
         this.outMessageCode = outMessageCode;
-        this.socketAddress = new InetSocketAddress(networkConfig.getMulticastAddress(), networkConfig.getMulticastPort());
     }
 
     public T poll(int retryCount, long timeout, TimeUnit timeUnit) throws JournalNetworkException {
-        return transform(poll1(retryCount, timeout, timeUnit));
-    }
+        try (DatagramChannelWrapper dcw = networkConfig.openDatagramChannel()) {
+            DatagramChannel dc = dcw.getChannel();
+            LOGGER.info("Polling on %s [%s]", dcw.getGroup(), dc.getOption(StandardSocketOptions.IP_MULTICAST_IF).getName());
 
-    protected abstract T transform(ByteBuffer buf) throws JournalNetworkException;
-
-    private ByteBuffer poll1(int retryCount, long timeout, TimeUnit timeUnit) throws JournalNetworkException {
-        ProtocolFamily family = NetworkConfig.isInet6(socketAddress.getAddress()) ? StandardProtocolFamily.INET6 : StandardProtocolFamily.INET;
-
-        LOGGER.info("Polling on " + networkConfig.getNetworkInterface());
-        try (DatagramChannel dc = DatagramChannel.open(family)
-                .setOption(StandardSocketOptions.SO_REUSEADDR, true)
-                .setOption(StandardSocketOptions.IP_MULTICAST_IF, networkConfig.getNetworkInterface())
-                .bind(new InetSocketAddress(networkConfig.getMulticastPort()))) {
-
-            dc.join(socketAddress.getAddress(), networkConfig.getNetworkInterface());
             Selector selector = Selector.open();
             dc.configureBlocking(false);
             dc.register(selector, SelectionKey.OP_READ);
             // print out each datagram that we receive
             ByteBuffer buf = ByteBuffer.allocateDirect(4096);
+            try {
+                int count = retryCount;
+                InetSocketAddress sa = null;
+                while (count > 0 && (sa = poll0(dc, dcw.getGroup(), selector, buf, timeUnit.toMillis(timeout))) == null) {
+                    buf.clear();
+                    count--;
+                }
 
-            int count = retryCount;
-            while (count > 0 && !poll0(dc, selector, buf, timeUnit.toMillis(timeout))) {
-                buf.clear();
-                count--;
+                if (count == 0) {
+                    throw new JournalNetworkException("Cannot find NFSdb servers on network");
+                }
+
+                return transform(buf, sa);
+            } finally {
+                ByteBuffers.release(buf);
             }
-            return count > 0 ? buf : null;
         } catch (IOException e) {
             throw new JournalNetworkException(e);
         }
     }
 
-    private boolean poll0(DatagramChannel dc, Selector selector, ByteBuffer buf, long timeoutMillis) throws IOException {
+    private InetSocketAddress poll0(DatagramChannel dc, SocketAddress group, Selector selector, ByteBuffer buf, long timeoutMillis) throws IOException {
         while (true) {
             buf.putInt(outMessageCode);
             buf.flip();
-            dc.send(buf, socketAddress);
+            dc.send(buf, group);
 
             int count = 2;
             while (count-- > 0) {
                 int updated = selector.select(timeoutMillis);
                 if (updated == 0) {
-                    return false;
+                    return null;
                 }
                 if (updated > 0) {
                     Iterator<SelectionKey> iter = selector.selectedKeys().iterator();
@@ -95,11 +95,12 @@ public abstract class AbstractOnDemandPoller<T> {
                         iter.remove();
                         DatagramChannel ch = (DatagramChannel) sk.channel();
                         buf.clear();
-                        SocketAddress sa = ch.receive(buf);
+                        InetSocketAddress sa = (InetSocketAddress) ch.receive(buf);
                         if (sa != null) {
                             buf.flip();
                             if (buf.remaining() >= 4 && inMessageCode == buf.getInt()) {
-                                return true;
+                                LOGGER.info("Receiving server information from: " + sa);
+                                return sa;
                             }
                         }
                     }
@@ -107,4 +108,6 @@ public abstract class AbstractOnDemandPoller<T> {
             }
         }
     }
+
+    protected abstract T transform(ByteBuffer buf, InetSocketAddress sa);
 }

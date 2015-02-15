@@ -35,6 +35,13 @@ public class JournalKey<T> {
         this.modelClass = null;
     }
 
+    public JournalKey(String id, Class<T> modelClass, String location, int recordHint) {
+        this.id = id;
+        this.modelClass = modelClass;
+        this.location = location;
+        this.recordHint = recordHint;
+    }
+
     public JournalKey(Class<T> clazz) {
         this.modelClass = clazz;
         this.id = clazz.getName();
@@ -117,16 +124,29 @@ public class JournalKey<T> {
         return new JournalKey<>(new String(clazz, Files.UTF_8), location == null ? null : new String(location), partitionType, recordHint, ordered);
     }
 
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof JournalKey)) return false;
+        JournalKey that = (JournalKey) o;
+        return ordered == that.ordered && recordHint == that.recordHint && !(id != null ? !id.equals(that.id) : that.id != null) && !(location != null ? !location.equals(that.location) : that.location != null) && partitionType == that.partitionType;
+
+    }
+
+    public int getBufferSize() {
+        return 4 + id.getBytes(Files.UTF_8).length + 4 + 2 * (location == null ? 0 : location.length()) + 1 + 1 + 4;
+    }
+
     public String getId() {
         return id;
     }
 
-    public Class<T> getModelClass() {
-        return modelClass;
-    }
-
     public String getLocation() {
         return location;
+    }
+
+    public Class<T> getModelClass() {
+        return modelClass;
     }
 
     public PartitionType getPartitionType() {
@@ -135,19 +155,6 @@ public class JournalKey<T> {
 
     public int getRecordHint() {
         return recordHint;
-    }
-
-    public boolean isOrdered() {
-        return ordered;
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (!(o instanceof JournalKey)) return false;
-        JournalKey that = (JournalKey) o;
-        return ordered == that.ordered && recordHint == that.recordHint && !(id != null ? !id.equals(that.id) : that.id != null) && !(location != null ? !location.equals(that.location) : that.location != null) && partitionType == that.partitionType;
-
     }
 
     @Override
@@ -162,6 +169,10 @@ public class JournalKey<T> {
 
     //////////////////////// REPLICATION CODE //////////////////////
 
+    public boolean isOrdered() {
+        return ordered;
+    }
+
     @Override
     public String toString() {
         return "JournalKey{" +
@@ -171,10 +182,6 @@ public class JournalKey<T> {
                 ", recordHint=" + recordHint +
                 ", ordered=" + ordered +
                 '}';
-    }
-
-    public int getBufferSize() {
-        return 4 + id.getBytes(Files.UTF_8).length + 4 + 2 * (location == null ? 0 : location.length()) + 1 + 1 + 4;
     }
 
     public void write(ByteBuffer buffer) {

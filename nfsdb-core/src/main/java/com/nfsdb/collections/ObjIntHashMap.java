@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -56,22 +56,8 @@ public class ObjIntHashMap<V> implements Iterable<ObjIntHashMap.Entry<V>> {
         clear();
     }
 
-    @SuppressWarnings({"unchecked"})
-    protected void rehash() {
-
-        int newCapacity = Primes.next(values.length << 1);
-        free = capacity = (int) (newCapacity * loadFactor);
-        int[] oldValues = values;
-        V[] oldKeys = keys;
-        this.keys = (V[]) new Object[newCapacity];
-        this.values = new int[newCapacity];
+    public void clear() {
         Arrays.fill(keys, FREE);
-
-        for (int i = oldKeys.length; i-- > 0; ) {
-            if (oldKeys[i] != FREE) {
-                insertKey(oldKeys[i], oldValues[i]);
-            }
-        }
     }
 
     public int get(V key) {
@@ -88,16 +74,14 @@ public class ObjIntHashMap<V> implements Iterable<ObjIntHashMap.Entry<V>> {
         return probe(key, index);
     }
 
-    private int probe(V key, int index) {
-        do {
-            index = (index + 1) % keys.length;
-            if (keys[index] == FREE) {
-                return noKeyValue;
-            }
-            if (keys[index] == key || key.equals(keys[index])) {
-                return values[index];
-            }
-        } while (true);
+    public Iterable<Entry<V>> immutableIterator() {
+        return new EntryIterator();
+    }
+
+    @Override
+    public Iterator<Entry<V>> iterator() {
+        iterator.index = 0;
+        return iterator;
     }
 
     public int put(V key, int value) {
@@ -119,6 +103,10 @@ public class ObjIntHashMap<V> implements Iterable<ObjIntHashMap.Entry<V>> {
         return !(keys[index] == key || key.equals(keys[index])) && probeInsertIfAbsent(key, index, value);
     }
 
+    public int size() {
+        return capacity - free;
+    }
+
     private int insertKey(V key, int value) {
         int index = (key.hashCode() & 0x7fffffff) % keys.length;
         if (keys[index] == FREE) {
@@ -138,6 +126,18 @@ public class ObjIntHashMap<V> implements Iterable<ObjIntHashMap.Entry<V>> {
         }
 
         return probeInsert(key, index, value);
+    }
+
+    private int probe(V key, int index) {
+        do {
+            index = (index + 1) % keys.length;
+            if (keys[index] == FREE) {
+                return noKeyValue;
+            }
+            if (keys[index] == key || key.equals(keys[index])) {
+                return values[index];
+            }
+        } while (true);
     }
 
     private int probeInsert(V key, int index, int value) {
@@ -180,18 +180,22 @@ public class ObjIntHashMap<V> implements Iterable<ObjIntHashMap.Entry<V>> {
         } while (true);
     }
 
-    public void clear() {
+    @SuppressWarnings({"unchecked"})
+    protected void rehash() {
+
+        int newCapacity = Primes.next(values.length << 1);
+        free = capacity = (int) (newCapacity * loadFactor);
+        int[] oldValues = values;
+        V[] oldKeys = keys;
+        this.keys = (V[]) new Object[newCapacity];
+        this.values = new int[newCapacity];
         Arrays.fill(keys, FREE);
-    }
 
-    public int size() {
-        return capacity - free;
-    }
-
-    @Override
-    public Iterator<Entry<V>> iterator() {
-        iterator.index = 0;
-        return iterator;
+        for (int i = oldKeys.length; i-- > 0; ) {
+            if (oldKeys[i] != FREE) {
+                insertKey(oldKeys[i], oldValues[i]);
+            }
+        }
     }
 
     public static class Entry<V> {
@@ -202,18 +206,11 @@ public class ObjIntHashMap<V> implements Iterable<ObjIntHashMap.Entry<V>> {
     public class EntryIterator extends AbstractImmutableIterator<Entry<V>> {
 
         private final Entry<V> entry = new Entry<>();
-        private int index;
+        private int index = 0;
 
         @Override
         public boolean hasNext() {
             return index < values.length && (keys[index] != FREE || scan());
-        }
-
-        private boolean scan() {
-            while (index < values.length && keys[index] == FREE) {
-                index++;
-            }
-            return index < values.length;
         }
 
         @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
@@ -222,6 +219,13 @@ public class ObjIntHashMap<V> implements Iterable<ObjIntHashMap.Entry<V>> {
             entry.key = keys[index];
             entry.value = values[index++];
             return entry;
+        }
+
+        private boolean scan() {
+            while (index < values.length && keys[index] == FREE) {
+                index++;
+            }
+            return index < values.length;
         }
     }
 }

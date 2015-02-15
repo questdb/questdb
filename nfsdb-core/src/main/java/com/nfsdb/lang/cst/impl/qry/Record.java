@@ -17,9 +17,7 @@
 package com.nfsdb.lang.cst.impl.qry;
 
 import com.nfsdb.column.DirectInputStream;
-import com.nfsdb.export.CharSink;
-
-import java.io.InputStream;
+import com.nfsdb.exp.CharSink;
 import java.io.OutputStream;
 
 public interface Record {
@@ -32,6 +30,20 @@ public interface Record {
 
     byte get(int col);
 
+    void getBin(int col, OutputStream s);
+
+    void getBin(String column, OutputStream s);
+
+    boolean getBool(String column);
+
+    boolean getBool(int col);
+
+    long getDate(int col);
+
+    double getDouble(String column);
+
+    double getDouble(int col);
+
     int getInt(String column);
 
     int getInt(int col);
@@ -40,11 +52,7 @@ public interface Record {
 
     long getLong(int col);
 
-    long getDate(int col);
-
-    double getDouble(String column);
-
-    double getDouble(int col);
+    short getShort(int col);
 
     CharSequence getStr(String column);
 
@@ -55,16 +63,6 @@ public interface Record {
     String getSym(String column);
 
     String getSym(int col);
-
-    boolean getBool(String column);
-
-    boolean getBool(int col);
-
-    void getBin(int col, OutputStream s);
-
-    void getBin(String column, OutputStream s);
-
-    short getShort(int col);
 
     DirectInputStream getBin(String column);
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,21 +16,26 @@
 
 package org.nfsdb.examples.network.cluster;
 
+import com.nfsdb.JournalKey;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.net.cluster.ClusterController;
-import com.nfsdb.net.cluster.ClusterNode;
 import com.nfsdb.net.cluster.ClusterStatusListener;
+import com.nfsdb.net.config.ClientConfig;
+import com.nfsdb.net.config.ServerConfig;
+import com.nfsdb.net.config.ServerNode;
 import com.nfsdb.utils.Numbers;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.nfsdb.examples.model.Price;
 
 import java.util.ArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+@SuppressFBWarnings({"SE_BAD_FIELD"})
 public class ClusteredProducerMain {
 
     public static void main(String[] args) throws JournalException {
@@ -41,21 +46,21 @@ public class ClusteredProducerMain {
             $(Price.class).$ts();
         }}.build(pathToDatabase));
 
-        final JournalWriter<Price> writer = factory.writer(Price.class);
+        final JournalWriter<Price> writer = factory.bulkWriter(new JournalKey<>(Price.class, 1000000000));
         final WorkerController wc = new WorkerController(writer);
 
         final ClusterController cc = new ClusterController(
-                new ArrayList<ClusterNode>() {{
-                    add(new ClusterNode(1, "localhost:7080"));
-                    add(new ClusterNode(2, "localhost:7090"));
-                }}
-                , instance
-                , wc
-                , factory
-                ,
+                new ServerConfig() {{
+                    addNode(new ServerNode(1, "192.168.1.81:7080"));
+                    addNode(new ServerNode(2, "192.168.1.81:7090"));
+                }},
+                new ClientConfig(),
+                factory,
+                instance,
                 new ArrayList<JournalWriter>() {{
                     add(writer);
-                }}
+                }},
+                wc
         );
 
         cc.start();
@@ -91,15 +96,8 @@ public class ClusteredProducerMain {
             (worker = new Worker(writer)).start();
         }
 
-        private void stopWorker() {
-            if (worker != null) {
-                worker.halt();
-                worker = null;
-            }
-        }
-
         @Override
-        public void onNodeStandingBy(ClusterNode activeNode) {
+        public void onNodeStandingBy(ServerNode activeNode) {
             System.out.println("This node is standing by");
             stopWorker();
         }
@@ -108,6 +106,13 @@ public class ClusteredProducerMain {
         public void onShutdown() {
             stopWorker();
             writer.close();
+        }
+
+        private void stopWorker() {
+            if (worker != null) {
+                worker.halt();
+                worker = null;
+            }
         }
     }
 
@@ -119,6 +124,14 @@ public class ClusteredProducerMain {
 
         public Worker(JournalWriter<Price> writer) {
             this.writer = writer;
+        }
+
+        public void halt() {
+            try {
+                breakLatch.countDown();
+                haltLatch.await();
+            } catch (InterruptedException ignore) {
+            }
         }
 
         public void start() {
@@ -134,15 +147,14 @@ public class ClusteredProducerMain {
                         while (true) {
                             for (int i = 0; i < 50000; i++) {
                                 p.setTimestamp(t += i);
-                                p.setNanos(System.nanoTime());
+                                p.setNanos(System.currentTimeMillis());
                                 p.setSym(String.valueOf(i % 20));
                                 p.setPrice(i * 1.04598 + i);
                                 writer.append(p);
                             }
                             writer.commit();
 
-                            breakLatch.await(2, TimeUnit.SECONDS);
-                            if (breakLatch.getCount() == 0) {
+                            if (breakLatch.await(2, TimeUnit.SECONDS)) {
                                 break;
                             }
 
@@ -154,14 +166,6 @@ public class ClusteredProducerMain {
                     }
                 }
             }.start();
-        }
-
-        public void halt() {
-            try {
-                breakLatch.countDown();
-                haltLatch.await();
-            } catch (InterruptedException ignore) {
-            }
         }
     }
 }

@@ -46,6 +46,19 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
     }
 
     @Override
+    public void free() {
+        super.free();
+        journalServerStateConsumer.free();
+        journalSymbolTableConsumer.free();
+        for (int i = 0; i < partitionDeltaConsumers.size(); i++) {
+            partitionDeltaConsumers.get(i).free();
+        }
+        if (lagPartitionDeltaConsumer != null) {
+            lagPartitionDeltaConsumer.free();
+        }
+    }
+
+    @Override
     public boolean isComplete() {
         return state != null && metaIndex >= state.getNonLagPartitionCount() && lagProcessed;
     }
@@ -62,24 +75,32 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
             lagPartitionDeltaConsumer.reset();
         }
 
-        // reset partition consumers
-        boolean keep = true;
-        for (int i = partitionDeltaConsumers.size() - 1; i >= 0; i--) {
-            PartitionDeltaConsumer consumer = partitionDeltaConsumers.get(i);
-            if (consumer != null) {
-                if (!keep) {
-                    partitionDeltaConsumers.set(i, null);
-                    try {
-                        Partition partition = journal.getPartition(i, false);
-                        partition.close();
-                    } catch (JournalException e) {
-                        throw new JournalRuntimeException(e);
-                    }
+        int recent = partitionDeltaConsumers.size() - 1;
+
+        if (recent < 0) {
+            return;
+        }
+
+        try {
+            PartitionDeltaConsumer c = partitionDeltaConsumers.get(recent);
+
+            if (c != null) {
+                if (!journal.getPartition(recent, false).isOpen()) {
+                    partitionDeltaConsumers.set(recent, null).free();
                 } else {
-                    consumer.reset();
-                    keep = false;
+                    c.reset();
                 }
             }
+
+            for (int i = 0; i < recent; i++) {
+                c = partitionDeltaConsumers.set(i, null);
+                if (c != null) {
+                    c.free();
+                }
+                journal.getPartition(i, false).close();
+            }
+        } catch (JournalException e) {
+            throw new JournalRuntimeException(e);
         }
     }
 
@@ -89,13 +110,16 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
         journalServerStateConsumer.read(channel);
         if (journalServerStateConsumer.isComplete()) {
 
-            journal.beginTx();
+            this.state = journalServerStateConsumer.getValue();
 
             try {
-                if (state == null) {
-                    state = journalServerStateConsumer.getValue();
-                    createPartitions(state);
+                if (state.getTxn() < journal.getTxn()) {
+                    journal.rollback(state.getTxn(), state.getTxPin());
+                    return;
                 }
+
+                journal.beginTx();
+                createPartitions(state);
 
                 if (state.isSymbolTables()) {
                     journalSymbolTableConsumer.read(channel);
@@ -151,7 +175,7 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
     @Override
     protected void commit() throws JournalNetworkException {
         try {
-            journal.commit();
+            journal.commit(false, state.getTxn(), state.getTxPin());
         } catch (JournalException e) {
             throw new JournalNetworkException(e);
         }
@@ -178,18 +202,5 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
         }
 
         return consumer;
-    }
-
-    @Override
-    public void free() {
-        super.free();
-        journalServerStateConsumer.free();
-        journalSymbolTableConsumer.free();
-        for (int i = 0; i < partitionDeltaConsumers.size(); i++) {
-            partitionDeltaConsumers.get(i).free();
-        }
-        if (lagPartitionDeltaConsumer != null) {
-            lagPartitionDeltaConsumer.free();
-        }
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,39 +17,39 @@
 package com.nfsdb.factory.configuration;
 
 public abstract class AbstractMetadataBuilder<T> {
-    protected final ColumnMetadata meta;
+    final ColumnMetadata meta;
     private final JournalMetadataBuilder<T> parent;
 
-    public AbstractMetadataBuilder(JournalMetadataBuilder<T> parent, ColumnMetadata meta) {
+    AbstractMetadataBuilder(JournalMetadataBuilder<T> parent, ColumnMetadata meta) {
         this.parent = parent;
         this.meta = meta;
-    }
-
-    public StringBuilder $str(String name) {
-        return parent.$str(name);
     }
 
     public BinaryBuilder $bin(String name) {
         return parent.$bin(name);
     }
 
-    public SymbolBuilder $sym(String name) {
-        return parent.$sym(name);
+    public JournalMetadataBuilder<T> $date(String name) {
+        return parent.$date(name);
     }
 
     public IntBuilder $int(String name) {
         return parent.$int(name);
     }
 
-    public JournalMetadataBuilder<T> $ts(String name) {
-        return parent.$ts(name);
+    public StringBuilder $str(String name) {
+        return parent.$str(name);
+    }
+
+    public SymbolBuilder $sym(String name) {
+        return parent.$sym(name);
     }
 
     public JournalMetadataBuilder<T> $ts() {
         return parent.$ts();
     }
 
-    public JournalMetadataBuilder<T> $date(String name) {
-        return parent.$date(name);
+    public JournalMetadataBuilder<T> $ts(String name) {
+        return parent.$ts(name);
     }
 }

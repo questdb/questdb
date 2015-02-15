@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,8 +23,13 @@ public abstract class AbstractRecord implements Record {
 
     protected final RecordMetadata metadata;
 
-    public AbstractRecord(RecordMetadata metadata) {
+    protected AbstractRecord(RecordMetadata metadata) {
         this.metadata = metadata;
+    }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return metadata;
     }
 
     @Override
@@ -70,10 +75,5 @@ public abstract class AbstractRecord implements Record {
     @Override
     public DirectInputStream getBin(String column) {
         return getBin(metadata.getColumnIndex(column));
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
     }
 }

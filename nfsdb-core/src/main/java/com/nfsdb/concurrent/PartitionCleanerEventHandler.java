@@ -24,9 +24,13 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.tx.TxLog;
 
+import java.util.concurrent.CountDownLatch;
+
 class PartitionCleanerEventHandler implements EventHandler<PartitionCleanerEvent>, LifecycleAware {
+    final CountDownLatch startLatch = new CountDownLatch(1);
+    final CountDownLatch stopLatch = new CountDownLatch(1);
     private final JournalWriter writer;
-    volatile TxLog txLog;
+    private TxLog txLog;
 
     public PartitionCleanerEventHandler(JournalWriter writer) {
         this.writer = writer;
@@ -40,19 +44,21 @@ class PartitionCleanerEventHandler implements EventHandler<PartitionCleanerEvent
     }
 
     @Override
-    public void onStart() {
-        try {
-            this.txLog = new TxLog(writer.getLocation(), JournalMode.READ);
-        } catch (JournalException e) {
-            throw new JournalRuntimeException(e);
-        }
-    }
-
-    @Override
     public void onShutdown() {
         if (this.txLog != null) {
             this.txLog.close();
             this.txLog = null;
+            stopLatch.countDown();
+        }
+    }
+
+    @Override
+    public void onStart() {
+        try {
+            this.txLog = new TxLog(writer.getLocation(), JournalMode.READ);
+            startLatch.countDown();
+        } catch (JournalException e) {
+            throw new JournalRuntimeException(e);
         }
     }
 }

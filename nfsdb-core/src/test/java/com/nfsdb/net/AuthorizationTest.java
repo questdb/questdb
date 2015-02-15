@@ -26,6 +26,7 @@ import com.nfsdb.net.auth.AuthorizationHandler;
 import com.nfsdb.net.auth.CredentialProvider;
 import com.nfsdb.net.config.ClientConfig;
 import com.nfsdb.net.config.ServerConfig;
+import com.nfsdb.net.config.ServerNode;
 import com.nfsdb.net.krb.SSOCredentialProvider;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
@@ -39,7 +40,10 @@ import java.util.concurrent.TimeUnit;
 
 public class AuthorizationTest extends AbstractTest {
 
-    private final ClientConfig local = new ClientConfig("localhost");
+    private final ClientConfig local = new ClientConfig("localhost") {{
+        addNode(new ServerNode(1, "xyz"));
+        addNode(new ServerNode(2, "localhost"));
+    }};
 
     @Test
     public void testClientAndServerSuccessfulAuth() throws Exception {
@@ -47,8 +51,7 @@ public class AuthorizationTest extends AbstractTest {
         JournalServer server = new JournalServer(
                 new ServerConfig() {{
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(100));
-                    setEnableMulticast(false);
-                    setHostname("localhost");
+                    setEnableMultiCast(false);
                 }}
                 , factory
                 ,
@@ -67,6 +70,7 @@ public class AuthorizationTest extends AbstractTest {
             }
         });
 
+
         beginSync(server, client);
     }
 
@@ -75,8 +79,7 @@ public class AuthorizationTest extends AbstractTest {
         JournalServer server = new JournalServer(
                 new ServerConfig() {{
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
-                    setEnableMulticast(false);
-                    setHostname("localhost");
+                    setEnableMultiCast(false);
                 }}
                 , factory
                 ,
@@ -103,12 +106,37 @@ public class AuthorizationTest extends AbstractTest {
     }
 
     @Test
+    public void testExceptionInCredentialProvider() throws Exception {
+        JournalServer server = new JournalServer(
+                new ServerConfig() {{
+                    setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
+                    setEnableMultiCast(false);
+                }}
+                , factory
+                ,
+                new AuthorizationHandler() {
+                    @Override
+                    public boolean isAuthorized(byte[] token, List<JournalKey> requestedKeys) {
+                        return "SECRET".equals(new String(token));
+                    }
+                });
+
+
+        JournalClient client = new JournalClient(local, factory, new SSOCredentialProvider("HOST/test"));
+
+        try {
+            beginSync(server, client);
+        } catch (JournalNetworkException e) {
+            Assert.assertTrue(e.getMessage().startsWith("java.io.IOException: ERROR") || e.getMessage().startsWith("java.io.IOException: ActiveDirectory SSO"));
+        }
+    }
+
+    @Test
     public void testServerAuthException() throws Exception {
         JournalServer server = new JournalServer(
                 new ServerConfig() {{
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
-                    setEnableMulticast(false);
-                    setHostname("localhost");
+                    setEnableMultiCast(false);
                 }}
                 , factory
                 ,
@@ -139,8 +167,7 @@ public class AuthorizationTest extends AbstractTest {
         JournalServer server = new JournalServer(
                 new ServerConfig() {{
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
-                    setEnableMulticast(false);
-                    setHostname("localhost");
+                    setEnableMultiCast(false);
                 }}
                 , factory
                 ,
@@ -158,33 +185,6 @@ public class AuthorizationTest extends AbstractTest {
             beginSync(server, client);
         } catch (JournalNetworkException e) {
             Assert.assertEquals("Server requires authentication. Supply CredentialProvider.", e.getMessage());
-        }
-    }
-
-    @Test
-    public void testExceptionInCredentialProvider() throws Exception {
-        JournalServer server = new JournalServer(
-                new ServerConfig() {{
-                    setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
-                    setEnableMulticast(false);
-                    setHostname("localhost");
-                }}
-                , factory
-                ,
-                new AuthorizationHandler() {
-                    @Override
-                    public boolean isAuthorized(byte[] token, List<JournalKey> requestedKeys) {
-                        return "SECRET".equals(new String(token));
-                    }
-                });
-
-
-        JournalClient client = new JournalClient(local, factory, new SSOCredentialProvider("HOST/test"));
-
-        try {
-            beginSync(server, client);
-        } catch (JournalNetworkException e) {
-            Assert.assertTrue(e.getMessage().startsWith("java.io.IOException: ERROR") || e.getMessage().startsWith("java.io.IOException: ActiveDirectory SSO"));
         }
     }
 

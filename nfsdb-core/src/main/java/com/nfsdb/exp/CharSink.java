@@ -14,8 +14,12 @@
  * limitations under the License.
  */
 
-package com.nfsdb.tx;
+package com.nfsdb.exp;
 
-public interface TxAsyncListener {
-    TxFuture onCommitAsync();
+public interface CharSink {
+    void flush();
+
+    CharSink put(CharSequence cs);
+
+    CharSink put(char c);
 }

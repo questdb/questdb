@@ -32,6 +32,7 @@ import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class IntegrationTest extends AbstractTest {
 
@@ -41,11 +42,59 @@ public class IntegrationTest extends AbstractTest {
     @Before
     public void setUp() throws Exception {
         server = new JournalServer(new ServerConfig() {{
-            setHostname("localhost");
             setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(100));
-            setEnableMulticast(false);
+            setEnableMultiCast(false);
         }}, factory);
         client = new JournalClient(new ClientConfig("localhost"), factory);
+    }
+
+    @Test(expected = JournalNetworkException.class)
+    public void testClientConnect() throws Exception {
+        client.start();
+    }
+
+    @Test
+    public void testClientConnectServerHalt() throws Exception {
+        server.start();
+        client.start();
+        Thread.sleep(TimeUnit.SECONDS.toMillis(1));
+        server.halt();
+        Assert.assertEquals(0, server.getConnectedClients());
+        Assert.assertFalse(server.isRunning());
+        Thread.sleep(500);
+        Assert.assertFalse(client.isRunning());
+        client.halt();
+    }
+
+    @Test
+    public void testClientDisconnect() throws Exception {
+        server.start();
+        client.start();
+        Thread.sleep(100);
+        client.halt();
+        Assert.assertFalse(client.isRunning());
+        Thread.sleep(100);
+        Assert.assertEquals(0, server.getConnectedClients());
+        server.halt();
+    }
+
+    @Test
+    public void testServerIdleStartStop() throws Exception {
+        JournalWriter<Quote> remote = factory.writer(Quote.class, "remote");
+        server.publish(remote);
+        server.start();
+        client.subscribe(Quote.class, "remote", "local");
+        client.start();
+        Thread.sleep(100);
+        server.halt();
+        Assert.assertFalse(server.isRunning());
+    }
+
+    @Test
+    public void testServerStartStop() throws Exception {
+        server.start();
+        server.halt();
+        Assert.assertFalse(server.isRunning());
     }
 
     @Test
@@ -72,6 +121,114 @@ public class IntegrationTest extends AbstractTest {
         server.halt();
         Journal<Quote> local = factory.reader(Quote.class, "local");
         TestUtils.assertDataEquals(remote, local);
+    }
+
+/*
+    @Test
+    public void testSingleJournalSync2() throws Exception {
+
+        int size = 100000;
+        JournalWriter<Price> remote = factory.writer(Price.class, "remote");
+        server.publish(remote);
+        server.start();
+
+
+
+        final AtomicInteger counter = new AtomicInteger();
+        client.subscribe(Price.class, "remote", "local", new TxListener() {
+            @Override
+            public void onCommit() {
+                counter.incrementAndGet();
+            }
+        });
+        client.start();
+
+        Price p = new Price();
+        long t = remote.getMaxTimestamp();
+        for (int i = 0; i < size; i++) {
+            p.setTimestamp(t += i);
+            p.setNanos(System.currentTimeMillis());
+            p.setSym(String.valueOf(i % 20));
+            p.setPrice(i * 1.04598 + i);
+            remote.append(p);
+        }
+        remote.commit();
+
+        TestUtils.assertCounter(counter, 1, 2, TimeUnit.SECONDS);
+
+        Journal<Price> r = factory.bulkReader(Price.class, "local");
+        for (Price v: r.bufferedIterator()) {
+            System.out.println(v.getSym());
+        }
+        client.halt();
+        server.halt();
+    }
+*/
+
+    @Test
+    public void testTwoClientSync() throws Exception {
+        int size = 10000;
+        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
+        TestUtils.generateQuoteData(origin, size);
+
+        JournalWriter<Quote> remote = factory.writer(Quote.class, "remote");
+        remote.append(origin.query().all().asResultSet().subset(0, 1000));
+        remote.commit();
+
+        server.publish(remote);
+        server.start();
+
+        final AtomicInteger counter = new AtomicInteger();
+        JournalClient client1 = new JournalClient(new ClientConfig("localhost"), factory);
+        client1.subscribe(Quote.class, "remote", "local1", new TxListener() {
+            @Override
+            public void onCommit() {
+                counter.incrementAndGet();
+            }
+        });
+        client1.start();
+
+        JournalClient client2 = new JournalClient(new ClientConfig("localhost"), factory);
+        client2.subscribe(Quote.class, "remote", "local2", new TxListener() {
+            @Override
+            public void onCommit() {
+                counter.incrementAndGet();
+            }
+        });
+        client2.start();
+
+        TestUtils.assertCounter(counter, 2, 2, TimeUnit.SECONDS);
+        client1.halt();
+
+        remote.append(origin.query().all().asResultSet().subset(1000, 1500));
+        remote.commit();
+
+        TestUtils.assertCounter(counter, 3, 2, TimeUnit.SECONDS);
+
+
+        client1 = new JournalClient(new ClientConfig("localhost"), factory);
+        client1.subscribe(Quote.class, "remote", "local1", new TxListener() {
+            @Override
+            public void onCommit() {
+                counter.incrementAndGet();
+            }
+        });
+        client1.start();
+
+        remote.append(origin.query().all().asResultSet().subset(1500, size));
+        remote.commit();
+
+        TestUtils.assertCounter(counter, 6, 2, TimeUnit.SECONDS);
+
+        Journal<Quote> local1r = factory.reader(Quote.class, "local1");
+        Journal<Quote> local2r = factory.reader(Quote.class, "local2");
+
+        Assert.assertEquals(size, local1r.size());
+        Assert.assertEquals(size, local2r.size());
+
+        client1.halt();
+        client2.halt();
+        server.halt();
     }
 
     @Test
@@ -113,99 +270,6 @@ public class IntegrationTest extends AbstractTest {
         Journal<TestEntity> local2 = factory.reader(TestEntity.class, "local2");
         Assert.assertEquals("Remote2 has wrong size", size, remote2.size());
         Assert.assertEquals("Local2 has wrong size", size, local2.size());
-    }
-
-    @Test
-    public void testTwoClientsSync() throws Exception {
-        int size = 10000;
-        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
-        TestUtils.generateQuoteData(origin, size);
-
-        JournalWriter<Quote> remote = factory.writer(Quote.class, "remote");
-        remote.append(origin.query().all().asResultSet().subset(0, 3000));
-        server.publish(remote);
-        server.start();
-
-        try (JournalWriter<Quote> local1 = factory.writer(Quote.class, "local1")) {
-            local1.append(origin.query().all().asResultSet().subset(0, 1000));
-        }
-
-        try (JournalWriter<Quote> local2 = factory.writer(Quote.class, "local2")) {
-            local2.append(origin.query().all().asResultSet().subset(0, 1500));
-        }
-
-        final CountDownLatch latch = new CountDownLatch(2);
-
-        client.subscribe(Quote.class, "remote", "local1", new TxListener() {
-            @Override
-            public void onCommit() {
-                latch.countDown();
-            }
-        });
-
-        JournalClient client2 = new JournalClient(new ClientConfig("localhost"), factory);
-
-        client2.subscribe(Quote.class, "remote", "local2", new TxListener() {
-            @Override
-            public void onCommit() {
-                latch.countDown();
-            }
-        });
-
-        client.start();
-        client2.start();
-
-        remote.append(origin.query().all().asResultSet().subset(3000, 10000));
-        remote.commit();
-
-        latch.await();
-
-        client.halt();
-        client2.halt();
-        server.halt();
-
-        Journal<Quote> local1r = factory.reader(Quote.class, "local1");
-        Journal<Quote> local2r = factory.reader(Quote.class, "local2");
-
-        Assert.assertEquals(size, local1r.size());
-        Assert.assertEquals(size, local2r.size());
-    }
-
-    @Test
-    public void testServerStartStop() throws Exception {
-        server.start();
-        server.halt();
-        Assert.assertFalse(server.isRunning());
-    }
-
-    @Test(expected = JournalNetworkException.class)
-    public void testClientConnect() throws Exception {
-        client.start();
-    }
-
-    @Test
-    public void testClientConnectServerHalt() throws Exception {
-        server.start();
-        client.start();
-        Thread.sleep(TimeUnit.SECONDS.toMillis(1));
-        server.halt();
-        Assert.assertEquals(0, server.getConnectedClients());
-        Assert.assertFalse(server.isRunning());
-        Thread.sleep(500);
-        Assert.assertFalse(client.isRunning());
-        client.halt();
-    }
-
-    @Test
-    public void testClientDisconnect() throws Exception {
-        server.start();
-        client.start();
-        Thread.sleep(100);
-        client.halt();
-        Assert.assertFalse(client.isRunning());
-        Thread.sleep(100);
-        Assert.assertEquals(0, server.getConnectedClients());
-        server.halt();
     }
 
     @Test

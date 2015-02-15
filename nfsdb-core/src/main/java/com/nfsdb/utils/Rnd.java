@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,16 +30,24 @@ public class Rnd {
         this.s1 = 0xdee4c0ed;
     }
 
-    public long nextLong() {
-        long l1 = s0;
-        long l0 = s1;
-        s0 = l0;
-        l1 ^= l1 << 23;
-        return (s1 = l1 ^ l0 ^ (l1 >> 17) ^ (l0 >> 26)) + l0;
+    public boolean nextBoolean() {
+        return nextLong(1) != 0;
     }
 
-    public long nextLong(int bits) {
-        return nextLong() >>> (64 - bits);
+    public byte[] nextBytes(int len) {
+        byte bytes[] = new byte[len];
+        for (int i = 0; i < len; i++) {
+            bytes[i] = (byte) (nextPositiveInt() % 25 + 66);
+        }
+        return bytes;
+    }
+
+    public void nextChars(long address, int len) {
+        long limit = address + len - 2;
+        while (address < limit) {
+            Unsafe.getUnsafe().putChar(address, (char) (nextPositiveInt() % 25 + 66));
+            address += 2;
+        }
     }
 
     public double nextDouble() {
@@ -54,9 +62,26 @@ public class Rnd {
         return (int) nextLong();
     }
 
+    public long nextLong() {
+        long l1 = s0;
+        long l0 = s1;
+        s0 = l0;
+        l1 ^= l1 << 23;
+        return (s1 = l1 ^ l0 ^ (l1 >> 17) ^ (l0 >> 26)) + l0;
+    }
+
+    public long nextLong(int bits) {
+        return nextLong() >>> (64 - bits);
+    }
+
     public int nextPositiveInt() {
         int n = (int) nextLong();
         return n > 0 ? n : -n;
+    }
+
+    public long nextPositiveLong() {
+        long l = nextLong();
+        return l > 0 ? l : -l;
     }
 
     public String nextString(int len) {
@@ -65,25 +90,5 @@ public class Rnd {
             chars[i] = (char) (nextPositiveInt() % 25 + 66);
         }
         return new String(chars);
-    }
-
-    public void nextChars(long address, int len) {
-        long limit = address + len - 2;
-        while (address < limit) {
-            Unsafe.getUnsafe().putChar(address, (char) (nextPositiveInt() % 25 + 66));
-            address += 2;
-        }
-    }
-
-    public byte[] nextBytes(int len) {
-        byte bytes[] = new byte[len];
-        for (int i = 0; i < len; i++) {
-            bytes[i] = (byte) (nextPositiveInt() % 25 + 66);
-        }
-        return bytes;
-    }
-
-    public boolean nextBoolean() {
-        return nextLong(1) != 0;
     }
 }

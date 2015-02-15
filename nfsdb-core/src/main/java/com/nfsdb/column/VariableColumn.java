@@ -18,7 +18,7 @@ package com.nfsdb.column;
 
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.export.CharSink;
+import com.nfsdb.exp.CharSink;
 import com.nfsdb.utils.Unsafe;
 
 import java.io.IOException;
@@ -40,73 +40,9 @@ public class VariableColumn extends AbstractColumn {
     }
 
     @Override
-    public void commit() {
-        if (binOut.offset != -1) {
-            binOut.close();
-        }
-        super.commit();
-        indexColumn.commit();
-    }
-
-    @Override
-    public void force() {
-        super.force();
-        indexColumn.force();
-    }
-
-    @Override
     public void close() {
         indexColumn.close();
         super.close();
-    }
-
-    @Override
-    public void truncate(long size) {
-
-        if (size < 0) {
-            size = 0;
-        }
-
-        if (size < size()) {
-            preCommit(getOffset(size));
-        }
-        indexColumn.truncate(size);
-    }
-
-    @Override
-    public long size() {
-        return indexColumn.size();
-    }
-
-    @Override
-    public long getOffset(long localRowID) {
-        return indexColumn.getLong(localRowID);
-    }
-
-    public String getStr(long localRowID) {
-        long offset = indexColumn.getLong(localRowID);
-        int len = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
-
-        if (len == -1) {
-            return null;
-        }
-        return getStr0(mappedFile.getAddress(offset + 4, len * 2), len);
-    }
-
-
-    public void getStr(long localRowID, CharSink sink) {
-        long offset = indexColumn.getLong(localRowID);
-        int len = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
-
-        if (len == -1) {
-            return;
-        }
-
-        long address = mappedFile.getAddress(offset + 4, len * 2);
-        for (int i = 0; i < len; i++) {
-            sink.put(Unsafe.getUnsafe().getChar(address));
-            address += 2;
-        }
     }
 
     public boolean cmpStr(long localRowID, String value) {
@@ -128,22 +64,13 @@ public class VariableColumn extends AbstractColumn {
         return true;
     }
 
-    public long putStr(CharSequence value) {
-        if (value == null) {
-            return putNull();
-        } else {
-            int l;
-            int len = (l = value.length()) * 2 + 4;
-            long offset = getOffset();
-            long address = mappedFile.getAddress(offset, len);
-            Unsafe.getUnsafe().putInt(address, l);
-            address += 4;
-            for (int i = 0; i < l; i++) {
-                Unsafe.getUnsafe().putChar(address, value.charAt(i));
-                address += 2;
-            }
-            return commitAppend(offset, len);
+    @Override
+    public void commit() {
+        if (binOut.offset != -1) {
+            binOut.close();
         }
+        super.commit();
+        indexColumn.commit();
     }
 
     @Override
@@ -152,8 +79,95 @@ public class VariableColumn extends AbstractColumn {
         this.indexColumn.compact();
     }
 
+    @Override
+    public void force() {
+        super.force();
+        indexColumn.force();
+    }
+
+    public void getBin(long localRowID, ByteBuffer target) {
+        long offset = getOffset(localRowID) + 4; // skip size
+
+        while (target.hasRemaining()) {
+            long address = mappedFile.getAddress(offset, 1);
+            int len = mappedFile.getAddressSize(offset);
+            int min = len < target.remaining() ? len : target.remaining();
+
+            for (int i = 0; i < min; i++) {
+                target.put(Unsafe.getUnsafe().getByte(address++));
+            }
+            offset += min;
+        }
+    }
+
+    public void getBin(long localRowID, OutputStream s) {
+        getBin(localRowID, s, getBinSize(localRowID));
+    }
+
+    public void getBin(long localRowID, OutputStream s, int len) {
+        initStreamBuf();
+
+        long offset = getOffset(localRowID) + 4; // skip size
+
+        int blockRemaining = 0;
+        long blockAddress = 0;
+
+        try {
+            while (len > 0) {
+                if (blockRemaining == 0) {
+                    blockAddress = mappedFile.getAddress(offset, 1);
+                    blockRemaining = mappedFile.getAddressSize(offset);
+                }
+
+                int l = len > blockRemaining ? blockRemaining : len;
+                Unsafe.getUnsafe().copyMemory(null, blockAddress, streamBuf, sun.misc.Unsafe.ARRAY_BYTE_BASE_OFFSET, l);
+                offset += l;
+                blockRemaining -= l;
+                len -= l;
+                blockAddress += l;
+                s.write(streamBuf, 0, l);
+            }
+        } catch (IOException e) {
+            throw new JournalRuntimeException(e);
+        }
+    }
+
+    public int getBinSize(long localRowID) {
+        return Unsafe.getUnsafe().getInt(mappedFile.getAddress(getOffset(localRowID), 4));
+    }
+
     public FixedColumn getIndexColumn() {
         return indexColumn;
+    }
+
+    @Override
+    public long getOffset(long localRowID) {
+        return indexColumn.getLong(localRowID);
+    }
+
+    public String getStr(long localRowID) {
+        long offset = indexColumn.getLong(localRowID);
+        int len = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
+
+        if (len == -1) {
+            return null;
+        }
+        return getStr0(mappedFile.getAddress(offset + 4, len * 2), len);
+    }
+
+    public void getStr(long localRowID, CharSink sink) {
+        long offset = indexColumn.getLong(localRowID);
+        int len = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
+
+        if (len == -1) {
+            return;
+        }
+
+        long address = mappedFile.getAddress(offset + 4, len * 2);
+        for (int i = 0; i < len; i++) {
+            sink.put(Unsafe.getUnsafe().getChar(address));
+            address += 2;
+        }
     }
 
     public void putBin(ByteBuffer value) {
@@ -234,66 +248,56 @@ public class VariableColumn extends AbstractColumn {
         return binOut;
     }
 
-    public int getBinSize(long localRowID) {
-        return Unsafe.getUnsafe().getInt(mappedFile.getAddress(getOffset(localRowID), 4));
-    }
-
-    public void getBin(long localRowID, ByteBuffer target) {
-        long offset = getOffset(localRowID) + 4; // skip size
-
-        while (target.hasRemaining()) {
-            long address = mappedFile.getAddress(offset, 1);
-            int len = mappedFile.getAddressSize(offset);
-            int min = len < target.remaining() ? len : target.remaining();
-
-            for (int i = 0; i < min; i++) {
-                target.put(Unsafe.getUnsafe().getByte(address++));
-            }
-            offset += min;
-        }
-    }
-
-    public void getBin(long localRowID, OutputStream s) {
-        getBin(localRowID, s, getBinSize(localRowID));
-    }
-
-    public void getBin(long localRowID, OutputStream s, int len) {
-        initStreamBuf();
-
-        long offset = getOffset(localRowID) + 4; // skip size
-
-        int blockRemaining = 0;
-        long blockAddress = 0;
-
-        try {
-            while (len > 0) {
-                if (blockRemaining == 0) {
-                    blockAddress = mappedFile.getAddress(offset, 1);
-                    blockRemaining = mappedFile.getAddressSize(offset);
-                }
-
-                int l = len > blockRemaining ? blockRemaining : len;
-                Unsafe.getUnsafe().copyMemory(null, blockAddress, streamBuf, sun.misc.Unsafe.ARRAY_BYTE_BASE_OFFSET, l);
-                offset += l;
-                blockRemaining -= l;
-                len -= l;
-                blockAddress += l;
-                s.write(streamBuf, 0, l);
-            }
-        } catch (IOException e) {
-            throw new JournalRuntimeException(e);
-        }
-    }
-
-    public DirectInputStream getBin(long localRowID) {
-        binIn.reset(getOffset(localRowID));
-        return binIn;
-    }
-
     public long putNull() {
         long offset = getOffset();
         Unsafe.getUnsafe().putInt(mappedFile.getAddress(offset, 4), -1);
         return commitAppend(offset, 4);
+    }
+
+    public long putStr(CharSequence value) {
+        if (value == null) {
+            return putNull();
+        } else {
+            int l;
+            int len = (l = value.length()) * 2 + 4;
+            long offset = getOffset();
+            long address = mappedFile.getAddress(offset, len);
+            Unsafe.getUnsafe().putInt(address, l);
+            address += 4;
+            for (int i = 0; i < l; i++) {
+                Unsafe.getUnsafe().putChar(address, value.charAt(i));
+                address += 2;
+            }
+            return commitAppend(offset, len);
+        }
+    }
+
+    @Override
+    public long size() {
+        return indexColumn.size();
+    }
+
+    @Override
+    public void truncate(long size) {
+
+        if (size < 0) {
+            size = 0;
+        }
+
+        if (size < size()) {
+            preCommit(getOffset(size));
+        }
+        indexColumn.truncate(size);
+    }
+
+    long commitAppend(long offset, int size) {
+        preCommit(offset + size);
+        return indexColumn.putLong(offset);
+    }
+    
+    public DirectInputStream getBin(long localRowID) {
+        binIn.reset(getOffset(localRowID));
+        return binIn;
     }
 
     private void initStreamBuf() {
@@ -310,17 +314,20 @@ public class VariableColumn extends AbstractColumn {
         return new String(buffer, 0, len);
     }
 
-    long commitAppend(long offset, int size) {
-        preCommit(offset + size);
-        return indexColumn.putLong(offset);
-    }
-
     private class BinaryOutputStream extends OutputStream {
 
         private long offset = -1;
         private long workOffset;
         private long blockAddress;
         private int blockRemaining;
+
+        @Override
+        public void close() {
+            long a = mappedFile.getAddress(offset, 4);
+            Unsafe.getUnsafe().putInt(a, (int) (workOffset - offset - 4));
+            commitAppend(offset, (int) (workOffset - offset));
+            offset = -1;
+        }
 
         @Override
         public void write(int b) throws IOException {
@@ -330,14 +337,6 @@ public class VariableColumn extends AbstractColumn {
             Unsafe.getUnsafe().putByte(blockAddress++, (byte) b);
             workOffset++;
             blockRemaining--;
-        }
-
-        @Override
-        public void close() {
-            long a = mappedFile.getAddress(offset, 4);
-            Unsafe.getUnsafe().putInt(a, (int) (workOffset - offset - 4));
-            commitAppend(offset, (int) (workOffset - offset));
-            offset = -1;
         }
 
         private void reset(long offset) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ import com.nfsdb.net.bridge.JournalEvent;
 import com.nfsdb.net.bridge.JournalEventBridge;
 import com.nfsdb.net.bridge.JournalEventHandler;
 import com.nfsdb.net.bridge.JournalEventProcessor;
-import com.nfsdb.tx.TxFuture;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -29,7 +28,7 @@ import java.util.concurrent.*;
 public class JournalEventBridgeTest {
     @Test
     public void testStartStop() throws Exception {
-        JournalEventBridge bridge = new JournalEventBridge(2, TimeUnit.SECONDS, 16);
+        JournalEventBridge bridge = new JournalEventBridge(2, TimeUnit.SECONDS);
         bridge.start();
         for (int i = 0; i < 10000; i++) {
             bridge.publish(10, System.currentTimeMillis());
@@ -40,12 +39,11 @@ public class JournalEventBridgeTest {
     @Test
     public void testTwoPublishersThreeConsumers() throws Exception {
         ExecutorService service = Executors.newCachedThreadPool();
-        final JournalEventBridge bridge = new JournalEventBridge(50, TimeUnit.MILLISECONDS, 2048);
+        final JournalEventBridge bridge = new JournalEventBridge(50, TimeUnit.MILLISECONDS);
         bridge.start();
         final Future[] publishers = new Future[2];
         final Handler[] consumers = new Handler[3];
         final int batchSize = 1000;
-        final int ackTimeoutMs = 50;
 
         final CyclicBarrier barrier = new CyclicBarrier(publishers.length + consumers.length);
         final CountDownLatch latch = new CountDownLatch(publishers.length + consumers.length);
@@ -60,13 +58,8 @@ public class JournalEventBridgeTest {
                         barrier.await();
                         for (int k = 0; k < batchSize; k++) {
                             long ts = System.nanoTime();
-                            TxFuture future = bridge.createRemoteCommitFuture(index, ts);
                             bridge.publish(index, ts);
-                            if (future.waitFor(ackTimeoutMs, TimeUnit.MILLISECONDS)) {
-                                count++;
-                            } else {
-                                break;
-                            }
+                            count++;
                         }
                     } catch (Exception e) {
                         e.printStackTrace();
@@ -141,15 +134,15 @@ public class JournalEventBridgeTest {
             this.index = index;
         }
 
+        public int getCounter() {
+            return counter;
+        }
+
         @Override
         public void handle(JournalEvent event) {
             if (event.getIndex() == index) {
                 counter++;
             }
-        }
-
-        public int getCounter() {
-            return counter;
         }
     }
 }

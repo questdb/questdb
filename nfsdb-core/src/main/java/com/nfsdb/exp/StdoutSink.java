@@ -14,10 +14,23 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst;
+package com.nfsdb.exp;
 
-import com.nfsdb.lang.cst.impl.qry.JournalRecordSource;
+import java.io.FileDescriptor;
+import java.io.FileOutputStream;
+import java.io.IOException;
 
-public interface JournalSourceLookup {
-    JournalRecordSource source(String value);
+public class StdoutSink extends FlexBufferSink {
+    private final FileOutputStream out;
+
+    public StdoutSink() {
+        this.out = new FileOutputStream(FileDescriptor.out);
+        this.channel = out.getChannel();
+    }
+
+    @Override
+    public void close() throws IOException {
+        super.close();
+        out.close();
+    }
 }

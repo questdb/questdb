@@ -16,10 +16,12 @@
 
 package com.nfsdb.net.cluster;
 
+import com.nfsdb.net.config.ServerNode;
+
 public interface ClusterStatusListener {
     void onNodeActive();
 
-    void onNodeStandingBy(ClusterNode activeNode);
+    void onNodeStandingBy(ServerNode activeNode);
 
     void onShutdown();
 }

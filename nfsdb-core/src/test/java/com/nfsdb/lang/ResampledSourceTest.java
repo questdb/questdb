@@ -18,8 +18,8 @@ package com.nfsdb.lang;
 
 import com.nfsdb.Journal;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.export.RecordSourcePrinter;
-import com.nfsdb.export.StringSink;
+import com.nfsdb.exp.RecordSourcePrinter;
+import com.nfsdb.exp.StringSink;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.lang.cst.impl.agg.*;
 import com.nfsdb.lang.cst.impl.jsrc.JournalSourceImpl;

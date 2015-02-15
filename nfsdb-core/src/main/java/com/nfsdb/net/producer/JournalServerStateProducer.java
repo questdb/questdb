@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,13 +28,15 @@ public class JournalServerStateProducer extends AbstractObjectProducer<JournalSe
 
     @Override
     protected int getBufferSize(JournalServerState value) {
-        return 4 + 1 + value.getNonLagPartitionCount() * SUMMARY_RECORD_SIZE
+        return 8 + 8 + 4 + 1 + value.getNonLagPartitionCount() * SUMMARY_RECORD_SIZE
                 + 2 + (value.getLagPartitionName() != null ? 2 * value.getLagPartitionName().length() : 0)
                 + SUMMARY_RECORD_SIZE;
     }
 
     @Override
     protected void write(JournalServerState value, ByteBuffer buffer) {
+        buffer.putLong(value.getTxn());
+        buffer.putLong(value.getTxPin());
         buffer.put((byte) (value.isSymbolTables() ? 1 : 0));
         buffer.putInt(value.getNonLagPartitionCount());
         for (int i = 0; i < value.getNonLagPartitionCount(); i++) {

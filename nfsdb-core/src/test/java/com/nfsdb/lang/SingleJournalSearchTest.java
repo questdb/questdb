@@ -17,8 +17,8 @@
 package com.nfsdb.lang;
 
 import com.nfsdb.JournalWriter;
-import com.nfsdb.export.RecordSourcePrinter;
-import com.nfsdb.export.StringSink;
+import com.nfsdb.exp.RecordSourcePrinter;
+import com.nfsdb.exp.StringSink;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.lang.cst.RowSource;
 import com.nfsdb.lang.cst.impl.fltr.DoubleGreaterThanRowFilter;
@@ -83,37 +83,6 @@ public class SingleJournalSearchTest {
     }
 
     @Test
-    public void testUnionAndFilter() throws Exception {
-
-        final String expected = "2013-03-12T13:23:20.000Z\tBP.L\t0.754494592594\t0.069385533063\t1360360213\t403082481\tFast trading\tSK\t\n" +
-                "2013-03-12T07:50:00.000Z\tWTB.L\t0.588779883603\t0.245365403760\t1675014181\t2093945023\tFast trading\tGR\t\n";
-        StringRef sym = new StringRef("sym");
-
-        // from quote where timestamp in ("2013-03-12T00:00:00.000Z", "2013-03-13T00:00:00.000Z") and (sym in ("BP.L", "XXX") or sym = "WTB.L")
-        assertEquals(expected, new JournalSourceImpl(new IntervalPartitionSource(new JournalPartitionSource(journal, false), new Interval("2013-03-12T00:00:00.000Z", "2013-03-13T00:00:00.000Z")), new FilteredRowSource(
-                        new UnionRowSource(
-                                new RowSource[]{
-                                        new KvIndexRowSource(
-                                                sym
-                                                ,
-                                                new PartialSymbolKeySource(sym, new ArrayList<String>() {{
-                                                    add("BP.L");
-                                                    add("XXX");
-                                                }})
-                                        ), new KvIndexRowSource(
-                                        sym
-                                        ,
-                                        new PartialSymbolKeySource(sym, new ArrayList<String>() {{
-                                            add("WTB.L");
-                                        }})
-                                )}
-                        )
-                        , new DoubleGreaterThanRowFilter("bid", 0.4)
-                ))
-        );
-    }
-
-    @Test
     public void testHead() throws Exception {
         final String expected = "2013-03-14T22:20:00.000Z\tADM.L\t0.222782760571\t0.713311797139\t273855268\t1241896809\tFast trading\tSK\t\n" +
                 "2013-03-14T11:13:20.000Z\tBT-A.L\t0.054623153514\t0.022790647791\t1665489604\t1825275267\tFast trading\tLXE\t\n" +
@@ -174,6 +143,37 @@ public class SingleJournalSearchTest {
                 )
         );
 
+    }
+
+    @Test
+    public void testUnionAndFilter() throws Exception {
+
+        final String expected = "2013-03-12T13:23:20.000Z\tBP.L\t0.754494592594\t0.069385533063\t1360360213\t403082481\tFast trading\tSK\t\n" +
+                "2013-03-12T07:50:00.000Z\tWTB.L\t0.588779883603\t0.245365403760\t1675014181\t2093945023\tFast trading\tGR\t\n";
+        StringRef sym = new StringRef("sym");
+
+        // from quote where timestamp in ("2013-03-12T00:00:00.000Z", "2013-03-13T00:00:00.000Z") and (sym in ("BP.L", "XXX") or sym = "WTB.L")
+        assertEquals(expected, new JournalSourceImpl(new IntervalPartitionSource(new JournalPartitionSource(journal, false), new Interval("2013-03-12T00:00:00.000Z", "2013-03-13T00:00:00.000Z")), new FilteredRowSource(
+                        new UnionRowSource(
+                                new RowSource[]{
+                                        new KvIndexRowSource(
+                                                sym
+                                                ,
+                                                new PartialSymbolKeySource(sym, new ArrayList<String>() {{
+                                                    add("BP.L");
+                                                    add("XXX");
+                                                }})
+                                        ), new KvIndexRowSource(
+                                        sym
+                                        ,
+                                        new PartialSymbolKeySource(sym, new ArrayList<String>() {{
+                                            add("WTB.L");
+                                        }})
+                                )}
+                        )
+                        , new DoubleGreaterThanRowFilter("bid", 0.4)
+                ))
+        );
     }
 
     private void assertEquals(CharSequence expected, RecordSource<? extends Record> src) {

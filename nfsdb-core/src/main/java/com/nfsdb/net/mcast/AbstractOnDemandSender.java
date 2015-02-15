@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,10 +19,12 @@ package com.nfsdb.net.mcast;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.logging.Logger;
-import com.nfsdb.net.config.NetworkConfig;
+import com.nfsdb.net.config.DatagramChannelWrapper;
+import com.nfsdb.net.config.ServerConfig;
 import com.nfsdb.utils.ByteBuffers;
 
-import java.net.*;
+import java.net.SocketAddress;
+import java.net.StandardSocketOptions;
 import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
 import java.nio.channels.SelectionKey;
@@ -33,24 +35,37 @@ import java.util.concurrent.CountDownLatch;
 public abstract class AbstractOnDemandSender {
 
     private static final Logger LOGGER = Logger.getLogger(AbstractOnDemandSender.class);
-
-    private final NetworkConfig networkConfig;
-    private final InetSocketAddress socketAddress;
+    final int instance;
+    private final ServerConfig serverConfig;
     private final int inMessageCode;
     private final int outMessageCode;
     private final String threadName;
     private Selector selector;
     private volatile boolean running = false;
     private volatile boolean selecting = false;
-
     private CountDownLatch latch;
 
-    public AbstractOnDemandSender(NetworkConfig networkConfig, int inMessageCode, int outMessageCode, int instance) throws JournalNetworkException {
-        this.networkConfig = networkConfig;
-        this.socketAddress = new InetSocketAddress(networkConfig.getMulticastAddress(), networkConfig.getMulticastPort());
+    AbstractOnDemandSender(ServerConfig serverConfig, int inMessageCode, int outMessageCode, int instance) {
+        this.serverConfig = serverConfig;
         this.inMessageCode = inMessageCode;
         this.outMessageCode = outMessageCode;
         this.threadName = "nfsdb-mcast-sender-" + instance;
+        this.instance = instance;
+    }
+
+    public void halt() {
+        if (running) {
+            while (!selecting) {
+                Thread.yield();
+            }
+            selector.wakeup();
+            running = false;
+            try {
+                latch.await();
+            } catch (InterruptedException e) {
+                throw new JournalRuntimeException(e);
+            }
+        }
     }
 
     public void start() {
@@ -68,19 +83,13 @@ public abstract class AbstractOnDemandSender {
         }
     }
 
+    protected abstract void prepareBuffer(ByteBuffer buf) throws JournalNetworkException;
+
     private void start0() {
         try {
-            InetAddress multicastAddress = socketAddress.getAddress();
-            ProtocolFamily family = NetworkConfig.isInet6(multicastAddress) ? StandardProtocolFamily.INET6 : StandardProtocolFamily.INET;
-
-            LOGGER.info("Sending on: " + networkConfig.getNetworkInterface());
-
-            try (DatagramChannel dc = DatagramChannel.open(family)
-                    .setOption(StandardSocketOptions.SO_REUSEADDR, true)
-                    .setOption(StandardSocketOptions.IP_MULTICAST_IF, networkConfig.getNetworkInterface())
-                    .bind(new InetSocketAddress(socketAddress.getPort()))) {
-
-                dc.join(multicastAddress, networkConfig.getNetworkInterface());
+            try (DatagramChannelWrapper dcw = serverConfig.openDatagramChannel(instance)) {
+                DatagramChannel dc = dcw.getChannel();
+                LOGGER.info("Sending to %s on [%s] ", dcw.getGroup(), dc.getOption(StandardSocketOptions.IP_MULTICAST_IF).getName());
 
                 selector = Selector.open();
                 selecting = true;
@@ -104,10 +113,11 @@ public abstract class AbstractOnDemandSender {
                                 if (sa != null) {
                                     buf.flip();
                                     if (buf.remaining() >= 4 && inMessageCode == buf.getInt(0)) {
+                                        LOGGER.debug("Sending server information [%s] to [%s] ", inMessageCode, sa);
                                         buf.clear();
                                         buf.putInt(outMessageCode);
                                         prepareBuffer(buf);
-                                        dc.send(buf, socketAddress);
+                                        dc.send(buf, dcw.getGroup());
                                     }
                                 }
                             }
@@ -121,23 +131,6 @@ public abstract class AbstractOnDemandSender {
             LOGGER.error("Multicast sender crashed", e);
         } finally {
             latch.countDown();
-        }
-    }
-
-    protected abstract void prepareBuffer(ByteBuffer buf) throws JournalNetworkException;
-
-    public void halt() {
-        if (running) {
-            while (!selecting) {
-                Thread.yield();
-            }
-            selector.wakeup();
-            running = false;
-            try {
-                latch.await();
-            } catch (InterruptedException e) {
-                throw new JournalRuntimeException(e);
-            }
         }
     }
 }

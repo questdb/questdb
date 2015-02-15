@@ -14,13 +14,31 @@
  * limitations under the License.
  */
 
-package com.nfsdb.export;
+package com.nfsdb.exp;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
 
 public class StringSink implements CharSink, CharSequence {
     private final StringBuilder builder = new StringBuilder();
+
+    @Override
+    public char charAt(int index) {
+        return builder.charAt(index);
+    }
+
+    public void clear() {
+        builder.setLength(0);
+    }
+
+    @Override
+    public void flush() {
+    }
+
+    @Override
+    public int length() {
+        return builder.length();
+    }
 
     @Override
     public CharSink put(char c) {
@@ -35,7 +53,8 @@ public class StringSink implements CharSink, CharSequence {
     }
 
     @Override
-    public void flush() {
+    public CharSequence subSequence(int lo, int hi) {
+        return builder.subSequence(lo, hi);
     }
 
     /* Either IDEA or FireBug complain, annotation galore */
@@ -44,24 +63,5 @@ public class StringSink implements CharSink, CharSequence {
     @Override
     public String toString() {
         return builder.toString();
-    }
-
-    public void clear() {
-        builder.setLength(0);
-    }
-
-    @Override
-    public int length() {
-        return builder.length();
-    }
-
-    @Override
-    public char charAt(int index) {
-        return builder.charAt(index);
-    }
-
-    @Override
-    public CharSequence subSequence(int lo, int hi) {
-        return builder.subSequence(lo, hi);
     }
 }

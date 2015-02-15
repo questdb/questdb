@@ -25,7 +25,7 @@ import com.nfsdb.factory.configuration.RecordColumnMetadata;
 public abstract class AbstractJournalSource extends AbstractImmutableIterator<JournalRecord> implements JournalRecordSource, RecordMetadata {
     private final JournalMetadata metadata;
 
-    public AbstractJournalSource(JournalMetadata metadata) {
+    protected AbstractJournalSource(JournalMetadata metadata) {
         this.metadata = metadata;
     }
 
@@ -40,18 +40,13 @@ public abstract class AbstractJournalSource extends AbstractImmutableIterator<Jo
     }
 
     @Override
-    public int getColumnIndex(CharSequence name) {
-        return metadata.getColumnIndex(name);
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return this;
-    }
-
-    @Override
     public SymbolTable getSymbolTable(int index) {
         return getJournal().getSymbolTable(getJournal().getMetadata().getColumnMetadata(index).name);
+    }
+
+    @Override
+    public int getColumnIndex(CharSequence name) {
+        return metadata.getColumnIndex(name);
     }
 
     @Override

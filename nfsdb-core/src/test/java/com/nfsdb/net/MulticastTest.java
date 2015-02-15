@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,9 @@ import com.nfsdb.Journal;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.model.Quote;
+import com.nfsdb.net.config.ClientConfig;
 import com.nfsdb.net.config.ServerConfig;
+import com.nfsdb.net.config.ServerNode;
 import com.nfsdb.net.mcast.AbstractOnDemandSender;
 import com.nfsdb.net.mcast.OnDemandAddressPoller;
 import com.nfsdb.net.mcast.OnDemandAddressSender;
@@ -29,22 +31,17 @@ import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.net.InetSocketAddress;
 import java.net.SocketException;
 import java.util.concurrent.TimeUnit;
 
 public class MulticastTest extends AbstractTest {
 
     @Test
-    public void testLocalhostBehaviour() throws Exception {
-
+    public void testAllNics() throws Exception {
         if (isMulticastDisabled()) {
             return;
         }
-
-        ServerConfig networkConfig = new ServerConfig();
-        networkConfig.setHostname("localhost");
-        assertMulticast(networkConfig);
+        assertMulticast();
     }
 
     @Test
@@ -52,7 +49,7 @@ public class MulticastTest extends AbstractTest {
         if (isMulticastDisabled()) {
             return;
         }
-        assertMulticast(new ServerConfig());
+        assertMulticast();
     }
 
     @Test
@@ -61,19 +58,7 @@ public class MulticastTest extends AbstractTest {
             return;
         }
         System.setProperty("java.net.preferIPv4Stack", "true");
-        ServerConfig networkConfig = new ServerConfig();
-        networkConfig.setHostname("localhost");
-        assertMulticast(networkConfig);
-    }
-
-    @Test
-    public void testAllNics() throws Exception {
-        if (isMulticastDisabled()) {
-            return;
-        }
-        ServerConfig networkConfig = new ServerConfig();
-        networkConfig.setHostname(null);
-        assertMulticast(networkConfig);
+        assertMulticast();
     }
 
     @Test
@@ -82,13 +67,12 @@ public class MulticastTest extends AbstractTest {
             return;
         }
 
-        ServerConfig networkConfig = new ServerConfig() {{
-            setHostname("0:0:0:0:0:0:0:0");
+        JournalServer server = new JournalServer(new ServerConfig() {{
+            addNode(new ServerNode(0, "[0:0:0:0:0:0:0:0]"));
             setHeartbeatFrequency(100);
-        }};
-
-        JournalServer server = new JournalServer(networkConfig, factory);
-        JournalClient client = new JournalClient(factory);
+        }}, factory, null, 0);
+        JournalClient client = new JournalClient(new ClientConfig() {{
+        }}, factory);
 
 
         JournalWriter<Quote> remote = factory.writer(Quote.class, "remote");
@@ -101,17 +85,27 @@ public class MulticastTest extends AbstractTest {
         TestUtils.assertDataEquals(remote, local);
     }
 
-    private void assertMulticast(ServerConfig serverConfig) throws JournalNetworkException {
-        AbstractOnDemandSender sender = new OnDemandAddressSender(serverConfig, 120, 150, 0);
+    @Test
+    public void testLocalhostBehaviour() throws Exception {
+
+        if (isMulticastDisabled()) {
+            return;
+        }
+
+        assertMulticast();
+    }
+
+    private void assertMulticast() throws JournalNetworkException {
+        AbstractOnDemandSender sender = new OnDemandAddressSender(new ServerConfig(), 120, 150, 0);
         sender.start();
 
-        OnDemandAddressPoller poller = new OnDemandAddressPoller(serverConfig, 150, 120);
-        InetSocketAddress address = poller.poll(2, 500, TimeUnit.MILLISECONDS);
+        OnDemandAddressPoller poller = new OnDemandAddressPoller(new ClientConfig(), 150, 120);
+        ServerNode address = poller.poll(2, 500, TimeUnit.MILLISECONDS);
         Assert.assertNotNull(address);
         sender.halt();
     }
 
     private boolean isMulticastDisabled() throws JournalNetworkException, SocketException {
-        return !new ServerConfig().getNetworkInterface().supportsMulticast();
+        return !new ServerConfig().getMultiCastInterface(0).supportsMulticast();
     }
 }
