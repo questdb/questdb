@@ -370,7 +370,6 @@ public class JournalServerAgent {
     private void setClientKey(ByteChannel channel, IndexedJournalKey indexedKey) throws JournalNetworkException {
         JournalKey<?> readerKey = indexedKey.getKey();
         IndexedJournalKey augmentedReaderKey = server.getWriterIndex0(readerKey);
-//        int writerIndex = server.getWriterIndex(readerKey);
         if (augmentedReaderKey == null) {
             error(channel, "Requested key not exported: " + readerKey);
         } else {

@@ -16,14 +16,22 @@
 
 package com.nfsdb.imp;
 
+import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Unsafe;
 import org.jetbrains.annotations.NotNull;
+import sun.nio.ch.DirectBuffer;
 
+import java.io.File;
+import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
 import java.util.ArrayList;
 import java.util.List;
 
 public class Csv {
     private final List<String> names = new ArrayList<>();
+    private final Listener listener;
     private boolean inQuote;
     private boolean delayedOutQuote;
     private boolean eol;
@@ -36,13 +44,12 @@ public class Csv {
     private boolean useLineRollBuf = false;
     private long lastLineStart;
     private long lineRollBufLen = 1024;
-    private long lineRollBufPtr = Unsafe.getUnsafe().allocateMemory(lineRollBufLen);
+    private final long lineRollBufPtr = Unsafe.getUnsafe().allocateMemory(lineRollBufLen);
     private long lineRollBufCur;
-    private CsvListener listener;
     private boolean header;
     private boolean ignoreEolOnce;
 
-    public Csv(boolean header, CsvListener listener) {
+    public Csv(boolean header, Listener listener) {
         this.header = header;
         this.listener = listener;
         reset();
@@ -50,6 +57,26 @@ public class Csv {
 
     public int getLineCount() {
         return lineCount;
+    }
+
+    public void parse(File file, long bufSize) throws IOException {
+        this.reset();
+        try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
+            try (FileChannel channel = raf.getChannel()) {
+                long size = channel.size();
+                long p = 0;
+                while (p < size) {
+                    MappedByteBuffer buf = channel.map(FileChannel.MapMode.READ_ONLY, p, size - p < bufSize ? size - p : bufSize);
+                    try {
+                        p += buf.remaining();
+                        parse(((DirectBuffer) buf).address(), buf.remaining());
+                    } finally {
+                        ByteBuffers.release(buf);
+                    }
+                }
+            }
+        }
+
     }
 
     public void parse(long lo, long len) {
@@ -250,7 +277,7 @@ public class Csv {
         this.lastLineStart = this.lo - lo;
     }
 
-    public interface CsvListener {
+    public interface Listener {
         void onError(int line);
 
         void onField(CharSequence value, int line, boolean eol);

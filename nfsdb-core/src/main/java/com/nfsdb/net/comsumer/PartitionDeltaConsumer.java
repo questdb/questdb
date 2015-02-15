@@ -23,8 +23,6 @@ import com.nfsdb.column.VariableColumn;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.net.ChannelConsumer;
 
-import java.nio.channels.ReadableByteChannel;
-
 public class PartitionDeltaConsumer extends ChannelConsumerGroup {
 
     private final Partition partition;
@@ -47,11 +45,6 @@ public class PartitionDeltaConsumer extends ChannelConsumerGroup {
             }
         }
         return consumers;
-    }
-
-    @Override
-    protected void doRead(ReadableByteChannel channel) throws JournalNetworkException {
-        super.doRead(channel);
     }
 
     @Override

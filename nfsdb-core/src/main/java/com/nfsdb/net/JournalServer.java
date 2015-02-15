@@ -41,7 +41,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class JournalServer {
 
-    public static final int JOURNAL_KEY_NOT_FOUND = -1;
     private static final Logger LOGGER = Logger.getLogger(JournalServer.class);
     private final AtomicInteger writerIdGenerator = new AtomicInteger(0);
     private final ObjIntHashMap<JournalWriter> writers = new ObjIntHashMap<>();
@@ -201,18 +200,7 @@ public class JournalServer {
         service.execute(new Acceptor());
     }
 
-    int getWriterIndex(JournalKey key) {
-        for (ObjIntHashMap.Entry<JournalWriter> e : writers.immutableIterator()) {
-            JournalKey jk = e.key.getKey();
-            if (jk.getId().equals(key.getId()) && (
-                    (jk.getLocation() == null && key.getLocation() == null)
-                            || (jk.getLocation() != null && jk.getLocation().equals(key.getLocation())))) {
-                return e.value;
-            }
-        }
-        return JOURNAL_KEY_NOT_FOUND;
-    }
-
+    @SuppressWarnings("unchecked")
     IndexedJournalKey getWriterIndex0(JournalKey key) {
         for (ObjIntHashMap.Entry<JournalWriter> e : writers.immutableIterator()) {
             JournalKey jk = e.key.getKey();

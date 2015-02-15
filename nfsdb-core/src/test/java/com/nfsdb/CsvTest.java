@@ -16,75 +16,97 @@
 
 package com.nfsdb;
 
+import com.nfsdb.exp.StringSink;
 import com.nfsdb.imp.Csv;
-import com.nfsdb.utils.ByteBuffers;
+import org.junit.Assert;
 import org.junit.Test;
-import sun.nio.ch.DirectBuffer;
 
-import java.io.IOException;
-import java.io.RandomAccessFile;
-import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
+import java.io.File;
 import java.util.List;
 
 public class CsvTest {
 
-    public static final int BUF_SIZE = 1024 * 1024 * 10;
-
-    public static void main(String[] args) throws IOException {
-        RandomAccessFile raf = new RandomAccessFile("D:\\data\\worldcitiespop.txt", "r");
-        FileChannel channel = raf.getChannel();
-        long size = channel.size();
-
-        Csv csv = new Csv(false, new Csv.CsvListener() {
-            @Override
-            public void onError(int line) {
-                System.out.println("Error on line: " + line);
-            }
-
-            @Override
-            public void onField(CharSequence value, int line, boolean eol) {
-/*
-                System.out.print(value.toString());
-                if (eol) {
-                    System.out.println();
-                } else {
-                    System.out.print(",");
-                }
-*/
-            }
-
-            @Override
-            public void onNames(List<String> names) {
-
-            }
-        });
-
-
-        for (int i = 0; i < 100; i++) {
-            long p = 0;
-            long t = System.nanoTime();
-            while (p < size) {
-                MappedByteBuffer buf = channel.map(FileChannel.MapMode.READ_ONLY, p, size - p < BUF_SIZE ? size - p : BUF_SIZE);
-                try {
-                    p += buf.remaining();
-                    csv.parse(
-                            ((DirectBuffer) buf).address(), buf.remaining()
-
-                    );
-                } finally {
-                    ByteBuffers.release(buf);
-                }
-            }
-            System.out.println(csv.getLineCount() + " ~ " + (System.nanoTime() - t));
-            csv.reset();
-        }
-
+    @Test
+    public void testParseDosCsvSmallBuf() throws Exception {
+        assertFile("/csv/test-dos.csv", 10);
     }
 
     @Test
     public void testParseTab() throws Exception {
+        assertFile("/csv/test.txt", 1024 * 1024);
+    }
 
+    @Test
+    public void testParseTabSmallBuf() throws Exception {
+        assertFile("/csv/test.txt", 10);
+    }
 
+    @Test
+    public void testParseUnixCsvSmallBuf() throws Exception {
+        assertFile("/csv/test-unix.csv", 10);
+    }
+
+    private void assertFile(String file, long bufSize) throws Exception {
+        String expected = "123,abc,2015-01-20T21:00:00.000Z,3.1415,TRUE,Lorem ipsum dolor sit amet.,122\n" +
+                "124,abc,2015-01-20T21:00:00.000Z,7.342,FALSE,\"Lorem ipsum \n" +
+                "\n" +
+                "dolor \"\"sit\"\" amet.\",546756\n" +
+                "125,abc,2015-01-20T21:00:00.000Z,9.334,,\"Lorem ipsum \"\"dolor\"\" sit amet.\",23\n" +
+                "126,abc,2015-01-20T21:00:00.000Z,1.345,TRUE,\"Lorem, ipsum, dolor sit amet.\",434\n" +
+                "127,abc,2015-01-20T21:00:00.000Z,1.53321,TRUE,Lorem ipsum dolor sit amet.,112\n" +
+                "128,abc,2015-01-20T21:00:00.000Z,2.456,TRUE,Lorem ipsum dolor sit amet.,122\n";
+
+        TestCsvListener listener = new TestCsvListener();
+
+        Csv csv = new Csv(false, listener);
+        csv.parse(
+                new File(this.getClass().getResource(file).getFile())
+                , bufSize
+        );
+
+        Assert.assertEquals(expected, listener.toString());
+        Assert.assertEquals(1, listener.getErrorCounter());
+        Assert.assertEquals(4, listener.getErrorLine());
+        Assert.assertEquals(7, csv.getLineCount());
+    }
+
+    private static class TestCsvListener implements Csv.Listener {
+        private final StringSink sink = new StringSink();
+        private int errorCounter = 0;
+        private int errorLine = -1;
+
+        public int getErrorCounter() {
+            return errorCounter;
+        }
+
+        public int getErrorLine() {
+            return errorLine;
+        }
+
+        @Override
+        public void onError(int line) {
+            errorCounter++;
+            errorLine = line;
+        }
+
+        @Override
+        public void onField(CharSequence value, int line, boolean eol) {
+            sink.put(value);
+            if (eol) {
+                sink.put('\n');
+            } else {
+                sink.put(',');
+            }
+        }
+
+        @Override
+        public void onNames(List<String> names) {
+
+        }
+
+        @Override
+        public String toString() {
+            return sink.toString();
+        }
     }
 }
