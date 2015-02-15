@@ -35,10 +35,11 @@ public class SplitRecordMetadata implements RecordMetadata {
         this.split = a.getColumnCount();
         this.columnCount = this.split + b.getColumnCount();
         this.columnIndices = new ObjIntHashMap<>(columnCount);
-        this.columns = new RecordColumn[columnCount];
+        this.columns = new RecordColumnMetadata[columnCount];
 
         for (int i = 0; i < split; i++) {
-            columns[i] = a.getColumn(i);
+            RecordColumnMetadata rc = a.getColumn(i);
+            columns[i] = rc;
             columnIndices.put(columns[i].getName(), i);
         }
 

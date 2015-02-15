@@ -43,8 +43,8 @@ public final class MapMetadata implements RecordMetadata {
         }
 
         for (int i = 0, sz = keyColumns.size(); i < sz; i++) {
-            columns[i] = keyColumns.get(i);
-            nameCache.put(columns[i].getName(), split + i);
+            columns[split + i] = keyColumns.get(i);
+            nameCache.put(columns[split + i].getName(), split + i);
         }
     }
 

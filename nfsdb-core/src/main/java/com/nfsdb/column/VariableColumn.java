@@ -435,15 +435,15 @@ public class VariableColumn extends AbstractColumn {
             remaining -= offset;
             long targetWorkOffset = workOffset + offset;
 
-            while (targetWorkOffset > workOffset) {
+            while (workOffset < targetWorkOffset) {
+                if (blockRemaining == 0) {
+                    renew();
+                }
+
                 long blockSkip = Math.min(targetWorkOffset - workOffset, blockRemaining);
                 workOffset += blockSkip;
                 blockRemaining -= blockSkip;
                 blockAddress += blockSkip;
-
-                if (blockRemaining == 0) {
-                    renew();
-                }
             }
         }
     }
