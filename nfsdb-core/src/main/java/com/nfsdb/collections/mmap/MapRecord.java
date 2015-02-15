@@ -17,7 +17,7 @@
 package com.nfsdb.collections.mmap;
 
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.export.CharSink;
+import com.nfsdb.exp.CharSink;
 import com.nfsdb.lang.cst.impl.qry.AbstractRecord;
 import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
 import com.nfsdb.utils.Unsafe;
@@ -43,24 +43,29 @@ public final class MapRecord extends AbstractRecord {
         this.keyDataOffset = keyDataOffset;
     }
 
-    MapRecord init(long address) {
-        this.address0 = address;
-        this.address1 = address + keyDataOffset;
-        this.address2 = address + keyBlockOffset;
-        return this;
+    @Override
+    public byte get(int index) {
+        return Unsafe.getUnsafe().getByte(address0(index));
     }
 
-    private long address0(int index) {
+    @Override
+    public void getBin(int col, OutputStream s) {
+        throw new JournalRuntimeException("Not implemented");
+    }
 
-        if (index < split) {
-            return address0 + valueOffsets[index];
-        }
+    @Override
+    public InputStream getBin(int col) {
+        throw new JournalRuntimeException("Not implemented");
+    }
 
-        if (index == split) {
-            return address1;
-        }
+    @Override
+    public boolean getBool(int index) {
+        return Unsafe.getUnsafe().getByte(address0(index)) == 1;
+    }
 
-        return Unsafe.getUnsafe().getInt(address2 + (index - split - 1) * 4) + address0;
+    @Override
+    public long getDate(int index) {
+        return Unsafe.getUnsafe().getLong(address0(index));
     }
 
     @Override
@@ -69,13 +74,18 @@ public final class MapRecord extends AbstractRecord {
     }
 
     @Override
+    public int getInt(int index) {
+        return Unsafe.getUnsafe().getInt(address0(index));
+    }
+
+    @Override
     public long getLong(int index) {
         return Unsafe.getUnsafe().getLong(address0(index));
     }
 
     @Override
-    public int getInt(int index) {
-        return Unsafe.getUnsafe().getInt(address0(index));
+    public short getShort(int index) {
+        return Unsafe.getUnsafe().getShort(address0(index));
     }
 
     @Override
@@ -100,37 +110,27 @@ public final class MapRecord extends AbstractRecord {
     }
 
     @Override
-    public long getDate(int index) {
-        return Unsafe.getUnsafe().getLong(address0(index));
-    }
-
-    @Override
-    public boolean getBool(int index) {
-        return Unsafe.getUnsafe().getByte(address0(index)) == 1;
-    }
-
-    @Override
-    public short getShort(int index) {
-        return Unsafe.getUnsafe().getShort(address0(index));
-    }
-
-    @Override
-    public byte get(int index) {
-        return Unsafe.getUnsafe().getByte(address0(index));
-    }
-
-    @Override
-    public void getBin(int col, OutputStream s) {
-        throw new JournalRuntimeException("Not implemented");
-    }
-
-    @Override
-    public InputStream getBin(int col) {
-        throw new JournalRuntimeException("Not implemented");
-    }
-
-    @Override
     public String getSym(int index) {
         return metadata.getSymbolTable(index).value(getInt(index));
+    }
+
+    MapRecord init(long address) {
+        this.address0 = address;
+        this.address1 = address + keyDataOffset;
+        this.address2 = address + keyBlockOffset;
+        return this;
+    }
+
+    private long address0(int index) {
+
+        if (index < split) {
+            return address0 + valueOffsets[index];
+        }
+
+        if (index == split) {
+            return address1;
+        }
+
+        return Unsafe.getUnsafe().getInt(address2 + (index - split - 1) * 4) + address0;
     }
 }

@@ -19,7 +19,7 @@ package com.nfsdb;
 import com.nfsdb.column.*;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.export.CharSink;
+import com.nfsdb.exp.CharSink;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.index.KVIndex;
@@ -69,7 +69,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
     }
 
     public void applyTx(long txLimit, long[] indexTxAddresses) {
-        access();
         if (this.txLimit != txLimit) {
             this.txLimit = txLimit;
             for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
@@ -417,7 +416,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
     }
 
     public void updateIndexes(long oldSize, long newSize) {
-        access();
         if (oldSize < newSize) {
             try {
                 for (int i1 = 0, sz = indexProxies.size(); i1 < sz; i1++) {

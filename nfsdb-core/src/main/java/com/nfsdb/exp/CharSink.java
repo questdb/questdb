@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-package com.nfsdb.export;
+package com.nfsdb.exp;
 
 public interface CharSink {
-    CharSink put(char c);
+    void flush();
 
     CharSink put(CharSequence cs);
 
-    void flush();
+    CharSink put(char c);
 }

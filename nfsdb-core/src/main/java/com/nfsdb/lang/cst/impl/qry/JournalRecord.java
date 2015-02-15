@@ -18,7 +18,7 @@ package com.nfsdb.lang.cst.impl.qry;
 
 import com.nfsdb.Partition;
 import com.nfsdb.column.FixedColumn;
-import com.nfsdb.export.CharSink;
+import com.nfsdb.exp.CharSink;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -37,13 +37,18 @@ public class JournalRecord extends AbstractRecord {
     }
 
     @Override
-    public int getInt(int col) {
-        return partition.getInt(rowid, col);
+    public void getBin(int col, OutputStream s) {
+        partition.getBin(rowid, col, s);
     }
 
     @Override
-    public long getLong(int col) {
-        return partition.getLong(rowid, col);
+    public InputStream getBin(int col) {
+        return partition.getBin(rowid, col);
+    }
+
+    @Override
+    public boolean getBool(int col) {
+        return partition.getBoolean(rowid, col);
     }
 
     @Override
@@ -54,6 +59,21 @@ public class JournalRecord extends AbstractRecord {
     @Override
     public double getDouble(int col) {
         return partition.getDouble(rowid, col);
+    }
+
+    @Override
+    public int getInt(int col) {
+        return partition.getInt(rowid, col);
+    }
+
+    @Override
+    public long getLong(int col) {
+        return partition.getLong(rowid, col);
+    }
+
+    @Override
+    public short getShort(int col) {
+        return partition.getShort(rowid, col);
     }
 
     @Override
@@ -69,26 +89,6 @@ public class JournalRecord extends AbstractRecord {
     @Override
     public String getSym(int col) {
         return partition.getSym(rowid, col);
-    }
-
-    @Override
-    public boolean getBool(int col) {
-        return partition.getBoolean(rowid, col);
-    }
-
-    @Override
-    public void getBin(int col, OutputStream s) {
-        partition.getBin(rowid, col, s);
-    }
-
-    @Override
-    public short getShort(int col) {
-        return partition.getShort(rowid, col);
-    }
-
-    @Override
-    public InputStream getBin(int col) {
-        return partition.getBin(rowid, col);
     }
 
     @Override

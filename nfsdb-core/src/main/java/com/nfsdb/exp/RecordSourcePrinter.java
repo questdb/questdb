@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.nfsdb.export;
+package com.nfsdb.exp;
 
 import com.nfsdb.lang.cst.impl.qry.Record;
 import com.nfsdb.lang.cst.impl.qry.RecordMetadata;

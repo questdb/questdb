@@ -18,7 +18,7 @@ package com.nfsdb.utils;
 
 import com.nfsdb.PartitionType;
 import com.nfsdb.exceptions.JournalUnsupportedTypeException;
-import com.nfsdb.export.StringSink;
+import com.nfsdb.exp.StringSink;
 
 public class Interval {
     private final long lo;
@@ -85,28 +85,8 @@ public class Interval {
         }
     }
 
-    public long getLo() {
-        return lo;
-    }
-
-    public long getHi() {
-        return hi;
-    }
-
     public boolean contains(long x) {
         return (x >= lo && x < hi);
-    }
-
-    public boolean isAfter(long x) {
-        return (lo > x);
-    }
-
-    public boolean isBefore(long x) {
-        return hi <= x;
-    }
-
-    public boolean overlaps(Interval other) {
-        return lo < other.hi && other.lo < hi;
     }
 
     @Override
@@ -115,13 +95,6 @@ public class Interval {
         if (o == null || getClass() != o.getClass()) return false;
         Interval interval = (Interval) o;
         return hi == interval.hi && lo == interval.lo;
-    }
-
-    @Override
-    public int hashCode() {
-        int result = (int) (lo ^ (lo >>> 32));
-        result = 31 * result + (int) (hi ^ (hi >>> 32));
-        return result;
     }
 
     public String getDirName(PartitionType t) {
@@ -140,6 +113,33 @@ public class Interval {
                 return "default";
         }
         return sink.toString();
+    }
+
+    public long getHi() {
+        return hi;
+    }
+
+    public long getLo() {
+        return lo;
+    }
+
+    @Override
+    public int hashCode() {
+        int result = (int) (lo ^ (lo >>> 32));
+        result = 31 * result + (int) (hi ^ (hi >>> 32));
+        return result;
+    }
+
+    public boolean isAfter(long x) {
+        return (lo > x);
+    }
+
+    public boolean isBefore(long x) {
+        return hi <= x;
+    }
+
+    public boolean overlaps(Interval other) {
+        return lo < other.hi && other.lo < hi;
     }
 }
 

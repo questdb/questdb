@@ -20,6 +20,7 @@ import com.lmax.disruptor.BatchEventProcessor;
 import com.lmax.disruptor.BlockingWaitStrategy;
 import com.lmax.disruptor.RingBuffer;
 import com.nfsdb.JournalWriter;
+import com.nfsdb.exceptions.JournalRuntimeException;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -29,7 +30,6 @@ public class PartitionCleaner {
     private final RingBuffer<PartitionCleanerEvent> ringBuffer = RingBuffer.createSingleProducer(PartitionCleanerEvent.EVENT_FACTORY, 32, new BlockingWaitStrategy());
     private final BatchEventProcessor<PartitionCleanerEvent> batchEventProcessor;
     private final PartitionCleanerEventHandler h;
-    private boolean started = false;
 
     public PartitionCleaner(JournalWriter writer, String name) {
         this.executor = Executors.newCachedThreadPool(new NamedDaemonThreadFactory("nfsdb-journal-cleaner-" + name, true));
@@ -37,29 +37,25 @@ public class PartitionCleaner {
         ringBuffer.addGatingSequences(batchEventProcessor.getSequence());
     }
 
-    public void start() {
-        started = true;
-        executor.submit(batchEventProcessor);
+    public void halt() {
+        executor.shutdown();
+
+        try {
+            h.startLatch.await();
+            batchEventProcessor.halt();
+            h.stopLatch.await();
+        } catch (InterruptedException e) {
+            throw new JournalRuntimeException(e);
+        }
+
+        executor.shutdown();
     }
 
     public void purge() {
         ringBuffer.publish(ringBuffer.next());
     }
 
-    public void halt() {
-        executor.shutdown();
-
-        // wait until txLog handle become available
-        while (started && h.txLog == null) {
-            Thread.yield();
-        }
-
-        started = false;
-
-        do {
-            batchEventProcessor.halt();
-        } while (batchEventProcessor.isRunning());
-
-        executor.shutdown();
+    public void start() {
+        executor.submit(batchEventProcessor);
     }
 }

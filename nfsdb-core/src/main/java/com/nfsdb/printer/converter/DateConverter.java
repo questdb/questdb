@@ -16,7 +16,7 @@
 
 package com.nfsdb.printer.converter;
 
-import com.nfsdb.export.StringSink;
+import com.nfsdb.exp.StringSink;
 import com.nfsdb.printer.JournalPrinter;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Unsafe;

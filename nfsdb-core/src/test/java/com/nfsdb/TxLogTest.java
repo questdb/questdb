@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,8 @@
 
 package com.nfsdb;
 
-import com.nfsdb.export.CharSink;
-import com.nfsdb.export.StringSink;
+import com.nfsdb.exp.CharSink;
+import com.nfsdb.exp.StringSink;
 import com.nfsdb.model.Quote;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;

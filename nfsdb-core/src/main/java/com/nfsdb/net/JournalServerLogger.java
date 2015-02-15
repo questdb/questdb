@@ -20,7 +20,7 @@ import com.lmax.disruptor.BatchEventProcessor;
 import com.lmax.disruptor.BlockingWaitStrategy;
 import com.lmax.disruptor.EventHandler;
 import com.lmax.disruptor.RingBuffer;
-import com.nfsdb.export.StringSink;
+import com.nfsdb.exp.StringSink;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.utils.Dates;
 

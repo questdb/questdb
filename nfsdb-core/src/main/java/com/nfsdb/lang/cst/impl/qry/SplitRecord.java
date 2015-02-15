@@ -16,7 +16,7 @@
 
 package com.nfsdb.lang.cst.impl.qry;
 
-import com.nfsdb.export.CharSink;
+import com.nfsdb.exp.CharSink;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -31,20 +31,57 @@ public class SplitRecord extends AbstractRecord {
         this.split = split;
     }
 
-    public void setA(Record a) {
-        this.a = a;
-    }
-
-    public void setB(Record b) {
-        this.b = b;
-    }
-
     @Override
     public byte get(int col) {
         if (col < split) {
             return a.get(col);
         } else {
             return b == null ? 0 : b.get(col - split);
+        }
+    }
+
+    @Override
+    public void getBin(int col, OutputStream s) {
+        if (col < split) {
+            a.getBin(col, s);
+        } else if (b != null) {
+            b.getBin(col - split, s);
+        }
+    }
+
+    @Override
+    public InputStream getBin(int col) {
+        if (col < split) {
+            return a.getBin(col);
+        } else {
+            return b == null ? null : b.getBin(col - split);
+        }
+    }
+
+    @Override
+    public boolean getBool(int col) {
+        if (col < split) {
+            return a.getBool(col);
+        } else {
+            return b != null && b.getBool(col - split);
+        }
+    }
+
+    @Override
+    public long getDate(int col) {
+        if (col < split) {
+            return a.getDate(col);
+        } else {
+            return b == null ? 0L : b.getDate(col - split);
+        }
+    }
+
+    @Override
+    public double getDouble(int col) {
+        if (col < split) {
+            return a.getDouble(col);
+        } else {
+            return b == null ? 0d : b.getDouble(col - split);
         }
     }
 
@@ -67,20 +104,11 @@ public class SplitRecord extends AbstractRecord {
     }
 
     @Override
-    public long getDate(int col) {
+    public short getShort(int col) {
         if (col < split) {
-            return a.getDate(col);
+            return a.getShort(col);
         } else {
-            return b == null ? 0L : b.getDate(col - split);
-        }
-    }
-
-    @Override
-    public double getDouble(int col) {
-        if (col < split) {
-            return a.getDouble(col);
-        } else {
-            return b == null ? 0d : b.getDouble(col - split);
+            return b == null ? 0 : b.getShort(col - split);
         }
     }
 
@@ -111,43 +139,15 @@ public class SplitRecord extends AbstractRecord {
         }
     }
 
-    @Override
-    public boolean getBool(int col) {
-        if (col < split) {
-            return a.getBool(col);
-        } else {
-            return b != null && b.getBool(col - split);
-        }
-    }
-
-    @Override
-    public void getBin(int col, OutputStream s) {
-        if (col < split) {
-            a.getBin(col, s);
-        } else if (b != null) {
-            b.getBin(col - split, s);
-        }
-    }
-
-    @Override
-    public short getShort(int col) {
-        if (col < split) {
-            return a.getShort(col);
-        } else {
-            return b == null ? 0 : b.getShort(col - split);
-        }
-    }
-
-    @Override
-    public InputStream getBin(int col) {
-        if (col < split) {
-            return a.getBin(col);
-        } else {
-            return b == null ? null : b.getBin(col - split);
-        }
-    }
-
     public boolean hasB() {
         return b != null;
+    }
+
+    public void setA(Record a) {
+        this.a = a;
+    }
+
+    public void setB(Record b) {
+        this.b = b;
     }
 }

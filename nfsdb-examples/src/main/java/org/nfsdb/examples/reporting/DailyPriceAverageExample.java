@@ -19,7 +19,7 @@ package org.nfsdb.examples.reporting;
 import com.nfsdb.Journal;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.export.StringSink;
+import com.nfsdb.exp.StringSink;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.printer.JournalPrinter;
 import com.nfsdb.printer.appender.StdOutAppender;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.nfsdb.export;
+package com.nfsdb.exp;
 
 import com.nfsdb.utils.ByteBuffers;
 
@@ -46,19 +46,21 @@ public class FlexBufferSink implements CharSink, Closeable {
         free();
     }
 
+    @Override
+    public void flush() {
+        try {
+            buffer.flip();
+            channel.write(buffer);
+            buffer.clear();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
     public void free() {
         if (buffer != null) {
             ByteBuffers.release(buffer);
         }
-    }
-
-    @Override
-    public CharSink put(char c) {
-        if (!buffer.hasRemaining()) {
-            resize();
-        }
-        buffer.put((byte) c);
-        return this;
     }
 
     @Override
@@ -70,14 +72,12 @@ public class FlexBufferSink implements CharSink, Closeable {
     }
 
     @Override
-    public void flush() {
-        try {
-            buffer.flip();
-            channel.write(buffer);
-            buffer.clear();
-        } catch (IOException e) {
-            e.printStackTrace();
+    public CharSink put(char c) {
+        if (!buffer.hasRemaining()) {
+            resize();
         }
+        buffer.put((byte) c);
+        return this;
     }
 
     private void resize() {
