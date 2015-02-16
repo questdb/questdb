@@ -200,6 +200,11 @@ public class AuthorizationTest extends AbstractTest {
                 public void onCommit() {
                     latch.countDown();
                 }
+
+                @Override
+                public void onError() {
+
+                }
             });
 
             client.start();

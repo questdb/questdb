@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -177,16 +177,28 @@ public class ClusterController {
 
         LOGGER.info("%s Starting client", thisNode);
         client.setDisconnectCallback(new JournalClient.DisconnectCallback() {
-            @Override
-            public void onDisconnect(JournalClient.DisconnectReason reason) {
-                if (running.get()) {
-                    LOGGER.info("Server is re-voting %d", instance);
-                    service.submit(up);
-                }
-            }
-        }).start();
+                                         @Override
+                                         public void onDisconnect(JournalClient.DisconnectReason reason) {
+                                             if (reason != JournalClient.DisconnectReason.INCOMPATIBLE_JOURNAL && running.get()) {
+                                                 LOGGER.info("Server is re-voting %d", instance);
+                                                 service.submit(up);
+                                             } else {
+                                                 try {
+                                                     halt();
+                                                 } catch (JournalNetworkException e) {
+                                                     throw new JournalRuntimeException(e);
+                                                 }
+                                             }
+                                         }
+                                     }
 
-        if (listener != null) {
+        ).
+
+                start();
+
+        if (listener != null)
+
+        {
             LOGGER.info("%s Notifying callback of standby state", thisNode);
             listener.onNodeStandingBy(node);
         }

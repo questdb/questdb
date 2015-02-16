@@ -61,6 +61,11 @@ public class DataLossTest extends AbstractTest {
             public void onCommit() {
                 counter.incrementAndGet();
             }
+
+            @Override
+            public void onError() {
+
+            }
         });
         client.start();
 
@@ -82,6 +87,11 @@ public class DataLossTest extends AbstractTest {
             @Override
             public void onCommit() {
                 counter.incrementAndGet();
+            }
+
+            @Override
+            public void onError() {
+
             }
         });
         client.start();

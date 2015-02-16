@@ -73,6 +73,11 @@ public class ReconnectTest extends AbstractTest {
                     throw new JournalRuntimeException(e);
                 }
             }
+
+            @Override
+            public void onError() {
+
+            }
         });
 
 

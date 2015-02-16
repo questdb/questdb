@@ -38,9 +38,9 @@ public class JournalServerLogger {
 
                 sink.clear();
                 Dates.appendDateTime(sink, System.currentTimeMillis());
-                sink.put('\t')
+                sink.put(' ')
                         .put(msg.getSocketAddress().toString())
-                        .put('\t')
+                        .put(' ')
                         .put(msg.getMessage());
 
 
@@ -49,10 +49,10 @@ public class JournalServerLogger {
                 } else {
                     switch (msg.getLevel()) {
                         case INFO:
-                            LOGGER.info(sink);
+                            LOGGER.info(sink, msg.getThrowable());
                             break;
                         case ERROR:
-                            LOGGER.error(sink);
+                            LOGGER.error(sink, msg.getThrowable());
                             break;
                         default:
                             LOGGER.trace(sink);

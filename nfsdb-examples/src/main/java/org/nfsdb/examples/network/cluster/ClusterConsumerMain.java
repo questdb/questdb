@@ -35,6 +35,8 @@ public class ClusterConsumerMain {
         }}, factory);
 
         final Journal<Price> reader = factory.bulkReader(new JournalKey<>(Price.class, "price-copy", PartitionType.NONE, 1000000000));
+//        reader.transactions().print(new File(args[0], "client.csv"));
+
 
         client.subscribe(Price.class, null, "price-copy", 1000000000, new TxListener() {
             @Override

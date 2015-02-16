@@ -23,6 +23,7 @@ import com.nfsdb.column.HugeBuffer;
 import com.nfsdb.column.SymbolTable;
 import com.nfsdb.concurrent.PartitionCleaner;
 import com.nfsdb.concurrent.TimerCache;
+import com.nfsdb.exceptions.IncompatibleJournalException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.exp.FlexBufferSink;
@@ -492,6 +493,16 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
+    public void notifyTxError() {
+        if (txListener != null) {
+            try {
+                txListener.onError();
+            } catch (Throwable e) {
+                LOGGER.error("Error in listener", e);
+            }
+        }
+    }
+
     /**
      * Opens existing lag partition if it exists or creates new one if parent journal is configured to
      * have lag partitions.
@@ -737,8 +748,10 @@ public class JournalWriter<T> extends Journal<T> {
     private void rollback0(long address, boolean writeDiscard) throws JournalException {
 
         if (address == -1L) {
-            throw new JournalException("Wrong txn/txPin. Incompatible journals?");
+            notifyTxError();
+            throw new IncompatibleJournalException("Server txn is not compatible with %s", this.getLocation());
         }
+
         txLog.read(address, tx);
 
         if (tx.address == 0) {

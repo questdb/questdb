@@ -31,6 +31,7 @@ import com.nfsdb.utils.Numbers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.nfsdb.examples.model.Price;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -38,7 +39,7 @@ import java.util.concurrent.TimeUnit;
 @SuppressFBWarnings({"SE_BAD_FIELD"})
 public class ClusteredProducerMain {
 
-    public static void main(String[] args) throws JournalException {
+    public static void main(String[] args) throws JournalException, IOException {
 
         final String pathToDatabase = args[0];
         final int instance = Numbers.parseInt(args[1]);
@@ -47,6 +48,7 @@ public class ClusteredProducerMain {
         }}.build(pathToDatabase));
 
         final JournalWriter<Price> writer = factory.bulkWriter(new JournalKey<>(Price.class, 1000000000));
+
         final WorkerController wc = new WorkerController(writer);
 
         final ClusterController cc = new ClusterController(

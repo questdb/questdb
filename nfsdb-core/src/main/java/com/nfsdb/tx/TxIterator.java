@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,14 @@
 package com.nfsdb.tx;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
+import com.nfsdb.exp.DelimitedCharSink;
+import com.nfsdb.exp.FlexBufferSink;
+
+import java.io.File;
+import java.io.FileDescriptor;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.channels.WritableByteChannel;
 
 public class TxIterator extends AbstractImmutableIterator<Tx> {
     private final TxLog txLog;
@@ -43,6 +51,46 @@ public class TxIterator extends AbstractImmutableIterator<Tx> {
     @Override
     public Tx next() {
         return tx;
+    }
+
+    public void print() throws IOException {
+        try (FileOutputStream fos = new FileOutputStream(FileDescriptor.out)) {
+            print(fos.getChannel());
+        }
+    }
+
+    public void print(WritableByteChannel channel) throws IOException {
+        try (DelimitedCharSink sink = new DelimitedCharSink(new FlexBufferSink(channel, 1024), '\t', "\n")) {
+            print(sink);
+        }
+    }
+
+    public void print(DelimitedCharSink sink) {
+        reset();
+
+        sink.put("addr").put("prev").put("txn").put("txPin").put("timestamp").put("rowid").put("part timestamp").put("lag size").put("lag name").eol();
+
+        for (Tx tx : this) {
+            sink
+                    .put(tx.address)
+                    .put(tx.prevTxAddress)
+                    .put(tx.txn)
+                    .put(tx.txPin)
+                    .putISODate(tx.timestamp)
+                    .put(tx.journalMaxRowID)
+                    .putISODate(tx.lastPartitionTimestamp)
+                    .put(tx.lagSize)
+                    .put(tx.lagName)
+                    .eol();
+
+        }
+        sink.flush();
+    }
+
+    public void print(File file) throws IOException {
+        try (FileOutputStream fos = new FileOutputStream(file)) {
+            print(fos.getChannel());
+        }
     }
 
     public void reset() {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -61,7 +61,13 @@ public class JournalDeltaProducer implements ChannelProducer {
         journalServerState.setTxPin(journal.getTxPin());
 
         if (thisTxn > txn) {
-            configure0(journal.find(txn, txPin));
+            Tx tx = journal.find(txn, txPin);
+            if (tx == null) {
+                // indicate to client that their txn is invalid
+                journalServerState.setTxn(-1);
+            } else {
+                configure0(tx);
+            }
         }
     }
 

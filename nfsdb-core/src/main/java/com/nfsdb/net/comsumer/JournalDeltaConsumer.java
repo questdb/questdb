@@ -19,6 +19,7 @@ package com.nfsdb.net.comsumer;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.Partition;
 import com.nfsdb.collections.Lists;
+import com.nfsdb.exceptions.IncompatibleJournalException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.exceptions.JournalRuntimeException;
@@ -113,6 +114,12 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
             this.state = journalServerStateConsumer.getValue();
 
             try {
+
+                if (state.getTxn() == -1) {
+                    journal.notifyTxError();
+                    throw new IncompatibleJournalException("Server refused txn for %s", journal.getLocation());
+                }
+
                 if (state.getTxn() < journal.getTxn()) {
                     journal.rollback(state.getTxn(), state.getTxPin());
                     return;

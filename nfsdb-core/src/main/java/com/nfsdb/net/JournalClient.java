@@ -22,6 +22,7 @@ import com.nfsdb.JournalWriter;
 import com.nfsdb.PartitionType;
 import com.nfsdb.collections.DirectIntList;
 import com.nfsdb.concurrent.NamedDaemonThreadFactory;
+import com.nfsdb.exceptions.IncompatibleJournalException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.factory.JournalWriterFactory;
@@ -398,7 +399,7 @@ public class JournalClient {
 
 
     public enum DisconnectReason {
-        UNKNOWN, CLIENT_HALT, CLIENT_EXCEPTION, BROKEN_CHANNEL, CLIENT_ERROR
+        UNKNOWN, CLIENT_HALT, CLIENT_EXCEPTION, BROKEN_CHANNEL, CLIENT_ERROR, INCOMPATIBLE_JOURNAL
     }
 
     public interface DisconnectCallback {
@@ -509,6 +510,9 @@ public class JournalClient {
                         }
                     }
                 }
+            } catch (IncompatibleJournalException e) {
+                LOGGER.error(e.getMessage());
+                reason = DisconnectReason.INCOMPATIBLE_JOURNAL;
             } catch (JournalNetworkException e) {
                 LOGGER.error("Network error. Server died?", e);
                 reason = DisconnectReason.BROKEN_CHANNEL;

@@ -14,10 +14,12 @@
  * limitations under the License.
  */
 
-package com.nfsdb.tx;
+package com.nfsdb.exceptions;
 
-public interface TxListener {
-    void onCommit();
+public class IncompatibleJournalException extends JournalRuntimeException {
 
-    void onError();
+    public IncompatibleJournalException(String message, Object... args) {
+        super(message, args);
+    }
+
 }
