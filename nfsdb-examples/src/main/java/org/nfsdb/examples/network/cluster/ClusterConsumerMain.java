@@ -55,6 +55,11 @@ public class ClusterConsumerMain {
                     System.out.println("took: " + (System.currentTimeMillis() - t) + ", count=" + count);
                 }
             }
+
+            @Override
+            public void onError() {
+                System.out.println("there was an error");
+            }
         });
         client.start();
 

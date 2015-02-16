@@ -69,6 +69,11 @@ public class SslReplicationClientMain {
                 }
                 System.out.println("took: " + (System.nanoTime() - t) + ", count=" + count);
             }
+
+            @Override
+            public void onError() {
+                System.out.println("There was an error");
+            }
         });
         client.start();
 
