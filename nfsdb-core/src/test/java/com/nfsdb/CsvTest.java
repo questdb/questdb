@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,15 +16,71 @@
 
 package com.nfsdb;
 
+import com.nfsdb.column.ColumnType;
 import com.nfsdb.exp.StringSink;
+import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.imp.Csv;
+import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.List;
 
 public class CsvTest {
+
+    @Test
+    public void testHeaders() throws Exception {
+        final List<String> names = new ArrayList<>();
+        final List<String> expected = new ArrayList<String>() {{
+            add("type");
+            add("value");
+            add("active");
+            add("desc");
+            add("grp");
+        }};
+
+
+        Csv csv = new Csv();
+        csv.parse(new File(this.getClass().getResource("/csv/test-headers.csv").getFile())
+                , 1024 * 1024
+                , false
+                , true
+                , new Csv.Listener() {
+                    @Override
+                    public void onError(int line) {
+
+                    }
+
+                    @Override
+                    public void onField(int index, CharSequence value, int line, boolean eol) {
+
+                    }
+
+                    @Override
+                    public void onFieldCount(int count) {
+
+                    }
+
+                    @Override
+                    public void onLineCount(int count) {
+
+                    }
+
+                    @Override
+                    public void onNames(List<ColumnMetadata> meta) {
+                        for (ColumnMetadata m : meta) {
+                            names.add(m.name);
+                        }
+                    }
+                }
+
+        );
+
+        TestUtils.assertEquals(expected.iterator(), names.iterator());
+
+    }
 
     @Test
     public void testParseDosCsvSmallBuf() throws Exception {
@@ -46,6 +102,82 @@ public class CsvTest {
         assertFile("/csv/test-unix.csv", 10);
     }
 
+    @Test
+    public void testTypeDetection() throws Exception {
+        final List<ColumnMetadata> meta = new ArrayList<>();
+        final List<ColumnMetadata> expected = new ArrayList<ColumnMetadata>() {{
+            ColumnMetadata m;
+
+            m = new ColumnMetadata();
+            m.name = "type";
+            m.type = ColumnType.STRING;
+            add(m);
+
+            m = new ColumnMetadata();
+            m.name = "value";
+            m.type = ColumnType.DOUBLE;
+            add(m);
+
+
+            m = new ColumnMetadata();
+            m.name = "active";
+            m.type = ColumnType.BOOLEAN;
+            add(m);
+
+
+            m = new ColumnMetadata();
+            m.name = "desc";
+            m.type = ColumnType.STRING;
+            add(m);
+
+            m = new ColumnMetadata();
+            m.name = "grp";
+            m.type = ColumnType.STRING;
+            add(m);
+
+        }};
+
+
+        Csv csv = new Csv();
+        csv.parse(
+                new File(this.getClass().getResource("/csv/test-headers.csv").getFile())
+                , 1024 * 1024
+                , true
+                , false
+                , new Csv.Listener() {
+                    @Override
+                    public void onError(int line) {
+
+                    }
+
+                    @Override
+                    public void onField(int index, CharSequence value, int line, boolean eol) {
+
+                    }
+
+                    @Override
+                    public void onFieldCount(int count) {
+
+                    }
+
+                    @Override
+                    public void onLineCount(int count) {
+
+                    }
+
+                    @Override
+                    public void onNames(List<ColumnMetadata> m) {
+                        meta.addAll(m);
+                    }
+                }
+
+        );
+
+        Assert.assertEquals(expected.size(), meta.size());
+        TestUtils.assertEquals(expected.iterator(), meta.iterator());
+
+    }
+
     private void assertFile(String file, long bufSize) throws Exception {
         String expected = "123,abc,2015-01-20T21:00:00.000Z,3.1415,TRUE,Lorem ipsum dolor sit amet.,122\n" +
                 "124,abc,2015-01-20T21:00:00.000Z,7.342,FALSE,\"Lorem ipsum \n" +
@@ -58,10 +190,13 @@ public class CsvTest {
 
         TestCsvListener listener = new TestCsvListener();
 
-        Csv csv = new Csv(false, listener);
+        Csv csv = new Csv();
         csv.parse(
                 new File(this.getClass().getResource(file).getFile())
                 , bufSize
+                , false
+                , false
+                , listener
         );
 
         Assert.assertEquals(expected, listener.toString());
@@ -84,13 +219,18 @@ public class CsvTest {
         }
 
         @Override
+        public String toString() {
+            return sink.toString();
+        }
+
+        @Override
         public void onError(int line) {
             errorCounter++;
             errorLine = line;
         }
 
         @Override
-        public void onField(CharSequence value, int line, boolean eol) {
+        public void onField(int index, CharSequence value, int line, boolean eol) {
             sink.put(value);
             if (eol) {
                 sink.put('\n');
@@ -100,13 +240,18 @@ public class CsvTest {
         }
 
         @Override
-        public void onNames(List<String> names) {
+        public void onNames(List<ColumnMetadata> meta) {
+
+        }
+
+
+        @Override
+        public void onFieldCount(int count) {
 
         }
 
         @Override
-        public String toString() {
-            return sink.toString();
+        public void onLineCount(int count) {
         }
     }
 }

@@ -1,0 +1,7 @@
+type,value,active,desc,grp
+ABC,13,TRUE,brown fox jumped over the fence,GROUP1
+CDE,14,FALSE,"sentence 1
+sentence 2",GROUP1
+EFD,14.4,FALSE,xyz > ?abc?,GROUP1
+XYZ,16,TRUE,,GROUP2
+XCB,29,TRUE,this is not the end,GROUP2
