@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -59,6 +59,11 @@ public class JournalRecord extends AbstractRecord {
     @Override
     public double getDouble(int col) {
         return partition.getDouble(rowid, col);
+    }
+
+    @Override
+    public float getFloat(int col) {
+        return partition.getFloat(rowid, col);
     }
 
     @Override

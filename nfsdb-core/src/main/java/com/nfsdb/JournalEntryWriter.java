@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,31 +22,33 @@ import java.io.InputStream;
 import java.io.OutputStream;
 
 public interface JournalEntryWriter {
+    void append() throws JournalException;
+
     long getTimestamp();
 
     void put(int index, byte value);
-
-    void putLong(int index, long value);
-
-    void putDate(int index, long value);
-
-    void putDouble(int index, double value);
-
-    void putStr(int index, CharSequence value);
-
-    void putSym(int index, String value);
 
     void putBin(int index, InputStream value);
 
     OutputStream putBin(int index);
 
-    void putNull(int index);
+    void putBool(int index, boolean value);
+
+    void putDate(int index, long value);
+
+    void putDouble(int index, double value);
+
+    void putFloat(int index, float value);
 
     void putInt(int index, int value);
 
-    void putBool(int index, boolean value);
+    void putLong(int index, long value);
 
-    void append() throws JournalException;
+    void putNull(int index);
 
     void putShort(int index, short value);
+
+    void putStr(int index, CharSequence value);
+
+    void putSym(int index, String value);
 }

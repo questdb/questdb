@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -60,6 +60,7 @@ public class MultiMap extends DirectMemory {
             valueOffsets[i] = offset;
             switch (valueColumns.get(i).type) {
                 case INT:
+                case FLOAT:
                     offset += 4;
                     break;
                 case LONG:
@@ -80,6 +81,9 @@ public class MultiMap extends DirectMemory {
         this.recordSource = new MapRecordSource(record, metadata, this.values, interceptors);
     }
 
+    public Key claimKey() {
+        return key.init();
+    }
 
     public MapValues claimSlot(Key key) {
         // calculate hash remembering "key" structure
@@ -103,22 +107,23 @@ public class MultiMap extends DirectMemory {
         }
     }
 
-    private MapValues probe0(Key key, int index) {
-        long offset;
-        while ((offset = offsets.get(index = (++index % keyCapacity))) != -1) {
-            if (eq(key, offset)) {
-                kPos = key.startAddr;
-                return values.init(kStart + offset, false);
-            }
-        }
-        offsets.set(index, key.startAddr - kStart);
-        free--;
-        if (free == 0) {
-            rehash();
-        }
+    public void clear() {
+        kPos = kStart;
+        free = (int) (keyCapacity * loadFactor);
+        size = 0;
+        offsets.clear((byte) -1);
+    }
 
-        size++;
-        return values.init(key.startAddr, true);
+    public RecordMetadata getMetadata() {
+        return recordSource.getMetadata();
+    }
+
+    public MapRecordSource getRecordSource() {
+        return recordSource.init(kStart, size);
+    }
+
+    public int size() {
+        return size;
     }
 
     private boolean eq(Key key, long offset) {
@@ -152,27 +157,27 @@ public class MultiMap extends DirectMemory {
         return true;
     }
 
-    public Key claimKey() {
-        return key.init();
+    @Override
+    protected void freeInternal() {
+        offsets.free();
     }
 
-    private void resize() {
-        long kCapacity = (kLimit - kStart) << 1;
-        long kAddress = Unsafe.getUnsafe().allocateMemory(kCapacity + AbstractDirectList.CACHE_LINE_SIZE);
-        long kStart = kAddress + (kAddress & (AbstractDirectList.CACHE_LINE_SIZE - 1));
+    private MapValues probe0(Key key, int index) {
+        long offset;
+        while ((offset = offsets.get(index = (++index % keyCapacity))) != -1) {
+            if (eq(key, offset)) {
+                kPos = key.startAddr;
+                return values.init(kStart + offset, false);
+            }
+        }
+        offsets.set(index, key.startAddr - kStart);
+        free--;
+        if (free == 0) {
+            rehash();
+        }
 
-        Unsafe.getUnsafe().copyMemory(this.kStart, kStart, kCapacity >> 1);
-        Unsafe.getUnsafe().freeMemory(this.address);
-
-        long d = kStart - this.kStart;
-        key.startAddr += d;
-        key.appendAddr += d;
-        key.nextColOffset += d;
-
-
-        this.address = kAddress;
-        this.kStart = kStart;
-        this.kLimit = kStart + kCapacity;
+        size++;
+        return values.init(key.startAddr, true);
     }
 
     private void rehash() {
@@ -198,28 +203,23 @@ public class MultiMap extends DirectMemory {
         this.keyCapacity = capacity;
     }
 
-    @Override
-    protected void freeInternal() {
-        offsets.free();
-    }
+    private void resize() {
+        long kCapacity = (kLimit - kStart) << 1;
+        long kAddress = Unsafe.getUnsafe().allocateMemory(kCapacity + AbstractDirectList.CACHE_LINE_SIZE);
+        long kStart = kAddress + (kAddress & (AbstractDirectList.CACHE_LINE_SIZE - 1));
 
-    public MapRecordSource getRecordSource() {
-        return recordSource.init(kStart, size);
-    }
+        Unsafe.getUnsafe().copyMemory(this.kStart, kStart, kCapacity >> 1);
+        Unsafe.getUnsafe().freeMemory(this.address);
 
-    public RecordMetadata getMetadata() {
-        return recordSource.getMetadata();
-    }
+        long d = kStart - this.kStart;
+        key.startAddr += d;
+        key.appendAddr += d;
+        key.nextColOffset += d;
 
-    public int size() {
-        return size;
-    }
 
-    public void clear() {
-        kPos = kStart;
-        free = (int) (keyCapacity * loadFactor);
-        size = 0;
-        offsets.clear((byte) -1);
+        this.address = kAddress;
+        this.kStart = kStart;
+        this.kLimit = kStart + kCapacity;
     }
 
     public static class Builder {
@@ -230,8 +230,12 @@ public class MultiMap extends DirectMemory {
         private long dataSize = 4096;
         private float loadFactor = 0.5f;
 
-        public Builder valueColumn(ColumnMetadata metadata) {
-            valueColumns.add(metadata);
+        public MultiMap build() {
+            return new MultiMap(capacity, dataSize, loadFactor, valueColumns, keyColumns, interceptors);
+        }
+
+        public Builder interceptor(MapRecordValueInterceptor interceptor) {
+            interceptors.add(interceptor);
             return this;
         }
 
@@ -255,13 +259,9 @@ public class MultiMap extends DirectMemory {
             return this;
         }
 
-        public Builder interceptor(MapRecordValueInterceptor interceptor) {
-            interceptors.add(interceptor);
+        public Builder valueColumn(ColumnMetadata metadata) {
+            valueColumns.add(metadata);
             return this;
-        }
-
-        public MultiMap build() {
-            return new MultiMap(capacity, dataSize, loadFactor, valueColumns, keyColumns, interceptors);
         }
     }
 
@@ -272,25 +272,16 @@ public class MultiMap extends DirectMemory {
         private int len;
         private long nextColOffset;
 
-        private void checkSize(int size) {
-            if (appendAddr + size > kLimit) {
-                resize();
-            }
-        }
-
-        public Key putLong(long value) {
-            checkSize(8);
-            Unsafe.getUnsafe().putLong(appendAddr, value);
-            appendAddr += 8;
-            writeOffset();
+        public Key commit() {
+            Unsafe.getUnsafe().putInt(startAddr, len = (int) (appendAddr - startAddr));
+            kPos = appendAddr;
             return this;
         }
 
-        public Key putInt(int value) {
-            checkSize(4);
-            Unsafe.getUnsafe().putInt(appendAddr, value);
-            appendAddr += 4;
-            writeOffset();
+        public Key init() {
+            startAddr = kPos;
+            appendAddr = startAddr + keyDataOffset;
+            nextColOffset = startAddr + keyBlockOffset;
             return this;
         }
 
@@ -301,9 +292,20 @@ public class MultiMap extends DirectMemory {
             writeOffset();
         }
 
-        private void writeOffset() {
-            Unsafe.getUnsafe().putInt(nextColOffset, (int) (appendAddr - startAddr));
-            nextColOffset += 4;
+        public Key putInt(int value) {
+            checkSize(4);
+            Unsafe.getUnsafe().putInt(appendAddr, value);
+            appendAddr += 4;
+            writeOffset();
+            return this;
+        }
+
+        public Key putLong(long value) {
+            checkSize(8);
+            Unsafe.getUnsafe().putLong(appendAddr, value);
+            appendAddr += 8;
+            writeOffset();
+            return this;
         }
 
         public Key putStr(CharSequence value) {
@@ -317,17 +319,15 @@ public class MultiMap extends DirectMemory {
             return this;
         }
 
-        public Key commit() {
-            Unsafe.getUnsafe().putInt(startAddr, len = (int) (appendAddr - startAddr));
-            kPos = appendAddr;
-            return this;
+        private void checkSize(int size) {
+            if (appendAddr + size > kLimit) {
+                resize();
+            }
         }
 
-        public Key init() {
-            startAddr = kPos;
-            appendAddr = startAddr + keyDataOffset;
-            nextColOffset = startAddr + keyBlockOffset;
-            return this;
+        private void writeOffset() {
+            Unsafe.getUnsafe().putInt(nextColOffset, (int) (appendAddr - startAddr));
+            nextColOffset += 4;
         }
     }
 }

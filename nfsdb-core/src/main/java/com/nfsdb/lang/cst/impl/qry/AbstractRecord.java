@@ -28,13 +28,33 @@ public abstract class AbstractRecord implements Record {
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
+    public byte get(String column) {
+        return get(metadata.getColumnIndex(column));
     }
 
     @Override
-    public byte get(String column) {
-        return get(metadata.getColumnIndex(column));
+    public void getBin(String column, OutputStream s) {
+        getBin(metadata.getColumnIndex(column), s);
+    }
+
+    @Override
+    public InputStream getBin(String column) {
+        return getBin(metadata.getColumnIndex(column));
+    }
+
+    @Override
+    public boolean getBool(String column) {
+        return getBool(metadata.getColumnIndex(column));
+    }
+
+    @Override
+    public double getDouble(String column) {
+        return getDouble(metadata.getColumnIndex(column));
+    }
+
+    @Override
+    public float getFloat(String column) {
+        return getFloat(metadata.getColumnIndex(column));
     }
 
     @Override
@@ -48,8 +68,8 @@ public abstract class AbstractRecord implements Record {
     }
 
     @Override
-    public double getDouble(String column) {
-        return getDouble(metadata.getColumnIndex(column));
+    public RecordMetadata getMetadata() {
+        return metadata;
     }
 
     @Override
@@ -60,20 +80,5 @@ public abstract class AbstractRecord implements Record {
     @Override
     public String getSym(String column) {
         return getSym(metadata.getColumnIndex(column));
-    }
-
-    @Override
-    public boolean getBool(String column) {
-        return getBool(metadata.getColumnIndex(column));
-    }
-
-    @Override
-    public void getBin(String column, OutputStream s) {
-        getBin(metadata.getColumnIndex(column), s);
-    }
-
-    @Override
-    public InputStream getBin(String column) {
-        return getBin(metadata.getColumnIndex(column));
     }
 }

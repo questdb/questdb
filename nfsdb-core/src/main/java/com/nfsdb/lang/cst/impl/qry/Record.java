@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,6 +44,10 @@ public interface Record {
     double getDouble(String column);
 
     double getDouble(int col);
+
+    float getFloat(String column);
+
+    float getFloat(int col);
 
     int getInt(String column);
 

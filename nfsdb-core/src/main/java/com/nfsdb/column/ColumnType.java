@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ public enum ColumnType {
     BOOLEAN(boolean.class, 1),
     BYTE(byte.class, 1),
     DOUBLE(double.class, 8),
+    FLOAT(double.class, 4),
     INT(int.class, 4),
     LONG(long.class, 8),
     SHORT(short.class, 2),

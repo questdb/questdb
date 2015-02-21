@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -82,6 +82,15 @@ public class SplitRecord extends AbstractRecord {
             return a.getDouble(col);
         } else {
             return b == null ? 0d : b.getDouble(col - split);
+        }
+    }
+
+    @Override
+    public float getFloat(int col) {
+        if (col < split) {
+            return a.getFloat(col);
+        } else {
+            return b == null ? 0f : b.getFloat(col - split);
         }
     }
 
