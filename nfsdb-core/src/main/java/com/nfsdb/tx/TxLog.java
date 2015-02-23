@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ import java.io.File;
 
 public class TxLog {
 
+    public static final String FILE_NAME = "_tx";
     private final HugeBuffer hb;
     private final Rnd rnd;
     private long headAddress = 0;
@@ -35,7 +36,7 @@ public class TxLog {
 
     public TxLog(File baseLocation, JournalMode mode) throws JournalException {
         // todo: calculate hint
-        this.hb = new HugeBuffer(new File(baseLocation, "_tx"), Constants.PIPE_BIT_HINT, mode);
+        this.hb = new HugeBuffer(new File(baseLocation, FILE_NAME), Constants.PIPE_BIT_HINT, mode);
         this.rnd = new Rnd(System.currentTimeMillis(), System.nanoTime());
         this.txn = getCurrentTxn() + 1;
     }

@@ -16,18 +16,20 @@
 
 package com.nfsdb.factory.configuration;
 
-import com.nfsdb.JournalKey;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.PartitionType;
 
 import java.io.File;
 
-public interface JournalConfiguration {
+public interface MetadataBuilder<T> {
+    JournalMetadata<T> build();
 
-    public static final String FILE_NAME = "_meta2";
+    String getLocation();
 
-    <T> JournalMetadata<T> augmentMetadata(MetadataBuilder<T> builder) throws JournalException;
+    MetadataBuilder<T> location(String location);
 
-    <T> JournalMetadata<T> createMetadata(JournalKey<T> key) throws JournalException;
+    MetadataBuilder<T> location(File path);
 
-    File getJournalBase();
+    MetadataBuilder<T> partitionBy(PartitionType type);
+
+    MetadataBuilder<T> recordCountHint(int count);
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-public class JournalStructure implements JMetadataBuilder<Object> {
+public class JournalStructure implements MetadataBuilder<Object> {
     private static final Logger LOGGER = Logger.getLogger(JournalStructure.class);
     private final List<ColumnMetadata> metadata = new ArrayList<>();
     private final ObjIntHashMap<String> nameToIndexMap = new ObjIntHashMap<>();
@@ -51,6 +51,15 @@ public class JournalStructure implements JMetadataBuilder<Object> {
 
     public JournalStructure(String location) {
         this.location = location;
+    }
+
+    public JournalStructure(String location, ColumnMetadata columnMetadata[]) {
+        this.location = location;
+        for (int i = 0, sz = columnMetadata.length; i < sz; i++) {
+            ColumnMetadata to = new ColumnMetadata();
+            metadata.add(to.copy(columnMetadata[i]));
+            nameToIndexMap.put(to.name, i);
+        }
     }
 
     public JournalStructure(JournalMetadata model) {
@@ -119,76 +128,6 @@ public class JournalStructure implements JMetadataBuilder<Object> {
         return this;
     }
 
-    public JournalStructure key(String key) {
-        this.key = key;
-        return this;
-    }
-
-    public JournalStructure lag(long time, TimeUnit unit) {
-        this.lag = (int) unit.toHours(time);
-        return this;
-    }
-
-    @SuppressWarnings("unchecked")
-    public JournalMetadata map(Class clazz) {
-        List<Field> classFields = getAllFields(new ArrayList<Field>(), clazz);
-
-        for (int i = 0; i < classFields.size(); i++) {
-            Field f = classFields.get(i);
-
-            if (Modifier.isStatic(f.getModifiers())) {
-                continue;
-            }
-
-            int index = nameToIndexMap.get(f.getName());
-            if (index == -1) {
-                LOGGER.warn("Unusable member field: " + clazz.getName() + "." + f.getName());
-                continue;
-            }
-
-            Class type = f.getType();
-            ColumnMetadata meta = metadata.get(index);
-
-            checkTypes(meta.type, toColumnType(type));
-
-            meta.offset = Unsafe.getUnsafe().objectFieldOffset(f);
-        }
-
-        this.partialMapping = missingMappings();
-
-        this.modelClass = clazz;
-        try {
-            this.constructor = modelClass.getDeclaredConstructor();
-        } catch (NoSuchMethodException e) {
-            throw new JournalConfigurationException("No default constructor declared on %s", modelClass.getName());
-        }
-
-        return this.build();
-    }
-
-    public JournalStructure openFileTTL(long time, TimeUnit unit) {
-        this.openFileTTL = unit.toMillis(time);
-        return this;
-    }
-
-    public JournalStructure partitionBy(PartitionType type) {
-        if (type != PartitionType.DEFAULT) {
-            this.partitionBy = type;
-        }
-        return this;
-    }
-
-    public JournalStructure recordCountHint(int count) {
-        if (count > 0) {
-            this.recordCountHint = count;
-        }
-        return this;
-    }
-
-    public String getLocation() {
-        return location;
-    }
-
     public JournalMetadata<Object> build() {
 
         // default tx count hint
@@ -248,6 +187,20 @@ public class JournalStructure implements JMetadataBuilder<Object> {
         );
     }
 
+    public String getLocation() {
+        return location;
+    }
+
+    public JournalStructure key(String key) {
+        this.key = key;
+        return this;
+    }
+
+    public JournalStructure lag(long time, TimeUnit unit) {
+        this.lag = (int) unit.toHours(time);
+        return this;
+    }
+
     @Override
     public JournalStructure location(String location) {
         this.location = location;
@@ -257,6 +210,62 @@ public class JournalStructure implements JMetadataBuilder<Object> {
     @Override
     public JournalStructure location(File path) {
         this.location = path.getAbsolutePath();
+        return this;
+    }
+
+    @SuppressWarnings("unchecked")
+    public JournalMetadata map(Class clazz) {
+        List<Field> classFields = getAllFields(new ArrayList<Field>(), clazz);
+
+        for (int i = 0; i < classFields.size(); i++) {
+            Field f = classFields.get(i);
+
+            if (Modifier.isStatic(f.getModifiers())) {
+                continue;
+            }
+
+            int index = nameToIndexMap.get(f.getName());
+            if (index == -1) {
+                LOGGER.warn("Unusable member field: " + clazz.getName() + "." + f.getName());
+                continue;
+            }
+
+            Class type = f.getType();
+            ColumnMetadata meta = metadata.get(index);
+
+            checkTypes(meta.type, toColumnType(type));
+
+            meta.offset = Unsafe.getUnsafe().objectFieldOffset(f);
+        }
+
+        this.partialMapping = missingMappings();
+
+        this.modelClass = clazz;
+        try {
+            this.constructor = modelClass.getDeclaredConstructor();
+        } catch (NoSuchMethodException e) {
+            throw new JournalConfigurationException("No default constructor declared on %s", modelClass.getName());
+        }
+
+        return this.build();
+    }
+
+    public JournalStructure openFileTTL(long time, TimeUnit unit) {
+        this.openFileTTL = unit.toMillis(time);
+        return this;
+    }
+
+    public JournalStructure partitionBy(PartitionType type) {
+        if (type != PartitionType.DEFAULT) {
+            this.partitionBy = type;
+        }
+        return this;
+    }
+
+    public JournalStructure recordCountHint(int count) {
+        if (count > 0) {
+            this.recordCountHint = count;
+        }
         return this;
     }
 

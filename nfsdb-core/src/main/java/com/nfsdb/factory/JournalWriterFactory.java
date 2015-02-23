@@ -20,10 +20,22 @@ import com.nfsdb.JournalBulkWriter;
 import com.nfsdb.JournalKey;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.factory.configuration.JMetadataBuilder;
 import com.nfsdb.factory.configuration.JournalConfiguration;
+import com.nfsdb.factory.configuration.MetadataBuilder;
 
 public interface JournalWriterFactory {
+
+    <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz) throws JournalException;
+
+    <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz, String location) throws JournalException;
+
+    <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz, String location, int recordHint) throws JournalException;
+
+    <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException;
+
+    JournalReaderFactory.JournalExistenceCheck exists(String location);
+
+    JournalConfiguration getConfiguration();
 
     <T> JournalWriter<T> writer(Class<T> clazz) throws JournalException;
 
@@ -35,16 +47,5 @@ public interface JournalWriterFactory {
 
     <T> JournalWriter<T> writer(JournalKey<T> key) throws JournalException;
 
-    <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz) throws JournalException;
-
-    <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz, String location) throws JournalException;
-
-    <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz, String location, int recordHint) throws JournalException;
-
-    <T> JournalWriter<T> writer(JMetadataBuilder<T> metadata) throws JournalException;
-
-    <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException;
-
-    JournalConfiguration getConfiguration();
-
+    <T> JournalWriter<T> writer(MetadataBuilder<T> metadata) throws JournalException;
 }

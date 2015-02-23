@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,23 +20,23 @@ import com.nfsdb.column.ColumnType;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.imp.probes.BooleanProbe;
 import com.nfsdb.imp.probes.DoubleProbe;
+import com.nfsdb.imp.probes.FloatProbe;
 import com.nfsdb.imp.probes.IntProbe;
 
-import java.util.List;
-
-public class FieldTypeDetector implements Csv.Listener {
+public class MetadataExtractorListener implements Listener {
 
     // order of probes in array is critical
-    private static final TypeProbe probes[] = new TypeProbe[]{new IntProbe(), new DoubleProbe(), new BooleanProbe()};
+    private static final TypeProbe probes[] = new TypeProbe[]{new IntProbe(), new FloatProbe(), new DoubleProbe(), new BooleanProbe()};
     private static final int probeLen = probes.length;
     private int fieldCount;
     private int histogram[];
     private int blanks[];
+    private ColumnMetadata metadata[];
+    private String headers[];
     private boolean header = false;
-    private ColumnType types[];
 
-    public ColumnType getTypes(int index) {
-        return types[index];
+    public ColumnMetadata[] getMetadata() {
+        return metadata;
     }
 
     public boolean isHeader() {
@@ -49,15 +49,21 @@ public class FieldTypeDetector implements Csv.Listener {
     }
 
     @Override
-    public void onField(int index, CharSequence value, int line, boolean eol) {
-        int offset = index * probeLen;
-        if (value.length() == 0) {
-            blanks[index]++;
+    public void onField(int line, CharSequence values[], int hi) {
+        // keep first line in case its a header
+        if (line == 0) {
+            stashPossibleHeader(values, hi);
         }
-        for (int i = 0; i < probeLen; i++) {
-            if (probes[i].probe(value)) {
 
-                histogram[i + offset]++;
+        for (int i = 0; i < hi; i++) {
+            if (values[i].length() == 0) {
+                blanks[i]++;
+            }
+            int offset = i * probeLen;
+            for (int k = 0; k < probeLen; k++) {
+                if (probes[k].probe(values[i])) {
+                    histogram[k + offset]++;
+                }
             }
         }
     }
@@ -66,7 +72,13 @@ public class FieldTypeDetector implements Csv.Listener {
     public void onFieldCount(int count) {
         this.histogram = new int[(fieldCount = count) * probeLen];
         this.blanks = new int[count];
-        this.types = new ColumnType[count];
+        this.metadata = new ColumnMetadata[count];
+        this.headers = new String[count];
+    }
+
+    @Override
+    public void onHeader(CharSequence[] values, int hi) {
+
     }
 
     @Override
@@ -75,13 +87,26 @@ public class FieldTypeDetector implements Csv.Listener {
         // if all types come up as strings, reduce count by one and retry
         // if some fields come up as non-string after subtracting row - we have a header
         if (calcTypes(count, true)) {
-            header = !calcTypes(count - 1, false);
+            if (!calcTypes(count - 1, false)) {
+                // copy headers
+                for (int i = 0; i < fieldCount; i++) {
+                    metadata[i].name = headers[i];
+                }
+                header = true;
+                return;
+            }
         }
+
+        for (int i = 0; i < fieldCount; i++) {
+            metadata[i].name = "f" + i;
+        }
+
     }
 
-    @Override
-    public void onNames(List<ColumnMetadata> meta) {
-
+    private void stashPossibleHeader(CharSequence values[], int hi) {
+        for (int i = 0; i < hi; i++) {
+            headers[i] = values[i].toString();
+        }
     }
 
     /**
@@ -100,9 +125,9 @@ public class FieldTypeDetector implements Csv.Listener {
             int offset = i * probeLen;
             int blanks = this.blanks[i];
 
-            for (int k = 1; k < probeLen; k++) {
+            for (int k = 0; k < probeLen; k++) {
                 if (histogram[k + offset] + blanks == count && blanks < count) {
-                    types[i] = probes[k].getType();
+                    metadata[i] = probes[k].getMetadata();
                     if (allStrings) {
                         allStrings = false;
                     }
@@ -110,8 +135,11 @@ public class FieldTypeDetector implements Csv.Listener {
                 }
             }
 
-            if (setDefault && types[i] == null) {
-                types[i] = ColumnType.STRING;
+            if (setDefault && metadata[i] == null) {
+                ColumnMetadata meta = new ColumnMetadata();
+                meta.type = ColumnType.STRING;
+                meta.size = meta.avgSize + 4;
+                metadata[i] = meta;
             }
         }
 

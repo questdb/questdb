@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,8 +19,6 @@ package com.nfsdb.exp;
 import com.nfsdb.lang.cst.impl.qry.Record;
 import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
 import com.nfsdb.lang.cst.impl.qry.RecordSource;
-import com.nfsdb.utils.Dates;
-import com.nfsdb.utils.Numbers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT"})
@@ -36,16 +34,16 @@ public class RecordSourcePrinter {
         for (int i = 0, sz = m.getColumnCount(); i < sz; i++) {
             switch (m.getColumnType(i)) {
                 case DATE:
-                    Dates.appendDateTime(sink, r.getLong(i));
+                    sink.putISODate(r.getLong(i));
                     break;
                 case DOUBLE:
-                    Numbers.append(sink, r.getDouble(i), 12);
+                    sink.put(r.getDouble(i), 12);
                     break;
                 case FLOAT:
-                    Numbers.append(sink, r.getFloat(i), 12);
+                    sink.put(r.getFloat(i), 12);
                     break;
                 case INT:
-                    Numbers.append(sink, r.getInt(i));
+                    sink.put(r.getInt(i));
                     break;
                 case STRING:
                     r.getStr(i, sink);
@@ -54,16 +52,16 @@ public class RecordSourcePrinter {
                     sink.put(r.getSym(i));
                     break;
                 case SHORT:
-                    Numbers.append(sink, r.getShort(i));
+                    sink.put(r.getShort(i));
                     break;
                 case LONG:
-                    Numbers.append(sink, r.getLong(i));
+                    sink.put(r.getLong(i));
                     break;
                 case BYTE:
-                    Numbers.append(sink, r.get(i));
+                    sink.put(r.get(i));
                     break;
                 case BOOLEAN:
-                    sink.put(r.getBool(i) ? "true" : "false");
+                    sink.put(r.getBool(i));
                     break;
 //                default:
 //                    throw new JournalRuntimeException("Unsupported type: " + r.getColumnType(i));

@@ -25,7 +25,7 @@ import java.util.List;
 import java.util.Map;
 
 public class JournalConfigurationBuilder {
-    private final List<JMetadataBuilder> builders = new ArrayList<>();
+    private final List<MetadataBuilder> builders = new ArrayList<>();
 
     public <T> JournalMetadataBuilder<T> $(Class<T> clazz) {
         JournalMetadataBuilder<T> builder = new JournalMetadataBuilder<>(clazz);

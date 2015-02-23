@@ -19,7 +19,7 @@ package com.nfsdb.exp;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
 
-public class StringSink implements CharSink, CharSequence {
+public class StringSink extends AbstractCharSink implements CharSequence {
     private final StringBuilder builder = new StringBuilder();
 
     @Override

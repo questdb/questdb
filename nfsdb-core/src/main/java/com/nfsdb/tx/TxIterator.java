@@ -68,7 +68,8 @@ public class TxIterator extends AbstractImmutableIterator<Tx> {
     public void print(DelimitedCharSink sink) {
         reset();
 
-        sink.put("addr").put("prev").put("txn").put("txPin").put("timestamp").put("rowid").put("part timestamp").put("lag size").put("lag name").eol();
+        sink.put("addr").put("prev").put("txn").put("txPin").put("timestamp").put("rowid").put("part timestamp").put("lag size").put("lag name");
+        sink.eol();
 
         for (Tx tx : this) {
             sink
@@ -80,8 +81,8 @@ public class TxIterator extends AbstractImmutableIterator<Tx> {
                     .put(tx.journalMaxRowID)
                     .putISODate(tx.lastPartitionTimestamp)
                     .put(tx.lagSize)
-                    .put(tx.lagName)
-                    .eol();
+                    .put(tx.lagName);
+            sink.eol();
 
         }
         sink.flush();

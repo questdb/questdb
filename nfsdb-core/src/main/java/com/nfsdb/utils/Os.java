@@ -14,20 +14,16 @@
  * limitations under the License.
  */
 
-package com.nfsdb.factory.configuration;
+package com.nfsdb.utils;
 
-import com.nfsdb.JournalKey;
-import com.nfsdb.exceptions.JournalException;
+import com.sun.management.OperatingSystemMXBean;
 
-import java.io.File;
+import java.lang.management.ManagementFactory;
 
-public interface JournalConfiguration {
+public class Os {
+    private static final OperatingSystemMXBean bean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
 
-    public static final String FILE_NAME = "_meta2";
-
-    <T> JournalMetadata<T> augmentMetadata(MetadataBuilder<T> builder) throws JournalException;
-
-    <T> JournalMetadata<T> createMetadata(JournalKey<T> key) throws JournalException;
-
-    File getJournalBase();
+    public static long getSystemMemory() {
+        return bean.getTotalPhysicalMemorySize();
+    }
 }

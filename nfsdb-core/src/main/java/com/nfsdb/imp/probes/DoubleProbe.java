@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,13 +17,18 @@
 package com.nfsdb.imp.probes;
 
 import com.nfsdb.column.ColumnType;
+import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.imp.TypeProbe;
 import com.nfsdb.utils.Numbers;
 
 public class DoubleProbe implements TypeProbe {
+
     @Override
-    public ColumnType getType() {
-        return ColumnType.DOUBLE;
+    public ColumnMetadata getMetadata() {
+        ColumnMetadata m = new ColumnMetadata();
+        m.type = ColumnType.DOUBLE;
+        m.size = 8;
+        return m;
     }
 
     @Override

@@ -16,14 +16,11 @@
 
 package com.nfsdb.exp;
 
-import com.nfsdb.utils.Dates;
-import com.nfsdb.utils.Numbers;
-
 import java.io.Closeable;
 import java.io.IOException;
 
-public class DelimitedCharSink implements CharSink, Closeable {
-    private static final String NULL = "NULL";
+public class DelimitedCharSink extends AbstractCharSink implements CharSink, Closeable {
+    private static final String NULL = "";
     private final CharSink delegate;
     private final char delimiter;
     private final String eol;
@@ -53,30 +50,32 @@ public class DelimitedCharSink implements CharSink, Closeable {
         delegate.flush();
     }
 
-    public DelimitedCharSink put(long value) {
+    public CharSink put(int value) {
         delimiter();
-        Numbers.append(delegate, value);
-        return this;
+        return super.put(value);
+    }
+
+    public CharSink put(long value) {
+        delimiter();
+        return super.put(value);
     }
 
     @Override
-    public DelimitedCharSink put(CharSequence cs) {
+    public CharSink put(CharSequence cs) {
         delimiter();
         delegate.put(cs == null ? NULL : cs);
         return this;
     }
 
     @Override
-    public DelimitedCharSink put(char c) {
-        delimiter();
+    public CharSink put(char c) {
         delegate.put(c);
         return this;
     }
 
-    public DelimitedCharSink putISODate(long value) {
+    public CharSink putISODate(long value) {
         delimiter();
-        Dates.appendDateTime(delegate, value);
-        return this;
+        return super.put(value);
     }
 
     @Override

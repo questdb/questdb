@@ -30,7 +30,7 @@ import java.lang.reflect.Modifier;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
-public class JournalMetadataBuilder<T> implements JMetadataBuilder<T> {
+public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
     private final Map<String, ColumnMetadata> columnMetadata = new HashMap<>();
     private final Class<T> modelClass;
     private Constructor<T> constructor;
@@ -66,20 +66,25 @@ public class JournalMetadataBuilder<T> implements JMetadataBuilder<T> {
         }
     }
 
-    public SymbolBuilder<T> $sym(String name) {
-        return new SymbolBuilder<>(this, getMeta(name));
+    public BinaryBuilder<T> $bin(String name) {
+        return new BinaryBuilder<>(this, getMeta(name));
+    }
+
+    public JournalMetadataBuilder<T> $date(String name) {
+        getMeta(name).type = ColumnType.DATE;
+        return this;
+    }
+
+    public IntBuilder<T> $int(String name) {
+        return new IntBuilder<>(this, getMeta(name));
     }
 
     public StringBuilder<T> $str(String name) {
         return new StringBuilder<>(this, getMeta(name));
     }
 
-    public BinaryBuilder<T> $bin(String name) {
-        return new BinaryBuilder<>(this, getMeta(name));
-    }
-
-    public IntBuilder<T> $int(String name) {
-        return new IntBuilder<>(this, getMeta(name));
+    public SymbolBuilder<T> $sym(String name) {
+        return new SymbolBuilder<>(this, getMeta(name));
     }
 
     public JournalMetadataBuilder<T> $ts() {
@@ -93,61 +98,6 @@ public class JournalMetadataBuilder<T> implements JMetadataBuilder<T> {
         }
         getMeta(name).type = ColumnType.DATE;
         return this;
-    }
-
-    public JournalMetadataBuilder<T> $date(String name) {
-        getMeta(name).type = ColumnType.DATE;
-        return this;
-    }
-
-    public JournalMetadataBuilder<T> location(String location) {
-        this.location = location;
-        return this;
-    }
-
-    public JournalMetadataBuilder<T> location(File location) {
-        this.location = location.getAbsolutePath();
-        return this;
-    }
-
-    @Override
-    public JournalMetadataBuilder<T> partitionBy(PartitionType type) {
-        if (type != PartitionType.DEFAULT) {
-            this.partitionBy = type;
-        }
-        return this;
-    }
-
-    @Override
-    public JournalMetadataBuilder<T> recordCountHint(int count) {
-        if (count > 0) {
-            this.recordCountHint = count;
-        }
-        return this;
-    }
-
-    public JournalMetadataBuilder<T> txCountHint(int count) {
-        this.txCountHint = count;
-        return this;
-    }
-
-    public JournalMetadataBuilder<T> key(String key) {
-        this.key = key;
-        return this;
-    }
-
-    public JournalMetadataBuilder<T> openFileTTL(long time, TimeUnit unit) {
-        this.openFileTTL = unit.toMillis(time);
-        return this;
-    }
-
-    public JournalMetadataBuilder<T> lag(long time, TimeUnit unit) {
-        this.lag = (int) unit.toHours(time);
-        return this;
-    }
-
-    public String getLocation() {
-        return location;
     }
 
     public JournalMetadata<T> build() {
@@ -211,6 +161,56 @@ public class JournalMetadataBuilder<T> implements JMetadataBuilder<T> {
                 , lag
                 , false
         );
+    }
+
+    public String getLocation() {
+        return location;
+    }
+
+    public JournalMetadataBuilder<T> key(String key) {
+        this.key = key;
+        return this;
+    }
+
+    public JournalMetadataBuilder<T> lag(long time, TimeUnit unit) {
+        this.lag = (int) unit.toHours(time);
+        return this;
+    }
+
+    public JournalMetadataBuilder<T> location(String location) {
+        this.location = location;
+        return this;
+    }
+
+    public JournalMetadataBuilder<T> location(File location) {
+        this.location = location.getAbsolutePath();
+        return this;
+    }
+
+    public JournalMetadataBuilder<T> openFileTTL(long time, TimeUnit unit) {
+        this.openFileTTL = unit.toMillis(time);
+        return this;
+    }
+
+    @Override
+    public JournalMetadataBuilder<T> partitionBy(PartitionType type) {
+        if (type != PartitionType.DEFAULT) {
+            this.partitionBy = type;
+        }
+        return this;
+    }
+
+    @Override
+    public JournalMetadataBuilder<T> recordCountHint(int count) {
+        if (count > 0) {
+            this.recordCountHint = count;
+        }
+        return this;
+    }
+
+    public JournalMetadataBuilder<T> txCountHint(int count) {
+        this.txCountHint = count;
+        return this;
     }
 
     private ColumnMetadata getMeta(String name) {

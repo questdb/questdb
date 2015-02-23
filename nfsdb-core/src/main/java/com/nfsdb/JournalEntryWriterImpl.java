@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,13 +24,12 @@ import com.nfsdb.utils.Checksum;
 
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.BitSet;
 
 public class JournalEntryWriterImpl implements JournalEntryWriter {
     private final JournalWriter journal;
     private final ColumnMetadata meta[];
     private final int timestampIndex;
-    private final BitSet updated = new BitSet();
+    private final boolean[] skipped;
     private final long[] koTuple;
     private AbstractColumn columns[];
     private SymbolIndexProxy indexProxies[];
@@ -43,12 +42,13 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
         journal.getMetadata().copyColumnMetadata(meta);
         this.timestampIndex = journal.getMetadata().getTimestampIndex();
         koTuple = new long[meta.length * 2];
+        skipped = new boolean[meta.length];
     }
 
     @Override
     public void append() throws JournalException {
-        for (int i = 0; i < meta.length; i++) {
-            if (!updated.get(i)) {
+        for (int i = 0, l = meta.length; i < l; i++) {
+            if (skipped[i]) {
                 putNull(i);
             }
             columns[i].commit();
@@ -70,91 +70,122 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
     public void put(int index, byte value) {
         assertType(index, ColumnType.BYTE);
         ((FixedColumn) columns[index]).putByte(value);
-        updated.set(index);
+        skipped[index] = false;
     }
 
     @Override
     public void putBin(int index, InputStream value) {
         putBin0(index, value);
-        updated.set(index);
+        skipped[index] = false;
     }
 
     public OutputStream putBin(int index) {
-        updated.set(index);
+        skipped[index] = false;
         return ((VariableColumn) columns[index]).putBin();
+    }
+
+    public void putBin0(int index, InputStream value) {
+        ((VariableColumn) columns[index]).putBin(value);
     }
 
     @Override
     public void putBool(int index, boolean value) {
         assertType(index, ColumnType.BOOLEAN);
         ((FixedColumn) columns[index]).putBool(value);
-        updated.set(index);
+        skipped[index] = false;
     }
 
     @Override
     public void putDate(int index, long value) {
         assertType(index, ColumnType.DATE);
         ((FixedColumn) columns[index]).putLong(value);
-        updated.set(index);
+        skipped[index] = false;
     }
 
     @Override
     public void putDouble(int index, double value) {
         assertType(index, ColumnType.DOUBLE);
         ((FixedColumn) columns[index]).putDouble(value);
-        updated.set(index);
+        skipped[index] = false;
     }
 
     @Override
     public void putFloat(int index, float value) {
         assertType(index, ColumnType.FLOAT);
         ((FixedColumn) columns[index]).putFloat(value);
-        updated.set(index);
+        skipped[index] = false;
     }
 
     @Override
     public void putInt(int index, int value) {
         assertType(index, ColumnType.INT);
         putInt0(index, value);
-        updated.set(index);
+        skipped[index] = false;
     }
 
     @Override
     public void putLong(int index, long value) {
         assertType(index, ColumnType.LONG);
         ((FixedColumn) columns[index]).putLong(value);
-        updated.set(index);
+        skipped[index] = false;
     }
 
     @Override
     public void putNull(int index) {
-        putNull0(index);
-        updated.set(index);
+        switch (meta[index].type) {
+            case STRING:
+                putNullStr(index);
+                break;
+            case SYMBOL:
+                putSymbol0(index, null);
+                break;
+            case INT:
+                putInt0(index, 0);
+                break;
+            case BINARY:
+                putBin0(index, null);
+                break;
+            default:
+                ((FixedColumn) columns[index]).putNull();
+        }
     }
 
     @Override
     public void putShort(int index, short value) {
         assertType(index, ColumnType.SHORT);
         ((FixedColumn) columns[index]).putShort(value);
-        updated.set(index);
+        skipped[index] = false;
     }
 
     @Override
     public void putStr(int index, CharSequence value) {
         assertType(index, ColumnType.STRING);
         putString0(index, value);
-        updated.set(index);
+        skipped[index] = false;
     }
 
     @Override
     public void putSym(int index, String value) {
         assertType(index, ColumnType.SYMBOL);
         putSymbol0(index, value);
-        updated.set(index);
+        skipped[index] = false;
     }
 
-    public void putBin0(int index, InputStream value) {
-        ((VariableColumn) columns[index]).putBin(value);
+    void setPartition(Partition partition, long timestamp) {
+        if (this.partition != partition) {
+            this.columns = partition.columns;
+            this.partition = partition;
+            this.indexProxies = partition.sparseIndexProxies;
+        }
+        this.timestamp = timestamp;
+
+        for (int i = 0, l = skipped.length; i < l; i++) {
+            skipped[i] = true;
+        }
+
+        if (timestampIndex != -1) {
+            putDate(timestampIndex, timestamp);
+        }
     }
 
     private void assertType(int index, ColumnType t) {
@@ -172,31 +203,21 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
         }
     }
 
-    private void putNull0(int index) {
-        switch (meta[index].type) {
-            case STRING:
-                putString0(index, null);
-                break;
-            case SYMBOL:
-                putSymbol0(index, null);
-                break;
-            case INT:
-                putInt0(index, 0);
-                break;
-            case BINARY:
-                putBin0(index, null);
-                break;
-            default:
-                ((FixedColumn) columns[index]).putNull();
-        }
-    }
-
     private void putString0(int index, CharSequence value) {
         if (meta[index].indexed) {
             koTuple[index * 2] = value == null ? SymbolTable.VALUE_IS_NULL : Checksum.hash(value, meta[index].distinctCountHint);
             koTuple[index * 2 + 1] = ((VariableColumn) columns[index]).putStr(value);
         } else {
             ((VariableColumn) columns[index]).putStr(value);
+        }
+    }
+
+    private void putNullStr(int index) {
+        if (meta[index].indexed) {
+            koTuple[index * 2] = SymbolTable.VALUE_IS_NULL;
+            koTuple[index * 2 + 1] = ((VariableColumn) columns[index]).putNull();
+        } else {
+            ((VariableColumn) columns[index]).putNull();
         }
     }
 
@@ -212,19 +233,6 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
             koTuple[index * 2 + 1] = ((FixedColumn) columns[index]).putInt(key);
         } else {
             ((FixedColumn) columns[index]).putInt(key);
-        }
-    }
-
-    void setPartition(Partition partition, long timestamp) {
-        if (this.partition != partition) {
-            this.columns = partition.columns;
-            this.partition = partition;
-            this.indexProxies = partition.sparseIndexProxies;
-        }
-        this.timestamp = timestamp;
-        updated.clear();
-        if (timestampIndex != -1) {
-            putDate(timestampIndex, timestamp);
         }
     }
 }

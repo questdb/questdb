@@ -14,22 +14,19 @@
  * limitations under the License.
  */
 
-package com.nfsdb.factory.configuration;
+package org.nfsdb.examples.imports;
 
-import com.nfsdb.PartitionType;
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalFactory;
+import com.nfsdb.imp.ImportManager;
 
-import java.io.File;
+import java.io.IOException;
 
-public interface JMetadataBuilder<T> {
-    JMetadataBuilder<T> partitionBy(PartitionType type);
-
-    JMetadataBuilder<T> recordCountHint(int count);
-
-    String getLocation();
-
-    JournalMetadata<T> build();
-
-    JMetadataBuilder<T> location(String location);
-
-    JMetadataBuilder<T> location(File path);
+public class ImportCsvMain {
+    public static void main(String[] args) throws IOException, JournalException {
+        JournalFactory factory = new JournalFactory("d:/data");
+        long t = System.currentTimeMillis();
+        ImportManager.importPipeFile(factory, "D:\\csv\\wise-allwise-cat-part01");
+        System.out.println(System.currentTimeMillis() - t);
+    }
 }

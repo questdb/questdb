@@ -14,20 +14,23 @@
  * limitations under the License.
  */
 
-package com.nfsdb.factory.configuration;
+package com.nfsdb.imp;
 
-import com.nfsdb.JournalKey;
-import com.nfsdb.exceptions.JournalException;
+public interface TextParser {
+    int getLineCount();
 
-import java.io.File;
+    void parse(long lo, long len, int lim, Listener listener);
 
-public interface JournalConfiguration {
+    /**
+     * Resets parser including metadata.
+     */
+    void reset();
 
-    public static final String FILE_NAME = "_meta2";
+    /**
+     * Prepares parser to re-parse input keeping metadata intact.
+     */
+    void restart();
 
-    <T> JournalMetadata<T> augmentMetadata(MetadataBuilder<T> builder) throws JournalException;
+    void setHeader(boolean header);
 
-    <T> JournalMetadata<T> createMetadata(JournalKey<T> key) throws JournalException;
-
-    File getJournalBase();
 }

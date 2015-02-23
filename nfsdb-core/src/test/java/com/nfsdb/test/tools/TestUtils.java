@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -296,25 +296,6 @@ public final class TestUtils {
         }
         if (commit) {
             w.commit();
-        }
-    }
-
-    public static void generateQuoteData(int count, long timestamp, int increment) {
-        String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
-        String exchanges[] = {"LXE", "GR", "SK", "LN"};
-        Rnd r = new Rnd();
-        for (int i = 0; i < count; i++) {
-            Quote q = new Quote();
-            q.setSym(symbols[Math.abs(r.nextInt() % (symbols.length - 1))]);
-            q.setAsk(Math.abs(r.nextDouble()));
-            q.setBid(Math.abs(r.nextDouble()));
-            q.setAskSize(Math.abs(r.nextInt()));
-            q.setBidSize(Math.abs(r.nextInt()));
-            q.setEx(exchanges[Math.abs(r.nextInt() % (exchanges.length - 1))]);
-            q.setMode("Fast trading");
-            q.setTimestamp(timestamp);
-            timestamp += increment;
-            print(q);
         }
     }
 

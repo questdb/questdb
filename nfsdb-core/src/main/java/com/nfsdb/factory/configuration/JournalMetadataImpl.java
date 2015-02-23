@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ import com.nfsdb.utils.Base64;
 import com.nfsdb.utils.Checksum;
 import org.jetbrains.annotations.NotNull;
 
+import java.lang.StringBuilder;
 import java.lang.reflect.Constructor;
 import java.util.Arrays;
 
@@ -114,77 +115,6 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
         partialMapping = false;
     }
 
-    public void write(HugeBuffer buf) {
-        buf.setPos(0);
-        buf.put(id);
-        buf.put(location);
-        buf.put(partitionBy.name());
-        buf.put(columnCount);
-        for (int i = 0; i < columnMetadata.length; i++) {
-            columnMetadata[i].write(buf);
-        }
-        buf.put(timestampColumnIndex);
-        buf.put(openFileTTL);
-        buf.put(ioBlockRecordCount);
-        buf.put(ioBlockTxCount);
-        buf.put(key);
-        buf.put(lag);
-    }
-
-    @Override
-    public JournalKey<T> deriveKey() {
-        if (modelClass != null) {
-            return new JournalKey<>(modelClass, location);
-        } else {
-            return new JournalKey<>(location);
-        }
-    }
-
-    @Override
-    @NotNull
-    public ColumnMetadata getColumnMetadata(CharSequence name) {
-        return getColumnMetadata(getColumnIndex(name));
-    }
-
-    @Override
-    public ColumnMetadata getColumnMetadata(int columnIndex) {
-        return columnMetadata[columnIndex];
-    }
-
-    @Override
-    public int getColumnIndex(CharSequence columnName) {
-        int result = columnIndexLookup.get(columnName);
-        if (result == -1) {
-            throw new JournalRuntimeException("Invalid column name: %s", columnName);
-        }
-        return result;
-    }
-
-    @Override
-    public String getLocation() {
-        return location;
-    }
-
-    @Override
-    public PartitionType getPartitionType() {
-        return partitionBy;
-    }
-
-    @Override
-    public int getColumnCount() {
-        return columnCount;
-    }
-
-    @Override
-    public ColumnMetadata getTimestampMetadata() {
-        return timestampMetadata;
-    }
-
-    @Override
-    public int getTimestampIndex() {
-        return timestampColumnIndex;
-    }
-
     @Override
     public void copyColumnMetadata(ColumnMetadata[] meta) {
 
@@ -195,59 +125,12 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
     }
 
     @Override
-    public Object newObject() throws JournalRuntimeException {
-        try {
-            return constructor.newInstance();
-        } catch (Exception e) {
-            throw new JournalRuntimeException("Could not create instance of class: " + modelClass.getName(), e);
+    public JournalKey<T> deriveKey() {
+        if (modelClass != null) {
+            return new JournalKey<>(modelClass, location);
+        } else {
+            return new JournalKey<>(location);
         }
-    }
-
-    @Override
-    public Class<T> getModelClass() {
-        return modelClass;
-    }
-
-    @Override
-    public long getOpenFileTTL() {
-        return openFileTTL;
-    }
-
-    @Override
-    public int getLag() {
-        return this.lag;
-    }
-
-    @Override
-    public int getRecordHint() {
-        return ioBlockRecordCount;
-    }
-
-    @Override
-    public int getTxCountHint() {
-        return ioBlockTxCount;
-    }
-
-    @Override
-    public String getKey() {
-        if (key == null) {
-            throw new JournalConfigurationException(modelClass.getName() + " does not have a key");
-        }
-        return key;
-    }
-
-    @Override
-    public String getKeyQuiet() {
-        return key;
-    }
-
-    public String getId() {
-        return id;
-    }
-
-    @Override
-    public boolean isPartialMapped() {
-        return partialMapping;
     }
 
     @Override
@@ -273,6 +156,93 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
     }
 
     @Override
+    public int getColumnCount() {
+        return columnCount;
+    }
+
+    @Override
+    public int getColumnIndex(CharSequence columnName) {
+        int result = columnIndexLookup.get(columnName);
+        if (result == -1) {
+            throw new JournalRuntimeException("Invalid column name: %s", columnName);
+        }
+        return result;
+    }
+
+    @Override
+    @NotNull
+    public ColumnMetadata getColumnMetadata(CharSequence name) {
+        return getColumnMetadata(getColumnIndex(name));
+    }
+
+    @Override
+    public ColumnMetadata getColumnMetadata(int columnIndex) {
+        return columnMetadata[columnIndex];
+    }
+
+    public String getId() {
+        return id;
+    }
+
+    @Override
+    public String getKey() {
+        if (key == null) {
+            throw new JournalConfigurationException(modelClass.getName() + " does not have a key");
+        }
+        return key;
+    }
+
+    @Override
+    public String getKeyQuiet() {
+        return key;
+    }
+
+    @Override
+    public int getLag() {
+        return this.lag;
+    }
+
+    @Override
+    public String getLocation() {
+        return location;
+    }
+
+    @Override
+    public Class<T> getModelClass() {
+        return modelClass;
+    }
+
+    @Override
+    public long getOpenFileTTL() {
+        return openFileTTL;
+    }
+
+    @Override
+    public PartitionType getPartitionType() {
+        return partitionBy;
+    }
+
+    @Override
+    public int getRecordHint() {
+        return ioBlockRecordCount;
+    }
+
+    @Override
+    public int getTimestampIndex() {
+        return timestampColumnIndex;
+    }
+
+    @Override
+    public ColumnMetadata getTimestampMetadata() {
+        return timestampMetadata;
+    }
+
+    @Override
+    public int getTxCountHint() {
+        return ioBlockTxCount;
+    }
+
+    @Override
     public int hashCode() {
         int result = id.hashCode();
         result = 31 * result + (location != null ? location.hashCode() : 0);
@@ -290,12 +260,88 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
     }
 
     @Override
-    public String toString() {
-        return "JournalMetaImpl{" +
-                "SHA='" + Base64._printBase64Binary(Checksum.getChecksum(this)) + '\'' +
-                ", partitionBy=" + partitionBy +
-                ", columnCount=" + columnCount +
-                ", columnMetadata=" + Arrays.toString(columnMetadata) +
-                '}';
+    public boolean isPartialMapped() {
+        return partialMapping;
     }
+
+    @Override
+    public Object newObject() throws JournalRuntimeException {
+        try {
+            return constructor.newInstance();
+        } catch (Exception e) {
+            throw new JournalRuntimeException("Could not create instance of class: " + modelClass.getName(), e);
+        }
+    }
+
+    @Override
+    public String toString() {
+
+        StringBuilder b = new StringBuilder();
+        sep(b);
+        b.append("|");
+        pad(b, 15, "Location:");
+        pad(b, 40, location).append('\n');
+
+
+        b.append("|");
+        pad(b, 15, "SHA:");
+        pad(b, 40, Base64._printBase64Binary(Checksum.getChecksum(this))).append('\n');
+
+        b.append("|");
+        pad(b, 15, "Partition by");
+        pad(b, 40, partitionBy.name()).append('\n');
+        sep(b);
+
+
+        for (int i = 0; i < columnCount; i++) {
+            b.append("|");
+            pad(b, 15, Integer.toString(i));
+            col(b, columnMetadata[i]);
+            b.append('\n');
+        }
+
+        sep(b);
+
+        return b.toString();
+    }
+
+    public void write(HugeBuffer buf) {
+        buf.setPos(0);
+        buf.put(id);
+        buf.put(location);
+        buf.put(partitionBy.name());
+        buf.put(columnCount);
+        for (int i = 0; i < columnMetadata.length; i++) {
+            columnMetadata[i].write(buf);
+        }
+        buf.put(timestampColumnIndex);
+        buf.put(openFileTTL);
+        buf.put(ioBlockRecordCount);
+        buf.put(ioBlockTxCount);
+        buf.put(key);
+        buf.put(lag);
+    }
+
+    private void sep(StringBuilder b) {
+        b.append("+------------------------------------------------------------+").append('\n');
+    }
+
+    private void col(StringBuilder b, ColumnMetadata m) {
+        pad(b, 40, (m.distinctCountHint > 0 ? m.distinctCountHint + " ~ " : "") + (m.indexed ? "#" : "") + m.name + (m.sameAs != null ? " -> " + m.sameAs : "") + " " + m.type.name() + "(" + m.size + ")");
+    }
+
+    private StringBuilder pad(StringBuilder b, int w, String value) {
+        int pad = value == null ? w : w - value.length();
+        for (int i = 0; i < pad; i++) {
+            b.append(' ');
+        }
+        if (value != null) {
+            b.append(value);
+        }
+
+        b.append("  |");
+
+        return b;
+    }
+
 }

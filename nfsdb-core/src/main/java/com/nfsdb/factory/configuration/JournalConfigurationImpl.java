@@ -40,7 +40,7 @@ public class JournalConfigurationImpl implements JournalConfiguration {
         this.journalMetadata = journalMetadata;
     }
 
-    public <T> JournalMetadata<T> augmentMetadata(JMetadataBuilder<T> builder) throws JournalException {
+    public <T> JournalMetadata<T> augmentMetadata(MetadataBuilder<T> builder) throws JournalException {
         File journalLocation = new File(getJournalBase(), builder.getLocation());
 
         JournalMetadata<T> mo = readMetadata(journalLocation);
@@ -71,13 +71,13 @@ public class JournalConfigurationImpl implements JournalConfiguration {
                 throw new JournalException("There is not enough information to create journal: " + key.getId());
             }
 
-            JMetadataBuilder<T> builder;
+            MetadataBuilder<T> builder;
 
             if (mn == null) {
                 builder = new JournalMetadataBuilder<>(key.getModelClass());
             } else {
                 if (key.getModelClass() == null) {
-                    builder = (JMetadataBuilder<T>) new JournalStructure(mn);
+                    builder = (MetadataBuilder<T>) new JournalStructure(mn);
                 } else {
                     builder = new JournalMetadataBuilder<>(mn);
                 }
@@ -115,19 +115,19 @@ public class JournalConfigurationImpl implements JournalConfiguration {
 
         boolean newMeta = false;
         JournalMetadata<T> meta = journalMetadata.get(key.getId());
-        JMetadataBuilder<T> builder;
+        MetadataBuilder<T> builder;
         if (meta == null) {
             if (key.getModelClass() != null) {
                 builder = new JournalMetadataBuilder<>(key.getModelClass());
             } else {
-                builder = (JMetadataBuilder<T>) new JournalStructure(key.getId());
+                builder = (MetadataBuilder<T>) new JournalStructure(key.getId());
             }
             newMeta = true;
         } else {
             if (meta.getModelClass() != null) {
                 builder = new JournalMetadataBuilder<>(meta);
             } else {
-                builder = (JMetadataBuilder<T>) new JournalStructure(meta);
+                builder = (MetadataBuilder<T>) new JournalStructure(meta);
             }
         }
 
@@ -198,7 +198,7 @@ public class JournalConfigurationImpl implements JournalConfiguration {
 
     private <T> JournalMetadata<T> readMetadata(File location) throws JournalException {
         if (location.exists()) {
-            File metaFile = new File(location, "_meta2");
+            File metaFile = new File(location, FILE_NAME);
             if (!metaFile.exists()) {
                 // todo: read old meta file for compatibility
                 throw new JournalException(location + " is not a recognised journal");

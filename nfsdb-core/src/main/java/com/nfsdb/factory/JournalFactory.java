@@ -19,10 +19,10 @@ package com.nfsdb.factory;
 import com.nfsdb.*;
 import com.nfsdb.concurrent.TimerCache;
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.factory.configuration.JMetadataBuilder;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.factory.configuration.MetadataBuilder;
 
 import java.io.Closeable;
 import java.io.File;
@@ -46,34 +46,8 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
     }
 
     @Override
-    public <T> JournalWriter<T> writer(Class<T> clazz) throws JournalException {
-        return writer(new JournalKey<>(clazz));
-    }
-
-    @Override
-    public <T> JournalWriter<T> writer(Class<T> clazz, String location) throws JournalException {
-        return writer(new JournalKey<>(clazz, location));
-    }
-
-    @Override
-    public <T> JournalWriter<T> writer(Class<T> clazz, String location, int recordHint) throws JournalException {
-        return writer(new JournalKey<>(clazz, location, PartitionType.DEFAULT, recordHint));
-    }
-
-    @Override
-    public JournalWriter writer(String location) throws JournalException {
-        return writer(new JournalKey<>(location));
-    }
-
-    @Override
-    public <T> JournalWriter<T> writer(JournalKey<T> key) throws JournalException {
-        return new JournalWriter<>(getConfiguration().createMetadata(key), key, getTimerCache());
-    }
-
-    @Override
-    public <T> JournalWriter<T> writer(JMetadataBuilder<T> b) throws JournalException {
-        JournalMetadata<T> metadata = getConfiguration().augmentMetadata(b);
-        return new JournalWriter<>(metadata, metadata.deriveKey(), getTimerCache());
+    public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
+        return new JournalBulkReader<>(getOrCreateMetadata(key), key, getTimerCache());
     }
 
     @Override
@@ -102,7 +76,33 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
     }
 
     @Override
-    public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
-        return new JournalBulkReader<>(getOrCreateMetadata(key), key, getTimerCache());
+    public <T> JournalWriter<T> writer(Class<T> clazz) throws JournalException {
+        return writer(new JournalKey<>(clazz));
+    }
+
+    @Override
+    public <T> JournalWriter<T> writer(Class<T> clazz, String location) throws JournalException {
+        return writer(new JournalKey<>(clazz, location));
+    }
+
+    @Override
+    public <T> JournalWriter<T> writer(Class<T> clazz, String location, int recordHint) throws JournalException {
+        return writer(new JournalKey<>(clazz, location, PartitionType.DEFAULT, recordHint));
+    }
+
+    @Override
+    public JournalWriter writer(String location) throws JournalException {
+        return writer(new JournalKey<>(location));
+    }
+
+    @Override
+    public <T> JournalWriter<T> writer(JournalKey<T> key) throws JournalException {
+        return new JournalWriter<>(getConfiguration().createMetadata(key), key, getTimerCache());
+    }
+
+    @Override
+    public <T> JournalWriter<T> writer(MetadataBuilder<T> b) throws JournalException {
+        JournalMetadata<T> metadata = getConfiguration().augmentMetadata(b);
+        return new JournalWriter<>(metadata, metadata.deriveKey(), getTimerCache());
     }
 }

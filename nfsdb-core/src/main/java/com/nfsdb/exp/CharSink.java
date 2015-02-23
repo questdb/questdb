@@ -22,4 +22,16 @@ public interface CharSink {
     CharSink put(CharSequence cs);
 
     CharSink put(char c);
+
+    CharSink put(int value);
+
+    CharSink put(long value);
+
+    CharSink put(float value, int scale);
+
+    CharSink put(double value, int scale);
+
+    CharSink put(boolean value);
+
+    CharSink putISODate(long value);
 }

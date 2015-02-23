@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -106,6 +106,11 @@ public class FixedColumn extends AbstractColumn {
         return Unsafe.getUnsafe().getLong(mappedFile.getAddress(getOffset(localRowID), 8));
     }
 
+    @Override
+    public long getOffset(long localRowID) {
+        return localRowID * width;
+    }
+
     public short getShort(long localRowID) {
         return Unsafe.getUnsafe().getShort(mappedFile.getAddress(getOffset(localRowID), 2));
     }
@@ -137,11 +142,17 @@ public class FixedColumn extends AbstractColumn {
     }
 
     public void putNull() {
-        Unsafe.getUnsafe().setMemory(getAddress(), width, (byte) 0);
+        getAddress();
+//        Unsafe.getUnsafe().setMemory(getAddress(), width, (byte) 0);
     }
 
     public void putShort(short value) {
         Unsafe.getUnsafe().putShort(getAddress(), value);
+    }
+
+    @Override
+    public long size() {
+        return getOffset() / width;
     }
 
     @Override
@@ -150,16 +161,6 @@ public class FixedColumn extends AbstractColumn {
             size = 0;
         }
         preCommit(size * width);
-    }
-
-    @Override
-    public long getOffset(long localRowID) {
-        return localRowID * width;
-    }
-
-    @Override
-    public long size() {
-        return getOffset() / width;
     }
 
     long getAddress() {

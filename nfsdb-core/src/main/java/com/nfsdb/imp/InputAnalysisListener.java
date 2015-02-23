@@ -14,20 +14,10 @@
  * limitations under the License.
  */
 
-package com.nfsdb.factory.configuration;
+package com.nfsdb.imp;
 
-import com.nfsdb.JournalKey;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.configuration.ColumnMetadata;
 
-import java.io.File;
-
-public interface JournalConfiguration {
-
-    public static final String FILE_NAME = "_meta2";
-
-    <T> JournalMetadata<T> augmentMetadata(MetadataBuilder<T> builder) throws JournalException;
-
-    <T> JournalMetadata<T> createMetadata(JournalKey<T> key) throws JournalException;
-
-    File getJournalBase();
+public interface InputAnalysisListener extends Listener {
+    void onMetadata(ColumnMetadata metadata[]);
 }

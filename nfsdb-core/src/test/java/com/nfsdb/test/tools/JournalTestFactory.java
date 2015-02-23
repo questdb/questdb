@@ -22,8 +22,8 @@ import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalClosingListener;
 import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.factory.configuration.JMetadataBuilder;
 import com.nfsdb.factory.configuration.JournalConfiguration;
+import com.nfsdb.factory.configuration.MetadataBuilder;
 import com.nfsdb.utils.Files;
 import org.junit.rules.TestRule;
 import org.junit.runner.Description;
@@ -111,7 +111,7 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
         return writer;
     }
 
-    public <T> JournalWriter<T> writer(JMetadataBuilder<T> b) throws JournalException {
+    public <T> JournalWriter<T> writer(MetadataBuilder<T> b) throws JournalException {
         JournalWriter<T> writer = super.writer(b);
         journals.add(writer);
         writer.setCloseListener(this);

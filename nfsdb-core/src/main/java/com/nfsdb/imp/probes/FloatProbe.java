@@ -21,11 +21,12 @@ import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.imp.TypeProbe;
 import com.nfsdb.utils.Numbers;
 
-public class IntProbe implements TypeProbe {
+public class FloatProbe implements TypeProbe {
+
     @Override
     public ColumnMetadata getMetadata() {
         ColumnMetadata m = new ColumnMetadata();
-        m.type = ColumnType.INT;
+        m.type = ColumnType.FLOAT;
         m.size = 4;
         return m;
     }
@@ -33,7 +34,7 @@ public class IntProbe implements TypeProbe {
     @Override
     public boolean probe(CharSequence seq) {
         try {
-            Numbers.parseInt(seq);
+            Numbers.parseFloat(seq);
             return true;
         } catch (NumberFormatException e) {
             return false;

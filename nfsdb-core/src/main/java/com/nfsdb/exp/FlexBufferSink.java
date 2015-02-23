@@ -23,7 +23,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.WritableByteChannel;
 
-public class FlexBufferSink implements CharSink, Closeable {
+public class FlexBufferSink extends AbstractCharSink implements Closeable {
     protected WritableByteChannel channel;
     private ByteBuffer buffer;
     private int capacity;
