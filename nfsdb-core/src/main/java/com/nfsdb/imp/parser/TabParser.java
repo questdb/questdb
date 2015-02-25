@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.nfsdb.imp;
+package com.nfsdb.imp.parser;
 
 import com.nfsdb.utils.Unsafe;
 

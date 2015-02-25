@@ -16,17 +16,25 @@
 
 package org.nfsdb.examples.imports;
 
+import com.nfsdb.Journal;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.imp.ImportManager;
 
+import java.io.File;
 import java.io.IOException;
 
 public class ImportCsvMain {
     public static void main(String[] args) throws IOException, JournalException {
-        JournalFactory factory = new JournalFactory("d:/data");
+        final String databaseLocation = args[0];
+        final String csv = args[1];
+
+        JournalFactory factory = new JournalFactory(databaseLocation);
         long t = System.currentTimeMillis();
-        ImportManager.importPipeFile(factory, "D:\\csv\\wise-allwise-cat-part01");
-        System.out.println(System.currentTimeMillis() - t);
+        ImportManager.importCsvFile(factory, csv);
+
+        Journal r = factory.reader(new File(csv).getName());
+        System.out.println(r.getMetadata());
+        System.out.println("Loaded " + r.size() + " rows in " + (System.currentTimeMillis() - t) + "ms");
     }
 }

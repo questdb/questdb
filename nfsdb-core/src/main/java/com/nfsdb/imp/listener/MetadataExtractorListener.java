@@ -14,28 +14,46 @@
  * limitations under the License.
  */
 
-package com.nfsdb.imp;
+package com.nfsdb.imp.listener;
 
+import com.nfsdb.collections.mmap.MapValues;
+import com.nfsdb.collections.mmap.MultiMap;
 import com.nfsdb.column.ColumnType;
 import com.nfsdb.factory.configuration.ColumnMetadata;
-import com.nfsdb.imp.probes.BooleanProbe;
-import com.nfsdb.imp.probes.DoubleProbe;
-import com.nfsdb.imp.probes.FloatProbe;
-import com.nfsdb.imp.probes.IntProbe;
+import com.nfsdb.imp.ImportManager;
+import com.nfsdb.imp.ImportedColumnMetadata;
+import com.nfsdb.imp.ImportedColumnType;
+import com.nfsdb.imp.probes.*;
 
-public class MetadataExtractorListener implements Listener {
+import java.io.Closeable;
 
+public class MetadataExtractorListener implements Listener, Closeable {
+
+    public static final int FREQUENCY_MAP_AREA_SIZE = ImportManager.SAMPLE_SIZE * 163;
     // order of probes in array is critical
-    private static final TypeProbe probes[] = new TypeProbe[]{new IntProbe(), new FloatProbe(), new DoubleProbe(), new BooleanProbe()};
+    private static final TypeProbe probes[] = new TypeProbe[]{new IntProbe(), new FloatProbe(), new DoubleProbe(), new BooleanProbe(), new DateIsoProbe(), new DateFmt1Probe()};
     private static final int probeLen = probes.length;
     private int fieldCount;
     private int histogram[];
     private int blanks[];
-    private ColumnMetadata metadata[];
+    private ImportedColumnMetadata metadata[];
     private String headers[];
     private boolean header = false;
+    private MultiMap frequencyMaps[];
 
-    public ColumnMetadata[] getMetadata() {
+    @Override
+    public void close() {
+        if (frequencyMaps != null) {
+            for (int i = 0; i < frequencyMaps.length; i++) {
+                if (frequencyMaps[i] != null) {
+                    frequencyMaps[i].close();
+                    frequencyMaps[i] = null;
+                }
+            }
+        }
+    }
+
+    public ImportedColumnMetadata[] getMetadata() {
         return metadata;
     }
 
@@ -65,6 +83,16 @@ public class MetadataExtractorListener implements Listener {
                     histogram[k + offset]++;
                 }
             }
+
+            MapValues mv = frequencyMaps[i].claimSlot(
+                    frequencyMaps[i].claimKey().putStr(values[i]).commit()
+            );
+
+            if (mv.isNew()) {
+                mv.putInt(0, 0);
+            } else {
+                mv.putInt(0, mv.getInt(0) + 1);
+            }
         }
     }
 
@@ -72,8 +100,23 @@ public class MetadataExtractorListener implements Listener {
     public void onFieldCount(int count) {
         this.histogram = new int[(fieldCount = count) * probeLen];
         this.blanks = new int[count];
-        this.metadata = new ColumnMetadata[count];
+        this.metadata = new ImportedColumnMetadata[count];
         this.headers = new String[count];
+        this.frequencyMaps = new MultiMap[count];
+        for (int i = 0; i < count; i++) {
+            frequencyMaps[i] = new MultiMap.Builder() {{
+                setCapacity(ImportManager.SAMPLE_SIZE);
+                setDataSize(FREQUENCY_MAP_AREA_SIZE);
+                keyColumn(new ColumnMetadata() {{
+                    setType(ColumnType.STRING);
+                    setName("Key");
+                }});
+                valueColumn(new ColumnMetadata() {{
+                    setType(ColumnType.INT);
+                    setName("Counter");
+                }});
+            }}.build();
+        }
     }
 
     @Override
@@ -83,22 +126,43 @@ public class MetadataExtractorListener implements Listener {
 
     @Override
     public void onLineCount(int count) {
+        int frequencyExpectation = 1;
         // try calculate types counting all rows
         // if all types come up as strings, reduce count by one and retry
         // if some fields come up as non-string after subtracting row - we have a header
         if (calcTypes(count, true)) {
+            frequencyExpectation++;
             if (!calcTypes(count - 1, false)) {
                 // copy headers
                 for (int i = 0; i < fieldCount; i++) {
                     metadata[i].name = headers[i];
                 }
                 header = true;
-                return;
             }
         }
 
+        if (!header) {
+            for (int i = 0; i < fieldCount; i++) {
+                metadata[i].name = "f" + i;
+            }
+        }
+
+        // check field value frequencies to determine
+        // which fields can be symbols.
+        // consider only INT and STRING fields
         for (int i = 0; i < fieldCount; i++) {
-            metadata[i].name = "f" + i;
+            switch (metadata[i].importedType) {
+                case STRING:
+                case INT:
+                    int sz = frequencyMaps[i].size();
+                    if (sz > frequencyExpectation && (sz * 10) < ImportManager.SAMPLE_SIZE && (blanks[i] * 10) < ImportManager.SAMPLE_SIZE) {
+                        ImportedColumnMetadata m = metadata[i];
+                        m.type = ColumnType.SYMBOL;
+                        m.importedType = ImportedColumnType.SYMBOL;
+                        m.indexed = true;
+                        m.size = 4;
+                    }
+            }
         }
 
     }
@@ -136,8 +200,9 @@ public class MetadataExtractorListener implements Listener {
             }
 
             if (setDefault && metadata[i] == null) {
-                ColumnMetadata meta = new ColumnMetadata();
+                ImportedColumnMetadata meta = new ImportedColumnMetadata();
                 meta.type = ColumnType.STRING;
+                meta.importedType = ImportedColumnType.STRING;
                 meta.size = meta.avgSize + 4;
                 metadata[i] = meta;
             }

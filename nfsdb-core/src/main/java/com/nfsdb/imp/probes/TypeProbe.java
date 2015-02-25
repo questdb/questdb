@@ -14,23 +14,12 @@
  * limitations under the License.
  */
 
-package com.nfsdb.imp;
+package com.nfsdb.imp.probes;
 
-public interface TextParser {
-    int getLineCount();
+import com.nfsdb.imp.ImportedColumnMetadata;
 
-    void parse(long lo, long len, int lim, Listener listener);
+public interface TypeProbe {
+    ImportedColumnMetadata getMetadata();
 
-    /**
-     * Resets parser including metadata.
-     */
-    void reset();
-
-    /**
-     * Prepares parser to re-parse input keeping metadata intact.
-     */
-    void restart();
-
-    void setHeader(boolean header);
-
+    boolean probe(CharSequence seq);
 }

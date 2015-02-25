@@ -17,21 +17,25 @@
 package com.nfsdb.imp.probes;
 
 import com.nfsdb.column.ColumnType;
-import com.nfsdb.factory.configuration.ColumnMetadata;
-import com.nfsdb.imp.TypeProbe;
+import com.nfsdb.imp.ImportedColumnMetadata;
+import com.nfsdb.imp.ImportedColumnType;
 import com.nfsdb.utils.Numbers;
 
 public class IntProbe implements TypeProbe {
     @Override
-    public ColumnMetadata getMetadata() {
-        ColumnMetadata m = new ColumnMetadata();
+    public ImportedColumnMetadata getMetadata() {
+        ImportedColumnMetadata m = new ImportedColumnMetadata();
         m.type = ColumnType.INT;
+        m.importedType = ImportedColumnType.INT;
         m.size = 4;
         return m;
     }
 
     @Override
     public boolean probe(CharSequence seq) {
+        if (seq.length() > 2 && seq.charAt(0) == '0' && seq.charAt(1) != '.') {
+            return false;
+        }
         try {
             Numbers.parseInt(seq);
             return true;

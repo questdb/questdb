@@ -42,7 +42,7 @@ public class SymbolTable implements Closeable {
     private static final double CACHE_LOAD_FACTOR = 0.2;
     private final int hashKeyCount;
     private final String column;
-    private final ObjIntHashMap<String> valueCache;
+    private final ObjIntHashMap<CharSequence> valueCache;
     private final ArrayList<String> keyCache;
     private final boolean noCache;
     private VariableColumn data;
@@ -79,103 +79,13 @@ public class SymbolTable implements Closeable {
         this.keyCache = new ArrayList<>(noCache ? 0 : keyCount);
     }
 
-    public void applyTx(int size, long indexTxAddress) {
-        this.size = size;
-        this.index.setTxAddress(indexTxAddress);
-    }
-
     public void alignSize() {
         this.size = (int) data.size();
     }
 
-    public int put(String value) {
-        int key = getQuick(value);
-        if (key == VALUE_NOT_FOUND) {
-            key = (int) data.putStr(value);
-            data.commit();
-            index.add(hashKey(value), key);
-            size++;
-            cache(key, value);
-        }
-        return key;
-    }
-
-    public int getQuick(String value) {
-        if (!noCache) {
-            int key = value == null ? VALUE_IS_NULL : this.valueCache.get(value);
-
-            if (key != VALUE_NOT_FOUND) {
-                return key;
-            }
-        }
-
-        int hashKey = hashKey(value);
-
-        if (!index.contains(hashKey)) {
-            return VALUE_NOT_FOUND;
-        }
-
-        Cursor cursor = index.cachedCursor(hashKey);
-        while (cursor.hasNext()) {
-            int key;
-            if (data.cmpStr((key = (int) cursor.next()), value)) {
-                cache(key, value);
-                return key;
-            }
-        }
-        return VALUE_NOT_FOUND;
-    }
-
-    public int get(String value) {
-        int result = getQuick(value);
-        if (result == VALUE_NOT_FOUND) {
-            throw new JournalInvalidSymbolValueException("Invalid value %s for symbol %s", value, column);
-        } else {
-            return result;
-        }
-    }
-
-    public boolean valueExists(String value) {
-        return getQuick(value) != VALUE_NOT_FOUND;
-    }
-
-    public String value(int key) {
-        if (key == VALUE_IS_NULL) {
-            return null;
-        }
-
-        if (key >= size) {
-            throw new JournalRuntimeException("Invalid symbol key: " + key);
-        }
-
-        String value = key < keyCache.size() ? keyCache.get(key) : null;
-        if (value == null) {
-            cache(key, value = data.getStr(key));
-        }
-        return value;
-    }
-
-    public Iterable<String> values() {
-
-        return new AbstractImmutableIterator<String>() {
-
-            private final long size = SymbolTable.this.size();
-            private long current = 0;
-
-            @Override
-            public boolean hasNext() {
-                return current < size;
-            }
-
-            @Override
-            public String next() {
-                return data.getStr(current++);
-            }
-        };
-    }
-
-    public int size() {
-        return size;
+    public void applyTx(int size, long indexTxAddress) {
+        this.size = size;
+        this.index.setTxAddress(indexTxAddress);
     }
 
     public void close() {
@@ -187,6 +97,74 @@ public class SymbolTable implements Closeable {
         }
         index = null;
         data = null;
+    }
+
+    public void commit() {
+        data.commit();
+        index.commit();
+    }
+
+    public void force() {
+        data.force();
+        index.force();
+    }
+
+    public int get(CharSequence value) {
+        int result = getQuick(value);
+        if (result == VALUE_NOT_FOUND) {
+            throw new JournalInvalidSymbolValueException("Invalid value %s for symbol %s", value, column);
+        } else {
+            return result;
+        }
+    }
+
+    public VariableColumn getDataColumn() {
+        return data;
+    }
+
+    public long getIndexTxAddress() {
+        return index.getTxAddress();
+    }
+
+    public int getQuick(CharSequence value) {
+        if (value == null) {
+            return VALUE_IS_NULL;
+        }
+
+        if (!noCache) {
+            int key = valueCache.get(value);
+            if (key != VALUE_NOT_FOUND) {
+                return key;
+            }
+        }
+
+        return get0(value);
+    }
+
+    public SymbolTable preLoad() {
+        for (int key = 0, size = (int) data.size(); key < size; key++) {
+            String value = data.getStr(key);
+            valueCache.putIfAbsent(value, key);
+            keyCache.add(value);
+
+        }
+        return this;
+    }
+
+    public int put(CharSequence value) {
+        int key = getQuick(value);
+        if (key == VALUE_NOT_FOUND) {
+            key = (int) data.putStr(value);
+            data.commit();
+            index.add(hashKey(value), key);
+            size++;
+            cache(key, value.toString());
+        }
+        return key;
+    }
+
+    public int size() {
+        return size;
     }
 
     public void truncate() {
@@ -211,32 +189,62 @@ public class SymbolTable implements Closeable {
         }
     }
 
-    public VariableColumn getDataColumn() {
-        return data;
-    }
-
-    public SymbolTable preLoad() {
-        for (int key = 0, size = (int) data.size(); key < size; key++) {
-            String value = data.getStr(key);
-            valueCache.putIfAbsent(value, key);
-            keyCache.add(value);
-
+    public String value(int key) {
+        if (key == VALUE_IS_NULL) {
+            return null;
         }
-        return this;
+
+        if (key >= size) {
+            throw new JournalRuntimeException("Invalid symbol key: " + key);
+        }
+
+        String value = key < keyCache.size() ? keyCache.get(key) : null;
+        if (value == null) {
+            cache(key, value = data.getStr(key));
+        }
+        return value;
     }
 
-    public long getIndexTxAddress() {
-        return index.getTxAddress();
+    public boolean valueExists(CharSequence value) {
+        return getQuick(value) != VALUE_NOT_FOUND;
     }
 
-    public void commit() {
-        data.commit();
-        index.commit();
+    public Iterable<String> values() {
+
+        return new AbstractImmutableIterator<String>() {
+
+            private final long size = SymbolTable.this.size();
+            private long current = 0;
+
+            @Override
+            public boolean hasNext() {
+                return current < size;
+            }
+
+            @Override
+            public String next() {
+                return data.getStr(current++);
+            }
+        };
     }
 
-    public void force() {
-        data.force();
-        index.force();
+    private int get0(CharSequence value) {
+        int hashKey = hashKey(value);
+
+        if (!index.contains(hashKey)) {
+            return VALUE_NOT_FOUND;
+        }
+
+        Cursor cursor = index.cachedCursor(hashKey);
+        while (cursor.hasNext()) {
+            int key;
+            if (data.cmpStr((key = (int) cursor.next()), value)) {
+                String s = value.toString();
+                cache(key, s);
+                return key;
+            }
+        }
+        return VALUE_NOT_FOUND;
     }
 
     private void cache(int key, String value) {
@@ -254,7 +262,7 @@ public class SymbolTable implements Closeable {
         keyCache.clear();
     }
 
-    private int hashKey(String value) {
+    private int hashKey(CharSequence value) {
         return Checksum.hash(value, hashKeyCount);
     }
 }

@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-package com.nfsdb.imp;
+package com.nfsdb.imp.listener;
 
-import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.imp.ImportedColumnMetadata;
 
 public interface InputAnalysisListener extends Listener {
-    void onMetadata(ColumnMetadata metadata[]);
+    void onMetadata(ImportedColumnMetadata metadata[]);
 }

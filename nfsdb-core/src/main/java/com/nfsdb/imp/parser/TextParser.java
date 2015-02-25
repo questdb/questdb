@@ -14,16 +14,27 @@
  * limitations under the License.
  */
 
-package com.nfsdb.imp;
+package com.nfsdb.imp.parser;
 
-public interface Listener {
-    void onError(int line);
+import com.nfsdb.imp.listener.Listener;
 
-    void onField(int line, CharSequence values[], int hi);
+import java.io.Closeable;
 
-    void onFieldCount(int count);
+public interface TextParser extends Closeable {
+    int getLineCount();
 
-    void onHeader(CharSequence values[], int hi);
+    void parse(long lo, long len, int lim, Listener listener);
 
-    void onLineCount(int count);
+    /**
+     * Resets parser including metadata.
+     */
+    void reset();
+
+    /**
+     * Prepares parser to re-parse input keeping metadata intact.
+     */
+    void restart();
+
+    void setHeader(boolean header);
+
 }

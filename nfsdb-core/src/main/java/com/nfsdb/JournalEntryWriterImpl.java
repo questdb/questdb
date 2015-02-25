@@ -165,7 +165,7 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
     }
 
     @Override
-    public void putSym(int index, String value) {
+    public void putSym(int index, CharSequence value) {
         assertType(index, ColumnType.SYMBOL);
         putSymbol0(index, value);
         skipped[index] = false;
@@ -221,7 +221,7 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
         }
     }
 
-    private void putSymbol0(int index, String value) {
+    private void putSymbol0(int index, CharSequence value) {
         int key;
         if (value == null) {
             key = SymbolTable.VALUE_IS_NULL;

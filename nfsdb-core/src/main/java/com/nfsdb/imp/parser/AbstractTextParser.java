@@ -14,15 +14,14 @@
  * limitations under the License.
  */
 
-package com.nfsdb.imp;
+package com.nfsdb.imp.parser;
 
+import com.nfsdb.imp.listener.Listener;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.utils.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.Closeable;
-
-public abstract class AbstractTextParser implements TextParser, Closeable {
+public abstract class AbstractTextParser implements TextParser {
     private final static Logger LOGGER = Logger.getLogger(AbstractTextParser.class);
     protected boolean inQuote;
     protected boolean delayedOutQuote;
@@ -155,6 +154,8 @@ public abstract class AbstractTextParser implements TextParser, Closeable {
         if (header) {
             listener.onHeader(fields, hi);
             header = false;
+            fieldIndex = 0;
+            eol = true;
             return;
         }
 
@@ -222,6 +223,43 @@ public abstract class AbstractTextParser implements TextParser, Closeable {
         }
 
         @Override
+        public boolean equals(Object obj) {
+            if (this == obj) {
+                return true;
+            }
+
+            if (obj instanceof CharSequence) {
+                CharSequence cs = (CharSequence) obj;
+                int l;
+                if ((l = this.length()) != cs.length()) {
+                    return false;
+                }
+
+                for (int i = 0; i < l; i++) {
+                    if (charAt(i) != cs.charAt(i)) {
+                        return false;
+                    }
+                }
+                return true;
+            } else {
+                return false;
+            }
+        }
+
+        @Override
+        public int hashCode() {
+            if (lo == hi) {
+                return 0;
+            }
+
+            int h = 0;
+            for (long p = lo; p < hi; p++) {
+                h = 31 * h + (char) Unsafe.getUnsafe().getByte(p);
+            }
+            return h;
+        }
+
+        @Override
         public int length() {
             return (int) (hi - lo);
         }
@@ -233,7 +271,6 @@ public abstract class AbstractTextParser implements TextParser, Closeable {
             seq.hi = this.lo + end;
             return seq;
         }
-
 
         @NotNull
         @Override

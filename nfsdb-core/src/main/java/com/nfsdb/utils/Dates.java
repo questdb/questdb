@@ -385,6 +385,36 @@ final public class Dates {
                 + mil;
     }
 
+
+    // YYYY-MM-DD hh:mm:ss
+    public static long parseDateTimeFmt1(CharSequence seq) {
+        int p = 0;
+        int year = Numbers.parseInt(seq, p, p += 4);
+        checkChar(seq, p++, '-');
+        int month = Numbers.parseInt(seq, p, p += 2);
+        checkRange(month, 1, 12, "Month");
+        checkChar(seq, p++, '-');
+        boolean l = isLeapYear(year);
+        int day = Numbers.parseInt(seq, p, p += 2);
+        checkRange(day, 1, getDaysPerMonth(month, l), "Day");
+        checkChar(seq, p++, ' ');
+        int hour = Numbers.parseInt(seq, p, p += 2);
+        checkRange(hour, 0, 23, "Hour");
+        checkChar(seq, p++, ':');
+        int min = Numbers.parseInt(seq, p, p += 2);
+        checkRange(min, 0, 59, "Minute");
+        checkChar(seq, p++, ':');
+        int sec = Numbers.parseInt(seq, p, p + 2);
+        checkRange(sec, 0, 59, "Second");
+
+        return yearMillis(year, l)
+                + monthOfYearMillis(month, l)
+                + (day - 1) * DAY_MILLIS
+                + hour * HOUR_MILLIS
+                + min * MINUTE_MILLIS
+                + sec * SECOND_MILLIS;
+    }
+
     public static long toMillis(int y, int m, int d) {
         boolean l = isLeapYear(y);
         return yearMillis(y, l) + monthOfYearMillis(m, l) + (d - 1) * DAY_MILLIS;

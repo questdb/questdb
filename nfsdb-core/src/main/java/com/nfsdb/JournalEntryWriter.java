@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -50,5 +50,5 @@ public interface JournalEntryWriter {
 
     void putStr(int index, CharSequence value);
 
-    void putSym(int index, String value);
+    void putSym(int index, CharSequence value);
 }

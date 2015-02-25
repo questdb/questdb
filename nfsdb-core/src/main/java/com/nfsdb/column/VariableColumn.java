@@ -45,7 +45,7 @@ public class VariableColumn extends AbstractColumn {
         super.close();
     }
 
-    public boolean cmpStr(long localRowID, String value) {
+    public boolean cmpStr(long localRowID, CharSequence value) {
         long offset = indexColumn.getLong(localRowID);
         int len = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
 

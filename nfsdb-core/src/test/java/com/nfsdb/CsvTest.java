@@ -17,7 +17,11 @@
 package com.nfsdb;
 
 import com.nfsdb.exp.StringSink;
-import com.nfsdb.imp.*;
+import com.nfsdb.imp.ImportManager;
+import com.nfsdb.imp.listener.Listener;
+import com.nfsdb.imp.parser.CsvParser;
+import com.nfsdb.imp.parser.TabParser;
+import com.nfsdb.imp.parser.TextParser;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;

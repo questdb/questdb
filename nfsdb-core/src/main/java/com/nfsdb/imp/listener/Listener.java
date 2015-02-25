@@ -14,12 +14,16 @@
  * limitations under the License.
  */
 
-package com.nfsdb.imp;
+package com.nfsdb.imp.listener;
 
-import com.nfsdb.factory.configuration.ColumnMetadata;
+public interface Listener {
+    void onError(int line);
 
-public interface TypeProbe {
-    ColumnMetadata getMetadata();
+    void onField(int line, CharSequence values[], int hi);
 
-    boolean probe(CharSequence seq);
+    void onFieldCount(int count);
+
+    void onHeader(CharSequence values[], int hi);
+
+    void onLineCount(int count);
 }

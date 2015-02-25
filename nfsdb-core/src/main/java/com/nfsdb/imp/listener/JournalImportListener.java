@@ -14,46 +14,35 @@
  * limitations under the License.
  */
 
-package com.nfsdb.imp;
+package com.nfsdb.imp.listener;
 
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.JournalWriterFactory;
-import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalStructure;
+import com.nfsdb.imp.ImportedColumnMetadata;
 import com.nfsdb.logging.Logger;
+import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Numbers;
 
 import java.io.Closeable;
-import java.io.File;
-import java.io.IOException;
 
 public class JournalImportListener implements InputAnalysisListener, Closeable {
     private static final Logger LOGGER = Logger.getLogger(JournalImportListener.class);
     private final JournalWriterFactory factory;
     private final String location;
     private JournalWriter writer;
-    private ColumnMetadata metadata[];
+    private ImportedColumnMetadata metadata[];
 
     public JournalImportListener(JournalWriterFactory factory, String location) {
         this.factory = factory;
         this.location = location;
-        switch (factory.exists(location)) {
-            case EXISTS_FOREIGN:
-                throw new JournalRuntimeException("A foreign file/directory already exists: " + (new File(factory.getConfiguration().getJournalBase(), location)));
-            case EXISTS:
-                try {
-                    writer = factory.writer(location);
-                } catch (JournalException e) {
-                    throw new JournalRuntimeException(e);
-                }
-        }
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         if (writer != null) {
             writer.close();
         }
@@ -73,7 +62,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
                     continue;
                 }
                 try {
-                    switch (metadata[i].type) {
+                    switch (metadata[i].importedType) {
                         case STRING:
                             w.putStr(i, values[i]);
                             break;
@@ -86,7 +75,16 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
                         case FLOAT:
                             w.putFloat(i, Numbers.parseFloat(values[i]));
                             break;
+                        case DATE_ISO:
+                            w.putDate(i, Dates.parseDateTime(values[i]));
+                            break;
+                        case DATE_1:
+                            w.putDate(i, Dates.parseDateTimeFmt1(values[i]));
+                            break;
+                        case SYMBOL:
+                            w.putSym(i, values[i]);
                     }
+
                 } catch (Exception e) {
                     LOGGER.info("Error at (%d,%d) as %s: %s", line, i, metadata[i].type, e.getMessage());
                     break;
@@ -100,12 +98,10 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
 
     @Override
     public void onFieldCount(int count) {
-
     }
 
     @Override
     public void onHeader(CharSequence[] values, int hi) {
-
     }
 
     @Override
@@ -114,7 +110,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
     }
 
     @Override
-    public void onMetadata(ColumnMetadata metadata[]) {
+    public void onMetadata(ImportedColumnMetadata metadata[]) {
         if (writer == null) {
             try {
                 writer = factory.writer(new JournalStructure(location, this.metadata = metadata));

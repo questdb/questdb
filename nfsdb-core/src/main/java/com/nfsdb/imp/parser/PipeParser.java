@@ -14,15 +14,14 @@
  * limitations under the License.
  */
 
-package com.nfsdb.imp;
+package com.nfsdb.imp.parser;
 
 import com.nfsdb.utils.Unsafe;
 
-public class CsvParser extends AbstractTextParser {
+public class PipeParser extends AbstractTextParser {
 
     @Override
-    protected void parse(long lo, long len, int maxLine) {
-        this.fieldHi = useLineRollBuf ? lineRollBufCur : (this.fieldLo = lo);
+    public void parse(long lo, long len, int maxLine) {
         long hi = lo + len;
         long ptr = lo;
 
@@ -44,7 +43,7 @@ public class CsvParser extends AbstractTextParser {
                 case '"':
                     quote();
                     break;
-                case ',':
+                case '|':
 
                     if (eol) {
                         uneol(lo);

@@ -19,35 +19,25 @@ package com.nfsdb.imp.probes;
 import com.nfsdb.column.ColumnType;
 import com.nfsdb.imp.ImportedColumnMetadata;
 import com.nfsdb.imp.ImportedColumnType;
+import com.nfsdb.utils.Dates;
 
-public class BooleanProbe implements TypeProbe {
-
+public class DateFmt1Probe implements TypeProbe {
     @Override
     public ImportedColumnMetadata getMetadata() {
         ImportedColumnMetadata m = new ImportedColumnMetadata();
-        m.type = ColumnType.BOOLEAN;
-        m.importedType = ImportedColumnType.BOOLEAN;
-        m.size = 1;
+        m.type = ColumnType.DATE;
+        m.importedType = ImportedColumnType.DATE_1;
+        m.size = 8;
         return m;
     }
 
     @Override
     public boolean probe(CharSequence seq) {
-        return cmp(seq, "true") || cmp(seq, "false");
-    }
-
-    private boolean cmp(CharSequence l, CharSequence r) {
-        int ll;
-        if ((ll = l.length()) != r.length()) {
+        try {
+            Dates.parseDateTimeFmt1(seq);
+            return true;
+        } catch (NumberFormatException e) {
             return false;
         }
-
-        for (int i = 0; i < ll; i++) {
-            if (Character.toLowerCase(l.charAt(i)) != r.charAt(i)) {
-                return false;
-            }
-        }
-
-        return true;
     }
 }
