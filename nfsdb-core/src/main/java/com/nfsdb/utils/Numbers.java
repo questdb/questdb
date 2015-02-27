@@ -23,7 +23,7 @@ public class Numbers {
     private static final long[] pow10;
 
     static {
-        pow10 = new long[19];
+        pow10 = new long[20];
         pow10[0] = 1;
         for (int i = 1; i < pow10.length; i++) {
             pow10[i] = pow10[i - 1] * 10;
@@ -59,14 +59,12 @@ public class Numbers {
         }
         long factor = pow10[scale];
         long scaled = (long) (d * factor + 0.5);
-        long targetScale = scale + 1;
-        long z;
-        while (targetScale < 20 && (z = factor * 10) <= scaled) {
-            factor = z;
-            targetScale++;
+        int targetScale = scale + 1;
+        while (targetScale < 20 && pow10[targetScale] <= scaled) {
+            factor = pow10[targetScale++];
         }
 
-        // factor overflow, fallback to slow method rather than thrown an exception
+        // factor overflow, fallback to slow method rather than throwing exception
         if (targetScale == 20) {
             sink.put(Double.toString(d));
             return;
@@ -234,6 +232,65 @@ public class Numbers {
             } else { //  nineteen
                 appendLong19(sink, i);
             }
+        }
+    }
+
+    public static void appendTrim(CharSink sink, double d, int scale) {
+        if (d == Double.POSITIVE_INFINITY) {
+            sink.put("Infinity");
+            return;
+        }
+
+        if (d == Double.NEGATIVE_INFINITY) {
+            sink.put("-Infinity");
+            return;
+        }
+
+        if (d != d) {
+            sink.put("NaN");
+            return;
+        }
+
+        if (d == 0d) {
+            sink.put('0');
+            return;
+        }
+
+        if (d < 0) {
+            sink.put('-');
+            d = -d;
+        }
+
+        long scaled = (long) (d * pow10[scale] + 0.5);
+
+        // adjust scale to remove trailing zeroes
+        int k = 1;
+        while (scaled % pow10[k] == 0 && scaled / pow10[k] > d) {
+            k++;
+        }
+        scale = scale - k + 1;
+
+        long factor = pow10[scale];
+        scaled = (long) (d * factor + 0.5);
+
+        int targetScale = scale + 1;
+        while (targetScale < 20 && pow10[targetScale] <= scaled) {
+            factor = pow10[targetScale++];
+        }
+
+
+        // factor overflow, fallback to slow method rather than throwing exception
+        if (targetScale == 20) {
+            sink.put(Double.toString(d));
+            return;
+        }
+
+        while (targetScale > 0) {
+            if (targetScale-- == scale) {
+                sink.put('.');
+            }
+            sink.put((char) ('0' + scaled / factor % 10));
+            factor /= 10;
         }
     }
 

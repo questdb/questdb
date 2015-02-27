@@ -65,8 +65,10 @@ public class FlexBufferSink extends AbstractCharSink implements Closeable {
 
     @Override
     public CharSink put(CharSequence cs) {
-        for (int i = 0, len = cs.length(); i < len; i++) {
-            put(cs.charAt(i));
+        if (cs != null) {
+            for (int i = 0, len = cs.length(); i < len; i++) {
+                put(cs.charAt(i));
+            }
         }
         return this;
     }

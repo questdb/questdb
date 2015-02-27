@@ -55,12 +55,12 @@ public class CsvTest {
                     }
 
                     @Override
-                    public void onField(int line, CharSequence[] values, int hi) {
+                    public void onFieldCount(int count) {
 
                     }
 
                     @Override
-                    public void onFieldCount(int count) {
+                    public void onFields(int line, CharSequence[] values, int hi) {
 
                     }
 
@@ -153,7 +153,7 @@ public class CsvTest {
                     }
 
                     @Override
-                    public void onField(int index, CharSequence value, int line, boolean eol) {
+                    public void onFields(int index, CharSequence value, int line, boolean eol) {
                     }
 
                     @Override
@@ -226,7 +226,12 @@ public class CsvTest {
         }
 
         @Override
-        public void onField(int line, CharSequence[] values, int hi) {
+        public void onFieldCount(int count) {
+
+        }
+
+        @Override
+        public void onFields(int line, CharSequence[] values, int hi) {
             for (int i = 0; i < hi; i++) {
                 if (i > 0) {
                     sink.put(',');
@@ -234,11 +239,6 @@ public class CsvTest {
                 sink.put(values[i]);
             }
             sink.put('\n');
-        }
-
-        @Override
-        public void onFieldCount(int count) {
-
         }
 
         @Override

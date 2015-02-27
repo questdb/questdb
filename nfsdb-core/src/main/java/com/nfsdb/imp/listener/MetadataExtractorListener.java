@@ -23,16 +23,20 @@ import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.imp.ImportManager;
 import com.nfsdb.imp.ImportedColumnMetadata;
 import com.nfsdb.imp.ImportedColumnType;
+import com.nfsdb.imp.Schema;
 import com.nfsdb.imp.probes.*;
 
 import java.io.Closeable;
+import java.util.List;
 
 public class MetadataExtractorListener implements Listener, Closeable {
 
     public static final int FREQUENCY_MAP_AREA_SIZE = ImportManager.SAMPLE_SIZE * 163;
     // order of probes in array is critical
-    private static final TypeProbe probes[] = new TypeProbe[]{new IntProbe(), new FloatProbe(), new DoubleProbe(), new BooleanProbe(), new DateIsoProbe(), new DateFmt1Probe()};
+    private static final TypeProbe probes[] = new TypeProbe[]{new IntProbe(), new LongProbe(), new DoubleProbe(), new BooleanProbe(), new DateIsoProbe(), new DateFmt1Probe(), new DateFmt1Probe()};
     private static final int probeLen = probes.length;
+    private final StringBuilder normBuilder = new StringBuilder();
+    private final Schema schema;
     private int fieldCount;
     private int histogram[];
     private int blanks[];
@@ -40,6 +44,10 @@ public class MetadataExtractorListener implements Listener, Closeable {
     private String headers[];
     private boolean header = false;
     private MultiMap frequencyMaps[];
+
+    public MetadataExtractorListener(Schema schema) {
+        this.schema = schema;
+    }
 
     @Override
     public void close() {
@@ -67,7 +75,30 @@ public class MetadataExtractorListener implements Listener, Closeable {
     }
 
     @Override
-    public void onField(int line, CharSequence values[], int hi) {
+    public void onFieldCount(int count) {
+        this.histogram = new int[(fieldCount = count) * probeLen];
+        this.blanks = new int[count];
+        this.metadata = new ImportedColumnMetadata[count];
+        this.headers = new String[count];
+        this.frequencyMaps = new MultiMap[count];
+        for (int i = 0; i < count; i++) {
+            frequencyMaps[i] = new MultiMap.Builder() {{
+                setCapacity(ImportManager.SAMPLE_SIZE);
+                setDataSize(FREQUENCY_MAP_AREA_SIZE);
+                keyColumn(new ColumnMetadata() {{
+                    setType(ColumnType.STRING);
+                    setName("Key");
+                }});
+                valueColumn(new ColumnMetadata() {{
+                    setType(ColumnType.INT);
+                    setName("Counter");
+                }});
+            }}.build();
+        }
+    }
+
+    @Override
+    public void onFields(int line, CharSequence values[], int hi) {
         // keep first line in case its a header
         if (line == 0) {
             stashPossibleHeader(values, hi);
@@ -97,29 +128,6 @@ public class MetadataExtractorListener implements Listener, Closeable {
     }
 
     @Override
-    public void onFieldCount(int count) {
-        this.histogram = new int[(fieldCount = count) * probeLen];
-        this.blanks = new int[count];
-        this.metadata = new ImportedColumnMetadata[count];
-        this.headers = new String[count];
-        this.frequencyMaps = new MultiMap[count];
-        for (int i = 0; i < count; i++) {
-            frequencyMaps[i] = new MultiMap.Builder() {{
-                setCapacity(ImportManager.SAMPLE_SIZE);
-                setDataSize(FREQUENCY_MAP_AREA_SIZE);
-                keyColumn(new ColumnMetadata() {{
-                    setType(ColumnType.STRING);
-                    setName("Key");
-                }});
-                valueColumn(new ColumnMetadata() {{
-                    setType(ColumnType.INT);
-                    setName("Counter");
-                }});
-            }}.build();
-        }
-    }
-
-    @Override
     public void onHeader(CharSequence[] values, int hi) {
 
     }
@@ -141,6 +149,7 @@ public class MetadataExtractorListener implements Listener, Closeable {
             }
         }
 
+        // make up field names if there is no header
         if (!header) {
             for (int i = 0; i < fieldCount; i++) {
                 metadata[i].name = "f" + i;
@@ -155,7 +164,9 @@ public class MetadataExtractorListener implements Listener, Closeable {
                 case STRING:
                 case INT:
                     int sz = frequencyMaps[i].size();
-                    if (sz > frequencyExpectation && (sz * 10) < ImportManager.SAMPLE_SIZE && (blanks[i] * 10) < ImportManager.SAMPLE_SIZE) {
+                    if (sz > frequencyExpectation
+                            && (sz * 10) < ImportManager.SAMPLE_SIZE
+                            && (blanks[i] * 10) < ImportManager.SAMPLE_SIZE) {
                         ImportedColumnMetadata m = metadata[i];
                         m.type = ColumnType.SYMBOL;
                         m.importedType = ImportedColumnType.SYMBOL;
@@ -165,12 +176,46 @@ public class MetadataExtractorListener implements Listener, Closeable {
             }
         }
 
+        // override calculated types with user-supplied information
+        if (schema != null) {
+            List<ImportedColumnMetadata> override = schema.getMetadata();
+            for (int i = 0; i < override.size(); i++) {
+                ImportedColumnMetadata m = override.get(i);
+                if (m.columnIndex < fieldCount) {
+                    metadata[m.columnIndex].importedType = m.importedType;
+                    metadata[m.columnIndex].type = m.type;
+                    metadata[m.columnIndex].size = m.size;
+                }
+            }
+        }
     }
 
     private void stashPossibleHeader(CharSequence values[], int hi) {
         for (int i = 0; i < hi; i++) {
-            headers[i] = values[i].toString();
+            headers[i] = normalise(values[i]);
         }
+    }
+
+    private String normalise(CharSequence seq) {
+        boolean capNext = false;
+        normBuilder.setLength(0);
+        for (int i = 0, l = seq.length(); i < l; i++) {
+            char c = seq.charAt(i);
+            switch (c) {
+                case ' ':
+                case '_':
+                    capNext = true;
+                    break;
+                default:
+                    if (capNext) {
+                        normBuilder.append(Character.toUpperCase(c));
+                        capNext = false;
+                    } else {
+                        normBuilder.append(c);
+                    }
+            }
+        }
+        return normBuilder.toString();
     }
 
     /**

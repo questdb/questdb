@@ -22,12 +22,8 @@ import com.nfsdb.imp.listener.InputAnalysisListener;
 import com.nfsdb.imp.listener.JournalImportListener;
 import com.nfsdb.imp.listener.Listener;
 import com.nfsdb.imp.listener.MetadataExtractorListener;
-import com.nfsdb.imp.parser.CsvParser;
-import com.nfsdb.imp.parser.PipeParser;
-import com.nfsdb.imp.parser.TabParser;
 import com.nfsdb.imp.parser.TextParser;
 import com.nfsdb.utils.ByteBuffers;
-import com.nfsdb.utils.Os;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.File;
@@ -40,16 +36,22 @@ import java.nio.channels.FileChannel;
 public final class ImportManager {
     public static final int SAMPLE_SIZE = 100;
 
-    public static void importCsvFile(JournalWriterFactory factory, String fileName) throws IOException {
-        importFile(factory, fileName, new CsvParser());
-    }
+    public static void importFile(JournalWriterFactory factory, String fileName, TextParser parser, Schema schema) throws IOException {
+        try {
+            File file = new File(fileName);
+            String location = file.getName();
 
-    public static void importPipeFile(JournalWriterFactory factory, String fileName) throws IOException {
-        importFile(factory, fileName, new PipeParser());
-    }
-
-    public static void importTabFile(JournalWriterFactory factory, String fileName) throws IOException {
-        importFile(factory, fileName, new TabParser());
+            switch (factory.exists(location)) {
+                case EXISTS_FOREIGN:
+                    throw new JournalRuntimeException("A foreign file/directory already exists: " + (new File(factory.getConfiguration().getJournalBase(), location)));
+                default:
+                    try (JournalImportListener l = new JournalImportListener(factory, location)) {
+                        analyzeAndParse(file, parser, l, schema);
+                    }
+            }
+        } finally {
+            parser.close();
+        }
     }
 
     public static void parse(File file, TextParser parser, long bufSize, boolean header, Listener listener) throws IOException {
@@ -59,7 +61,7 @@ public final class ImportManager {
             try (FileChannel channel = raf.getChannel()) {
                 long size = channel.size();
                 if (bufSize == -1) {
-                    bufSize = calcBufferSize(size);
+                    bufSize = ByteBuffers.getMaxMappedBufferSize(size);
                 }
                 long p = 0;
                 while (p < size) {
@@ -76,42 +78,18 @@ public final class ImportManager {
         }
     }
 
-    private static void importFile(JournalWriterFactory factory, String fileName, TextParser parser) throws IOException {
-        try {
-            File file = new File(fileName);
-            String location = file.getName();
-
-            switch (factory.exists(location)) {
-                case EXISTS_FOREIGN:
-                    throw new JournalRuntimeException("A foreign file/directory already exists: " + (new File(factory.getConfiguration().getJournalBase(), location)));
-                default:
-                    try (JournalImportListener l = new JournalImportListener(factory, location)) {
-                        analyzeAndParse(file, parser, l);
-                    }
-            }
-        } finally {
-            parser.close();
-        }
-    }
-
-    private static long calcBufferSize(long channelSize) {
-        long max = Os.getSystemMemory() / 4;
-        max = max > Integer.MAX_VALUE ? Integer.MAX_VALUE : max;
-        return channelSize > max ? max : channelSize;
-    }
-
-    private static void analyzeAndParse(File file, TextParser parser, InputAnalysisListener listener) throws IOException {
+    private static void analyzeAndParse(File file, TextParser parser, InputAnalysisListener listener, Schema schema) throws IOException {
         parser.reset();
         try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
             try (FileChannel channel = raf.getChannel()) {
                 long size = channel.size();
-                long bufSize = calcBufferSize(size);
+                long bufSize = ByteBuffers.getMaxMappedBufferSize(size);
                 long p = 0;
                 while (p < size) {
                     MappedByteBuffer buf = channel.map(FileChannel.MapMode.READ_ONLY, p, size - p < bufSize ? size - p : bufSize);
                     try {
                         if (p == 0) {
-                            analyze(parser, buf, listener);
+                            analyze(parser, buf, listener, schema);
                         }
                         p += buf.remaining();
                         parser.parse(((DirectBuffer) buf).address(), buf.remaining(), Integer.MAX_VALUE, listener);
@@ -123,9 +101,9 @@ public final class ImportManager {
         }
     }
 
-    private static void analyze(TextParser parser, ByteBuffer buf, InputAnalysisListener listener) {
+    private static void analyze(TextParser parser, ByteBuffer buf, InputAnalysisListener listener, Schema schema) {
         // use field detector listener to process first 100 lines of input
-        try (MetadataExtractorListener lsnr = new MetadataExtractorListener()) {
+        try (MetadataExtractorListener lsnr = new MetadataExtractorListener(schema)) {
             parser.parse(((DirectBuffer) buf).address(), buf.remaining(), SAMPLE_SIZE, lsnr);
             lsnr.onLineCount(parser.getLineCount());
             buf.clear();

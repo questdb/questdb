@@ -82,6 +82,17 @@ public class NumbersTest {
     }
 
     @Test
+    public void testFormatDoubleNoPadding() throws Exception {
+        double d = 40.2345d;
+
+        sink.clear();
+
+        Numbers.appendTrim(sink, d, 12);
+        System.out.println(sink);
+
+    }
+
+    @Test
     public void testFormatFloat() throws Exception {
         Numbers.append(sink, Float.POSITIVE_INFINITY, 3);
         Assert.assertEquals(Float.toString(Float.POSITIVE_INFINITY), sink.toString());

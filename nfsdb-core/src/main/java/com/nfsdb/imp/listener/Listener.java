@@ -19,9 +19,9 @@ package com.nfsdb.imp.listener;
 public interface Listener {
     void onError(int line);
 
-    void onField(int line, CharSequence values[], int hi);
-
     void onFieldCount(int count);
+
+    void onFields(int line, CharSequence values[], int hi);
 
     void onHeader(CharSequence values[], int hi);
 

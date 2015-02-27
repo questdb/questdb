@@ -42,6 +42,10 @@ public abstract class AbstractTextParser implements TextParser {
     private boolean header;
     private long lastQuotePos = -1;
 
+    public AbstractTextParser() {
+        reset();
+    }
+
     @Override
     public void close() {
         Unsafe.getUnsafe().freeMemory(lineRollBufPtr);
@@ -57,6 +61,18 @@ public abstract class AbstractTextParser implements TextParser {
         this.listener = listener;
         this.fieldHi = useLineRollBuf ? lineRollBufCur : (this.fieldLo = lo);
         parse(lo, len, lim);
+    }
+
+    public void parseLast() {
+        if (useLineRollBuf) {
+            if (inQuote) {
+                listener.onError(lineCount);
+            } else {
+                this.fieldHi++;
+                stashField();
+                triggerLine(0);
+            }
+        }
     }
 
     @Override
@@ -159,7 +175,7 @@ public abstract class AbstractTextParser implements TextParser {
             return;
         }
 
-        listener.onField(lineCount++, fields, hi);
+        listener.onFields(lineCount++, fields, hi);
         fieldIndex = 0;
         eol = true;
 

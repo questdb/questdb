@@ -162,6 +162,12 @@ public final class ByteBuffers {
         return resultBits;
     }
 
+    public static long getMaxMappedBufferSize(long channelSize) {
+        long max = Os.getSystemMemory() / 4;
+        max = max > Integer.MAX_VALUE ? Integer.MAX_VALUE : max;
+        return channelSize > max ? max : channelSize;
+    }
+
     public static void putStr(ByteBuffer buffer, String value) {
         int p = buffer.position();
         for (int i = 0; i < value.length(); i++) {
@@ -230,4 +236,6 @@ public final class ByteBuffers {
         }
         return result;
     }
+
+
 }

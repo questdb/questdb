@@ -27,5 +27,6 @@ public enum ImportedColumnType {
     STRING,
     SYMBOL,
     DATE_ISO,
-    DATE_1
+    DATE_1,
+    DATE_2
 }

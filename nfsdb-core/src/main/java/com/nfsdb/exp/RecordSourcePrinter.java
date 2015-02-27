@@ -24,23 +24,33 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT"})
 public class RecordSourcePrinter {
     private final CharSink sink;
+    private final char delimiter;
 
     public RecordSourcePrinter(CharSink sink) {
         this.sink = sink;
+        this.delimiter = '\t';
+    }
+
+    public RecordSourcePrinter(CharSink sink, char delimiter) {
+        this.sink = sink;
+        this.delimiter = delimiter;
     }
 
     public void print(Record r, RecordMetadata m) {
 
         for (int i = 0, sz = m.getColumnCount(); i < sz; i++) {
+            if (i > 0) {
+                sink.put(delimiter);
+            }
             switch (m.getColumnType(i)) {
                 case DATE:
                     sink.putISODate(r.getLong(i));
                     break;
                 case DOUBLE:
-                    sink.put(r.getDouble(i), 12);
+                    sink.putTrim(r.getDouble(i), 12);
                     break;
                 case FLOAT:
-                    sink.put(r.getFloat(i), 12);
+                    sink.put(r.getFloat(i), 6);
                     break;
                 case INT:
                     sink.put(r.getInt(i));
@@ -66,7 +76,6 @@ public class RecordSourcePrinter {
 //                default:
 //                    throw new JournalRuntimeException("Unsupported type: " + r.getColumnType(i));
             }
-            sink.put('\t');
         }
         sink.put("\n");
         sink.flush();

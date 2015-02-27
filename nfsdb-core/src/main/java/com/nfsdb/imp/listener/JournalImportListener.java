@@ -54,7 +54,11 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
     }
 
     @Override
-    public void onField(int line, CharSequence[] values, int hi) {
+    public void onFieldCount(int count) {
+    }
+
+    @Override
+    public void onFields(int line, CharSequence[] values, int hi) {
         try {
             JournalEntryWriter w = writer.entryWriter();
             for (int i = 0; i < hi; i++) {
@@ -81,6 +85,9 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
                         case DATE_1:
                             w.putDate(i, Dates.parseDateTimeFmt1(values[i]));
                             break;
+                        case DATE_2:
+                            w.putDate(i, Dates.parseDateTimeFmt2(values[i]));
+                            break;
                         case SYMBOL:
                             w.putSym(i, values[i]);
                     }
@@ -94,10 +101,6 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
         } catch (JournalException e) {
             e.printStackTrace();
         }
-    }
-
-    @Override
-    public void onFieldCount(int count) {
     }
 
     @Override

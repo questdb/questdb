@@ -55,4 +55,10 @@ public abstract class AbstractCharSink implements CharSink {
         Dates.appendDateTime(this, value);
         return this;
     }
+
+    @Override
+    public CharSink putTrim(double value, int scale) {
+        Numbers.appendTrim(this, value, scale);
+        return this;
+    }
 }

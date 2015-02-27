@@ -19,6 +19,7 @@ package com.nfsdb.imp;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 
 public class ImportedColumnMetadata extends ColumnMetadata {
+    public int columnIndex;
     public ImportedColumnType importedType;
 }
 
