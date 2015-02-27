@@ -43,7 +43,7 @@ public class SplitRecordMetadata implements RecordMetadata {
             columnIndices.put(columns[i].getName(), i);
         }
 
-        for (int i = 0, c = columnCount - split; c < i; i++) {
+        for (int i = 0, c = columnCount - split; i < c; i++) {
             columns[i + split] = b.getColumn(i);
             columnIndices.put(columns[i + split].getName(), i + split);
         }

@@ -70,8 +70,8 @@ public class HashJoinTest {
         bw.commit();
 
         aw.append(new Album().setName("album X").setBand("band1").setGenre("pop"));
-        aw.append(new Album().setName("album BZ").setBand("band1").setGenre("rock"));
         aw.append(new Album().setName("album Y").setBand("band3").setGenre("metal"));
+        aw.append(new Album().setName("album BZ").setBand("band1").setGenre("rock"));
 
         aw.commit();
 
@@ -84,8 +84,8 @@ public class HashJoinTest {
                 "band"
         );
         p.printColumns(
-                joinResult, joinResult.getMetadata().getColumnIndex("name")
+                joinResult, joinResult.getMetadata().getColumnIndex("genre")
         );
-        Assert.assertEquals("band1\nband3", sink.toString());
+        Assert.assertEquals("pop\trock\tmetal\tpop\trock\t", sink.toString());
     }
 }

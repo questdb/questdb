@@ -17,26 +17,25 @@ package com.nfsdb.lang.cst.impl.join;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.column.ColumnType;
-import com.nfsdb.column.SymbolTable;
 import com.nfsdb.lang.cst.impl.qry.*;
 import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 
-import java.io.Closeable;
-import java.io.IOException;
-
-public class HashJoin extends AbstractImmutableIterator<SplitRecord> implements RecordSource<SplitRecord>, Closeable {
-    private final RecordSource<? extends Record> hashedSource;
-    private final RecordSource<? extends Record> slaveSource;
+public class HashJoin extends AbstractImmutableIterator<SplitRecord> implements RecordSource<SplitRecord> {
+    private final RecordSource<? extends Record> masterSource;
     private final SplitRecordMetadata metadata;
-    private final SplitRecord record;
-    private final JoinHashTable masterSymbolTable;
+    private final JoinHashTable joinHashTable;
+    private final SplitRecord currentRecord;
+    private final int masterColIndex;
+    private final ColumnType masterColType;
+    private RecordSource<? extends Record> hashedValues;
 
-    public HashJoin(RecordSource<? extends Record> hashedSource, String hashedSourceColumn, RecordSource<? extends Record> slaveSource, String slaveColumn) {
-        this.hashedSource = hashedSource;
-        this.slaveSource = slaveSource;
-        this.metadata = new SplitRecordMetadata(this.hashedSource.getMetadata(), slaveSource.getMetadata());
-        this.record = new SplitRecord(metadata, this.hashedSource.getMetadata().getColumnCount());
-        this.masterSymbolTable = buildColumnHash(this.hashedSource, hashedSourceColumn);
+    public HashJoin(RecordSource<? extends Record> masterSource, String masterColumn, RecordSource<? extends Record> hashedSource, String hashedSourceColumn) {
+        this.masterSource = masterSource;
+        this.metadata = new SplitRecordMetadata(masterSource.getMetadata(), hashedSource.getMetadata());
+        this.joinHashTable = buildColumnHash(hashedSource, hashedSourceColumn);
+        this.currentRecord = new SplitRecord(metadata, masterSource.getMetadata().getColumnCount());
+        this.masterColType = masterSource.getMetadata().getColumnType(
+                this.masterColIndex = masterSource.getMetadata().getColumnIndex(masterColumn));
     }
 
     private static JoinHashTable buildColumnHash(RecordSource<? extends Record> source, String expression) {
@@ -50,7 +49,7 @@ public class HashJoin extends AbstractImmutableIterator<SplitRecord> implements 
     }
 
     private static JoinHashTable buildRandomAccessColumnHash(RandomAccessRecordSource<? extends Record> source, String expression) {
-        throw new NotImplementedException();
+        return new RowIdJoinHashTable(source, expression);
     }
 
     @Override
@@ -60,20 +59,33 @@ public class HashJoin extends AbstractImmutableIterator<SplitRecord> implements 
 
     @Override
     public void reset() {
-
+        hashedValues = null;
+        masterSource.reset();
     }
 
     @Override
     public boolean hasNext() {
+        if (hashedValues != null && hashedValues.hasNext()) {
+            currentRecord.setB(hashedValues.next());
+            return true;
+        }
+
+        while (masterSource.hasNext()) {
+            Record masterRec = masterSource.next();
+            currentRecord.setA(masterRec);
+            hashedValues = joinHashTable.getRows(masterRec, masterColIndex, masterColType);
+
+            if (hashedValues.hasNext()) {
+                currentRecord.setB(hashedValues.next());
+                return true;
+            }
+        }
+
         return false;
     }
 
     @Override
     public SplitRecord next() {
-        return null;
-    }
-
-    @Override
-    public void close() throws IOException {
+        return currentRecord;
     }
 }

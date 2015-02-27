@@ -41,7 +41,7 @@ public class RecordSourcePrinter {
 
     public void printColumns(Record r, RecordMetadata m, int... columns) {
         for (int i = 0; i < columns.length; i++) {
-            printRecord(r, m, i);
+            printRecord(r, m, columns[i]);
         }
     }
 
