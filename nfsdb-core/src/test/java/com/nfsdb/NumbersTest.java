@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -83,13 +83,13 @@ public class NumbersTest {
 
     @Test
     public void testFormatDoubleNoPadding() throws Exception {
-        double d = 40.2345d;
+        sink.clear();
+        Numbers.appendTrim(sink, 40.2345d, 12);
+        Assert.assertEquals("40.2345", sink.toString());
 
         sink.clear();
-
-        Numbers.appendTrim(sink, d, 12);
-        System.out.println(sink);
-
+        Numbers.appendTrim(sink, 4000, 12);
+        Assert.assertEquals("4000.0", sink.toString());
     }
 
     @Test
