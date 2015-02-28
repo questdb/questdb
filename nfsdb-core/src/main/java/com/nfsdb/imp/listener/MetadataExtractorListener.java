@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,10 +31,10 @@ import java.util.List;
 
 public class MetadataExtractorListener implements Listener, Closeable {
 
-    public static final int FREQUENCY_MAP_AREA_SIZE = ImportManager.SAMPLE_SIZE * 163;
     // order of probes in array is critical
     private static final TypeProbe probes[] = new TypeProbe[]{new IntProbe(), new LongProbe(), new DoubleProbe(), new BooleanProbe(), new DateIsoProbe(), new DateFmt1Probe(), new DateFmt1Probe()};
     private static final int probeLen = probes.length;
+    public final int frequencyMapAreaSize;
     private final StringBuilder normBuilder = new StringBuilder();
     private final Schema schema;
     private int fieldCount;
@@ -45,8 +45,9 @@ public class MetadataExtractorListener implements Listener, Closeable {
     private boolean header = false;
     private MultiMap frequencyMaps[];
 
-    public MetadataExtractorListener(Schema schema) {
+    public MetadataExtractorListener(Schema schema, int sampleSize) {
         this.schema = schema;
+        this.frequencyMapAreaSize = sampleSize * 163;
     }
 
     @Override
@@ -84,7 +85,7 @@ public class MetadataExtractorListener implements Listener, Closeable {
         for (int i = 0; i < count; i++) {
             frequencyMaps[i] = new MultiMap.Builder() {{
                 setCapacity(ImportManager.SAMPLE_SIZE);
-                setDataSize(FREQUENCY_MAP_AREA_SIZE);
+                setDataSize(frequencyMapAreaSize);
                 keyColumn(new ColumnMetadata() {{
                     setType(ColumnType.STRING);
                     setName("Key");
@@ -190,34 +191,6 @@ public class MetadataExtractorListener implements Listener, Closeable {
         }
     }
 
-    private void stashPossibleHeader(CharSequence values[], int hi) {
-        for (int i = 0; i < hi; i++) {
-            headers[i] = normalise(values[i]);
-        }
-    }
-
-    private String normalise(CharSequence seq) {
-        boolean capNext = false;
-        normBuilder.setLength(0);
-        for (int i = 0, l = seq.length(); i < l; i++) {
-            char c = seq.charAt(i);
-            switch (c) {
-                case ' ':
-                case '_':
-                    capNext = true;
-                    break;
-                default:
-                    if (capNext) {
-                        normBuilder.append(Character.toUpperCase(c));
-                        capNext = false;
-                    } else {
-                        normBuilder.append(c);
-                    }
-            }
-        }
-        return normBuilder.toString();
-    }
-
     /**
      * Histogram contains counts for every probe that validates field. It is possible for multiple probes to validate same field.
      * It can happen because of two reasons.
@@ -254,5 +227,33 @@ public class MetadataExtractorListener implements Listener, Closeable {
         }
 
         return allStrings;
+    }
+
+    private String normalise(CharSequence seq) {
+        boolean capNext = false;
+        normBuilder.setLength(0);
+        for (int i = 0, l = seq.length(); i < l; i++) {
+            char c = seq.charAt(i);
+            switch (c) {
+                case ' ':
+                case '_':
+                    capNext = true;
+                    break;
+                default:
+                    if (capNext) {
+                        normBuilder.append(Character.toUpperCase(c));
+                        capNext = false;
+                    } else {
+                        normBuilder.append(c);
+                    }
+            }
+        }
+        return normBuilder.toString();
+    }
+
+    private void stashPossibleHeader(CharSequence values[], int hi) {
+        for (int i = 0; i < hi; i++) {
+            headers[i] = normalise(values[i]);
+        }
     }
 }

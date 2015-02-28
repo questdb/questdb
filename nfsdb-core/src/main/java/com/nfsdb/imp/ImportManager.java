@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,6 +37,10 @@ public final class ImportManager {
     public static final int SAMPLE_SIZE = 100;
 
     public static void importFile(JournalWriterFactory factory, String fileName, TextParser parser, Schema schema) throws IOException {
+        importFile(factory, fileName, parser, schema, SAMPLE_SIZE);
+    }
+
+    public static void importFile(JournalWriterFactory factory, String fileName, TextParser parser, Schema schema, int sampleSize) throws IOException {
         try {
             File file = new File(fileName);
             String location = file.getName();
@@ -46,7 +50,7 @@ public final class ImportManager {
                     throw new JournalRuntimeException("A foreign file/directory already exists: " + (new File(factory.getConfiguration().getJournalBase(), location)));
                 default:
                     try (JournalImportListener l = new JournalImportListener(factory, location)) {
-                        analyzeAndParse(file, parser, l, schema);
+                        analyzeAndParse(file, parser, l, schema, sampleSize);
                     }
             }
         } finally {
@@ -78,7 +82,7 @@ public final class ImportManager {
         }
     }
 
-    private static void analyzeAndParse(File file, TextParser parser, InputAnalysisListener listener, Schema schema) throws IOException {
+    private static void analyzeAndParse(File file, TextParser parser, InputAnalysisListener listener, Schema schema, int sampleSize) throws IOException {
         parser.reset();
         try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
             try (FileChannel channel = raf.getChannel()) {
@@ -89,7 +93,7 @@ public final class ImportManager {
                     MappedByteBuffer buf = channel.map(FileChannel.MapMode.READ_ONLY, p, size - p < bufSize ? size - p : bufSize);
                     try {
                         if (p == 0) {
-                            analyze(parser, buf, listener, schema);
+                            analyze(parser, buf, listener, schema, sampleSize);
                         }
                         p += buf.remaining();
                         parser.parse(((DirectBuffer) buf).address(), buf.remaining(), Integer.MAX_VALUE, listener);
@@ -101,10 +105,10 @@ public final class ImportManager {
         }
     }
 
-    private static void analyze(TextParser parser, ByteBuffer buf, InputAnalysisListener listener, Schema schema) {
+    private static void analyze(TextParser parser, ByteBuffer buf, InputAnalysisListener listener, Schema schema, int sampleSize) {
         // use field detector listener to process first 100 lines of input
-        try (MetadataExtractorListener lsnr = new MetadataExtractorListener(schema)) {
-            parser.parse(((DirectBuffer) buf).address(), buf.remaining(), SAMPLE_SIZE, lsnr);
+        try (MetadataExtractorListener lsnr = new MetadataExtractorListener(schema, sampleSize)) {
+            parser.parse(((DirectBuffer) buf).address(), buf.remaining(), sampleSize, lsnr);
             lsnr.onLineCount(parser.getLineCount());
             buf.clear();
             listener.onMetadata(lsnr.getMetadata());
