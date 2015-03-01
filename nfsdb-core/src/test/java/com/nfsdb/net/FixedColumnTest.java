@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,11 +17,11 @@
 package com.nfsdb.net;
 
 import com.nfsdb.JournalMode;
-import com.nfsdb.column.FixedColumn;
-import com.nfsdb.column.MappedFileImpl;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.net.comsumer.FixedColumnDeltaConsumer;
 import com.nfsdb.net.producer.FixedColumnDeltaProducer;
+import com.nfsdb.storage.FixedColumn;
+import com.nfsdb.storage.MemoryFile;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
@@ -31,8 +31,8 @@ public class FixedColumnTest {
 
     @Rule
     public final TemporaryFolder temporaryFolder = new TemporaryFolder();
-    private MappedFileImpl file;
-    private MappedFileImpl file2;
+    private MemoryFile file;
+    private MemoryFile file2;
     private MockByteChannel channel;
 
     @After
@@ -43,10 +43,10 @@ public class FixedColumnTest {
 
     @Before
     public void setUp() throws JournalException {
-        file = new MappedFileImpl(new File(temporaryFolder.getRoot(), "col.d"), 22, JournalMode.APPEND);
+        file = new MemoryFile(new File(temporaryFolder.getRoot(), "col.d"), 22, JournalMode.APPEND);
         // it is important to keep bit hint small, so that file2 has small buffers. This would made test go via both pathways.
         // large number will result in tests not covering all of execution path.
-        file2 = new MappedFileImpl(new File(temporaryFolder.getRoot(), "col2.d"), 18, JournalMode.APPEND);
+        file2 = new MemoryFile(new File(temporaryFolder.getRoot(), "col2.d"), 18, JournalMode.APPEND);
         channel = new MockByteChannel();
     }
 

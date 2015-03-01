@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,10 +18,10 @@ package com.nfsdb.net.comsumer;
 
 import com.nfsdb.Journal;
 import com.nfsdb.Partition;
-import com.nfsdb.column.AbstractColumn;
-import com.nfsdb.column.VariableColumn;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.net.ChannelConsumer;
+import com.nfsdb.storage.AbstractColumn;
+import com.nfsdb.storage.VariableColumn;
 
 public class PartitionDeltaConsumer extends ChannelConsumerGroup {
 

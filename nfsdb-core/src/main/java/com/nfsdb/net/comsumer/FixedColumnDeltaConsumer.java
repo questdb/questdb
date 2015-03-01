@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,9 @@
 
 package com.nfsdb.net.comsumer;
 
-import com.nfsdb.column.AbstractColumn;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.net.AbstractChannelConsumer;
+import com.nfsdb.storage.AbstractColumn;
 import com.nfsdb.utils.ByteBuffers;
 
 import java.nio.ByteBuffer;
@@ -36,12 +36,6 @@ public class FixedColumnDeltaConsumer extends AbstractChannelConsumer {
     public FixedColumnDeltaConsumer(AbstractColumn column) {
         this.column = column;
         this.appendOffset = column.getOffset();
-    }
-
-    @Override
-    public void free() {
-        ByteBuffers.release(header);
-        super.free();
     }
 
     @Override
@@ -85,5 +79,11 @@ public class FixedColumnDeltaConsumer extends AbstractChannelConsumer {
     @Override
     protected void commit() {
         column.preCommit(targetOffset);
+    }
+
+    @Override
+    public void free() {
+        ByteBuffers.release(header);
+        super.free();
     }
 }

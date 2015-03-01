@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.nfsdb;
 
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.model.Quote;
+import com.nfsdb.query.ResultSet;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Dates;
@@ -34,6 +35,102 @@ public class JournalRefreshTest extends AbstractTest {
     @Before
     public void before() throws JournalException {
         rw = factory.writer(Quote.class);
+    }
+
+    @Test
+    public void testIllegalArgExceptionInStorage() throws JournalException {
+        rw.append(new Quote().setMode("A").setSym("B").setEx("E1").setAsk(10).setAskSize(1000).setBid(9).setBidSize(900).setTimestamp(System.currentTimeMillis()));
+        rw.compact();
+        rw.commit();
+
+        Journal<Quote> reader = factory.reader(Quote.class);
+        reader.query().all().asResultSet().read();
+        rw.close();
+
+        JournalWriter<Quote> writer = factory.writer(Quote.class);
+        writer.append(new Quote().setMode("A").setSym("B").setEx("E1").setAsk(10).setAskSize(1000).setBid(9).setBidSize(900).setTimestamp(System.currentTimeMillis()));
+
+        Quote expected = new Quote().setMode("A").setSym("B22").setEx("E1").setAsk(10).setAskSize(1000).setBid(9).setBidSize(900).setTimestamp(System.currentTimeMillis());
+        writer.append(expected);
+        writer.commit();
+
+        reader.refresh();
+        ResultSet<Quote> rs = reader.query().all().asResultSet();
+        // at this point we used to get an IllegalArgumentException because we
+        // were reaching outside of buffer of compacted column
+        Quote q = rs.read(rs.size() - 1);
+        Assert.assertEquals(expected, q);
+    }
+
+    @Test
+    public void testLagDetach() throws Exception {
+        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
+        Journal<Quote> reader = factory.reader(Quote.class);
+
+        TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2014-02-10T02:00:00.000Z"));
+        TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2014-02-10T10:00:00.000Z"));
+
+        rw.append(origin.query().all().asResultSet().subset(0, 500));
+        rw.commit();
+        reader.refresh();
+        Assert.assertEquals(rw.size(), reader.size());
+
+        rw.append(origin.query().all().asResultSet().subset(500, 600));
+        rw.commit();
+        reader.refresh();
+        Assert.assertEquals(rw.size(), reader.size());
+
+        rw.mergeAppend(origin.query().all().asResultSet().subset(500, 600));
+        rw.commit();
+        reader.refresh();
+        Assert.assertEquals(rw.size(), reader.size());
+
+        rw.removeIrregularPartition();
+        rw.commit();
+        reader.refresh();
+        Assert.assertEquals(rw.size(), reader.size());
+    }
+
+    @Test
+    public void testPartitionRescan() throws Exception {
+        Journal<Quote> reader = factory.reader(Quote.class);
+
+        Assert.assertEquals(0, reader.size());
+        TestUtils.generateQuoteData(rw, 1001);
+        reader.refresh();
+        Assert.assertEquals(1001, reader.size());
+
+        TestUtils.generateQuoteData(rw, 302, Dates.parseDateTime("2014-02-10T10:00:00.000Z"));
+        reader.refresh();
+        Assert.assertEquals(1001, reader.size());
+
+        rw.commit();
+        reader.refresh();
+        Assert.assertEquals(1303, reader.size());
+    }
+
+    @Test
+    public void testReadConsistency() throws JournalException {
+
+        Quote q1 = new Quote().setSym("ABC").setEx("LN");
+        Quote q2 = new Quote().setSym("EFG").setEx("SK");
+
+        rw.append(q1);
+        rw.close();
+
+        rw = factory.writer(Quote.class);
+
+        Journal<Quote> r = factory.reader(Quote.class);
+
+        for (Quote v : r) {
+            Assert.assertEquals(q1, v);
+        }
+
+        rw.append(q2);
+
+        for (Quote v : r) {
+            Assert.assertEquals(q1, v);
+        }
     }
 
     @Test
@@ -102,102 +199,6 @@ public class JournalRefreshTest extends AbstractTest {
         Assert.assertTrue(r.refresh());
         Assert.assertEquals(0, r.size());
         Assert.assertEquals(0, r.getSymbolTable("sym").size());
-    }
-
-    @Test
-    public void testPartitionRescan() throws Exception {
-        Journal<Quote> reader = factory.reader(Quote.class);
-
-        Assert.assertEquals(0, reader.size());
-        TestUtils.generateQuoteData(rw, 1001);
-        reader.refresh();
-        Assert.assertEquals(1001, reader.size());
-
-        TestUtils.generateQuoteData(rw, 302, Dates.parseDateTime("2014-02-10T10:00:00.000Z"));
-        reader.refresh();
-        Assert.assertEquals(1001, reader.size());
-
-        rw.commit();
-        reader.refresh();
-        Assert.assertEquals(1303, reader.size());
-    }
-
-    @Test
-    public void testIllegalArgExceptionInStorage() throws JournalException {
-        rw.append(new Quote().setMode("A").setSym("B").setEx("E1").setAsk(10).setAskSize(1000).setBid(9).setBidSize(900).setTimestamp(System.currentTimeMillis()));
-        rw.compact();
-        rw.commit();
-
-        Journal<Quote> reader = factory.reader(Quote.class);
-        reader.query().all().asResultSet().read();
-        rw.close();
-
-        JournalWriter<Quote> writer = factory.writer(Quote.class);
-        writer.append(new Quote().setMode("A").setSym("B").setEx("E1").setAsk(10).setAskSize(1000).setBid(9).setBidSize(900).setTimestamp(System.currentTimeMillis()));
-
-        Quote expected = new Quote().setMode("A").setSym("B22").setEx("E1").setAsk(10).setAskSize(1000).setBid(9).setBidSize(900).setTimestamp(System.currentTimeMillis());
-        writer.append(expected);
-        writer.commit();
-
-        reader.refresh();
-        ResultSet<Quote> rs = reader.query().all().asResultSet();
-        // at this point we used to get an IllegalArgumentException because we
-        // were reaching outside of buffer of compacted column
-        Quote q = rs.read(rs.size() - 1);
-        Assert.assertEquals(expected, q);
-    }
-
-    @Test
-    public void testLagDetach() throws Exception {
-        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
-        Journal<Quote> reader = factory.reader(Quote.class);
-
-        TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2014-02-10T02:00:00.000Z"));
-        TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2014-02-10T10:00:00.000Z"));
-
-        rw.append(origin.query().all().asResultSet().subset(0, 500));
-        rw.commit();
-        reader.refresh();
-        Assert.assertEquals(rw.size(), reader.size());
-
-        rw.append(origin.query().all().asResultSet().subset(500, 600));
-        rw.commit();
-        reader.refresh();
-        Assert.assertEquals(rw.size(), reader.size());
-
-        rw.mergeAppend(origin.query().all().asResultSet().subset(500, 600));
-        rw.commit();
-        reader.refresh();
-        Assert.assertEquals(rw.size(), reader.size());
-
-        rw.removeIrregularPartition();
-        rw.commit();
-        reader.refresh();
-        Assert.assertEquals(rw.size(), reader.size());
-    }
-
-    @Test
-    public void testReadConsistency() throws JournalException {
-
-        Quote q1 = new Quote().setSym("ABC").setEx("LN");
-        Quote q2 = new Quote().setSym("EFG").setEx("SK");
-
-        rw.append(q1);
-        rw.close();
-
-        rw = factory.writer(Quote.class);
-
-        Journal<Quote> r = factory.reader(Quote.class);
-
-        for (Quote v : r) {
-            Assert.assertEquals(q1, v);
-        }
-
-        rw.append(q2);
-
-        for (Quote v : r) {
-            Assert.assertEquals(q1, v);
-        }
     }
 
 }

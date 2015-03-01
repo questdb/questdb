@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 
 package com.nfsdb.factory.configuration;
 
-import com.nfsdb.column.ColumnType;
+import com.nfsdb.storage.ColumnType;
 
 public class GenericStringBuilder extends AbstractGenericMetadataBuilder {
 
@@ -26,13 +26,13 @@ public class GenericStringBuilder extends AbstractGenericMetadataBuilder {
         size(this.meta.avgSize);
     }
 
-    public GenericStringBuilder index() {
-        this.meta.indexed = true;
+    public GenericStringBuilder buckets(int buckets) {
+        this.meta.distinctCountHint = buckets;
         return this;
     }
 
-    public GenericStringBuilder buckets(int buckets) {
-        this.meta.distinctCountHint = buckets;
+    public GenericStringBuilder index() {
+        this.meta.indexed = true;
         return this;
     }
 

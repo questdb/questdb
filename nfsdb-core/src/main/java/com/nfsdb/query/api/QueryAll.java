@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,43 +16,43 @@
 
 package com.nfsdb.query.api;
 
-import com.nfsdb.OrderedResultSet;
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.iterators.ConcurrentIterator;
-import com.nfsdb.iterators.JournalIterator;
-import com.nfsdb.iterators.JournalPeekingIterator;
-import com.nfsdb.iterators.JournalRowBufferedIterator;
+import com.nfsdb.query.OrderedResultSet;
+import com.nfsdb.query.iterator.ConcurrentIterator;
+import com.nfsdb.query.iterator.JournalIterator;
+import com.nfsdb.query.iterator.JournalPeekingIterator;
+import com.nfsdb.query.iterator.JournalRowBufferedIterator;
 import com.nfsdb.utils.Interval;
 
 public interface QueryAll<T> extends Iterable<T> {
 
     OrderedResultSet<T> asResultSet() throws JournalException;
 
-    long size();
-
     JournalPeekingIterator<T> bufferedIterator();
+
+    JournalPeekingIterator<T> bufferedIterator(Interval interval);
+
+    JournalPeekingIterator<T> bufferedIterator(long rowid);
 
     JournalRowBufferedIterator<T> bufferedRowIterator();
 
     ConcurrentIterator<T> concurrentIterator();
 
-    JournalIterator<T> iterator(Interval interval);
-
-    QueryAllBuilder<T> withKeys(String... value);
-
-    QueryAllBuilder<T> withSymValues(String symbol, String... value);
-
-    JournalPeekingIterator<T> bufferedIterator(Interval interval);
-
     ConcurrentIterator<T> concurrentIterator(Interval interval);
 
-    JournalPeekingIterator<T> iterator(long loRowID);
-
-    JournalPeekingIterator<T> bufferedIterator(long rowid);
+    ConcurrentIterator<T> concurrentIterator(long rowid);
 
     JournalPeekingIterator<T> incrementBufferedIterator();
 
     JournalPeekingIterator<T> incrementIterator();
 
-    ConcurrentIterator<T> concurrentIterator(long rowid);
+    JournalIterator<T> iterator(Interval interval);
+
+    JournalPeekingIterator<T> iterator(long loRowID);
+
+    long size();
+
+    QueryAllBuilder<T> withKeys(String... value);
+
+    QueryAllBuilder<T> withSymValues(String symbol, String... value);
 }

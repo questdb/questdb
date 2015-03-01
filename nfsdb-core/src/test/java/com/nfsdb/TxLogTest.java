@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,13 +17,13 @@
 package com.nfsdb;
 
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exp.DelimitedCharSink;
-import com.nfsdb.exp.StringSink;
+import com.nfsdb.io.sink.DelimitedCharSink;
+import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.model.Quote;
+import com.nfsdb.storage.Tx;
+import com.nfsdb.storage.TxLog;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
-import com.nfsdb.tx.Tx;
-import com.nfsdb.tx.TxLog;
 import com.nfsdb.utils.Rows;
 import org.junit.Assert;
 import org.junit.Rule;

@@ -17,9 +17,9 @@
 package com.nfsdb.lang.cst.impl.qry;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.column.ColumnType;
-import com.nfsdb.column.SymbolTable;
 import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.storage.ColumnType;
+import com.nfsdb.storage.SymbolTable;
 
 public abstract class AbstractJournalSource extends AbstractImmutableIterator<JournalRecord> implements JournalRecordSource, RecordMetadata {
 
@@ -35,16 +35,6 @@ public abstract class AbstractJournalSource extends AbstractImmutableIterator<Jo
     }
 
     @Override
-    public ColumnType getColumnType(int index) {
-        return metadata.getColumnMetadata(index).type;
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int index) {
-        return getJournal().getSymbolTable(getJournal().getMetadata().getColumnMetadata(index).name);
-    }
-
-    @Override
     public int getColumnIndex(CharSequence name) {
         return metadata.getColumnIndex(name);
     }
@@ -52,6 +42,16 @@ public abstract class AbstractJournalSource extends AbstractImmutableIterator<Jo
     @Override
     public String getColumnName(int index) {
         return metadata.getColumnMetadata(index).name;
+    }
+
+    @Override
+    public ColumnType getColumnType(int index) {
+        return metadata.getColumnMetadata(index).type;
+    }
+
+    @Override
+    public SymbolTable getSymbolTable(int index) {
+        return getJournal().getSymbolTable(getJournal().getMetadata().getColumnMetadata(index).name);
     }
 
     @Override

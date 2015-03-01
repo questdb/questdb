@@ -16,7 +16,7 @@
 
 package com.nfsdb;
 
-import com.nfsdb.exp.StringSink;
+import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Rnd;
 import org.junit.Assert;

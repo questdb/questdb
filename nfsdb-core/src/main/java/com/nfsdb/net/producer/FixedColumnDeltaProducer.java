@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,8 @@
 
 package com.nfsdb.net.producer;
 
-import com.nfsdb.column.AbstractColumn;
 import com.nfsdb.exceptions.JournalNetworkException;
+import com.nfsdb.storage.AbstractColumn;
 import com.nfsdb.utils.ByteBuffers;
 
 import java.nio.ByteBuffer;
@@ -55,16 +55,6 @@ public class FixedColumnDeltaProducer implements ColumnDeltaProducer {
     }
 
     @Override
-    public String toString() {
-        return "ColumnDelta{" +
-                "offset=" + offset +
-                ", targetOffset=" + targetOffset +
-                ", nextOffset=" + nextOffset +
-                ", column=" + column +
-                '}';
-    }
-
-    @Override
     public void write(WritableByteChannel channel) throws JournalNetworkException {
         if (hasContent()) {
             ByteBuffers.copy(header, channel);
@@ -73,5 +63,15 @@ public class FixedColumnDeltaProducer implements ColumnDeltaProducer {
             }
             hasContent = false;
         }
+    }
+
+    @Override
+    public String toString() {
+        return "ColumnDelta{" +
+                "offset=" + offset +
+                ", targetOffset=" + targetOffset +
+                ", nextOffset=" + nextOffset +
+                ", column=" + column +
+                '}';
     }
 }

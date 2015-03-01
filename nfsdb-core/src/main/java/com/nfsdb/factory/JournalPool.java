@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,11 @@
 
 package com.nfsdb.factory;
 
-import com.nfsdb.concurrent.NamedDaemonThreadFactory;
-import com.nfsdb.concurrent.TimerCache;
+import com.nfsdb.TimerCache;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.logging.Logger;
+import com.nfsdb.utils.NamedDaemonThreadFactory;
 
 import java.io.Closeable;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -44,16 +44,6 @@ public class JournalPool implements Closeable {
         }
     }
 
-    public JournalCachingFactory get() throws InterruptedException, JournalException {
-        if (running.get()) {
-            JournalCachingFactory factory = pool.take();
-            factory.refresh();
-            return factory;
-        } else {
-            throw new InterruptedException("Journal pool has been closed");
-        }
-    }
-
     @Override
     public void close() {
         if (running.compareAndSet(true, false)) {
@@ -63,6 +53,16 @@ public class JournalPool implements Closeable {
             }
         }
         timerCache.halt();
+    }
+
+    public JournalCachingFactory get() throws InterruptedException, JournalException {
+        if (running.get()) {
+            JournalCachingFactory factory = pool.take();
+            factory.refresh();
+            return factory;
+        } else {
+            throw new InterruptedException("Journal pool has been closed");
+        }
     }
 
     void release(final JournalCachingFactory factory) {

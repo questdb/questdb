@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,11 +17,10 @@
 package com.nfsdb.factory;
 
 import com.nfsdb.*;
-import com.nfsdb.concurrent.TimerCache;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.tx.TxLog;
+import com.nfsdb.storage.TxLog;
 
 import java.io.Closeable;
 import java.io.File;

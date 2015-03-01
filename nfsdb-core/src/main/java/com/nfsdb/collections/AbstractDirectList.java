@@ -18,7 +18,7 @@ package com.nfsdb.collections;
 
 import com.nfsdb.utils.Unsafe;
 
-public class AbstractDirectList extends DirectMemory {
+public class AbstractDirectList extends DirectMemoryStructure {
     public static final int CACHE_LINE_SIZE = 64;
     private final int pow2;
     private final int onePow2;

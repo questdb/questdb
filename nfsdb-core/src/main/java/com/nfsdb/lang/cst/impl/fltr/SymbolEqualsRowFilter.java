@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,6 @@
 
 package com.nfsdb.lang.cst.impl.fltr;
 
-import com.nfsdb.column.AbstractColumn;
-import com.nfsdb.column.FixedColumn;
-import com.nfsdb.column.SymbolTable;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.lang.cst.Choice;
@@ -26,6 +23,9 @@ import com.nfsdb.lang.cst.PartitionSlice;
 import com.nfsdb.lang.cst.RowAcceptor;
 import com.nfsdb.lang.cst.RowFilter;
 import com.nfsdb.lang.cst.impl.ref.StringRef;
+import com.nfsdb.storage.AbstractColumn;
+import com.nfsdb.storage.FixedColumn;
+import com.nfsdb.storage.SymbolTable;
 
 public class SymbolEqualsRowFilter implements RowFilter, RowAcceptor {
     private final StringRef column;
@@ -38,6 +38,14 @@ public class SymbolEqualsRowFilter implements RowFilter, RowAcceptor {
     public SymbolEqualsRowFilter(StringRef column, StringRef value) {
         this.column = column;
         this.value = value;
+    }
+
+    @Override
+    public Choice accept(long localRowID) {
+        if (key == -1) {
+            return Choice.SKIP;
+        }
+        return columnRef.getInt(localRowID) == key ? Choice.PICK : Choice.SKIP;
     }
 
     @Override
@@ -67,13 +75,5 @@ public class SymbolEqualsRowFilter implements RowFilter, RowAcceptor {
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
-    }
-
-    @Override
-    public Choice accept(long localRowID) {
-        if (key == -1) {
-            return Choice.SKIP;
-        }
-        return columnRef.getInt(localRowID) == key ? Choice.PICK : Choice.SKIP;
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ package com.nfsdb.net;
 import com.nfsdb.JournalKey;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.collections.ObjIntHashMap;
-import com.nfsdb.concurrent.NamedDaemonThreadFactory;
 import com.nfsdb.exceptions.ClusterLossException;
 import com.nfsdb.exceptions.JournalDisconnectedChannelException;
 import com.nfsdb.exceptions.JournalNetworkException;
@@ -30,6 +29,7 @@ import com.nfsdb.net.bridge.JournalEventBridge;
 import com.nfsdb.net.config.ServerConfig;
 import com.nfsdb.net.mcast.OnDemandAddressSender;
 import com.nfsdb.net.model.IndexedJournalKey;
+import com.nfsdb.utils.NamedDaemonThreadFactory;
 
 import java.io.IOException;
 import java.nio.channels.ServerSocketChannel;
@@ -200,19 +200,6 @@ public class JournalServer {
         service.execute(new Acceptor());
     }
 
-    @SuppressWarnings("unchecked")
-    IndexedJournalKey getWriterIndex0(JournalKey key) {
-        for (ObjIntHashMap.Entry<JournalWriter> e : writers.immutableIterator()) {
-            JournalKey jk = e.key.getKey();
-            if (jk.getId().equals(key.getId()) && (
-                    (jk.getLocation() == null && key.getLocation() == null)
-                            || (jk.getLocation() != null && jk.getLocation().equals(key.getLocation())))) {
-                return new IndexedJournalKey(e.value, new JournalKey(jk.getId(), jk.getClass(), jk.getLocation(), jk.getRecordHint()));
-            }
-        }
-        return null;
-    }
-
     private void addChannel(SocketChannelHolder holder) {
         channels.add(holder);
     }
@@ -239,6 +226,19 @@ public class JournalServer {
         while (channels.size() > 0) {
             closeChannel(channels.remove(0), true);
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    IndexedJournalKey getWriterIndex0(JournalKey key) {
+        for (ObjIntHashMap.Entry<JournalWriter> e : writers.immutableIterator()) {
+            JournalKey jk = e.key.getKey();
+            if (jk.getId().equals(key.getId()) && (
+                    (jk.getLocation() == null && key.getLocation() == null)
+                            || (jk.getLocation() != null && jk.getLocation().equals(key.getLocation())))) {
+                return new IndexedJournalKey(e.value, new JournalKey(jk.getId(), jk.getClass(), jk.getLocation(), jk.getRecordHint()));
+            }
+        }
+        return null;
     }
 
     private void removeChannel(SocketChannelHolder holder) {

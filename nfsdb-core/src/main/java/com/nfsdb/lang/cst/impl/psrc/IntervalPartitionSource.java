@@ -19,11 +19,11 @@ package com.nfsdb.lang.cst.impl.psrc;
 import com.nfsdb.Journal;
 import com.nfsdb.Partition;
 import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.column.BSearchType;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.lang.cst.PartitionSlice;
 import com.nfsdb.lang.cst.PartitionSource;
+import com.nfsdb.storage.BSearchType;
 import com.nfsdb.utils.Interval;
 
 import java.util.NoSuchElementException;

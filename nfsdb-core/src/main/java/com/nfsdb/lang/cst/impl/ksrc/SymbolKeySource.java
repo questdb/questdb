@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,11 @@
 
 package com.nfsdb.lang.cst.impl.ksrc;
 
-import com.nfsdb.column.SymbolTable;
 import com.nfsdb.lang.cst.KeyCursor;
 import com.nfsdb.lang.cst.KeySource;
 import com.nfsdb.lang.cst.PartitionSlice;
 import com.nfsdb.lang.cst.impl.ref.StringRef;
+import com.nfsdb.storage.SymbolTable;
 
 public class SymbolKeySource implements KeySource, KeyCursor {
 
@@ -44,16 +44,6 @@ public class SymbolKeySource implements KeySource, KeyCursor {
     }
 
     @Override
-    public boolean hasNext() {
-        return keyIndex < keyCount;
-    }
-
-    @Override
-    public int next() {
-        return keyIndex++;
-    }
-
-    @Override
     public int size() {
         return keyCount;
     }
@@ -62,5 +52,15 @@ public class SymbolKeySource implements KeySource, KeyCursor {
     public void reset() {
         symbolTable = null;
         keyIndex = 0;
+    }
+
+    @Override
+    public boolean hasNext() {
+        return keyIndex < keyCount;
+    }
+
+    @Override
+    public int next() {
+        return keyIndex++;
     }
 }

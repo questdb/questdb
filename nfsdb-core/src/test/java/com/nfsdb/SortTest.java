@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,8 @@ package com.nfsdb;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.model.TestEntity;
+import com.nfsdb.query.OrderedResultSet;
+import com.nfsdb.query.ResultSet;
 import com.nfsdb.query.api.Query;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
@@ -36,6 +38,32 @@ public class SortTest extends AbstractTest {
         JournalWriter<TestEntity> w = factory.writer(TestEntity.class);
         TestUtils.generateTestEntityData(w, 1000, Dates.parseDateTime("2012-05-15T10:55:00.000Z"), 100000);
         q = w.query();
+    }
+
+    @Test
+    public void testDefaultSort() throws JournalException {
+        long last = 0;
+        for (TestEntity p : q.all().asResultSet().sort("anInt").sort().bufferedIterator()) {
+            Assert.assertTrue("Journal records are out of order", last <= p.getTimestamp());
+            last = p.getTimestamp();
+        }
+    }
+
+    @Test
+    public void testMaxResultSetTimestamp() throws JournalException {
+        OrderedResultSet<TestEntity> rs = q.all().asResultSet();
+        Assert.assertEquals(rs.getMaxTimestamp(), rs.readLast().getTimestamp());
+    }
+
+    @Test
+    public void testReadSortedTimestamps() throws JournalException {
+        long[] result = q.all().asResultSet().sort("anInt").sort().readTimestamps();
+
+        long last = 0;
+        for (long t : result) {
+            Assert.assertTrue("Journal records are out of order", last <= t);
+            last = t;
+        }
     }
 
     @Test
@@ -71,29 +99,12 @@ public class SortTest extends AbstractTest {
     }
 
     @Test
-    public void testDefaultSort() throws JournalException {
-        long last = 0;
-        for (TestEntity p : q.all().asResultSet().sort("anInt").sort().bufferedIterator()) {
-            Assert.assertTrue("Journal records are out of order", last <= p.getTimestamp());
-            last = p.getTimestamp();
+    public void testSortStrings() throws Exception {
+        String last = "";
+        for (TestEntity v : q.all().asResultSet().sort("bStr").bufferedIterator()) {
+            Assert.assertTrue("Journal records are out of order", last.compareTo(v.getBStr()) <= 0);
+            last = v.getBStr();
         }
-    }
-
-    @Test
-    public void testReadSortedTimestamps() throws JournalException {
-        long[] result = q.all().asResultSet().sort("anInt").sort().readTimestamps();
-
-        long last = 0;
-        for (long t : result) {
-            Assert.assertTrue("Journal records are out of order", last <= t);
-            last = t;
-        }
-    }
-
-    @Test
-    public void testMaxResultSetTimestamp() throws JournalException {
-        OrderedResultSet<TestEntity> rs = q.all().asResultSet();
-        Assert.assertEquals(rs.getMaxTimestamp(), rs.readLast().getTimestamp());
     }
 
     @Test
@@ -102,15 +113,6 @@ public class SortTest extends AbstractTest {
         for (TestEntity v : q.all().asResultSet().sort("sym").bufferedIterator()) {
             Assert.assertTrue("Journal records are out of order", last.compareTo(v.getSym() == null ? "" : v.getSym()) <= 0);
             last = v.getSym() == null ? "" : v.getSym();
-        }
-    }
-
-    @Test
-    public void testSortStrings() throws Exception {
-        String last = "";
-        for (TestEntity v : q.all().asResultSet().sort("bStr").bufferedIterator()) {
-            Assert.assertTrue("Journal records are out of order", last.compareTo(v.getBStr()) <= 0);
-            last = v.getBStr();
         }
     }
 }

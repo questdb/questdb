@@ -16,9 +16,9 @@
 
 package com.nfsdb;
 
-import com.nfsdb.column.BSearchType;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.model.Quote;
+import com.nfsdb.storage.BSearchType;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.utils.Dates;
 import org.junit.Assert;

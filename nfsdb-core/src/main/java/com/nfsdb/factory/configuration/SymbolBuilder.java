@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,8 @@
 
 package com.nfsdb.factory.configuration;
 
-import com.nfsdb.column.ColumnType;
 import com.nfsdb.exceptions.JournalConfigurationException;
+import com.nfsdb.storage.ColumnType;
 
 public class SymbolBuilder<T> extends AbstractMetadataBuilder<T> {
     public SymbolBuilder(JournalMetadataBuilder<T> parent, ColumnMetadata meta) {
@@ -29,13 +29,18 @@ public class SymbolBuilder<T> extends AbstractMetadataBuilder<T> {
         meta.size = 4;
     }
 
-    public SymbolBuilder<T> sameAs(String name) {
-        this.meta.sameAs = name;
+    public SymbolBuilder<T> index() {
+        this.meta.indexed = true;
         return this;
     }
 
-    public SymbolBuilder<T> valueCountHint(int valueCountHint) {
-        this.meta.distinctCountHint = valueCountHint;
+    public SymbolBuilder<T> noCache() {
+        this.meta.noCache = true;
+        return this;
+    }
+
+    public SymbolBuilder<T> sameAs(String name) {
+        this.meta.sameAs = name;
         return this;
     }
 
@@ -44,13 +49,8 @@ public class SymbolBuilder<T> extends AbstractMetadataBuilder<T> {
         return this;
     }
 
-    public SymbolBuilder<T> index() {
-        this.meta.indexed = true;
-        return this;
-    }
-
-    public SymbolBuilder<T> noCache() {
-        this.meta.noCache = true;
+    public SymbolBuilder<T> valueCountHint(int valueCountHint) {
+        this.meta.distinctCountHint = valueCountHint;
         return this;
     }
 }

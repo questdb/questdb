@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,12 +16,12 @@
 
 package com.nfsdb;
 
-import com.nfsdb.exp.StringSink;
-import com.nfsdb.imp.ImportManager;
-import com.nfsdb.imp.listener.Listener;
-import com.nfsdb.imp.parser.CsvParser;
-import com.nfsdb.imp.parser.TabParser;
-import com.nfsdb.imp.parser.TextParser;
+import com.nfsdb.io.ImportManager;
+import com.nfsdb.io.parser.CsvParser;
+import com.nfsdb.io.parser.TabParser;
+import com.nfsdb.io.parser.TextParser;
+import com.nfsdb.io.parser.listener.Listener;
+import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -220,6 +220,11 @@ public class CsvTest {
         }
 
         @Override
+        public String toString() {
+            return sink.toString();
+        }
+
+        @Override
         public void onError(int line) {
             errorCounter++;
             errorLine = line;
@@ -250,9 +255,6 @@ public class CsvTest {
         public void onLineCount(int count) {
         }
 
-        @Override
-        public String toString() {
-            return sink.toString();
-        }
+
     }
 }

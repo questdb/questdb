@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,12 +17,12 @@
 package com.nfsdb.query.spi;
 
 import com.nfsdb.Partition;
-import com.nfsdb.UnorderedResultSetBuilder;
 import com.nfsdb.collections.DirectIntList;
 import com.nfsdb.collections.DirectLongList;
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.index.Cursor;
-import com.nfsdb.index.KVIndex;
+import com.nfsdb.query.UnorderedResultSetBuilder;
+import com.nfsdb.storage.Cursor;
+import com.nfsdb.storage.KVIndex;
 import com.nfsdb.utils.Interval;
 import com.nfsdb.utils.Rows;
 

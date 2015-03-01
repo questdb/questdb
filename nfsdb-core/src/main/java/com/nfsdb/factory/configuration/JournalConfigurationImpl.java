@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,10 +18,10 @@ package com.nfsdb.factory.configuration;
 
 import com.nfsdb.JournalKey;
 import com.nfsdb.JournalMode;
-import com.nfsdb.column.HugeBuffer;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalMetadataException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.storage.HugeBuffer;
 import com.nfsdb.utils.Base64;
 import com.nfsdb.utils.Checksum;
 import com.nfsdb.utils.Files;
@@ -110,6 +110,11 @@ public class JournalConfigurationImpl implements JournalConfiguration {
         }
     }
 
+    @Override
+    public File getJournalBase() {
+        return journalBase;
+    }
+
     @SuppressWarnings("unchecked")
     public <T> JournalMetadata<T> createMetadata2(JournalKey<T> key) throws JournalException {
 
@@ -191,24 +196,18 @@ public class JournalConfigurationImpl implements JournalConfiguration {
         return result;
     }
 
-    @Override
-    public File getJournalBase() {
-        return journalBase;
-    }
+    private boolean eq(byte[] expected, byte[] actual) {
+        if (expected.length != actual.length) {
+            return false;
+        }
 
-    private <T> JournalMetadata<T> readMetadata(File location) throws JournalException {
-        if (location.exists()) {
-            File metaFile = new File(location, FILE_NAME);
-            if (!metaFile.exists()) {
-                // todo: read old meta file for compatibility
-                throw new JournalException(location + " is not a recognised journal");
-            }
-
-            try (HugeBuffer hb = new HugeBuffer(metaFile, 12, JournalMode.READ)) {
-                return new JournalMetadataImpl<>(hb);
+        for (int i = 0; i < expected.length; i++) {
+            if (expected[i] != actual[i]) {
+                return false;
             }
         }
-        return null;
+
+        return true;
     }
 
     private String getLocation(JournalKey key) {
@@ -228,17 +227,18 @@ public class JournalConfigurationImpl implements JournalConfiguration {
         return m.getLocation();
     }
 
-    private boolean eq(byte[] expected, byte[] actual) {
-        if (expected.length != actual.length) {
-            return false;
-        }
+    private <T> JournalMetadata<T> readMetadata(File location) throws JournalException {
+        if (location.exists()) {
+            File metaFile = new File(location, FILE_NAME);
+            if (!metaFile.exists()) {
+                // todo: read old meta file for compatibility
+                throw new JournalException(location + " is not a recognised journal");
+            }
 
-        for (int i = 0; i < expected.length; i++) {
-            if (expected[i] != actual[i]) {
-                return false;
+            try (HugeBuffer hb = new HugeBuffer(metaFile, 12, JournalMode.READ)) {
+                return new JournalMetadataImpl<>(hb);
             }
         }
-
-        return true;
+        return null;
     }
 }

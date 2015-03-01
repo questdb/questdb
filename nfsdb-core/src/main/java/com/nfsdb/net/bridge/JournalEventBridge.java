@@ -17,7 +17,7 @@
 package com.nfsdb.net.bridge;
 
 import com.lmax.disruptor.*;
-import com.nfsdb.concurrent.NamedDaemonThreadFactory;
+import com.nfsdb.utils.NamedDaemonThreadFactory;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;

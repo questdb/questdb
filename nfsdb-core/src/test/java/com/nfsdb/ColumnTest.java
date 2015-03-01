@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,10 @@
 
 package com.nfsdb;
 
-import com.nfsdb.column.FixedColumn;
-import com.nfsdb.column.MappedFile;
-import com.nfsdb.column.MappedFileImpl;
-import com.nfsdb.column.VariableColumn;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.storage.FixedColumn;
+import com.nfsdb.storage.MemoryFile;
+import com.nfsdb.storage.VariableColumn;
 import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Files;
 import com.nfsdb.utils.Rnd;
@@ -52,7 +51,7 @@ public class ColumnTest {
     public void testFixedWidthColumns() throws JournalException {
 
 
-        MappedFile mf = new MappedFileImpl(dataFile, 22, JournalMode.APPEND);
+        MemoryFile mf = new MemoryFile(dataFile, 22, JournalMode.APPEND);
 
         try (FixedColumn pcc = new FixedColumn(mf, 4)) {
             for (int i = 0; i < 10000; i++) {
@@ -61,7 +60,7 @@ public class ColumnTest {
             }
         }
 
-        MappedFile mf2 = new MappedFileImpl(dataFile, 22, JournalMode.READ);
+        MemoryFile mf2 = new MemoryFile(dataFile, 22, JournalMode.READ);
 
         try (FixedColumn pcc2 = new FixedColumn(mf2, 4)) {
             Assert.assertEquals(66, pcc2.getInt(66));
@@ -70,76 +69,32 @@ public class ColumnTest {
             Assert.assertEquals(4599, pcc2.getInt(4599));
         }
 
-        MappedFile mf3 = new MappedFileImpl(dataFile, 22, JournalMode.READ);
+        MemoryFile mf3 = new MemoryFile(dataFile, 22, JournalMode.READ);
         try (FixedColumn pcc3 = new FixedColumn(mf3, 4)) {
             Assert.assertEquals(4598, pcc3.getInt(4598));
         }
     }
 
     @Test
-    public void testVarcharColumn() throws JournalException {
-        final int recordCount = 10000;
-
-        MappedFile df1 = new MappedFileImpl(dataFile, 22, JournalMode.APPEND);
-        MappedFile idxFile1 = new MappedFileImpl(indexFile, 22, JournalMode.APPEND);
-
-        try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1)) {
-            for (int i = 0; i < recordCount; i++) {
-                varchar1.putStr("s" + i);
-                varchar1.commit();
+    public void testFixedWidthFloat() throws Exception {
+        try (FixedColumn col = new FixedColumn(new MemoryFile(dataFile, 22, JournalMode.APPEND), 4)) {
+            int max = 150;
+            for (int i = 0; i < max; i++) {
+                col.putFloat((max - i) + 0.33f);
+                col.commit();
             }
-        }
 
-        MappedFile df2 = new MappedFileImpl(dataFile, 22, JournalMode.APPEND);
-        MappedFile idxFile2 = new MappedFileImpl(indexFile, 22, JournalMode.APPEND);
-
-        try (VariableColumn varchar2 = new VariableColumn(df2, idxFile2)) {
-            Assert.assertEquals(recordCount, varchar2.size());
-            for (int i = 0; i < varchar2.size(); i++) {
-                String s = varchar2.getStr(i);
-                Assert.assertEquals("s" + i, s);
+            for (long l = 0; l < col.size(); l++) {
+                Assert.assertEquals(max - l + 0.33f, col.getFloat(l), 0);
             }
-        }
-    }
-
-    @Test
-    public void testVarcharNulls() throws JournalException {
-        MappedFile df1 = new MappedFileImpl(dataFile, 22, JournalMode.APPEND);
-        MappedFile idxFile1 = new MappedFileImpl(indexFile, 22, JournalMode.APPEND);
-
-        try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1)) {
-            varchar1.putStr("string1");
-            varchar1.commit();
-            varchar1.putStr("string2");
-            varchar1.commit();
-            varchar1.putNull();
-            varchar1.commit();
-            varchar1.putStr("string3");
-            varchar1.commit();
-            varchar1.putNull();
-            varchar1.commit();
-            varchar1.putStr("string4");
-            varchar1.commit();
-        }
-
-        MappedFile df2 = new MappedFileImpl(dataFile, 22, JournalMode.READ);
-        MappedFile idxFile2 = new MappedFileImpl(indexFile, 22, JournalMode.READ);
-
-        try (VariableColumn varchar2 = new VariableColumn(df2, idxFile2)) {
-            Assert.assertEquals("string1", varchar2.getStr(0));
-            Assert.assertEquals("string2", varchar2.getStr(1));
-//            Assert.assertNull(varchar2.getStr(2));
-            Assert.assertEquals("string3", varchar2.getStr(3));
-//            Assert.assertNull(varchar2.getStr(4));
-            Assert.assertEquals("string4", varchar2.getStr(5));
         }
     }
 
     @Test
     public void testTruncate() throws JournalException {
 
-        MappedFile df1 = new MappedFileImpl(dataFile, 22, JournalMode.APPEND);
-        MappedFile idxFile1 = new MappedFileImpl(indexFile, 22, JournalMode.APPEND);
+        MemoryFile df1 = new MemoryFile(dataFile, 22, JournalMode.APPEND);
+        MemoryFile idxFile1 = new MemoryFile(indexFile, 22, JournalMode.APPEND);
 
         try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1)) {
             varchar1.putStr("string1");
@@ -166,8 +121,8 @@ public class ColumnTest {
 
         }
 
-        MappedFile df2 = new MappedFileImpl(dataFile, 22, JournalMode.READ);
-        MappedFile idxFile12 = new MappedFileImpl(indexFile, 22, JournalMode.READ);
+        MemoryFile df2 = new MemoryFile(dataFile, 22, JournalMode.READ);
+        MemoryFile idxFile12 = new MemoryFile(indexFile, 22, JournalMode.READ);
 
         try (VariableColumn varchar2 = new VariableColumn(df2, idxFile12)) {
             Assert.assertEquals("string1", varchar2.getStr(0));
@@ -178,25 +133,36 @@ public class ColumnTest {
     }
 
     @Test
-    public void testFixedWidthFloat() throws Exception {
-        try (FixedColumn col = new FixedColumn(new MappedFileImpl(dataFile, 22, JournalMode.APPEND), 4)) {
-            int max = 150;
-            for (int i = 0; i < max; i++) {
-                col.putFloat((max - i) + 0.33f);
-                col.commit();
-            }
+    public void testTwoByteEdges() throws JournalException {
 
-            for (long l = 0; l < col.size(); l++) {
-                Assert.assertEquals(max - l + 0.33f, col.getFloat(l), 0);
-            }
+        Rnd r = new Rnd();
+        String s1 = r.nextString(65000);
+        String s2 = r.nextString(65000);
+        MemoryFile df1 = new MemoryFile(dataFile, 22, JournalMode.APPEND);
+        MemoryFile idxFile1 = new MemoryFile(indexFile, 22, JournalMode.APPEND);
+
+        try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1)) {
+
+            varchar1.putStr(s1);
+            varchar1.commit();
+            varchar1.putStr(s2);
+            varchar1.commit();
+        }
+
+        MemoryFile df2 = new MemoryFile(dataFile, 22, JournalMode.READ);
+        MemoryFile idxFile2 = new MemoryFile(indexFile, 22, JournalMode.READ);
+
+        try (VariableColumn varchar2 = new VariableColumn(df2, idxFile2)) {
+            Assert.assertEquals(s1, varchar2.getStr(0));
+            Assert.assertEquals(s2, varchar2.getStr(1));
         }
     }
 
     @Test
     public void testVarByteBuffer() throws Exception {
         // bit hint 12 = 4k buffer, length of stored buffer must be larger than 4k for proper test.
-        MappedFile df1 = new MappedFileImpl(dataFile, 12, JournalMode.APPEND);
-        MappedFile idxFile1 = new MappedFileImpl(indexFile, 12, JournalMode.APPEND);
+        MemoryFile df1 = new MemoryFile(dataFile, 12, JournalMode.APPEND);
+        MemoryFile idxFile1 = new MemoryFile(indexFile, 12, JournalMode.APPEND);
 
         final Rnd random = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
         final int len = 5024;
@@ -221,28 +187,61 @@ public class ColumnTest {
     }
 
     @Test
-    public void testTwoByteEdges() throws JournalException {
+    public void testVarcharColumn() throws JournalException {
+        final int recordCount = 10000;
 
-        Rnd r = new Rnd();
-        String s1 = r.nextString(65000);
-        String s2 = r.nextString(65000);
-        MappedFile df1 = new MappedFileImpl(dataFile, 22, JournalMode.APPEND);
-        MappedFile idxFile1 = new MappedFileImpl(indexFile, 22, JournalMode.APPEND);
+        MemoryFile df1 = new MemoryFile(dataFile, 22, JournalMode.APPEND);
+        MemoryFile idxFile1 = new MemoryFile(indexFile, 22, JournalMode.APPEND);
 
         try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1)) {
+            for (int i = 0; i < recordCount; i++) {
+                varchar1.putStr("s" + i);
+                varchar1.commit();
+            }
+        }
 
-            varchar1.putStr(s1);
+        MemoryFile df2 = new MemoryFile(dataFile, 22, JournalMode.APPEND);
+        MemoryFile idxFile2 = new MemoryFile(indexFile, 22, JournalMode.APPEND);
+
+        try (VariableColumn varchar2 = new VariableColumn(df2, idxFile2)) {
+            Assert.assertEquals(recordCount, varchar2.size());
+            for (int i = 0; i < varchar2.size(); i++) {
+                String s = varchar2.getStr(i);
+                Assert.assertEquals("s" + i, s);
+            }
+        }
+    }
+
+    @Test
+    public void testVarcharNulls() throws JournalException {
+        MemoryFile df1 = new MemoryFile(dataFile, 22, JournalMode.APPEND);
+        MemoryFile idxFile1 = new MemoryFile(indexFile, 22, JournalMode.APPEND);
+
+        try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1)) {
+            varchar1.putStr("string1");
             varchar1.commit();
-            varchar1.putStr(s2);
+            varchar1.putStr("string2");
+            varchar1.commit();
+            varchar1.putNull();
+            varchar1.commit();
+            varchar1.putStr("string3");
+            varchar1.commit();
+            varchar1.putNull();
+            varchar1.commit();
+            varchar1.putStr("string4");
             varchar1.commit();
         }
 
-        MappedFile df2 = new MappedFileImpl(dataFile, 22, JournalMode.READ);
-        MappedFile idxFile2 = new MappedFileImpl(indexFile, 22, JournalMode.READ);
+        MemoryFile df2 = new MemoryFile(dataFile, 22, JournalMode.READ);
+        MemoryFile idxFile2 = new MemoryFile(indexFile, 22, JournalMode.READ);
 
         try (VariableColumn varchar2 = new VariableColumn(df2, idxFile2)) {
-            Assert.assertEquals(s1, varchar2.getStr(0));
-            Assert.assertEquals(s2, varchar2.getStr(1));
+            Assert.assertEquals("string1", varchar2.getStr(0));
+            Assert.assertEquals("string2", varchar2.getStr(1));
+//            Assert.assertNull(varchar2.getStr(2));
+            Assert.assertEquals("string3", varchar2.getStr(3));
+//            Assert.assertNull(varchar2.getStr(4));
+            Assert.assertEquals("string4", varchar2.getStr(5));
         }
     }
 }

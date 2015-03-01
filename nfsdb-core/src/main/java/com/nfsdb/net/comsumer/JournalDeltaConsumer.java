@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ package com.nfsdb.net.comsumer;
 
 import com.nfsdb.JournalWriter;
 import com.nfsdb.Partition;
-import com.nfsdb.collections.Lists;
 import com.nfsdb.exceptions.IncompatibleJournalException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
@@ -26,6 +25,7 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.net.AbstractChannelConsumer;
 import com.nfsdb.net.model.JournalServerState;
 import com.nfsdb.utils.Interval;
+import com.nfsdb.utils.Lists;
 
 import java.nio.channels.ReadableByteChannel;
 import java.util.ArrayList;
@@ -44,19 +44,6 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
     public JournalDeltaConsumer(JournalWriter journal) {
         this.journal = journal;
         this.journalSymbolTableConsumer = new JournalSymbolTableConsumer(journal);
-    }
-
-    @Override
-    public void free() {
-        super.free();
-        journalServerStateConsumer.free();
-        journalSymbolTableConsumer.free();
-        for (int i = 0; i < partitionDeltaConsumers.size(); i++) {
-            partitionDeltaConsumers.get(i).free();
-        }
-        if (lagPartitionDeltaConsumer != null) {
-            lagPartitionDeltaConsumer.free();
-        }
     }
 
     @Override
@@ -185,6 +172,19 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
             journal.commit(false, state.getTxn(), state.getTxPin());
         } catch (JournalException e) {
             throw new JournalNetworkException(e);
+        }
+    }
+
+    @Override
+    public void free() {
+        super.free();
+        journalServerStateConsumer.free();
+        journalSymbolTableConsumer.free();
+        for (int i = 0; i < partitionDeltaConsumers.size(); i++) {
+            partitionDeltaConsumers.get(i).free();
+        }
+        if (lagPartitionDeltaConsumer != null) {
+            lagPartitionDeltaConsumer.free();
         }
     }
 

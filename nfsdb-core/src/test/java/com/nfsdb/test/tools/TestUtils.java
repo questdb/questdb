@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,28 +16,33 @@
 
 package com.nfsdb.test.tools;
 
-import com.nfsdb.*;
+import com.nfsdb.Journal;
+import com.nfsdb.JournalEntryWriter;
+import com.nfsdb.JournalWriter;
+import com.nfsdb.Partition;
 import com.nfsdb.collections.DirectLongList;
-import com.nfsdb.collections.Lists;
-import com.nfsdb.column.ColumnType;
-import com.nfsdb.column.SymbolTable;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.index.KVIndex;
-import com.nfsdb.iterators.JournalIterator;
 import com.nfsdb.model.Quote;
 import com.nfsdb.model.TestEntity;
 import com.nfsdb.printer.JournalPrinter;
 import com.nfsdb.printer.appender.AssertingAppender;
 import com.nfsdb.printer.converter.DateConverter;
-import com.nfsdb.utils.Dates;
-import com.nfsdb.utils.Interval;
-import com.nfsdb.utils.Rnd;
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.query.ResultSet;
+import com.nfsdb.query.iterator.JournalIterator;
+import com.nfsdb.storage.ColumnType;
+import com.nfsdb.storage.KVIndex;
+import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.utils.*;
 import org.junit.Assert;
+import sun.nio.ch.DirectBuffer;
 
+import java.io.File;
 import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.UUID;
@@ -170,6 +175,48 @@ public final class TestUtils {
                 break;
             }
             Assert.assertEquals(expected.next(), actual.next());
+        }
+    }
+
+    public static void assertEquals(File a, File b) throws IOException {
+        try (RandomAccessFile rafA = new RandomAccessFile(a, "r")) {
+            try (RandomAccessFile rafB = new RandomAccessFile(b, "r")) {
+                try (FileChannel chA = rafA.getChannel()) {
+                    try (FileChannel chB = rafB.getChannel()) {
+                        Assert.assertEquals(chA.size(), chB.size());
+                        ByteBuffer bufA = chA.map(FileChannel.MapMode.READ_ONLY, 0, chA.size());
+                        try {
+                            ByteBuffer bufB = chB.map(FileChannel.MapMode.READ_ONLY, 0, chB.size());
+                            try {
+                                long pa = ((DirectBuffer) bufA).address();
+                                long pb = ((DirectBuffer) bufB).address();
+                                long lim = pa + bufA.limit();
+
+                                while (pa + 8 < lim) {
+                                    if (Unsafe.getUnsafe().getLong(pa) != Unsafe.getUnsafe().getLong(pb)) {
+                                        Assert.fail();
+                                    }
+                                    pa += 8;
+                                    pb += 8;
+                                }
+
+                                while (pa < lim) {
+                                    if (Unsafe.getUnsafe().getByte(pa++) != Unsafe.getUnsafe().getByte(pb++)) {
+                                        Assert.fail();
+                                    }
+                                }
+
+                            } finally {
+                                ByteBuffers.release(bufB);
+                            }
+
+                        } finally {
+                            ByteBuffers.release(bufA);
+                        }
+                    }
+                }
+            }
+
         }
     }
 
@@ -351,22 +398,5 @@ public final class TestUtils {
         for (T o : iterator) {
             p.out(o);
         }
-    }
-
-    private static void print(Quote q) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("w.append(");
-        sb.append("new Quote()");
-        sb.append(".setSym(\"").append(q.getSym()).append("\")");
-        sb.append(".setAsk(").append(q.getAsk()).append(")");
-        sb.append(".setBid(").append(q.getBid()).append(")");
-        sb.append(".setAskSize(").append(q.getAskSize()).append(")");
-        sb.append(".setBidSize(").append(q.getBidSize()).append(")");
-        sb.append(".setEx(\"").append(q.getEx()).append("\")");
-        sb.append(".setMode(\"").append(q.getMode()).append("\")");
-        sb.append(".setTimestamp(Dates.toMillis(\"").append(Dates.toString(q.getTimestamp())).append("\"))");
-        sb.append(")");
-        sb.append(";");
-        System.out.println(sb);
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,11 @@
 
 package com.nfsdb;
 
-import com.nfsdb.column.*;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
-import com.nfsdb.utils.Checksum;
+import com.nfsdb.storage.*;
+import com.nfsdb.utils.Hash;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -82,10 +82,6 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
     public OutputStream putBin(int index) {
         skipped[index] = false;
         return ((VariableColumn) columns[index]).putBin();
-    }
-
-    public void putBin0(int index, InputStream value) {
-        ((VariableColumn) columns[index]).putBin(value);
     }
 
     @Override
@@ -171,21 +167,8 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
         skipped[index] = false;
     }
 
-    void setPartition(Partition partition, long timestamp) {
-        if (this.partition != partition) {
-            this.columns = partition.columns;
-            this.partition = partition;
-            this.indexProxies = partition.sparseIndexProxies;
-        }
-        this.timestamp = timestamp;
-
-        for (int i = 0, l = skipped.length; i < l; i++) {
-            skipped[i] = true;
-        }
-
-        if (timestampIndex != -1) {
-            putDate(timestampIndex, timestamp);
-        }
+    public void putBin0(int index, InputStream value) {
+        ((VariableColumn) columns[index]).putBin(value);
     }
 
     private void assertType(int index, ColumnType t) {
@@ -203,21 +186,21 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
         }
     }
 
-    private void putString0(int index, CharSequence value) {
-        if (meta[index].indexed) {
-            koTuple[index * 2] = value == null ? SymbolTable.VALUE_IS_NULL : Checksum.hash(value, meta[index].distinctCountHint);
-            koTuple[index * 2 + 1] = ((VariableColumn) columns[index]).putStr(value);
-        } else {
-            ((VariableColumn) columns[index]).putStr(value);
-        }
-    }
-
     private void putNullStr(int index) {
         if (meta[index].indexed) {
             koTuple[index * 2] = SymbolTable.VALUE_IS_NULL;
             koTuple[index * 2 + 1] = ((VariableColumn) columns[index]).putNull();
         } else {
             ((VariableColumn) columns[index]).putNull();
+        }
+    }
+
+    private void putString0(int index, CharSequence value) {
+        if (meta[index].indexed) {
+            koTuple[index * 2] = value == null ? SymbolTable.VALUE_IS_NULL : Hash.boundedHash(value, meta[index].distinctCountHint);
+            koTuple[index * 2 + 1] = ((VariableColumn) columns[index]).putStr(value);
+        } else {
+            ((VariableColumn) columns[index]).putStr(value);
         }
     }
 
@@ -233,6 +216,23 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
             koTuple[index * 2 + 1] = ((FixedColumn) columns[index]).putInt(key);
         } else {
             ((FixedColumn) columns[index]).putInt(key);
+        }
+    }
+
+    void setPartition(Partition partition, long timestamp) {
+        if (this.partition != partition) {
+            this.columns = partition.columns;
+            this.partition = partition;
+            this.indexProxies = partition.sparseIndexProxies;
+        }
+        this.timestamp = timestamp;
+
+        for (int i = 0, l = skipped.length; i < l; i++) {
+            skipped[i] = true;
+        }
+
+        if (timestampIndex != -1) {
+            putDate(timestampIndex, timestamp);
         }
     }
 }

@@ -16,20 +16,19 @@
 
 package com.nfsdb;
 
-import com.nfsdb.column.*;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.exp.CharSink;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.index.KVIndex;
-import com.nfsdb.iterators.ConcurrentIterator;
-import com.nfsdb.iterators.PartitionBufferedIterator;
-import com.nfsdb.iterators.PartitionConcurrentIterator;
-import com.nfsdb.iterators.PartitionIterator;
+import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.logging.Logger;
-import com.nfsdb.utils.Checksum;
+import com.nfsdb.query.iterator.ConcurrentIterator;
+import com.nfsdb.query.iterator.PartitionBufferedIterator;
+import com.nfsdb.query.iterator.PartitionConcurrentIterator;
+import com.nfsdb.query.iterator.PartitionIterator;
+import com.nfsdb.storage.*;
 import com.nfsdb.utils.Dates;
+import com.nfsdb.utils.Hash;
 import com.nfsdb.utils.Interval;
 import com.nfsdb.utils.Unsafe;
 
@@ -470,7 +469,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
                         long offset = ((VariableColumn) columns[i]).putStr(s);
                         if (m.indexed) {
                             sparseIndexProxies[i].getIndex().add(
-                                    s == null ? SymbolTable.VALUE_IS_NULL : Checksum.hash(s, m.distinctCountHint)
+                                    s == null ? SymbolTable.VALUE_IS_NULL : Hash.boundedHash(s, m.distinctCountHint)
                                     , offset
                             );
                         }
@@ -599,12 +598,12 @@ public class Partition<T> implements Iterable<T>, Closeable {
             case STRING:
             case BINARY:
                 columns[idx] = new VariableColumn(
-                        new MappedFileImpl(new File(partitionDir, columnMetadata[idx].name + ".d"), columnMetadata[idx].bitHint, journal.getMode())
-                        , new MappedFileImpl(new File(partitionDir, columnMetadata[idx].name + ".i"), columnMetadata[idx].indexBitHint, journal.getMode()));
+                        new MemoryFile(new File(partitionDir, columnMetadata[idx].name + ".d"), columnMetadata[idx].bitHint, journal.getMode())
+                        , new MemoryFile(new File(partitionDir, columnMetadata[idx].name + ".i"), columnMetadata[idx].indexBitHint, journal.getMode()));
                 break;
             default:
                 columns[idx] = new FixedColumn(
-                        new MappedFileImpl(new File(partitionDir, columnMetadata[idx].name + ".d"), columnMetadata[idx].bitHint, journal.getMode()), columnMetadata[idx].size);
+                        new MemoryFile(new File(partitionDir, columnMetadata[idx].name + ".d"), columnMetadata[idx].bitHint, journal.getMode()), columnMetadata[idx].size);
         }
     }
 

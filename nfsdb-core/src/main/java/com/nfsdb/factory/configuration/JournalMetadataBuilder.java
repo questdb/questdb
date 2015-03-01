@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,8 +18,8 @@ package com.nfsdb.factory.configuration;
 
 import com.nfsdb.PartitionType;
 import com.nfsdb.collections.ObjIntHashMap;
-import com.nfsdb.column.ColumnType;
 import com.nfsdb.exceptions.JournalConfigurationException;
+import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Unsafe;
 
@@ -167,16 +167,6 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
         return location;
     }
 
-    public JournalMetadataBuilder<T> key(String key) {
-        this.key = key;
-        return this;
-    }
-
-    public JournalMetadataBuilder<T> lag(long time, TimeUnit unit) {
-        this.lag = (int) unit.toHours(time);
-        return this;
-    }
-
     public JournalMetadataBuilder<T> location(String location) {
         this.location = location;
         return this;
@@ -184,11 +174,6 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
 
     public JournalMetadataBuilder<T> location(File location) {
         this.location = location.getAbsolutePath();
-        return this;
-    }
-
-    public JournalMetadataBuilder<T> openFileTTL(long time, TimeUnit unit) {
-        this.openFileTTL = unit.toMillis(time);
         return this;
     }
 
@@ -208,9 +193,32 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
         return this;
     }
 
+    public JournalMetadataBuilder<T> key(String key) {
+        this.key = key;
+        return this;
+    }
+
+    public JournalMetadataBuilder<T> lag(long time, TimeUnit unit) {
+        this.lag = (int) unit.toHours(time);
+        return this;
+    }
+
+    public JournalMetadataBuilder<T> openFileTTL(long time, TimeUnit unit) {
+        this.openFileTTL = unit.toMillis(time);
+        return this;
+    }
+
     public JournalMetadataBuilder<T> txCountHint(int count) {
         this.txCountHint = count;
         return this;
+    }
+
+    private List<Field> getAllFields(List<Field> fields, Class<?> type) {
+        Collections.addAll(fields, type.getDeclaredFields());
+        if (type.getSuperclass() != null) {
+            fields = getAllFields(fields, type.getSuperclass());
+        }
+        return fields;
     }
 
     private ColumnMetadata getMeta(String name) {
@@ -258,13 +266,5 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
             columnMetadata.put(meta.name, meta);
             nameToIndexMap.put(meta.name, nameToIndexMap.size());
         }
-    }
-
-    private List<Field> getAllFields(List<Field> fields, Class<?> type) {
-        Collections.addAll(fields, type.getDeclaredFields());
-        if (type.getSuperclass() != null) {
-            fields = getAllFields(fields, type.getSuperclass());
-        }
-        return fields;
     }
 }

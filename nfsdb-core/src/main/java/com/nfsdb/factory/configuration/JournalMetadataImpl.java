@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,9 +19,9 @@ package com.nfsdb.factory.configuration;
 import com.nfsdb.JournalKey;
 import com.nfsdb.PartitionType;
 import com.nfsdb.collections.ObjIntHashMap;
-import com.nfsdb.column.HugeBuffer;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.storage.HugeBuffer;
 import com.nfsdb.utils.Base64;
 import com.nfsdb.utils.Checksum;
 import org.jetbrains.annotations.NotNull;
@@ -32,6 +32,8 @@ import java.util.Arrays;
 
 public class JournalMetadataImpl<T> implements JournalMetadata<T> {
 
+    private static final int TO_STRING_COL1_PAD = 20;
+    private static final int TO_STRING_COL2_PAD = 55;
     private final String id;
     private final Class<T> modelClass;
     private final String location;
@@ -134,28 +136,6 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
     }
 
     @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-
-        JournalMetadataImpl that = (JournalMetadataImpl) o;
-
-        return columnCount == that.columnCount
-                && ioBlockRecordCount == that.ioBlockRecordCount
-                && ioBlockTxCount == that.ioBlockTxCount
-                && lag == that.lag
-                && openFileTTL == that.openFileTTL
-                && timestampColumnIndex == that.timestampColumnIndex
-                && Arrays.equals(columnMetadata, that.columnMetadata)
-                && id.equals(that.id)
-                && !(key != null ? !key.equals(that.key) : that.key != null)
-                && !(location != null ? !location.equals(that.location) : that.location != null)
-                && partitionBy == that.partitionBy
-                && !(timestampMetadata != null ? !timestampMetadata.equals(that.timestampMetadata) : that.timestampMetadata != null);
-
-    }
-
-    @Override
     public int getColumnCount() {
         return columnCount;
     }
@@ -243,23 +223,6 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
     }
 
     @Override
-    public int hashCode() {
-        int result = id.hashCode();
-        result = 31 * result + (location != null ? location.hashCode() : 0);
-        result = 31 * result + partitionBy.hashCode();
-        result = 31 * result + columnCount;
-        result = 31 * result + (timestampMetadata != null ? timestampMetadata.hashCode() : 0);
-        result = 31 * result + (int) (openFileTTL ^ (openFileTTL >>> 32));
-        result = 31 * result + ioBlockRecordCount;
-        result = 31 * result + ioBlockTxCount;
-        result = 31 * result + (key != null ? key.hashCode() : 0);
-        result = 31 * result + Arrays.hashCode(columnMetadata);
-        result = 31 * result + timestampColumnIndex;
-        result = 31 * result + lag;
-        return result;
-    }
-
-    @Override
     public boolean isPartialMapped() {
         return partialMapping;
     }
@@ -271,38 +234,6 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
         } catch (Exception e) {
             throw new JournalRuntimeException("Could not create instance of class: " + modelClass.getName(), e);
         }
-    }
-
-    @Override
-    public String toString() {
-
-        StringBuilder b = new StringBuilder();
-        sep(b);
-        b.append("|");
-        pad(b, 15, "Location:");
-        pad(b, 40, location).append('\n');
-
-
-        b.append("|");
-        pad(b, 15, "SHA:");
-        pad(b, 40, Base64._printBase64Binary(Checksum.getChecksum(this))).append('\n');
-
-        b.append("|");
-        pad(b, 15, "Partition by");
-        pad(b, 40, partitionBy.name()).append('\n');
-        sep(b);
-
-
-        for (int i = 0; i < columnCount; i++) {
-            b.append("|");
-            pad(b, 15, Integer.toString(i));
-            col(b, columnMetadata[i]);
-            b.append('\n');
-        }
-
-        sep(b);
-
-        return b.toString();
     }
 
     public void write(HugeBuffer buf) {
@@ -322,12 +253,79 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
         buf.put(lag);
     }
 
-    private void sep(StringBuilder b) {
-        b.append("+------------------------------------------------------------+").append('\n');
+    @Override
+    public int hashCode() {
+        int result = id.hashCode();
+        result = 31 * result + (location != null ? location.hashCode() : 0);
+        result = 31 * result + partitionBy.hashCode();
+        result = 31 * result + columnCount;
+        result = 31 * result + (timestampMetadata != null ? timestampMetadata.hashCode() : 0);
+        result = 31 * result + (int) (openFileTTL ^ (openFileTTL >>> 32));
+        result = 31 * result + ioBlockRecordCount;
+        result = 31 * result + ioBlockTxCount;
+        result = 31 * result + (key != null ? key.hashCode() : 0);
+        result = 31 * result + Arrays.hashCode(columnMetadata);
+        result = 31 * result + timestampColumnIndex;
+        result = 31 * result + lag;
+        return result;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+
+        JournalMetadataImpl that = (JournalMetadataImpl) o;
+
+        return columnCount == that.columnCount
+                && ioBlockRecordCount == that.ioBlockRecordCount
+                && ioBlockTxCount == that.ioBlockTxCount
+                && lag == that.lag
+                && openFileTTL == that.openFileTTL
+                && timestampColumnIndex == that.timestampColumnIndex
+                && Arrays.equals(columnMetadata, that.columnMetadata)
+                && id.equals(that.id)
+                && !(key != null ? !key.equals(that.key) : that.key != null)
+                && !(location != null ? !location.equals(that.location) : that.location != null)
+                && partitionBy == that.partitionBy
+                && !(timestampMetadata != null ? !timestampMetadata.equals(that.timestampMetadata) : that.timestampMetadata != null);
+
+    }
+
+    @Override
+    public String toString() {
+
+        StringBuilder b = new StringBuilder();
+        sep(b);
+        b.append("|");
+        pad(b, TO_STRING_COL1_PAD, "Location:");
+        pad(b, TO_STRING_COL2_PAD, location).append('\n');
+
+
+        b.append("|");
+        pad(b, TO_STRING_COL1_PAD, "SHA:");
+        pad(b, TO_STRING_COL2_PAD, Base64._printBase64Binary(Checksum.getChecksum(this))).append('\n');
+
+        b.append("|");
+        pad(b, TO_STRING_COL1_PAD, "Partition by");
+        pad(b, TO_STRING_COL2_PAD, partitionBy.name()).append('\n');
+        sep(b);
+
+
+        for (int i = 0; i < columnCount; i++) {
+            b.append("|");
+            pad(b, TO_STRING_COL1_PAD, Integer.toString(i));
+            col(b, columnMetadata[i]);
+            b.append('\n');
+        }
+
+        sep(b);
+
+        return b.toString();
     }
 
     private void col(StringBuilder b, ColumnMetadata m) {
-        pad(b, 40, (m.distinctCountHint > 0 ? m.distinctCountHint + " ~ " : "") + (m.indexed ? "#" : "") + m.name + (m.sameAs != null ? " -> " + m.sameAs : "") + " " + m.type.name() + "(" + m.size + ")");
+        pad(b, TO_STRING_COL2_PAD, (m.distinctCountHint > 0 ? m.distinctCountHint + " ~ " : "") + (m.indexed ? "#" : "") + m.name + (m.sameAs != null ? " -> " + m.sameAs : "") + " " + m.type.name() + "(" + m.size + ")");
     }
 
     private StringBuilder pad(StringBuilder b, int w, String value) {
@@ -335,13 +333,26 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
         for (int i = 0; i < pad; i++) {
             b.append(' ');
         }
+
         if (value != null) {
-            b.append(value);
+            if (pad < 0) {
+                b.append("...").append(value.substring(-pad + 3));
+            } else {
+                b.append(value);
+            }
         }
 
         b.append("  |");
 
         return b;
+    }
+
+    private void sep(StringBuilder b) {
+        b.append("+");
+        for (int i = 0; i < TO_STRING_COL1_PAD + TO_STRING_COL2_PAD + 5; i++) {
+            b.append("-");
+        }
+        b.append("+\n");
     }
 
 }

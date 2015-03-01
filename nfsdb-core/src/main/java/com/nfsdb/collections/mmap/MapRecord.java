@@ -17,7 +17,7 @@
 package com.nfsdb.collections.mmap;
 
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.exp.CharSink;
+import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.lang.cst.impl.qry.AbstractRecord;
 import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
 import com.nfsdb.utils.Unsafe;

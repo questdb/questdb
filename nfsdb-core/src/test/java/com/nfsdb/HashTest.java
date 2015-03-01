@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,8 @@
 
 package com.nfsdb;
 
-import com.nfsdb.collections.Hash;
 import com.nfsdb.collections.IntHashSet;
+import com.nfsdb.utils.Hash;
 import com.nfsdb.utils.Rnd;
 import com.nfsdb.utils.Unsafe;
 import org.junit.Assert;
@@ -35,7 +35,7 @@ public class HashTest {
 
         for (int i = 0; i < 100000; i++) {
             rnd.nextChars(address, LEN);
-            hashes.add(Hash.hash(address, LEN));
+            hashes.add(Hash.hashMem(address, LEN));
         }
         Assert.assertTrue("Hash function distribution dropped", hashes.size() > 99990);
     }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,13 +18,13 @@ package com.nfsdb;
 
 import com.nfsdb.collections.mmap.MapValues;
 import com.nfsdb.collections.mmap.MultiMap;
-import com.nfsdb.column.ColumnType;
-import com.nfsdb.exp.CharSink;
-import com.nfsdb.exp.RecordSourcePrinter;
-import com.nfsdb.exp.StringSink;
 import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.io.RecordSourcePrinter;
+import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.lang.cst.impl.qry.JournalRecord;
 import com.nfsdb.model.Quote;
+import com.nfsdb.storage.ColumnType;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Dates;

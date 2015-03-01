@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,9 +17,6 @@
 package com.nfsdb.query.spi;
 
 import com.nfsdb.Journal;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.map.JournalHashMap;
-import com.nfsdb.map.JournalMap;
 import com.nfsdb.query.api.QueryHead;
 import com.nfsdb.query.api.QueryHeadBuilder;
 
@@ -40,10 +37,5 @@ public class QueryHeadImpl<T> implements QueryHead<T> {
         QueryHeadBuilderImpl<T> impl = new QueryHeadBuilderImpl<>(journal);
         impl.setSymbol(symbol, values);
         return impl;
-    }
-
-    @Override
-    public JournalMap<T> map() throws JournalException {
-        return new JournalHashMap<>(this.journal).eager();
     }
 }

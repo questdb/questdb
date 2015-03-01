@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,12 +16,11 @@
 
 package com.nfsdb;
 
-import com.nfsdb.concurrent.TimerCache;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.index.KVIndex;
 import com.nfsdb.logging.Logger;
+import com.nfsdb.storage.KVIndex;
 import com.nfsdb.utils.Dates;
 
 import java.io.Closeable;
@@ -53,6 +52,10 @@ class SymbolIndexProxy<T> implements Closeable {
         lastAccessed = 0L;
     }
 
+    public int getColumnIndex() {
+        return columnIndex;
+    }
+
     public long getLastAccessed() {
         return lastAccessed;
     }
@@ -70,10 +73,6 @@ class SymbolIndexProxy<T> implements Closeable {
                 "index=" + index +
                 ", lastAccessed=" + Dates.toString(lastAccessed) +
                 '}';
-    }
-
-    public int getColumnIndex() {
-        return columnIndex;
     }
 
     KVIndex getIndex() throws JournalException {

@@ -18,7 +18,6 @@ package com.nfsdb;
 
 import com.nfsdb.collections.DirectLongList;
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.index.KVIndex;
 import com.nfsdb.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.lang.cst.impl.ksrc.PartialSymbolKeySource;
 import com.nfsdb.lang.cst.impl.psrc.IntervalPartitionSource;
@@ -33,6 +32,7 @@ import com.nfsdb.logging.Logger;
 import com.nfsdb.model.Quote;
 import com.nfsdb.query.api.QueryAllBuilder;
 import com.nfsdb.query.api.QueryHeadBuilder;
+import com.nfsdb.storage.KVIndex;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Dates;

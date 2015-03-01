@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,13 +18,13 @@ package com.nfsdb.net.producer;
 
 import com.nfsdb.Journal;
 import com.nfsdb.Partition;
-import com.nfsdb.collections.Lists;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.net.ChannelProducer;
 import com.nfsdb.net.model.JournalServerState;
-import com.nfsdb.tx.Tx;
+import com.nfsdb.storage.Tx;
+import com.nfsdb.utils.Lists;
 import com.nfsdb.utils.Rows;
 
 import java.nio.channels.WritableByteChannel;

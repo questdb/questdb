@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ package com.nfsdb.factory;
 import com.nfsdb.Journal;
 import com.nfsdb.JournalBulkReader;
 import com.nfsdb.JournalKey;
-import com.nfsdb.concurrent.TimerCache;
+import com.nfsdb.TimerCache;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 
@@ -45,6 +45,32 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
     }
 
     @Override
+    @SuppressWarnings("unchecked")
+    public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
+        JournalBulkReader<T> result = bulkReaders.get(key);
+        if (result == null) {
+            result = new JournalBulkReader<>(getOrCreateMetadata(key), key, getTimerCache());
+            result.setCloseListener(this);
+            bulkReaders.put(key, result);
+            journalList.add(result);
+        }
+        return result;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
+        Journal<T> result = readers.get(key);
+        if (result == null) {
+            result = new Journal<>(getOrCreateMetadata(key), key, getTimerCache());
+            result.setCloseListener(this);
+            readers.put(key, result);
+            journalList.add(result);
+        }
+        return result;
+    }
+
+    @Override
     public void close() {
         if (pool != null) {
             pool.release(this);
@@ -65,19 +91,6 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
         return false;
     }
 
-    @Override
-    @SuppressWarnings("unchecked")
-    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        Journal<T> result = readers.get(key);
-        if (result == null) {
-            result = new Journal<>(getOrCreateMetadata(key), key, getTimerCache());
-            result.setCloseListener(this);
-            readers.put(key, result);
-            journalList.add(result);
-        }
-        return result;
-    }
-
     public void refresh() throws JournalException {
         for (int i = 0, sz = journalList.size(); i < sz; i++) {
             journalList.get(i).refresh();
@@ -92,18 +105,5 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
         for (int i = 0, sz = journalList.size(); i < sz; i++) {
             journalList.get(i).expireOpenFiles();
         }
-    }
-
-    @Override
-    @SuppressWarnings("unchecked")
-    public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
-        JournalBulkReader<T> result = bulkReaders.get(key);
-        if (result == null) {
-            result = new JournalBulkReader<>(getOrCreateMetadata(key), key, getTimerCache());
-            result.setCloseListener(this);
-            bulkReaders.put(key, result);
-            journalList.add(result);
-        }
-        return result;
     }
 }

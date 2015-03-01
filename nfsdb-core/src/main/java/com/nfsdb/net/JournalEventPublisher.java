@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 package com.nfsdb.net;
 
 import com.nfsdb.net.bridge.JournalEventBridge;
-import com.nfsdb.tx.TxListener;
+import com.nfsdb.storage.TxListener;
 
 public class JournalEventPublisher implements TxListener {
     private final int journalIndex;

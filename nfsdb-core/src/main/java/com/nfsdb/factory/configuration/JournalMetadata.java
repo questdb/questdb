@@ -18,11 +18,13 @@ package com.nfsdb.factory.configuration;
 
 import com.nfsdb.JournalKey;
 import com.nfsdb.PartitionType;
-import com.nfsdb.column.HugeBuffer;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.storage.HugeBuffer;
 import org.jetbrains.annotations.NotNull;
 
 public interface JournalMetadata<T> {
+
+    void copyColumnMetadata(ColumnMetadata[] meta);
 
     JournalKey<T> deriveKey();
 
@@ -32,6 +34,15 @@ public interface JournalMetadata<T> {
      * @return column count
      */
     int getColumnCount();
+
+    /**
+     * Lookup column index and validate column name. Column names are case-sensitive and {#JournalRuntimeException} is
+     * thrown if column name is invalid.
+     *
+     * @param columnName the name
+     * @return 0-based column index
+     */
+    int getColumnIndex(CharSequence columnName);
 
     /**
      * Lookup column metadata by name. This method is slower than
@@ -56,44 +67,33 @@ public interface JournalMetadata<T> {
      */
     ColumnMetadata getColumnMetadata(int columnIndex);
 
-    /**
-     * Lookup column index and validate column name. Column names are case-sensitive and {#JournalRuntimeException} is
-     * thrown if column name is invalid.
-     *
-     * @param columnName the name
-     * @return 0-based column index
-     */
-    int getColumnIndex(CharSequence columnName);
-
-    ColumnMetadata getTimestampMetadata();
-
-    int getTimestampIndex();
-
-    void copyColumnMetadata(ColumnMetadata[] meta);
-
-    String getLocation();
-
-    PartitionType getPartitionType();
-
-    Object newObject() throws JournalRuntimeException;
-
-    Class<T> getModelClass();
-
-    long getOpenFileTTL();
-
-    int getLag();
-
-    int getRecordHint();
-
-    int getTxCountHint();
+    String getId();
 
     String getKey();
 
     String getKeyQuiet();
 
-    String getId();
+    int getLag();
 
-    void write(HugeBuffer buf);
+    String getLocation();
+
+    Class<T> getModelClass();
+
+    long getOpenFileTTL();
+
+    PartitionType getPartitionType();
+
+    int getRecordHint();
+
+    int getTimestampIndex();
+
+    ColumnMetadata getTimestampMetadata();
+
+    int getTxCountHint();
 
     boolean isPartialMapped();
+
+    Object newObject() throws JournalRuntimeException;
+
+    void write(HugeBuffer buf);
 }

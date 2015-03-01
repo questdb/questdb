@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,9 +18,9 @@ package com.nfsdb.lang.cst.impl.rsrc;
 
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.index.KVIndex;
 import com.nfsdb.lang.cst.*;
 import com.nfsdb.lang.cst.impl.ref.StringRef;
+import com.nfsdb.storage.KVIndex;
 
 public class KvIndexHeadRowSource implements RowSource, RowCursor {
 
@@ -88,6 +88,13 @@ public class KvIndexHeadRowSource implements RowSource, RowCursor {
     }
 
     @Override
+    public void reset() {
+        keyCount = -1;
+        keySource.reset();
+        indexCursor = null;
+    }
+
+    @Override
     public boolean hasNext() {
         int cnt;
         int o;
@@ -108,13 +115,6 @@ public class KvIndexHeadRowSource implements RowSource, RowCursor {
     @Override
     public long next() {
         return localRowID;
-    }
-
-    @Override
-    public void reset() {
-        keyCount = -1;
-        keySource.reset();
-        indexCursor = null;
     }
 
     private boolean hasNextKey() {

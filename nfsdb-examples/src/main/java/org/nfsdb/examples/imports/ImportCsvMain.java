@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,9 +19,9 @@ package org.nfsdb.examples.imports;
 import com.nfsdb.Journal;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.imp.ImportManager;
-import com.nfsdb.imp.Schema;
-import com.nfsdb.imp.parser.CsvParser;
+import com.nfsdb.io.ImportManager;
+import com.nfsdb.io.ImportSchema;
+import com.nfsdb.io.TextFileFormat;
 
 import java.io.File;
 import java.io.IOException;
@@ -30,12 +30,13 @@ public class ImportCsvMain {
     public static void main(String[] args) throws IOException, JournalException {
         final String databaseLocation = args[0];
         final String csv = args[1];
-        final Schema schema = args.length > 2 ? new Schema(new File(args[2])) : null;
+        final TextFileFormat format = TextFileFormat.valueOf(args[2].toUpperCase());
+        final ImportSchema importSchema = args.length > 2 ? new ImportSchema(new File(args[2])) : null;
 
 
         JournalFactory factory = new JournalFactory(databaseLocation);
         long t = System.currentTimeMillis();
-        ImportManager.importFile(factory, csv, new CsvParser(), schema);
+        ImportManager.importFile(factory, csv, format, importSchema);
 
 
         Journal r = factory.reader(new File(csv).getName());

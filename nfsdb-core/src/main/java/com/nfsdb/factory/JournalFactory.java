@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 package com.nfsdb.factory;
 
 import com.nfsdb.*;
-import com.nfsdb.concurrent.TimerCache;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
@@ -51,8 +50,8 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
     }
 
     @Override
-    public <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException {
-        return new JournalBulkWriter<>(getConfiguration().createMetadata(key), key, getTimerCache());
+    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
+        return new Journal<>(getOrCreateMetadata(key), key, getTimerCache());
     }
 
     @Override
@@ -71,8 +70,8 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
     }
 
     @Override
-    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        return new Journal<>(getOrCreateMetadata(key), key, getTimerCache());
+    public <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException {
+        return new JournalBulkWriter<>(getConfiguration().createMetadata(key), key, getTimerCache());
     }
 
     @Override

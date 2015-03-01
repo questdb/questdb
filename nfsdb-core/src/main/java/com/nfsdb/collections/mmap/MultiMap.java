@@ -16,16 +16,20 @@
 
 package com.nfsdb.collections.mmap;
 
-import com.nfsdb.collections.*;
+import com.nfsdb.collections.AbstractDirectList;
+import com.nfsdb.collections.DirectLongList;
+import com.nfsdb.collections.DirectMemoryStructure;
+import com.nfsdb.collections.Primes;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
+import com.nfsdb.utils.Hash;
 import com.nfsdb.utils.Unsafe;
 
 import java.util.ArrayList;
 import java.util.List;
 
-public class MultiMap extends DirectMemory {
+public class MultiMap extends DirectMemoryStructure {
 
     private final float loadFactor;
     private final Key key = new Key();
@@ -88,7 +92,7 @@ public class MultiMap extends DirectMemory {
     public MapValues claimSlot(Key key) {
         // calculate hash remembering "key" structure
         // [ len | value block | key offset block | key data block ]
-        int index = Hash.hash(key.startAddr + keyBlockOffset, key.len - keyBlockOffset) % keyCapacity;
+        int index = Hash.hashMem(key.startAddr + keyBlockOffset, key.len - keyBlockOffset) % keyCapacity;
         long offset = offsets.get(index);
 
         if (offset == -1) {
@@ -191,7 +195,7 @@ public class MultiMap extends DirectMemory {
             if (offset == -1) {
                 continue;
             }
-            long index = Hash.hash(kStart + offset + keyBlockOffset, Unsafe.getUnsafe().getInt(kStart + offset) - keyBlockOffset) % capacity;
+            long index = Hash.hashMem(kStart + offset + keyBlockOffset, Unsafe.getUnsafe().getInt(kStart + offset) - keyBlockOffset) % capacity;
             while (pointers.get(index) != -1) {
                 index = (index + 1) % capacity;
             }

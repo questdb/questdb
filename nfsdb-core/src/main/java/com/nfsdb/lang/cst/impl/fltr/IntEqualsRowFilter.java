@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,12 +16,12 @@
 
 package com.nfsdb.lang.cst.impl.fltr;
 
-import com.nfsdb.column.AbstractColumn;
-import com.nfsdb.column.FixedColumn;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.lang.cst.*;
 import com.nfsdb.lang.cst.impl.ref.StringRef;
+import com.nfsdb.storage.AbstractColumn;
+import com.nfsdb.storage.FixedColumn;
 
 public class IntEqualsRowFilter implements RowFilter, RowAcceptor {
     private final StringRef column;
@@ -32,6 +32,11 @@ public class IntEqualsRowFilter implements RowFilter, RowAcceptor {
     public IntEqualsRowFilter(StringRef column, IntVariableSource variableSource) {
         this.column = column;
         this.variableSource = variableSource;
+    }
+
+    @Override
+    public Choice accept(long localRowID) {
+        return columnRef.getInt(localRowID) == var.getValue() ? Choice.PICK : Choice.SKIP;
     }
 
     @Override
@@ -48,10 +53,5 @@ public class IntEqualsRowFilter implements RowFilter, RowAcceptor {
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
-    }
-
-    @Override
-    public Choice accept(long localRowID) {
-        return columnRef.getInt(localRowID) == var.getValue() ? Choice.PICK : Choice.SKIP;
     }
 }

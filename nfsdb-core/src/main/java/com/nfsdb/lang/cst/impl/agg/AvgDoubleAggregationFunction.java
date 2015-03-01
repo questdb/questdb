@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,11 +18,11 @@ package com.nfsdb.lang.cst.impl.agg;
 
 import com.nfsdb.collections.mmap.MapRecordValueInterceptor;
 import com.nfsdb.collections.mmap.MapValues;
-import com.nfsdb.column.ColumnType;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.lang.cst.impl.qry.Record;
 import com.nfsdb.lang.cst.impl.qry.RecordSource;
+import com.nfsdb.storage.ColumnType;
 
 public class AvgDoubleAggregationFunction implements AggregatorFunction, MapRecordValueInterceptor {
 
@@ -34,6 +34,11 @@ public class AvgDoubleAggregationFunction implements AggregatorFunction, MapReco
 
     public AvgDoubleAggregationFunction(ColumnMetadata sourceColumn) {
         this.sourceColumn = sourceColumn;
+    }
+
+    @Override
+    public void beforeRecord(MapValues values) {
+        values.putDouble(avgIdx, values.getDouble(sumIdx) / values.getLong(countIdx));
     }
 
     @Override
@@ -76,10 +81,5 @@ public class AvgDoubleAggregationFunction implements AggregatorFunction, MapReco
             values.putLong(countIdx, values.getLong(countIdx) + 1);
             values.putDouble(sumIdx, values.getDouble(sumIdx) + rec.getDouble(columnIndex));
         }
-    }
-
-    @Override
-    public void beforeRecord(MapValues values) {
-        values.putDouble(avgIdx, values.getDouble(sumIdx) / values.getLong(countIdx));
     }
 }

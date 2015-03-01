@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 package com.nfsdb.test.tools;
 
 import com.nfsdb.*;
-import com.nfsdb.concurrent.TimerCache;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalClosingListener;
@@ -82,25 +81,19 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
     }
 
     @Override
-    public <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException {
-        JournalBulkWriter<T> writer = super.bulkWriter(key);
-        journals.add(writer);
-        writer.setCloseListener(this);
-        return writer;
-    }
-
-    @Override
-    public boolean closing(Journal journal) {
-        journals.remove(journal);
-        return true;
-    }
-
-    @Override
     public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
         Journal<T> result = super.reader(key);
         journals.add(result);
         result.setCloseListener(this);
         return result;
+    }
+
+    @Override
+    public <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException {
+        JournalBulkWriter<T> writer = super.bulkWriter(key);
+        journals.add(writer);
+        writer.setCloseListener(this);
+        return writer;
     }
 
     @Override
@@ -116,6 +109,12 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
         journals.add(writer);
         writer.setCloseListener(this);
         return writer;
+    }
+
+    @Override
+    public boolean closing(Journal journal) {
+        journals.remove(journal);
+        return true;
     }
 
     @Override

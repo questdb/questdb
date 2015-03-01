@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,10 @@
 
 package org.nfsdb.examples.imports;
 
-import com.nfsdb.Journal;
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exp.FileSink;
-import com.nfsdb.exp.RecordSourcePrinter;
 import com.nfsdb.factory.JournalFactory;
+import com.nfsdb.io.ExportManager;
+import com.nfsdb.io.TextFileFormat;
 
 import java.io.File;
 import java.io.IOException;
@@ -28,13 +27,8 @@ import java.io.IOException;
 public class ExportCsvMain {
     public static void main(String[] args) throws JournalException, IOException {
         JournalFactory factory = new JournalFactory(args[0]);
-
-        Journal r = factory.reader("trip_data_1.csv");
-        try (FileSink sink = new FileSink(new File("d:/csv/1.csv"))) {
-            RecordSourcePrinter printer = new RecordSourcePrinter(sink, ',');
-            long t = System.currentTimeMillis();
-            printer.print(r.rows());
-            System.out.println(System.currentTimeMillis() - t);
-        }
+        String from = args[1];
+        String toDir = args[2];
+        ExportManager.export(factory, from, new File(toDir, from).getAbsolutePath(), TextFileFormat.CSV);
     }
 }

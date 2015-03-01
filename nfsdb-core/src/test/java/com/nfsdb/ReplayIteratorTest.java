@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,11 @@
 
 package com.nfsdb;
 
-import com.nfsdb.iterators.ReplayIterator;
-import com.nfsdb.iterators.TimeSource;
-import com.nfsdb.iterators.clock.Clock;
-import com.nfsdb.iterators.clock.MilliClock;
 import com.nfsdb.model.Quote;
+import com.nfsdb.query.iterator.ReplayIterator;
+import com.nfsdb.query.iterator.TimeSource;
+import com.nfsdb.query.iterator.clock.Clock;
+import com.nfsdb.query.iterator.clock.MilliClock;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -30,6 +30,24 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class ReplayIteratorTest extends AbstractTest {
+    @Test
+    public void testJournalIteratorReplay() throws Exception {
+        JournalWriter<Quote> w = factory.writer(Quote.class);
+        TestUtils.generateQuoteData(w, 1000);
+
+        ReplayIterator<Quote> replay = new ReplayIterator<>(w.bufferedIterator(), 0.00000001f);
+        TestUtils.assertEquals(w.bufferedIterator(), replay);
+    }
+
+    @Test
+    public void testJournalReplay() throws Exception {
+        JournalWriter<Quote> w = factory.writer(Quote.class);
+        TestUtils.generateQuoteData(w, 1000);
+
+        ReplayIterator<Quote> replay = new ReplayIterator<>(w, 0.00000001f);
+        TestUtils.assertEquals(w.bufferedIterator(), replay);
+    }
+
     @Test
     public void testReplay() throws Exception {
 
@@ -67,24 +85,6 @@ public class ReplayIteratorTest extends AbstractTest {
 
         Assert.assertArrayEquals(expected, actual);
 
-    }
-
-    @Test
-    public void testJournalReplay() throws Exception {
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-        TestUtils.generateQuoteData(w, 1000);
-
-        ReplayIterator<Quote> replay = new ReplayIterator<>(w, 0.00000001f);
-        TestUtils.assertEquals(w.bufferedIterator(), replay);
-    }
-
-    @Test
-    public void testJournalIteratorReplay() throws Exception {
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-        TestUtils.generateQuoteData(w, 1000);
-
-        ReplayIterator<Quote> replay = new ReplayIterator<>(w.bufferedIterator(), 0.00000001f);
-        TestUtils.assertEquals(w.bufferedIterator(), replay);
     }
 
     private long[] deltas(List<Entity> entities) {

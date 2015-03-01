@@ -16,9 +16,9 @@
 
 package com.nfsdb;
 
-import com.nfsdb.column.BSearchType;
-import com.nfsdb.column.FixedColumn;
-import com.nfsdb.column.MappedFileImpl;
+import com.nfsdb.storage.BSearchType;
+import com.nfsdb.storage.FixedColumn;
+import com.nfsdb.storage.MemoryFile;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
@@ -31,7 +31,7 @@ public class BinarySearchTest {
 
     @Before
     public void setUp() throws Exception {
-        column = new FixedColumn(new MappedFileImpl(temp.newFile(), 16, JournalMode.APPEND), 8);
+        column = new FixedColumn(new MemoryFile(temp.newFile(), 16, JournalMode.APPEND), 8);
     }
 
     @After

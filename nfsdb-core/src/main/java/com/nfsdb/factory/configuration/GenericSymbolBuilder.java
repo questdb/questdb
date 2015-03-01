@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,28 +16,13 @@
 
 package com.nfsdb.factory.configuration;
 
-import com.nfsdb.column.ColumnType;
+import com.nfsdb.storage.ColumnType;
 
 public class GenericSymbolBuilder extends AbstractGenericMetadataBuilder {
     public GenericSymbolBuilder(JournalStructure parent, ColumnMetadata meta) {
         super(parent, meta);
         meta.type = ColumnType.SYMBOL;
         meta.size = 4;
-    }
-
-    public GenericSymbolBuilder sameAs(String name) {
-        this.meta.sameAs = name;
-        return this;
-    }
-
-    public GenericSymbolBuilder valueCountHint(int valueCountHint) {
-        this.meta.distinctCountHint = valueCountHint;
-        return this;
-    }
-
-    public GenericSymbolBuilder size(int size) {
-        this.meta.avgSize = size;
-        return this;
     }
 
     public GenericSymbolBuilder index() {
@@ -47,6 +32,21 @@ public class GenericSymbolBuilder extends AbstractGenericMetadataBuilder {
 
     public GenericSymbolBuilder noCache() {
         this.meta.noCache = true;
+        return this;
+    }
+
+    public GenericSymbolBuilder sameAs(String name) {
+        this.meta.sameAs = name;
+        return this;
+    }
+
+    public GenericSymbolBuilder size(int size) {
+        this.meta.avgSize = size;
+        return this;
+    }
+
+    public GenericSymbolBuilder valueCountHint(int valueCountHint) {
+        this.meta.distinctCountHint = valueCountHint;
         return this;
     }
 }

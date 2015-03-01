@@ -17,8 +17,8 @@
 package com.nfsdb.lang.cst.impl.qry;
 
 import com.nfsdb.Partition;
-import com.nfsdb.column.FixedColumn;
-import com.nfsdb.exp.CharSink;
+import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.storage.FixedColumn;
 
 import java.io.InputStream;
 import java.io.OutputStream;

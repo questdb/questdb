@@ -20,7 +20,6 @@ import com.nfsdb.Journal;
 import com.nfsdb.JournalKey;
 import com.nfsdb.collections.DirectIntList;
 import com.nfsdb.collections.IntIntHashMap;
-import com.nfsdb.collections.Lists;
 import com.nfsdb.exceptions.ClusterLossException;
 import com.nfsdb.exceptions.JournalDisconnectedChannelException;
 import com.nfsdb.exceptions.JournalException;
@@ -39,6 +38,7 @@ import com.nfsdb.net.protocol.CommandConsumer;
 import com.nfsdb.net.protocol.CommandProducer;
 import com.nfsdb.net.protocol.Version;
 import com.nfsdb.net.protocol.commands.*;
+import com.nfsdb.utils.Lists;
 
 import java.net.SocketAddress;
 import java.nio.channels.ByteChannel;

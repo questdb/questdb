@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,14 +18,14 @@ package com.nfsdb.query.spi;
 
 import com.nfsdb.Journal;
 import com.nfsdb.Partition;
-import com.nfsdb.UnorderedResultSet;
-import com.nfsdb.UnorderedResultSetBuilder;
 import com.nfsdb.collections.DirectIntList;
 import com.nfsdb.collections.DirectLongList;
-import com.nfsdb.column.SymbolTable;
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.index.KVIndex;
+import com.nfsdb.query.UnorderedResultSet;
+import com.nfsdb.query.UnorderedResultSetBuilder;
 import com.nfsdb.query.api.QueryHeadBuilder;
+import com.nfsdb.storage.KVIndex;
+import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.utils.Interval;
 import com.nfsdb.utils.Rows;
 
@@ -47,60 +47,6 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
 
     public QueryHeadBuilderImpl(Journal<T> journal) {
         this.journal = journal;
-    }
-
-    public void setSymbol(String symbol, String... values) {
-        this.symbolColumnIndex = journal.getMetadata().getColumnIndex(symbol);
-        SymbolTable symbolTable = journal.getSymbolTable(symbol);
-        this.symbolKeys.reset(values == null || values.length == 0 ? symbolTable.size() : values.length);
-        if (values == null || values.length == 0) {
-            int sz = symbolTable.size();
-            for (int i = 0; i < sz; i++) {
-                this.symbolKeys.add(i);
-            }
-        } else {
-            for (int i = 0; i < values.length; i++) {
-                int key = symbolTable.getQuick(values[i]);
-                if (key != SymbolTable.VALUE_NOT_FOUND) {
-                    symbolKeys.add(key);
-                }
-            }
-        }
-    }
-
-    @Override
-    public QueryHeadBuilder<T> limit(Interval interval) {
-        this.interval = interval;
-        this.minRowID = -1L;
-        return this;
-    }
-
-    @Override
-    public QueryHeadBuilder<T> limit(long minRowID) {
-        this.minRowID = minRowID;
-        this.interval = null;
-        return this;
-    }
-
-    @Override
-    public QueryHeadBuilder<T> filter(String symbol, String value) {
-        SymbolTable tab = journal.getSymbolTable(symbol);
-        int key = tab.get(value);
-        filterSymbols.add(symbol);
-        filterSymbolKeys.add(key);
-        return this;
-    }
-
-    @Override
-    public void resetFilter() {
-        filterSymbols.clear();
-        filterSymbolKeys.reset();
-    }
-
-    @Override
-    public QueryHeadBuilder<T> strict(boolean strict) {
-        this.strict = strict;
-        return this;
     }
 
     public UnorderedResultSet<T> asResultSet() throws JournalException {
@@ -206,5 +152,59 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
                     }
                 }
         );
+    }
+
+    @Override
+    public QueryHeadBuilder<T> filter(String symbol, String value) {
+        SymbolTable tab = journal.getSymbolTable(symbol);
+        int key = tab.get(value);
+        filterSymbols.add(symbol);
+        filterSymbolKeys.add(key);
+        return this;
+    }
+
+    @Override
+    public QueryHeadBuilder<T> limit(Interval interval) {
+        this.interval = interval;
+        this.minRowID = -1L;
+        return this;
+    }
+
+    @Override
+    public QueryHeadBuilder<T> limit(long minRowID) {
+        this.minRowID = minRowID;
+        this.interval = null;
+        return this;
+    }
+
+    @Override
+    public void resetFilter() {
+        filterSymbols.clear();
+        filterSymbolKeys.reset();
+    }
+
+    @Override
+    public QueryHeadBuilder<T> strict(boolean strict) {
+        this.strict = strict;
+        return this;
+    }
+
+    public void setSymbol(String symbol, String... values) {
+        this.symbolColumnIndex = journal.getMetadata().getColumnIndex(symbol);
+        SymbolTable symbolTable = journal.getSymbolTable(symbol);
+        this.symbolKeys.reset(values == null || values.length == 0 ? symbolTable.size() : values.length);
+        if (values == null || values.length == 0) {
+            int sz = symbolTable.size();
+            for (int i = 0; i < sz; i++) {
+                this.symbolKeys.add(i);
+            }
+        } else {
+            for (int i = 0; i < values.length; i++) {
+                int key = symbolTable.getQuick(values[i]);
+                if (key != SymbolTable.VALUE_NOT_FOUND) {
+                    symbolKeys.add(key);
+                }
+            }
+        }
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,10 @@
 
 package com.nfsdb;
 
-import com.nfsdb.column.HugeBuffer;
 import com.nfsdb.factory.configuration.JournalMetadataBuilder;
 import com.nfsdb.factory.configuration.JournalMetadataImpl;
 import com.nfsdb.model.Quote;
+import com.nfsdb.storage.HugeBuffer;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,9 +17,9 @@
 package com.nfsdb.lang;
 
 import com.nfsdb.JournalWriter;
-import com.nfsdb.exp.RecordSourcePrinter;
-import com.nfsdb.exp.StringSink;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
+import com.nfsdb.io.RecordSourcePrinter;
+import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.lang.cst.RowSource;
 import com.nfsdb.lang.cst.impl.fltr.DoubleGreaterThanRowFilter;
 import com.nfsdb.lang.cst.impl.fltr.SymbolEqualsRowFilter;

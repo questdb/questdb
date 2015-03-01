@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,6 @@ import com.nfsdb.JournalKey;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.PartitionType;
 import com.nfsdb.collections.DirectIntList;
-import com.nfsdb.concurrent.NamedDaemonThreadFactory;
 import com.nfsdb.exceptions.IncompatibleJournalException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
@@ -42,7 +41,8 @@ import com.nfsdb.net.protocol.CommandConsumer;
 import com.nfsdb.net.protocol.CommandProducer;
 import com.nfsdb.net.protocol.Version;
 import com.nfsdb.net.protocol.commands.*;
-import com.nfsdb.tx.TxListener;
+import com.nfsdb.storage.TxListener;
+import com.nfsdb.utils.NamedDaemonThreadFactory;
 
 import java.io.IOException;
 import java.nio.channels.ByteChannel;

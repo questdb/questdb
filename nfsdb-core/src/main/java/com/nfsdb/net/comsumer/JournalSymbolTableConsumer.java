@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,11 +18,11 @@ package com.nfsdb.net.comsumer;
 
 import com.nfsdb.Journal;
 import com.nfsdb.collections.DirectIntList;
-import com.nfsdb.collections.Lists;
-import com.nfsdb.column.SymbolTable;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.net.AbstractChannelConsumer;
+import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.utils.ByteBuffers;
+import com.nfsdb.utils.Lists;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -65,6 +65,11 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
     }
 
     @Override
+    public boolean isComplete() {
+        return complete && symbolTableIndex >= symbolTabDataIndicators.size();
+    }
+
+    @Override
     public void reset() {
         super.reset();
         symbolTableIndex = 0;
@@ -77,11 +82,6 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
                 symbolTableSizes.set(i, symbolTables.get(i).size());
             }
         }
-    }
-
-    @Override
-    public boolean isComplete() {
-        return complete && symbolTableIndex >= symbolTabDataIndicators.size();
     }
 
     @Override

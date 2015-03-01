@@ -16,11 +16,15 @@
 
 package com.nfsdb.net;
 
-import com.nfsdb.*;
+import com.nfsdb.Journal;
+import com.nfsdb.JournalKey;
+import com.nfsdb.JournalWriter;
+import com.nfsdb.PartitionType;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.model.Quote;
 import com.nfsdb.net.config.ClientConfig;
 import com.nfsdb.net.config.ServerConfig;
+import com.nfsdb.query.ResultSet;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestData;
 import com.nfsdb.test.tools.TestUtils;
