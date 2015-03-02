@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.nfsdb.examples.imports;
+package org.nfsdb.examples.io;
 
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalFactory;
@@ -26,9 +26,16 @@ import java.io.IOException;
 
 public class ExportCsvMain {
     public static void main(String[] args) throws JournalException, IOException {
+
         JournalFactory factory = new JournalFactory(args[0]);
         String from = args[1];
         String toDir = args[2];
-        ExportManager.export(factory, from, new File(toDir, from).getAbsolutePath(), TextFileFormat.CSV);
+        TextFileFormat format = TextFileFormat.valueOf(args[3]);
+
+        // exports "from" journal to a delimited format file written to "toDir" directory. Name of the file is
+        // the same as name of exported journal.
+        // Delimiter is selected via TextFormatEnum
+
+        ExportManager.export(factory, from, new File(toDir, from), format);
     }
 }

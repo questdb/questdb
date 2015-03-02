@@ -102,15 +102,13 @@ public class ImportSchema {
 
 
                     try {
-                        if (hi > 1) {
-                            meta.columnIndex = Numbers.parseInt(values[0].toString().trim());
-                            meta.type = ColumnType.valueOf(values[1].toString().toUpperCase().trim());
-                            if (meta.type == null) {
-                                LOGGER.error("Invalid column type: " + values[1]);
-                                return;
-                            }
-                            meta.size = meta.type.size();
+                        meta.columnIndex = Numbers.parseInt(values[0].toString().trim());
+                        meta.type = ColumnType.valueOf(values[1].toString().toUpperCase().trim());
+                        if (meta.type == null) {
+                            LOGGER.error("Invalid column type: " + values[1]);
+                            return;
                         }
+                        meta.size = meta.type.size();
 
                         if (values[2].length() > 0) {
                             meta.importedType = importedTypeLookup.get(values[2]);

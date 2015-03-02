@@ -21,6 +21,7 @@ import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.io.ExportManager;
 import com.nfsdb.io.ImportManager;
+import com.nfsdb.io.ImportSchema;
 import com.nfsdb.io.TextFileFormat;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.test.tools.AbstractTest;
@@ -59,10 +60,39 @@ public class ImportCsvTest extends AbstractTest {
         File actual = new File(factory.getConfiguration().getJournalBase(), "exp.csv");
         File expected = new File(this.getClass().getResource("/csv/test-export-expected.csv").getFile());
 
-        ExportManager.export(factory, location, actual.getAbsolutePath(), TextFileFormat.CSV);
+        ExportManager.export(factory, location, actual, TextFileFormat.CSV);
         TestUtils.assertEquals(actual, expected);
+    }
 
-        System.out.println(factory.getConfiguration().getJournalBase());
-        System.out.println(m);
+    @Test
+    public void testImportSchema() throws Exception {
+        String file = this.getClass().getResource("/csv/test-import.csv").getFile();
+        ImportManager.importFile(factory, file, TextFileFormat.CSV, new ImportSchema("1,INT,\n6,STRING,"));
+        String location = "test-import.csv";
+
+
+        Assert.assertEquals(JournalReaderFactory.JournalExistenceCheck.EXISTS, factory.exists(location));
+
+        Journal r = factory.reader(location);
+        JournalMetadata m = r.getMetadata();
+        Assert.assertEquals(ColumnType.INT, m.getColumnMetadata(1).type);
+        Assert.assertEquals(ColumnType.STRING, m.getColumnMetadata(6).type);
+    }
+
+    @Test
+    public void testImportSchemaFile() throws Exception {
+        String file = this.getClass().getResource("/csv/test-import.csv").getFile();
+        ImportManager.importFile(factory, file, TextFileFormat.CSV, new ImportSchema(
+                new File(this.getClass().getResource("/csv/test-import-schema.csv").getFile())
+        ));
+        String location = "test-import.csv";
+
+
+        Assert.assertEquals(JournalReaderFactory.JournalExistenceCheck.EXISTS, factory.exists(location));
+
+        Journal r = factory.reader(location);
+        JournalMetadata m = r.getMetadata();
+        Assert.assertEquals(ColumnType.INT, m.getColumnMetadata(1).type);
+        Assert.assertEquals(ColumnType.STRING, m.getColumnMetadata(6).type);
     }
 }

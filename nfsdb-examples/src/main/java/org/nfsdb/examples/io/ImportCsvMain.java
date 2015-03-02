@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.nfsdb.examples.imports;
+package org.nfsdb.examples.io;
 
 import com.nfsdb.Journal;
 import com.nfsdb.exceptions.JournalException;
@@ -29,17 +29,15 @@ import java.io.IOException;
 public class ImportCsvMain {
     public static void main(String[] args) throws IOException, JournalException {
         final String databaseLocation = args[0];
-        final String csv = args[1];
+        final String from = args[1];
         final TextFileFormat format = TextFileFormat.valueOf(args[2].toUpperCase());
-        final ImportSchema importSchema = args.length > 2 ? new ImportSchema(new File(args[2])) : null;
+        final ImportSchema importSchema = args.length > 3 ? new ImportSchema(new File(args[3])) : null;
 
 
         JournalFactory factory = new JournalFactory(databaseLocation);
         long t = System.currentTimeMillis();
-        ImportManager.importFile(factory, csv, format, importSchema);
-
-
-        Journal r = factory.reader(new File(csv).getName());
+        ImportManager.importFile(factory, from, format, importSchema);
+        Journal r = factory.reader(new File(from).getName());
         System.out.println(r.getMetadata());
         System.out.println("Loaded " + r.size() + " rows in " + (System.currentTimeMillis() - t) + "ms");
     }

@@ -29,9 +29,12 @@ public final class ExportManager {
     private ExportManager() {
     }
 
-    public static void export(JournalReaderFactory factory, String from, String to, TextFileFormat format) throws JournalException, IOException {
+    public static void export(JournalReaderFactory factory, String from, File to, TextFileFormat format) throws JournalException, IOException {
+        if (to.isDirectory()) {
+            throw new JournalException(to + "cannot be a directory");
+        }
         try (Journal r = factory.reader(from)) {
-            try (FileSink sink = new FileSink(new File(to))) {
+            try (FileSink sink = new FileSink(to)) {
                 RecordSourcePrinter printer = new RecordSourcePrinter(sink, format.getDelimiter());
                 printer.print(r.rows());
             }

@@ -39,6 +39,47 @@ public final class ImportManager {
     private ImportManager() {
     }
 
+    /**
+     * Imports journal from delimited values text file. At present three types of delimited value files are supported:
+     * <el>
+     * <li>CSV</li>
+     * <li>TAB</li>
+     * <li>PIPE</li>
+     * </el>
+     * <p/>
+     * Both Unix and DOS line endings are automatically detected and parsed.
+     * <p/>
+     * Parser will attempt to determine types of fields in the input by probing first 100 lines. It does a good job if
+     * 100 lines are representative of the rest of file. In case 100 is too low, there is another method that takes
+     * sample size as a parameter.
+     * <p/>
+     * Once types are auto-detected it is possible to override them by supplying Import Schema. Import Schema is a
+     * CSV file with required three columns:
+     * <pre>
+     *     column#,type,format
+     * </pre>
+     * Where:
+     * <el>
+     * <li>column# - is column number between 0 and count-1, where count is number of columns in input</li>
+     * <li>type - is a value of ColumnType enum</li>
+     * <li>format - is mainly to disambiguate dates. Format selects date parser for column. There are only three
+     * possible values that are currently supported: YYYY-MM-DDThh:mm:ss, YYYY-MM-DD hh:mm:ss and MM/DD/YYYY</li>
+     * </el>
+     * Import Schema does not have to describe all columns in input. It is there only to correct auto-detection mistakes.
+     * So specify only columns where auto-detection gets it wrong.
+     * <p/>
+     * To import data efficiently parser can use up to 2GB of physical memory, or 1/4 of your total physical memory,
+     * whichever is lower.
+     * </p>
+     * Parser will always attempt to infer journal structure from input, even of journal already exists. If input
+     * structure does not match structure of journal - an exception is thrown.
+     *
+     * @param factory      journal factory
+     * @param fileName     name of input file
+     * @param format       inout format
+     * @param importSchema instance of ImportSchema
+     * @throws IOException
+     */
     public static void importFile(JournalWriterFactory factory, String fileName, TextFileFormat format, ImportSchema importSchema) throws IOException {
         importFile(factory, fileName, format, importSchema, SAMPLE_SIZE);
     }
