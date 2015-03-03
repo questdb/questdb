@@ -56,7 +56,7 @@ public class HugeBuffer extends MemoryFile {
             }
             long address = nextAddress(len * 8);
             for (int i = 0; i < len; i++) {
-                container[i] = Unsafe.getUnsafe().getInt(address);
+                container[i] = Unsafe.getUnsafe().getLong(address);
                 address += 8;
             }
             return container;
