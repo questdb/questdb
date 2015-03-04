@@ -21,6 +21,7 @@ import com.nfsdb.exceptions.IncompatibleJournalException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.Constants;
+import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.FlexBufferSink;
@@ -232,7 +233,7 @@ public class JournalWriter<T> extends Journal<T> {
         }
         txLog.head(tx);
 
-        File meta = new File(getLocation(), "_meta2");
+        File meta = new File(getLocation(), JournalConfiguration.FILE_NAME);
         if (!meta.exists()) {
             try (HugeBuffer hb = new HugeBuffer(meta, 12, JournalMode.APPEND)) {
                 getMetadata().write(hb);

@@ -50,6 +50,11 @@ public class FixedColumnDeltaProducer implements ColumnDeltaProducer {
     }
 
     @Override
+    public void free() {
+        ByteBuffers.release(header);
+    }
+
+    @Override
     public boolean hasContent() {
         return hasContent;
     }

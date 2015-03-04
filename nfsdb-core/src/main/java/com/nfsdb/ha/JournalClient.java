@@ -362,9 +362,8 @@ public class JournalClient {
 
     private void sendKeys() throws JournalNetworkException {
         for (int i = 0, sz = remoteKeys.size(); i < sz; i++) {
-            JournalKey key = remoteKeys.get(i);
             commandProducer.write(channel, Command.SET_KEY_CMD);
-            setKeyRequestProducer.write(channel, new IndexedJournalKey(i, key));
+            setKeyRequestProducer.write(channel, new IndexedJournalKey(i, remoteKeys.get(i)));
             checkAck();
         }
     }

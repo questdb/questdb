@@ -22,6 +22,8 @@ import java.nio.channels.WritableByteChannel;
 
 public interface ChannelProducer {
 
+    void free();
+
     boolean hasContent();
 
     void write(WritableByteChannel channel) throws JournalNetworkException;

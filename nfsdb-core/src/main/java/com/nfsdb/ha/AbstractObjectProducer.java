@@ -28,6 +28,11 @@ public abstract class AbstractObjectProducer<T> implements ChannelProducer {
     private ByteBuffer buffer;
 
     @Override
+    public void free() {
+        buffer = ByteBuffers.release(buffer);
+    }
+
+    @Override
     public final boolean hasContent() {
         return buffer != null && buffer.hasRemaining();
     }

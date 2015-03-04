@@ -69,6 +69,14 @@ public class JournalSymbolTableProducer implements ChannelProducer {
     }
 
     @Override
+    public void free() {
+        for (int i = 0, sz = symbolTableProducers.size(); i < sz; i++) {
+            symbolTableProducers.get(i).free();
+        }
+        ByteBuffers.release(buffer);
+    }
+
+    @Override
     public boolean hasContent() {
         return hasContent;
     }

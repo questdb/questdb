@@ -29,6 +29,11 @@ public class IntResponseProducer implements ChannelProducer {
     private final ByteBuffer buffer = ByteBuffer.allocateDirect(4).order(ByteOrder.LITTLE_ENDIAN);
 
     @Override
+    public void free() {
+        ByteBuffers.release(buffer);
+    }
+
+    @Override
     public boolean hasContent() {
         return buffer.hasRemaining();
     }

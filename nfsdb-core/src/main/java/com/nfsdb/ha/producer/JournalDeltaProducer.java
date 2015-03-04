@@ -72,6 +72,22 @@ public class JournalDeltaProducer implements ChannelProducer {
     }
 
     @Override
+    public void free() {
+        journalServerStateProducer.free();
+        journalSymbolTableProducer.free();
+        if (lagPartitionDeltaProducer != null) {
+            lagPartitionDeltaProducer.free();
+        }
+
+        for (int i = 0, sz = partitionDeltaProducerCache.size(); i < sz; i++) {
+            PartitionDeltaProducer p = partitionDeltaProducerCache.get(i);
+            if (p != null) {
+                p.free();
+            }
+        }
+    }
+
+    @Override
     public boolean hasContent() {
         return rollback || journalServerState.notEmpty();
     }

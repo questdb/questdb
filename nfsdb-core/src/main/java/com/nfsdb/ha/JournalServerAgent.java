@@ -88,6 +88,12 @@ public class JournalServerAgent {
         setKeyRequestConsumer.free();
         intResponseConsumer.free();
         byteArrayResponseConsumer.free();
+        commandProducer.free();
+        stringResponseProducer.free();
+        intResponseProducer.free();
+        for (int i = 0, sz = producers.size(); i < sz; i++) {
+            producers.get(i).free();
+        }
     }
 
     public void process(ByteChannel channel) throws JournalNetworkException {

@@ -29,6 +29,13 @@ public class ChannelProducerGroup<T extends ChannelProducer> implements ChannelP
     private boolean hasContent = false;
 
     @Override
+    public void free() {
+        for (int i = 0, sz = producers.size(); i < sz; i++) {
+            producers.get(i).free();
+        }
+    }
+
+    @Override
     public boolean hasContent() {
         return hasContent;
     }
