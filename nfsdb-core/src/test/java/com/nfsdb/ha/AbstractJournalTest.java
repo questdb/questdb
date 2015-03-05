@@ -63,8 +63,6 @@ public abstract class AbstractJournalTest extends AbstractTest {
         journalClientStateConsumer.reset();
         journalClientStateConsumer.read(channel);
 
-        Assert.assertTrue(journalClientStateConsumer.isComplete());
-
         journalDeltaProducer.configure(journalClientStateConsumer.getValue().getTxn(), journalClientStateConsumer.getValue().getTxPin());
         Assert.assertEquals(expectContent, journalDeltaProducer.hasContent());
         if (expectContent) {

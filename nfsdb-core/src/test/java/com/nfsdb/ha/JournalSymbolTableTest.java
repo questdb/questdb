@@ -112,7 +112,6 @@ public class JournalSymbolTableTest extends AbstractTest {
             journalSymbolTableProducer.write(channel);
             journalSymbolTableConsumer.reset();
             journalSymbolTableConsumer.read(channel);
-            Assert.assertTrue(journalSymbolTableConsumer.isComplete());
             TestUtils.compareSymbolTables(master, slave);
         }
     }

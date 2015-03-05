@@ -26,7 +26,6 @@ import java.nio.channels.ReadableByteChannel;
 
 public class IntResponseConsumer implements ChannelConsumer {
     private final ByteBuffer buffer = ByteBuffer.allocateDirect(4).order(ByteOrder.LITTLE_ENDIAN);
-    private boolean complete = false;
 
     @Override
     public void free() {
@@ -34,22 +33,13 @@ public class IntResponseConsumer implements ChannelConsumer {
     }
 
     @Override
-    public boolean isComplete() {
-        return complete;
-    }
-
-    @Override
     public void read(ReadableByteChannel channel) throws JournalNetworkException {
-        if (!complete) {
-            ByteBuffers.copy(channel, buffer);
-            complete = !buffer.hasRemaining();
-        }
+        ByteBuffers.copy(channel, buffer);
     }
 
     @Override
     public void reset() {
         buffer.rewind();
-        complete = false;
     }
 
     public int getValue() {

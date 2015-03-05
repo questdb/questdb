@@ -38,7 +38,6 @@ public class IntTest {
         producer.write(channel, 155);
         consumer.reset();
         consumer.read(channel);
-        Assert.assertTrue(consumer.isComplete());
         Assert.assertEquals(155, consumer.getValue());
     }
 }

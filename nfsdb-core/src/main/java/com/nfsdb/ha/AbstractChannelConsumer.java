@@ -22,26 +22,14 @@ import java.nio.channels.ReadableByteChannel;
 
 public abstract class AbstractChannelConsumer implements ChannelConsumer {
 
-    private boolean committed = false;
-
     @Override
     public void free() {
     }
 
     @Override
     public final void read(ReadableByteChannel channel) throws JournalNetworkException {
-        if (!isComplete()) {
             doRead(channel);
-        }
-        if (isComplete() && !committed) {
             commit();
-            committed = true;
-        }
-    }
-
-    @Override
-    public void reset() {
-        committed = false;
     }
 
     protected void commit() throws JournalNetworkException {

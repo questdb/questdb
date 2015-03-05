@@ -39,7 +39,6 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
     private JournalServerState state;
     private PartitionDeltaConsumer lagPartitionDeltaConsumer;
     private int metaIndex = -1;
-    private boolean lagProcessed = false;
 
     public JournalDeltaConsumer(JournalWriter journal) {
         this.journal = journal;
@@ -60,12 +59,79 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
     }
 
     @Override
+    protected void commit() throws JournalNetworkException {
+        try {
+            journal.commit(false, state.getTxn(), state.getTxPin());
+        } catch (JournalException e) {
+            throw new JournalNetworkException(e);
+        }
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    protected void doRead(ReadableByteChannel channel) throws JournalNetworkException {
+        journalServerStateConsumer.read(channel);
+        this.state = journalServerStateConsumer.getValue();
+
+        try {
+
+            if (state.getTxn() == -1) {
+                journal.notifyTxError();
+                throw new IncompatibleJournalException("Server refused txn for %s", journal.getLocation());
+            }
+
+            if (state.getTxn() < journal.getTxn()) {
+                journal.rollback(state.getTxn(), state.getTxPin());
+                return;
+            }
+
+            journal.beginTx();
+            createPartitions(state);
+
+            if (state.isSymbolTables()) {
+                journalSymbolTableConsumer.read(channel);
+            }
+
+            if (metaIndex == -1) {
+                metaIndex = 0;
+            }
+
+            while (metaIndex < state.getNonLagPartitionCount()) {
+                JournalServerState.PartitionMetadata meta = state.getMeta(metaIndex);
+                if (meta.getEmpty() == 0) {
+                    PartitionDeltaConsumer partitionDeltaConsumer = getPartitionDeltaConsumer(meta.getPartitionIndex());
+                    partitionDeltaConsumer.read(channel);
+                    metaIndex++;
+                } else {
+                    metaIndex++;
+                }
+            }
+
+            if (metaIndex >= state.getNonLagPartitionCount()) {
+                if (state.getLagPartitionName() == null && journal.hasIrregularPartition()) {
+                    // delete lag partition
+                    journal.removeIrregularPartition();
+                } else if (state.getLagPartitionName() != null) {
+                    if (lagPartitionDeltaConsumer == null || !journal.hasIrregularPartition()
+                            || !state.getLagPartitionName().equals(journal.getIrregularPartition().getName())) {
+                        Partition temp = journal.createTempPartition(state.getLagPartitionName());
+                        lagPartitionDeltaConsumer = new PartitionDeltaConsumer(temp.open());
+                        journal.setIrregularPartition(temp);
+                    }
+                    lagPartitionDeltaConsumer.read(channel);
+                }
+
+            }
+        } catch (JournalException e) {
+            throw new JournalNetworkException(e);
+        }
+    }
+
+    @Override
     public void reset() {
-        super.reset();
         journalServerStateConsumer.reset();
         state = null;
         metaIndex = -1;
-        lagProcessed = false;
         journalSymbolTableConsumer.reset();
         if (lagPartitionDeltaConsumer != null) {
             lagPartitionDeltaConsumer.reset();
@@ -98,94 +164,6 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
-    }
-
-    @Override
-    protected void commit() throws JournalNetworkException {
-        try {
-            journal.commit(false, state.getTxn(), state.getTxPin());
-        } catch (JournalException e) {
-            throw new JournalNetworkException(e);
-        }
-    }
-
-    @Override
-    @SuppressWarnings("unchecked")
-    protected void doRead(ReadableByteChannel channel) throws JournalNetworkException {
-        journalServerStateConsumer.read(channel);
-        if (journalServerStateConsumer.isComplete()) {
-
-            this.state = journalServerStateConsumer.getValue();
-
-            try {
-
-                if (state.getTxn() == -1) {
-                    journal.notifyTxError();
-                    throw new IncompatibleJournalException("Server refused txn for %s", journal.getLocation());
-                }
-
-                if (state.getTxn() < journal.getTxn()) {
-                    journal.rollback(state.getTxn(), state.getTxPin());
-                    return;
-                }
-
-                journal.beginTx();
-                createPartitions(state);
-
-                if (state.isSymbolTables()) {
-                    journalSymbolTableConsumer.read(channel);
-                }
-
-                if (!state.isSymbolTables() || journalSymbolTableConsumer.isComplete()) {
-                    if (metaIndex == -1) {
-                        metaIndex = 0;
-                    }
-
-                    while (metaIndex < state.getNonLagPartitionCount()) {
-                        JournalServerState.PartitionMetadata meta = state.getMeta(metaIndex);
-                        if (meta.getEmpty() == 0) {
-                            PartitionDeltaConsumer partitionDeltaConsumer = getPartitionDeltaConsumer(meta.getPartitionIndex());
-                            partitionDeltaConsumer.read(channel);
-
-                            if (partitionDeltaConsumer.isComplete()) {
-                                metaIndex++;
-                            } else {
-                                break;
-                            }
-                        } else {
-                            metaIndex++;
-                        }
-                    }
-
-                    if (metaIndex >= state.getNonLagPartitionCount() && !lagProcessed) {
-                        if (state.getLagPartitionName() == null && journal.hasIrregularPartition()) {
-                            // delete lag partition
-                            journal.removeIrregularPartition();
-                            lagProcessed = true;
-                        } else if (state.getLagPartitionName() == null && !journal.hasIrregularPartition()) {
-                            lagProcessed = true;
-                        } else if (state.getLagPartitionName() != null) {
-                            if (lagPartitionDeltaConsumer == null || !journal.hasIrregularPartition()
-                                    || !state.getLagPartitionName().equals(journal.getIrregularPartition().getName())) {
-                                Partition temp = journal.createTempPartition(state.getLagPartitionName());
-                                lagPartitionDeltaConsumer = new PartitionDeltaConsumer(temp.open());
-                                journal.setIrregularPartition(temp);
-                            }
-                            lagPartitionDeltaConsumer.read(channel);
-                            lagProcessed = lagPartitionDeltaConsumer.isComplete();
-                        }
-                    }
-
-                }
-            } catch (JournalException e) {
-                throw new JournalNetworkException(e);
-            }
-        }
-    }
-
-    @Override
-    public boolean isComplete() {
-        return state != null && metaIndex >= state.getNonLagPartitionCount() && lagProcessed;
     }
 
     private void createPartitions(JournalServerState metadata) throws JournalException {

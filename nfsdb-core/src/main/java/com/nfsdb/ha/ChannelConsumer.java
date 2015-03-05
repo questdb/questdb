@@ -24,8 +24,6 @@ public interface ChannelConsumer {
 
     void free();
 
-    boolean isComplete();
-
     void read(ReadableByteChannel channel) throws JournalNetworkException;
 
     void reset();

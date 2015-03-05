@@ -31,20 +31,7 @@ public class ChannelConsumerGroup extends AbstractChannelConsumer {
     }
 
     @Override
-    public boolean isComplete() {
-        // consumers are filled from first to last. So incomplete status
-        // is better visible from tail of sink array.
-        for (int i = consumers.length - 1; i >= 0; i--) {
-            if (!consumers[i].isComplete()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    @Override
     public void reset() {
-        super.reset();
         for (int i = 0; i < consumers.length; i++) {
             consumers[i].reset();
         }

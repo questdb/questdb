@@ -197,17 +197,13 @@ public class JournalClient {
         add0(writer, txListener);
     }
 
-    public VoteResult voteInstance(int instance, ServerNode remote) {
+    public VoteResult voteInstance(int instance) {
         try {
             openChannel(null);
             commandProducer.write(channel, Command.CLUSTER_VOTE);
             intResponseProducer.write(channel, instance);
             stringResponseConsumer.reset();
             stringResponseConsumer.read(channel);
-            if (!stringResponseConsumer.isComplete()) {
-                LOGGER.info("Received incomplete response from cluster member %s", remote);
-                return VoteResult.THEM;
-            }
 
             switch (stringResponseConsumer.getValue()) {
                 case "WIN":
@@ -235,7 +231,6 @@ public class JournalClient {
     private void checkAck() throws JournalNetworkException {
         stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
-        fail(stringResponseConsumer.isComplete(), "Incomplete response");
         fail("OK".equals(stringResponseConsumer.getValue()), stringResponseConsumer.getValue());
     }
 
@@ -345,7 +340,6 @@ public class JournalClient {
     private String readString() throws JournalNetworkException {
         stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
-        fail(stringResponseConsumer.isComplete(), "Incomplete response");
         return stringResponseConsumer.getValue();
     }
 
@@ -458,56 +452,49 @@ public class JournalClient {
     private final class Handler implements Runnable {
         @Override
         public void run() {
-            JournalDeltaConsumer deltaConsumer = null;
             DisconnectReason reason = DisconnectReason.UNKNOWN;
             try {
                 OUT:
                 while (true) {
                     assert channel != null;
                     commandConsumer.read(channel);
-                    if (commandConsumer.isComplete()) {
-                        switch (commandConsumer.getValue()) {
-                            case JOURNAL_DELTA_CMD:
-                                statsChannel.setDelegate(channel);
-                                intResponseConsumer.read(statsChannel);
-                                if (intResponseConsumer.isComplete()) {
-                                    int index = intResponseConsumer.getValue();
-                                    deltaConsumer = deltaConsumers.get(index);
-                                    deltaConsumer.read(statsChannel);
-                                    statusSentList.set(index, 0);
-                                }
-                                statsChannel.logStats();
-                                break;
-                            case SERVER_READY_CMD:
-                                if (isRunning()) {
-                                    sendState();
-                                } else {
-                                    sendDisconnect();
-                                    reason = DisconnectReason.CLIENT_HALT;
-                                    break OUT;
-                                }
-                                break;
-                            case SERVER_HEARTBEAT:
-                                if (isRunning()) {
-                                    sendReady();
-                                } else {
-                                    sendDisconnect();
-                                    reason = DisconnectReason.CLIENT_HALT;
-                                    break OUT;
-                                }
-                                break;
-                            case SERVER_SHUTDOWN:
-                                reason = DisconnectReason.BROKEN_CHANNEL;
-                                break OUT;
-                            default:
-                                LOGGER.warn("Unknown command: ", commandConsumer.getValue());
-                        }
-                        commandConsumer.reset();
-                        intResponseConsumer.reset();
-                        if (deltaConsumer != null) {
+                    switch (commandConsumer.getValue()) {
+                        case JOURNAL_DELTA_CMD:
+                            statsChannel.setDelegate(channel);
+                            intResponseConsumer.read(statsChannel);
+                            int index = intResponseConsumer.getValue();
+                            JournalDeltaConsumer deltaConsumer = deltaConsumers.get(index);
+                            deltaConsumer.read(statsChannel);
                             deltaConsumer.reset();
-                        }
+                            statusSentList.set(index, 0);
+                            statsChannel.logStats();
+                            break;
+                        case SERVER_READY_CMD:
+                            if (isRunning()) {
+                                sendState();
+                            } else {
+                                sendDisconnect();
+                                reason = DisconnectReason.CLIENT_HALT;
+                                break OUT;
+                            }
+                            break;
+                        case SERVER_HEARTBEAT:
+                            if (isRunning()) {
+                                sendReady();
+                            } else {
+                                sendDisconnect();
+                                reason = DisconnectReason.CLIENT_HALT;
+                                break OUT;
+                            }
+                            break;
+                        case SERVER_SHUTDOWN:
+                            reason = DisconnectReason.BROKEN_CHANNEL;
+                            break OUT;
+                        default:
+                            LOGGER.warn("Unknown command: ", commandConsumer.getValue());
                     }
+                    commandConsumer.reset();
+                    intResponseConsumer.reset();
                 }
             } catch (IncompatibleJournalException e) {
                 LOGGER.error(e.getMessage());

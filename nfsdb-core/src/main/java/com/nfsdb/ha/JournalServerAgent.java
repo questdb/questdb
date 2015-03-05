@@ -98,88 +98,76 @@ public class JournalServerAgent {
 
     public void process(ByteChannel channel) throws JournalNetworkException {
         commandConsumer.read(channel);
-        if (commandConsumer.isComplete()) {
-            switch (commandConsumer.getValue()) {
-                case CLUSTER_VOTE:
-                    checkAuthorized(channel);
-                    intResponseConsumer.read(channel);
-                    if (intResponseConsumer.isComplete()) {
-                        int inst = intResponseConsumer.getValue();
-                        boolean loss = !server.isAlpha() && inst > server.getServerInstance();
-                        intResponseConsumer.reset();
-                        commandConsumer.reset();
+        switch (commandConsumer.getValue()) {
+            case CLUSTER_VOTE:
+                checkAuthorized(channel);
+                intResponseConsumer.read(channel);
+                int inst = intResponseConsumer.getValue();
+                boolean loss = !server.isAlpha() && inst > server.getServerInstance();
+                intResponseConsumer.reset();
+                commandConsumer.reset();
 
-                        if (loss) {
-                            ok(channel);
-                            throw new ClusterLossException(inst);
-                        } else {
-                            error(channel, server.isAlpha() ? "WIN" : "OUT");
-                        }
-                    }
-                    break;
-                case SET_KEY_CMD:
-                    server.getLogger().msg()
-                            .setLevel(ServerLogMsg.Level.TRACE)
-                            .setSocketAddress(socketAddress)
-                            .setMessage("SetKey command received")
-                            .send();
-                    setKeyRequestConsumer.read(channel);
-                    if (setKeyRequestConsumer.isComplete()) {
-                        setClientKey(channel, setKeyRequestConsumer.getValue());
-                        setKeyRequestConsumer.reset();
-                        commandConsumer.reset();
-                    }
-                    break;
-                case DELTA_REQUEST_CMD:
-                    checkAuthorized(channel);
-                    server.getLogger().msg()
-                            .setLevel(ServerLogMsg.Level.TRACE)
-                            .setSocketAddress(socketAddress)
-                            .setMessage("DeltaRequest command received")
-                            .send();
-                    journalClientStateConsumer.read(channel);
-                    if (journalClientStateConsumer.isComplete()) {
-                        storeDeltaRequest(channel, journalClientStateConsumer.getValue());
-                        journalClientStateConsumer.reset();
-                        commandConsumer.reset();
-                    }
-                    break;
-                case CLIENT_READY_CMD:
-                    checkAuthorized(channel);
-                    statsChannel.setDelegate(channel);
-                    dispatch(statsChannel);
-                    statsChannel.logStats();
-                    commandConsumer.reset();
-                    break;
-                case CLIENT_DISCONNECT:
-                    throw new JournalDisconnectedChannelException();
-                case PROTOCOL_VERSION:
-                    intResponseConsumer.read(channel);
-                    if (intResponseConsumer.isComplete()) {
-                        checkProtocolVersion(channel, intResponseConsumer.getValue());
-                        intResponseConsumer.reset();
-                        commandConsumer.reset();
-                    }
-                    break;
-                case HANDSHAKE_COMPLETE:
-                    if (authorized) {
-                        ok(channel);
-                    } else {
-                        stringResponseProducer.write(channel, "AUTH");
-                    }
-                    commandConsumer.reset();
-                    break;
-                case AUTHORIZATION:
-                    byteArrayResponseConsumer.read(channel);
-                    if (byteArrayResponseConsumer.isComplete()) {
-                        authorize(channel, byteArrayResponseConsumer.getValue());
-                    }
-                    byteArrayResponseConsumer.reset();
-                    commandConsumer.reset();
-                    break;
-                default:
-                    throw new JournalNetworkException("Corrupt channel");
-            }
+                if (loss) {
+                    ok(channel);
+                    throw new ClusterLossException(inst);
+                } else {
+                    error(channel, server.isAlpha() ? "WIN" : "OUT");
+                }
+                break;
+            case SET_KEY_CMD:
+                server.getLogger().msg()
+                        .setLevel(ServerLogMsg.Level.TRACE)
+                        .setSocketAddress(socketAddress)
+                        .setMessage("SetKey command received")
+                        .send();
+                setKeyRequestConsumer.read(channel);
+                setClientKey(channel, setKeyRequestConsumer.getValue());
+                setKeyRequestConsumer.reset();
+                commandConsumer.reset();
+                break;
+            case DELTA_REQUEST_CMD:
+                checkAuthorized(channel);
+                server.getLogger().msg()
+                        .setLevel(ServerLogMsg.Level.TRACE)
+                        .setSocketAddress(socketAddress)
+                        .setMessage("DeltaRequest command received")
+                        .send();
+                journalClientStateConsumer.read(channel);
+                storeDeltaRequest(channel, journalClientStateConsumer.getValue());
+                journalClientStateConsumer.reset();
+                commandConsumer.reset();
+                break;
+            case CLIENT_READY_CMD:
+                checkAuthorized(channel);
+                statsChannel.setDelegate(channel);
+                dispatch(statsChannel);
+                statsChannel.logStats();
+                commandConsumer.reset();
+                break;
+            case CLIENT_DISCONNECT:
+                throw new JournalDisconnectedChannelException();
+            case PROTOCOL_VERSION:
+                intResponseConsumer.read(channel);
+                checkProtocolVersion(channel, intResponseConsumer.getValue());
+                intResponseConsumer.reset();
+                commandConsumer.reset();
+                break;
+            case HANDSHAKE_COMPLETE:
+                if (authorized) {
+                    ok(channel);
+                } else {
+                    stringResponseProducer.write(channel, "AUTH");
+                }
+                commandConsumer.reset();
+                break;
+            case AUTHORIZATION:
+                byteArrayResponseConsumer.read(channel);
+                authorize(channel, byteArrayResponseConsumer.getValue());
+                byteArrayResponseConsumer.reset();
+                commandConsumer.reset();
+                break;
+            default:
+                throw new JournalNetworkException("Corrupt channel");
         }
     }
 

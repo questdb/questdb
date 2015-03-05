@@ -85,7 +85,6 @@ public class JournalServerAgentTest extends AbstractTest {
         agent.process(channel);
         stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
-        Assert.assertTrue(stringResponseConsumer.isComplete());
         Assert.assertEquals("OK", stringResponseConsumer.getValue());
 
         // send quote state
@@ -94,7 +93,6 @@ public class JournalServerAgentTest extends AbstractTest {
         agent.process(channel);
         stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
-        Assert.assertTrue(stringResponseConsumer.isComplete());
         Assert.assertEquals("OK", stringResponseConsumer.getValue());
 
         quoteWriter.append(origin.query().all().asResultSet().subset(0, 100));
@@ -112,7 +110,6 @@ public class JournalServerAgentTest extends AbstractTest {
         Assert.assertEquals(0, intResponseConsumer.getValue());
         quoteDeltaConsumer.reset();
         quoteDeltaConsumer.read(channel);
-        Assert.assertTrue(quoteDeltaConsumer.isComplete());
         Assert.assertEquals(100, quoteClientWriter.size());
 
         commandConsumer.reset();
@@ -128,7 +125,6 @@ public class JournalServerAgentTest extends AbstractTest {
         agent.process(channel);
         stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
-        Assert.assertTrue(stringResponseConsumer.isComplete());
         Assert.assertEquals("OK", stringResponseConsumer.getValue());
 
         commandProducer.write(channel, Command.CLIENT_READY_CMD);
@@ -143,7 +139,6 @@ public class JournalServerAgentTest extends AbstractTest {
         Assert.assertEquals(0, intResponseConsumer.getValue());
         quoteDeltaConsumer.reset();
         quoteDeltaConsumer.read(channel);
-        Assert.assertTrue(quoteDeltaConsumer.isComplete());
         Assert.assertEquals(200, quoteClientWriter.size());
 
         commandConsumer.reset();
@@ -175,7 +170,6 @@ public class JournalServerAgentTest extends AbstractTest {
         agent.process(channel);
         stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
-        Assert.assertTrue(stringResponseConsumer.isComplete());
         Assert.assertEquals("OK", stringResponseConsumer.getValue());
 
         commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
@@ -183,7 +177,6 @@ public class JournalServerAgentTest extends AbstractTest {
         agent.process(channel);
         stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
-        Assert.assertTrue(stringResponseConsumer.isComplete());
         Assert.assertEquals("Journal index does not match key request", stringResponseConsumer.getValue());
 
         commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
@@ -191,7 +184,6 @@ public class JournalServerAgentTest extends AbstractTest {
         agent.process(channel);
         stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
-        Assert.assertTrue(stringResponseConsumer.isComplete());
         Assert.assertEquals("OK", stringResponseConsumer.getValue());
 
         server.halt();
@@ -204,7 +196,6 @@ public class JournalServerAgentTest extends AbstractTest {
         agent.process(channel);
         stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
-        Assert.assertTrue(stringResponseConsumer.isComplete());
         Assert.assertEquals("OK", stringResponseConsumer.getValue());
 
         commandProducer.write(channel, Command.SET_KEY_CMD);
@@ -212,7 +203,6 @@ public class JournalServerAgentTest extends AbstractTest {
         agent.process(channel);
         stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
-        Assert.assertTrue(stringResponseConsumer.isComplete());
         Assert.assertEquals("Requested key not exported: JournalKey{id=com.nfsdb.model.Trade, location='null', partitionType=DEFAULT, recordHint=0, ordered=true}", stringResponseConsumer.getValue());
     }
 }

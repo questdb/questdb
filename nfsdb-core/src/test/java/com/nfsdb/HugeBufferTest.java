@@ -26,7 +26,7 @@ import org.junit.rules.TemporaryFolder;
 public class HugeBufferTest {
 
     @Rule
-    public TemporaryFolder temp = new TemporaryFolder();
+    public final TemporaryFolder temp = new TemporaryFolder();
 
     @Test
     public void testIntArrays() throws Exception {

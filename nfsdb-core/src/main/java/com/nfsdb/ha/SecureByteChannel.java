@@ -101,7 +101,7 @@ class SecureByteChannel implements ByteChannel {
             // check if anything is remaining in swapBuf
             if (swapBuf.hasRemaining()) {
 
-                ByteBuffers.copy(swapBuf, dst, dst.remaining());
+                ByteBuffers.copy(swapBuf, dst);
 
             } else {
 
@@ -127,7 +127,7 @@ class SecureByteChannel implements ByteChannel {
                     swapBuf.clear();
                     fillInBuf = unwrap(swapBuf);
                     swapBuf.flip();
-                    ByteBuffers.copy(swapBuf, dst, dst.remaining());
+                    ByteBuffers.copy(swapBuf, dst);
                 } else {
                     fillInBuf = unwrap(dst);
                 }

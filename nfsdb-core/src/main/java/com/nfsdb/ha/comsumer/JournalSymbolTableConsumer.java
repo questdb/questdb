@@ -35,28 +35,24 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
     private final ArrayList<VariableColumnDeltaConsumer> symbolTableConsumers;
     private final ArrayList<SymbolTable> symbolTables;
     private final DirectIntList symbolTableSizes;
-    private final DirectIntList symbolTabDataIndicators = new DirectIntList();
-    private boolean complete;
-    private int symbolTableIndex = 0;
+    private final int tabCount;
 
     public JournalSymbolTableConsumer(Journal journal) {
         this.buffer = ByteBuffer.allocateDirect(journal.getSymbolTableCount()).order(ByteOrder.LITTLE_ENDIAN);
-        this.symbolTableConsumers = new ArrayList<>(journal.getSymbolTableCount());
-        this.symbolTables = new ArrayList<>(journal.getSymbolTableCount());
-        this.symbolTableSizes = new DirectIntList(journal.getSymbolTableCount());
+        this.tabCount = journal.getSymbolTableCount();
+        this.symbolTableConsumers = new ArrayList<>(tabCount);
+        this.symbolTables = new ArrayList<>(tabCount);
+        this.symbolTableSizes = new DirectIntList(tabCount);
 
-        Lists.advance(this.symbolTableConsumers, journal.getSymbolTableCount() - 1);
-        Lists.advance(this.symbolTables, journal.getSymbolTableCount() - 1);
+        Lists.advance(this.symbolTableConsumers, tabCount - 1);
+        Lists.advance(this.symbolTables, tabCount - 1);
 
-        while (symbolTabDataIndicators.size() < journal.getSymbolTableCount()) {
-            symbolTabDataIndicators.add(-1);
-        }
 
         while (symbolTableSizes.size() < journal.getSymbolTableCount()) {
             symbolTableSizes.add(-1);
         }
 
-        for (int i = 0, sz = journal.getSymbolTableCount(); i < sz; i++) {
+        for (int i = 0; i < tabCount; i++) {
             SymbolTable tab = journal.getSymbolTable(i);
             symbolTableConsumers.set(i, new VariableColumnDeltaConsumer(tab.getDataColumn()));
             symbolTables.set(i, tab);
@@ -65,76 +61,46 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
     }
 
     @Override
-    public boolean isComplete() {
-        return complete && symbolTableIndex >= symbolTabDataIndicators.size();
-    }
-
-    @Override
-    public void reset() {
-        super.reset();
-        symbolTableIndex = 0;
-        complete = false;
-        buffer.rewind();
-        for (int i = 0, sz = symbolTableConsumers.size(); i < sz; i++) {
-            VariableColumnDeltaConsumer c = symbolTableConsumers.get(i);
-            if (c != null) {
-                c.reset();
-                symbolTableSizes.set(i, symbolTables.get(i).size());
-            }
+    public void free() {
+        super.free();
+        ByteBuffers.release(buffer);
+        for (int i = 0; i < tabCount; i++) {
+            symbolTableConsumers.get(i).free();
         }
-    }
-
-    @Override
-    protected void doRead(ReadableByteChannel channel) throws JournalNetworkException {
-        ByteBuffers.copy(channel, buffer);
-        if (!complete && !buffer.hasRemaining()) {
-            buffer.flip();
-            for (int i = 0, sz = symbolTabDataIndicators.size(); i < sz; i++) {
-                symbolTabDataIndicators.set(i, buffer.get());
-            }
-            symbolTableIndex = 0;
-            complete = true;
-        }
-
-        while (symbolTableIndex < symbolTabDataIndicators.size()) {
-
-            if (symbolTabDataIndicators.get(symbolTableIndex) == 0) {
-                symbolTableIndex++;
-                continue;
-            }
-
-            VariableColumnDeltaConsumer c = symbolTableConsumers.get(symbolTableIndex);
-            c.read(channel);
-            if (c.isComplete()) {
-                symbolTableIndex++;
-            } else {
-                break;
-            }
-        }
+        symbolTableSizes.free();
     }
 
     @Override
     protected void commit() {
         for (int i = 0, sz = symbolTables.size(); i < sz; i++) {
             SymbolTable tab = symbolTables.get(i);
-            if (tab != null) {
-                int oldSize = symbolTableSizes.get(i);
-                tab.getDataColumn().commit();
-                tab.alignSize();
-                tab.updateIndex(oldSize, tab.size());
-                tab.commit();
-            }
+            int oldSize = symbolTableSizes.get(i);
+            tab.getDataColumn().commit();
+            tab.alignSize();
+            tab.updateIndex(oldSize, tab.size());
+            tab.commit();
         }
     }
 
     @Override
-    public void free() {
-        super.free();
-        ByteBuffers.release(buffer);
-        for (int i = 0; i < symbolTableConsumers.size(); i++) {
-            symbolTableConsumers.get(i).free();
+    protected void doRead(ReadableByteChannel channel) throws JournalNetworkException {
+        ByteBuffers.copy(channel, buffer);
+        buffer.flip();
+        for (int i = 0; i < tabCount; i++) {
+            if (buffer.get() == 0) {
+                continue;
+            }
+            symbolTableConsumers.get(i).read(channel);
         }
-        symbolTableSizes.free();
-        symbolTabDataIndicators.free();
+    }
+
+    @Override
+    public void reset() {
+        buffer.rewind();
+        for (int i = 0, sz = symbolTableConsumers.size(); i < sz; i++) {
+            VariableColumnDeltaConsumer c = symbolTableConsumers.get(i);
+            c.reset();
+            symbolTableSizes.set(i, symbolTables.get(i).size());
+        }
     }
 }

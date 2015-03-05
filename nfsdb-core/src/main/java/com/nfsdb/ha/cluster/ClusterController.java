@@ -259,7 +259,7 @@ public class ClusterController {
 
                 client = new JournalClient(clientConfig, factory);
                 LOGGER.info("%s is probing %s", thisNode, node);
-                JournalClient.VoteResult vote = client.voteInstance(instance, node);
+                JournalClient.VoteResult vote = client.voteInstance(instance);
                 LOGGER.info("%s got %s from %s", thisNode, vote, node);
                 switch (vote) {
                     case ALPHA:
@@ -304,7 +304,7 @@ public class ClusterController {
             }
 
             LOGGER.info("%s is checking if %s has become ALPHA", thisNode, activeNode);
-            if (client.voteInstance(instance, activeNode) == JournalClient.VoteResult.ALPHA) {
+            if (client.voteInstance(instance) == JournalClient.VoteResult.ALPHA) {
                 setupClient(activeNode);
                 return;
             }

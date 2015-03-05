@@ -31,7 +31,6 @@ public class FixedColumnDeltaConsumer extends AbstractChannelConsumer {
     private final AbstractColumn column;
     private long appendOffset;
     private long targetOffset = -1;
-    private boolean headerProcessed = false;
 
     public FixedColumnDeltaConsumer(AbstractColumn column) {
         this.column = column;
@@ -39,41 +38,9 @@ public class FixedColumnDeltaConsumer extends AbstractChannelConsumer {
     }
 
     @Override
-    public boolean isComplete() {
-        return appendOffset == targetOffset;
-    }
-
-    @Override
-    public void reset() {
-        super.reset();
-        appendOffset = column.getOffset();
-        targetOffset = -1;
-        headerProcessed = false;
-        header.rewind();
-    }
-
-    @Override
-    protected void doRead(ReadableByteChannel channel) throws JournalNetworkException {
-        ByteBuffers.copy(channel, header);
-
-        // if header is complete, extract target column size and release header
-        // so we don't attempt to fill it up again
-        if (!headerProcessed && header.remaining() == 0) {
-            header.flip();
-            this.targetOffset = appendOffset + header.getLong();
-            headerProcessed = true;
-        }
-
-        while (!isComplete()) {
-            ByteBuffer target = column.getBuffer(appendOffset, 1);
-            int sz = ByteBuffers.copy(channel, target, targetOffset - appendOffset);
-            // using non-blocking IO it should be possible not to read anything
-            // we need to give up here and let the rest of execution continue
-            if (sz == 0) {
-                break;
-            }
-            appendOffset += sz;
-        }
+    public void free() {
+        ByteBuffers.release(header);
+        super.free();
     }
 
     @Override
@@ -82,8 +49,28 @@ public class FixedColumnDeltaConsumer extends AbstractChannelConsumer {
     }
 
     @Override
-    public void free() {
-        ByteBuffers.release(header);
-        super.free();
+    protected void doRead(ReadableByteChannel channel) throws JournalNetworkException {
+        ByteBuffers.copy(channel, header);
+        header.flip();
+        long offset = appendOffset;
+        targetOffset = offset + header.getLong();
+
+        while (offset < targetOffset) {
+            int sz = ByteBuffers.copy(channel, column.getBuffer(offset, 1), targetOffset - offset);
+            // using non-blocking IO it should be possible not to read anything
+            // we need to give up here and let the rest of execution continue
+            if (sz == 0) {
+                break;
+            }
+            offset += sz;
+        }
+        this.appendOffset = offset;
+    }
+
+    @Override
+    public void reset() {
+        appendOffset = column.getOffset();
+        targetOffset = -1;
+        header.rewind();
     }
 }
