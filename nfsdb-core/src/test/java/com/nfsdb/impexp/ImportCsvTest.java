@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,19 +43,20 @@ public class ImportCsvTest extends AbstractTest {
 
         Assert.assertEquals(JournalReaderFactory.JournalExistenceCheck.EXISTS, factory.exists(location));
 
-        Journal r = factory.reader(location);
-        JournalMetadata m = r.getMetadata();
-        Assert.assertEquals(10, m.getColumnCount());
-        Assert.assertEquals(ColumnType.SYMBOL, m.getColumnMetadata(0).type);
-        Assert.assertEquals(ColumnType.SYMBOL, m.getColumnMetadata(1).type);
-        Assert.assertEquals(ColumnType.INT, m.getColumnMetadata(2).type);
-        Assert.assertEquals(ColumnType.DOUBLE, m.getColumnMetadata(3).type);
-        Assert.assertEquals(ColumnType.DATE, m.getColumnMetadata(4).type);
-        Assert.assertEquals(ColumnType.DATE, m.getColumnMetadata(5).type);
-        Assert.assertEquals(ColumnType.DATE, m.getColumnMetadata(6).type);
-        Assert.assertEquals(ColumnType.STRING, m.getColumnMetadata(7).type);
-        Assert.assertEquals(ColumnType.BOOLEAN, m.getColumnMetadata(8).type);
-        Assert.assertEquals(ColumnType.LONG, m.getColumnMetadata(9).type);
+        try (Journal r = factory.reader(location)) {
+            JournalMetadata m = r.getMetadata();
+            Assert.assertEquals(10, m.getColumnCount());
+            Assert.assertEquals(ColumnType.SYMBOL, m.getColumnMetadata(0).type);
+            Assert.assertEquals(ColumnType.SYMBOL, m.getColumnMetadata(1).type);
+            Assert.assertEquals(ColumnType.INT, m.getColumnMetadata(2).type);
+            Assert.assertEquals(ColumnType.DOUBLE, m.getColumnMetadata(3).type);
+            Assert.assertEquals(ColumnType.DATE, m.getColumnMetadata(4).type);
+            Assert.assertEquals(ColumnType.DATE, m.getColumnMetadata(5).type);
+            Assert.assertEquals(ColumnType.DATE, m.getColumnMetadata(6).type);
+            Assert.assertEquals(ColumnType.STRING, m.getColumnMetadata(7).type);
+            Assert.assertEquals(ColumnType.BOOLEAN, m.getColumnMetadata(8).type);
+            Assert.assertEquals(ColumnType.LONG, m.getColumnMetadata(9).type);
+        }
 
         File actual = new File(factory.getConfiguration().getJournalBase(), "exp.csv");
         File expected = new File(this.getClass().getResource("/csv/test-export-expected.csv").getFile());
