@@ -35,7 +35,7 @@ public class TxLog {
 
     public TxLog(File baseLocation, JournalMode mode) throws JournalException {
         // todo: calculate hint
-        this.hb = new HugeBuffer(new File(baseLocation, FILE_NAME), Constants.PIPE_BIT_HINT, mode);
+        this.hb = new HugeBuffer(new File(baseLocation, FILE_NAME), Constants.HB_HINT, mode);
         this.rnd = new Rnd(System.currentTimeMillis(), System.nanoTime());
         this.txn = getCurrentTxn() + 1;
     }

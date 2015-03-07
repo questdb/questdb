@@ -251,6 +251,7 @@ public class JournalMetadataImpl<T> implements JournalMetadata<T> {
         buf.put(ioBlockTxCount);
         buf.put(key);
         buf.put(lag);
+        buf.setAppendOffset(buf.getPos());
     }
 
     @Override
