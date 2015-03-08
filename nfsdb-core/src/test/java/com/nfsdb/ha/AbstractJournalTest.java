@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -60,14 +60,12 @@ public abstract class AbstractJournalTest extends AbstractTest {
     protected void executeSequence(boolean expectContent) throws JournalNetworkException, JournalException {
         slave.refresh();
         journalClientStateProducer.write(channel, new IndexedJournal(0, slave));
-        journalClientStateConsumer.reset();
         journalClientStateConsumer.read(channel);
 
         journalDeltaProducer.configure(journalClientStateConsumer.getValue().getTxn(), journalClientStateConsumer.getValue().getTxPin());
         Assert.assertEquals(expectContent, journalDeltaProducer.hasContent());
         if (expectContent) {
             journalDeltaProducer.write(channel);
-            journalDeltaConsumer.reset();
             journalDeltaConsumer.read(channel);
             TestUtils.assertEquals(master, slave);
         }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,6 +23,8 @@ import com.nfsdb.ha.AbstractChannelConsumer;
 import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Lists;
+import com.nfsdb.utils.Unsafe;
+import sun.nio.ch.DirectBuffer;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -32,6 +34,7 @@ import java.util.ArrayList;
 public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
 
     private final ByteBuffer buffer;
+    private final long address;
     private final ArrayList<VariableColumnDeltaConsumer> symbolTableConsumers;
     private final ArrayList<SymbolTable> symbolTables;
     private final DirectIntList symbolTableSizes;
@@ -39,6 +42,7 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
 
     public JournalSymbolTableConsumer(Journal journal) {
         this.buffer = ByteBuffer.allocateDirect(journal.getSymbolTableCount()).order(ByteOrder.LITTLE_ENDIAN);
+        this.address = ((DirectBuffer) buffer).address();
         this.tabCount = journal.getSymbolTableCount();
         this.symbolTableConsumers = new ArrayList<>(tabCount);
         this.symbolTables = new ArrayList<>(tabCount);
@@ -84,23 +88,14 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
 
     @Override
     protected void doRead(ReadableByteChannel channel) throws JournalNetworkException {
+        buffer.position(0);
         ByteBuffers.copy(channel, buffer);
-        buffer.flip();
         for (int i = 0; i < tabCount; i++) {
-            if (buffer.get() == 0) {
+            symbolTableSizes.set(i, symbolTables.get(i).size());
+            if (Unsafe.getUnsafe().getByte(address + i) == 0) {
                 continue;
             }
             symbolTableConsumers.get(i).read(channel);
-        }
-    }
-
-    @Override
-    public void reset() {
-        buffer.rewind();
-        for (int i = 0, sz = symbolTableConsumers.size(); i < sz; i++) {
-            VariableColumnDeltaConsumer c = symbolTableConsumers.get(i);
-            c.reset();
-            symbolTableSizes.set(i, symbolTables.get(i).size());
         }
     }
 }

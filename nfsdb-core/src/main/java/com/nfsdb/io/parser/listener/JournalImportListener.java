@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ import com.nfsdb.logging.Logger;
 import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Numbers;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 
@@ -58,6 +59,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
     public void onFieldCount(int count) {
     }
 
+    @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT"})
     @Override
     public void onFields(int line, CharSequence[] values, int hi) {
         try {
@@ -119,6 +121,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
 
     }
 
+    @SuppressFBWarnings({"EI_EXPOSE_REP2"})
     @Override
     public void onMetadata(ImportedColumnMetadata metadata[]) {
         if (writer == null) {

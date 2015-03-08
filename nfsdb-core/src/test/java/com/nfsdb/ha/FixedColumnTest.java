@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -62,7 +62,6 @@ public class FixedColumnTest {
         FixedColumn col2 = new FixedColumn(file2, 4);
 
         FixedColumnDeltaProducer producer = new FixedColumnDeltaProducer(col1);
-        ChannelConsumer consumer = new FixedColumnDeltaConsumer(col2);
 
         int max = 1500000;
 
@@ -76,7 +75,6 @@ public class FixedColumnTest {
             col2.commit();
         }
 
-        consumer.reset();
         producer.configure(col2.size(), col1.size());
 
         // hasNext() can be true, because of compulsory header
@@ -95,7 +93,6 @@ public class FixedColumnTest {
         FixedColumn col2 = new FixedColumn(file2, 4);
 
         FixedColumnDeltaProducer producer = new FixedColumnDeltaProducer(col1);
-        ChannelConsumer consumer = new FixedColumnDeltaConsumer(col2);
 
         int max = 1500000;
 
@@ -109,7 +106,6 @@ public class FixedColumnTest {
             col2.commit();
         }
 
-        consumer.reset();
         producer.configure(col2.size(), col1.size());
         Assert.assertFalse(producer.hasContent());
     }
@@ -134,7 +130,6 @@ public class FixedColumnTest {
             col2.commit();
         }
 
-        consumer.reset();
         producer.configure(col2.size(), col1.size());
         Assert.assertTrue(producer.hasContent());
         producer.write(channel);
@@ -148,7 +143,6 @@ public class FixedColumnTest {
             col1.commit();
         }
 
-        consumer.reset();
         producer.configure(col2.size(), col1.size());
         Assert.assertTrue(producer.hasContent());
         producer.write(channel);
@@ -186,7 +180,6 @@ public class FixedColumnTest {
             col2.commit();
         }
 
-        consumer.reset();
         producer.configure(col2.size(), col1.size());
         Assert.assertTrue(producer.hasContent());
         producer.write(channel);
@@ -215,7 +208,6 @@ public class FixedColumnTest {
             col1.commit();
         }
 
-        consumer.reset();
         producer.configure(col2.size(), col1.size());
 
         // hasNext() can be true, because of compulsory header
@@ -238,9 +230,6 @@ public class FixedColumnTest {
         FixedColumn col2 = new FixedColumn(file2, 4);
 
         FixedColumnDeltaProducer producer = new FixedColumnDeltaProducer(col1);
-        ChannelConsumer consumer = new FixedColumnDeltaConsumer(col2);
-
-        consumer.reset();
         producer.configure(col2.size(), col1.size());
 
         // hasNext() can be true, because of compulsory header

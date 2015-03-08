@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,8 @@ package com.nfsdb.ha;
 
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.utils.ByteBuffers;
+import com.nfsdb.utils.Unsafe;
+import sun.nio.ch.DirectBuffer;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -26,6 +28,7 @@ import java.nio.channels.ReadableByteChannel;
 public abstract class AbstractObjectConsumer extends AbstractChannelConsumer {
 
     private final ByteBuffer header = ByteBuffer.allocateDirect(4).order(ByteOrder.LITTLE_ENDIAN);
+    private final long headerAddress = ((DirectBuffer) header).address();
     private ByteBuffer valueBuffer;
 
     @Override
@@ -35,28 +38,23 @@ public abstract class AbstractObjectConsumer extends AbstractChannelConsumer {
         super.free();
     }
 
+    final ByteBuffer getValueBuffer() {
+        return valueBuffer;
+    }
+
     @Override
     protected final void doRead(ReadableByteChannel channel) throws JournalNetworkException {
+        header.position(0);
         ByteBuffers.copy(channel, header);
-        header.flip();
-        int bufSz = header.getInt();
+
+        int bufSz = Unsafe.getUnsafe().getInt(headerAddress);
         if (valueBuffer == null || valueBuffer.capacity() < bufSz) {
             ByteBuffers.release(valueBuffer);
             valueBuffer = ByteBuffer.allocateDirect(bufSz).order(ByteOrder.LITTLE_ENDIAN);
-        }
-        valueBuffer.limit(bufSz);
-        ByteBuffers.copy(channel, valueBuffer);
-    }
-
-    @Override
-    public final void reset() {
-        header.rewind();
-        if (valueBuffer != null) {
+        } else {
             valueBuffer.rewind();
         }
-    }
-
-    final ByteBuffer getValueBuffer() {
-        return valueBuffer;
+        valueBuffer.limit(bufSz);
+        ByteBuffers.copy(channel, valueBuffer, bufSz);
     }
 }

@@ -54,7 +54,7 @@ public class PartitionByDayAppend {
 
             Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote-by-day"));
 
-            // default partition type for Quote is MONTH (@see ModelConfiguration)
+            // default partition type for Quote is MONTH (see ModelConfiguration)
             // you can change it in runtime and also, optionally put journal in alternative location
             try (JournalWriter<Quote> writer = factory.writer(Quote.class)) {
 

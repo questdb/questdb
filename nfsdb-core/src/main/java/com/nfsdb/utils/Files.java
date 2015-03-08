@@ -63,13 +63,30 @@ public final class Files {
         }
     }
 
-    public static void writeStringToFile(File file, String s) throws JournalException {
+    public static File makeTempDir() {
+        File result;
         try {
-            try (FileOutputStream fos = new FileOutputStream(file)) {
-                fos.write(s.getBytes(UTF_8));
-            }
+            result = File.createTempFile("nfsdb", "");
+            deleteOrException(result);
+            mkDirsOrException(result);
+        } catch (Exception e) {
+            throw new JournalRuntimeException("Exception when creating temp dir", e);
+        }
+        return result;
+    }
+
+    public static File makeTempFile() {
+        try {
+            return File.createTempFile("nfsdb", "");
         } catch (IOException e) {
-            throw new JournalException("Cannot write to %s", e, file.getAbsolutePath());
+            throw new JournalRuntimeException(e);
+        }
+
+    }
+
+    public static void mkDirsOrException(File dir) {
+        if (!dir.mkdirs()) {
+            throw new JournalRuntimeException("Cannot create temp directory: %s", dir);
         }
     }
 
@@ -89,21 +106,13 @@ public final class Files {
         }
     }
 
-    public static File makeTempDir() {
-        File result;
+    public static void writeStringToFile(File file, String s) throws JournalException {
         try {
-            result = File.createTempFile("journal", "");
-            deleteOrException(result);
-            mkDirsOrException(result);
-        } catch (Exception e) {
-            throw new JournalRuntimeException("Exception when creating temp dir", e);
-        }
-        return result;
-    }
-
-    public static void mkDirsOrException(File dir) {
-        if (!dir.mkdirs()) {
-            throw new JournalRuntimeException("Cannot create temp directory: %s", dir);
+            try (FileOutputStream fos = new FileOutputStream(file)) {
+                fos.write(s.getBytes(UTF_8));
+            }
+        } catch (IOException e) {
+            throw new JournalException("Cannot write to %s", e, file.getAbsolutePath());
         }
     }
 

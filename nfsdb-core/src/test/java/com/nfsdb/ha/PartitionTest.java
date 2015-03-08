@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -72,7 +72,6 @@ public class PartitionTest extends AbstractTest {
         Assert.assertEquals(1000, masterPartition.size());
         Assert.assertEquals(1000, slavePartition.size());
 
-        consumer.reset();
         producer.configure(slave.size());
         Assert.assertFalse(producer.hasContent());
     }
@@ -95,14 +94,12 @@ public class PartitionTest extends AbstractTest {
 
         syncSymbolTables();
 
-        consumer.reset();
         producer.write(channel);
         consumer.read(channel);
         comparePartitions();
 
         TestUtils.generateQuoteData(master, 200, Dates.parseDateTime("2014-01-01T00:00:00.000Z"));
         producer.configure(slave.size());
-        consumer.reset();
         producer.write(channel);
         consumer.read(channel);
         comparePartitions();
@@ -116,7 +113,6 @@ public class PartitionTest extends AbstractTest {
         Assert.assertEquals(1000, masterPartition.size());
         Assert.assertEquals(700, slavePartition.size());
 
-        consumer.reset();
         producer.configure(slave.size());
 
         Assert.assertTrue(producer.hasContent());
@@ -129,7 +125,6 @@ public class PartitionTest extends AbstractTest {
     @Test
     public void testEmptyConsumerAndPopulatedProducer() throws Exception {
         master.append(origin);
-        consumer.reset();
         producer.configure(slave.size());
         Assert.assertTrue(producer.hasContent());
 
@@ -142,7 +137,6 @@ public class PartitionTest extends AbstractTest {
 
     @Test
     public void testEmptyConsumerAndProducer() throws Exception {
-        consumer.reset();
         producer.configure(slave.size());
         Assert.assertFalse(producer.hasContent());
     }
@@ -161,7 +155,6 @@ public class PartitionTest extends AbstractTest {
         JournalClientStateConsumer sc = new JournalClientStateConsumer();
 
         sp.write(channel, new IndexedJournal(0, slave));
-        sc.reset();
         sc.read(channel);
 
         JournalSymbolTableProducer p = new JournalSymbolTableProducer(master);
@@ -170,7 +163,6 @@ public class PartitionTest extends AbstractTest {
         p.configure(master.find(sc.getValue().getTxn(), sc.getValue().getTxPin()));
 
         p.write(channel);
-        c.reset();
         c.read(channel);
     }
 }

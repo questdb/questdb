@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,9 +25,12 @@ import com.nfsdb.exceptions.IncompatibleJournalException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.factory.JournalWriterFactory;
+import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.ha.auth.AuthConfigurationException;
 import com.nfsdb.ha.auth.AuthFailureException;
 import com.nfsdb.ha.auth.CredentialProvider;
+import com.nfsdb.ha.comsumer.HugeBufferConsumer;
 import com.nfsdb.ha.comsumer.JournalDeltaConsumer;
 import com.nfsdb.ha.config.ClientConfig;
 import com.nfsdb.ha.config.ServerNode;
@@ -42,8 +45,11 @@ import com.nfsdb.ha.protocol.Version;
 import com.nfsdb.ha.protocol.commands.*;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.storage.TxListener;
+import com.nfsdb.utils.Files;
+import com.nfsdb.utils.Lists;
 import com.nfsdb.utils.NamedDaemonThreadFactory;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.channels.ByteChannel;
 import java.nio.channels.SocketChannel;
@@ -159,42 +165,47 @@ public class JournalClient {
      * @param clazz      journal class on both client and server
      * @param txListener callback listener to get receive commit notifications.
      * @param <T>        generics to comply with Journal API.
-     * @throws com.nfsdb.exceptions.JournalException if local writer cannot be opened.
      */
-    public <T> void subscribe(Class<T> clazz, TxListener txListener) throws JournalException {
-        subscribe(new JournalKey<>(clazz), factory.writer(clazz), txListener);
+    public <T> void subscribe(Class<T> clazz, TxListener txListener) {
+        subscribe(new JournalKey<>(clazz), new JournalKey<>(clazz), txListener);
     }
 
     @SuppressWarnings("unused")
-    public <T> void subscribe(Class<T> clazz, String location) throws JournalException {
+    public <T> void subscribe(Class<T> clazz, String location) {
         subscribe(clazz, location, (TxListener) null);
     }
 
-    public <T> void subscribe(Class<T> clazz, String location, TxListener txListener) throws JournalException {
-        subscribe(new JournalKey<>(clazz, location), factory.writer(clazz, location), txListener);
+    public <T> void subscribe(Class<T> clazz, String location, TxListener txListener) {
+        subscribe(new JournalKey<>(clazz, location), new JournalKey<>(clazz, location), txListener);
     }
 
-    public <T> void subscribe(Class<T> clazz, String remote, String local) throws JournalException {
+    public <T> void subscribe(Class<T> clazz, String remote, String local) {
         subscribe(clazz, remote, local, null);
     }
 
-    public <T> void subscribe(Class<T> clazz, String remote, String local, TxListener txListener) throws JournalException {
-        subscribe(new JournalKey<>(clazz, remote), factory.writer(clazz, local), txListener);
+    public <T> void subscribe(Class<T> clazz, String remote, String local, TxListener txListener) {
+        subscribe(new JournalKey<>(clazz, remote), new JournalKey<>(clazz, local), txListener);
     }
 
-    public <T> void subscribe(Class<T> clazz, String remote, String local, int recordHint) throws JournalException {
+    public <T> void subscribe(Class<T> clazz, String remote, String local, int recordHint) {
         subscribe(clazz, remote, local, recordHint, null);
     }
 
-    public <T> void subscribe(Class<T> clazz, String remote, String local, int recordHint, TxListener txListener) throws JournalException {
-        subscribe(new JournalKey<>(clazz, remote, PartitionType.DEFAULT, recordHint), factory.bulkWriter(clazz, local, recordHint), txListener);
+    public <T> void subscribe(Class<T> clazz, String remote, String local, int recordHint, TxListener txListener) {
+        subscribe(new JournalKey<>(clazz, remote, PartitionType.DEFAULT, recordHint), new JournalKey<>(clazz, local, PartitionType.DEFAULT, recordHint), txListener);
     }
 
     public <T> void subscribe(JournalKey<T> remoteKey, JournalWriter<T> writer, TxListener txListener) {
         remoteKeys.add(remoteKey);
         localKeys.add(writer.getKey());
         listeners.add(txListener);
-        add0(writer, txListener);
+        set0(remoteKeys.size() - 1, writer, txListener);
+    }
+
+    public <T> void subscribe(JournalKey<T> remote, JournalKey<T> local, TxListener txListener) {
+        remoteKeys.add(remote);
+        localKeys.add(local);
+        listeners.add(txListener);
     }
 
     public VoteResult voteInstance(int instance) {
@@ -202,7 +213,6 @@ public class JournalClient {
             openChannel(null);
             commandProducer.write(channel, Command.CLUSTER_VOTE);
             intResponseProducer.write(channel, instance);
-            stringResponseConsumer.reset();
             stringResponseConsumer.read(channel);
 
             switch (stringResponseConsumer.getValue()) {
@@ -219,17 +229,19 @@ public class JournalClient {
         }
     }
 
-    private <T> void add0(JournalWriter<T> writer, TxListener txListener) {
-        deltaConsumers.add(new JournalDeltaConsumer(writer.setCommitOnClose(false)));
-        writers.add(writer);
-        statusSentList.add(0);
+    private <T> void set0(int index, JournalWriter<T> writer, TxListener txListener) {
+        Lists.advance(deltaConsumers, index);
+        Lists.advance(writers, index);
+        statusSentList.extendAndSet(index, 0);
+
+        deltaConsumers.set(index, new JournalDeltaConsumer(writer.setCommitOnClose(false)));
+        writers.set(index, writer);
         if (txListener != null) {
             writer.setTxListener(txListener);
         }
     }
 
     private void checkAck() throws JournalNetworkException {
-        stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
         fail("OK".equals(stringResponseConsumer.getValue()), stringResponseConsumer.getValue());
     }
@@ -265,9 +277,6 @@ public class JournalClient {
         writers.clear();
         statusSentList.clear();
         deltaConsumers.clear();
-        commandConsumer.reset();
-        stringResponseConsumer.reset();
-        intResponseConsumer.reset();
     }
 
     private void closeChannel() {
@@ -338,16 +347,8 @@ public class JournalClient {
     }
 
     private String readString() throws JournalNetworkException {
-        stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
         return stringResponseConsumer.getValue();
-    }
-
-    @SuppressWarnings("unchecked")
-    private void reopenWriters() throws JournalException {
-        for (int i = 0, sz = localKeys.size(); i < sz; i++) {
-            add0(factory.writer(localKeys.get(i)), listeners.get(0));
-        }
     }
 
     private void sendDisconnect() throws JournalNetworkException {
@@ -359,6 +360,29 @@ public class JournalClient {
             commandProducer.write(channel, Command.SET_KEY_CMD);
             setKeyRequestProducer.write(channel, new IndexedJournalKey(i, remoteKeys.get(i)));
             checkAck();
+
+
+            JournalMetadata metadata;
+            File file = Files.makeTempFile();
+            try {
+                try (HugeBufferConsumer h = new HugeBufferConsumer(file)) {
+                    h.read(channel);
+                    metadata = new JournalMetadata(h.getHb());
+                } catch (JournalException e) {
+                    throw new JournalNetworkException(e);
+                }
+            } finally {
+                Files.delete(file);
+            }
+
+
+            try {
+                if (i >= writers.size() || writers.get(i) == null) {
+                    set0(i, factory.writer(new JournalStructure(metadata).location(localKeys.get(i).getLocation())), listeners.get(i));
+                }
+            } catch (JournalException e) {
+                throw new JournalNetworkException(e);
+            }
         }
     }
 
@@ -414,12 +438,11 @@ public class JournalClient {
                             LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(config.getReconnectPolicy().getSleepBetweenRetriesMillis()));
                             LOGGER.info("Retrying reconnect ... [" + (retryCount + 1) + "]");
                             close0();
-                            reopenWriters();
                             handshake();
                             connected = true;
                         } catch (AuthConfigurationException | AuthFailureException e) {
                             loginRetryCount--;
-                        } catch (JournalNetworkException | JournalException ignored) {
+                        } catch (JournalNetworkException ignored) {
                             LOGGER.warn("Error during disconnect", ignored);
                         }
                     }
@@ -465,7 +488,6 @@ public class JournalClient {
                             int index = intResponseConsumer.getValue();
                             JournalDeltaConsumer deltaConsumer = deltaConsumers.get(index);
                             deltaConsumer.read(statsChannel);
-                            deltaConsumer.reset();
                             statusSentList.set(index, 0);
                             statsChannel.logStats();
                             break;
@@ -493,8 +515,6 @@ public class JournalClient {
                         default:
                             LOGGER.warn("Unknown command: ", commandConsumer.getValue());
                     }
-                    commandConsumer.reset();
-                    intResponseConsumer.reset();
                 }
             } catch (IncompatibleJournalException e) {
                 LOGGER.error(e.getMessage());

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -268,7 +268,7 @@ public final class Numbers {
 
         // adjust scale to remove trailing zeroes
         int k = 1;
-        while (scaled % pow10[k] == 0 && scaled / pow10[k] > d) {
+        while (scaled % pow10[k] == 0 && ((double) scaled) / pow10[k] > d) {
             k++;
         }
         scale = scale - k + 1;

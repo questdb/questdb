@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,13 +26,14 @@ import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Unsafe;
 import sun.nio.ch.DirectBuffer;
 
+import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.ReadableByteChannel;
 
-public class HugeBufferConsumer implements ChannelConsumer {
+public class HugeBufferConsumer implements ChannelConsumer, Closeable {
     private final ByteBuffer header = ByteBuffer.allocateDirect(8).order(ByteOrder.LITTLE_ENDIAN);
     private final long headerAddr = ((DirectBuffer) header).address();
     private final HugeBuffer hb;
@@ -42,8 +43,17 @@ public class HugeBufferConsumer implements ChannelConsumer {
     }
 
     @Override
-    public void free() {
+    public void close() {
+        free();
+    }
 
+    @Override
+    public void free() {
+        hb.close();
+    }
+
+    public HugeBuffer getHb() {
+        return hb;
     }
 
     @Override
@@ -60,14 +70,5 @@ public class HugeBufferConsumer implements ChannelConsumer {
         } catch (IOException e) {
             throw new JournalNetworkException(e);
         }
-    }
-
-    @Override
-    public void reset() {
-
-    }
-
-    public HugeBuffer getHb() {
-        return hb;
     }
 }

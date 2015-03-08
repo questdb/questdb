@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,8 @@
 
 package com.nfsdb;
 
+import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.factory.configuration.JournalMetadataBuilder;
-import com.nfsdb.factory.configuration.JournalMetadataImpl;
 import com.nfsdb.model.Quote;
 import com.nfsdb.storage.HugeBuffer;
 import org.junit.Assert;
@@ -35,10 +35,10 @@ public class JournalMetadataTest {
         JournalMetadataBuilder<Quote> b = new JournalMetadataBuilder<>(Quote.class);
 
         HugeBuffer hb = new HugeBuffer(temp.newFile(), 10, JournalMode.APPEND);
-        JournalMetadataImpl m = (JournalMetadataImpl) b.build();
+        JournalMetadata m = (JournalMetadata) b.build();
         m.write(hb);
-        JournalMetadataImpl metadata = new JournalMetadataImpl(hb);
+        JournalMetadata metadata = new JournalMetadata(hb);
         hb.close();
-        Assert.assertEquals(m, metadata);
+        Assert.assertTrue(m.isCompatible(metadata));
     }
 }

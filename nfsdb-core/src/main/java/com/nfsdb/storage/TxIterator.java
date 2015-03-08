@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.nfsdb.storage;
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.io.sink.DelimitedCharSink;
 import com.nfsdb.io.sink.FlexBufferSink;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.io.FileDescriptor;
@@ -48,6 +49,7 @@ public class TxIterator extends AbstractImmutableIterator<Tx> {
         return true;
     }
 
+    @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
     @Override
     public Tx next() {
         return tx;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,11 @@
 
 package com.nfsdb.ha;
 
+import com.nfsdb.JournalKey;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.PartitionType;
 import com.nfsdb.factory.configuration.JournalStructure;
+import com.nfsdb.ha.config.ClientConfig;
 import com.nfsdb.ha.config.ServerConfig;
 import com.nfsdb.ha.config.ServerNode;
 import com.nfsdb.test.tools.AbstractTest;
@@ -46,7 +48,9 @@ public class GenericTest extends AbstractTest {
         server.start();
 
 
-        //JournalClient client = new JournalClient(new ClientConfig("localhost"), factory);
+        JournalClient client = new JournalClient(new ClientConfig("localhost"), factory);
+        client.subscribe(new JournalKey("xyz"), new JournalKey("abc"), null);
+        client.start();
 
 
         Thread.sleep(10000);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -73,7 +73,6 @@ public class LinkedJournalSymbolTableTest extends AbstractTest {
 
     private void executeSequence(boolean expectContent) throws JournalNetworkException {
         journalClientStateProducer.write(channel, new IndexedJournal(0, slave));
-        journalClientStateConsumer.reset();
         journalClientStateConsumer.read(channel);
 
 //        journalSymbolTableProducer.configure(journalClientStateConsumer.getValue());
@@ -82,7 +81,6 @@ public class LinkedJournalSymbolTableTest extends AbstractTest {
         Assert.assertEquals(expectContent, journalSymbolTableProducer.hasContent());
         if (expectContent) {
             journalSymbolTableProducer.write(channel);
-            journalSymbolTableConsumer.reset();
             journalSymbolTableConsumer.read(channel);
             TestUtils.compareSymbolTables(master, slave);
         }

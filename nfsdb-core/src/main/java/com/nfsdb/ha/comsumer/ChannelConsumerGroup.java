@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,13 +28,6 @@ public class ChannelConsumerGroup extends AbstractChannelConsumer {
 
     ChannelConsumerGroup(ChannelConsumer... consumers) {
         this.consumers = consumers;
-    }
-
-    @Override
-    public void reset() {
-        for (int i = 0; i < consumers.length; i++) {
-            consumers[i].reset();
-        }
     }
 
     @Override

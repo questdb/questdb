@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.nfsdb.ha;
 
 import com.nfsdb.Journal;
 import com.nfsdb.JournalWriter;
+import com.nfsdb.ha.comsumer.HugeBufferConsumer;
 import com.nfsdb.ha.comsumer.JournalDeltaConsumer;
 import com.nfsdb.ha.config.NetworkConfig;
 import com.nfsdb.ha.config.ServerConfig;
@@ -34,9 +35,8 @@ import com.nfsdb.model.Quote;
 import com.nfsdb.model.Trade;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
+import org.junit.rules.TemporaryFolder;
 
 import java.net.InetSocketAddress;
 
@@ -48,11 +48,14 @@ public class JournalServerAgentTest extends AbstractTest {
     private final StringResponseConsumer stringResponseConsumer = new StringResponseConsumer();
     private final JournalClientStateProducer journalClientStateProducer = new JournalClientStateProducer();
     private final IntResponseConsumer intResponseConsumer = new IntResponseConsumer();
+    @Rule
+    public TemporaryFolder temp = new TemporaryFolder();
     private MockByteChannel channel;
     private JournalWriter<Quote> quoteWriter;
     private JournalWriter<Trade> tradeWriter;
     private JournalServer server;
     private JournalServerAgent agent;
+    private HugeBufferConsumer hugeBufferConsumer;
 
     @Before
     public void setUp() throws Exception {
@@ -67,6 +70,13 @@ public class JournalServerAgentTest extends AbstractTest {
         server = new JournalServer(config, factory);
         server.publish(quoteWriter);
         agent = new JournalServerAgent(server, new InetSocketAddress(NetworkConfig.DEFAULT_DATA_PORT), null);
+        hugeBufferConsumer = new HugeBufferConsumer(temp.newFile());
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        agent.close();
+        hugeBufferConsumer.free();
     }
 
     @Test
@@ -83,15 +93,14 @@ public class JournalServerAgentTest extends AbstractTest {
         commandProducer.write(channel, Command.SET_KEY_CMD);
         setKeyRequestProducer.write(channel, new IndexedJournalKey(0, quoteWriter.getKey()));
         agent.process(channel);
-        stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
         Assert.assertEquals("OK", stringResponseConsumer.getValue());
+        hugeBufferConsumer.read(channel);
 
         // send quote state
         commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
         journalClientStateProducer.write(channel, new IndexedJournal(0, quoteClientWriter));
         agent.process(channel);
-        stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
         Assert.assertEquals("OK", stringResponseConsumer.getValue());
 
@@ -101,18 +110,14 @@ public class JournalServerAgentTest extends AbstractTest {
         commandProducer.write(channel, Command.CLIENT_READY_CMD);
         agent.process(channel);
 
-        commandConsumer.reset();
         commandConsumer.read(channel);
         Assert.assertEquals(Command.JOURNAL_DELTA_CMD, commandConsumer.getValue());
 
-        intResponseConsumer.reset();
         intResponseConsumer.read(channel);
         Assert.assertEquals(0, intResponseConsumer.getValue());
-        quoteDeltaConsumer.reset();
         quoteDeltaConsumer.read(channel);
         Assert.assertEquals(100, quoteClientWriter.size());
 
-        commandConsumer.reset();
         commandConsumer.read(channel);
         Assert.assertEquals(Command.SERVER_READY_CMD, commandConsumer.getValue());
 
@@ -123,25 +128,20 @@ public class JournalServerAgentTest extends AbstractTest {
         commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
         journalClientStateProducer.write(channel, new IndexedJournal(0, quoteClientWriter));
         agent.process(channel);
-        stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
         Assert.assertEquals("OK", stringResponseConsumer.getValue());
 
         commandProducer.write(channel, Command.CLIENT_READY_CMD);
         agent.process(channel);
 
-        commandConsumer.reset();
         commandConsumer.read(channel);
         Assert.assertEquals(Command.JOURNAL_DELTA_CMD, commandConsumer.getValue());
 
-        intResponseConsumer.reset();
         intResponseConsumer.read(channel);
         Assert.assertEquals(0, intResponseConsumer.getValue());
-        quoteDeltaConsumer.reset();
         quoteDeltaConsumer.read(channel);
         Assert.assertEquals(200, quoteClientWriter.size());
 
-        commandConsumer.reset();
         commandConsumer.read(channel);
         Assert.assertEquals(Command.SERVER_READY_CMD, commandConsumer.getValue());
 
@@ -168,21 +168,19 @@ public class JournalServerAgentTest extends AbstractTest {
         commandProducer.write(channel, Command.SET_KEY_CMD);
         setKeyRequestProducer.write(channel, new IndexedJournalKey(0, quoteWriter.getKey()));
         agent.process(channel);
-        stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
         Assert.assertEquals("OK", stringResponseConsumer.getValue());
+        hugeBufferConsumer.read(channel);
 
         commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
         journalClientStateProducer.write(channel, new IndexedJournal(1, quoteClientWriter));
         agent.process(channel);
-        stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
         Assert.assertEquals("Journal index does not match key request", stringResponseConsumer.getValue());
 
         commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
         journalClientStateProducer.write(channel, new IndexedJournal(0, quoteClientWriter));
         agent.process(channel);
-        stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
         Assert.assertEquals("OK", stringResponseConsumer.getValue());
 
@@ -194,14 +192,13 @@ public class JournalServerAgentTest extends AbstractTest {
         commandProducer.write(channel, Command.SET_KEY_CMD);
         setKeyRequestProducer.write(channel, new IndexedJournalKey(0, quoteWriter.getKey()));
         agent.process(channel);
-        stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
         Assert.assertEquals("OK", stringResponseConsumer.getValue());
+        hugeBufferConsumer.read(channel);
 
         commandProducer.write(channel, Command.SET_KEY_CMD);
         setKeyRequestProducer.write(channel, new IndexedJournalKey(0, tradeWriter.getKey()));
         agent.process(channel);
-        stringResponseConsumer.reset();
         stringResponseConsumer.read(channel);
         Assert.assertEquals("Requested key not exported: JournalKey{id=com.nfsdb.model.Trade, location='null', partitionType=DEFAULT, recordHint=0, ordered=true}", stringResponseConsumer.getValue());
     }

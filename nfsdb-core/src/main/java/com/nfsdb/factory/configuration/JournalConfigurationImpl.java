@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,18 +20,13 @@ import com.nfsdb.JournalKey;
 import com.nfsdb.JournalMode;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalMetadataException;
-import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.storage.HugeBuffer;
-import com.nfsdb.utils.Base64;
-import com.nfsdb.utils.Checksum;
-import com.nfsdb.utils.Files;
 
 import java.io.File;
 import java.util.Map;
 
 public class JournalConfigurationImpl implements JournalConfiguration {
 
-    public static final int NULL_RECORD_HINT = 0;
     private final Map<String, JournalMetadata> journalMetadata;
     private final File journalBase;
 
@@ -46,7 +41,8 @@ public class JournalConfigurationImpl implements JournalConfiguration {
         JournalMetadata<T> mo = readMetadata(journalLocation);
         JournalMetadata<T> mn = builder.location(journalLocation).build();
 
-        if (mo == null || eq(Checksum.getChecksum(mo), Checksum.getChecksum(mn))) {
+//        if (mo == null || Checksum.eq(Checksum.getChecksum(mo), Checksum.getChecksum(mn))) {
+        if (mo == null || mn.isCompatible(mo)) {
             return mn;
         }
 
@@ -99,7 +95,7 @@ public class JournalConfigurationImpl implements JournalConfiguration {
 
             // we have both on-disk and in-app meta
             // check if in-app meta matches on-disk meta
-            if (eq(Checksum.getChecksum(mo), Checksum.getChecksum(mn))) {
+            if (mn.isCompatible(mo)) {
                 if (mn.getModelClass() == null) {
                     return (JournalMetadata<T>) new JournalStructure(mn).recordCountHint(key.getRecordHint()).location(journalLocation).build();
                 }
@@ -113,101 +109,6 @@ public class JournalConfigurationImpl implements JournalConfiguration {
     @Override
     public File getJournalBase() {
         return journalBase;
-    }
-
-    @SuppressWarnings("unchecked")
-    public <T> JournalMetadata<T> createMetadata2(JournalKey<T> key) throws JournalException {
-
-        boolean newMeta = false;
-        JournalMetadata<T> meta = journalMetadata.get(key.getId());
-        MetadataBuilder<T> builder;
-        if (meta == null) {
-            if (key.getModelClass() != null) {
-                builder = new JournalMetadataBuilder<>(key.getModelClass());
-            } else {
-                builder = (MetadataBuilder<T>) new JournalStructure(key.getId());
-            }
-            newMeta = true;
-        } else {
-            if (meta.getModelClass() != null) {
-                builder = new JournalMetadataBuilder<>(meta);
-            } else {
-                builder = (MetadataBuilder<T>) new JournalStructure(meta);
-            }
-        }
-
-        if (meta != null && meta.getLocation() == null && key.getLocation() == null) {
-            throw new JournalException("There is no defaultPath for %s", key.getId());
-        }
-
-        if (key.getPartitionType() != null) {
-            switch (key.getPartitionType()) {
-                case NONE:
-                case DAY:
-                case MONTH:
-                case YEAR:
-                    builder.partitionBy(key.getPartitionType());
-                    break;
-                case DEFAULT:
-                    break;
-            }
-        }
-
-        if (key.getRecordHint() > NULL_RECORD_HINT) {
-            builder.recordCountHint(key.getRecordHint());
-        }
-
-        File journalLocation;
-        if (key.getLocation() != null) {
-            journalLocation = new File(getJournalBase(), key.getLocation());
-        } else {
-            journalLocation = new File(getJournalBase(), builder.getLocation());
-        }
-
-        if (newMeta) {
-            JournalMetadata<T> m = builder.build();
-            journalMetadata.put(key.getId(), m);
-        }
-
-        builder.location(journalLocation);
-
-        JournalMetadata<T> result = builder.build();
-
-        File f = new File(journalLocation, Constants.JOURNAL_META_FILE);
-        if (f.exists()) {
-            String metaStr = Files.readStringFromFile(f);
-            String pattern = "SHA='";
-            int lo = metaStr.indexOf(pattern);
-            if (lo == -1) {
-                throw new JournalRuntimeException("Cannot find journal metadata checksum. Corrupt journal?");
-            }
-            int hi = metaStr.indexOf("'", lo + pattern.length());
-            if (hi == -1) {
-                throw new JournalRuntimeException("Cannot find journal metadata checksum. Corrupt journal?");
-            }
-            String existingChecksum = metaStr.substring(lo + pattern.length(), hi);
-            String requestedChecksum = Base64._printBase64Binary(Checksum.getChecksum(result));
-
-            if (!existingChecksum.equals(requestedChecksum)) {
-                throw new JournalRuntimeException("Wrong metadata. Compare config on disk:\n\r" + metaStr + "\n\r with what you trying to use to open journal:\n\r" + result.toString() + "\n\rImportant fields are marked with *");
-            }
-        }
-
-        return result;
-    }
-
-    private boolean eq(byte[] expected, byte[] actual) {
-        if (expected.length != actual.length) {
-            return false;
-        }
-
-        for (int i = 0; i < expected.length; i++) {
-            if (expected[i] != actual[i]) {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     private String getLocation(JournalKey key) {
@@ -236,7 +137,7 @@ public class JournalConfigurationImpl implements JournalConfiguration {
             }
 
             try (HugeBuffer hb = new HugeBuffer(metaFile, 12, JournalMode.READ)) {
-                return new JournalMetadataImpl<>(hb);
+                return new JournalMetadata<>(hb);
             }
         }
         return null;

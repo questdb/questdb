@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -60,7 +60,6 @@ public class VariableColumnTest {
     public void testConsumerEqualToProducer() throws Exception {
         VariableColumn col1 = new VariableColumn(file, indexFile);
         VariableColumn col2 = new VariableColumn(file2, indexFile2);
-        ChannelConsumer consumer = new VariableColumnDeltaConsumer(col2);
         VariableColumnDeltaProducer producer = new VariableColumnDeltaProducer(col1);
 
         int max = 150000;
@@ -75,7 +74,6 @@ public class VariableColumnTest {
             col2.commit();
         }
 
-        consumer.reset();
         producer.configure(col2.size(), col1.size());
         Assert.assertFalse(producer.hasContent());
         Assert.assertEquals(col1.size(), col2.size());
@@ -85,7 +83,6 @@ public class VariableColumnTest {
     public void testConsumerLargerThanProducer() throws Exception {
         VariableColumn col1 = new VariableColumn(file, indexFile);
         VariableColumn col2 = new VariableColumn(file2, indexFile2);
-        ChannelConsumer consumer = new VariableColumnDeltaConsumer(col2);
         VariableColumnDeltaProducer producer = new VariableColumnDeltaProducer(col1);
 
         int max = 150000;
@@ -100,7 +97,6 @@ public class VariableColumnTest {
             col2.commit();
         }
 
-        consumer.reset();
         producer.configure(col2.size(), col1.size());
         Assert.assertFalse(producer.hasContent());
     }
@@ -124,7 +120,6 @@ public class VariableColumnTest {
             col2.commit();
         }
 
-        consumer.reset();
         producer.configure(col2.size(), col1.size());
         Assert.assertTrue(producer.hasContent());
         producer.write(channel);
@@ -138,7 +133,6 @@ public class VariableColumnTest {
             col1.commit();
         }
 
-        consumer.reset();
         producer.configure(col2.size(), col1.size());
         Assert.assertTrue(producer.hasContent());
         producer.write(channel);
@@ -175,7 +169,6 @@ public class VariableColumnTest {
             col2.commit();
         }
 
-        consumer.reset();
         producer.configure(col2.size(), col1.size());
         Assert.assertTrue(producer.hasContent());
         producer.write(channel);
@@ -203,7 +196,6 @@ public class VariableColumnTest {
             col1.commit();
         }
 
-        consumer.reset();
         producer.configure(col2.size(), col1.size());
         Assert.assertTrue(producer.hasContent());
         producer.write(channel);
@@ -221,10 +213,8 @@ public class VariableColumnTest {
     public void testEmptyConsumerAndProducer() throws Exception {
         VariableColumn col1 = new VariableColumn(file, indexFile);
         VariableColumn col2 = new VariableColumn(file2, indexFile2);
-        ChannelConsumer consumer = new VariableColumnDeltaConsumer(col2);
         VariableColumnDeltaProducer producer = new VariableColumnDeltaProducer(col1);
 
-        consumer.reset();
         producer.configure(col2.size(), col1.size());
         Assert.assertFalse(producer.hasContent());
         Assert.assertEquals(col1.size(), col2.size());
@@ -241,7 +231,6 @@ public class VariableColumnTest {
         col1.putNull();
         col1.commit();
 
-        consumer.reset();
         producer.configure(col2.size(), col1.size());
         Assert.assertTrue(producer.hasContent());
         producer.write(channel);

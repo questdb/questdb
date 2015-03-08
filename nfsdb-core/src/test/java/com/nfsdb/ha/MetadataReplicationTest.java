@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,21 +18,22 @@ package com.nfsdb.ha;
 
 import com.nfsdb.JournalWriter;
 import com.nfsdb.factory.configuration.JournalConfiguration;
-import com.nfsdb.factory.configuration.JournalMetadataImpl;
+import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.ha.comsumer.HugeBufferConsumer;
 import com.nfsdb.ha.producer.HugeBufferProducer;
 import com.nfsdb.model.Quote;
 import com.nfsdb.test.tools.AbstractTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
 
 public class MetadataReplicationTest extends AbstractTest {
     @Test
-    public void testName() throws Exception {
+    public void testReplication() throws Exception {
 
         JournalWriter w = factory.writer(Quote.class);
-        System.out.println(w.getMetadata().getLocation());
 
         MockByteChannel channel = new MockByteChannel();
         HugeBufferProducer p = new HugeBufferProducer(new File(w.getMetadata().getLocation(), JournalConfiguration.FILE_NAME));
@@ -40,7 +41,18 @@ public class MetadataReplicationTest extends AbstractTest {
         p.write(channel);
         c.read(channel);
 
-        JournalMetadataImpl m = new JournalMetadataImpl(c.getHb());
-        System.out.println(m);
+        JournalWriter w2 = factory.writer(
+                new JournalStructure(
+                        new JournalMetadata(c.getHb())
+                ).location("xyz")
+        );
+
+        Assert.assertTrue(w.getMetadata().isCompatible(w2.getMetadata()));
+
+        w2.close();
+        w.close();
+
+        p.free();
+        c.free();
     }
 }

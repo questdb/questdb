@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -131,7 +131,6 @@ public class ClusterController {
 
     public void start() {
         if (running.compareAndSet(false, true)) {
-
             service.submit(up);
         }
     }
@@ -161,6 +160,7 @@ public class ClusterController {
 
     private void haltClient() throws JournalNetworkException {
         if (client != null) {
+            LOGGER.info("Halting client " + instance);
             client.halt();
             client = null;
         }
@@ -221,6 +221,7 @@ public class ClusterController {
                 }
             } catch (JournalNetworkException ignore) {
                 LOGGER.info("Exception during initial server acquisition. It is safe to ignore: %s", ignore.getMessage());
+                ignore.printStackTrace();
             }
 
             haltClient();

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,18 +26,24 @@ import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Unsafe;
 import sun.nio.ch.DirectBuffer;
 
+import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.WritableByteChannel;
 
-public class HugeBufferProducer implements ChannelProducer {
+public class HugeBufferProducer implements ChannelProducer, Closeable {
     private final ByteBuffer header = ByteBuffer.allocateDirect(8);
     private final long headerAddr = ((DirectBuffer) header).address();
     private final HugeBuffer hb;
 
     public HugeBufferProducer(File file) throws JournalException {
         hb = new HugeBuffer(file, Constants.HB_HINT, JournalMode.READ);
+    }
+
+    @Override
+    public void close() {
+        free();
     }
 
     @Override

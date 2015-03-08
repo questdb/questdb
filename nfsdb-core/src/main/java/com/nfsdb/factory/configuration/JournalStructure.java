@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -170,7 +170,7 @@ public class JournalStructure implements MetadataBuilder<Object> {
             m[i] = meta;
         }
 
-        return new JournalMetadataImpl<>(
+        return new JournalMetadata<>(
                 location
                 , modelClass
                 , constructor
@@ -191,6 +191,16 @@ public class JournalStructure implements MetadataBuilder<Object> {
         return location;
     }
 
+    public JournalStructure key(String key) {
+        this.key = key;
+        return this;
+    }
+
+    public JournalStructure lag(long time, TimeUnit unit) {
+        this.lag = (int) unit.toHours(time);
+        return this;
+    }
+
     @Override
     public JournalStructure location(String location) {
         this.location = location;
@@ -200,30 +210,6 @@ public class JournalStructure implements MetadataBuilder<Object> {
     @Override
     public JournalStructure location(File path) {
         this.location = path.getAbsolutePath();
-        return this;
-    }
-
-    public JournalStructure partitionBy(PartitionType type) {
-        if (type != PartitionType.DEFAULT) {
-            this.partitionBy = type;
-        }
-        return this;
-    }
-
-    public JournalStructure recordCountHint(int count) {
-        if (count > 0) {
-            this.recordCountHint = count;
-        }
-        return this;
-    }
-
-    public JournalStructure key(String key) {
-        this.key = key;
-        return this;
-    }
-
-    public JournalStructure lag(long time, TimeUnit unit) {
-        this.lag = (int) unit.toHours(time);
         return this;
     }
 
@@ -266,6 +252,20 @@ public class JournalStructure implements MetadataBuilder<Object> {
 
     public JournalStructure openFileTTL(long time, TimeUnit unit) {
         this.openFileTTL = unit.toMillis(time);
+        return this;
+    }
+
+    public JournalStructure partitionBy(PartitionType type) {
+        if (type != PartitionType.DEFAULT) {
+            this.partitionBy = type;
+        }
+        return this;
+    }
+
+    public JournalStructure recordCountHint(int count) {
+        if (count > 0) {
+            this.recordCountHint = count;
+        }
         return this;
     }
 

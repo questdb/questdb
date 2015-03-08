@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import com.nfsdb.io.ImportedColumnMetadata;
 import com.nfsdb.io.ImportedColumnType;
 import com.nfsdb.io.parser.listener.probe.*;
 import com.nfsdb.storage.ColumnType;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.util.List;
@@ -62,6 +63,7 @@ public class MetadataExtractorListener implements Listener, Closeable {
         }
     }
 
+    @SuppressFBWarnings({"EI_EXPOSE_REP"})
     public ImportedColumnMetadata[] getMetadata() {
         return metadata;
     }
@@ -133,6 +135,7 @@ public class MetadataExtractorListener implements Listener, Closeable {
 
     }
 
+    @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT"})
     @Override
     public void onLineCount(int count) {
         int frequencyExpectation = 1;
