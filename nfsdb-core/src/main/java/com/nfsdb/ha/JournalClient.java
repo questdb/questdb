@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -229,18 +229,6 @@ public class JournalClient {
         }
     }
 
-    private <T> void set0(int index, JournalWriter<T> writer, TxListener txListener) {
-        Lists.advance(deltaConsumers, index);
-        Lists.advance(writers, index);
-        statusSentList.extendAndSet(index, 0);
-
-        deltaConsumers.set(index, new JournalDeltaConsumer(writer.setCommitOnClose(false)));
-        writers.set(index, writer);
-        if (txListener != null) {
-            writer.setTxListener(txListener);
-        }
-    }
-
     private void checkAck() throws JournalNetworkException {
         stringResponseConsumer.read(channel);
         fail("OK".equals(stringResponseConsumer.getValue()), stringResponseConsumer.getValue());
@@ -378,7 +366,8 @@ public class JournalClient {
 
             try {
                 if (i >= writers.size() || writers.get(i) == null) {
-                    set0(i, factory.writer(new JournalStructure(metadata).location(localKeys.get(i).getLocation())), listeners.get(i));
+                    JournalKey key = localKeys.get(i);
+                    set0(i, factory.writer(new JournalStructure(metadata).location(key.getLocation() == null ? key.getId() : key.getLocation())), listeners.get(i));
                 }
             } catch (JournalException e) {
                 throw new JournalNetworkException(e);
@@ -408,6 +397,18 @@ public class JournalClient {
             }
         }
         sendReady();
+    }
+
+    private <T> void set0(int index, JournalWriter<T> writer, TxListener txListener) {
+        Lists.advance(deltaConsumers, index);
+        Lists.advance(writers, index);
+        statusSentList.extendAndSet(index, 0);
+
+        deltaConsumers.set(index, new JournalDeltaConsumer(writer.setCommitOnClose(false)));
+        writers.set(index, writer);
+        if (txListener != null) {
+            writer.setTxListener(txListener);
+        }
     }
 
     public static enum VoteResult {

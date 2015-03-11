@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -122,7 +122,7 @@ public class JournalMetadata<T> {
         System.arraycopy(columnMetadata, 0, meta, 0, meta.length);
     }
 
-    public JournalKey<T> deriveKey() {
+    public JournalKey<T> deriveKey(String location) {
         if (modelClass != null) {
             return new JournalKey<>(modelClass, location);
         } else {

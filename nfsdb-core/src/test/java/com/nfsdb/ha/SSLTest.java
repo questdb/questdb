@@ -61,6 +61,7 @@ public class SSLTest {
                 getSslConfig().setKeyStore(is, "changeit");
             }
             setEnableMultiCast(false);
+            setHeartbeatFrequency(50);
         }}, factory);
 
         JournalClient client = new JournalClient(new ClientConfig("localhost") {{
@@ -108,6 +109,7 @@ public class SSLTest {
                 getSslConfig().setTrustStore(is, "changeit");
             }
             setEnableMultiCast(false);
+            setHeartbeatFrequency(50);
         }}, factory);
 
         JournalClient client = new JournalClient(new ClientConfig("localhost") {{
@@ -151,6 +153,7 @@ public class SSLTest {
                 getSslConfig().setKeyStore(is, "changeit");
             }
             setEnableMultiCast(false);
+            setHeartbeatFrequency(50);
         }}, factory);
 
         JournalClient client = new JournalClient(new ClientConfig("localhost") {{
@@ -187,6 +190,7 @@ public class SSLTest {
                 getSslConfig().setKeyStore(is, "changeit");
             }
             setEnableMultiCast(false);
+            setHeartbeatFrequency(50);
         }}, factory);
 
         JournalClient client = new JournalClient(new ClientConfig("localhost") {{
@@ -225,6 +229,7 @@ public class SSLTest {
                 getSslConfig().setKeyStore(is, "changeit");
             }
             setEnableMultiCast(false);
+            setHeartbeatFrequency(50);
         }}, factory);
 
         JournalClient client = new JournalClient(new ClientConfig("localhost") {{
@@ -272,6 +277,7 @@ public class SSLTest {
                 getSslConfig().setKeyStore(is, "changeit");
             }
             setEnableMultiCast(false);
+            setHeartbeatFrequency(50);
         }}, factory);
 
         JournalClient client = new JournalClient(new ClientConfig("localhost") {{

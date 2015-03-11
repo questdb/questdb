@@ -131,7 +131,7 @@ public class JournalServer {
 
         if (timeout > 0) {
             try {
-                LOGGER.info("Waiting for %s agent services to conplete data exchange on %s", service.getActiveCount(), serverInstance);
+                LOGGER.info("Waiting for %s agent services to complete data exchange on %s", service.getActiveCount(), serverInstance);
                 service.awaitTermination(timeout, unit);
             } catch (InterruptedException e) {
                 LOGGER.debug(e);
@@ -235,7 +235,7 @@ public class JournalServer {
             if (jk.getId().equals(key.getId()) && (
                     (jk.getLocation() == null && key.getLocation() == null)
                             || (jk.getLocation() != null && jk.getLocation().equals(key.getLocation())))) {
-                return new IndexedJournalKey(e.value, new JournalKey(jk.getId(), jk.getClass(), jk.getLocation(), jk.getRecordHint()));
+                return new IndexedJournalKey(e.value, new JournalKey(jk.getId(), jk.getModelClass(), jk.getLocation(), jk.getRecordHint()));
             }
         }
         return null;

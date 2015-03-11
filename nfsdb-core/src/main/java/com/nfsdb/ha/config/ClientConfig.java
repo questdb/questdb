@@ -28,6 +28,7 @@ import java.net.StandardSocketOptions;
 import java.nio.channels.SocketChannel;
 import java.nio.channels.UnresolvedAddressException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
 
 public class ClientConfig extends NetworkConfig {
 
@@ -37,6 +38,7 @@ public class ClientConfig extends NetworkConfig {
     private boolean keepAlive = true;
     private boolean tcpNoDelay = true;
     private int linger = 0;
+    private long connectionTimeout = 1000; //millis
 
     public ClientConfig() {
         this(null);
@@ -48,6 +50,14 @@ public class ClientConfig extends NetworkConfig {
         if (hosts != null && hosts.length() > 0) {
             ServerNode.parse(hosts, nodes);
         }
+    }
+
+    public long getConnectionTimeout() {
+        return connectionTimeout;
+    }
+
+    public void setConnectionTimeout(long connectionTimeout) {
+        this.connectionTimeout = connectionTimeout;
     }
 
     public boolean getKeepAlive() {
@@ -118,19 +128,6 @@ public class ClientConfig extends NetworkConfig {
         }
     }
 
-    public SocketChannel openSocketChannel0(ServerNode node) throws IOException {
-        InetSocketAddress address = new InetSocketAddress(node.getHostname(), node.getPort());
-        SocketChannel channel = SocketChannel.open(address)
-                .setOption(StandardSocketOptions.TCP_NODELAY, isTcpNoDelay())
-                .setOption(StandardSocketOptions.SO_KEEPALIVE, getKeepAlive())
-                .setOption(StandardSocketOptions.SO_SNDBUF, getSoSndBuf())
-                .setOption(StandardSocketOptions.SO_RCVBUF, getSoRcvBuf())
-                .setOption(StandardSocketOptions.SO_LINGER, getLinger());
-
-        LOGGER.info("Connected to %s [%s]", node, channel.getLocalAddress());
-        return channel;
-    }
-
     private NetworkInterface getMultiCastInterface() throws JournalNetworkException {
         try {
             if (getIfName() == null) {
@@ -143,6 +140,37 @@ public class ClientConfig extends NetworkConfig {
             return NetworkInterface.getByName(getIfName());
         } catch (IOException e) {
             throw new JournalNetworkException(e);
+        }
+    }
+
+    private SocketChannel openSocketChannel0(ServerNode node) throws IOException {
+        InetSocketAddress address = new InetSocketAddress(node.getHostname(), node.getPort());
+        SocketChannel channel = SocketChannel.open()
+                .setOption(StandardSocketOptions.TCP_NODELAY, isTcpNoDelay())
+                .setOption(StandardSocketOptions.SO_KEEPALIVE, getKeepAlive())
+                .setOption(StandardSocketOptions.SO_SNDBUF, getSoSndBuf())
+                .setOption(StandardSocketOptions.SO_RCVBUF, getSoRcvBuf())
+                .setOption(StandardSocketOptions.SO_LINGER, getLinger());
+
+        channel.configureBlocking(false);
+        try {
+            channel.connect(address);
+            long t = System.currentTimeMillis();
+
+            while (!channel.finishConnect()) {
+                LockSupport.parkNanos(5000000L);
+                if (System.currentTimeMillis() - t > connectionTimeout) {
+                    throw new IOException("Connection timeout");
+                }
+            }
+
+            channel.configureBlocking(true);
+
+            LOGGER.info("Connected to %s [%s]", node, channel.getLocalAddress());
+            return channel;
+        } catch (IOException e) {
+            channel.close();
+            throw e;
         }
     }
 

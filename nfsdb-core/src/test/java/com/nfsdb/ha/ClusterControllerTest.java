@@ -74,6 +74,7 @@ public class ClusterControllerTest extends AbstractTest {
                     addNode(new ServerNode(1, "localhost:7080"));
                     addNode(new ServerNode(2, "localhost:7090"));
                     setEnableMultiCast(false);
+                    setHeartbeatFrequency(50);
                 }},
                 new ClientConfig() {{
                     setEnableMultiCast(false);
@@ -118,6 +119,7 @@ public class ClusterControllerTest extends AbstractTest {
                     addNode(new ServerNode(1, "localhost:7080"));
                     addNode(new ServerNode(2, "localhost:7090"));
                     setEnableMultiCast(false);
+                    setHeartbeatFrequency(50);
                 }},
                 new ClientConfig() {{
                     setEnableMultiCast(false);
@@ -388,6 +390,7 @@ public class ClusterControllerTest extends AbstractTest {
                     addNode(new ServerNode(1, "localhost:7080"));
                     addNode(new ServerNode(2, "localhost:7090"));
                     setEnableMultiCast(false);
+                    setHeartbeatFrequency(50);
                 }},
                 new ClientConfig() {{
                     setEnableMultiCast(false);
@@ -424,6 +427,7 @@ public class ClusterControllerTest extends AbstractTest {
                     addNode(new ServerNode(2, "localhost:7042"));
                     addNode(new ServerNode(1, "localhost:7043"));
                     addNode(new ServerNode(0, "localhost:7044"));
+                    setHeartbeatFrequency(50);
                     setEnableMultiCast(false);
                 }},
                 new ClientConfig() {{
