@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -366,8 +366,7 @@ public class JournalClient {
 
             try {
                 if (i >= writers.size() || writers.get(i) == null) {
-                    JournalKey key = localKeys.get(i);
-                    set0(i, factory.writer(new JournalStructure(metadata).location(key.getLocation() == null ? key.getId() : key.getLocation())), listeners.get(i));
+                    set0(i, factory.writer(new JournalStructure(metadata).location(localKeys.get(i).derivedLocation())), listeners.get(i));
                 }
             } catch (JournalException e) {
                 throw new JournalNetworkException(e);

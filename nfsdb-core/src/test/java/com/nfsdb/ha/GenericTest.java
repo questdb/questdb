@@ -17,22 +17,179 @@
 package com.nfsdb.ha;
 
 import com.nfsdb.*;
+import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.ha.config.ClientConfig;
 import com.nfsdb.ha.config.ServerConfig;
 import com.nfsdb.ha.config.ServerNode;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
+import com.nfsdb.model.Quote;
 import com.nfsdb.storage.TxListener;
 import com.nfsdb.test.tools.AbstractTest;
+import com.nfsdb.test.tools.JournalTestFactory;
+import com.nfsdb.test.tools.TestUtils;
+import com.nfsdb.utils.Dates;
+import com.nfsdb.utils.Files;
 import com.nfsdb.utils.Rnd;
 import org.junit.Assert;
+import org.junit.Rule;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 public class GenericTest extends AbstractTest {
+
+    @Rule
+    public JournalTestFactory factory2 = new JournalTestFactory(new JournalConfigurationBuilder().build(Files.makeTempDir()));
+
+    @Test
+    public void testClassToGenericPublish() throws Exception {
+        JournalWriter<Quote> w = factory.writer(Quote.class, "quote");
+
+        JournalServer server = new JournalServer(new ServerConfig() {{
+            addNode(new ServerNode(1, "localhost"));
+            setHeartbeatFrequency(100);
+            setEnableMultiCast(false);
+        }}, factory);
+        server.publish(w);
+        server.start();
+
+        final CountDownLatch ready = new CountDownLatch(1);
+
+        JournalClient client = new JournalClient(new ClientConfig("localhost") {{
+            setEnableMultiCast(false);
+        }}, factory2);
+        client.subscribe(new JournalKey("quote"), new JournalKey("abc"), new TxListener() {
+            @Override
+            public void onCommit() {
+                ready.countDown();
+            }
+
+            @Override
+            public void onError() {
+
+            }
+        });
+        client.start();
+
+        TestUtils.generateQuoteData(w, 100, Dates.parseDateTime("2015-01-10T12:00:00.000"));
+        w.commit();
+
+        ready.await(1, TimeUnit.SECONDS);
+
+        Journal r = factory2.reader("abc");
+        StringSink sink = new StringSink();
+        RecordSourcePrinter p = new RecordSourcePrinter(sink);
+        p.print(r.rows());
+
+        final String expected = "2015-01-10T12:00:00.000Z\tAGK.L\t0.000001189157\t1.050231933594\t1326447242\t948263339\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tBP.L\t104.021850585938\t0.006688738358\t1575378703\t1436881714\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tBP.L\t879.117187500000\t496.806518554688\t1530831067\t339631474\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tRRS.L\t768.000000000000\t0.000020634160\t426455968\t1432278050\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tBT-A.L\t256.000000000000\t0.000000035797\t1404198\t1153445279\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tGKN.L\t920.625000000000\t0.040750414133\t761275053\t1232884790\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tBP.L\t512.000000000000\t896.000000000000\t422941535\t113506296\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tLLOY.L\t12.923866510391\t0.032379742712\t2006313928\t2132716300\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tABF.L\t0.006530375686\t0.000000000000\t1890602616\t2137969456\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tLLOY.L\t0.000000017324\t720.000000000000\t410717394\t458818940\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tBT-A.L\t384.000000000000\t0.000000019700\t1575135393\t530317703\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tABF.L\t0.001165474765\t0.000001752813\t171200398\t2034804966\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tWTB.L\t1.507822513580\t695.796875000000\t1515787781\t66297136\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tAGK.L\t172.796875000000\t1.959461987019\t360860352\t1538602195\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tLLOY.L\t0.000000006081\t942.899414062500\t1857212401\t1985398001\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tTLW.L\t424.828125000000\t1024.000000000000\t1269042121\t1566901076\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tADM.L\t153.473033905029\t0.000355183205\t532665695\t1424048819\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tTLW.L\t632.921875000000\t348.175781250000\t89906802\t373499303\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tABF.L\t186.000000000000\t0.000020114637\t731466113\t1609750740\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tBT-A.L\t0.015470010694\t671.442138671875\t880943673\t1172180184\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tAGK.L\t0.000000009901\t0.060836097226\t1235206821\t817130367\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tLLOY.L\t0.003103211522\t271.689331054688\t1864113037\t865832060\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tBT-A.L\t770.359375000000\t0.000000014643\t618037497\t844704299\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tTLW.L\t1.229880273342\t4.852988362312\t639125092\t519895483\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tWTB.L\t0.000001305853\t767.380859375000\t614536941\t462277692\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tBT-A.L\t0.000000776007\t0.000484068747\t195213883\t283321892\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tABF.L\t583.609375000000\t0.555824235082\t1015055928\t1383560599\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tGKN.L\t296.544433593750\t174.774871826172\t1503763988\t805434743\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tAGK.L\t842.000000000000\t100.000000000000\t514934130\t246923735\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tBT-A.L\t364.462486267090\t0.000002526560\t1475953213\t1023667478\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tABF.L\t0.000603844470\t0.000027837185\t133913299\t2042181314\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tTLW.L\t0.000000261681\t352.000000000000\t684778036\t2076507991\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tLLOY.L\t0.000125102033\t0.000000000000\t880219256\t862447505\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tWTB.L\t0.000000194258\t0.001741337735\t1204245663\t1179767285\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tGKN.L\t218.371459960938\t0.000003607215\t1542366041\t239305284\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tAGK.L\t1024.000000000000\t33.643297195435\t2077041000\t2062507031\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tABF.L\t256.000000000000\t0.001175858604\t292438036\t39497392\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tGKN.L\t144.421875000000\t0.000063085048\t597366062\t370796356\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tLLOY.L\t256.000000000000\t0.000000032050\t484276102\t2017314910\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tBT-A.L\t0.000080152415\t832.000000000000\t1465751763\t36814604\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tLLOY.L\t512.000000000000\t69.914062500000\t874367915\t120660220\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tABF.L\t768.000000000000\t134.988502502441\t1218814076\t1822590290\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tABF.L\t0.000000001871\t589.718750000000\t1484108978\t1962248170\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tAGK.L\t736.000000000000\t0.000003953393\t1570930196\t494223693\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tRRS.L\t0.000000001374\t0.000000014146\t273567866\t365989785\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tAGK.L\t0.115072973073\t3.896593213081\t1180113884\t1863806522\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tLLOY.L\t386.843750000000\t0.000000005098\t689798930\t529035657\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tADM.L\t5.590153217316\t8.408761024475\t976011946\t1594425659\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tLLOY.L\t0.000000248992\t10.084638834000\t557653156\t1440049547\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tLLOY.L\t0.000002116648\t164.218750000000\t1479209616\t1300367617\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tAGK.L\t0.000005107453\t0.000014963527\t2136017735\t782135501\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tABF.L\t629.480468750000\t310.101058959961\t465171440\t1805101061\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tTLW.L\t0.000000049302\t0.611244902015\t297507019\t1197986472\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tGKN.L\t672.000000000000\t7.793050527573\t831951785\t2108259867\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tGKN.L\t0.018715771381\t1.461132109165\t1561652006\t1915752164\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tRRS.L\t655.625000000000\t52.330078125000\t1501720177\t464081554\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tADM.L\t0.000036359392\t121.029296875000\t876817614\t1705668785\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tBT-A.L\t265.807006835938\t0.004646989168\t1912522421\t1654490571\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tBP.L\t0.971607863903\t97.790924072266\t1436639185\t1975151962\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tADM.L\t0.000000000000\t353.683593750000\t1604266757\t647653731\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tGKN.L\t8.039016723633\t7.977778911591\t1341091541\t1977116623\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tGKN.L\t638.000000000000\t0.014096791856\t1091570282\t772867311\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tBT-A.L\t0.000002654824\t820.224609375000\t2094760568\t1194691156\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tAGK.L\t300.093750000000\t0.000000040298\t724165345\t1307291490\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tLLOY.L\t0.005052038119\t0.000785129319\t1418612367\t1933125405\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tRRS.L\t0.127358488739\t0.000000718634\t570261315\t158323100\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tADM.L\t0.000000009919\t0.000000059185\t1290623970\t873017617\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tABF.L\t0.040659694001\t0.000000818963\t2029231362\t400205299\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tGKN.L\t0.000012560774\t5.638884067535\t1722682901\t1025310386\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tBT-A.L\t873.000000000000\t127.708919525146\t1753567161\t256128916\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tTLW.L\t939.150390625000\t512.000000000000\t447593202\t135792148\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tBT-A.L\t978.632812500000\t0.000194281980\t1567482693\t8264817\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tADM.L\t844.000000000000\t46.725388526917\t432358603\t1657803999\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tRRS.L\t31.000000000000\t428.000000000000\t481303173\t739168384\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tWTB.L\t75.842805862427\t0.000002408446\t1297032488\t1215601315\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tADM.L\t283.158325195313\t880.000000000000\t357119340\t970294725\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tBT-A.L\t0.000003385293\t965.151367187500\t844915022\t1889838659\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tABF.L\t0.031326758675\t0.360216885805\t263487884\t1680503149\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tADM.L\t508.375000000000\t768.000000000000\t1923884740\t1121347399\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tRRS.L\t12.290055274963\t0.011763263494\t304383158\t2039181884\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tRRS.L\t4.111308574677\t1.257051765919\t159178348\t604818378\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tAGK.L\t0.000002205143\t228.001586914063\t1815322506\t1197959281\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tAGK.L\t0.000000129186\t0.011274382472\t1060590724\t1159512064\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tBP.L\t19.756743907928\t0.000340424791\t526923908\t1034870849\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tADM.L\t0.000180012023\t0.000000052629\t1406232957\t378247895\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tBP.L\t400.000000000000\t106.662109375000\t1440131320\t971963578\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tWTB.L\t68.043695449829\t380.435256958008\t1204423553\t795316150\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tBT-A.L\t0.004094106262\t0.000000914462\t2138704106\t655076307\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tABF.L\t64.000000000000\t445.875000000000\t1848218326\t1023760162\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tBT-A.L\t0.000000157150\t6.012886285782\t1247892921\t1890713369\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tGKN.L\t497.000000000000\t111.975021362305\t24972718\t1583707719\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tGKN.L\t549.125503540039\t18.834793090820\t957024901\t1487779338\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tGKN.L\t0.000000150060\t412.000000000000\t1158267509\t980916820\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tTLW.L\t0.000000007168\t41.500000000000\t1725416460\t1078921487\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tBP.L\t354.286376953125\t540.000000000000\t1772028439\t1496904948\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tABF.L\t0.000010415702\t372.000000000000\t1262895671\t1914805024\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tRRS.L\t728.300781250000\t15.240249156952\t1926049591\t2113879331\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tGKN.L\t448.000000000000\t0.696862459183\t1499957018\t1753521575\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tLLOY.L\t0.019178653602\t1024.000000000000\t1445553836\t896453005\tFast trading\tLXE\n" +
+                "2015-01-10T12:00:00.000Z\tRRS.L\t1021.000000000000\t391.000000000000\t856634079\t840591709\tFast trading\tLXE\n";
+
+        Assert.assertEquals(expected, sink.toString());
+
+        client.halt();
+        server.halt();
+    }
 
     @Test
     public void testGenericPublish() throws Exception {
