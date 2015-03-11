@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,13 +48,16 @@ public class GenericTest extends AbstractTest {
         JournalServer server = new JournalServer(new ServerConfig() {{
             addNode(new ServerNode(1, "localhost"));
             setHeartbeatFrequency(100);
+            setEnableMultiCast(false);
         }}, factory);
         server.publish(w);
         server.start();
 
         final CountDownLatch ready = new CountDownLatch(1);
 
-        JournalClient client = new JournalClient(new ClientConfig("localhost"), factory);
+        JournalClient client = new JournalClient(new ClientConfig("localhost") {{
+            setEnableMultiCast(false);
+        }}, factory);
         client.subscribe(new JournalKey("xyz"), new JournalKey("abc"), new TxListener() {
             @Override
             public void onCommit() {
