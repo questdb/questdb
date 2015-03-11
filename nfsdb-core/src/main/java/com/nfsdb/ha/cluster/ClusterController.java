@@ -214,15 +214,16 @@ public class ClusterController {
             ServerNode activeNode;
             try {
                 if ((activeNode = getActiveNodeAndSetupClient()) != null) {
-                    LOGGER.info("%s: there is active node already %s. Yielding", thisNode, activeNode);
-                    setupClient(activeNode);
-                    return;
+                    if (client.voteInstance(instance) == JournalClient.VoteResult.ALPHA) {
+                        LOGGER.info("%s: there is active node already %s. Yielding", thisNode, activeNode);
+                        setupClient(activeNode);
+                        return;
+                    }
                 }
             } catch (JournalNetworkException ignore) {
                 LOGGER.info("Exception during initial server acquisition. It is safe to ignore: %s", ignore.getMessage());
                 ignore.printStackTrace();
             }
-
             haltClient();
         }
 
@@ -253,7 +254,7 @@ public class ClusterController {
                     break;
                 }
 
-                if (node.getId() == instance) {
+                if (node.getId() <= instance) {
                     continue;
                 }
 
