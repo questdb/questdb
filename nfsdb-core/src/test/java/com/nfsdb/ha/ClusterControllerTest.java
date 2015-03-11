@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -174,6 +174,8 @@ public class ClusterControllerTest extends AbstractTest {
         AtomicInteger active = new AtomicInteger();
         AtomicInteger standby = new AtomicInteger();
         AtomicInteger shutdown = new AtomicInteger();
+
+        System.out.println("======= VOTING TEST ==========");
 
         ClusterController c1 = createController2(0, fact1, active, standby, shutdown);
         ClusterController c2 = createController2(1, fact2, active, standby, shutdown);

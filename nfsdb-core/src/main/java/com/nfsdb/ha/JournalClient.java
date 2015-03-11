@@ -202,7 +202,7 @@ public class JournalClient {
         set0(remoteKeys.size() - 1, writer, txListener);
     }
 
-    public <T> void subscribe(JournalKey<T> remote, JournalKey<T> local, TxListener txListener) {
+    public void subscribe(JournalKey remote, JournalKey local, TxListener txListener) {
         remoteKeys.add(remote);
         localKeys.add(local);
         listeners.add(txListener);
@@ -224,7 +224,7 @@ public class JournalClient {
                     return VoteResult.ME;
             }
         } catch (JournalNetworkException e) {
-            LOGGER.info("Voting error", e);
+            LOGGER.info("Voting error: %s", e.getMessage());
             return VoteResult.ME_BY_DEFAULT;
         }
     }

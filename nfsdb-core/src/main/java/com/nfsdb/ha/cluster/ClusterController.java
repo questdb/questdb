@@ -160,7 +160,6 @@ public class ClusterController {
 
     private void haltClient() throws JournalNetworkException {
         if (client != null) {
-            LOGGER.info("Halting client " + instance);
             client.halt();
             client = null;
         }
