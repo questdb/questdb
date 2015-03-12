@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,15 +23,14 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
-import com.nfsdb.lang.cst.StatefulJournalSource;
+import com.nfsdb.lang.cst.Record;
+import com.nfsdb.lang.cst.RecordSource;
 import com.nfsdb.lang.cst.impl.join.InnerSkipJoin;
 import com.nfsdb.lang.cst.impl.join.NestedLoopLeftOuterJoin;
 import com.nfsdb.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.lang.cst.impl.jsrc.StatefulJournalSourceImpl;
 import com.nfsdb.lang.cst.impl.ksrc.SingleKeySource;
 import com.nfsdb.lang.cst.impl.psrc.JournalPartitionSource;
-import com.nfsdb.lang.cst.impl.qry.Record;
-import com.nfsdb.lang.cst.impl.qry.RecordSource;
 import com.nfsdb.lang.cst.impl.ref.StringRef;
 import com.nfsdb.lang.cst.impl.ref.SymbolXTabVariableSource;
 import com.nfsdb.lang.cst.impl.rsrc.AllRowSource;
@@ -125,7 +124,7 @@ public class JoinSymbolOnSymbolTest {
                                 new JournalSourceImpl(new JournalPartitionSource(aw, false), new SkipSymbolRowSource(
                                         new KvIndexRowSource(
                                                 band
-                                                , new SingleKeySource(new SymbolXTabVariableSource(master, "name", "band"))
+                                                , new SingleKeySource(new SymbolXTabVariableSource(master.getMetadata(), "name", "band", master))
                                         )
                                         , name
                                 ))
@@ -159,7 +158,7 @@ public class JoinSymbolOnSymbolTest {
         StringRef band = new StringRef("band");
 
         // from band join album head by name
-        StatefulJournalSource master;
+        StatefulJournalSourceImpl master;
 
         out.print(
                 new InnerSkipJoin(
@@ -170,7 +169,7 @@ public class JoinSymbolOnSymbolTest {
                                 ,
                                 new JournalSourceImpl(new JournalPartitionSource(aw, false), new KvIndexRowSource(
                                         band
-                                        , new SingleKeySource(new SymbolXTabVariableSource(master, "name", "band"))
+                                        , new SingleKeySource(new SymbolXTabVariableSource(master.getMetadata(), "name", "band", master))
                                 ))
                         )
                 )
@@ -238,7 +237,7 @@ public class JoinSymbolOnSymbolTest {
         StringRef band = new StringRef("band");
         StringRef name = new StringRef("name");
 
-        StatefulJournalSource master;
+        StatefulJournalSourceImpl master;
 
         out.print(
                 new NestedLoopLeftOuterJoin(
@@ -249,7 +248,7 @@ public class JoinSymbolOnSymbolTest {
                         new JournalSourceImpl(new JournalPartitionSource(aw, false), new SkipSymbolRowSource(
                                 new KvIndexRowSource(
                                         band
-                                        , new SingleKeySource(new SymbolXTabVariableSource(master, "name", "band"))
+                                        , new SingleKeySource(new SymbolXTabVariableSource(master.getMetadata(), "name", "band", master))
                                 )
                                 , name
                         ))
@@ -304,7 +303,7 @@ public class JoinSymbolOnSymbolTest {
 
         // from album join band head by name
         StringRef name = new StringRef("name");
-        StatefulJournalSource master;
+        StatefulJournalSourceImpl master;
 
         out.print(new NestedLoopLeftOuterJoin(
                 master = new StatefulJournalSourceImpl(
@@ -313,7 +312,7 @@ public class JoinSymbolOnSymbolTest {
                 ,
                 new JournalSourceImpl(new JournalPartitionSource(bw, false), new KvIndexTopRowSource(
                         name
-                        , new SingleKeySource(new SymbolXTabVariableSource(master, "band", "name"))
+                        , new SingleKeySource(new SymbolXTabVariableSource(master.getMetadata(), "band", "name", master))
                         , null
                 ))
         ));
@@ -323,14 +322,14 @@ public class JoinSymbolOnSymbolTest {
 
     private RecordSource<? extends Record> buildSource(Journal<Band> bw, Journal<Album> aw) {
         StringRef band = new StringRef("band");
-        StatefulJournalSource master;
+        StatefulJournalSourceImpl master;
         return new NestedLoopLeftOuterJoin(
                 master = new StatefulJournalSourceImpl(
                         new JournalSourceImpl(new JournalPartitionSource(bw, false), new AllRowSource())
                 )
                 ,
                 new JournalSourceImpl(new JournalPartitionSource(aw, false), new KvIndexRowSource(band
-                        , new SingleKeySource(new SymbolXTabVariableSource(master, "name", "band"))
+                        , new SingleKeySource(new SymbolXTabVariableSource(master.getMetadata(), "name", "band", master))
                 ))
         );
     }

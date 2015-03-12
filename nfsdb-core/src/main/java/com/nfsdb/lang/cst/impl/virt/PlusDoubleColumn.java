@@ -14,23 +14,28 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.agg;
+package com.nfsdb.lang.cst.impl.virt;
 
-import com.nfsdb.collections.mmap.MapValues;
-import com.nfsdb.factory.configuration.ColumnMetadata;
-import com.nfsdb.lang.cst.impl.qry.Record;
+import com.nfsdb.storage.ColumnType;
 
-public class SumIntAggregationFunction extends AbstractSingleColumnAggregatorFunction {
-    public SumIntAggregationFunction(ColumnMetadata meta) {
-        super(meta);
+public class PlusDoubleColumn extends AbstractDyadicColumn {
+
+    public PlusDoubleColumn(String name, VirtualColumn l, VirtualColumn r) {
+        super(name, ColumnType.DOUBLE, l, r);
     }
 
     @Override
-    public void calculate(Record rec, MapValues values) {
-        if (values.isNew()) {
-            values.putInt(valueIndex, rec.getInt(recordIndex));
-        } else {
-            values.putInt(valueIndex, values.getInt(valueIndex) + rec.getInt(recordIndex));
-        }
+    public double getDouble() {
+        return l.getDouble() + r.getDouble();
+    }
+
+    @Override
+    public float getFloat() {
+        return (float) (l.getDouble() + r.getDouble());
+    }
+
+    @Override
+    public int getInt() {
+        return (int) (l.getDouble() + r.getDouble());
     }
 }

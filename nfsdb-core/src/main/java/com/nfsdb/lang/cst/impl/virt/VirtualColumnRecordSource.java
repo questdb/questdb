@@ -14,17 +14,26 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.jsrc;
+package com.nfsdb.lang.cst.impl.virt;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.lang.cst.*;
 
-public class StatefulJournalSourceImpl extends AbstractImmutableIterator<Record> implements GenericRecordSource, RecordSourceState {
-    private final RecordSource<? extends Record> delegate;
-    private Record current;
+import java.util.List;
 
-    public StatefulJournalSourceImpl(RecordSource<? extends Record> delegate) {
+public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record> implements GenericRecordSource, RecordSourceState {
+    private final RecordSource<? extends Record> delegate;
+    private final RecordMetadata metadata;
+    private VirtualRecord current;
+
+
+    public VirtualColumnRecordSource(RecordSource<? extends Record> delegate, List<VirtualColumn> virtualColumns) {
         this.delegate = delegate;
+        for (int i = 0, k = virtualColumns.size(); i < k; i++) {
+            virtualColumns.get(i).configure(delegate.getMetadata(), this);
+        }
+        this.metadata = new VirtualRecordMetadata(delegate.getMetadata(), virtualColumns);
+        this.current = new VirtualRecord(this.metadata, delegate.getMetadata().getColumnCount(), virtualColumns);
     }
 
     @Override
@@ -34,7 +43,7 @@ public class StatefulJournalSourceImpl extends AbstractImmutableIterator<Record>
 
     @Override
     public RecordMetadata getMetadata() {
-        return delegate.getMetadata();
+        return metadata;
     }
 
     @Override
@@ -44,7 +53,8 @@ public class StatefulJournalSourceImpl extends AbstractImmutableIterator<Record>
 
     @Override
     public Record next() {
-        return current = delegate.next();
+        current.setBase(delegate.next());
+        return current;
     }
 
     @Override

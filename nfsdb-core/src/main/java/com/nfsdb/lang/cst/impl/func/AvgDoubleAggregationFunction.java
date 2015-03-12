@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,14 +14,15 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.agg;
+package com.nfsdb.lang.cst.impl.func;
 
 import com.nfsdb.collections.mmap.MapRecordValueInterceptor;
 import com.nfsdb.collections.mmap.MapValues;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
-import com.nfsdb.lang.cst.impl.qry.Record;
-import com.nfsdb.lang.cst.impl.qry.RecordSource;
+import com.nfsdb.lang.cst.AggregatorFunction;
+import com.nfsdb.lang.cst.Record;
+import com.nfsdb.lang.cst.RecordSource;
 import com.nfsdb.storage.ColumnType;
 
 public class AvgDoubleAggregationFunction implements AggregatorFunction, MapRecordValueInterceptor {
@@ -42,17 +43,23 @@ public class AvgDoubleAggregationFunction implements AggregatorFunction, MapReco
     }
 
     @Override
+    public void calculate(Record rec, MapValues values) {
+        if (values.isNew()) {
+            values.putLong(countIdx, 1);
+            values.putDouble(sumIdx, rec.getDouble(columnIndex));
+        } else {
+            values.putLong(countIdx, values.getLong(countIdx) + 1);
+            values.putDouble(sumIdx, values.getDouble(sumIdx) + rec.getDouble(columnIndex));
+        }
+    }
+
+    @Override
     public ColumnMetadata[] getColumns() {
         return new ColumnMetadata[]{
                 new ColumnMetadata().setName("$count").setType(ColumnType.LONG)
                 , new ColumnMetadata().setName("$sum").setType(ColumnType.DOUBLE)
                 , new ColumnMetadata().setName("avg").setType(ColumnType.DOUBLE)
         };
-    }
-
-    @Override
-    public void prepareSource(RecordSource<? extends Record> source) {
-        this.columnIndex = source.getMetadata().getColumnIndex(sourceColumn.name);
     }
 
     @Override
@@ -73,13 +80,7 @@ public class AvgDoubleAggregationFunction implements AggregatorFunction, MapReco
     }
 
     @Override
-    public void calculate(Record rec, MapValues values) {
-        if (values.isNew()) {
-            values.putLong(countIdx, 1);
-            values.putDouble(sumIdx, rec.getDouble(columnIndex));
-        } else {
-            values.putLong(countIdx, values.getLong(countIdx) + 1);
-            values.putDouble(sumIdx, values.getDouble(sumIdx) + rec.getDouble(columnIndex));
-        }
+    public void prepareSource(RecordSource<? extends Record> source) {
+        this.columnIndex = source.getMetadata().getColumnIndex(sourceColumn.name);
     }
 }

@@ -14,7 +14,20 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.qry;
+package com.nfsdb.lang.cst.impl.func;
 
-public interface GenericRecordSource extends RecordSource<Record> {
+import com.nfsdb.collections.mmap.MapValues;
+import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.lang.cst.Record;
+
+public class LastDoubleAggregationFunction extends AbstractSingleColumnAggregatorFunction {
+
+    public LastDoubleAggregationFunction(ColumnMetadata meta) {
+        super(meta);
+    }
+
+    @Override
+    public void calculate(Record rec, MapValues values) {
+        values.putDouble(valueIndex, rec.getDouble(recordIndex));
+    }
 }

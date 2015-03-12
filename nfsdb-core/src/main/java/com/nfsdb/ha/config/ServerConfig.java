@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -58,6 +58,7 @@ public class ServerConfig extends NetworkConfig {
 
         try {
             // default IP address and port
+            // todo: there is possible bug where InetAddress.getByName may return null
             if (node == null && getIfName() == null) {
                 return hasIPv4Address(
                         NetworkInterface.getByInetAddress(

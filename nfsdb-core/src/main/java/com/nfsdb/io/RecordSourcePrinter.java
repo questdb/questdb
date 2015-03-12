@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,9 +17,9 @@
 package com.nfsdb.io;
 
 import com.nfsdb.io.sink.CharSink;
-import com.nfsdb.lang.cst.impl.qry.Record;
-import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
-import com.nfsdb.lang.cst.impl.qry.RecordSource;
+import com.nfsdb.lang.cst.Record;
+import com.nfsdb.lang.cst.RecordMetadata;
+import com.nfsdb.lang.cst.RecordSource;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT"})

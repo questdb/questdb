@@ -16,28 +16,27 @@
 
 package com.nfsdb.lang.cst.impl.jsrc;
 
-import com.nfsdb.Journal;
 import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.lang.cst.impl.qry.JournalRecord;
-import com.nfsdb.lang.cst.impl.qry.JournalRecordSource;
-import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
+import com.nfsdb.lang.cst.GenericRecordSource;
+import com.nfsdb.lang.cst.Record;
+import com.nfsdb.lang.cst.RecordMetadata;
+import com.nfsdb.lang.cst.RecordSource;
 
-public class TopJournalSource extends AbstractImmutableIterator<JournalRecord> implements JournalRecordSource {
+public class TopRecordSource extends AbstractImmutableIterator<Record> implements GenericRecordSource {
 
-    private final JournalRecordSource delegate;
+    private final RecordSource<? extends Record> delegate;
     private final int count;
     private int remaining;
 
-    public TopJournalSource(int count, JournalRecordSource delegate) {
+    public TopRecordSource(int count, RecordSource<? extends Record> delegate) {
         this.delegate = delegate;
         this.count = count;
         this.remaining = count;
     }
 
     @Override
-    public void reset() {
-        delegate.reset();
-        this.remaining = count;
+    public RecordMetadata getMetadata() {
+        return delegate.getMetadata();
     }
 
     @Override
@@ -46,18 +45,16 @@ public class TopJournalSource extends AbstractImmutableIterator<JournalRecord> i
     }
 
     @Override
-    public JournalRecord next() {
+    public Record next() {
         remaining--;
         return delegate.next();
     }
 
     @Override
-    public Journal getJournal() {
-        return delegate.getJournal();
+    public void reset() {
+        delegate.reset();
+        this.remaining = count;
     }
 
-    @Override
-    public RecordMetadata getMetadata() {
-        return delegate.getMetadata();
-    }
+
 }

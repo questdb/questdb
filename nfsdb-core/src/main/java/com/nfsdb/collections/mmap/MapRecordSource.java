@@ -17,9 +17,9 @@
 package com.nfsdb.collections.mmap;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.lang.cst.impl.qry.Record;
-import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
-import com.nfsdb.lang.cst.impl.qry.RecordSource;
+import com.nfsdb.lang.cst.Record;
+import com.nfsdb.lang.cst.RecordMetadata;
+import com.nfsdb.lang.cst.RecordSource;
 import com.nfsdb.utils.Unsafe;
 
 import java.util.List;
@@ -41,19 +41,9 @@ public final class MapRecordSource extends AbstractImmutableIterator<Record> imp
         this.interceptorsLen = interceptors != null ? interceptors.size() : 0;
     }
 
-    MapRecordSource init(long address, int count) {
-        this.address = address;
-        this.count = count;
-        return this;
-    }
-
     @Override
     public RecordMetadata getMetadata() {
         return metadata;
-    }
-
-    @Override
-    public void reset() {
     }
 
     @Override
@@ -70,6 +60,16 @@ public final class MapRecordSource extends AbstractImmutableIterator<Record> imp
             notifyInterceptors(address);
         }
         return record.init(address);
+    }
+
+    @Override
+    public void reset() {
+    }
+
+    MapRecordSource init(long address, int count) {
+        this.address = address;
+        this.count = count;
+        return this;
     }
 
     private void notifyInterceptors(long address) {

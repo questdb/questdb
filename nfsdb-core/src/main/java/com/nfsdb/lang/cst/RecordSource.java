@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.qry;
+package com.nfsdb.lang.cst;
 
 import com.nfsdb.collections.ImmutableIterator;
 

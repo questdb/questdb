@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,8 +18,8 @@ package com.nfsdb.collections.mmap;
 
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.impl.qry.AbstractRecord;
-import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
 import com.nfsdb.utils.Unsafe;
 
 import java.io.InputStream;
@@ -119,6 +119,13 @@ public final class MapRecord extends AbstractRecord {
         return metadata.getSymbolTable(index).value(getInt(index));
     }
 
+    MapRecord init(long address) {
+        this.address0 = address;
+        this.address1 = address + keyDataOffset;
+        this.address2 = address + keyBlockOffset;
+        return this;
+    }
+
     private long address0(int index) {
 
         if (index < split) {
@@ -130,12 +137,5 @@ public final class MapRecord extends AbstractRecord {
         }
 
         return Unsafe.getUnsafe().getInt(address2 + (index - split - 1) * 4) + address0;
-    }
-
-    MapRecord init(long address) {
-        this.address0 = address;
-        this.address1 = address + keyDataOffset;
-        this.address2 = address + keyBlockOffset;
-        return this;
     }
 }

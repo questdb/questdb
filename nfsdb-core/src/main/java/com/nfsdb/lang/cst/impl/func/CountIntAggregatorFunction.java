@@ -14,23 +14,32 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.agg;
+package com.nfsdb.lang.cst.impl.func;
 
 import com.nfsdb.collections.mmap.MapValues;
 import com.nfsdb.factory.configuration.ColumnMetadata;
-import com.nfsdb.lang.cst.impl.qry.Record;
+import com.nfsdb.lang.cst.Record;
+import com.nfsdb.lang.cst.RecordSource;
+import com.nfsdb.storage.ColumnType;
 
-public class SumDoubleAggregationFunction extends AbstractSingleColumnAggregatorFunction {
-    public SumDoubleAggregationFunction(ColumnMetadata meta) {
-        super(meta);
+public class CountIntAggregatorFunction extends AbstractSingleColumnAggregatorFunction {
+
+
+    public CountIntAggregatorFunction(String name) {
+        super(new ColumnMetadata().setName(name).setType(ColumnType.INT));
     }
 
     @Override
     public void calculate(Record rec, MapValues values) {
         if (values.isNew()) {
-            values.putDouble(valueIndex, rec.getDouble(recordIndex));
+            values.putInt(valueIndex, 1);
         } else {
-            values.putDouble(valueIndex, values.getDouble(valueIndex) + rec.getDouble(recordIndex));
+            values.putInt(valueIndex, values.getInt(valueIndex) + 1);
         }
+    }
+
+    @Override
+    public void prepareSource(RecordSource<? extends Record> source) {
+        // do not call parent method, which will be trying to lookup column in record source.
     }
 }

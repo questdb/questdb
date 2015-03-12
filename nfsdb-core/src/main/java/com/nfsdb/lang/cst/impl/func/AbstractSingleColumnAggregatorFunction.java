@@ -14,11 +14,12 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.agg;
+package com.nfsdb.lang.cst.impl.func;
 
 import com.nfsdb.factory.configuration.ColumnMetadata;
-import com.nfsdb.lang.cst.impl.qry.Record;
-import com.nfsdb.lang.cst.impl.qry.RecordSource;
+import com.nfsdb.lang.cst.AggregatorFunction;
+import com.nfsdb.lang.cst.Record;
+import com.nfsdb.lang.cst.RecordSource;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"EI_EXPOSE_REP"})

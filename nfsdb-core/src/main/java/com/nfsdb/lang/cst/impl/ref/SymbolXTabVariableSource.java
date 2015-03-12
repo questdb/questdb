@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,7 @@
 
 package com.nfsdb.lang.cst.impl.ref;
 
-import com.nfsdb.lang.cst.IntVariable;
-import com.nfsdb.lang.cst.IntVariableSource;
-import com.nfsdb.lang.cst.PartitionSlice;
-import com.nfsdb.lang.cst.StatefulJournalSource;
+import com.nfsdb.lang.cst.*;
 import com.nfsdb.storage.SymbolTable;
 
 import java.util.Arrays;
@@ -28,7 +25,7 @@ import java.util.Arrays;
  * Reads partition/rowid from current position of JoinedSource, reads symbol column value based on current position of said JoinedSource
  */
 public class SymbolXTabVariableSource implements IntVariableSource, IntVariable {
-    private final StatefulJournalSource masterSource;
+    private final RecordSourceState state;
     private final String slaveSymbol;
     private final int masterColumnIndex;
     private final int map[];
@@ -36,11 +33,11 @@ public class SymbolXTabVariableSource implements IntVariableSource, IntVariable 
     private SymbolTable slaveTab;
     private int slaveKey;
 
-    public SymbolXTabVariableSource(StatefulJournalSource masterSource, String masterSymbol, String slaveSymbol) {
-        this.masterSource = masterSource;
+    public SymbolXTabVariableSource(RecordMetadata masterMetadata, String masterSymbol, String slaveSymbol, RecordSourceState state) {
+        this.state = state;
         this.slaveSymbol = slaveSymbol;
-        this.masterColumnIndex = masterSource.getMetadata().getColumnIndex(masterSymbol);
-        this.masterTab = masterSource.getMetadata().getSymbolTable(masterColumnIndex);
+        this.masterColumnIndex = masterMetadata.getColumnIndex(masterSymbol);
+        this.masterTab = masterMetadata.getSymbolTable(masterColumnIndex);
         map = new int[masterTab.size()];
         Arrays.fill(map, -1);
     }
@@ -48,7 +45,7 @@ public class SymbolXTabVariableSource implements IntVariableSource, IntVariable 
     @Override
     public int getValue() {
         if (slaveKey == -3) {
-            int masterKey = masterSource.current().getInt(masterColumnIndex);
+            int masterKey = state.currentRecord().getInt(masterColumnIndex);
             if (map[masterKey] == -1) {
                 map[masterKey] = slaveTab.getQuick(masterTab.value(masterKey));
             }

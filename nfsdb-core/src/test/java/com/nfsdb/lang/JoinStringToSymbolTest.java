@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
-import com.nfsdb.lang.cst.StatefulJournalSource;
 import com.nfsdb.lang.cst.impl.join.NestedLoopLeftOuterJoin;
 import com.nfsdb.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.lang.cst.impl.jsrc.StatefulJournalSourceImpl;
@@ -98,7 +97,7 @@ public class JoinStringToSymbolTest {
         aw.commit();
 
         StringRef name = new StringRef("name");
-        StatefulJournalSource master;
+        StatefulJournalSourceImpl master;
 
 
         StringSink sink = new StringSink();
@@ -114,7 +113,7 @@ public class JoinStringToSymbolTest {
                                 new JournalPartitionSource(bw, false),
                                 new KvIndexTopRowSource(
                                         name
-                                        , new SingleKeySource(new StringXTabVariableSource(master, "band", "name"))
+                                        , new SingleKeySource(new StringXTabVariableSource(master.getMetadata(), "band", "name", master))
                                         , null
                                 ))
                 )

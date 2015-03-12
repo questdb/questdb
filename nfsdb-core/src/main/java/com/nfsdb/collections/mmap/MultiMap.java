@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ import com.nfsdb.collections.DirectMemoryStructure;
 import com.nfsdb.collections.Primes;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
-import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
+import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.utils.Hash;
 import com.nfsdb.utils.Unsafe;
 
@@ -130,6 +130,11 @@ public class MultiMap extends DirectMemoryStructure {
         return size;
     }
 
+    @Override
+    protected void freeInternal() {
+        offsets.free();
+    }
+
     private boolean eq(Key key, long offset) {
         long a = kStart + offset;
         long b = key.startAddr;
@@ -159,11 +164,6 @@ public class MultiMap extends DirectMemoryStructure {
             }
         }
         return true;
-    }
-
-    @Override
-    protected void freeInternal() {
-        offsets.free();
     }
 
     private MapValues probe0(Key key, int index) {

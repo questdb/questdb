@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,32 +14,22 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.agg;
+package com.nfsdb.lang.cst.impl.func;
 
 import com.nfsdb.collections.mmap.MapValues;
 import com.nfsdb.factory.configuration.ColumnMetadata;
-import com.nfsdb.lang.cst.impl.qry.Record;
-import com.nfsdb.lang.cst.impl.qry.RecordSource;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.lang.cst.Record;
 
-public class CountIntAggregatorFunction extends AbstractSingleColumnAggregatorFunction {
+public class FirstDoubleAggregationFunction extends AbstractSingleColumnAggregatorFunction {
 
-
-    public CountIntAggregatorFunction(String name) {
-        super(new ColumnMetadata().setName(name).setType(ColumnType.INT));
+    public FirstDoubleAggregationFunction(ColumnMetadata meta) {
+        super(meta);
     }
 
     @Override
     public void calculate(Record rec, MapValues values) {
         if (values.isNew()) {
-            values.putInt(valueIndex, 1);
-        } else {
-            values.putInt(valueIndex, values.getInt(valueIndex) + 1);
+            values.putDouble(valueIndex, rec.getDouble(recordIndex));
         }
-    }
-
-    @Override
-    public void prepareSource(RecordSource<? extends Record> source) {
-        // do not call parent method, which will be trying to lookup column in record source.
     }
 }

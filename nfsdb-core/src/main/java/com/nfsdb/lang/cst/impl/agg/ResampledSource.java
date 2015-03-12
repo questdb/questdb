@@ -24,10 +24,7 @@ import com.nfsdb.collections.mmap.MapValues;
 import com.nfsdb.collections.mmap.MultiMap;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
-import com.nfsdb.lang.cst.impl.qry.GenericRecordSource;
-import com.nfsdb.lang.cst.impl.qry.Record;
-import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
-import com.nfsdb.lang.cst.impl.qry.RecordSource;
+import com.nfsdb.lang.cst.*;
 import com.nfsdb.utils.Dates;
 
 import java.util.List;
@@ -83,12 +80,6 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
     }
 
     @Override
-    public void reset() {
-        rowSource.reset();
-        map.clear();
-    }
-
-    @Override
     public RecordMetadata getMetadata() {
         return map.getMetadata();
     }
@@ -96,6 +87,17 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
     @Override
     public boolean hasNext() {
         return mapRecordSource != null && mapRecordSource.hasNext() || buildMap();
+    }
+
+    @Override
+    public Record next() {
+        return mapRecordSource.next();
+    }
+
+    @Override
+    public void reset() {
+        rowSource.reset();
+        map.clear();
     }
 
     private boolean buildMap() {
@@ -185,11 +187,6 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
         } while (true);
 
         return (mapRecordSource = map.getRecordSource()).hasNext();
-    }
-
-    @Override
-    public Record next() {
-        return mapRecordSource.next();
     }
 
 

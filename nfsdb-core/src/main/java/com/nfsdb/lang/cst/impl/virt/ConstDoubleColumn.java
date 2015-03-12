@@ -14,10 +14,30 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.qry;
+package com.nfsdb.lang.cst.impl.virt;
 
-import com.nfsdb.Journal;
+import com.nfsdb.storage.ColumnType;
 
-public interface JournalRecordSource extends RecordSource<JournalRecord> {
-    Journal getJournal();
+public class ConstDoubleColumn extends AbstractVirtualColumn {
+    private final double value;
+
+    public ConstDoubleColumn(String name, double value) {
+        super(name, ColumnType.FLOAT);
+        this.value = value;
+    }
+
+    @Override
+    public double getDouble() {
+        return value;
+    }
+
+    @Override
+    public float getFloat() {
+        return (float) value;
+    }
+
+    @Override
+    public int getInt() {
+        return (int) value;
+    }
 }

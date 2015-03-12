@@ -14,11 +14,20 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst;
+package com.nfsdb.lang.cst.impl.func;
 
-import com.nfsdb.lang.cst.impl.qry.GenericRecordSource;
-import com.nfsdb.lang.cst.impl.qry.Record;
+import com.nfsdb.collections.mmap.MapValues;
+import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.lang.cst.Record;
 
-public interface StatefulJournalSource extends GenericRecordSource {
-    Record current();
+public class LastLongAggregationFunction extends AbstractSingleColumnAggregatorFunction {
+
+    public LastLongAggregationFunction(ColumnMetadata meta) {
+        super(meta);
+    }
+
+    @Override
+    public void calculate(Record rec, MapValues values) {
+        values.putLong(valueIndex, rec.getLong(recordIndex));
+    }
 }

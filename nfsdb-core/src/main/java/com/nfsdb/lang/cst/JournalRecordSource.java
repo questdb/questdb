@@ -14,22 +14,11 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.agg;
+package com.nfsdb.lang.cst;
 
-import com.nfsdb.collections.mmap.MapValues;
-import com.nfsdb.factory.configuration.ColumnMetadata;
-import com.nfsdb.lang.cst.impl.qry.Record;
+import com.nfsdb.Journal;
+import com.nfsdb.lang.cst.impl.qry.JournalRecord;
 
-public class FirstDoubleAggregationFunction extends AbstractSingleColumnAggregatorFunction {
-
-    public FirstDoubleAggregationFunction(ColumnMetadata meta) {
-        super(meta);
-    }
-
-    @Override
-    public void calculate(Record rec, MapValues values) {
-        if (values.isNew()) {
-            values.putDouble(valueIndex, rec.getDouble(recordIndex));
-        }
-    }
+public interface JournalRecordSource extends RecordSource<JournalRecord> {
+    Journal getJournal();
 }

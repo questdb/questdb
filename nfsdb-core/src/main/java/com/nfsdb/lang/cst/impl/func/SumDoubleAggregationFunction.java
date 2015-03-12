@@ -14,20 +14,23 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.agg;
+package com.nfsdb.lang.cst.impl.func;
 
 import com.nfsdb.collections.mmap.MapValues;
 import com.nfsdb.factory.configuration.ColumnMetadata;
-import com.nfsdb.lang.cst.impl.qry.Record;
+import com.nfsdb.lang.cst.Record;
 
-public class LastLongAggregationFunction extends AbstractSingleColumnAggregatorFunction {
-
-    public LastLongAggregationFunction(ColumnMetadata meta) {
+public class SumDoubleAggregationFunction extends AbstractSingleColumnAggregatorFunction {
+    public SumDoubleAggregationFunction(ColumnMetadata meta) {
         super(meta);
     }
 
     @Override
     public void calculate(Record rec, MapValues values) {
-        values.putLong(valueIndex, rec.getLong(recordIndex));
+        if (values.isNew()) {
+            values.putDouble(valueIndex, rec.getDouble(recordIndex));
+        } else {
+            values.putDouble(valueIndex, values.getDouble(valueIndex) + rec.getDouble(recordIndex));
+        }
     }
 }

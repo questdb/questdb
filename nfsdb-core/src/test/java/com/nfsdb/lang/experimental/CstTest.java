@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,16 +24,15 @@ import com.nfsdb.collections.mmap.MultiMap;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.lang.cst.StatefulJournalSource;
+import com.nfsdb.lang.cst.JournalRecordSource;
+import com.nfsdb.lang.cst.Record;
+import com.nfsdb.lang.cst.RecordSource;
 import com.nfsdb.lang.cst.impl.join.NestedLoopLeftOuterJoin;
 import com.nfsdb.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.lang.cst.impl.jsrc.StatefulJournalSourceImpl;
 import com.nfsdb.lang.cst.impl.ksrc.SingleKeySource;
 import com.nfsdb.lang.cst.impl.psrc.JournalPartitionSource;
 import com.nfsdb.lang.cst.impl.qry.JournalRecord;
-import com.nfsdb.lang.cst.impl.qry.JournalRecordSource;
-import com.nfsdb.lang.cst.impl.qry.Record;
-import com.nfsdb.lang.cst.impl.qry.RecordSource;
 import com.nfsdb.lang.cst.impl.ref.MutableIntVariableSource;
 import com.nfsdb.lang.cst.impl.ref.StringRef;
 import com.nfsdb.lang.cst.impl.ref.SymbolXTabVariableSource;
@@ -99,13 +98,13 @@ public class CstTest {
         Journal<Quote> slave = factory.reader(Quote.class, "q", c);
 
         StringRef sym = new StringRef("sym");
-        StatefulJournalSource m;
+        StatefulJournalSourceImpl m;
         RecordSource<? extends Record> src = new NestedLoopLeftOuterJoin(
                 m = new StatefulJournalSourceImpl(
                         new JournalSourceImpl(new JournalPartitionSource(master, false), new AllRowSource())
                 )
                 ,
-                new JournalSourceImpl(new JournalPartitionSource(slave, false), new KvIndexTopRowSource(sym, new SingleKeySource(new SymbolXTabVariableSource(m, "sym", "sym")), null))
+                new JournalSourceImpl(new JournalPartitionSource(slave, false), new KvIndexTopRowSource(sym, new SingleKeySource(new SymbolXTabVariableSource(m.getMetadata(), "sym", "sym", m)), null))
         );
 
         long count = 0;
@@ -139,13 +138,13 @@ public class CstTest {
         Journal<Quote> slave = factory.reader(Quote.class, "q2", c);
 
         StringRef sym = new StringRef("sym");
-        StatefulJournalSource m;
+        StatefulJournalSourceImpl m;
         RecordSource<? extends Record> src = new NestedLoopLeftOuterJoin(
                 m = new StatefulJournalSourceImpl(
                         new JournalSourceImpl(new JournalPartitionSource(master, false), new AllRowSource())
                 )
                 ,
-                new JournalSourceImpl(new JournalPartitionSource(slave, false), new KvIndexHeadRowSource(sym, new SingleKeySource(new SymbolXTabVariableSource(m, "sym", "sym")), 1000, 0, null))
+                new JournalSourceImpl(new JournalPartitionSource(slave, false), new KvIndexHeadRowSource(sym, new SingleKeySource(new SymbolXTabVariableSource(m.getMetadata(), "sym", "sym", m)), 1000, 0, null))
         );
 
         long count = 0;

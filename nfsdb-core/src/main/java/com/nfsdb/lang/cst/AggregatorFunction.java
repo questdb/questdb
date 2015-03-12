@@ -14,14 +14,14 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.agg;
+package com.nfsdb.lang.cst;
 
 import com.nfsdb.collections.mmap.MapValues;
 import com.nfsdb.factory.configuration.ColumnMetadata;
-import com.nfsdb.lang.cst.impl.qry.Record;
-import com.nfsdb.lang.cst.impl.qry.RecordSource;
 
 public interface AggregatorFunction {
+
+    void calculate(Record rec, MapValues values);
 
     /**
      * Columns that aggregation function writes out. Out of {#ColumnMetadata} objects
@@ -41,13 +41,6 @@ public interface AggregatorFunction {
     ColumnMetadata[] getColumns();
 
     /**
-     * Callback to give implementation opportunity to resolve column names to their indexes.
-     *
-     * @param source record source
-     */
-    void prepareSource(RecordSource<? extends Record> source);
-
-    /**
      * When calculating values implementing classes will be sharing columns of {#Record}. Each
      * aggregator columns indexes need to be mapped into space of "record" column indexes. This
      * is done once when aggregator is prepared. Implementing class must maintain column mapping
@@ -64,5 +57,10 @@ public interface AggregatorFunction {
      */
     void mapColumn(int k, int i);
 
-    void calculate(Record rec, MapValues values);
+    /**
+     * Callback to give implementation opportunity to resolve column names to their indexes.
+     *
+     * @param source record source
+     */
+    void prepareSource(RecordSource<? extends Record> source);
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,8 @@ import com.nfsdb.JournalWriter;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
+import com.nfsdb.lang.cst.Record;
+import com.nfsdb.lang.cst.RecordSource;
 import com.nfsdb.lang.cst.RowSource;
 import com.nfsdb.lang.cst.impl.fltr.DoubleGreaterThanRowFilter;
 import com.nfsdb.lang.cst.impl.fltr.SymbolEqualsRowFilter;
@@ -28,8 +30,6 @@ import com.nfsdb.lang.cst.impl.ksrc.PartialSymbolKeySource;
 import com.nfsdb.lang.cst.impl.ksrc.SymbolKeySource;
 import com.nfsdb.lang.cst.impl.psrc.IntervalPartitionSource;
 import com.nfsdb.lang.cst.impl.psrc.JournalPartitionSource;
-import com.nfsdb.lang.cst.impl.qry.Record;
-import com.nfsdb.lang.cst.impl.qry.RecordSource;
 import com.nfsdb.lang.cst.impl.ref.StringRef;
 import com.nfsdb.lang.cst.impl.rsrc.FilteredRowSource;
 import com.nfsdb.lang.cst.impl.rsrc.KvIndexHeadRowSource;

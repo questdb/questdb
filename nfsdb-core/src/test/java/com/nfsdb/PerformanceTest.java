@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,14 +18,14 @@ package com.nfsdb;
 
 import com.nfsdb.collections.DirectLongList;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.lang.cst.JournalRecordSource;
+import com.nfsdb.lang.cst.Record;
+import com.nfsdb.lang.cst.RecordSource;
 import com.nfsdb.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.lang.cst.impl.ksrc.PartialSymbolKeySource;
 import com.nfsdb.lang.cst.impl.psrc.IntervalPartitionSource;
 import com.nfsdb.lang.cst.impl.psrc.JournalPartitionSource;
 import com.nfsdb.lang.cst.impl.qry.JournalRecord;
-import com.nfsdb.lang.cst.impl.qry.JournalRecordSource;
-import com.nfsdb.lang.cst.impl.qry.Record;
-import com.nfsdb.lang.cst.impl.qry.RecordSource;
 import com.nfsdb.lang.cst.impl.ref.StringRef;
 import com.nfsdb.lang.cst.impl.rsrc.KvIndexRowSource;
 import com.nfsdb.logging.Logger;
