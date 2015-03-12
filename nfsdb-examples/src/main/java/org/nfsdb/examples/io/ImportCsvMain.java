@@ -36,8 +36,11 @@ public class ImportCsvMain {
 
         JournalFactory factory = new JournalFactory(databaseLocation);
         long t = System.currentTimeMillis();
+
         ImportManager.importFile(factory, from, format, importSchema);
+
         Journal r = factory.reader(new File(from).getName());
+
         System.out.println(r.getMetadata());
         System.out.println("Loaded " + r.size() + " rows in " + (System.currentTimeMillis() - t) + "ms");
     }

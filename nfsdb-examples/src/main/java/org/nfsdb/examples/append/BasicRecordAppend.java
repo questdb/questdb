@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,6 +45,7 @@ public class BasicRecordAppend {
             $(Quote.class)
                     .location("quote")
                     .$ts() // tell factory that Quote has "timestamp" column. If column is called differently you can pass its name
+            // journal will enforce ascending order in that column
             ;
         }}.build(journalLocation))) {
 

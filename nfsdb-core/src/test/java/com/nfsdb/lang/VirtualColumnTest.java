@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,8 @@ import com.nfsdb.JournalWriter;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
+import com.nfsdb.lang.cst.Record;
+import com.nfsdb.lang.cst.RecordSource;
 import com.nfsdb.lang.cst.impl.virt.*;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.test.tools.AbstractTest;
@@ -158,6 +160,141 @@ public class VirtualColumnTest extends AbstractTest {
                 "XGZMDJTHMH\t-670.500000000000\t-658.000000000000\n" +
                 "VZHCNXZEQG\t-524.507812500000\t-512.007812500000\n" +
                 "LUCFTLNKYT\t0.000000001835\t12.500000001835\n";
+
+        Assert.assertEquals(expected, sink.toString());
+    }
+
+    @Test
+    public void testSelectedColumns() throws Exception {
+
+        JournalWriter w = factory.writer(new JournalStructure("xyz") {{
+            $str("ccy");
+            $double("bid");
+        }});
+
+        Rnd rnd = new Rnd();
+
+        for (int i = 0; i < 100; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            ew.putStr(0, rnd.nextString(10));
+            ew.putDouble(1, rnd.nextDouble());
+            ew.append();
+        }
+        w.commit();
+
+        StringSink sink = new StringSink();
+        RecordSourcePrinter p = new RecordSourcePrinter(sink);
+        RecordSource<? extends Record> src = new SelectedColumnsRecordSource(
+                new VirtualColumnRecordSource(w.rows(), new ArrayList<VirtualColumn>() {{
+                    add(new PlusDoubleColumn("plus", new ConcreteColumn("bid", ColumnType.DOUBLE), new ConstDoubleColumn(null, 12.5d)));
+                }}),
+                new ArrayList<String>() {{
+                    add("ccy");
+                    add("plus");
+                }});
+
+        p.print(src);
+
+        final String expected = "VTJWCPSWHY\t-91.521850585938\n" +
+                "PEHNRXGZSX\t12.500020634160\n" +
+                "IBBTGPGWFF\t12.500000567185\n" +
+                "DEYYQEHBHF\t12.500000401164\n" +
+                "LPDXYSBEOU\t396.572387695313\n" +
+                "SHRUEDRQQU\t121.855468750000\n" +
+                "FJGETJRSZS\t211.250000000000\n" +
+                "RFBVTMHGOO\t185.296875000000\n" +
+                "VDZJMYICCX\t-1011.500000000000\n" +
+                "UICWEKGHVU\t12.500425009843\n" +
+                "DOTSEDYYCT\t569.500000000000\n" +
+                "OLYXWCKYLS\t12.500553289865\n" +
+                "DSWUGSHOLN\t-1000.967773437500\n" +
+                "IQBZXIOVIK\t524.500000000000\n" +
+                "MSSUQSRLTK\t12.500000776007\n" +
+                "SJOJIPHZEP\t187.274871826172\n" +
+                "VLTOVLJUML\t-64.928833007813\n" +
+                "HMLLEOYPHR\t12.500327562877\n" +
+                "ZIMNZZRMFM\t251.132812500000\n" +
+                "ZGHWVDKFLO\t12.500102697388\n" +
+                "OXPKRGIIHY\t140.500000000000\n" +
+                "OQMYSSMPGL\t-131.921875000000\n" +
+                "HNZHZSQLDG\t844.500000000000\n" +
+                "GIFOUSZMZV\t-187.500000000000\n" +
+                "BNDCQCEHNO\t15.102588653564\n" +
+                "ELLKKHTWNW\t12.500969694171\n" +
+                "FLRBROMNXK\t12.500000548919\n" +
+                "ZULIGYVFZF\t-314.750000000000\n" +
+                "ZLUOGXHFVW\t12.500002116648\n" +
+                "SRGOONFCLT\t322.601058959961\n" +
+                "KFMQNTOGMX\t12.500012478828\n" +
+                "LGMXSLUQDY\t12.500013214448\n" +
+                "HNIMYFFDTN\t12.500000001910\n" +
+                "FLPBNHGZWW\t707.673828125000\n" +
+                "NGTNLEGPUH\t12.705350898206\n" +
+                "UGGLNYRZLC\t650.500000000000\n" +
+                "MIGQZVKHTL\t12.500000040298\n" +
+                "SLQVFGPPRG\t-1011.500000000000\n" +
+                "BHYSBQYMIZ\t17.836447119713\n" +
+                "VTNPIWZNFK\t12.500000012570\n" +
+                "VMCGFNWGRM\t-115.500000000000\n" +
+                "GIJYDVRVNG\t12.500000052204\n" +
+                "EQODRZEIWF\t-18.500000000000\n" +
+                "KYHQQUWQOE\t892.500000000000\n" +
+                "NEBQQEMXDK\t38.339271545410\n" +
+                "JCTIZKYFLU\t780.500000000000\n" +
+                "QSNPXMKJSM\t12.504184104619\n" +
+                "XEYVTUPDHH\t858.323730468750\n" +
+                "IWHPZRHHMG\t49.850353240967\n" +
+                "YYFLSVIHDW\t-387.500000000000\n" +
+                "EVMLKCJBEV\t12.500000914462\n" +
+                "HLIHYBTVZN\t12.500001439041\n" +
+                "NXFSUWPNXH\t-187.148437500000\n" +
+                "TZODWKOCPF\t12.502563251997\n" +
+                "PVKNCBWLNL\t12.897523656487\n" +
+                "WQXYPOVFDB\t21.450848102570\n" +
+                "NIJEEHRUGP\t460.500000000000\n" +
+                "BTKVSBEGMI\t403.500000000000\n" +
+                "NLKFNUHNRJ\t12.500000048669\n" +
+                "BWVLOMPBET\t12.500038398017\n" +
+                "KRIVOCUGPU\t15.429819107056\n" +
+                "FIVQFNIZOS\t827.500000000000\n" +
+                "SEPGIUQZHE\t12.517051883508\n" +
+                "QHNOJIGFIN\t613.587127685547\n" +
+                "QVZWEVQTQO\t-479.500000000000\n" +
+                "XTPNHTDCEB\t-953.500000000000\n" +
+                "XBBZVRLPTY\t83.310325622559\n" +
+                "GYFUXCDKDW\t12.500837845349\n" +
+                "DXCBJFRPXZ\t12.500008696692\n" +
+                "XUNYQXTGNJ\t18.859375000000\n" +
+                "LLEYMIWTCW\t804.742187500000\n" +
+                "ORGFIEVMKP\t-713.500000000000\n" +
+                "GPYKKBMQMU\t12.500000000000\n" +
+                "CIHCNPUGJO\t-749.740234375000\n" +
+                "EUKWMDNZZB\t12.500000031117\n" +
+                "KOJSOLDYRO\t564.500000000000\n" +
+                "PUNRPSMIFD\t86.447616577148\n" +
+                "DKOEZBRQSQ\t-723.500000000000\n" +
+                "DIHHNSSTCR\t12.500002963134\n" +
+                "PVQFULMERT\t12.500005817310\n" +
+                "QBUYZVQQHS\t12.500000011688\n" +
+                "PZPBHLNEJR\t-991.125000000000\n" +
+                "IKDISGQFYQ\t364.009208679199\n" +
+                "GPZNYVLTPK\t12.500702012621\n" +
+                "QFNPOYNNCT\t12.500445737198\n" +
+                "NSXHHDILEL\t12.501584486396\n" +
+                "MMZSCJOUOU\t655.365234375000\n" +
+                "ENFELWWRSL\t-921.768554687500\n" +
+                "QHGJBFQBBK\t116.408081054688\n" +
+                "JZZYNPPBXB\t-931.500000000000\n" +
+                "RIIYMHOWKC\t12.500000542615\n" +
+                "ZNLCNGZTOY\t12.500080315222\n" +
+                "XRSFPVRQLG\t12.500000093226\n" +
+                "ONNLITWGLF\t12.500000000000\n" +
+                "QWPKLHTIIG\t-771.250000000000\n" +
+                "YYPDVRGRQG\t12.500376001219\n" +
+                "PHKOWBVDEG\t12.500002666791\n" +
+                "XGZMDJTHMH\t-658.000000000000\n" +
+                "VZHCNXZEQG\t-512.007812500000\n" +
+                "LUCFTLNKYT\t12.500000001835\n";
 
         Assert.assertEquals(expected, sink.toString());
     }

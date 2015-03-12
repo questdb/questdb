@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.nfsdb.examples.iterate;
+package org.nfsdb.examples.query;
 
 import com.nfsdb.Journal;
 import com.nfsdb.JournalWriter;

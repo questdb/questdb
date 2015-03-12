@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,12 @@ import com.nfsdb.storage.SymbolTable;
 public interface RecordMetadata {
     int getColumnCount();
 
+    /**
+     * Finds index of column by given name. If name is invalid a JournalRuntimeException is thrown.
+     *
+     * @param name column name
+     * @return column index between 0 and getColumnCount()-1
+     */
     int getColumnIndex(CharSequence name);
 
     String getColumnName(int index);
