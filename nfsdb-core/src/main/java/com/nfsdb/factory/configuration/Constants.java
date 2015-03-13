@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ package com.nfsdb.factory.configuration;
 
 public class Constants {
     public static final String TEMP_DIRECTORY_PREFIX = "temp";
-    public static final String JOURNAL_META_FILE = "_meta";
     public static final int NULL_RECORD_HINT = 0;
     public static final int DEFAULT_STRING_AVG_SIZE = 12;
     public static final int HB_HINT = 16;

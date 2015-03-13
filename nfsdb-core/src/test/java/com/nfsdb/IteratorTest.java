@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -152,31 +152,6 @@ public class IteratorTest extends AbstractTest {
         Journal<Quote> r2 = factory.reader(Quote.class);
         try (ConcurrentIterator<Quote> it = r.concurrentIterator()) {
             TestUtils.assertEquals(r2.bufferedIterator(), it);
-        }
-    }
-
-    @Test
-    public void testJournalRowIterator() throws Exception {
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-        TestUtils.generateQuoteData(w, 1000);
-
-        JournalIterator<Quote> expected = w.bufferedIterator();
-        JournalRowBufferedIterator<Quote> actual = w.bufferedRowIterator();
-
-        while (true) {
-            boolean expectedHasNext = expected.hasNext();
-            boolean actualHasNext = actual.hasNext();
-
-            Assert.assertEquals(expectedHasNext, actualHasNext);
-
-            if (!expectedHasNext) {
-                break;
-            }
-
-            Quote e = expected.next();
-            JournalRow<Quote> a = actual.next();
-
-            Assert.assertEquals(e, a.getObject());
         }
     }
 

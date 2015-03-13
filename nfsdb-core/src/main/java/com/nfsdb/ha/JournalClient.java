@@ -151,7 +151,7 @@ public class JournalClient {
         }
     }
 
-    public <T> void subscribe(Class<T> clazz) throws JournalException {
+    public <T> void subscribe(Class<T> clazz) {
         subscribe(clazz, (TxListener) null);
     }
 

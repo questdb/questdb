@@ -31,7 +31,6 @@ import com.nfsdb.query.AbstractResultSetBuilder;
 import com.nfsdb.query.api.Query;
 import com.nfsdb.query.iterator.ConcurrentIterator;
 import com.nfsdb.query.iterator.JournalPeekingIterator;
-import com.nfsdb.query.iterator.JournalRowBufferedIterator;
 import com.nfsdb.query.spi.QueryImpl;
 import com.nfsdb.storage.*;
 import com.nfsdb.utils.Dates;
@@ -90,10 +89,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
 
     public JournalPeekingIterator<T> bufferedIterator() {
         return query().all().bufferedIterator();
-    }
-
-    public JournalRowBufferedIterator<T> bufferedRowIterator() {
-        return query().all().bufferedRowIterator();
     }
 
     /**

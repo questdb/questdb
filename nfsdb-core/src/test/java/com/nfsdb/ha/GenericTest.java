@@ -42,7 +42,7 @@ import java.util.concurrent.TimeUnit;
 public class GenericTest extends AbstractTest {
 
     @Rule
-    public JournalTestFactory factory2 = new JournalTestFactory(new JournalConfigurationBuilder().build(Files.makeTempDir()));
+    public final JournalTestFactory factory2 = new JournalTestFactory(new JournalConfigurationBuilder().build(Files.makeTempDir()));
 
     @Test
     public void testClassToGenericPublish() throws Exception {

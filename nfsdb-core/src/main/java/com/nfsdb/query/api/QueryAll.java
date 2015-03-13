@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,6 @@ import com.nfsdb.query.OrderedResultSet;
 import com.nfsdb.query.iterator.ConcurrentIterator;
 import com.nfsdb.query.iterator.JournalIterator;
 import com.nfsdb.query.iterator.JournalPeekingIterator;
-import com.nfsdb.query.iterator.JournalRowBufferedIterator;
 import com.nfsdb.utils.Interval;
 
 public interface QueryAll<T> extends Iterable<T> {
@@ -33,8 +32,6 @@ public interface QueryAll<T> extends Iterable<T> {
     JournalPeekingIterator<T> bufferedIterator(Interval interval);
 
     JournalPeekingIterator<T> bufferedIterator(long rowid);
-
-    JournalRowBufferedIterator<T> bufferedRowIterator();
 
     ConcurrentIterator<T> concurrentIterator();
 

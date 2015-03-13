@@ -24,7 +24,7 @@ import java.util.List;
 public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record> implements GenericRecordSource, RecordSourceState {
     private final RecordSource<? extends Record> delegate;
     private final RecordMetadata metadata;
-    private VirtualRecord current;
+    private final VirtualRecord current;
 
 
     public VirtualColumnRecordSource(RecordSource<? extends Record> delegate, List<VirtualColumn> virtualColumns) {

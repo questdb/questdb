@@ -42,14 +42,14 @@ import java.net.InetSocketAddress;
 
 public class JournalServerAgentTest extends AbstractTest {
 
+    @Rule
+    public final TemporaryFolder temp = new TemporaryFolder();
     private final CommandProducer commandProducer = new CommandProducer();
     private final CommandConsumer commandConsumer = new CommandConsumer();
     private final SetKeyRequestProducer setKeyRequestProducer = new SetKeyRequestProducer();
     private final StringResponseConsumer stringResponseConsumer = new StringResponseConsumer();
     private final JournalClientStateProducer journalClientStateProducer = new JournalClientStateProducer();
     private final IntResponseConsumer intResponseConsumer = new IntResponseConsumer();
-    @Rule
-    public TemporaryFolder temp = new TemporaryFolder();
     private MockByteChannel channel;
     private JournalWriter<Quote> quoteWriter;
     private JournalWriter<Trade> tradeWriter;

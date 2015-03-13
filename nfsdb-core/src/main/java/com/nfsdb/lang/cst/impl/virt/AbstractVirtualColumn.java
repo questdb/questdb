@@ -27,9 +27,8 @@ import java.util.NoSuchElementException;
 
 public abstract class AbstractVirtualColumn implements VirtualColumn {
     private final String name;
-    private final ColumnType type;
     protected RecordSourceState state;
-    protected RecordMetadata metadata;
+    private ColumnType type;
 
     public AbstractVirtualColumn(String name, ColumnType type) {
         this.name = name;
@@ -39,7 +38,6 @@ public abstract class AbstractVirtualColumn implements VirtualColumn {
     @Override
     public void configure(RecordMetadata metadata, RecordSourceState state) {
         this.state = state;
-        this.metadata = metadata;
     }
 
     @Override
@@ -115,5 +113,9 @@ public abstract class AbstractVirtualColumn implements VirtualColumn {
     @Override
     public ColumnType getType() {
         return type;
+    }
+
+    protected void setType(ColumnType type) {
+        this.type = type;
     }
 }
