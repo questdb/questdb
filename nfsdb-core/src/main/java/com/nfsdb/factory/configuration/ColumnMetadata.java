@@ -19,7 +19,9 @@ package com.nfsdb.factory.configuration;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.HugeBuffer;
 import com.nfsdb.storage.SymbolTable;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+@SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
 public class ColumnMetadata {
     public String name;
     public ColumnType type;
@@ -60,8 +62,7 @@ public class ColumnMetadata {
         result = 31 * result + indexBitHint;
         result = 31 * result + distinctCountHint;
         result = 31 * result + (sameAs != null ? sameAs.hashCode() : 0);
-        result = 31 * result + (noCache ? 1 : 0);
-        return result;
+        return 31 * result + (noCache ? 1 : 0);
     }
 
     @Override

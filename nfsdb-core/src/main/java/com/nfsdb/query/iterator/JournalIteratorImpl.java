@@ -68,7 +68,7 @@ public class JournalIteratorImpl<T> extends AbstractImmutableIterator<T> impleme
 
     @Override
     public boolean isEmpty() {
-        return ranges == null || ranges.size() == 0;
+        return ranges == null || ranges.isEmpty();
     }
 
     @Override

@@ -18,6 +18,7 @@ package com.nfsdb.ha.krb;
 
 import com.nfsdb.utils.Base64;
 import com.nfsdb.utils.Files;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.*;
 import java.net.URL;
@@ -52,6 +53,7 @@ public class SSOServiceTokenEncoder implements Closeable {
         }
     }
 
+    @SuppressFBWarnings({"COMMAND_INJECTION"})
     public byte[] encodeServiceToken(String serviceName) throws IOException {
 
         if (!isAvailable()) {
@@ -79,6 +81,7 @@ public class SSOServiceTokenEncoder implements Closeable {
         return osName != null && osName.startsWith("Windows") && "amd64".equals(osArch);
     }
 
+    @SuppressFBWarnings({"PATH_TRAVERSAL_IN"})
     private static void copy(String resource, File dir) throws IOException {
         URL url = SSOServiceTokenEncoder.class.getResource(resource);
         if (url == null) {

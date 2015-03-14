@@ -26,6 +26,7 @@ import com.nfsdb.logging.Logger;
 import com.nfsdb.storage.Tx;
 import com.nfsdb.utils.Lists;
 import com.nfsdb.utils.Rows;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.nio.channels.WritableByteChannel;
 import java.util.ArrayList;
@@ -112,6 +113,7 @@ public class JournalDeltaProducer implements ChannelProducer {
         journal.expireOpenFiles();
     }
 
+    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     private void configure0(Tx tx) throws JournalException {
         if (LOGGER.isDebugEnabled()) {
             LOGGER.debug("Journal %s size: %d", journal.getLocation(), journal.size());

@@ -56,7 +56,7 @@ public class ObjIntHashMap<V> implements Iterable<ObjIntHashMap.Entry<V>> {
         clear();
     }
 
-    public void clear() {
+    public final void clear() {
         Arrays.fill(keys, FREE);
     }
 

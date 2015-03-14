@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.nfsdb.lang.parser;
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.collections.IntObjHashMap;
 import com.nfsdb.utils.ByteBuffers;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -32,31 +33,16 @@ public class TokenStream extends AbstractImmutableIterator<String> {
     private ByteBuffer buffer;
     private String next = null;
 
-    public void setContent(String s) {
-        if (s == null || s.length() == 0 && buffer != null) {
-            buffer.limit(0);
-            return;
-        }
-
-        if (buffer == null || buffer.capacity() < s.length() * 2) {
-            buffer = ByteBuffer.allocate(s.length() * 2);
-        } else {
-            buffer.limit(s.length() * 2);
-        }
-        buffer.rewind();
-        ByteBuffers.putStr(buffer, s);
-        buffer.rewind();
-    }
-
     public void defineSymbol(String text) {
         defineSymbol(new Token(text));
     }
 
     public void defineSymbol(Token token) {
-        List<Token> l = symbols.get(token.text.charAt(0));
+        char c0 = token.text.charAt(0);
+        List<Token> l = symbols.get(c0);
         if (l == null) {
             l = new ArrayList<>();
-            symbols.put(token.text.charAt(0), l);
+            symbols.put(c0, l);
         }
         l.add(token);
         Collections.sort(l, new Comparator<Token>() {
@@ -67,6 +53,7 @@ public class TokenStream extends AbstractImmutableIterator<String> {
         });
     }
 
+    @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public Token getSymbol(char c) {
 
         List<Token> l = symbols.get(c);
@@ -159,6 +146,22 @@ public class TokenStream extends AbstractImmutableIterator<String> {
             }
         }
         return s.toString();
+    }
+
+    public void setContent(String s) {
+        if ((s == null || s.length() == 0) && buffer != null) {
+            buffer.limit(0);
+            return;
+        }
+
+        if (buffer == null || buffer.capacity() < s.length() * 2) {
+            buffer = ByteBuffer.allocate(s.length() * 2);
+        } else {
+            buffer.limit(s.length() * 2);
+        }
+        buffer.rewind();
+        ByteBuffers.putStr(buffer, s);
+        buffer.rewind();
     }
 
     private String token(char c) {

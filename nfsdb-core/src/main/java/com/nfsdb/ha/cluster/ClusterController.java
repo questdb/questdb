@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ import com.nfsdb.ha.config.ClientConfig;
 import com.nfsdb.ha.config.ServerConfig;
 import com.nfsdb.ha.config.ServerNode;
 import com.nfsdb.logging.Logger;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import javax.annotation.Nonnull;
 import java.util.List;
@@ -204,6 +205,7 @@ public class ClusterController {
 
     }
 
+    @SuppressFBWarnings({"MDM_THREAD_YIELD"})
     private void vote(boolean startup) throws JournalNetworkException {
 
         // this method can be called during both, standalone start and cluster re-vote

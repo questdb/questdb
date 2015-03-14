@@ -22,12 +22,14 @@ import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.factory.configuration.MetadataBuilder;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.File;
 
 public class JournalFactory extends AbstractJournalReaderFactory implements JournalReaderFactory, JournalWriterFactory, Closeable {
 
+    @SuppressFBWarnings({"SCII_SPOILED_CHILD_INTERFACE_IMPLEMENTOR"})
     public JournalFactory(String journalBase) {
         super(new JournalConfigurationBuilder().build(journalBase));
     }

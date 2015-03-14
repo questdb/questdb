@@ -21,7 +21,10 @@ import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.ha.JournalClient;
 import com.nfsdb.ha.auth.CredentialProvider;
 import com.nfsdb.storage.TxListener;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.nfsdb.examples.model.Price;
+
+import java.io.UnsupportedEncodingException;
 
 /**
  * Single journal replication client example.
@@ -32,8 +35,9 @@ public class AuthReplicationClientMain {
     public static void main(String[] args) throws Exception {
         JournalFactory factory = new JournalFactory(args[0]);
         final JournalClient client = new JournalClient(factory, new CredentialProvider() {
+            @SuppressFBWarnings({"BED_BOGUS_EXCEPTION_DECLARATION"})
             @Override
-            public byte[] createToken() throws Exception {
+            public byte[] createToken() throws UnsupportedEncodingException {
                 return "MY SECRET".getBytes("UTF8");
             }
         });

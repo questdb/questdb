@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,24 +45,8 @@ public class IntIntHashMap {
         clear();
     }
 
-    @SuppressWarnings({"unchecked"})
-    protected void rehash() {
-
-        int newCapacity = Primes.next(values.length << 1);
-
-        free = (int) (newCapacity * loadFactor);
-
-        int[] oldValues = values;
-        int[] oldKeys = keys;
-        this.keys = new int[newCapacity];
-        this.values = new int[newCapacity];
-        Arrays.fill(values, 0, values.length, FREE);
-
-        for (int i = oldKeys.length; i-- > 0; ) {
-            if (oldValues[i] != FREE) {
-                insertKey(oldKeys[i], oldValues[i]);
-            }
-        }
+    public final void clear() {
+        Arrays.fill(values, FREE);
     }
 
     public int get(int key) {
@@ -71,15 +55,6 @@ public class IntIntHashMap {
             return values[index];
         }
         return probe(key, index);
-    }
-
-    private int probe(int key, int index) {
-        do {
-            index = (index + 1) % keys.length;
-            if (values[index] == FREE || keys[index] == key) {
-                return values[index];
-            }
-        } while (true);
     }
 
     public int put(int key, int value) {
@@ -108,6 +83,15 @@ public class IntIntHashMap {
         return probeInsert(key, index, value);
     }
 
+    private int probe(int key, int index) {
+        do {
+            index = (index + 1) % keys.length;
+            if (values[index] == FREE || keys[index] == key) {
+                return values[index];
+            }
+        } while (true);
+    }
+
     private int probeInsert(int key, int index, int value) {
         do {
             index = (index + 1) % keys.length;
@@ -126,7 +110,23 @@ public class IntIntHashMap {
         } while (true);
     }
 
-    public void clear() {
-        Arrays.fill(values, FREE);
+    @SuppressWarnings({"unchecked"})
+    protected void rehash() {
+
+        int newCapacity = Primes.next(values.length << 1);
+
+        free = (int) (newCapacity * loadFactor);
+
+        int[] oldValues = values;
+        int[] oldKeys = keys;
+        this.keys = new int[newCapacity];
+        this.values = new int[newCapacity];
+        Arrays.fill(values, 0, values.length, FREE);
+
+        for (int i = oldKeys.length; i-- > 0; ) {
+            if (oldValues[i] != FREE) {
+                insertKey(oldKeys[i], oldValues[i]);
+            }
+        }
     }
 }

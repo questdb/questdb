@@ -37,9 +37,7 @@ public class IndexedJournalKey {
 
     @Override
     public int hashCode() {
-        int result = key.hashCode();
-        result = 31 * result + index;
-        return result;
+        return 31 * key.hashCode() + index;
     }
 
     @Override

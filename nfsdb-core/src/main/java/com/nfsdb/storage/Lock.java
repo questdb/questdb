@@ -19,6 +19,7 @@ package com.nfsdb.storage;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.logging.Logger;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.io.IOException;
@@ -37,6 +38,7 @@ public final class Lock {
     private File lockName;
     private File location;
 
+    @SuppressFBWarnings({"PATH_TRAVERSAL_IN"})
     Lock(File location, boolean shared) throws JournalException {
 
         try {

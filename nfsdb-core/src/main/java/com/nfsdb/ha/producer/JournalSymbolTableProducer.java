@@ -22,7 +22,6 @@ import com.nfsdb.ha.ChannelProducer;
 import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.storage.Tx;
 import com.nfsdb.utils.ByteBuffers;
-import com.nfsdb.utils.Lists;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -37,13 +36,11 @@ public class JournalSymbolTableProducer implements ChannelProducer {
     private boolean hasContent = false;
 
     public JournalSymbolTableProducer(Journal journal) {
-        Lists.advance(symbolTableProducers, journal.getSymbolTableCount() - 1);
-        Lists.advance(symbolTables, journal.getSymbolTableCount() - 1);
-
-        for (int i = 0, sz = journal.getSymbolTableCount(); i < sz; i++) {
+        int tabCount = journal.getSymbolTableCount();
+        for (int i = 0; i < tabCount; i++) {
             SymbolTable tab = journal.getSymbolTable(i);
-            symbolTables.set(i, tab);
-            symbolTableProducers.set(i, new VariableColumnDeltaProducer(tab.getDataColumn()));
+            symbolTables.add(tab);
+            symbolTableProducers.add(new VariableColumnDeltaProducer(tab.getDataColumn()));
         }
         buffer = ByteBuffer.allocateDirect(journal.getMetadata().getColumnCount()).order(ByteOrder.LITTLE_ENDIAN);
     }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.nfsdb.lang.cst.impl.qry;
 
+import com.nfsdb.Journal;
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.lang.cst.JournalRecordSource;
@@ -52,12 +53,13 @@ public abstract class AbstractJournalSource extends AbstractImmutableIterator<Jo
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return this;
+    public SymbolTable getSymbolTable(int index) {
+        Journal j = getJournal();
+        return j.getSymbolTable(j.getMetadata().getColumnMetadata(index).name);
     }
 
     @Override
-    public SymbolTable getSymbolTable(int index) {
-        return getJournal().getSymbolTable(getJournal().getMetadata().getColumnMetadata(index).name);
+    public RecordMetadata getMetadata() {
+        return this;
     }
 }

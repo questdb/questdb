@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ import com.nfsdb.logging.Logger;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Unsafe;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.lang.reflect.Constructor;
@@ -191,16 +192,6 @@ public class JournalStructure implements MetadataBuilder<Object> {
         return location;
     }
 
-    public JournalStructure key(String key) {
-        this.key = key;
-        return this;
-    }
-
-    public JournalStructure lag(long time, TimeUnit unit) {
-        this.lag = (int) unit.toHours(time);
-        return this;
-    }
-
     @Override
     public JournalStructure location(String location) {
         this.location = location;
@@ -213,6 +204,31 @@ public class JournalStructure implements MetadataBuilder<Object> {
         return this;
     }
 
+    public JournalStructure partitionBy(PartitionType type) {
+        if (type != PartitionType.DEFAULT) {
+            this.partitionBy = type;
+        }
+        return this;
+    }
+
+    public JournalStructure recordCountHint(int count) {
+        if (count > 0) {
+            this.recordCountHint = count;
+        }
+        return this;
+    }
+
+    public JournalStructure key(String key) {
+        this.key = key;
+        return this;
+    }
+
+    public JournalStructure lag(long time, TimeUnit unit) {
+        this.lag = (int) unit.toHours(time);
+        return this;
+    }
+
+    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS", "LEST_LOST_EXCEPTION_STACK_TRACE"})
     @SuppressWarnings("unchecked")
     public JournalMetadata map(Class clazz) {
         List<Field> classFields = getAllFields(new ArrayList<Field>(), clazz);
@@ -252,20 +268,6 @@ public class JournalStructure implements MetadataBuilder<Object> {
 
     public JournalStructure openFileTTL(long time, TimeUnit unit) {
         this.openFileTTL = unit.toMillis(time);
-        return this;
-    }
-
-    public JournalStructure partitionBy(PartitionType type) {
-        if (type != PartitionType.DEFAULT) {
-            this.partitionBy = type;
-        }
-        return this;
-    }
-
-    public JournalStructure recordCountHint(int count) {
-        if (count > 0) {
-            this.recordCountHint = count;
-        }
         return this;
     }
 

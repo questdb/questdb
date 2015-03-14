@@ -17,10 +17,12 @@
 package com.nfsdb.utils;
 
 import com.sun.management.OperatingSystemMXBean;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.lang.management.ManagementFactory;
 
 public final class Os {
+    @SuppressFBWarnings({"IICU_INCORRECT_INTERNAL_CLASS_USE", "IICU_INCORRECT_INTERNAL_CLASS_USE"})
     private static final OperatingSystemMXBean bean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
 
     private Os() {

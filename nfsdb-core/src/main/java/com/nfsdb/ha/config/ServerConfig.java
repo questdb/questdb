@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.nfsdb.ha.config;
 
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.logging.Logger;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;
 import java.net.*;
@@ -25,6 +26,7 @@ import java.nio.channels.ServerSocketChannel;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class ServerConfig extends NetworkConfig {
     public static final long SYNC_TIMEOUT = TimeUnit.SECONDS.toMillis(15);
     private static final long DEFAULT_HEARTBEAT_FREQUENCY = TimeUnit.SECONDS.toMillis(5);
@@ -53,6 +55,7 @@ public class ServerConfig extends NetworkConfig {
         throw new JournalNetworkException("Network interface " + ifn.getName() + " is down");
     }
 
+    @SuppressFBWarnings({"MDM_INETADDRESS_GETLOCALHOST"})
     public InetSocketAddress getSocketAddress(int instance) throws JournalNetworkException {
         ServerNode node = getNode(instance);
 
@@ -104,6 +107,7 @@ public class ServerConfig extends NetworkConfig {
         }
     }
 
+    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS", "MDM_INETADDRESS_GETLOCALHOST"})
     private NetworkInterface getMultiCastInterface0(int instance) throws JournalNetworkException {
         ServerNode node = getNode(instance);
 

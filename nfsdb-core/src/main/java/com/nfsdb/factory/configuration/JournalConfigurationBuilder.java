@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.nfsdb.factory.configuration;
 
 import com.nfsdb.exceptions.JournalConfigurationException;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -39,10 +40,12 @@ public class JournalConfigurationBuilder {
         return builder;
     }
 
+    @SuppressFBWarnings({"PATH_TRAVERSAL_IN"})
     public JournalConfiguration build(String journalBase) {
         return build(new File(journalBase));
     }
 
+    @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public JournalConfiguration build(File journalBase) {
         if (!journalBase.isDirectory()) {
             throw new JournalConfigurationException("Not a directory: %s", journalBase);

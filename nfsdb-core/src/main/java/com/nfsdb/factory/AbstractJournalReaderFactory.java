@@ -21,10 +21,12 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.storage.TxLog;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.File;
 
+@SuppressFBWarnings({"PATH_TRAVERSAL_IN"})
 public abstract class AbstractJournalReaderFactory implements JournalReaderFactory, Closeable {
 
     private final TimerCache timerCache;

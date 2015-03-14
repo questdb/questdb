@@ -18,7 +18,6 @@ package com.nfsdb.utils;
 
 import com.nfsdb.exceptions.JournalDisconnectedChannelException;
 import com.nfsdb.exceptions.JournalNetworkException;
-import sun.misc.Cleaner;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.IOException;
@@ -185,14 +184,9 @@ public final class ByteBuffers {
      * @return null if buffer is released or same buffer if release is not possible.
      */
     public static <T extends ByteBuffer> T release(final T buffer) {
-        if (buffer != null) {
-            if (buffer instanceof DirectBuffer) {
-                Cleaner cleaner = ((DirectBuffer) buffer).cleaner();
-                if (cleaner != null) {
-                    cleaner.clean();
-                    return null;
-                }
-            }
+        if (buffer instanceof DirectBuffer) {
+            ((DirectBuffer) buffer).cleaner().clean();
+            return null;
         }
         return buffer;
     }

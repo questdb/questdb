@@ -39,7 +39,7 @@ public class AbstractDirectList extends DirectMemoryStructure {
         add(that);
     }
 
-    public void add(AbstractDirectList that) {
+    public final void add(AbstractDirectList that) {
         int count = (int) (that.pos - that.start);
         if (limit - pos < count) {
             extend((int) (this.limit - this.start + count) >> 1);

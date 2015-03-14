@@ -21,15 +21,17 @@ import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.utils.Files;
+import com.nfsdb.utils.Rnd;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.nfsdb.examples.model.ModelConfiguration;
 import org.nfsdb.examples.model.Quote;
 
 import java.io.File;
-import java.util.Random;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+@SuppressFBWarnings({"SACM_STATIC_ARRAY_CREATED_IN_METHOD", "PREDICTABLE_RANDOM"})
 public class MultiplexAppend {
 
     /**
@@ -68,7 +70,7 @@ public class MultiplexAppend {
 
                     final int count = 2000000;
                     final String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
-                    final Random r = new Random(System.currentTimeMillis());
+                    final Rnd r = new Rnd();
 
                     long t = System.nanoTime();
                     for (int i = 0; i < count; i++) {

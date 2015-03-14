@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.utils.Files;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.nfsdb.examples.model.Quote;
 
 import java.io.File;
@@ -29,6 +30,7 @@ import java.util.Collections;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
+@SuppressFBWarnings({"SACM_STATIC_ARRAY_CREATED_IN_METHOD", "PREDICTABLE_RANDOM"})
 public class MergeAppendUnordered {
 
 

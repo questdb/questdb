@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,6 +41,7 @@ import com.nfsdb.ha.protocol.CommandProducer;
 import com.nfsdb.ha.protocol.Version;
 import com.nfsdb.ha.protocol.commands.*;
 import com.nfsdb.utils.Lists;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.net.SocketAddress;
@@ -49,6 +50,7 @@ import java.nio.channels.WritableByteChannel;
 import java.util.ArrayList;
 import java.util.List;
 
+@SuppressFBWarnings({"PL_PARALLEL_LISTS", "LII_LIST_INDEXED_ITERATING", "LII_LIST_INDEXED_ITERATING"})
 public class JournalServerAgent {
 
     private static final byte JOURNAL_INDEX_NOT_FOUND = -1;
@@ -152,19 +154,6 @@ public class JournalServerAgent {
         }
     }
 
-    private void log(ServerLogMsg.Level level, String msg) {
-        log(level, msg, null);
-    }
-
-    private void log(ServerLogMsg.Level level, String msg, Throwable e) {
-        server.getLogger().msg()
-                .setLevel(level)
-                .setSocketAddress(socketAddress)
-                .setMessage(msg)
-                .setException(e)
-                .send();
-    }
-
     private void authorize(WritableByteChannel channel, byte[] value) throws JournalNetworkException {
         if (!authorized) {
             try {
@@ -193,7 +182,6 @@ public class JournalServerAgent {
         }
     }
 
-
     private void checkProtocolVersion(ByteChannel channel, int version) throws JournalNetworkException {
         if (version == Version.PROTOCOL_VERSION) {
             ok(channel);
@@ -213,13 +201,6 @@ public class JournalServerAgent {
         JournalDeltaProducer producer = producers.get(index);
         if (producer == null) {
             producers.set(index, new JournalDeltaProducer(journal));
-        }
-    }
-
-    private void sendMetadata(WritableByteChannel channel, int index) throws JournalException, JournalNetworkException {
-        Journal r = readers.get(index);
-        try (HugeBufferProducer h = new HugeBufferProducer(new File(r.getLocation(), JournalConfiguration.FILE_NAME))) {
-            h.write(channel);
         }
     }
 
@@ -305,6 +286,19 @@ public class JournalServerAgent {
         return producers.get(index);
     }
 
+    private void log(ServerLogMsg.Level level, String msg) {
+        log(level, msg, null);
+    }
+
+    private void log(ServerLogMsg.Level level, String msg, Throwable e) {
+        server.getLogger().msg()
+                .setLevel(level)
+                .setSocketAddress(socketAddress)
+                .setMessage(msg)
+                .setException(e)
+                .send();
+    }
+
     private void ok(WritableByteChannel channel) throws JournalNetworkException {
         stringResponseProducer.write(channel, "OK");
     }
@@ -350,6 +344,13 @@ public class JournalServerAgent {
             }
         }
         return dataSent;
+    }
+
+    private void sendMetadata(WritableByteChannel channel, int index) throws JournalException, JournalNetworkException {
+        Journal r = readers.get(index);
+        try (HugeBufferProducer h = new HugeBufferProducer(new File(r.getLocation(), JournalConfiguration.FILE_NAME))) {
+            h.write(channel);
+        }
     }
 
     @SuppressWarnings("unchecked")

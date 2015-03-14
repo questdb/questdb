@@ -17,6 +17,7 @@
 package com.nfsdb.ha.bridge;
 
 import com.lmax.disruptor.*;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
@@ -32,6 +33,7 @@ public class TimeoutBlockingWaitStrategy implements WaitStrategy {
         timeoutInNanos = units.toNanos(timeout);
     }
 
+    @SuppressFBWarnings({"MDM_THREAD_YIELD"})
     @Override
     public long waitFor(final long sequence,
                         final Sequence cursorSequence,

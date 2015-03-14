@@ -17,6 +17,7 @@
 package com.nfsdb.ha.config;
 
 import com.nfsdb.exceptions.JournalNetworkException;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
@@ -145,15 +146,17 @@ public class SslConfig {
         return keyStore;
     }
 
+    @SuppressFBWarnings({"WEAK_TRUST_MANAGER", "BED_BOGUS_EXCEPTION_DECLARATION"})
     private final static class AllowAllTrustManager implements X509TrustManager {
         @Override
-        public void checkClientTrusted(X509Certificate[] x509Certificates, String s) throws CertificateException {
+        public void checkClientTrusted(X509Certificate[] x509Certificates, String s) {
         }
 
         @Override
-        public void checkServerTrusted(X509Certificate[] x509Certificates, String s) throws CertificateException {
+        public void checkServerTrusted(X509Certificate[] x509Certificates, String s) {
         }
 
+        @SuppressFBWarnings({"WEAK_TRUST_MANAGER"})
         @Override
         public X509Certificate[] getAcceptedIssuers() {
             return new X509Certificate[0];

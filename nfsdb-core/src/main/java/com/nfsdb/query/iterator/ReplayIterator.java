@@ -21,6 +21,7 @@ import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.query.iterator.clock.Clock;
 import com.nfsdb.query.iterator.clock.MilliClock;
 import com.nfsdb.utils.Unsafe;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.Iterator;
 
@@ -33,6 +34,7 @@ public class ReplayIterator<T> extends AbstractImmutableIterator<T> {
     private long lastObjTicks;
     private long lastTicks;
 
+    @SuppressFBWarnings({"OCP_OVERLY_CONCRETE_PARAMETER"})
     @SuppressWarnings("unchecked")
     public ReplayIterator(final Journal journal, float speed) {
         this((JournalIterator<T>) journal.iterator(), speed);

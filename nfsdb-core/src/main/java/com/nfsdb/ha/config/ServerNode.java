@@ -33,7 +33,7 @@ public class ServerNode {
 
         int ob = address.indexOf('[');
         if (ob > -1) {
-            int cb = address.indexOf("]");
+            int cb = address.indexOf(']');
             // IPv6
             this.hostname = address.substring(ob + 1, cb);
             if (address.length() > cb + 1) {

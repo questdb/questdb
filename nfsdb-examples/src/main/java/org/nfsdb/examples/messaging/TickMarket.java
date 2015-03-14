@@ -17,20 +17,19 @@
 package org.nfsdb.examples.messaging;
 
 import com.lmax.disruptor.RingBuffer;
-
-import java.util.Random;
+import com.nfsdb.utils.Rnd;
 
 public class TickMarket implements Runnable {
     private final RingBuffer<Tick> buffer;
     private final int messageCount;
-    private final Random random;
+    private final Rnd random;
     private final int instrumentCount;
 
     public TickMarket(RingBuffer<Tick> buffer, int instrumentCount, int messageCount) {
         this.buffer = buffer;
         this.instrumentCount = instrumentCount;
         this.messageCount = messageCount;
-        this.random = new Random(System.nanoTime());
+        this.random = new Rnd(System.nanoTime(), System.currentTimeMillis());
     }
 
     @Override

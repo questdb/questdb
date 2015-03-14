@@ -49,7 +49,7 @@ public class IntObjHashMap<V> {
         clear();
     }
 
-    public void clear() {
+    public final void clear() {
         Arrays.fill(values, FREE);
     }
 

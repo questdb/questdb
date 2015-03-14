@@ -22,6 +22,7 @@ import com.nfsdb.ha.config.DatagramChannelWrapper;
 import com.nfsdb.ha.config.ServerConfig;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.utils.ByteBuffers;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.net.SocketAddress;
 import java.net.StandardSocketOptions;
@@ -53,6 +54,7 @@ public abstract class AbstractOnDemandSender {
         this.instance = instance;
     }
 
+    @SuppressFBWarnings({"MDM_THREAD_YIELD"})
     public void halt() {
         if (running) {
             while (!selecting) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,8 @@
  */
 
 package com.nfsdb.utils;
+
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class Base64 {
 
@@ -122,6 +124,7 @@ public class Base64 {
         return text.length() / 4 * 3 - padSize;
     }
 
+    @SuppressFBWarnings({"MRC_METHOD_RETURNS_CONSTANT"})
     private static byte[] initDecodeMap() {
         byte[] map = new byte[128];
         int i;

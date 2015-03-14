@@ -28,10 +28,12 @@ import com.nfsdb.storage.KVIndex;
 import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.utils.Interval;
 import com.nfsdb.utils.Rows;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayList;
 import java.util.List;
 
+@SuppressFBWarnings({"PL_PARALLEL_LISTS"})
 public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
 
     private final Journal<T> journal;

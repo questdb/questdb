@@ -59,7 +59,7 @@ public class SslReplicationServerMain {
         for (int i = 0; i < 10; i++) {
             publishPrice(writer, i < 3 ? 1000000 : 100);
             Thread.sleep(TimeUnit.SECONDS.toMillis(2));
-            System.out.print(".");
+            System.out.print('.');
         }
         System.out.println(" [Done]");
     }

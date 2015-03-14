@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,6 +23,13 @@ public class ImportedColumnMetadata extends ColumnMetadata {
     public ImportedColumnType importedType;
 
     @Override
+    public int hashCode() {
+        int result = super.hashCode();
+        result = 31 * result + columnIndex;
+        return 31 * result + importedType.hashCode();
+    }
+
+    @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
@@ -31,14 +38,6 @@ public class ImportedColumnMetadata extends ColumnMetadata {
         ImportedColumnMetadata that = (ImportedColumnMetadata) o;
         return columnIndex == that.columnIndex && importedType == that.importedType;
 
-    }
-
-    @Override
-    public int hashCode() {
-        int result = super.hashCode();
-        result = 31 * result + columnIndex;
-        result = 31 * result + importedType.hashCode();
-        return result;
     }
 }
 

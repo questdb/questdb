@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -125,7 +125,7 @@ public class JournalServer {
         try {
             serverSocketChannel.close();
         } catch (IOException e) {
-            LOGGER.debug(e);
+            LOGGER.debug("Error closing socket", e);
         }
 
 
@@ -134,7 +134,7 @@ public class JournalServer {
                 LOGGER.info("Waiting for %s agent services to complete data exchange on %s", service.getActiveCount(), serverInstance);
                 service.awaitTermination(timeout, unit);
             } catch (InterruptedException e) {
-                LOGGER.debug(e);
+                LOGGER.debug("Interrupted wait", e);
             }
         }
 
@@ -200,17 +200,6 @@ public class JournalServer {
         service.execute(new Acceptor());
     }
 
-    @SuppressWarnings("unchecked")
-    IndexedJournalKey getWriterIndex0(JournalKey key) {
-        for (ObjIntHashMap.Entry<JournalWriter> e : writers.immutableIterator()) {
-            JournalKey jk = e.key.getKey();
-            if (jk.derivedLocation().equals(key.derivedLocation())) {
-                return new IndexedJournalKey(e.value, new JournalKey(jk.getId(), jk.getModelClass(), jk.getLocation(), jk.getRecordHint()));
-            }
-        }
-        return null;
-    }
-
     private void addChannel(SocketChannelHolder holder) {
         channels.add(holder);
     }
@@ -237,6 +226,17 @@ public class JournalServer {
         while (channels.size() > 0) {
             closeChannel(channels.remove(0), true);
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    IndexedJournalKey getWriterIndex0(JournalKey key) {
+        for (ObjIntHashMap.Entry<JournalWriter> e : writers.immutableIterator()) {
+            JournalKey jk = e.key.getKey();
+            if (jk.derivedLocation().equals(key.derivedLocation())) {
+                return new IndexedJournalKey(e.value, new JournalKey(jk.getId(), jk.getModelClass(), jk.getLocation(), jk.getRecordHint()));
+            }
+        }
+        return null;
     }
 
     private void removeChannel(SocketChannelHolder holder) {
@@ -305,11 +305,10 @@ public class JournalServer {
                         break;
                     } catch (JournalNetworkException e) {
                         if (running.get()) {
-                            LOGGER.info("Client died: " + holder.socketAddress);
                             if (LOGGER.isDebugEnabled()) {
-                                LOGGER.debug(e);
+                                LOGGER.debug("Client died", e);
                             } else {
-                                LOGGER.info(e.getMessage());
+                                LOGGER.info("Client died %s: %s", holder.socketAddress, e.getMessage());
                             }
                         }
                         break;

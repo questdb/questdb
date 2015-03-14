@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,6 +48,7 @@ import com.nfsdb.storage.TxListener;
 import com.nfsdb.utils.Files;
 import com.nfsdb.utils.Lists;
 import com.nfsdb.utils.NamedDaemonThreadFactory;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.io.IOException;
@@ -60,6 +61,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
+@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class JournalClient {
     private static final AtomicInteger counter = new AtomicInteger(0);
     private static final Logger LOGGER = Logger.getLogger(JournalClient.class);
@@ -286,7 +288,7 @@ public class JournalClient {
     }
 
     private void free() {
-        for (int i = 0; i < deltaConsumers.size(); i++) {
+        for (int i = 0, k = deltaConsumers.size(); i < k; i++) {
             deltaConsumers.get(i).free();
         }
         commandConsumer.free();
@@ -343,6 +345,7 @@ public class JournalClient {
         commandProducer.write(channel, Command.CLIENT_DISCONNECT);
     }
 
+    @SuppressFBWarnings({"PL_PARALLEL_LISTS"})
     private void sendKeys() throws JournalNetworkException {
         for (int i = 0, sz = remoteKeys.size(); i < sz; i++) {
             commandProducer.write(channel, Command.SET_KEY_CMD);

@@ -463,7 +463,6 @@ public class KVIndex implements Closeable {
     public class IndexCursor implements Cursor {
         private int remainingBlockCount;
         private int remainingRowCount;
-        private long rowBlockOffset;
         private long size;
         private long address;
 
@@ -476,8 +475,7 @@ public class KVIndex implements Closeable {
                 return Unsafe.getUnsafe().getLong(address + --this.remainingRowCount * 8);
             } else {
                 remainingBlockCount--;
-                this.rowBlockOffset = Unsafe.getUnsafe().getLong(address + rowBlockLen * 8);
-                this.address = rData.getAddress(rowBlockOffset - rowBlockSize, rowBlockSize);
+                this.address = rData.getAddress(Unsafe.getUnsafe().getLong(address + rowBlockLen * 8) - rowBlockSize, rowBlockSize);
                 this.remainingRowCount = rowBlockLen;
                 return Unsafe.getUnsafe().getLong(address + --this.remainingRowCount * 8);
             }
@@ -497,7 +495,7 @@ public class KVIndex implements Closeable {
             }
 
             long addr = kData.getAddress(keyOffset, ENTRY_SIZE);
-            this.rowBlockOffset = Unsafe.getUnsafe().getLong(addr);
+            long rowBlockOffset = Unsafe.getUnsafe().getLong(addr);
             this.size = Unsafe.getUnsafe().getLong(addr + 8);
 
             if (size == 0) {
@@ -512,7 +510,7 @@ public class KVIndex implements Closeable {
                 remainingRowCount = rowBlockLen;
             }
 
-            this.address = rData.getAddress(this.rowBlockOffset - rowBlockSize, rowBlockSize);
+            this.address = rData.getAddress(rowBlockOffset - rowBlockSize, rowBlockSize);
             return this;
         }
 

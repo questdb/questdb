@@ -74,8 +74,9 @@ public final class LockManager {
             return;
         }
 
-        String sharedKey = getKey(lock.getLocation(), true);
-        String exclusiveKey = getKey(lock.getLocation(), false);
+        File loc = lock.getLocation();
+        String sharedKey = getKey(loc, true);
+        String exclusiveKey = getKey(loc, false);
 
         Lock storedSharedLock = locks.get(sharedKey);
         if (storedSharedLock == lock) {

@@ -47,6 +47,28 @@ public class NetworkConfig {
         nodes.put(node.getId(), node);
     }
 
+    public NetworkInterface findExternalMulticastNic() throws JournalNetworkException {
+        try {
+            Enumeration<NetworkInterface> ifs = NetworkInterface.getNetworkInterfaces();
+            while (ifs.hasMoreElements()) {
+                NetworkInterface ifn = ifs.nextElement();
+
+                if (ifn.isLoopback()) {
+                    continue;
+                }
+
+                if (ifn.supportsMulticast() && ifn.isUp() && !ifn.getDisplayName().startsWith("awdl0")) {
+                    return ifn;
+                }
+
+            }
+        } catch (SocketException e) {
+            throw new JournalNetworkException(e);
+        }
+
+        throw new JournalNetworkException("Could not find multicast-capable network interfaces");
+    }
+
     public String getIfName() {
         return ifName;
     }
@@ -105,7 +127,7 @@ public class NetworkConfig {
                 throw new JournalNetworkException("Multicast is not supported on " + ifn.getName());
             }
 
-            if (ifn.getInterfaceAddresses().size() == 0) {
+            if (ifn.getInterfaceAddresses().isEmpty()) {
                 throw new JournalNetworkException("No IP addresses assigned to " + ifn.getName());
             }
 
@@ -137,28 +159,6 @@ public class NetworkConfig {
         } catch (IOException e) {
             throw new JournalNetworkException(e);
         }
-    }
-
-    public NetworkInterface findExternalMulticastNic() throws JournalNetworkException {
-        try {
-            Enumeration<NetworkInterface> ifs = NetworkInterface.getNetworkInterfaces();
-            while(ifs.hasMoreElements()) {
-                NetworkInterface ifn = ifs.nextElement();
-
-                if (ifn.isLoopback()) {
-                    continue;
-                }
-
-                if (ifn.supportsMulticast()) {
-                    return ifn;
-                }
-
-            }
-        } catch (SocketException e) {
-            throw new JournalNetworkException(e);
-        }
-
-        throw new JournalNetworkException("Could not find multicast-capable network interfaces");
     }
 
 }

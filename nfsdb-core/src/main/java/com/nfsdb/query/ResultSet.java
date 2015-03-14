@@ -107,7 +107,8 @@ public class ResultSet<T> implements Iterable<T> {
     }
 
     public T readLast() throws JournalException {
-        return size() > 0 ? read(size() - 1) : null;
+        int size = size();
+        return size > 0 ? read(size - 1) : null;
     }
 
     public long[] readTimestamps() throws JournalException {
@@ -139,8 +140,9 @@ public class ResultSet<T> implements Iterable<T> {
     }
 
     public ResultSet<T> sort(Order order, int... columnIndices) throws JournalException {
-        if (size() > 0) {
-            quickSort(order, 0, size() - 1, columnIndices);
+        int size = size();
+        if (size > 0) {
+            quickSort(order, 0, size - 1, columnIndices);
         }
         return this;
     }

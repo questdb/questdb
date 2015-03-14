@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,29 +44,20 @@ public class IntHashSet {
         clear();
     }
 
-    @SuppressWarnings({"unchecked"})
-    protected void rehash() {
-        int newCapacity = Primes.next(keys.length << 1);
-
-        free = capacity = (int) (newCapacity * loadFactor);
-
-        int[] oldKeys = keys;
-        this.keys = new int[newCapacity];
-        Arrays.fill(keys, noEntryValue);
-
-        for (int i = oldKeys.length; i-- > 0; ) {
-            if (oldKeys[i] != noEntryValue) {
-                insertKey(oldKeys[i]);
-            }
-        }
-    }
-
     public boolean add(int key) {
         boolean r = insertKey(key);
         if (free == 0) {
             rehash();
         }
         return r;
+    }
+
+    public final void clear() {
+        Arrays.fill(keys, 0, keys.length, noEntryValue);
+    }
+
+    public int size() {
+        return capacity - free;
     }
 
     private boolean insertKey(int key) {
@@ -94,11 +85,20 @@ public class IntHashSet {
         } while (true);
     }
 
-    public void clear() {
-        Arrays.fill(keys, 0, keys.length, noEntryValue);
-    }
+    @SuppressWarnings({"unchecked"})
+    protected void rehash() {
+        int newCapacity = Primes.next(keys.length << 1);
 
-    public int size() {
-        return capacity - free;
+        free = capacity = (int) (newCapacity * loadFactor);
+
+        int[] oldKeys = keys;
+        this.keys = new int[newCapacity];
+        Arrays.fill(keys, noEntryValue);
+
+        for (int i = oldKeys.length; i-- > 0; ) {
+            if (oldKeys[i] != noEntryValue) {
+                insertKey(oldKeys[i]);
+            }
+        }
     }
 }

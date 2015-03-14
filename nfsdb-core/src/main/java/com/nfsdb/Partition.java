@@ -31,6 +31,7 @@ import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Hash;
 import com.nfsdb.utils.Interval;
 import com.nfsdb.utils.Unsafe;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.File;
@@ -41,6 +42,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 
+@SuppressFBWarnings({"PL_PARALLEL_LISTS"})
 public class Partition<T> implements Iterable<T>, Closeable {
     private static final Logger LOGGER = Logger.getLogger(Partition.class);
     private final Journal<T> journal;
@@ -57,14 +59,15 @@ public class Partition<T> implements Iterable<T>, Closeable {
     private FixedColumn timestampColumn;
 
     Partition(Journal<T> journal, Interval interval, int partitionIndex, long txLimit, long[] indexTxAddresses) {
+        JournalMetadata<T> meta = journal.getMetadata();
         this.journal = journal;
         this.partitionIndex = partitionIndex;
         this.interval = interval;
         this.txLimit = txLimit;
-        this.columnCount = journal.getMetadata().getColumnCount();
+        this.columnCount = meta.getColumnCount();
         this.columnMetadata = new ColumnMetadata[columnCount];
-        journal.getMetadata().copyColumnMetadata(columnMetadata);
-        setPartitionDir(new File(this.journal.getLocation(), interval.getDirName(journal.getMetadata().getPartitionType())), indexTxAddresses);
+        meta.copyColumnMetadata(columnMetadata);
+        setPartitionDir(new File(this.journal.getLocation(), interval.getDirName(meta.getPartitionType())), indexTxAddresses);
     }
 
     public void applyTx(long txLimit, long[] indexTxAddresses) {
@@ -629,7 +632,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
     }
 
-    void setPartitionDir(File partitionDir, long[] indexTxAddresses) {
+    final void setPartitionDir(File partitionDir, long[] indexTxAddresses) {
         boolean create = partitionDir != null && !partitionDir.equals(this.partitionDir);
         this.partitionDir = partitionDir;
         if (create) {

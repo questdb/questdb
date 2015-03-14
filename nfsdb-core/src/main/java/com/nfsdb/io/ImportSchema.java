@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,6 +36,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+@SuppressFBWarnings({"CLI_CONSTANT_LIST_INDEX"})
 public class ImportSchema {
 
     private static final Logger LOGGER = Logger.getLogger(ImportSchema.class);

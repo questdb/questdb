@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -222,7 +222,8 @@ public class ResampledSourceTest extends AbstractTest {
         final Journal r = factory.reader(Quote.class.getName());
 
 
-            ResampledSource resampledSource = new ResampledSource(
+        // select count(), first(ask), last(ask), sym, ts sample by sym, 1m
+        ResampledSource resampledSource = new ResampledSource(
                 new JournalSourceImpl(
                         new JournalPartitionSource(r, false)
                         , new AllRowSource()
@@ -238,12 +239,12 @@ public class ResampledSourceTest extends AbstractTest {
                     add(new LastDoubleAggregationFunction(r.getMetadata().getColumnMetadata("ask")));
                 }}
                 , r.getMetadata().getTimestampMetadata()
-                    , ResampledSource.SampleBy.MINUTE
+                , ResampledSource.SampleBy.MINUTE
         );
 
         StringSink sink = new StringSink();
         RecordSourcePrinter out = new RecordSourcePrinter(sink);
-            out.print(resampledSource);
+        out.print(resampledSource);
         Assert.assertEquals(expected, sink.toString());
     }
 }

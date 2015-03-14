@@ -118,8 +118,7 @@ public class Interval {
     @Override
     public int hashCode() {
         int result = (int) (lo ^ (lo >>> 32));
-        result = 31 * result + (int) (hi ^ (hi >>> 32));
-        return result;
+        return 31 * result + (int) (hi ^ (hi >>> 32));
     }
 
     @Override

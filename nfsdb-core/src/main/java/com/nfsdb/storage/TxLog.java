@@ -21,6 +21,7 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.Constants;
 import com.nfsdb.utils.Rnd;
 import com.nfsdb.utils.Unsafe;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 
@@ -44,6 +45,7 @@ public class TxLog {
         hb.close();
     }
 
+    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     public long findAddress(long txn, long txPin) {
         long address = getCurrentTxAddress();
         long curr;
@@ -77,7 +79,7 @@ public class TxLog {
         return currentAddress;
     }
 
-    public long getCurrentTxn() {
+    public final long getCurrentTxn() {
         long address = getCurrentTxAddress();
         if (address == 0) {
             return 0L;
@@ -111,6 +113,7 @@ public class TxLog {
         return hb.getAppendOffset() <= 9 || readCurrentTxAddress() <= 0;
     }
 
+    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     public void read(long address, Tx tx) {
         assert address > 0 : "zero headAddress: " + address;
         tx.address = address;

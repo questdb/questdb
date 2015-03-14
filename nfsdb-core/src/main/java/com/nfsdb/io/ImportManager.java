@@ -24,6 +24,7 @@ import com.nfsdb.io.parser.listener.JournalImportListener;
 import com.nfsdb.io.parser.listener.Listener;
 import com.nfsdb.io.parser.listener.MetadataExtractorListener;
 import com.nfsdb.utils.ByteBuffers;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.File;
@@ -84,6 +85,7 @@ public final class ImportManager {
         importFile(factory, fileName, format, importSchema, SAMPLE_SIZE);
     }
 
+    @SuppressFBWarnings({"PATH_TRAVERSAL_IN"})
     public static void importFile(JournalWriterFactory factory, String fileName, TextFileFormat format, ImportSchema importSchema, int sampleSize) throws IOException {
 
         try (TextParser parser = format.newParser()) {

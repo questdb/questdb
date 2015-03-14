@@ -22,6 +22,7 @@ import com.nfsdb.collections.ObjIntHashMap;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.storage.HugeBuffer;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
 
 import java.lang.StringBuilder;
@@ -85,6 +86,7 @@ public class JournalMetadata<T> {
         this.partialMapping = partialMapping;
     }
 
+    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     public JournalMetadata(HugeBuffer buf) {
         buf.setPos(0);
         id = buf.getStr();
@@ -204,7 +206,7 @@ public class JournalMetadata<T> {
 
     public boolean isCompatible(JournalMetadata that) {
         if (that == null
-                || !this.getPartitionType().equals(that.getPartitionType())
+                || this.getPartitionType() != that.getPartitionType()
                 || this.getColumnCount() != that.getColumnCount()
                 ) {
             return false;

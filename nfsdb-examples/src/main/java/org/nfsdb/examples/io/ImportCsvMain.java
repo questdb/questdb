@@ -22,11 +22,13 @@ import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.io.ImportManager;
 import com.nfsdb.io.ImportSchema;
 import com.nfsdb.io.TextFileFormat;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.io.IOException;
 
 public class ImportCsvMain {
+    @SuppressFBWarnings({"PATH_TRAVERSAL_IN", "PATH_TRAVERSAL_IN"})
     public static void main(String[] args) throws IOException, JournalException {
         final String databaseLocation = args[0];
         final String from = args[1];

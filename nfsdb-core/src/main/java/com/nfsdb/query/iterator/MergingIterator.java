@@ -73,7 +73,7 @@ public class MergingIterator<T> extends AbstractImmutableIterator<T> {
     }
 
     private static <T, X extends ImmutableIterator<T>> ImmutableIterator<T> merge(List<X> iterators, Comparator<T> comparator, int index) {
-        if (iterators == null || iterators.size() == 0) {
+        if (iterators == null || iterators.isEmpty()) {
             throw new IllegalArgumentException();
         }
 

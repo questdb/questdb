@@ -45,16 +45,17 @@ public abstract class AbstractResultSetBuilder<T, X> {
 
     public boolean next(Partition<T> partition, boolean desc) throws JournalException {
 
-        if (interval != null && partition.getInterval() != null
+        Interval that = partition.getInterval();
+        if (interval != null && that != null
                 &&
                 (
-                        partition.getInterval().getLo() > interval.getHi()
-                                || partition.getInterval().getHi() < interval.getLo()
+                        that.getLo() > interval.getHi()
+                                || that.getHi() < interval.getLo()
                 )
                 ) {
 
-            return (partition.getInterval().getHi() < interval.getLo() && !desc) ||
-                    (partition.getInterval().getLo() > interval.getHi() && desc);
+            return (that.getHi() < interval.getLo() && !desc) ||
+                    (that.getLo() > interval.getHi() && desc);
         }
 
         switch (accept(partition)) {

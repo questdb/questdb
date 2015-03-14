@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -112,8 +112,9 @@ public class JournalConfigurationImpl implements JournalConfiguration {
     }
 
     private String getLocation(JournalKey key) {
-        if (key.getLocation() != null) {
-            return key.getLocation();
+        String loc = key.getLocation();
+        if (loc != null) {
+            return loc;
         }
 
         JournalMetadata m = journalMetadata.get(key.getId());

@@ -18,6 +18,7 @@ package com.nfsdb.ha.bridge;
 
 import com.lmax.disruptor.*;
 import com.nfsdb.utils.NamedDaemonThreadFactory;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -92,6 +93,7 @@ public class JournalEventBridge {
         return outRingBuffer;
     }
 
+    @SuppressFBWarnings({"MDM_THREAD_YIELD"})
     public void halt() {
         executor.shutdown();
         while (inRingBuffer.getCursor() < inRingBuffer.getMinimumGatingSequence()) {

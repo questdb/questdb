@@ -20,11 +20,13 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.io.ExportManager;
 import com.nfsdb.io.TextFileFormat;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.io.IOException;
 
 public class ExportCsvMain {
+    @SuppressFBWarnings({"PATH_TRAVERSAL_IN"})
     public static void main(String[] args) throws JournalException, IOException {
 
         JournalFactory factory = new JournalFactory(args[0]);

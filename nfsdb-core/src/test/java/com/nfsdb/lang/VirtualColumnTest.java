@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -53,6 +53,8 @@ public class VirtualColumnTest extends AbstractTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
+
+        // select ccy, bid, bid+12.5 plus from xyz
         VirtualColumnRecordSource src = new VirtualColumnRecordSource(w.rows(), new ArrayList<VirtualColumn>() {{
             add(new PlusDoubleColumn("plus", new ConcreteColumn("bid"), new ConstDoubleColumn(null, 12.5d)));
         }});
@@ -183,10 +185,15 @@ public class VirtualColumnTest extends AbstractTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
+
+        // select ccy, bid+12.5 plus from xyz
         RecordSource<? extends Record> src = new SelectedColumnsRecordSource(
-                new VirtualColumnRecordSource(w.rows(), new ArrayList<VirtualColumn>() {{
-                    add(new PlusDoubleColumn("plus", new ConcreteColumn("bid"), new ConstDoubleColumn(null, 12.5d)));
-                }}),
+                new VirtualColumnRecordSource(
+                        w.rows(),
+                        new ArrayList<VirtualColumn>() {{
+                            add(new PlusDoubleColumn("plus", new ConcreteColumn("bid"), new ConstDoubleColumn(null, 12.5d)));
+                        }}
+                ),
                 new ArrayList<String>() {{
                     add("ccy");
                     add("plus");

@@ -40,7 +40,7 @@ public class PeekingListIterator<T> extends AbstractImmutableIterator<T> impleme
 
     @Override
     public boolean isEmpty() {
-        return delegate == null || delegate.size() == 0;
+        return delegate == null || delegate.isEmpty();
     }
 
     @Override

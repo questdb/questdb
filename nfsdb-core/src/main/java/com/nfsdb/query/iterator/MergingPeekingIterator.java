@@ -55,7 +55,7 @@ public class MergingPeekingIterator<T> extends MergingIterator<T> implements Pee
     }
 
     private static <T, X extends PeekingIterator<T>> PeekingIterator<T> mergePeek(List<X> iterators, Comparator<T> comparator, int index) {
-        if (iterators == null || iterators.size() == 0) {
+        if (iterators == null || iterators.isEmpty()) {
             throw new IllegalArgumentException();
         }
 

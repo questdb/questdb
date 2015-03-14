@@ -32,7 +32,6 @@ public class KvIndexTopRowSource implements RowSource, RowCursor {
     private KeyCursor keyCursor;
     private long lo;
     private long hi;
-    private KVIndex.IndexCursor indexCursor;
     private long localRowID;
     private RowAcceptor rowAcceptor;
 
@@ -59,7 +58,6 @@ public class KvIndexTopRowSource implements RowSource, RowCursor {
     @Override
     public void reset() {
         keySource.reset();
-        indexCursor = null;
     }
 
     @Override
@@ -69,7 +67,7 @@ public class KvIndexTopRowSource implements RowSource, RowCursor {
             return false;
         }
 
-        indexCursor = index.cachedCursor(keyCursor.next());
+        KVIndex.IndexCursor indexCursor = index.cachedCursor(keyCursor.next());
         while (indexCursor.hasNext()) {
             localRowID = indexCursor.next();
             if (localRowID >= lo && localRowID <= hi && (rowAcceptor == null || rowAcceptor.accept(localRowID) == Choice.PICK)) {

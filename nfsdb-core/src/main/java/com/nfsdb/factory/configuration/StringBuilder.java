@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,17 +23,17 @@ public class StringBuilder<T> extends AbstractMetadataBuilder<T> {
         size(this.meta.avgSize);
     }
 
-    public StringBuilder<T> index() {
-        this.meta.indexed = true;
-        return this;
-    }
-
     public StringBuilder<T> buckets(int buckets) {
         this.meta.distinctCountHint = buckets;
         return this;
     }
 
-    public StringBuilder<T> size(int size) {
+    public StringBuilder<T> index() {
+        this.meta.indexed = true;
+        return this;
+    }
+
+    public final StringBuilder<T> size(int size) {
         this.meta.avgSize = size;
         this.meta.size = size + 4;
         return this;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.nfsdb.ha.config;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.ha.mcast.OnDemandAddressPoller;
 import com.nfsdb.logging.Logger;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -127,6 +128,7 @@ public class ClientConfig extends NetworkConfig {
         }
     }
 
+    @SuppressFBWarnings({"MDM_INETADDRESS_GETLOCALHOST"})
     private NetworkInterface getMultiCastInterface() throws JournalNetworkException {
         try {
             if (getIfName() == null) {

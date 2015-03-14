@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,23 +43,6 @@ public class Logger {
         return new Logger(clazz);
     }
 
-    public void trace(java.lang.Object message) {
-        logger.finest(message.toString());
-    }
-
-    public void trace(String format, Object... args) {
-        if (isTraceEnabled()) {
-            log(Level.FINEST, String.format(format, args));
-        }
-    }
-
-
-    /////////////////////////////////////////////////////////////////
-
-    public boolean isTraceEnabled() {
-        return logger.isLoggable(Level.FINEST);
-    }
-
     public void debug(java.lang.Object message) {
         logger.fine(message.toString());
     }
@@ -70,11 +53,27 @@ public class Logger {
         }
     }
 
+
     /////////////////////////////////////////////////////////////////
 
-    public boolean isDebugEnabled() {
-        return logger.isLoggable(Level.FINE);
+    public void debug(java.lang.Object message, java.lang.Throwable throwable) {
+        log(Level.FINE, message.toString(), throwable);
     }
+
+    public void error(java.lang.Object message) {
+        logger.severe(message.toString());
+    }
+
+    public void error(java.lang.Object message, java.lang.Throwable throwable) {
+        log(Level.SEVERE, message.toString(), throwable);
+    }
+
+    public void error(String format, Object... args) {
+        if (isErrorEnabled()) {
+            log(Level.SEVERE, String.format(format, args));
+        }
+    }
+    /////////////////////////////////////////////////////////////////
 
     public void info(java.lang.Object message) {
         log(Level.INFO, message.toString());
@@ -90,12 +89,38 @@ public class Logger {
         }
     }
 
+    public boolean isDebugEnabled() {
+        return logger.isLoggable(Level.FINE);
+    }
+
+    public boolean isErrorEnabled() {
+        return logger.isLoggable(Level.SEVERE);
+    }
+
     public boolean isInfoEnabled() {
         return logger.isLoggable(Level.INFO);
     }
 
+    public boolean isTraceEnabled() {
+        return logger.isLoggable(Level.FINEST);
+    }
+
     public boolean isWarnEnabled() {
         return logger.isLoggable(Level.INFO);
+    }
+
+    /////////////////////////////////////////////////////////////////
+
+    public void trace(java.lang.Object message) {
+        logger.finest(message.toString());
+    }
+
+    /////////////////////////////////////////////////////////////////
+
+    public void trace(String format, Object... args) {
+        if (isTraceEnabled()) {
+            log(Level.FINEST, String.format(format, args));
+        }
     }
 
     public void warn(java.lang.Object message) {
@@ -106,28 +131,6 @@ public class Logger {
         if (isWarnEnabled()) {
             log(Level.WARNING, String.format(format, args));
         }
-    }
-
-    /////////////////////////////////////////////////////////////////
-
-    public void error(java.lang.Object message) {
-        logger.severe(message.toString());
-    }
-
-    /////////////////////////////////////////////////////////////////
-
-    public void error(java.lang.Object message, java.lang.Throwable throwable) {
-        log(Level.SEVERE, message.toString(), throwable);
-    }
-
-    public void error(String format, Object... args) {
-        if (isErrorEnabled()) {
-            log(Level.SEVERE, String.format(format, args));
-        }
-    }
-
-    public boolean isErrorEnabled() {
-        return logger.isLoggable(Level.SEVERE);
     }
 
     private void log(Level level, String message) {

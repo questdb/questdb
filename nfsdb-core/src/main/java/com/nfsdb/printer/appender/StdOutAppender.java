@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,6 @@
 
 package com.nfsdb.printer.appender;
 
-import java.io.IOException;
-
 public final class StdOutAppender implements Appender {
 
     public static final StdOutAppender INSTANCE = new StdOutAppender();
@@ -26,11 +24,11 @@ public final class StdOutAppender implements Appender {
     }
 
     @Override
-    public void append(StringBuilder stringBuilder) throws IOException {
+    public void append(StringBuilder stringBuilder) {
         System.out.println(stringBuilder);
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.nfsdb.utils;
 
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -45,6 +46,7 @@ public final class Files {
         }
     }
 
+    @SuppressFBWarnings({"MDM_THREAD_YIELD"})
     public static void deleteOrException(File file) throws JournalException {
         if (!file.exists()) {
             return;
@@ -116,6 +118,7 @@ public final class Files {
         }
     }
 
+    @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE"})
     private static void deleteDirContentsOrException(File file) throws JournalException {
         if (!file.exists()) {
             return;

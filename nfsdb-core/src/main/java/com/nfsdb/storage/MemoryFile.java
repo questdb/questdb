@@ -37,12 +37,12 @@ import java.util.List;
 public class MemoryFile implements Closeable {
 
     private static final Logger LOGGER = Logger.getLogger(MemoryFile.class);
+    // reserve first 8 bytes in the file for storing pointer to logical end of file
+    // so the actual data begins from "DATA_OFFSET"
+    private final static int DATA_OFFSET = 8;
     private final File file;
     private final JournalMode mode;
     private final int bitHint;
-    // reserve first 8 bytes in the file for storing pointer to logical end of file
-    // so the actual data begins from "dataOffset"
-    private final int dataOffset = 8;
     private FileChannel channel;
     private MappedByteBuffer offsetBuffer;
     private List<MappedByteBuffer> buffers;
@@ -84,7 +84,7 @@ public class MemoryFile implements Closeable {
         try {
             openInternal("rw");
             try {
-                long newSize = getAppendOffset() + dataOffset;
+                long newSize = getAppendOffset() + DATA_OFFSET;
                 offsetBuffer = ByteBuffers.release(offsetBuffer);
                 LOGGER.debug("Compacting %s to %d bytes", this, newSize);
                 channel.truncate(newSize).close();
@@ -259,7 +259,7 @@ public class MemoryFile implements Closeable {
     }
 
     private MappedByteBuffer mapBufferInternal(long offset, int size) {
-        long actualOffset = offset + dataOffset;
+        long actualOffset = offset + DATA_OFFSET;
 
         try {
             MappedByteBuffer buf;
@@ -288,7 +288,7 @@ public class MemoryFile implements Closeable {
         }
     }
 
-    void open() throws JournalException {
+    final void open() throws JournalException {
         String m;
         switch (mode) {
             case READ:
@@ -303,14 +303,13 @@ public class MemoryFile implements Closeable {
 
     private void openInternal(String mode) throws JournalException {
 
-        if (file.getParentFile() == null) {
+        File pf = file.getParentFile();
+        if (pf == null) {
             throw new JournalException("Expected a file: " + file);
         }
 
-        if (!file.getParentFile().exists()) {
-            if (!file.getParentFile().mkdirs()) {
-                throw new JournalException("Could not create directories: %s", file.getParentFile().getAbsolutePath());
-            }
+        if (!pf.exists() && !pf.mkdirs()) {
+            throw new JournalException("Could not create directories: %s", file.getParentFile().getAbsolutePath());
         }
 
         try {
