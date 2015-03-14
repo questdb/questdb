@@ -26,7 +26,7 @@ import java.nio.channels.ServerSocketChannel;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
+@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING", "LII_LIST_INDEXED_ITERATING"})
 public class ServerConfig extends NetworkConfig {
     public static final long SYNC_TIMEOUT = TimeUnit.SECONDS.toMillis(15);
     private static final long DEFAULT_HEARTBEAT_FREQUENCY = TimeUnit.SECONDS.toMillis(5);
@@ -113,7 +113,7 @@ public class ServerConfig extends NetworkConfig {
 
         try {
             if (node == null && getIfName() == null) {
-                return findExternalMulticastNic();
+                return findExternalNic();
             }
 
             if (node != null && getIfName() == null) {
@@ -121,7 +121,7 @@ public class ServerConfig extends NetworkConfig {
                 if (!address.isAnyLocalAddress()) {
                     return NetworkInterface.getByInetAddress(address);
                 } else {
-                    return findExternalMulticastNic();
+                    return findExternalNic();
                 }
             }
 

@@ -132,7 +132,7 @@ public class ClientConfig extends NetworkConfig {
     private NetworkInterface getMultiCastInterface() throws JournalNetworkException {
         try {
             if (getIfName() == null) {
-                return findExternalMulticastNic();
+                return findExternalNic();
             }
 
             return NetworkInterface.getByName(getIfName());

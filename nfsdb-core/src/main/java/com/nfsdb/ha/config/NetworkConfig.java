@@ -47,7 +47,7 @@ public class NetworkConfig {
         nodes.put(node.getId(), node);
     }
 
-    public NetworkInterface findExternalMulticastNic() throws JournalNetworkException {
+    public NetworkInterface findExternalNic() throws JournalNetworkException {
         try {
             Enumeration<NetworkInterface> ifs = NetworkInterface.getNetworkInterfaces();
             while (ifs.hasMoreElements()) {
@@ -57,7 +57,7 @@ public class NetworkConfig {
                     continue;
                 }
 
-                if (ifn.supportsMulticast() && ifn.isUp() && !ifn.getDisplayName().startsWith("awdl0")) {
+                if (ifn.isUp() && /* osx hack */ !ifn.getDisplayName().startsWith("awdl0")) {
                     return ifn;
                 }
 
