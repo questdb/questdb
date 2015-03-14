@@ -21,7 +21,6 @@ import com.nfsdb.ha.mcast.OnDemandAddressPoller;
 import com.nfsdb.logging.Logger;
 
 import java.io.IOException;
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
 import java.net.StandardSocketOptions;
@@ -131,10 +130,7 @@ public class ClientConfig extends NetworkConfig {
     private NetworkInterface getMultiCastInterface() throws JournalNetworkException {
         try {
             if (getIfName() == null) {
-                return NetworkInterface.getByInetAddress(
-                        InetAddress.getByName(InetAddress.getLocalHost().getHostName()
-                        )
-                );
+                return findExternalMulticastNic();
             }
 
             return NetworkInterface.getByName(getIfName());

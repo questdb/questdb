@@ -22,6 +22,7 @@ import com.nfsdb.exceptions.JournalNetworkException;
 import java.io.IOException;
 import java.net.*;
 import java.nio.channels.DatagramChannel;
+import java.util.Enumeration;
 
 public class NetworkConfig {
     public static final int DEFAULT_DATA_PORT = 7075;
@@ -137,4 +138,27 @@ public class NetworkConfig {
             throw new JournalNetworkException(e);
         }
     }
+
+    public NetworkInterface findExternalMulticastNic() throws JournalNetworkException {
+        try {
+            Enumeration<NetworkInterface> ifs = NetworkInterface.getNetworkInterfaces();
+            while(ifs.hasMoreElements()) {
+                NetworkInterface ifn = ifs.nextElement();
+
+                if (ifn.isLoopback()) {
+                    continue;
+                }
+
+                if (ifn.supportsMulticast()) {
+                    return ifn;
+                }
+
+            }
+        } catch (SocketException e) {
+            throw new JournalNetworkException(e);
+        }
+
+        throw new JournalNetworkException("Could not find multicast-capable network interfaces");
+    }
+
 }

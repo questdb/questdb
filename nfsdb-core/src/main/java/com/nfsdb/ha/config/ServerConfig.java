@@ -60,12 +60,11 @@ public class ServerConfig extends NetworkConfig {
             // default IP address and port
             // todo: there is possible bug where InetAddress.getByName may return null
             if (node == null && getIfName() == null) {
-                return hasIPv4Address(
-                        NetworkInterface.getByInetAddress(
-                                InetAddress.getByName(InetAddress.getLocalHost().getHostName()
-                                )
-                        )
-                ) ? new InetSocketAddress("0.0.0.0", DEFAULT_DATA_PORT) : new InetSocketAddress(InetAddress.getByName("0:0:0:0:0:0:0:0"), DEFAULT_DATA_PORT);
+                NetworkInterface ifn = NetworkInterface.getByInetAddress(
+                        InetAddress.getByName(InetAddress.getLocalHost().getHostName()
+                        ));
+
+                return ifn == null|| hasIPv4Address(ifn) ? new InetSocketAddress("0.0.0.0", DEFAULT_DATA_PORT) : new InetSocketAddress(InetAddress.getByName("0:0:0:0:0:0:0:0"), DEFAULT_DATA_PORT);
             }
 
             // we have hostname
@@ -110,10 +109,7 @@ public class ServerConfig extends NetworkConfig {
 
         try {
             if (node == null && getIfName() == null) {
-                return NetworkInterface.getByInetAddress(
-                        InetAddress.getByName(InetAddress.getLocalHost().getHostName()
-                        )
-                );
+                return findExternalMulticastNic();
             }
 
             if (node != null && getIfName() == null) {
@@ -121,10 +117,7 @@ public class ServerConfig extends NetworkConfig {
                 if (!address.isAnyLocalAddress()) {
                     return NetworkInterface.getByInetAddress(address);
                 } else {
-                    return NetworkInterface.getByInetAddress(
-                            InetAddress.getByName(InetAddress.getLocalHost().getHostName()
-                            )
-                    );
+                    return findExternalMulticastNic();
                 }
             }
 
