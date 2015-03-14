@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -65,7 +65,7 @@ public abstract class AbstractColumn implements Closeable {
 
     @Override
     public String toString() {
-        return this.getClass().getName() + "[file=" + mappedFile.toString() + ", size=" + size() + "]";
+        return this.getClass().getName() + "[file=" + mappedFile + ", size=" + size() + "]";
     }
 
     public abstract void truncate(long size);

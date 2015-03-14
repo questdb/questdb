@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import com.nfsdb.ha.config.ClientConfig;
 import com.nfsdb.ha.config.DatagramChannelWrapper;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.utils.ByteBuffers;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -33,6 +34,7 @@ import java.nio.channels.Selector;
 import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 
+@SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
 public abstract class AbstractOnDemandPoller<T> {
     private static final Logger LOGGER = Logger.getLogger(AbstractOnDemandPoller.class);
     private final ClientConfig networkConfig;
@@ -73,6 +75,39 @@ public abstract class AbstractOnDemandPoller<T> {
             }
         } catch (IOException e) {
             throw new JournalNetworkException(e);
+        }
+    }
+
+    private InetSocketAddress poll0(DatagramChannel dc, SocketAddress group, Selector selector, ByteBuffer buf, long timeoutMillis) throws IOException {
+        while (true) {
+            buf.putInt(outMessageCode);
+            buf.flip();
+            dc.send(buf, group);
+
+            int count = 2;
+            while (count-- > 0) {
+                int updated = selector.select(timeoutMillis);
+                if (updated == 0) {
+                    return null;
+                }
+                if (updated > 0) {
+                    Iterator<SelectionKey> iter = selector.selectedKeys().iterator();
+                    while (iter.hasNext()) {
+                        SelectionKey sk = iter.next();
+                        iter.remove();
+                        DatagramChannel ch = (DatagramChannel) sk.channel();
+                        buf.clear();
+                        InetSocketAddress sa = (InetSocketAddress) ch.receive(buf);
+                        if (sa != null) {
+                            buf.flip();
+                            if (buf.remaining() >= 4 && inMessageCode == buf.getInt()) {
+                                LOGGER.info("Receiving server information from: " + sa);
+                                return sa;
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

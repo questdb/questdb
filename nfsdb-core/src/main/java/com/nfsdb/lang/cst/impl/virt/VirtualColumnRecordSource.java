@@ -18,9 +18,11 @@ package com.nfsdb.lang.cst.impl.virt;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.lang.cst.*;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.List;
 
+@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record> implements GenericRecordSource, RecordSourceState {
     private final RecordSource<? extends Record> delegate;
     private final RecordMetadata metadata;
@@ -29,11 +31,12 @@ public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record>
 
     public VirtualColumnRecordSource(RecordSource<? extends Record> delegate, List<VirtualColumn> virtualColumns) {
         this.delegate = delegate;
+        RecordMetadata dm = delegate.getMetadata();
         for (int i = 0, k = virtualColumns.size(); i < k; i++) {
-            virtualColumns.get(i).configure(delegate.getMetadata(), this);
+            virtualColumns.get(i).configure(dm, this);
         }
-        this.metadata = new VirtualRecordMetadata(delegate.getMetadata(), virtualColumns);
-        this.current = new VirtualRecord(this.metadata, delegate.getMetadata().getColumnCount(), virtualColumns);
+        this.metadata = new VirtualRecordMetadata(dm, virtualColumns);
+        this.current = new VirtualRecord(this.metadata, dm.getColumnCount(), virtualColumns);
     }
 
     @Override

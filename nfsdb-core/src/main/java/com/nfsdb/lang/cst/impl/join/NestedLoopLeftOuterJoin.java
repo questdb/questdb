@@ -33,8 +33,10 @@ public class NestedLoopLeftOuterJoin extends AbstractImmutableIterator<SplitReco
     public NestedLoopLeftOuterJoin(RecordSource<? extends Record> masterSource, RecordSource<? extends Record> slaveSource) {
         this.masterSource = masterSource;
         this.slaveSource = slaveSource;
-        this.metadata = new SplitRecordMetadata(masterSource.getMetadata(), slaveSource.getMetadata());
-        this.record = new SplitRecord(metadata, masterSource.getMetadata().getColumnCount());
+
+        RecordMetadata mm = masterSource.getMetadata();
+        this.metadata = new SplitRecordMetadata(mm, slaveSource.getMetadata());
+        this.record = new SplitRecord(metadata, mm.getColumnCount());
     }
 
     @Override

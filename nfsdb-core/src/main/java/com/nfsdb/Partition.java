@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,7 +42,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 
-@SuppressFBWarnings({"PL_PARALLEL_LISTS"})
+@SuppressFBWarnings({"PL_PARALLEL_LISTS", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public class Partition<T> implements Iterable<T>, Closeable {
     private static final Logger LOGGER = Logger.getLogger(Partition.class);
     private final Journal<T> journal;
@@ -509,25 +509,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
     }
 
-    private void appendBin(T obj, int i, ColumnMetadata meta) {
-        ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, meta.offset);
-        if (buf == null || buf.remaining() == 0) {
-            ((VariableColumn) columns[i]).putNull();
-        } else {
-            ((VariableColumn) columns[i]).putBin(buf);
-        }
-    }
-
-    private void checkColumnIndex(int i) {
-        if (columns == null) {
-            throw new JournalRuntimeException("Partition is closed: %s", this);
-        }
-
-        if (i < 0 || i >= columns.length) {
-            throw new JournalRuntimeException("Invalid column index: %d in %s", i, this);
-        }
-    }
-
     void clearTx() {
         applyTx(Journal.TX_LIMIT_EVAL, null);
     }
@@ -536,24 +517,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
         for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
             SymbolIndexProxy<T> proxy = indexProxies.get(i);
             proxy.getIndex().commit();
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private void createSymbolIndexProxies(long[] indexTxAddresses) {
-        indexProxies.clear();
-        if (sparseIndexProxies == null || sparseIndexProxies.length != columnCount) {
-            sparseIndexProxies = new SymbolIndexProxy[columnCount];
-        }
-
-        for (int i = 0; i < columnCount; i++) {
-            if (columnMetadata[i].indexed) {
-                SymbolIndexProxy<T> proxy = new SymbolIndexProxy<>(this, i, indexTxAddresses == null ? 0 : indexTxAddresses[i]);
-                indexProxies.add(proxy);
-                sparseIndexProxies[i] = proxy;
-            } else {
-                sparseIndexProxies[i] = null;
-            }
         }
     }
 
@@ -583,16 +546,78 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
     }
 
-    private FixedColumn getFixedWidthColumn(int i) {
-        checkColumnIndex(i);
-        return (FixedColumn) columns[i];
-    }
-
     void getIndexPointers(long[] pointers) throws JournalException {
         for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
             SymbolIndexProxy<T> proxy = indexProxies.get(i);
             pointers[proxy.getColumnIndex()] = proxy.getIndex().getTxAddress();
         }
+    }
+
+    final void setPartitionDir(File partitionDir, long[] indexTxAddresses) {
+        boolean create = partitionDir != null && !partitionDir.equals(this.partitionDir);
+        this.partitionDir = partitionDir;
+        if (create) {
+            createSymbolIndexProxies(indexTxAddresses);
+        }
+    }
+
+    void truncate(long newSize) throws JournalException {
+        if (isOpen() && size() > newSize) {
+            for (int i = 0, sz = indexProxies.size(); i < sz; i++) {
+                SymbolIndexProxy<T> proxy = indexProxies.get(i);
+                proxy.getIndex().truncate(newSize);
+            }
+            for (int i = 0; i < columns.length; i++) {
+                if (columns[i] != null) {
+                    columns[i].truncate(newSize);
+                }
+            }
+
+            commitColumns();
+            clearTx();
+        }
+    }
+
+    private void appendBin(T obj, int i, ColumnMetadata meta) {
+        ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, meta.offset);
+        if (buf == null || buf.remaining() == 0) {
+            ((VariableColumn) columns[i]).putNull();
+        } else {
+            ((VariableColumn) columns[i]).putBin(buf);
+        }
+    }
+
+    private void checkColumnIndex(int i) {
+        if (columns == null) {
+            throw new JournalRuntimeException("Partition is closed: %s", this);
+        }
+
+        if (i < 0 || i >= columns.length) {
+            throw new JournalRuntimeException("Invalid column index: %d in %s", i, this);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void createSymbolIndexProxies(long[] indexTxAddresses) {
+        indexProxies.clear();
+        if (sparseIndexProxies == null || sparseIndexProxies.length != columnCount) {
+            sparseIndexProxies = new SymbolIndexProxy[columnCount];
+        }
+
+        for (int i = 0; i < columnCount; i++) {
+            if (columnMetadata[i].indexed) {
+                SymbolIndexProxy<T> proxy = new SymbolIndexProxy<>(this, i, indexTxAddresses == null ? 0 : indexTxAddresses[i]);
+                indexProxies.add(proxy);
+                sparseIndexProxies[i] = proxy;
+            } else {
+                sparseIndexProxies[i] = null;
+            }
+        }
+    }
+
+    private FixedColumn getFixedWidthColumn(int i) {
+        checkColumnIndex(i);
+        return (FixedColumn) columns[i];
     }
 
     private void open(int idx) throws JournalException {
@@ -629,31 +654,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
             buf.limit(size);
             ((VariableColumn) columns[i]).getBin(localRowID, buf);
             buf.flip();
-        }
-    }
-
-    final void setPartitionDir(File partitionDir, long[] indexTxAddresses) {
-        boolean create = partitionDir != null && !partitionDir.equals(this.partitionDir);
-        this.partitionDir = partitionDir;
-        if (create) {
-            createSymbolIndexProxies(indexTxAddresses);
-        }
-    }
-
-    void truncate(long newSize) throws JournalException {
-        if (isOpen() && size() > newSize) {
-            for (int i = 0, sz = indexProxies.size(); i < sz; i++) {
-                SymbolIndexProxy<T> proxy = indexProxies.get(i);
-                proxy.getIndex().truncate(newSize);
-            }
-            for (int i = 0; i < columns.length; i++) {
-                if (columns[i] != null) {
-                    columns[i].truncate(newSize);
-                }
-            }
-
-            commitColumns();
-            clearTx();
         }
     }
 }

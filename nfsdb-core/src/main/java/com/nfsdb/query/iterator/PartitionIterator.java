@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import com.nfsdb.Partition;
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class PartitionIterator<T> extends AbstractImmutableIterator<T> implements JournalIterator<T>, PeekingIterator<T> {
     private final long lo;
@@ -28,6 +29,7 @@ public class PartitionIterator<T> extends AbstractImmutableIterator<T> implement
     private final Partition<T> partition;
     private long cursor;
 
+    @SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
     public PartitionIterator(Partition<T> partition, long lo, long hi) {
         this.partition = partition;
         this.lo = lo;
@@ -46,13 +48,13 @@ public class PartitionIterator<T> extends AbstractImmutableIterator<T> implement
     }
 
     @Override
-    public T next() {
-        return get(cursor++);
+    public boolean isEmpty() {
+        return cursor > hi;
     }
 
     @Override
-    public boolean isEmpty() {
-        return cursor > hi;
+    public T next() {
+        return get(cursor++);
     }
 
     @Override
@@ -65,6 +67,7 @@ public class PartitionIterator<T> extends AbstractImmutableIterator<T> implement
         return get(hi);
     }
 
+    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
     private T get(long localRowID) {
         try {
             if (!partition.isOpen()) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.utils.NamedDaemonThreadFactory;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -28,6 +29,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+@SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
 public class JournalPool implements Closeable {
     private static final Logger LOGGER = Logger.getLogger(JournalPool.class);
 

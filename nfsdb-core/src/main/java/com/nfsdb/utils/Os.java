@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,8 +21,8 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.lang.management.ManagementFactory;
 
+@SuppressFBWarnings({"IICU_INCORRECT_INTERNAL_CLASS_USE"})
 public final class Os {
-    @SuppressFBWarnings({"IICU_INCORRECT_INTERNAL_CLASS_USE", "IICU_INCORRECT_INTERNAL_CLASS_USE"})
     private static final OperatingSystemMXBean bean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
 
     private Os() {

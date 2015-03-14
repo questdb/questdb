@@ -16,37 +16,20 @@
 
 package com.nfsdb.factory.configuration;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+
 public abstract class AbstractGenericMetadataBuilder {
     protected final ColumnMetadata meta;
     private final JournalStructure parent;
 
+    @SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
     public AbstractGenericMetadataBuilder(JournalStructure parent, ColumnMetadata meta) {
         this.parent = parent;
         this.meta = meta;
     }
 
-    public GenericStringBuilder $str(String name) {
-        return parent.$str(name);
-    }
-
     public GenericBinaryBuilder $bin(String name) {
         return parent.$bin(name);
-    }
-
-    public GenericSymbolBuilder $sym(String name) {
-        return parent.$sym(name);
-    }
-
-    public GenericIntBuilder $int(String name) {
-        return parent.$int(name);
-    }
-
-    public JournalStructure $ts(String name) {
-        return parent.$ts(name);
-    }
-
-    public JournalStructure $ts() {
-        return parent.$ts();
     }
 
     public JournalStructure $date(String name) {
@@ -55,5 +38,25 @@ public abstract class AbstractGenericMetadataBuilder {
 
     public JournalStructure $double(String name) {
         return parent.$double(name);
+    }
+
+    public GenericIntBuilder $int(String name) {
+        return parent.$int(name);
+    }
+
+    public GenericStringBuilder $str(String name) {
+        return parent.$str(name);
+    }
+
+    public GenericSymbolBuilder $sym(String name) {
+        return parent.$sym(name);
+    }
+
+    public JournalStructure $ts(String name) {
+        return parent.$ts(name);
+    }
+
+    public JournalStructure $ts() {
+        return parent.$ts();
     }
 }

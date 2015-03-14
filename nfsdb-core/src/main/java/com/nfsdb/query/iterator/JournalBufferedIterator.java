@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,9 +22,11 @@ import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.utils.Rows;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.List;
 
+@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public class JournalBufferedIterator<T> extends AbstractImmutableIterator<T> implements JournalPeekingIterator<T> {
     private final List<JournalIteratorRange> ranges;
     private final Journal<T> journal;
@@ -53,6 +55,11 @@ public class JournalBufferedIterator<T> extends AbstractImmutableIterator<T> imp
     }
 
     @Override
+    public boolean isEmpty() {
+        return ranges == null || ranges.isEmpty();
+    }
+
+    @Override
     public T next() {
         partition.read(currentRowID, obj);
         if (currentRowID < currentUpperBound) {
@@ -62,11 +69,6 @@ public class JournalBufferedIterator<T> extends AbstractImmutableIterator<T> imp
             updateVariables();
         }
         return obj;
-    }
-
-    @Override
-    public boolean isEmpty() {
-        return ranges == null || ranges.isEmpty();
     }
 
     @Override

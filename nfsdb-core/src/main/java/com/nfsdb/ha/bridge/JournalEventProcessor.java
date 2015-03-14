@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,9 @@ package com.nfsdb.ha.bridge;
 
 import com.lmax.disruptor.*;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public class JournalEventProcessor {
     private final SequenceBarrier barrier;
     private final Sequence sequence;

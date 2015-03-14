@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,9 @@ import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.query.ResultSet;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED", "CD_CIRCULAR_DEPENDENCY"})
 public class ResultSetIterator<T> extends AbstractImmutableIterator<T> implements JournalIterator<T>, PeekingIterator<T> {
 
     private final ResultSet<T> rs;
@@ -42,17 +44,17 @@ public class ResultSetIterator<T> extends AbstractImmutableIterator<T> implement
     }
 
     @Override
+    public boolean isEmpty() {
+        return cursor >= rs.size();
+    }
+
+    @Override
     public T next() {
         try {
             return rs.read(cursor++);
         } catch (JournalException e) {
             throw new JournalRuntimeException("Journal exception", e);
         }
-    }
-
-    @Override
-    public boolean isEmpty() {
-        return cursor >= rs.size();
     }
 
     @Override

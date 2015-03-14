@@ -22,12 +22,14 @@ import com.nfsdb.printer.appender.Appender;
 import com.nfsdb.printer.appender.StdOutAppender;
 import com.nfsdb.printer.converter.*;
 import com.nfsdb.utils.Unsafe;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
+@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public class JournalPrinter implements Closeable {
 
     private static final long OBJECT_VALUE_OFFSET = -1;
@@ -42,57 +44,10 @@ public class JournalPrinter implements Closeable {
     public JournalPrinter() {
     }
 
-    public Field f(String name) {
-        Field field = new Field(name, this);
-        ff.add(field);
-        return field;
-    }
-
-    public Field v(int typeIndex) {
-        Field field = new Field(typeIndex, this);
-        ff.add(field);
-        return field;
-    }
-
-    public JournalPrinter types(Class... clazz) {
-        typeTemplate = clazz;
-        return this;
-    }
-
-    @SuppressWarnings("unused")
-    public JournalPrinter setDelimiter(String delimiter) {
-        this.delimiter = delimiter;
-        return this;
-    }
-
-    public String getNullString() {
-        return nullString;
-    }
-
-    public JournalPrinter setNullString(String forNull) {
-        nullString = forNull;
-        return this;
-    }
-
-    public JournalPrinter setAppender(Appender appender) {
-        this.appender = appender;
-        return this;
-    }
-
-    public void out(Object... instances) throws IOException {
-        configure();
-        rowBuilder.setLength(0);
-        for (int i = 0, sz = ff.size(); i < sz; i++) {
-            if (i > 0) {
-                rowBuilder.append(delimiter);
-            }
-            Field f = ff.get(i);
-            Object instance = instances[f.typeTemplateIndex];
-            if (instance != null) {
-                f.converter.convert(rowBuilder, f, instances[f.typeTemplateIndex]);
-            }
-        }
-        appender.append(rowBuilder);
+    public void close() throws IOException {
+        appender.close();
+        ff.clear();
+        configured = false;
     }
 
     public void configure() {
@@ -101,7 +56,7 @@ public class JournalPrinter implements Closeable {
         }
 
         try {
-            for (int i1 = 0; i1 < ff.size(); i1++) {
+            for (int i1 = 0, k = ff.size(); i1 < k; i1++) {
                 Field f = ff.get(i1);
                 // value field
                 if (f.name == null) {
@@ -148,6 +103,21 @@ public class JournalPrinter implements Closeable {
         }
     }
 
+    public Field f(String name) {
+        Field field = new Field(name, this);
+        ff.add(field);
+        return field;
+    }
+
+    public String getNullString() {
+        return nullString;
+    }
+
+    public JournalPrinter setNullString(String forNull) {
+        nullString = forNull;
+        return this;
+    }
+
     public void header() throws IOException {
         rowBuilder.setLength(0);
         for (int i = 0; i < ff.size(); i++) {
@@ -166,10 +136,42 @@ public class JournalPrinter implements Closeable {
         appender.append(rowBuilder);
     }
 
-    public void close() throws IOException {
-        appender.close();
-        ff.clear();
-        configured = false;
+    public void out(Object... instances) throws IOException {
+        configure();
+        rowBuilder.setLength(0);
+        for (int i = 0, sz = ff.size(); i < sz; i++) {
+            if (i > 0) {
+                rowBuilder.append(delimiter);
+            }
+            Field f = ff.get(i);
+            Object instance = instances[f.typeTemplateIndex];
+            if (instance != null) {
+                f.converter.convert(rowBuilder, f, instances[f.typeTemplateIndex]);
+            }
+        }
+        appender.append(rowBuilder);
+    }
+
+    public JournalPrinter setAppender(Appender appender) {
+        this.appender = appender;
+        return this;
+    }
+
+    @SuppressWarnings("unused")
+    public JournalPrinter setDelimiter(String delimiter) {
+        this.delimiter = delimiter;
+        return this;
+    }
+
+    public JournalPrinter types(Class... clazz) {
+        typeTemplate = clazz;
+        return this;
+    }
+
+    public Field v(int typeIndex) {
+        Field field = new Field(typeIndex, this);
+        ff.add(field);
+        return field;
     }
 
     private Class getType(int typeIndex) {
@@ -222,6 +224,19 @@ public class JournalPrinter implements Closeable {
             this.printer = printer;
         }
 
+        public Field c(Converter converter) {
+            this.converter = converter;
+            return this;
+        }
+
+        public Field f(String name) {
+            return printer.f(name);
+        }
+
+        public long getOffset() {
+            return offset;
+        }
+
         public Field h(String header) {
             this.header = header;
             return this;
@@ -230,10 +245,6 @@ public class JournalPrinter implements Closeable {
         public Field i(int instanceIndex) {
             this.typeTemplateIndex = instanceIndex;
             return this;
-        }
-
-        public Field f(String name) {
-            return printer.f(name);
         }
 
         /**
@@ -245,15 +256,6 @@ public class JournalPrinter implements Closeable {
          */
         public Field v(int typeIndex) {
             return printer.v(typeIndex);
-        }
-
-        public Field c(Converter converter) {
-            this.converter = converter;
-            return this;
-        }
-
-        public long getOffset() {
-            return offset;
         }
     }
 }

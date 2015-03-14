@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,11 +18,13 @@ package com.nfsdb.ha.producer;
 
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.ha.ChannelProducer;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.nio.channels.WritableByteChannel;
 import java.util.ArrayList;
 import java.util.List;
 
+@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class ChannelProducerGroup<T extends ChannelProducer> implements ChannelProducer {
 
     private final List<T> producers = new ArrayList<>();
@@ -41,6 +43,13 @@ public class ChannelProducerGroup<T extends ChannelProducer> implements ChannelP
     }
 
     @Override
+    public String toString() {
+        return "ChannelProducerGroup{" +
+                "size=" + producers.size() +
+                '}';
+    }
+
+    @Override
     public void write(WritableByteChannel channel) throws JournalNetworkException {
         if (hasContent) {
             for (int i = 0, sz = producers.size(); i < sz; i++) {
@@ -48,13 +57,6 @@ public class ChannelProducerGroup<T extends ChannelProducer> implements ChannelP
             }
             hasContent = false;
         }
-    }
-
-    @Override
-    public String toString() {
-        return "ChannelProducerGroup{" +
-                "size=" + producers.size() +
-                '}';
     }
 
     void addProducer(T producer) {

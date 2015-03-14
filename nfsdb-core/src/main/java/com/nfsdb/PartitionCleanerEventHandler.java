@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,9 +21,11 @@ import com.lmax.disruptor.LifecycleAware;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.storage.TxLog;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.concurrent.CountDownLatch;
 
+@SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
 class PartitionCleanerEventHandler implements EventHandler<PartitionCleanerEvent>, LifecycleAware {
     final CountDownLatch startLatch = new CountDownLatch(1);
     final CountDownLatch stopLatch = new CountDownLatch(1);
@@ -42,21 +44,21 @@ class PartitionCleanerEventHandler implements EventHandler<PartitionCleanerEvent
     }
 
     @Override
+    public void onShutdown() {
+        if (this.txLog != null) {
+            this.txLog.close();
+            this.txLog = null;
+            stopLatch.countDown();
+        }
+    }
+
+    @Override
     public void onStart() {
         try {
             this.txLog = new TxLog(writer.getLocation(), JournalMode.READ);
             startLatch.countDown();
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
-        }
-    }
-
-    @Override
-    public void onShutdown() {
-        if (this.txLog != null) {
-            this.txLog.close();
-            this.txLog = null;
-            stopLatch.countDown();
         }
     }
 }

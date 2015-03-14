@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,12 +22,14 @@ import com.nfsdb.JournalKey;
 import com.nfsdb.TimerCache;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class JournalCachingFactory extends AbstractJournalReaderFactory implements JournalClosingListener {
 
     private final Map<JournalKey, Journal> readers = new HashMap<>();
@@ -58,19 +60,6 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
     }
 
     @Override
-    @SuppressWarnings("unchecked")
-    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        Journal<T> result = readers.get(key);
-        if (result == null) {
-            result = new Journal<>(getOrCreateMetadata(key), key, getTimerCache());
-            result.setCloseListener(this);
-            readers.put(key, result);
-            journalList.add(result);
-        }
-        return result;
-    }
-
-    @Override
     public void close() {
         if (pool != null) {
             pool.release(this);
@@ -89,6 +78,19 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
     @Override
     public boolean closing(Journal journal) {
         return false;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
+        Journal<T> result = readers.get(key);
+        if (result == null) {
+            result = new Journal<>(getOrCreateMetadata(key), key, getTimerCache());
+            result.setCloseListener(this);
+            readers.put(key, result);
+            journalList.add(result);
+        }
+        return result;
     }
 
     public void refresh() throws JournalException {

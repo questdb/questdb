@@ -27,11 +27,13 @@ import com.nfsdb.query.api.QueryAllBuilder;
 import com.nfsdb.query.iterator.*;
 import com.nfsdb.utils.Interval;
 import com.nfsdb.utils.Rows;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
+@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public class QueryAllImpl<T> implements QueryAll<T> {
 
     private final Journal<T> journal;

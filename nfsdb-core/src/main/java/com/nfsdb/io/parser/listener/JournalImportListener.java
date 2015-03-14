@@ -31,6 +31,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 
+@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
 public class JournalImportListener implements InputAnalysisListener, Closeable {
     private static final Logger LOGGER = Logger.getLogger(JournalImportListener.class);
     private final JournalWriterFactory factory;
@@ -108,7 +109,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
             }
             w.append();
         } catch (JournalException e) {
-            e.printStackTrace();
+            throw new JournalRuntimeException(e);
         }
     }
 

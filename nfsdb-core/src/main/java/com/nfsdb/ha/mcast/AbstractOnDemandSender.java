@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import java.nio.channels.Selector;
 import java.util.Iterator;
 import java.util.concurrent.CountDownLatch;
 
+@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public abstract class AbstractOnDemandSender {
 
     private static final Logger LOGGER = Logger.getLogger(AbstractOnDemandSender.class);

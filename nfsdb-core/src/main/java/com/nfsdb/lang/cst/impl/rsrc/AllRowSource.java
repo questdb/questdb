@@ -21,11 +21,13 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.lang.cst.PartitionSlice;
 import com.nfsdb.lang.cst.RowCursor;
 import com.nfsdb.lang.cst.RowSource;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class AllRowSource implements RowSource, RowCursor {
     private long lo;
     private long hi;
 
+    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
     @Override
     public RowCursor cursor(PartitionSlice slice) {
         try {
@@ -38,11 +40,6 @@ public class AllRowSource implements RowSource, RowCursor {
     }
 
     @Override
-    public void reset() {
-
-    }
-
-    @Override
     public boolean hasNext() {
         return lo <= hi;
     }
@@ -50,5 +47,10 @@ public class AllRowSource implements RowSource, RowCursor {
     @Override
     public long next() {
         return lo++;
+    }
+
+    @Override
+    public void reset() {
+
     }
 }

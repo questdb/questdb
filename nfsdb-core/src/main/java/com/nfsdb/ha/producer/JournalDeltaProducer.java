@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import java.nio.channels.WritableByteChannel;
 import java.util.ArrayList;
 import java.util.List;
 
+@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class JournalDeltaProducer implements ChannelProducer {
     private static final Logger LOGGER = Logger.getLogger(JournalDeltaProducer.class);
     private final Journal journal;

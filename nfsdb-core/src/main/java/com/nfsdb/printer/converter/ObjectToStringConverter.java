@@ -17,7 +17,9 @@
 package com.nfsdb.printer.converter;
 
 import com.nfsdb.printer.JournalPrinter;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+@SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
 public class ObjectToStringConverter extends AbstractConverter {
 
     public ObjectToStringConverter(JournalPrinter printer) {

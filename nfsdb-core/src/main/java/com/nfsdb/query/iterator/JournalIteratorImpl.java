@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,9 +21,11 @@ import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.utils.Rows;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.List;
 
+@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
 public class JournalIteratorImpl<T> extends AbstractImmutableIterator<T> implements JournalPeekingIterator<T> {
     private final List<JournalIteratorRange> ranges;
     private final Journal<T> journal;
@@ -51,6 +53,11 @@ public class JournalIteratorImpl<T> extends AbstractImmutableIterator<T> impleme
     }
 
     @Override
+    public boolean isEmpty() {
+        return ranges == null || ranges.isEmpty();
+    }
+
+    @Override
     public T next() {
         try {
             T result = journal.read(Rows.toRowID(currentPartitionID, currentRowID));
@@ -64,11 +71,6 @@ public class JournalIteratorImpl<T> extends AbstractImmutableIterator<T> impleme
         } catch (JournalException e) {
             throw new JournalRuntimeException("Error in iterator [" + this + "]", e);
         }
-    }
-
-    @Override
-    public boolean isEmpty() {
-        return ranges == null || ranges.isEmpty();
     }
 
     @Override

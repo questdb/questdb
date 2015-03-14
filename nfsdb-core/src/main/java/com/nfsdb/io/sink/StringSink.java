@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,8 +19,14 @@ package com.nfsdb.io.sink;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
 
+@SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
 public class StringSink extends AbstractCharSink implements CharSequence {
     private final StringBuilder builder = new StringBuilder();
+
+    @Override
+    public char charAt(int index) {
+        return builder.charAt(index);
+    }
 
     public void clear() {
         builder.setLength(0);
@@ -28,6 +34,11 @@ public class StringSink extends AbstractCharSink implements CharSequence {
 
     @Override
     public void flush() {
+    }
+
+    @Override
+    public int length() {
+        return builder.length();
     }
 
     @Override
@@ -40,16 +51,6 @@ public class StringSink extends AbstractCharSink implements CharSequence {
     public CharSink put(char c) {
         builder.append(c);
         return this;
-    }
-
-    @Override
-    public int length() {
-        return builder.length();
-    }
-
-    @Override
-    public char charAt(int index) {
-        return builder.charAt(index);
     }
 
     @Override

@@ -26,9 +26,11 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.lang.cst.*;
 import com.nfsdb.utils.Dates;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.List;
 
+@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class ResampledSource extends AbstractImmutableIterator<Record> implements GenericRecordSource {
 
     private final MultiMap map;
@@ -40,6 +42,7 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
     private MapRecordSource mapRecordSource;
     private Record nextRecord = null;
 
+    @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public ResampledSource(RecordSource<? extends Record> rowSource, List<ColumnMetadata> keyColumns, List<AggregatorFunction> aggregators, ColumnMetadata timestampMetadata, SampleBy sampleBy) {
 
         MultiMap.Builder builder = new MultiMap.Builder();
@@ -47,11 +50,13 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
         this.keyIndices = new int[keyColumnsSize];
         // define key columns
 
-        this.tsIndex = rowSource.getMetadata().getColumnIndex(timestampMetadata.name);
+        RecordMetadata rm = rowSource.getMetadata();
+        this.tsIndex = rm.getColumnIndex(timestampMetadata.name);
         builder.keyColumn(timestampMetadata);
         for (int i = 0; i < keyColumnsSize; i++) {
-            builder.keyColumn(keyColumns.get(i));
-            keyIndices[i] = rowSource.getMetadata().getColumnIndex(keyColumns.get(i).name);
+            ColumnMetadata cm = keyColumns.get(i);
+            builder.keyColumn(cm);
+            keyIndices[i] = rm.getColumnIndex(cm.name);
         }
 
         this.aggregators = aggregators;

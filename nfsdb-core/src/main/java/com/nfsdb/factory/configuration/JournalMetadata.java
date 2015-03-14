@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -235,7 +235,8 @@ public class JournalMetadata<T> {
         return partialMapping;
     }
 
-    public Object newObject() throws JournalRuntimeException {
+    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
+    public Object newObject() {
         try {
             return constructor.newInstance();
         } catch (Exception e) {

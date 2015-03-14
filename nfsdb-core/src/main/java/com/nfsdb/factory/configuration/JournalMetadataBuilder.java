@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -168,6 +168,16 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
         return location;
     }
 
+    public JournalMetadataBuilder<T> key(String key) {
+        this.key = key;
+        return this;
+    }
+
+    public JournalMetadataBuilder<T> lag(long time, TimeUnit unit) {
+        this.lag = (int) unit.toHours(time);
+        return this;
+    }
+
     public JournalMetadataBuilder<T> location(String location) {
         this.location = location;
         return this;
@@ -175,6 +185,11 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
 
     public JournalMetadataBuilder<T> location(File location) {
         this.location = location.getAbsolutePath();
+        return this;
+    }
+
+    public JournalMetadataBuilder<T> openFileTTL(long time, TimeUnit unit) {
+        this.openFileTTL = unit.toMillis(time);
         return this;
     }
 
@@ -191,21 +206,6 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
         if (count > 0) {
             this.recordCountHint = count;
         }
-        return this;
-    }
-
-    public JournalMetadataBuilder<T> key(String key) {
-        this.key = key;
-        return this;
-    }
-
-    public JournalMetadataBuilder<T> lag(long time, TimeUnit unit) {
-        this.lag = (int) unit.toHours(time);
-        return this;
-    }
-
-    public JournalMetadataBuilder<T> openFileTTL(long time, TimeUnit unit) {
-        this.openFileTTL = unit.toMillis(time);
         return this;
     }
 
@@ -230,7 +230,7 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
         return meta;
     }
 
-    @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
+    @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS", "LII_LIST_INDEXED_ITERATING"})
     private void parseClass() throws JournalConfigurationException {
         try {
             this.constructor = modelClass.getDeclaredConstructor();

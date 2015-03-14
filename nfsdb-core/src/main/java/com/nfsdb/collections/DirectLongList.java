@@ -18,6 +18,7 @@ package com.nfsdb.collections;
 
 import com.nfsdb.utils.Rnd;
 import com.nfsdb.utils.Unsafe;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class DirectLongList extends AbstractDirectList {
     /**
@@ -62,15 +63,6 @@ public class DirectLongList extends AbstractDirectList {
         pos += 8;
     }
 
-    public long get(long p) {
-        return Unsafe.getUnsafe().getLong(start + (p << 3));
-    }
-
-    public void set(long p, long v) {
-        assert p >= 0 && p <= (limit - start) >> 3;
-        Unsafe.getUnsafe().putLong(start + (p << 3), v);
-    }
-
     public int binarySearch(long v) {
         int low = 0;
         int high = (int) ((pos - start) >> 3) - 1;
@@ -94,6 +86,10 @@ public class DirectLongList extends AbstractDirectList {
         return -(low + 1);
     }
 
+    public long get(long p) {
+        return Unsafe.getUnsafe().getLong(start + (p << 3));
+    }
+
     public int scanSearch(long v) {
         int sz = size();
         for (int i = 0; i < sz; i++) {
@@ -108,18 +104,9 @@ public class DirectLongList extends AbstractDirectList {
         return -(sz + 1);
     }
 
-    @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder();
-        sb.append("{");
-        for (int i = 0; i < size(); i++) {
-            if (i > 0) {
-                sb.append(", ");
-            }
-            sb.append(get(i));
-        }
-        sb.append("}");
-        return sb.toString();
+    public void set(long p, long v) {
+        assert p >= 0 && p <= (limit - start) >> 3;
+        Unsafe.getUnsafe().putLong(start + (p << 3), v);
     }
 
     public DirectLongList shuffle(Rnd rnd) {
@@ -127,24 +114,6 @@ public class DirectLongList extends AbstractDirectList {
             swap(i, rnd.nextPositiveInt() & (sz - 1));
         }
         return this;
-    }
-
-    private void swap(int a, int b) {
-        long tmp = Unsafe.getUnsafe().getLong(start + (a << 3));
-        Unsafe.getUnsafe().copyMemory(start + (b << 3), start + (a << 3), 8);
-        Unsafe.getUnsafe().putLong(start + (b << 3), tmp);
-
-    }
-
-    public DirectLongList subset(int lo, int hi) {
-        DirectLongList that = new DirectLongList(hi - lo);
-        Unsafe.getUnsafe().copyMemory(start + (lo << 3), that.start, (hi - lo) << 3);
-        that.pos += (hi - lo) << 3;
-        return that;
-    }
-
-    private void let(int a, int b) {
-        Unsafe.getUnsafe().putLong(start + (a << 3), Unsafe.getUnsafe().getLong(start + (b << 3)));
     }
 
     /**
@@ -260,6 +229,38 @@ public class DirectLongList extends AbstractDirectList {
         }
     }
 
+    public DirectLongList subset(int lo, int hi) {
+        DirectLongList that = new DirectLongList(hi - lo);
+        Unsafe.getUnsafe().copyMemory(start + (lo << 3), that.start, (hi - lo) << 3);
+        that.pos += (hi - lo) << 3;
+        return that;
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("{");
+        for (int i = 0; i < size(); i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            sb.append(get(i));
+        }
+        sb.append("}");
+        return sb.toString();
+    }
+
+    private void swap(int a, int b) {
+        long tmp = Unsafe.getUnsafe().getLong(start + (a << 3));
+        Unsafe.getUnsafe().copyMemory(start + (b << 3), start + (a << 3), 8);
+        Unsafe.getUnsafe().putLong(start + (b << 3), tmp);
+
+    }
+
+    private void let(int a, int b) {
+        Unsafe.getUnsafe().putLong(start + (a << 3), Unsafe.getUnsafe().getLong(start + (b << 3)));
+    }
+
     /**
      * Sorts the specified range of the array by Dual-Pivot Quicksort.
      *
@@ -267,6 +268,7 @@ public class DirectLongList extends AbstractDirectList {
      * @param right    the index of the last element, inclusive, to be sorted
      * @param leftmost indicates if this part is the leftmost in the range
      */
+    @SuppressFBWarnings({"CC_CYCLOMATIC_COMPLEXITY"})
     private void sort(int left, int right, boolean leftmost) {
         int length = right - left + 1;
 

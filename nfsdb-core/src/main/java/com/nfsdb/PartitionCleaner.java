@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,10 +21,12 @@ import com.lmax.disruptor.BlockingWaitStrategy;
 import com.lmax.disruptor.RingBuffer;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.utils.NamedDaemonThreadFactory;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public class PartitionCleaner {
     private final ExecutorService executor;
     private final RingBuffer<PartitionCleanerEvent> ringBuffer = RingBuffer.createSingleProducer(PartitionCleanerEvent.EVENT_FACTORY, 32, new BlockingWaitStrategy());

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,18 +31,14 @@ public class SelectedColumnsRecordSource extends AbstractImmutableIterator<Recor
 
     public SelectedColumnsRecordSource(RecordSource<? extends Record> delegate, List<String> names) {
         this.delegate = delegate;
-        this.metadata = new SelectedColumnsMetadata(delegate.getMetadata(), names);
-        this.record = new SelectedColumnsRecord(delegate.getMetadata(), names);
+        RecordMetadata dm = delegate.getMetadata();
+        this.metadata = new SelectedColumnsMetadata(dm, names);
+        this.record = new SelectedColumnsRecord(dm, names);
     }
 
     @Override
     public RecordMetadata getMetadata() {
         return metadata;
-    }
-
-    @Override
-    public void reset() {
-        delegate.reset();
     }
 
     @Override
@@ -54,5 +50,10 @@ public class SelectedColumnsRecordSource extends AbstractImmutableIterator<Recor
     public Record next() {
         record.setBase(delegate.next());
         return record;
+    }
+
+    @Override
+    public void reset() {
+        delegate.reset();
     }
 }

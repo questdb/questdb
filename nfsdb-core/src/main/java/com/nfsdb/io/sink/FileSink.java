@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.nfsdb.io.sink;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Unsafe;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.Closeable;
@@ -28,6 +29,7 @@ import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 
+@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public class FileSink extends AbstractCharSink implements Closeable {
 
     private final RandomAccessFile raf;

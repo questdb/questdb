@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Files;
 import com.nfsdb.utils.Lists;
 import com.nfsdb.utils.Unsafe;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.*;
@@ -34,6 +35,7 @@ import java.nio.channels.FileChannel;
 import java.util.ArrayList;
 import java.util.List;
 
+@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS", "EXS_EXCEPTION_SOFTENING_HAS_CHECKED"})
 public class MemoryFile implements Closeable {
 
     private static final Logger LOGGER = Logger.getLogger(MemoryFile.class);
@@ -169,6 +171,23 @@ public class MemoryFile implements Closeable {
         return this.getClass().getName() + "[file=" + file + ", appendOffset=" + getAppendOffset() + "]";
     }
 
+    String getFullFileName() {
+        return this.file.getAbsolutePath();
+    }
+
+    final void open() throws JournalException {
+        String m;
+        switch (mode) {
+            case READ:
+            case BULK_READ:
+                m = "r";
+                break;
+            default:
+                m = "rw";
+        }
+        openInternal(m);
+    }
+
     private long allocateAddress(long offset, int size) {
         cachedBuffer = getBufferInternal(offset, size);
         cachedBufferLo = offset - cachedBuffer.position();
@@ -254,10 +273,6 @@ public class MemoryFile implements Closeable {
         return buffer;
     }
 
-    String getFullFileName() {
-        return this.file.getAbsolutePath();
-    }
-
     private MappedByteBuffer mapBufferInternal(long offset, int size) {
         long actualOffset = offset + DATA_OFFSET;
 
@@ -286,19 +301,6 @@ public class MemoryFile implements Closeable {
         } catch (IOException e) {
             throw new JournalRuntimeException("Failed to memory map: %s", e, file.getAbsolutePath());
         }
-    }
-
-    final void open() throws JournalException {
-        String m;
-        switch (mode) {
-            case READ:
-            case BULK_READ:
-                m = "r";
-                break;
-            default:
-                m = "rw";
-        }
-        openInternal(m);
     }
 
     private void openInternal(String mode) throws JournalException {
@@ -337,13 +339,13 @@ public class MemoryFile implements Closeable {
     }
 
     private void unmap() {
-        for (int i = 0, buffersSize = buffers.size(); i < buffersSize; i++) {
+        for (int i = 0, k = buffers.size(); i < k; i++) {
             MappedByteBuffer b = buffers.get(i);
             if (b != null) {
                 ByteBuffers.release(b);
             }
         }
-        for (int i = 0, stitchesSize = stitches.size(); i < stitchesSize; i++) {
+        for (int i = 0, k = stitches.size(); i < k; i++) {
             ByteBufferWrapper b = stitches.get(i);
             if (b != null) {
                 b.release();
