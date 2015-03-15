@@ -205,6 +205,7 @@ public class MultiMap extends DirectMemory {
     @Override
     protected void freeInternal() {
         offsets.free();
+        Unsafe.getUnsafe().freeMemory(address);
     }
 
     public MapRecordSource getRecordSource() {

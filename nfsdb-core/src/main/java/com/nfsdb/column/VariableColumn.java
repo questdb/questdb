@@ -388,7 +388,7 @@ public class VariableColumn extends AbstractColumn {
         }
 
         @Override
-        public int getLength() {
+        public long getLength() {
             return remaining;
         }
 
@@ -401,23 +401,9 @@ public class VariableColumn extends AbstractColumn {
             while(address < targetAddress) {
                 // copy to the block end.
                 long readBlockLen = Math.min(targetAddress - address, blockRemaining);
-                long targetBlockAddress = blockAddress + readBlockLen;
+                Unsafe.getUnsafe().copyMemory(blockAddress, address, readBlockLen);
 
-                // address to do long copies up to.
-                long longTargetBlockAddress = blockAddress + ((readBlockLen >> 3) << 3);
-
-                // long copies.
-                while (blockAddress < longTargetBlockAddress) {
-                    Unsafe.getUnsafe().putLong(address, Unsafe.getUnsafe().getLong(blockAddress));
-                    blockAddress += 8;
-                    address += 8;
-                }
-
-                // byte copies.
-                while (blockAddress < targetBlockAddress) {
-                    Unsafe.getUnsafe().putByte(address++, Unsafe.getUnsafe().getByte(blockAddress++));
-                }
-
+                address += readBlockLen;
                 workOffset += readBlockLen;
                 if (targetAddress - address > 0) {
                     renew();
