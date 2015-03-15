@@ -78,71 +78,38 @@ public abstract class AbstractOnDemandPoller<T> {
         }
     }
 
-    private InetSocketAddress poll0(DatagramChannel dc, SocketAddress group, Selector selector, ByteBuffer buf, long timeoutMillis) throws IOException {
-        while (true) {
-            buf.putInt(outMessageCode);
-            buf.flip();
-            dc.send(buf, group);
-
-            int count = 2;
-            while (count-- > 0) {
-                int updated = selector.select(timeoutMillis);
-                if (updated == 0) {
-                    return null;
-                }
-                if (updated > 0) {
-                    Iterator<SelectionKey> iter = selector.selectedKeys().iterator();
-                    while (iter.hasNext()) {
-                        SelectionKey sk = iter.next();
-                        iter.remove();
-                        DatagramChannel ch = (DatagramChannel) sk.channel();
-                        buf.clear();
-                        InetSocketAddress sa = (InetSocketAddress) ch.receive(buf);
-                        if (sa != null) {
-                            buf.flip();
-                            if (buf.remaining() >= 4 && inMessageCode == buf.getInt()) {
-                                LOGGER.info("Receiving server information from: " + sa);
-                                return sa;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private InetSocketAddress poll0(DatagramChannel dc, SocketAddress group, Selector selector, ByteBuffer buf, long timeoutMillis) throws IOException {
-        while (true) {
-            buf.putInt(outMessageCode);
-            buf.flip();
-            dc.send(buf, group);
-
-            int count = 2;
-            while (count-- > 0) {
-                int updated = selector.select(timeoutMillis);
-                if (updated == 0) {
-                    return null;
-                }
-                if (updated > 0) {
-                    Iterator<SelectionKey> iter = selector.selectedKeys().iterator();
-                    while (iter.hasNext()) {
-                        SelectionKey sk = iter.next();
-                        iter.remove();
-                        DatagramChannel ch = (DatagramChannel) sk.channel();
-                        buf.clear();
-                        InetSocketAddress sa = (InetSocketAddress) ch.receive(buf);
-                        if (sa != null) {
-                            buf.flip();
-                            if (buf.remaining() >= 4 && inMessageCode == buf.getInt()) {
-                                LOGGER.info("Receiving server information from: " + sa);
-                                return sa;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     protected abstract T transform(ByteBuffer buf, InetSocketAddress sa);
+
+    private InetSocketAddress poll0(DatagramChannel dc, SocketAddress group, Selector selector, ByteBuffer buf, long timeoutMillis) throws IOException {
+        while (true) {
+            buf.putInt(outMessageCode);
+            buf.flip();
+            dc.send(buf, group);
+
+            int count = 2;
+            while (count-- > 0) {
+                int updated = selector.select(timeoutMillis);
+                if (updated == 0) {
+                    return null;
+                }
+                if (updated > 0) {
+                    Iterator<SelectionKey> iter = selector.selectedKeys().iterator();
+                    while (iter.hasNext()) {
+                        SelectionKey sk = iter.next();
+                        iter.remove();
+                        DatagramChannel ch = (DatagramChannel) sk.channel();
+                        buf.clear();
+                        InetSocketAddress sa = (InetSocketAddress) ch.receive(buf);
+                        if (sa != null) {
+                            buf.flip();
+                            if (buf.remaining() >= 4 && inMessageCode == buf.getInt()) {
+                                LOGGER.info("Receiving server information from: " + sa);
+                                return sa;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
