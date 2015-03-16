@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -90,6 +90,12 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
     }
 
     @Override
+    public void reset() {
+        rowSource.reset();
+        map.clear();
+    }
+
+    @Override
     public boolean hasNext() {
         return mapRecordSource != null && mapRecordSource.hasNext() || buildMap();
     }
@@ -97,12 +103,6 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
     @Override
     public Record next() {
         return mapRecordSource.next();
-    }
-
-    @Override
-    public void reset() {
-        rowSource.reset();
-        map.clear();
     }
 
     private boolean buildMap() {
@@ -154,29 +154,27 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
             }
 
             // we are inside of time window, compute aggregates
-            MultiMap.Key key = map.claimKey();
-            key.putLong(sample);
+            MultiMap.KeyWriter keyWriter = map.keyWriter();
+            keyWriter.putLong(sample);
             for (int i = 0; i < keyIndices.length; i++) {
                 switch (rowSource.getMetadata().getColumnType(i + 1)) {
                     case LONG:
-                        key.putLong(rec.getLong(keyIndices[i]));
+                        keyWriter.putLong(rec.getLong(keyIndices[i]));
                         break;
                     case INT:
-                        key.putInt(rec.getInt(keyIndices[i]));
+                        keyWriter.putInt(rec.getInt(keyIndices[i]));
                         break;
                     case STRING:
-                        key.putStr(rec.getStr(keyIndices[i]));
+                        keyWriter.putStr(rec.getStr(keyIndices[i]));
                         break;
                     case SYMBOL:
-                        key.putInt(rec.getInt(keyIndices[i]));
+                        keyWriter.putInt(rec.getInt(keyIndices[i]));
                         break;
                     default:
                         throw new JournalRuntimeException("Unsupported type: " + rowSource.getMetadata().getColumnType(i + 1));
                 }
             }
-            key.commit();
-
-            MapValues values = map.claimSlot(key);
+            MapValues values = map.values(keyWriter);
 
             for (int i = 0, sz = aggregators.size(); i < sz; i++) {
                 aggregators.get(i).calculate(rec, values);

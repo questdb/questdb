@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,6 +23,44 @@ import org.junit.Test;
 import java.util.Iterator;
 
 public class TokenStreamTest {
+    @Test
+    public void testEdgeSymbol() throws Exception {
+        TokenStream ts = new TokenStream();
+        ts.defineSymbol(" ");
+        ts.defineSymbol("+");
+        ts.defineSymbol("(");
+        ts.defineSymbol(")");
+        ts.defineSymbol(",");
+
+        ts.setContent("create journal xyz(a int, b int)");
+
+        Iterator<String> iterator = ts.iterator();
+        Assert.assertEquals("create", iterator.next());
+        Assert.assertEquals(" ", iterator.next());
+        Assert.assertEquals("journal", iterator.next());
+        Assert.assertEquals(" ", iterator.next());
+        Assert.assertEquals("xyz", iterator.next());
+        Assert.assertEquals("(", iterator.next());
+        Assert.assertEquals("a", iterator.next());
+        Assert.assertEquals(" ", iterator.next());
+        Assert.assertEquals("int", iterator.next());
+        Assert.assertEquals(",", iterator.next());
+        Assert.assertEquals(" ", iterator.next());
+        Assert.assertEquals("b", iterator.next());
+        Assert.assertEquals(" ", iterator.next());
+        Assert.assertEquals("int", iterator.next());
+        Assert.assertEquals(")", iterator.next());
+        Assert.assertFalse(iterator.hasNext());
+    }
+
+    @Test
+    public void testNullContent() throws Exception {
+        TokenStream ts = new TokenStream();
+        ts.defineSymbol(" ");
+        ts.setContent(null);
+        Assert.assertFalse(ts.iterator().hasNext());
+    }
+
     @Test
     public void testSymbolLookup() throws Exception {
         TokenStream ts = new TokenStream();

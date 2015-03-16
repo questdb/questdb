@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ import java.util.List;
 public class MultiMap extends DirectMemoryStructure {
 
     private final float loadFactor;
-    private final Key key = new Key();
+    private final KeyWriter keyWriter = new KeyWriter();
     private final MapRecordSource recordSource;
     private final MapValues values;
     private int keyBlockOffset;
@@ -85,32 +85,6 @@ public class MultiMap extends DirectMemoryStructure {
         this.recordSource = new MapRecordSource(record, metadata, this.values, interceptors);
     }
 
-    public Key claimKey() {
-        return key.init();
-    }
-
-    public MapValues claimSlot(Key key) {
-        // calculate hash remembering "key" structure
-        // [ len | value block | key offset block | key data block ]
-        int index = Hash.hashMem(key.startAddr + keyBlockOffset, key.len - keyBlockOffset) % keyCapacity;
-        long offset = offsets.get(index);
-
-        if (offset == -1) {
-            offsets.set(index, key.startAddr - kStart);
-            if (--free == 0) {
-                rehash();
-            }
-            size++;
-            return values.init(key.startAddr, true);
-        } else if (eq(key, offset)) {
-            // rollback added key
-            kPos = key.startAddr;
-            return values.init(kStart + offset, false);
-        } else {
-            return probe0(key, index);
-        }
-    }
-
     public void clear() {
         kPos = kStart;
         free = (int) (keyCapacity * loadFactor);
@@ -126,25 +100,47 @@ public class MultiMap extends DirectMemoryStructure {
         return recordSource.init(kStart, size);
     }
 
+    public KeyWriter keyWriter() {
+        return keyWriter.init();
+    }
+
     public int size() {
         return size;
     }
 
-    @Override
-    protected void freeInternal() {
-        offsets.free();
+    public MapValues values(KeyWriter keyWriter) {
+        keyWriter.commit();
+        // calculate hash remembering "key" structure
+        // [ len | value block | key offset block | key data block ]
+        int index = Hash.hashMem(keyWriter.startAddr + keyBlockOffset, keyWriter.len - keyBlockOffset) % keyCapacity;
+        long offset = offsets.get(index);
+
+        if (offset == -1) {
+            offsets.set(index, keyWriter.startAddr - kStart);
+            if (--free == 0) {
+                rehash();
+            }
+            size++;
+            return values.init(keyWriter.startAddr, true);
+        } else if (eq(keyWriter, offset)) {
+            // rollback added key
+            kPos = keyWriter.startAddr;
+            return values.init(kStart + offset, false);
+        } else {
+            return probe0(keyWriter, index);
+        }
     }
 
-    private boolean eq(Key key, long offset) {
+    private boolean eq(KeyWriter keyWriter, long offset) {
         long a = kStart + offset;
-        long b = key.startAddr;
+        long b = keyWriter.startAddr;
 
         // check length first
         if (Unsafe.getUnsafe().getInt(a) != Unsafe.getUnsafe().getInt(b)) {
             return false;
         }
 
-        long lim = b + key.len;
+        long lim = b + keyWriter.len;
 
         // skip to the data
         a += keyBlockOffset;
@@ -166,22 +162,27 @@ public class MultiMap extends DirectMemoryStructure {
         return true;
     }
 
-    private MapValues probe0(Key key, int index) {
+    @Override
+    protected void freeInternal() {
+        offsets.free();
+    }
+
+    private MapValues probe0(KeyWriter keyWriter, int index) {
         long offset;
         while ((offset = offsets.get(index = (++index % keyCapacity))) != -1) {
-            if (eq(key, offset)) {
-                kPos = key.startAddr;
+            if (eq(keyWriter, offset)) {
+                kPos = keyWriter.startAddr;
                 return values.init(kStart + offset, false);
             }
         }
-        offsets.set(index, key.startAddr - kStart);
+        offsets.set(index, keyWriter.startAddr - kStart);
         free--;
         if (free == 0) {
             rehash();
         }
 
         size++;
-        return values.init(key.startAddr, true);
+        return values.init(keyWriter.startAddr, true);
     }
 
     private void rehash() {
@@ -216,9 +217,9 @@ public class MultiMap extends DirectMemoryStructure {
         Unsafe.getUnsafe().freeMemory(this.address);
 
         long d = kStart - this.kStart;
-        key.startAddr += d;
-        key.appendAddr += d;
-        key.nextColOffset += d;
+        keyWriter.startAddr += d;
+        keyWriter.appendAddr += d;
+        keyWriter.nextColOffset += d;
 
 
         this.address = kAddress;
@@ -269,20 +270,20 @@ public class MultiMap extends DirectMemoryStructure {
         }
     }
 
-    public class Key {
+    public class KeyWriter {
         private long startAddr;
         private long appendAddr;
 
         private int len;
         private long nextColOffset;
 
-        public Key commit() {
+        public KeyWriter commit() {
             Unsafe.getUnsafe().putInt(startAddr, len = (int) (appendAddr - startAddr));
             kPos = appendAddr;
             return this;
         }
 
-        public Key init() {
+        public KeyWriter init() {
             startAddr = kPos;
             appendAddr = startAddr + keyDataOffset;
             nextColOffset = startAddr + keyBlockOffset;
@@ -296,7 +297,7 @@ public class MultiMap extends DirectMemoryStructure {
             writeOffset();
         }
 
-        public Key putInt(int value) {
+        public KeyWriter putInt(int value) {
             checkSize(4);
             Unsafe.getUnsafe().putInt(appendAddr, value);
             appendAddr += 4;
@@ -304,7 +305,7 @@ public class MultiMap extends DirectMemoryStructure {
             return this;
         }
 
-        public Key putLong(long value) {
+        public KeyWriter putLong(long value) {
             checkSize(8);
             Unsafe.getUnsafe().putLong(appendAddr, value);
             appendAddr += 8;
@@ -312,7 +313,7 @@ public class MultiMap extends DirectMemoryStructure {
             return this;
         }
 
-        public Key putStr(CharSequence value) {
+        public KeyWriter putStr(CharSequence value) {
             int len = value.length();
             checkSize(len << 1);
             for (int i = 0; i < len; i++) {

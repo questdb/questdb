@@ -38,6 +38,7 @@ public class NetworkConfig {
     private int soRcvBuf = DEFAULT_SO_RCVBUF;
     private boolean enableMultiCast = true;
     private String ifName = null;
+    private NetworkInterface defaultInterface = null;
 
     public static boolean isInet6(InetAddress address) {
         return address instanceof Inet6Address;
@@ -48,25 +49,30 @@ public class NetworkConfig {
     }
 
     public NetworkInterface findExternalNic() throws JournalNetworkException {
+        if (defaultInterface != null) {
+            return defaultInterface;
+        }
         try {
             Enumeration<NetworkInterface> ifs = NetworkInterface.getNetworkInterfaces();
+            int index = Integer.MAX_VALUE;
+
             while (ifs.hasMoreElements()) {
-                NetworkInterface ifn = ifs.nextElement();
-
-                if (ifn.isLoopback()) {
-                    continue;
+                NetworkInterface q = ifs.nextElement();
+                if (!q.isLoopback() && q.isUp() && q.getIndex() < index) {
+                    defaultInterface = q;
+                    index = q.getIndex();
                 }
-
-                if (ifn.isUp() && /* osx hack */ !ifn.getDisplayName().startsWith("awdl0")) {
-                    return ifn;
-                }
-
             }
+
+            if (defaultInterface == null) {
+                throw new JournalNetworkException("Could not find multicast-capable network interfaces");
+            }
+
+            return defaultInterface;
         } catch (SocketException e) {
             throw new JournalNetworkException(e);
         }
 
-        throw new JournalNetworkException("Could not find multicast-capable network interfaces");
     }
 
     public String getIfName() {

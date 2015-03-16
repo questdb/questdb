@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 package com.nfsdb.io.parser.listener;
 
-import com.nfsdb.collections.mmap.MapValues;
 import com.nfsdb.collections.mmap.MultiMap;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.io.ImportManager;
@@ -118,16 +117,7 @@ public class MetadataExtractorListener implements Listener, Closeable {
                     histogram[k + offset]++;
                 }
             }
-
-            MapValues mv = frequencyMaps[i].claimSlot(
-                    frequencyMaps[i].claimKey().putStr(values[i]).commit()
-            );
-
-            if (mv.isNew()) {
-                mv.putInt(0, 0);
-            } else {
-                mv.putInt(0, mv.getInt(0) + 1);
-            }
+            frequencyMaps[i].values(frequencyMaps[i].keyWriter().putStr(values[i]));
         }
     }
 

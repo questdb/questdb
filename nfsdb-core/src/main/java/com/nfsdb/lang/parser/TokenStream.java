@@ -64,7 +64,7 @@ public class TokenStream extends AbstractImmutableIterator<String> {
         int pos = buffer.position();
         for (int i = 0, sz = l.size(); i < sz; i++) {
             final Token t = l.get(i);
-            boolean match = t.text.length() < buffer.remaining();
+            boolean match = (t.text.length() - 2) < buffer.remaining();
             if (match) {
                 for (int k = 1; k < t.text.length(); k++) {
                     if (buffer.getChar(pos + 2 * (k - 1)) != t.text.charAt(k)) {
@@ -83,7 +83,7 @@ public class TokenStream extends AbstractImmutableIterator<String> {
 
     @Override
     public boolean hasNext() {
-        return buffer != null && buffer.hasRemaining();
+        return next != null || (buffer != null && buffer.hasRemaining());
     }
 
     @Override
@@ -151,6 +151,10 @@ public class TokenStream extends AbstractImmutableIterator<String> {
     public void setContent(String s) {
         if ((s == null || s.length() == 0) && buffer != null) {
             buffer.limit(0);
+            return;
+        }
+
+        if (s == null) {
             return;
         }
 

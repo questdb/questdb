@@ -122,11 +122,10 @@ public class MultiMapTest extends AbstractTest {
         for (JournalRecord e : w.rows()) {
             long ts = e.getLong(tsIndex);
 
-            MapValues val = map.claimSlot(
-                    map.claimKey()
+            MapValues val = map.values(
+                    map.keyWriter()
                             .putLong(Dates.floorMI(ts))
                             .putInt(e.getInt(symIndex))
-                            .commit()
             );
 
             val.putInt(0, val.isNew() ? 1 : val.getInt(0) + 1);

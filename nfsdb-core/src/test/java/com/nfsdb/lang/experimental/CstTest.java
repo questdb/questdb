@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -264,11 +264,10 @@ public class CstTest {
                     prev = ts;
                 }
 
-                MapValues val = map.claimSlot(
-                        map.claimKey()
+                MapValues val = map.values(
+                        map.keyWriter()
                                 .putLong(ts)
                                 .putInt(e.getInt(symIndex))
-                                .commit()
                 );
 
                 val.putInt(0, val.isNew() ? 1 : val.getInt(0) + 1);
