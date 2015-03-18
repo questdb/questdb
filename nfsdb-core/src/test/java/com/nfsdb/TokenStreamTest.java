@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.nfsdb;
 
 import com.nfsdb.lang.parser.TokenStream;
+import com.nfsdb.utils.Chars;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -34,22 +35,22 @@ public class TokenStreamTest {
 
         ts.setContent("create journal xyz(a int, b int)");
 
-        Iterator<String> iterator = ts.iterator();
-        Assert.assertEquals("create", iterator.next());
-        Assert.assertEquals(" ", iterator.next());
-        Assert.assertEquals("journal", iterator.next());
-        Assert.assertEquals(" ", iterator.next());
-        Assert.assertEquals("xyz", iterator.next());
-        Assert.assertEquals("(", iterator.next());
-        Assert.assertEquals("a", iterator.next());
-        Assert.assertEquals(" ", iterator.next());
-        Assert.assertEquals("int", iterator.next());
-        Assert.assertEquals(",", iterator.next());
-        Assert.assertEquals(" ", iterator.next());
-        Assert.assertEquals("b", iterator.next());
-        Assert.assertEquals(" ", iterator.next());
-        Assert.assertEquals("int", iterator.next());
-        Assert.assertEquals(")", iterator.next());
+        Iterator<CharSequence> iterator = ts.iterator();
+        Assert.assertTrue(Chars.equals("create", iterator.next()));
+        Assert.assertTrue(Chars.equals(" ", iterator.next()));
+        Assert.assertTrue(Chars.equals("journal", iterator.next()));
+        Assert.assertTrue(Chars.equals(" ", iterator.next()));
+        Assert.assertTrue(Chars.equals("xyz", iterator.next()));
+        Assert.assertTrue(Chars.equals("(", iterator.next()));
+        Assert.assertTrue(Chars.equals("a", iterator.next()));
+        Assert.assertTrue(Chars.equals(" ", iterator.next()));
+        Assert.assertTrue(Chars.equals("int", iterator.next()));
+        Assert.assertTrue(Chars.equals(",", iterator.next()));
+        Assert.assertTrue(Chars.equals(" ", iterator.next()));
+        Assert.assertTrue(Chars.equals("b", iterator.next()));
+        Assert.assertTrue(Chars.equals(" ", iterator.next()));
+        Assert.assertTrue(Chars.equals("int", iterator.next()));
+        Assert.assertTrue(Chars.equals(")", iterator.next()));
         Assert.assertFalse(iterator.hasNext());
     }
 
@@ -70,14 +71,14 @@ public class TokenStreamTest {
 
         ts.setContent("+*a+b++blah-");
 
-        Iterator<String> iterator = ts.iterator();
-        Assert.assertEquals("+", iterator.next());
-        Assert.assertEquals("*", iterator.next());
-        Assert.assertEquals("a", iterator.next());
-        Assert.assertEquals("+", iterator.next());
-        Assert.assertEquals("b", iterator.next());
-        Assert.assertEquals("++", iterator.next());
-        Assert.assertEquals("blah-", iterator.next());
+        Iterator<CharSequence> iterator = ts.iterator();
+        Assert.assertTrue(Chars.equals("+", iterator.next()));
+        Assert.assertTrue(Chars.equals("*", iterator.next()));
+        Assert.assertTrue(Chars.equals("a", iterator.next()));
+        Assert.assertTrue(Chars.equals("+", iterator.next()));
+        Assert.assertTrue(Chars.equals("b", iterator.next()));
+        Assert.assertTrue(Chars.equals("++", iterator.next()));
+        Assert.assertTrue(Chars.equals("blah-", iterator.next()));
         Assert.assertFalse(iterator.hasNext());
     }
 }

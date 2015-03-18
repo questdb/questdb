@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,24 @@ package com.nfsdb.utils;
 
 public final class Chars {
     private Chars() {
+    }
+
+    public static boolean equals(CharSequence l, CharSequence r) {
+        int ll;
+        if ((ll = l.length()) != r.length()) {
+            return false;
+        }
+
+        for (int i = 0; i < ll; i++) {
+            if (l.charAt(i) != r.charAt(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static boolean equals(CharSequence l, char r) {
+        return l.length() == 1 && l.charAt(0) == r;
     }
 
     /**
@@ -42,5 +60,4 @@ public final class Chars {
 
         return true;
     }
-
 }

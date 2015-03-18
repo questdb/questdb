@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ package com.nfsdb.lang.parser;
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.collections.IntObjHashMap;
 import com.nfsdb.utils.ByteBuffers;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -27,11 +26,11 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 
-public class TokenStream extends AbstractImmutableIterator<String> {
+public class TokenStream extends AbstractImmutableIterator<CharSequence> {
     private final IntObjHashMap<List<Token>> symbols = new IntObjHashMap<>();
     private final StringBuilder s = new StringBuilder();
     private ByteBuffer buffer;
-    private String next = null;
+    private CharSequence next = null;
 
     public void defineSymbol(String text) {
         defineSymbol(new Token(text));
@@ -53,7 +52,6 @@ public class TokenStream extends AbstractImmutableIterator<String> {
         });
     }
 
-    @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public Token getSymbol(char c) {
 
         List<Token> l = symbols.get(c);
@@ -87,10 +85,10 @@ public class TokenStream extends AbstractImmutableIterator<String> {
     }
 
     @Override
-    public String next() {
+    public CharSequence next() {
 
         if (next != null) {
-            String result = next;
+            CharSequence result = next;
             next = null;
             return result;
         }
@@ -101,7 +99,7 @@ public class TokenStream extends AbstractImmutableIterator<String> {
 
         while (hasNext()) {
             char c = buffer.getChar();
-            String token;
+            CharSequence token;
             switch (term) {
                 case 1:
                     if ((token = token(c)) != null) {
@@ -131,7 +129,7 @@ public class TokenStream extends AbstractImmutableIterator<String> {
                 case '\'':
                     switch (c) {
                         case '\'':
-                            return s.toString();
+                            return s;
                         default:
                             s.append(c);
                     }
@@ -139,36 +137,36 @@ public class TokenStream extends AbstractImmutableIterator<String> {
                 case '"':
                     switch (c) {
                         case '"':
-                            return s.toString();
+                            return s;
                         default:
                             s.append(c);
                     }
             }
         }
-        return s.toString();
+        return s;
     }
 
-    public void setContent(String s) {
-        if ((s == null || s.length() == 0) && buffer != null) {
+    public void setContent(CharSequence cs) {
+        if (cs == null) {
+            return;
+        }
+
+        if (cs.length() == 0 && buffer != null) {
             buffer.limit(0);
             return;
         }
 
-        if (s == null) {
-            return;
-        }
-
-        if (buffer == null || buffer.capacity() < s.length() * 2) {
-            buffer = ByteBuffer.allocate(s.length() * 2);
+        if (buffer == null || buffer.capacity() < cs.length() * 2) {
+            buffer = ByteBuffer.allocate(cs.length() * 2);
         } else {
-            buffer.limit(s.length() * 2);
+            buffer.limit(cs.length() * 2);
         }
         buffer.rewind();
-        ByteBuffers.putStr(buffer, s);
+        ByteBuffers.putStr(buffer, cs);
         buffer.rewind();
     }
 
-    private String token(char c) {
+    private CharSequence token(char c) {
         Token t = getSymbol(c);
         if (t != null) {
             buffer.position(buffer.position() + (t.text.length() - 1) * 2);
@@ -177,7 +175,7 @@ public class TokenStream extends AbstractImmutableIterator<String> {
             } else {
                 next = t.text;
             }
-            return s.toString();
+            return s;
         } else {
             return null;
         }

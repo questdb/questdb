@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -146,7 +146,7 @@ public final class ByteBuffers {
         return channelSize > max ? max : channelSize;
     }
 
-    public static void putStr(ByteBuffer buffer, String value) {
+    public static void putStr(ByteBuffer buffer, CharSequence value) {
         int p = buffer.position();
         for (int i = 0; i < value.length(); i++) {
             buffer.putChar(p, value.charAt(i));
