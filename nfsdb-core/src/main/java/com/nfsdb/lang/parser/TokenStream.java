@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
     private final StringBuilder s = new StringBuilder();
     private ByteBuffer buffer;
     private CharSequence next = null;
+    private int position;
 
     public void defineSymbol(String text) {
         defineSymbol(new Token(text));
@@ -97,6 +98,8 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
 
         char term = 0;
 
+        this.position = buffer.position();
+
         while (hasNext()) {
             char c = buffer.getChar();
             CharSequence token;
@@ -144,6 +147,10 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
             }
         }
         return s;
+    }
+
+    public int position() {
+        return position >> 1;
     }
 
     public void setContent(CharSequence cs) {

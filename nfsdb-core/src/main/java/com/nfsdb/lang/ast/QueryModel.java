@@ -16,32 +16,26 @@
 
 package com.nfsdb.lang.ast;
 
-import com.nfsdb.factory.configuration.JournalStructure;
+import java.util.ArrayList;
+import java.util.List;
 
-public class Statement {
-    private StatementType type;
-    private JournalStructure structure;
-    private QueryModel queryModel;
+public class QueryModel {
+    private final List<String> columnNames = new ArrayList<>();
+    private String journalName;
 
-    public Statement(StatementType type, JournalStructure structure) {
-        this.structure = structure;
-        this.type = type;
+    public void addColumn(String name) {
+        columnNames.add(name);
     }
 
-    public Statement(StatementType type, QueryModel queryModel) {
-        this.type = type;
-        this.queryModel = queryModel;
+    public List<String> getColumnNames() {
+        return columnNames;
     }
 
-    public QueryModel getQueryModel() {
-        return queryModel;
+    public String getJournalName() {
+        return journalName;
     }
 
-    public JournalStructure getStructure() {
-        return structure;
-    }
-
-    public StatementType getType() {
-        return type;
+    public void setJournalName(String journalName) {
+        this.journalName = journalName;
     }
 }
