@@ -36,5 +36,4 @@ public abstract class AbstractDyadicColumn extends AbstractVirtualColumn {
         l.configure(metadata, state);
         r.configure(metadata, state);
     }
-
 }

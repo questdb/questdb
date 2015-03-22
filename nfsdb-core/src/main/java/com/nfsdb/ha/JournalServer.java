@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -200,34 +200,6 @@ public class JournalServer {
         service.execute(new Acceptor());
     }
 
-    private void addChannel(SocketChannelHolder holder) {
-        channels.add(holder);
-    }
-
-    private void closeChannel(SocketChannelHolder holder, boolean force) {
-        if (holder != null) {
-            try {
-                if (holder.socketAddress != null) {
-                    if (force) {
-                        LOGGER.info("Client forced out: %s", holder.socketAddress);
-                    } else {
-                        LOGGER.info("Client disconnected: %s", holder.socketAddress);
-                    }
-                }
-                holder.byteChannel.close();
-
-            } catch (IOException e) {
-                LOGGER.error("Cannot close channel [%s]: %s", holder.byteChannel, e.getMessage());
-            }
-        }
-    }
-
-    private void closeChannels() {
-        while (channels.size() > 0) {
-            closeChannel(channels.remove(0), true);
-        }
-    }
-
     @SuppressWarnings("unchecked")
     IndexedJournalKey getWriterIndex0(JournalKey key) {
         for (ObjIntHashMap.Entry<JournalWriter> e : writers.immutableIterator()) {
@@ -237,6 +209,34 @@ public class JournalServer {
             }
         }
         return null;
+    }
+
+    private void addChannel(SocketChannelHolder holder) {
+        channels.add(holder);
+    }
+
+    private void closeChannel(SocketChannelHolder holder, boolean force) {
+        if (holder != null) {
+            try {
+                if (holder.socketAddress != null) {
+                    if (force) {
+                        LOGGER.info("Server node %d: Client forced out: %s", serverInstance, holder.socketAddress);
+                    } else {
+                        LOGGER.info("Server node %d: Client disconnected: %s", serverInstance, holder.socketAddress);
+                    }
+                }
+                holder.byteChannel.close();
+
+            } catch (IOException e) {
+                LOGGER.error("Server node %d: Cannot close channel [%s]: %s", serverInstance, holder.byteChannel, e.getMessage());
+            }
+        }
+    }
+
+    private void closeChannels() {
+        while (channels.size() > 0) {
+            closeChannel(channels.remove(0), true);
+        }
     }
 
     private void removeChannel(SocketChannelHolder holder) {
@@ -262,9 +262,9 @@ public class JournalServer {
                         addChannel(holder);
                         try {
                             service.submit(new Handler(holder));
-                            LOGGER.info("Connected: %s", holder.socketAddress);
+                            LOGGER.info("Server node %d: Connected %s", serverInstance, holder.socketAddress);
                         } catch (RejectedExecutionException e) {
-                            LOGGER.info("Ignoring connection from %s. Server is shutting down.", holder.socketAddress);
+                            LOGGER.info("Node %d ignoring connection from %s. Server is shutting down.", serverInstance, holder.socketAddress);
                         }
                     }
                 }
@@ -308,7 +308,7 @@ public class JournalServer {
                             if (LOGGER.isDebugEnabled()) {
                                 LOGGER.debug("Client died", e);
                             } else {
-                                LOGGER.info("Client died %s: %s", holder.socketAddress, e.getMessage());
+                                LOGGER.info("Server node %d: Client died %s: %s", serverInstance, holder.socketAddress, e.getMessage());
                             }
                         }
                         break;

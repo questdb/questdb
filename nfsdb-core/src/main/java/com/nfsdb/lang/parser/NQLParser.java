@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import com.nfsdb.lang.cst.RecordSource;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Numbers;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -37,16 +38,17 @@ import java.util.Deque;
 public class NQLParser {
 
     private final TokenStream tokenStream = new TokenStream() {{
-        defineSymbol(new Token(" "));
-        defineSymbol(new Token("("));
-        defineSymbol(new Token(")"));
-        defineSymbol(new Token(","));
-        defineSymbol(new Token("+"));
+        defineSymbol(" ");
+        defineSymbol("(");
+        defineSymbol(")");
+        defineSymbol(",");
+        defineSymbol("+");
     }};
 
+    @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public NQLParser() {
         for (int i = 0, k = Operator.operators.size(); i < k; i++) {
-            tokenStream.defineSymbol(new Token(Operator.operators.get(i).token));
+            tokenStream.defineSymbol(Operator.operators.get(i).token);
         }
     }
 
@@ -64,6 +66,28 @@ public class NQLParser {
         System.out.println("ok");
     }
 
+    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
+    private static void addNode(ExprNode node, Deque<ExprNode> stack) {
+        switch (node.paramCount) {
+            case 0:
+                break;
+            case 1:
+                node.rhs = stack.pollFirst();
+                break;
+            case 2:
+                node.rhs = stack.pollFirst();
+                node.lhs = stack.pollFirst();
+                break;
+            default:
+                ArrayList<ExprNode> a = new ArrayList<>();
+                for (int i = 0; i < node.paramCount; i++) {
+                    a.add(stack.pollFirst());
+                }
+                node.args = a;
+        }
+        stack.push(node);
+    }
+
     public Statement parse() throws ParserException {
         CharSequence tok = tok();
         if (Chars.equals(tok, "create")) {
@@ -77,7 +101,12 @@ public class NQLParser {
         throw err("create | select expected");
     }
 
-    public ExprNode parseExpr() throws ParserException {
+    public void setContent(CharSequence cs) {
+        tokenStream.setContent(cs);
+    }
+
+    @SuppressFBWarnings({"CC_CYCLOMATIC_COMPLEXITY", "SF_SWITCH_NO_DEFAULT"})
+    ExprNode parseExpr() throws ParserException {
         Deque<ExprNode> opStack = new ArrayDeque<>();
         Deque<ExprNode> astStack = new ArrayDeque<>();
         Deque<Integer> paramCountStack = new ArrayDeque<>();
@@ -109,6 +138,7 @@ public class NQLParser {
 
                     if (braceCount == 0) {
                         // comma outside of braces
+                        tokenStream.unparse();
                         break OUT;
                     }
 
@@ -207,7 +237,6 @@ public class NQLParser {
                                     case NONE:
                                         // we have unary minus
                                         type = Operator.OperatorType.UNARY;
-
                                 }
                         }
 
@@ -242,6 +271,7 @@ public class NQLParser {
                     } else {
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input
+                        tokenStream.unparse();
                         break OUT;
                     }
             }
@@ -254,31 +284,6 @@ public class NQLParser {
             addNode(node, astStack);
         }
         return astStack.pollFirst();
-    }
-
-    public void setContent(CharSequence cs) {
-        tokenStream.setContent(cs);
-    }
-
-    private static void addNode(ExprNode node, Deque<ExprNode> stack) {
-        switch (node.paramCount) {
-            case 0:
-                break;
-            case 1:
-                node.rhs = stack.pollFirst();
-                break;
-            case 2:
-                node.rhs = stack.pollFirst();
-                node.lhs = stack.pollFirst();
-                break;
-            default:
-                ArrayList<ExprNode> a = new ArrayList<>();
-                for (int i = 0; i < node.paramCount; i++) {
-                    a.add(stack.pollFirst());
-                }
-                node.args = a;
-        }
-        stack.push(node);
     }
 
     private ParserException err(String msg) {
@@ -335,6 +340,7 @@ public class NQLParser {
         throw err("journal expected");
     }
 
+    @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE"})
     private CharSequence parseIntDefinition(GenericIntBuilder genericIntBuilder) throws ParserException {
         CharSequence tok = tok();
 
@@ -398,6 +404,9 @@ public class NQLParser {
                     break;
                 case DATE:
                     struct.$date(name);
+                    break;
+                default:
+                    throw new ParserException(tokenStream.position(), "Unsupported type");
             }
 
             if (tok == null) {

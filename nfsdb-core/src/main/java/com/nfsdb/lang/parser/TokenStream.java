@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.nfsdb.lang.parser;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.collections.IntObjHashMap;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
 import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 
@@ -27,7 +28,7 @@ import java.util.Comparator;
 import java.util.List;
 
 public class TokenStream extends AbstractImmutableIterator<CharSequence> {
-    private final IntObjHashMap<List<Token>> symbols = new IntObjHashMap<>();
+    private final IntObjHashMap<List<CharSequence>> symbols = new IntObjHashMap<>();
     private final CharSequence floatingSequence = new FloatingSequence();
     private CharSequence next = null;
     private int _lo;
@@ -35,37 +36,35 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
     private int _pos;
     private int _len;
     private CharSequence content;
+    private CharSequence unparsed;
+    private CharSequence last;
 
-    public void defineSymbol(String text) {
-        defineSymbol(new Token(text));
-    }
-
-    public void defineSymbol(Token token) {
-        char c0 = token.text.charAt(0);
-        List<Token> l = symbols.get(c0);
+    public void defineSymbol(String token) {
+        char c0 = token.charAt(0);
+        List<CharSequence> l = symbols.get(c0);
         if (l == null) {
             l = new ArrayList<>();
             symbols.put(c0, l);
         }
         l.add(token);
-        Collections.sort(l, new Comparator<Token>() {
+        Collections.sort(l, new Comparator<CharSequence>() {
             @Override
-            public int compare(Token o1, Token o2) {
-                return o2.text.length() - o1.text.length();
+            public int compare(CharSequence o1, CharSequence o2) {
+                return o2.length() - o1.length();
             }
         });
     }
 
-    public Token getSymbol(char c) {
+    @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
+    public CharSequence getSymbol(char c) {
 
-        List<Token> l = symbols.get(c);
+        List<CharSequence> l = symbols.get(c);
         if (l == null) {
             return null;
         }
 
         for (int i = 0, sz = l.size(); i < sz; i++) {
-            final Token t = l.get(i);
-            CharSequence txt = t.text;
+            CharSequence txt = l.get(i);
             boolean match = (txt.length() - 2) < (_len - _pos);
             if (match) {
                 for (int k = 1; k < txt.length(); k++) {
@@ -77,7 +76,7 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
             }
 
             if (match) {
-                return t;
+                return txt;
             }
         }
         return null;
@@ -91,10 +90,16 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
     @Override
     public CharSequence next() {
 
+        if (unparsed != null) {
+            CharSequence result = unparsed;
+            unparsed = null;
+            return last = result;
+        }
+
         if (next != null) {
             CharSequence result = next;
             next = null;
-            return result;
+            return last = result;
         }
 
         char term = 0;
@@ -107,7 +112,7 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
             switch (term) {
                 case 1:
                     if ((token = token(c)) != null) {
-                        return token;
+                        return last = token;
                     } else {
                         _hi++;
                     }
@@ -122,7 +127,7 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
                             break;
                         default:
                             if ((token = token(c)) != null) {
-                                return token;
+                                return last = token;
                             } else {
                                 _hi++;
                             }
@@ -133,7 +138,7 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
                 case '\'':
                     switch (c) {
                         case '\'':
-                            return floatingSequence;
+                            return last = floatingSequence;
                         default:
                             _hi++;
                     }
@@ -141,13 +146,13 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
                 case '"':
                     switch (c) {
                         case '"':
-                            return floatingSequence;
+                            return last = floatingSequence;
                         default:
                             _hi++;
                     }
             }
         }
-        return floatingSequence;
+        return last = floatingSequence;
     }
 
     public int position() {
@@ -160,14 +165,18 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
         this._len = cs == null ? 0 : cs.length();
     }
 
+    public void unparse() {
+        unparsed = last;
+    }
+
     private CharSequence token(char c) {
-        Token t = getSymbol(c);
+        CharSequence t = getSymbol(c);
         if (t != null) {
-            _pos = _pos + t.text.length() - 1;
+            _pos = _pos + t.length() - 1;
             if (_lo == _hi) {
-                return t.text;
+                return t;
             } else {
-                next = t.text;
+                next = t;
             }
             return floatingSequence;
         } else {
@@ -177,13 +186,13 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
 
     public class FloatingSequence implements CharSequence {
         @Override
-        public int length() {
-            return _hi - _lo;
+        public char charAt(int index) {
+            return content.charAt(_lo + index);
         }
 
         @Override
-        public char charAt(int index) {
-            return content.charAt(_lo + index);
+        public int length() {
+            return _hi - _lo;
         }
 
         @Override
@@ -191,6 +200,7 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
             throw new NotImplementedException();
         }
 
+        @SuppressFBWarnings({"RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE"})
         @Override
         @NotNull
         public String toString() {

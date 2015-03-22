@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@ public class ClientConfig extends NetworkConfig {
     private boolean keepAlive = true;
     private boolean tcpNoDelay = true;
     private int linger = 0;
-    private long connectionTimeout = 500; //millis
+    private long connectionTimeout = 30000; //millis
 
     public ClientConfig() {
         this(null);

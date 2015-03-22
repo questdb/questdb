@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,14 @@
 
 package com.nfsdb.lang.ast;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+import java.util.*;
+
+@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class Operator {
 
-    public static final List<Operator> operators = new ArrayList<Operator>() {{
+    public static final List<Operator> operators = Collections.unmodifiableList(new ArrayList<Operator>() {{
         add(new Operator("^", 2, false, OperatorType.BINARY));
         add(new Operator("*", 3, true, OperatorType.BINARY));
         add(new Operator("/", 3, true, OperatorType.BINARY));
@@ -36,14 +37,14 @@ public class Operator {
         add(new Operator("!=", 7, true, OperatorType.BINARY));
         add(new Operator("&&", 11, true, OperatorType.BINARY));
         add(new Operator("||", 11, true, OperatorType.BINARY));
-    }};
+    }});
     public String token;
-    public static final HashMap<CharSequence, Operator> opMap = new HashMap<CharSequence, Operator>() {{
+    public static final Map<CharSequence, Operator> opMap = Collections.unmodifiableMap(new HashMap<CharSequence, Operator>() {{
         for (int i = 0, k = operators.size(); i < k; i++) {
             Operator op = operators.get(i);
             put(op.token, op);
         }
-    }};
+    }});
     public int precedence;
     public boolean leftAssociative;
     public OperatorType type;
