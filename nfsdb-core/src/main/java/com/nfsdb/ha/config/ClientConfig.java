@@ -38,7 +38,7 @@ public class ClientConfig extends NetworkConfig {
     private boolean keepAlive = true;
     private boolean tcpNoDelay = true;
     private int linger = 0;
-    private long connectionTimeout = 30000; //millis
+    private long connectionTimeout = 500; //millis
 
     public ClientConfig() {
         this(null);

@@ -78,6 +78,7 @@ public class ClusterControllerTest extends AbstractTest {
                 }},
                 new ClientConfig() {{
                     setEnableMultiCast(false);
+                    setConnectionTimeout(30000);
                 }},
                 factory,
                 1,
@@ -123,6 +124,7 @@ public class ClusterControllerTest extends AbstractTest {
                 }},
                 new ClientConfig() {{
                     setEnableMultiCast(false);
+                    setConnectionTimeout(30000);
                 }},
                 factory2,
                 2,
@@ -396,6 +398,7 @@ public class ClusterControllerTest extends AbstractTest {
                 }},
                 new ClientConfig() {{
                     setEnableMultiCast(false);
+                    setConnectionTimeout(30000);
                 }},
                 fact,
                 instance,
@@ -434,6 +437,7 @@ public class ClusterControllerTest extends AbstractTest {
                 }},
                 new ClientConfig() {{
                     setEnableMultiCast(false);
+                    setConnectionTimeout(30000);
                 }},
                 fact,
                 instance,
