@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,6 +30,8 @@ public enum Command {
     AUTHORIZATION(0x0a),
     CLUSTER_VOTE(0x0b),
     SERVER_SHUTDOWN(0x0c),
+    ELECTION(0x0d),
+    ELECTED(0x0e),
     UNAUTHENTIC(0xFC),
     UNKNOWN_CMD(0xFE);
 

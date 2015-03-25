@@ -271,6 +271,7 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
+    @SuppressWarnings("EqualsBetweenInconvertibleTypes")
     @Override
     public boolean equals(Object o) {
         return this == o || !(o == null || getClass() != o.getClass()) && getKey().equals(((Journal) o).getKey());

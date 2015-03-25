@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 package com.nfsdb.ha.config;
 
-import com.nfsdb.collections.IntObjHashMap;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.utils.Numbers;
 import org.jetbrains.annotations.NotNull;
@@ -63,13 +62,6 @@ public class ServerNode {
         this.hostname = hostname;
         this.port = port;
         this.address = hostname + ":" + port;
-    }
-
-    public static void parse(String nodes, IntObjHashMap<ServerNode> to) {
-        String parts[] = nodes.split(",");
-        for (int i = 0; i < parts.length; i++) {
-            to.put(i, new ServerNode(i, parts[i]));
-        }
     }
 
     public String getAddress() {

@@ -38,16 +38,16 @@ public class Operator {
         add(new Operator("&&", 11, true, OperatorType.BINARY));
         add(new Operator("||", 11, true, OperatorType.BINARY));
     }});
-    public String token;
+    public final String token;
     public static final Map<CharSequence, Operator> opMap = Collections.unmodifiableMap(new HashMap<CharSequence, Operator>() {{
         for (int i = 0, k = operators.size(); i < k; i++) {
             Operator op = operators.get(i);
             put(op.token, op);
         }
     }});
-    public int precedence;
-    public boolean leftAssociative;
-    public OperatorType type;
+    public final int precedence;
+    public final boolean leftAssociative;
+    public final OperatorType type;
 
     public Operator(String token, int precedence, boolean leftAssociative, OperatorType type) {
         this.token = token;
@@ -56,7 +56,7 @@ public class Operator {
         this.type = type;
     }
 
-    public static enum OperatorType {
+    public enum OperatorType {
         UNARY, BINARY
     }
 }

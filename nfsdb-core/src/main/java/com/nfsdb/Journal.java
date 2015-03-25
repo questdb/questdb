@@ -157,6 +157,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         return -1;
     }
 
+    @SuppressWarnings("EqualsBetweenInconvertibleTypes")
     @Override
     public boolean equals(Object o) {
         return this == o || !(o == null || getClass() != o.getClass()) && key.equals(((Journal) o).key);
@@ -662,7 +663,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
             temp.applyTx(tx.lagSize, tx.lagIndexPointers);
             setIrregularPartition(temp);
             // exit out of while loop
-        } else if (lagPartitionName != null && irregularPartition != null && lagPartitionName.equals(irregularPartition.getName())) {
+        } else if (lagPartitionName != null && lagPartitionName.equals(irregularPartition.getName())) {
             irregularPartition.applyTx(tx.lagSize, tx.lagIndexPointers);
         } else if (lagPartitionName == null && irregularPartition != null) {
             removeIrregularPartitionInternal();

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ import com.nfsdb.Journal;
 import com.nfsdb.JournalKey;
 import com.nfsdb.collections.DirectIntList;
 import com.nfsdb.collections.IntIntHashMap;
-import com.nfsdb.exceptions.ClusterLossException;
 import com.nfsdb.exceptions.JournalDisconnectedChannelException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
@@ -104,19 +103,6 @@ public class JournalServerAgent {
     public void process(ByteChannel channel) throws JournalNetworkException {
         commandConsumer.read(channel);
         switch (commandConsumer.getValue()) {
-            case CLUSTER_VOTE:
-                checkAuthorized(channel);
-                intResponseConsumer.read(channel);
-                int inst = intResponseConsumer.getValue();
-                boolean loss = !server.isAlpha() && inst > server.getServerInstance();
-
-                if (loss) {
-                    ok(channel);
-                    throw new ClusterLossException(inst);
-                } else {
-                    error(channel, server.isAlpha() ? "WIN" : "OUT");
-                }
-                break;
             case SET_KEY_CMD:
                 setClientKey(channel);
                 break;
@@ -135,8 +121,7 @@ public class JournalServerAgent {
             case CLIENT_DISCONNECT:
                 throw new JournalDisconnectedChannelException();
             case PROTOCOL_VERSION:
-                intResponseConsumer.read(channel);
-                checkProtocolVersion(channel, intResponseConsumer.getValue());
+                checkProtocolVersion(channel, intResponseConsumer.getValue(channel));
                 break;
             case HANDSHAKE_COMPLETE:
                 if (authorized) {
@@ -148,6 +133,12 @@ public class JournalServerAgent {
             case AUTHORIZATION:
                 byteArrayResponseConsumer.read(channel);
                 authorize(channel, byteArrayResponseConsumer.getValue());
+                break;
+            case ELECTION:
+                server.handleElectionMessage(channel);
+                break;
+            case ELECTED:
+                server.handleElectedMessage(channel);
                 break;
             default:
                 throw new JournalNetworkException("Corrupt channel");

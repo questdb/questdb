@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,7 +39,7 @@ import java.util.concurrent.TimeUnit;
 @SuppressFBWarnings({"SE_BAD_FIELD"})
 public class ClusteredProducerMain {
 
-    public static void main(String[] args) throws JournalException, IOException {
+    public static void main(String[] args) throws JournalException, IOException, JournalNetworkException {
 
         final String pathToDatabase = args[0];
         final int instance = Numbers.parseInt(args[1]);
@@ -70,11 +70,7 @@ public class ClusteredProducerMain {
         Runtime.getRuntime().addShutdownHook(new Thread() {
             @Override
             public void run() {
-                try {
-                    cc.halt();
-                } catch (JournalNetworkException e) {
-                    e.printStackTrace();
-                }
+                cc.halt();
             }
         });
     }
@@ -99,7 +95,7 @@ public class ClusteredProducerMain {
         }
 
         @Override
-        public void onNodeStandingBy(ServerNode activeNode) {
+        public void onNodePassive(ServerNode activeNode) {
             System.out.println("This node is standing by");
             stopWorker();
         }

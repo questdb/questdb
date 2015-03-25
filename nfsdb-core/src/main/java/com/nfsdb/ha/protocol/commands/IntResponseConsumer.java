@@ -35,7 +35,8 @@ public class IntResponseConsumer implements ChannelConsumer {
         ByteBuffers.release(buffer);
     }
 
-    public int getValue() {
+    public int getValue(ReadableByteChannel channel) throws JournalNetworkException {
+        read(channel);
         return Unsafe.getUnsafe().getInt(address);
     }
 

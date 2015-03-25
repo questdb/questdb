@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,15 @@
 
 package com.nfsdb.ha.config;
 
-import com.nfsdb.collections.IntObjHashMap;
+import com.nfsdb.collections.IntIntHashMap;
 import com.nfsdb.exceptions.JournalNetworkException;
 
 import java.io.IOException;
 import java.net.*;
 import java.nio.channels.DatagramChannel;
+import java.util.ArrayList;
 import java.util.Enumeration;
+import java.util.List;
 
 public class NetworkConfig {
     public static final int DEFAULT_DATA_PORT = 7075;
@@ -31,7 +33,9 @@ public class NetworkConfig {
 
     private static final int DEFAULT_MULTICAST_PORT = 4446;
     private static final int DEFAULT_SO_RCVBUF = 1024 * 1024;
-    protected final IntObjHashMap<ServerNode> nodes = new IntObjHashMap<>();
+    private final List<ServerNode> nodes2 = new ArrayList<>();
+    private final IntIntHashMap nodeLookup = new IntIntHashMap();
+
     private final SslConfig sslConfig = new SslConfig();
     protected InetAddress multiCastAddress;
     private int multiCastPort = DEFAULT_MULTICAST_PORT;
@@ -45,7 +49,13 @@ public class NetworkConfig {
     }
 
     public void addNode(ServerNode node) {
-        nodes.put(node.getId(), node);
+        nodes2.add(node);
+        nodeLookup.put(node.getId(), nodes2.size() - 1);
+    }
+
+    public void clearNodes() {
+        nodes2.clear();
+        nodeLookup.clear();
     }
 
     public NetworkInterface findExternalNic() throws JournalNetworkException {
@@ -99,8 +109,28 @@ public class NetworkConfig {
         this.multiCastPort = multiCastPort;
     }
 
-    public ServerNode getNode(int instance) {
-        return nodes.get(instance);
+    public ServerNode getNodeByPosition(int pos) {
+        return nodes2.get(pos);
+    }
+
+    public ServerNode getNodeByUID(int uid) {
+        int pos = getNodePosition(uid);
+        if (pos == -1) {
+            return null;
+        }
+        return nodes2.get(pos);
+    }
+
+    public int getNodeCount() {
+        return nodes2.size();
+    }
+
+    public int getNodePosition(int uid) {
+        return nodeLookup.get(uid);
+    }
+
+    public List<ServerNode> getNodes() {
+        return nodes2;
     }
 
     public int getSoRcvBuf() {
@@ -119,8 +149,12 @@ public class NetworkConfig {
         return enableMultiCast;
     }
 
-    public Iterable<ServerNode> nodes() {
-        return nodes.values();
+    public void parseNodes(String nodes) {
+        clearNodes();
+        String parts[] = nodes.split(",");
+        for (int i = 0; i < parts.length; i++) {
+            addNode(new ServerNode(i, parts[i]));
+        }
     }
 
     public void setEnableMultiCast(boolean enableMultiCast) {

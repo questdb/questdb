@@ -105,6 +105,7 @@ public class NQLParser {
         tokenStream.setContent(cs);
     }
 
+    @SuppressWarnings("ConstantConditions")
     @SuppressFBWarnings({"CC_CYCLOMATIC_COMPLEXITY", "SF_SWITCH_NO_DEFAULT"})
     ExprNode parseExpr() throws ParserException {
         Deque<ExprNode> opStack = new ArrayDeque<>();

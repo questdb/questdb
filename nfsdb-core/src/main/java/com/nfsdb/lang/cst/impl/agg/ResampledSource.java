@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -90,12 +90,6 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
     }
 
     @Override
-    public void reset() {
-        rowSource.reset();
-        map.clear();
-    }
-
-    @Override
     public boolean hasNext() {
         return mapRecordSource != null && mapRecordSource.hasNext() || buildMap();
     }
@@ -103,6 +97,12 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
     @Override
     public Record next() {
         return mapRecordSource.next();
+    }
+
+    @Override
+    public void reset() {
+        rowSource.reset();
+        map.clear();
     }
 
     private boolean buildMap() {
@@ -193,7 +193,7 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
     }
 
 
-    public static enum SampleBy {
+    public enum SampleBy {
         YEAR, MONTH, DAY, HOUR, MINUTE, SECOND
     }
 }

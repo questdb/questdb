@@ -53,7 +53,7 @@ public class PerformanceTest extends AbstractTest {
     private static boolean enabled = false;
 
     @BeforeClass
-    public static void setUp() throws Exception {
+    public static void setUp() {
         enabled = System.getProperty("nfsdb.enable.perf.tests") != null;
     }
 

@@ -26,7 +26,7 @@ public class IntTest {
     private MockByteChannel channel;
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         channel = new MockByteChannel();
     }
 
@@ -36,7 +36,6 @@ public class IntTest {
         IntResponseConsumer consumer = new IntResponseConsumer();
 
         producer.write(channel, 155);
-        consumer.read(channel);
-        Assert.assertEquals(155, consumer.getValue());
+        Assert.assertEquals(155, consumer.getValue(channel));
     }
 }

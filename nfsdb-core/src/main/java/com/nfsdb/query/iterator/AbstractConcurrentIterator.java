@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -71,6 +71,14 @@ public abstract class AbstractConcurrentIterator<T> extends AbstractImmutableIte
     }
 
     @Override
+    public AbstractConcurrentIterator.Holder<T> newInstance() {
+        Holder<T> h = new Holder<>();
+        h.object = getJournal().newObject();
+        h.hasNext = true;
+        return h;
+    }
+
+    @Override
     public T next() {
         hasNext();
         T result = null;
@@ -84,17 +92,9 @@ public abstract class AbstractConcurrentIterator<T> extends AbstractImmutableIte
         return result;
     }
 
-    @Override
-    public AbstractConcurrentIterator.Holder<T> newInstance() {
-        Holder<T> h = new Holder<>();
-        h.object = getJournal().newObject();
-        h.hasNext = true;
-        return h;
-    }
-
     protected abstract Runnable getRunnable();
 
-    void start() {
+    private void start() {
         this.buffer = RingBuffer.createSingleProducer(this, bufferSize, new BusySpinWaitStrategy());
         this.barrier = buffer.newBarrier();
         this.sequence = new Sequence(barrier.getCursor());

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,14 +20,14 @@ import java.util.List;
 
 public class ExprNode {
 
-    public String token;
-    public int precedence;
+    public final String token;
+    public final int precedence;
+    public final int position;
     public ExprNode lhs;
     public ExprNode rhs;
     public NodeType type;
     public int paramCount;
     public List<ExprNode> args;
-    public int position;
 
     public ExprNode(NodeType type, String token, int precedence, int position) {
         this.type = type;
@@ -50,7 +50,7 @@ public class ExprNode {
                 '}';
     }
 
-    public static enum NodeType {
+    public enum NodeType {
         OPERATION, CONSTANT, LITERAL, FUNCTION, CONTROL
     }
 }

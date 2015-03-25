@@ -23,7 +23,7 @@ import java.io.File;
 
 public interface JournalConfiguration {
 
-    public static final String FILE_NAME = "_meta2";
+    String FILE_NAME = "_meta2";
 
     <T> JournalMetadata<T> augmentMetadata(MetadataBuilder<T> builder) throws JournalException;
 

@@ -71,17 +71,16 @@ public class ClusterControllerTest extends AbstractTest {
 
         ClusterController controller1 = new ClusterController(
                 new ServerConfig() {{
-                    addNode(new ServerNode(1, "localhost:7080"));
-                    addNode(new ServerNode(2, "localhost:7090"));
+                    addNode(new ServerNode(0, "localhost:7080"));
+                    addNode(new ServerNode(1, "localhost:7090"));
                     setEnableMultiCast(false);
                     setHeartbeatFrequency(50);
                 }},
                 new ClientConfig() {{
                     setEnableMultiCast(false);
-                    setConnectionTimeout(30000);
                 }},
                 factory,
-                1,
+                0,
                 new ArrayList<JournalWriter>() {{
                     add(writer1);
                 }},
@@ -106,7 +105,7 @@ public class ClusterControllerTest extends AbstractTest {
                     }
 
                     @Override
-                    public void onNodeStandingBy(ServerNode activeNode) {
+                    public void onNodePassive(ServerNode activeNode) {
                     }
 
                     @Override
@@ -117,17 +116,16 @@ public class ClusterControllerTest extends AbstractTest {
 
         ClusterController controller2 = new ClusterController(
                 new ServerConfig() {{
-                    addNode(new ServerNode(1, "localhost:7080"));
-                    addNode(new ServerNode(2, "localhost:7090"));
+                    addNode(new ServerNode(0, "localhost:7080"));
+                    addNode(new ServerNode(1, "localhost:7090"));
                     setEnableMultiCast(false);
                     setHeartbeatFrequency(50);
                 }},
                 new ClientConfig() {{
                     setEnableMultiCast(false);
-                    setConnectionTimeout(30000);
                 }},
                 factory2,
-                2,
+                1,
                 new ArrayList<JournalWriter>() {{
                     add(writer2);
                 }},
@@ -143,7 +141,7 @@ public class ClusterControllerTest extends AbstractTest {
                     }
 
                     @Override
-                    public void onNodeStandingBy(ServerNode activeNode) {
+                    public void onNodePassive(ServerNode activeNode) {
                         standby2.countDown();
                     }
 
@@ -212,35 +210,43 @@ public class ClusterControllerTest extends AbstractTest {
 
         System.out.println("--------------------------");
 
-        if (c5.isAlpha()) {
+        if (c5.isLeader()) {
             c5.halt();
-        } else if (c4.isAlpha()) {
+            System.out.println("halted 4");
+        } else if (c4.isLeader()) {
             c4.halt();
-        } else if (c3.isAlpha()) {
+            System.out.println("halted 3");
+        } else if (c3.isLeader()) {
             c3.halt();
-        } else if (c2.isAlpha()) {
+            System.out.println("halted 2");
+        } else if (c2.isLeader()) {
             c2.halt();
-        } else if (c1.isAlpha()) {
+            System.out.println("halted 1");
+        } else if (c1.isLeader()) {
             c1.halt();
+            System.out.println("halted 0");
         } else {
-            Assert.fail("No ALPHA cluster");
+            Assert.fail("No leader");
         }
 
         System.out.println("=========================");
         t = System.currentTimeMillis();
-        while (standby.get() < 3 && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 120) {
+        while ((active.get() < 1 || standby.get() < 3) && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 120) {
             Thread.yield();
         }
+        System.out.println("LOOKING FOR LEADER");
 
-        Assert.assertEquals(3, standby.get());
-        Assert.assertEquals(1, active.get());
+        try {
+            Assert.assertEquals(3, standby.get());
+            Assert.assertEquals(1, active.get());
 
-        System.out.println("+++++++++++++++++++++++++++++");
-
-        c1.halt();
-        c2.halt();
-        c3.halt();
-        c4.halt();
+            System.out.println("+++++++++++++++++++++++++++++");
+        } finally {
+            c1.halt();
+            c2.halt();
+            c3.halt();
+            c4.halt();
+        }
     }
 
     @Test
@@ -252,7 +258,7 @@ public class ClusterControllerTest extends AbstractTest {
         final CountDownLatch shutdown1 = new CountDownLatch(1);
         final CountDownLatch shutdown2 = new CountDownLatch(1);
 
-        ClusterController controller1 = createController(1, factory, active1Latch, standby1Latch, shutdown1);
+        ClusterController controller1 = createControllerX(0, factory, active1Latch, standby1Latch, shutdown1);
         controller1.start();
 
         active1Latch.await(5, TimeUnit.SECONDS);
@@ -260,7 +266,7 @@ public class ClusterControllerTest extends AbstractTest {
         standby1Latch.await(200, TimeUnit.MILLISECONDS);
         Assert.assertEquals("Node 1 standby callback is not expected to be called", 1, standby1Latch.getCount());
 
-        ClusterController controller2 = createController(2, factory2, active2Latch, standby2Latch, shutdown2);
+        ClusterController controller2 = createControllerX(1, factory2, active2Latch, standby2Latch, shutdown2);
         controller2.start();
 
         standby2Latch.await(5, TimeUnit.SECONDS);
@@ -289,7 +295,7 @@ public class ClusterControllerTest extends AbstractTest {
         final CountDownLatch shutdown1 = new CountDownLatch(1);
         final CountDownLatch shutdown2 = new CountDownLatch(1);
 
-        ClusterController controller1 = createController(1, factory, active1Latch, standby1Latch, shutdown1);
+        ClusterController controller1 = createControllerX(0, factory, active1Latch, standby1Latch, shutdown1);
         controller1.start();
 
         active1Latch.await(5, TimeUnit.SECONDS);
@@ -297,7 +303,7 @@ public class ClusterControllerTest extends AbstractTest {
         standby1Latch.await(200, TimeUnit.MILLISECONDS);
         Assert.assertEquals("Node 1 standby callback is not expected to be called", 1, standby1Latch.getCount());
 
-        ClusterController controller2 = createController(2, factory2, active2Latch, standby2Latch, shutdown2);
+        ClusterController controller2 = createControllerX(1, factory2, active2Latch, standby2Latch, shutdown2);
         controller2.start();
 
         standby2Latch.await(5, TimeUnit.SECONDS);
@@ -320,13 +326,13 @@ public class ClusterControllerTest extends AbstractTest {
         final CountDownLatch standby = new CountDownLatch(1);
         final CountDownLatch shutdown = new CountDownLatch(1);
 
-        ClusterController controller = createController(1, factory, active, standby, shutdown);
+        ClusterController controller = createControllerX(1, factory, active, standby, shutdown);
 
         controller.start();
         active.await(5, TimeUnit.SECONDS);
         Assert.assertEquals("onNodeActive() did not fire", 0, active.getCount());
         standby.await(200, TimeUnit.MILLISECONDS);
-        Assert.assertEquals("onNodeStandingBy() not expected to fire", 1, standby.getCount());
+        Assert.assertEquals("onNodePassive() not expected to fire", 1, standby.getCount());
 
         controller.halt();
         shutdown.await(5, TimeUnit.SECONDS);
@@ -344,8 +350,8 @@ public class ClusterControllerTest extends AbstractTest {
         final CountDownLatch shutdown1 = new CountDownLatch(1);
         final CountDownLatch shutdown2 = new CountDownLatch(1);
 
-        ClusterController controller1 = createController(1, factory, active1Latch, standby1Latch, shutdown1);
-        ClusterController controller2 = createController(2, factory2, active2Latch, standby2Latch, shutdown2);
+        ClusterController controller1 = createControllerX(0, factory, active1Latch, standby1Latch, shutdown1);
+        ClusterController controller2 = createControllerX(1, factory2, active2Latch, standby2Latch, shutdown2);
 
         // start two controller without pause
         controller1.start();
@@ -388,17 +394,16 @@ public class ClusterControllerTest extends AbstractTest {
         Assert.assertEquals("Controller 1 should have shut down", 0, shutdown1.getCount());
     }
 
-    private ClusterController createController(int instance, final JournalFactory fact, final CountDownLatch active, final CountDownLatch standby, final CountDownLatch shutdown) throws JournalException {
+    private ClusterController createControllerX(int instance, final JournalFactory fact, final CountDownLatch active, final CountDownLatch standby, final CountDownLatch shutdown) throws JournalException {
         return new ClusterController(
                 new ServerConfig() {{
-                    addNode(new ServerNode(1, "localhost:7080"));
-                    addNode(new ServerNode(2, "localhost:7090"));
+                    addNode(new ServerNode(0, "localhost:7080"));
+                    addNode(new ServerNode(1, "localhost:7090"));
                     setEnableMultiCast(false);
                     setHeartbeatFrequency(50);
                 }},
                 new ClientConfig() {{
                     setEnableMultiCast(false);
-                    setConnectionTimeout(30000);
                 }},
                 fact,
                 instance,
@@ -412,7 +417,7 @@ public class ClusterControllerTest extends AbstractTest {
                     }
 
                     @Override
-                    public void onNodeStandingBy(ServerNode activeNode) {
+                    public void onNodePassive(ServerNode activeNode) {
                         standby.countDown();
                     }
 
@@ -451,7 +456,7 @@ public class ClusterControllerTest extends AbstractTest {
                     }
 
                     @Override
-                    public void onNodeStandingBy(ServerNode activeNode) {
+                    public void onNodePassive(ServerNode activeNode) {
                         standby.incrementAndGet();
                     }
 
@@ -462,4 +467,5 @@ public class ClusterControllerTest extends AbstractTest {
                 }
         );
     }
+
 }

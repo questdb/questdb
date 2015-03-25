@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -110,18 +110,19 @@ public class JournalClient {
         this.credentialProvider = credentialProvider;
     }
 
-    public void halt() throws JournalNetworkException {
+    public void halt() {
         if (running.compareAndSet(true, false)) {
-            try {
-                if (handlerFuture != null) {
+            if (handlerFuture != null) {
+                try {
                     handlerFuture.get();
+                } catch (InterruptedException | ExecutionException e) {
+                    LOGGER.error("Exception while waiting for client to shutdown gracefully", e);
+                } finally {
                     handlerFuture = null;
                 }
-                close0();
-                free();
-            } catch (Exception e) {
-                throw new JournalNetworkException(e);
             }
+            close0();
+            free();
         } else {
             closeChannel();
         }
@@ -129,16 +130,6 @@ public class JournalClient {
 
     public boolean isRunning() {
         return running.get();
-    }
-
-    public boolean pingServer(ServerNode node) {
-        try {
-            openChannel(node);
-            sendProtocolVersion();
-            return true;
-        } catch (JournalNetworkException e) {
-            return false;
-        }
     }
 
     public JournalClient setDisconnectCallback(DisconnectCallback callback) {
@@ -208,27 +199,6 @@ public class JournalClient {
         remoteKeys.add(remote);
         localKeys.add(local);
         listeners.add(txListener);
-    }
-
-    public VoteResult voteInstance(int instance) {
-        try {
-            openChannel(null);
-            commandProducer.write(channel, Command.CLUSTER_VOTE);
-            intResponseProducer.write(channel, instance);
-            stringResponseConsumer.read(channel);
-
-            switch (stringResponseConsumer.getValue()) {
-                case "WIN":
-                    return VoteResult.ALPHA;
-                case "OUT":
-                    return VoteResult.THEM;
-                default:
-                    return VoteResult.ME;
-            }
-        } catch (JournalNetworkException e) {
-            LOGGER.info("Voting error: %s", e.getMessage());
-            return VoteResult.ME_BY_DEFAULT;
-        }
     }
 
     private void checkAck() throws JournalNetworkException {
@@ -413,11 +383,6 @@ public class JournalClient {
         }
     }
 
-    public static enum VoteResult {
-        ME, THEM, ALPHA, ME_BY_DEFAULT
-    }
-
-
     public enum DisconnectReason {
         UNKNOWN, CLIENT_HALT, CLIENT_EXCEPTION, BROKEN_CHANNEL, CLIENT_ERROR, INCOMPATIBLE_JOURNAL
     }
@@ -487,10 +452,8 @@ public class JournalClient {
                     switch (commandConsumer.getValue()) {
                         case JOURNAL_DELTA_CMD:
                             statsChannel.setDelegate(channel);
-                            intResponseConsumer.read(statsChannel);
-                            int index = intResponseConsumer.getValue();
-                            JournalDeltaConsumer deltaConsumer = deltaConsumers.get(index);
-                            deltaConsumer.read(statsChannel);
+                            int index = intResponseConsumer.getValue(statsChannel);
+                            deltaConsumers.get(index).read(statsChannel);
                             statusSentList.set(index, 0);
                             statsChannel.logStats();
                             break;

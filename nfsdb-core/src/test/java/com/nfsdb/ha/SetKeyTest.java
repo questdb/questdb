@@ -31,7 +31,7 @@ public class SetKeyTest {
     private MockByteChannel channel;
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         channel = new MockByteChannel();
     }
 

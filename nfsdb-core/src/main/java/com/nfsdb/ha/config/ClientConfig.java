@@ -27,12 +27,13 @@ import java.net.NetworkInterface;
 import java.net.StandardSocketOptions;
 import java.nio.channels.SocketChannel;
 import java.nio.channels.UnresolvedAddressException;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
 public class ClientConfig extends NetworkConfig {
 
-    public static final Logger LOGGER = Logger.getLogger(ClientConfig.class);
+    private static final Logger LOGGER = Logger.getLogger(ClientConfig.class);
     private final ClientReconnectPolicy reconnectPolicy = new ClientReconnectPolicy();
     private int soSndBuf = 8192;
     private boolean keepAlive = true;
@@ -48,7 +49,7 @@ public class ClientConfig extends NetworkConfig {
         super();
         getSslConfig().setClient(true);
         if (hosts != null && hosts.length() > 0) {
-            ServerNode.parse(hosts, nodes);
+            parseNodes(hosts);
         }
     }
 
@@ -100,8 +101,9 @@ public class ClientConfig extends NetworkConfig {
         return openDatagramChannel(getMultiCastInterface());
     }
 
+    @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public SocketChannel openSocketChannel() throws JournalNetworkException {
-        if (nodes.size() == 0) {
+        if (getNodeCount() == 0) {
             if (isMultiCastEnabled()) {
                 addNode(pollServerAddress());
             } else {
@@ -109,7 +111,10 @@ public class ClientConfig extends NetworkConfig {
             }
         }
 
-        for (ServerNode node : nodes.values()) {
+        List<ServerNode> nodes = getNodes();
+
+        for (int i = 0, k = nodes.size(); i < k; i++) {
+            ServerNode node = nodes.get(i);
             try {
                 return openSocketChannel0(node);
             } catch (UnresolvedAddressException | IOException e) {

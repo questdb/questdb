@@ -58,7 +58,7 @@ public class SearchByKeysTest {
     private long inc;
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         timestamp = Dates.parseDateTime("2013-01-01T00:00:00.000Z");
         // total 1500 rows to append
         // over 3 days
@@ -167,12 +167,12 @@ public class SearchByKeysTest {
             this.id = id;
         }
 
-        public void setTimestamp(long timestamp) {
-            this.timestamp = timestamp;
-        }
-
         public void setStrId(String strId) {
             this.strId = strId;
+        }
+
+        public void setTimestamp(long timestamp) {
+            this.timestamp = timestamp;
         }
 
         @Override

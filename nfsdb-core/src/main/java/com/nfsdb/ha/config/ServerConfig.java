@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -57,7 +57,7 @@ public class ServerConfig extends NetworkConfig {
 
     @SuppressFBWarnings({"MDM_INETADDRESS_GETLOCALHOST"})
     public InetSocketAddress getSocketAddress(int instance) throws JournalNetworkException {
-        ServerNode node = getNode(instance);
+        ServerNode node = getNodeByUID(instance);
 
         try {
             // default IP address and port
@@ -109,7 +109,7 @@ public class ServerConfig extends NetworkConfig {
 
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS", "MDM_INETADDRESS_GETLOCALHOST"})
     private NetworkInterface getMultiCastInterface0(int instance) throws JournalNetworkException {
-        ServerNode node = getNode(instance);
+        ServerNode node = getNodeByUID(instance);
 
         try {
             if (node == null && getIfName() == null) {

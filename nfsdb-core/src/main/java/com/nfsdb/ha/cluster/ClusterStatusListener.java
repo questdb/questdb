@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,9 +19,24 @@ package com.nfsdb.ha.cluster;
 import com.nfsdb.ha.config.ServerNode;
 
 public interface ClusterStatusListener {
+
+    /**
+     * Activates producer on current node. This can only happen once in a lifespan of cluster node.
+     * Node cannot become neither passive nor active again unless it cluster controller is restarted.
+     */
     void onNodeActive();
 
-    void onNodeStandingBy(ServerNode activeNode);
+    /**
+     * Notifies producer that current node is passive. Current active node is provided as a parameter.
+     * From passive state node can become either active or passive again. Implementations should check
+     * if active node has changed to avoid repeating work.
+     *
+     * @param activeNode current active node
+     */
+    void onNodePassive(ServerNode activeNode);
 
+    /**
+     * Cluster controller shutdown callback.
+     */
     void onShutdown();
 }

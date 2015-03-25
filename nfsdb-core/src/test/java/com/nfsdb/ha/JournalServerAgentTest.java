@@ -74,7 +74,7 @@ public class JournalServerAgentTest extends AbstractTest {
     }
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         agent.close();
         hugeBufferConsumer.free();
     }
@@ -113,8 +113,7 @@ public class JournalServerAgentTest extends AbstractTest {
         commandConsumer.read(channel);
         Assert.assertEquals(Command.JOURNAL_DELTA_CMD, commandConsumer.getValue());
 
-        intResponseConsumer.read(channel);
-        Assert.assertEquals(0, intResponseConsumer.getValue());
+        Assert.assertEquals(0, intResponseConsumer.getValue(channel));
         quoteDeltaConsumer.read(channel);
         Assert.assertEquals(100, quoteClientWriter.size());
 
@@ -137,8 +136,7 @@ public class JournalServerAgentTest extends AbstractTest {
         commandConsumer.read(channel);
         Assert.assertEquals(Command.JOURNAL_DELTA_CMD, commandConsumer.getValue());
 
-        intResponseConsumer.read(channel);
-        Assert.assertEquals(0, intResponseConsumer.getValue());
+        Assert.assertEquals(0, intResponseConsumer.getValue(channel));
         quoteDeltaConsumer.read(channel);
         Assert.assertEquals(200, quoteClientWriter.size());
 

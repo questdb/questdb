@@ -50,7 +50,7 @@ public interface JournalReaderFactory extends Closeable {
 
     <T> Journal<T> reader(Class<T> clazz, String location, int recordHint) throws JournalException;
 
-    public static enum JournalExistenceCheck {
+    enum JournalExistenceCheck {
         EXISTS, DOES_NOT_EXIST, EXISTS_FOREIGN
     }
 

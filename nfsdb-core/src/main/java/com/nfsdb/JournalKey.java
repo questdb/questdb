@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -100,7 +100,7 @@ public class JournalKey<T> {
         this.ordered = ordered;
     }
 
-    public static JournalKey<Object> fromBuffer(ByteBuffer buffer) {
+    public static <X> JournalKey<X> fromBuffer(ByteBuffer buffer) {
         // id
         int clazzLen = buffer.getInt();
         byte[] clazz = new byte[clazzLen];
@@ -128,6 +128,15 @@ public class JournalKey<T> {
         return location == null ? id : location;
     }
 
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof JournalKey)) return false;
+        JournalKey that = (JournalKey) o;
+        return ordered == that.ordered && recordHint == that.recordHint && !(id != null ? !id.equals(that.id) : that.id != null) && !(location != null ? !location.equals(that.location) : that.location != null) && partitionType == that.partitionType;
+
+    }
+
     public int getBufferSize() {
         return 4 + id.getBytes(Files.UTF_8).length + 4 + 2 * (location == null ? 0 : location.length()) + 1 + 1 + 4;
     }
@@ -152,6 +161,8 @@ public class JournalKey<T> {
         return recordHint;
     }
 
+    //////////////////////// REPLICATION CODE //////////////////////
+
     @Override
     public int hashCode() {
         int result = id != null ? id.hashCode() : 0;
@@ -161,15 +172,8 @@ public class JournalKey<T> {
         return 31 * result + (ordered ? 1 : 0);
     }
 
-    //////////////////////// REPLICATION CODE //////////////////////
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (!(o instanceof JournalKey)) return false;
-        JournalKey that = (JournalKey) o;
-        return ordered == that.ordered && recordHint == that.recordHint && !(id != null ? !id.equals(that.id) : that.id != null) && !(location != null ? !location.equals(that.location) : that.location != null) && partitionType == that.partitionType;
-
+    public boolean isOrdered() {
+        return ordered;
     }
 
     @Override
@@ -181,10 +185,6 @@ public class JournalKey<T> {
                 ", recordHint=" + recordHint +
                 ", ordered=" + ordered +
                 '}';
-    }
-
-    public boolean isOrdered() {
-        return ordered;
     }
 
     public void write(ByteBuffer buffer) {

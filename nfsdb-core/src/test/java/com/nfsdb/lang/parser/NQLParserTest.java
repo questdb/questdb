@@ -22,7 +22,7 @@ import org.junit.Test;
 
 public class NQLParserTest {
 
-    private NQLParser parser = new NQLParser();
+    private final NQLParser parser = new NQLParser();
 
     @Test
     public void testCommaExit() throws Exception {

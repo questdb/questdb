@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.nfsdb.Journal;
 import com.nfsdb.JournalKey;
 import com.nfsdb.PartitionType;
 import com.nfsdb.factory.JournalFactory;
+import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.ha.JournalClient;
 import com.nfsdb.ha.config.ClientConfig;
 import com.nfsdb.storage.TxListener;
@@ -27,7 +28,11 @@ import org.nfsdb.examples.model.Price;
 
 public class ClusterConsumerMain {
     public static void main(String[] args) throws Exception {
-        JournalFactory factory = new JournalFactory(args[0]);
+
+        final JournalFactory factory = new JournalFactory(new JournalConfigurationBuilder() {{
+            $(Price.class).$ts();
+        }}.build(args[0]));
+
         final JournalClient client = new JournalClient(new ClientConfig("192.168.1.81:7080,192.168.1.81:7090") {{
             getReconnectPolicy().setRetryCount(6);
             getReconnectPolicy().setSleepBetweenRetriesMillis(1);
@@ -35,8 +40,6 @@ public class ClusterConsumerMain {
         }}, factory);
 
         final Journal<Price> reader = factory.bulkReader(new JournalKey<>(Price.class, "price-copy", PartitionType.NONE, 1000000000));
-//        reader.transactions().print(new File(args[0], "client.csv"));
-
 
         client.subscribe(Price.class, null, "price-copy", 1000000000, new TxListener() {
             @Override
