@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ import java.util.List;
 public class JournalTestFactory extends JournalFactory implements TestRule, JournalClosingListener {
 
     private final List<Journal> journals = new ArrayList<>();
-    private final TimerCache timerCache = new TimerCache().start();
+    private TimerCache timerCache;
 
     public JournalTestFactory(JournalConfiguration configuration) throws JournalConfigurationException {
         super(configuration, null);
@@ -49,6 +49,7 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
                 try {
                     Files.deleteOrException(getConfiguration().getJournalBase());
                     Files.mkDirsOrException(getConfiguration().getJournalBase());
+                    timerCache = new TimerCache().start();
                     base.evaluate();
                 } catch (Throwable e) {
                     throwable = e;
@@ -59,6 +60,7 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
                             journal.close();
                         }
                     }
+                    timerCache.halt();
                     journals.clear();
                     Files.deleteOrException(getConfiguration().getJournalBase());
                 }
@@ -79,20 +81,6 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
     }
 
     @Override
-    public <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException {
-        JournalBulkWriter<T> writer = super.bulkWriter(key);
-        journals.add(writer);
-        writer.setCloseListener(this);
-        return writer;
-    }
-
-    @Override
-    public boolean closing(Journal journal) {
-        journals.remove(journal);
-        return true;
-    }
-
-    @Override
     public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
         Journal<T> result = super.reader(key);
         journals.add(result);
@@ -100,8 +88,9 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
         return result;
     }
 
-    public <T> JournalWriter<T> writer(MetadataBuilder<T> b) throws JournalException {
-        JournalWriter<T> writer = super.writer(b);
+    @Override
+    public <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException {
+        JournalBulkWriter<T> writer = super.bulkWriter(key);
         journals.add(writer);
         writer.setCloseListener(this);
         return writer;
@@ -113,6 +102,19 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
         journals.add(writer);
         writer.setCloseListener(this);
         return writer;
+    }
+
+    public <T> JournalWriter<T> writer(MetadataBuilder<T> b) throws JournalException {
+        JournalWriter<T> writer = super.writer(b);
+        journals.add(writer);
+        writer.setCloseListener(this);
+        return writer;
+    }
+
+    @Override
+    public boolean closing(Journal journal) {
+        journals.remove(journal);
+        return true;
     }
 
     @Override

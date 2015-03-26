@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -354,17 +354,20 @@ public class ClusterControllerTest extends AbstractTest {
         ClusterController controller2 = createControllerX(1, factory2, active2Latch, standby2Latch, shutdown2);
 
         // start two controller without pause
-        controller1.start();
         controller2.start();
+        controller1.start();
 
         factory.close();
 
+        long t = System.currentTimeMillis();
         do {
             active1Latch.await(1, TimeUnit.MICROSECONDS);
             active2Latch.await(1, TimeUnit.MICROSECONDS);
-        } while (active1Latch.getCount() > 0 && active2Latch.getCount() > 0);
+        } while (active1Latch.getCount() > 0 && active2Latch.getCount() > 0 && (System.currentTimeMillis() - t) < 2000);
 
         Assert.assertFalse("Two nodes are active simultaneously", active1Latch.getCount() == 0 && active2Latch.getCount() == 0);
+        Assert.assertFalse("No leader", active1Latch.getCount() > 0 && active2Latch.getCount() > 0);
+
 
         if (active1Latch.getCount() == 0) {
             standby2Latch.await(2, TimeUnit.SECONDS);
@@ -392,41 +395,6 @@ public class ClusterControllerTest extends AbstractTest {
         controller1.halt();
         shutdown1.await(10, TimeUnit.SECONDS);
         Assert.assertEquals("Controller 1 should have shut down", 0, shutdown1.getCount());
-    }
-
-    private ClusterController createControllerX(int instance, final JournalFactory fact, final CountDownLatch active, final CountDownLatch standby, final CountDownLatch shutdown) throws JournalException {
-        return new ClusterController(
-                new ServerConfig() {{
-                    addNode(new ServerNode(0, "localhost:7080"));
-                    addNode(new ServerNode(1, "localhost:7090"));
-                    setEnableMultiCast(false);
-                    setHeartbeatFrequency(50);
-                }},
-                new ClientConfig() {{
-                    setEnableMultiCast(false);
-                }},
-                fact,
-                instance,
-                new ArrayList<JournalWriter>() {{
-                    add(fact.writer(Quote.class));
-                }},
-                new ClusterStatusListener() {
-                    @Override
-                    public void onNodeActive() {
-                        active.countDown();
-                    }
-
-                    @Override
-                    public void onNodePassive(ServerNode activeNode) {
-                        standby.countDown();
-                    }
-
-                    @Override
-                    public void onShutdown() {
-                        shutdown.countDown();
-                    }
-                }
-        );
     }
 
     private ClusterController createController2(int instance, final JournalFactory fact, final AtomicInteger active, final AtomicInteger standby, final AtomicInteger shutdown) throws JournalException {
@@ -463,6 +431,41 @@ public class ClusterControllerTest extends AbstractTest {
                     @Override
                     public void onShutdown() {
                         shutdown.incrementAndGet();
+                    }
+                }
+        );
+    }
+
+    private ClusterController createControllerX(int instance, final JournalFactory fact, final CountDownLatch active, final CountDownLatch standby, final CountDownLatch shutdown) throws JournalException {
+        return new ClusterController(
+                new ServerConfig() {{
+                    addNode(new ServerNode(0, "localhost:7080"));
+                    addNode(new ServerNode(1, "localhost:7090"));
+                    setEnableMultiCast(false);
+                    setHeartbeatFrequency(50);
+                }},
+                new ClientConfig() {{
+                    setEnableMultiCast(false);
+                }},
+                fact,
+                instance,
+                new ArrayList<JournalWriter>() {{
+                    add(fact.writer(Quote.class));
+                }},
+                new ClusterStatusListener() {
+                    @Override
+                    public void onNodeActive() {
+                        active.countDown();
+                    }
+
+                    @Override
+                    public void onNodePassive(ServerNode activeNode) {
+                        standby.countDown();
+                    }
+
+                    @Override
+                    public void onShutdown() {
+                        shutdown.countDown();
                     }
                 }
         );

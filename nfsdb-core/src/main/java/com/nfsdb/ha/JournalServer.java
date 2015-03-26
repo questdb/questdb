@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -68,7 +68,8 @@ public class JournalServer {
     private ServerSocketChannel serverSocketChannel;
     private boolean leader = false;
     private boolean participant = false;
-    private boolean clusterStatusNotified = false;
+    private boolean passiveNotified = false;
+    private boolean activeNotified = false;
     private ClusterStatusListener clusterStatusListener;
 
     public JournalServer(JournalReaderFactory factory) {
@@ -188,7 +189,7 @@ public class JournalServer {
 
     public synchronized void joinCluster(ClusterStatusListener clusterStatusListener) {
         if (isRunning()) {
-            this.clusterStatusNotified = false;
+            this.passiveNotified = false;
             this.clusterStatusListener = clusterStatusListener;
             fwdElectionMessage(uid, Command.ELECTION, 0);
         }
@@ -214,6 +215,39 @@ public class JournalServer {
         service.execute(new Acceptor());
     }
 
+    private void addChannel(SocketChannelHolder holder) {
+        channels.add(holder);
+    }
+
+    private void closeChannel(SocketChannelHolder holder, boolean force) {
+        if (holder != null) {
+            try {
+                if (holder.socketAddress != null) {
+                    if (force) {
+                        LOGGER.info("Server node %d: Client forced out: %s", uid, holder.socketAddress);
+                    } else {
+                        LOGGER.info("Server node %d: Client disconnected: %s", uid, holder.socketAddress);
+                    }
+                }
+                holder.byteChannel.close();
+
+            } catch (IOException e) {
+                LOGGER.error("Server node %d: Cannot close channel [%s]: %s", uid, holder.byteChannel, e.getMessage());
+            }
+        }
+    }
+
+    private void closeChannels() {
+        while (channels.size() > 0) {
+            closeChannel(channels.remove(0), true);
+        }
+    }
+
+    private synchronized void fwdElectionMessage(int uid, Command command, int count) {
+        this.participant = true;
+        service.submit(new ElectionForwarder(uid, command, count));
+    }
+
     @SuppressWarnings("unchecked")
     IndexedJournalKey getWriterIndex0(JournalKey key) {
         for (ObjIntHashMap.Entry<JournalWriter> e : writers.immutableIterator()) {
@@ -223,6 +257,41 @@ public class JournalServer {
             }
         }
         return null;
+    }
+
+    synchronized void handleElectedMessage(ByteChannel channel) throws JournalNetworkException {
+        int theirUuid = intResponseConsumer.getValue(channel);
+        int hops = intResponseConsumer.getValue(channel);
+        int ourUuid = uid;
+
+        if (isRunning()) {
+            if (theirUuid != ourUuid) {
+                participant = false;
+                if (hops < config.getNodeCount() + 2) {
+
+                    if (leader && theirUuid > ourUuid) {
+                        leader = false;
+                    }
+
+                    fwdElectionMessage(theirUuid, Command.ELECTED, hops + 1);
+                    if (!passiveNotified && clusterStatusListener != null) {
+                        clusterStatusListener.onNodePassive(config.getNodeByUID(theirUuid));
+                        passiveNotified = true;
+                    }
+                } else {
+                    fwdElectionMessage(ourUuid, Command.ELECTION, 0);
+                }
+            } else if (leader) {
+                if (!activeNotified && clusterStatusListener != null) {
+                    LOGGER.info("%d is THE LEADER", ourUuid);
+                    clusterStatusListener.onNodeActive();
+                    activeNotified = true;
+                }
+            }
+            intResponseProducer.write(channel, 0xfc);
+        } else {
+            intResponseProducer.write(channel, 0xfd);
+        }
     }
 
     synchronized void handleElectionMessage(ByteChannel channel) throws JournalNetworkException {
@@ -262,75 +331,6 @@ public class JournalServer {
         }
     }
 
-    synchronized void handleElectedMessage(ByteChannel channel) throws JournalNetworkException {
-        int theirUuid = intResponseConsumer.getValue(channel);
-        int hops = intResponseConsumer.getValue(channel);
-        int ourUuid = uid;
-
-        if (isRunning()) {
-            if (theirUuid != ourUuid) {
-                participant = false;
-                if (hops < config.getNodeCount() + 2) {
-                    fwdElectionMessage(theirUuid, Command.ELECTED, hops + 1);
-                    if (!clusterStatusNotified && clusterStatusListener != null) {
-                        clusterStatusListener.onNodePassive(config.getNodeByUID(theirUuid));
-                        clusterStatusNotified = true;
-                    }
-                } else {
-                    fwdElectionMessage(ourUuid, Command.ELECTION, 0);
-                }
-            } else {
-                if (!clusterStatusNotified && clusterStatusListener != null) {
-                    LOGGER.info("%d is THE LEADER", ourUuid);
-                    clusterStatusListener.onNodeActive();
-                    clusterStatusNotified = true;
-                }
-            }
-            intResponseProducer.write(channel, 0xfc);
-        } else {
-            intResponseProducer.write(channel, 0xfd);
-        }
-    }
-
-    private void addChannel(SocketChannelHolder holder) {
-        channels.add(holder);
-    }
-
-    private void closeChannel(SocketChannelHolder holder, boolean force) {
-        if (holder != null) {
-            try {
-                if (holder.socketAddress != null) {
-                    if (force) {
-                        LOGGER.info("Server node %d: Client forced out: %s", uid, holder.socketAddress);
-                    } else {
-                        LOGGER.info("Server node %d: Client disconnected: %s", uid, holder.socketAddress);
-                    }
-                }
-                holder.byteChannel.close();
-
-            } catch (IOException e) {
-                LOGGER.error("Server node %d: Cannot close channel [%s]: %s", uid, holder.byteChannel, e.getMessage());
-            }
-        }
-    }
-
-    private void closeChannels() {
-        while (channels.size() > 0) {
-            closeChannel(channels.remove(0), true);
-        }
-    }
-
-    private void removeChannel(SocketChannelHolder holder) {
-        if (channels.remove(holder)) {
-            closeChannel(holder, false);
-        }
-    }
-
-    private synchronized void fwdElectionMessage(int uid, Command command, int count) {
-        this.participant = true;
-        service.submit(new ElectionForwarder(uid, command, count));
-    }
-
     private SocketChannel openSocketChannel0(ServerNode node, long timeout) throws IOException {
         InetSocketAddress address = new InetSocketAddress(node.getHostname(), node.getPort());
         SocketChannel channel = SocketChannel.open()
@@ -357,6 +357,12 @@ public class JournalServer {
         } catch (IOException e) {
             channel.close();
             throw e;
+        }
+    }
+
+    private void removeChannel(SocketChannelHolder holder) {
+        if (channels.remove(holder)) {
+            closeChannel(holder, false);
         }
     }
 
