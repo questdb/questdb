@@ -1,5 +1,5 @@
 <!--
-  ~ Copyright (c) 2014. Vlad Ilyushchenko
+  ~ Copyright (c) 2014-2015. Vlad Ilyushchenko
   ~
   ~ Licensed under the Apache License, Version 2.0 (the "License");
   ~ you may not use this file except in compliance with the License.
@@ -97,8 +97,8 @@
                 <version>2.17</version>
                 <configuration>
                     <systemPropertyVariables>
-                        <java.util.logging.SimpleFormatter.format>%1$tY-%1$tm-%1$td %1$tH:%1$tM:%1$tS %4$s %2$s
-                            %5$s%6$s%n
+                        <java.util.logging.SimpleFormatter.format>
+                            <![CDATA[%1$tY-%1$tm-%1$td %1$tH:%1$tM:%1$tS %4$s %2$s %5$s%6$s%n]]>
                         </java.util.logging.SimpleFormatter.format>
                     </systemPropertyVariables>
                 </configuration>
