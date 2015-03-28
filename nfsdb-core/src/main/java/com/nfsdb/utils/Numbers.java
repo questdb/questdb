@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -297,6 +297,21 @@ public final class Numbers {
         }
     }
 
+    public static int ceilPow2(int value) {
+        value |= (value >>> 1);
+        value |= (value >>> 2);
+        value |= (value >>> 4);
+        value |= (value >>> 8);
+        value |= (value >>> 16);
+        value++;
+
+        if (value < 0) {
+            value >>>= 1;
+        }
+
+        return value;
+    }
+
     public static double parseDouble(CharSequence sequence) {
         return parseDouble(sequence, 0, sequence.length());
     }
@@ -553,6 +568,9 @@ public final class Numbers {
         sink.put((char) ('0' + (c % 10)));
     }
 
+
+    //////////////////////
+
     private static void appendLong17(CharSink sink, long i) {
         long c;
         sink.put((char) ('0' + i / 10000000000000000L));
@@ -573,9 +591,6 @@ public final class Numbers {
         sink.put((char) ('0' + (c %= 100) / 10));
         sink.put((char) ('0' + (c % 10)));
     }
-
-
-    //////////////////////
 
     private static void appendLong16(CharSink sink, long i) {
         long c;

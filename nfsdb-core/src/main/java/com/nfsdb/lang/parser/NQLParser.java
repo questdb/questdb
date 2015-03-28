@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.nfsdb.lang.parser;
 
 import com.nfsdb.PartitionType;
+import com.nfsdb.collections.IntStack;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.GenericIntBuilder;
@@ -66,6 +67,23 @@ public class NQLParser {
         System.out.println("ok");
     }
 
+    public Statement parse() throws ParserException {
+        CharSequence tok = tok();
+        if (Chars.equals(tok, "create")) {
+            return parseCreateStatement();
+        }
+
+        if (Chars.equals(tok, "select")) {
+            return parseQuery();
+        }
+
+        throw err("create | select expected");
+    }
+
+    public void setContent(CharSequence cs) {
+        tokenStream.setContent(cs);
+    }
+
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     private static void addNode(ExprNode node, Deque<ExprNode> stack) {
         switch (node.paramCount) {
@@ -88,21 +106,58 @@ public class NQLParser {
         stack.push(node);
     }
 
-    public Statement parse() throws ParserException {
-        CharSequence tok = tok();
-        if (Chars.equals(tok, "create")) {
-            return parseCreateStatement();
-        }
-
-        if (Chars.equals(tok, "select")) {
-            return parseQuery();
-        }
-
-        throw err("create | select expected");
+    private ParserException err(String msg) {
+        return new ParserException(tokenStream.position(), msg);
     }
 
-    public void setContent(CharSequence cs) {
-        tokenStream.setContent(cs);
+    private void expectTok(CharSequence tok, CharSequence expected) throws ParserException {
+        if (!Chars.equals(tok, expected)) {
+            throw err("\"" + expected + "\" expected");
+        }
+
+    }
+
+    private boolean isFieldTerm(CharSequence tok) {
+        return Chars.equals(tok, ')') || Chars.equals(tok, ',');
+    }
+
+    private String notTermTok() throws ParserException {
+        CharSequence tok = tok();
+        if (isFieldTerm(tok)) {
+            throw err("Invalid column definition");
+        }
+        return tok.toString();
+    }
+
+    private CharSequence optionTok() {
+        while (tokenStream.hasNext()) {
+            CharSequence cs = tokenStream.next();
+            if (!Chars.equals(cs, ' ')) {
+                return cs;
+            }
+        }
+        return null;
+    }
+
+    private Statement parseCreateJournal() throws ParserException {
+        JournalStructure structure = new JournalStructure(tok().toString());
+        parseJournalFields(structure);
+        CharSequence tok = optionTok();
+        if (tok != null) {
+            expectTok(tok, "partition");
+            expectTok(tok(), "by");
+            structure.partitionBy(PartitionType.valueOf(tok().toString()));
+        }
+        return new Statement(StatementType.CREATE_JOURNAL, structure);
+    }
+
+    private Statement parseCreateStatement() throws ParserException {
+        CharSequence tok = tok();
+        if (Chars.equals(tok, "journal")) {
+            return parseCreateJournal();
+        }
+
+        throw err("journal expected");
     }
 
     @SuppressWarnings("ConstantConditions")
@@ -110,7 +165,7 @@ public class NQLParser {
     ExprNode parseExpr() throws ParserException {
         Deque<ExprNode> opStack = new ArrayDeque<>();
         Deque<ExprNode> astStack = new ArrayDeque<>();
-        Deque<Integer> paramCountStack = new ArrayDeque<>();
+        IntStack paramCountStack = new IntStack();
 
         int tokCount = 0;
         int opAt = 0;
@@ -194,8 +249,8 @@ public class NQLParser {
                         node.paramCount = prevChar == '(' ? 0 : paramCount + 1;
                         addNode(node, astStack);
                         opStack.pollFirst();
-                        if (!paramCountStack.isEmpty()) {
-                            paramCount = paramCountStack.pollFirst();
+                        if (paramCountStack.notEmpty()) {
+                            paramCount = paramCountStack.pop();
                         }
                     }
                     break;
@@ -285,60 +340,6 @@ public class NQLParser {
             addNode(node, astStack);
         }
         return astStack.pollFirst();
-    }
-
-    private ParserException err(String msg) {
-        return new ParserException(tokenStream.position(), msg);
-    }
-
-    private void expectTok(CharSequence tok, CharSequence expected) throws ParserException {
-        if (!Chars.equals(tok, expected)) {
-            throw err("\"" + expected + "\" expected");
-        }
-
-    }
-
-    private boolean isFieldTerm(CharSequence tok) {
-        return Chars.equals(tok, ')') || Chars.equals(tok, ',');
-    }
-
-    private String notTermTok() throws ParserException {
-        CharSequence tok = tok();
-        if (isFieldTerm(tok)) {
-            throw err("Invalid column definition");
-        }
-        return tok.toString();
-    }
-
-    private CharSequence optionTok() {
-        while (tokenStream.hasNext()) {
-            CharSequence cs = tokenStream.next();
-            if (!Chars.equals(cs, ' ')) {
-                return cs;
-            }
-        }
-        return null;
-    }
-
-    private Statement parseCreateJournal() throws ParserException {
-        JournalStructure structure = new JournalStructure(tok().toString());
-        parseJournalFields(structure);
-        CharSequence tok = optionTok();
-        if (tok != null) {
-            expectTok(tok, "partition");
-            expectTok(tok(), "by");
-            structure.partitionBy(PartitionType.valueOf(tok().toString()));
-        }
-        return new Statement(StatementType.CREATE_JOURNAL, structure);
-    }
-
-    private Statement parseCreateStatement() throws ParserException {
-        CharSequence tok = tok();
-        if (Chars.equals(tok, "journal")) {
-            return parseCreateJournal();
-        }
-
-        throw err("journal expected");
     }
 
     @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE"})

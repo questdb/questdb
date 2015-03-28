@@ -16,23 +16,25 @@
 
 package com.nfsdb.collections;
 
+import com.nfsdb.utils.Numbers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.Arrays;
 
 
 public class IntObjHashMap<V> {
-
-    private static final Object FREE = new Object();
+    public static final int MIN_INITIAL_CAPACITY = 16;
+    private static final Object noEntryValue = new Object();
     private final ValuesIterator valuesIterator = new ValuesIterator();
     private final double loadFactor;
     private V[] values;
     private int[] keys;
     private int free;
     private int capacity;
+    private int mask;
 
     public IntObjHashMap() {
-        this(11);
+        this(8);
     }
 
     public IntObjHashMap(int initialCapacity) {
@@ -41,21 +43,26 @@ public class IntObjHashMap<V> {
 
     @SuppressWarnings("unchecked")
     public IntObjHashMap(int initialCapacity, double loadFactor) {
+        if (loadFactor <= 0d || loadFactor >= 1d) {
+            throw new IllegalArgumentException("0 < loadFactor < 1");
+        }
         int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
+        capacity = capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);
         this.loadFactor = loadFactor;
         values = (V[]) new Object[capacity];
         keys = new int[capacity];
         free = this.capacity = initialCapacity;
+        mask = capacity - 1;
         clear();
     }
 
     public final void clear() {
-        Arrays.fill(values, FREE);
+        Arrays.fill(values, noEntryValue);
     }
 
     public V get(int key) {
-        int index = (key & 0x7fffffff) % keys.length;
-        if (values[index] == FREE) {
+        int index = key & mask;
+        if (values[index] == noEntryValue) {
             return null;
         }
 
@@ -84,8 +91,8 @@ public class IntObjHashMap<V> {
     }
 
     private V insertKey(int key, V value) {
-        int index = (key & 0x7fffffff) % keys.length;
-        if (values[index] == FREE) {
+        int index = key & mask;
+        if (values[index] == noEntryValue) {
             keys[index] = key;
             values[index] = value;
             free--;
@@ -103,8 +110,8 @@ public class IntObjHashMap<V> {
 
     private V probe(int key, int index) {
         do {
-            index = (index + 1) % keys.length;
-            if (values[index] == FREE) {
+            index = (index + 1) & mask;
+            if (values[index] == noEntryValue) {
                 return null;
             }
             if (key == keys[index]) {
@@ -115,8 +122,8 @@ public class IntObjHashMap<V> {
 
     private V probeInsert(int key, int index, V value) {
         do {
-            index = (index + 1) % keys.length;
-            if (values[index] == FREE) {
+            index = (index + 1) & mask;
+            if (values[index] == noEntryValue) {
                 keys[index] = key;
                 values[index] = value;
                 free--;
@@ -134,7 +141,8 @@ public class IntObjHashMap<V> {
     @SuppressWarnings({"unchecked"})
     protected void rehash() {
 
-        int newCapacity = Primes.next(values.length << 1);
+        int newCapacity = values.length << 1;
+        mask = newCapacity - 1;
 
         free = this.capacity = (int) (newCapacity * loadFactor);
 
@@ -142,10 +150,10 @@ public class IntObjHashMap<V> {
         int[] oldKeys = keys;
         this.keys = new int[newCapacity];
         this.values = (V[]) new Object[newCapacity];
-        Arrays.fill(values, 0, values.length, FREE);
+        Arrays.fill(values, 0, values.length, noEntryValue);
 
         for (int i = oldKeys.length; i-- > 0; ) {
-            if (oldValues[i] != FREE) {
+            if (oldValues[i] != noEntryValue) {
                 insertKey(oldKeys[i], oldValues[i]);
             }
         }
@@ -156,7 +164,7 @@ public class IntObjHashMap<V> {
 
         @Override
         public boolean hasNext() {
-            return index < values.length && (values[index] != FREE || scan());
+            return index < values.length && (values[index] != noEntryValue || scan());
         }
 
         @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
@@ -166,7 +174,7 @@ public class IntObjHashMap<V> {
         }
 
         private boolean scan() {
-            while (index < values.length && values[index] == FREE) {
+            while (index < values.length && values[index] == noEntryValue) {
                 index++;
             }
             return index < values.length;

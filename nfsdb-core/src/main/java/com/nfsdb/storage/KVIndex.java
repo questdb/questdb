@@ -22,6 +22,7 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Files;
+import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Unsafe;
 
 import java.io.Closeable;
@@ -44,13 +45,15 @@ public class KVIndex implements Closeable {
 
     private static final int ENTRY_SIZE = 16;
     private final IndexCursor cachedCursor = new IndexCursor();
-    private int rowBlockSize;
-    private int rowBlockLen;
-    private long firstEntryOffset;
-    private MemoryFile kData;
+    private final int rowBlockSize;
+    private final int rowBlockLen;
+    private final MemoryFile kData;
     // storage for rows
     // block structure is [ rowid1, rowid2 ..., rowidn, prevBlockOffset]
-    private MemoryFile rData;
+    private final MemoryFile rData;
+    private final int mask;
+    private final int bits;
+    private long firstEntryOffset;
     private long keyBlockSize;
     private long keyBlockAddressOffset;
     private long keyBlockSizeOffset;
@@ -58,14 +61,9 @@ public class KVIndex implements Closeable {
     private boolean inTransaction = false;
 
     public KVIndex(File baseName, long keyCountHint, long recordCountHint, int txCountHint, JournalMode mode, long txAddress) throws JournalException {
-        int bitHint = (int) Math.min(Integer.MAX_VALUE, Math.max(keyCountHint, 1));
-        this.rowBlockLen = (int) Math.min(134217728, Math.max(recordCountHint / bitHint, 1));
-        this.kData = new MemoryFile(new File(baseName.getParentFile(), baseName.getName() + ".k"), ByteBuffers.getBitHint(8, bitHint * txCountHint), mode);
+        int keyCount = (int) Math.min(Integer.MAX_VALUE, Math.max(keyCountHint, 1));
+        this.kData = new MemoryFile(new File(baseName.getParentFile(), baseName.getName() + ".k"), ByteBuffers.getBitHint(8, keyCount * txCountHint), mode);
         this.keyBlockAddressOffset = 8;
-
-        this.keyBlockSizeOffset = 16;
-        this.keyBlockSize = 0;
-        this.maxValue = 0;
 
         if (kData.getAppendOffset() > 0) {
             this.rowBlockLen = (int) getLong(kData, 0);
@@ -73,16 +71,27 @@ public class KVIndex implements Closeable {
             this.keyBlockSize = getLong(kData, keyBlockSizeOffset);
             this.maxValue = getLong(kData, keyBlockSizeOffset + 8);
         } else if (mode == JournalMode.APPEND || mode == JournalMode.BULK_APPEND) {
+            int l = (int) (recordCountHint / keyCount);
+            this.rowBlockLen = l < 1 ? 1 : Numbers.ceilPow2(l);
+            this.keyBlockSizeOffset = 16;
+            this.keyBlockSize = 0;
+            this.maxValue = 0;
             putLong(kData, 0, this.rowBlockLen); // 8
             putLong(kData, keyBlockAddressOffset, keyBlockSizeOffset); // 8
             putLong(kData, keyBlockSizeOffset, keyBlockSize); // 8
             putLong(kData, keyBlockSizeOffset + 8, maxValue); // 8
             kData.setAppendOffset(8 + 8 + 8 + 8);
+        } else {
+            throw new JournalException("Cannot open uninitialized index in read-only mode");
         }
 
+        // x & mask = x % rowBlockLen
+        this.mask = rowBlockLen - 1;
+        // x >>> bits = x / rowBlockLen
+        this.bits = 31 - Integer.numberOfLeadingZeros(rowBlockLen);
         this.firstEntryOffset = keyBlockSizeOffset + 16;
         this.rowBlockSize = rowBlockLen * 8 + 8;
-        this.rData = new MemoryFile(new File(baseName.getParentFile(), baseName.getName() + ".r"), ByteBuffers.getBitHint(rowBlockSize, bitHint), mode);
+        this.rData = new MemoryFile(new File(baseName.getParentFile(), baseName.getName() + ".r"), ByteBuffers.getBitHint(rowBlockSize, keyCount), mode);
     }
 
     public static void delete(File base) {
@@ -126,7 +135,7 @@ public class KVIndex implements Closeable {
         long rowBlockOffset = Unsafe.getUnsafe().getLong(address);
         long rowCount = Unsafe.getUnsafe().getLong(address + 8);
 
-        int cellIndex = (int) (rowCount % rowBlockLen);
+        int cellIndex = (int) (rowCount & mask);
         if (rowBlockOffset == 0 || cellIndex == 0) {
             long prevBlockOffset = rowBlockOffset;
             rowBlockOffset = rData.getAppendOffset() + rowBlockSize;
@@ -248,13 +257,13 @@ public class KVIndex implements Closeable {
             throw new JournalRuntimeException("Index out of bounds: %d, max: %d", i, rowCount - 1);
         }
 
-        int rowBlockCount = (int) (rowCount / rowBlockLen + 1);
-        if (rowCount % rowBlockLen == 0) {
+        int rowBlockCount = (int) ((rowCount >>> bits) + 1);
+        if ((rowCount & mask) == 0) {
             rowBlockCount--;
         }
 
-        int targetBlock = i / rowBlockLen;
-        int cellIndex = i % rowBlockLen;
+        int targetBlock = i >>> bits;
+        int cellIndex = i & mask;
 
         while (targetBlock < --rowBlockCount) {
             rowBlockOffset = getLong(rData, rowBlockOffset - 8);
@@ -306,8 +315,8 @@ public class KVIndex implements Closeable {
         values.reset((int) rowCount);
         values.setPos((int) rowCount);
 
-        int rowBlockCount = (int) (rowCount / rowBlockLen) + 1;
-        int len = (int) (rowCount % rowBlockLen);
+        int rowBlockCount = (int) (rowCount >>> bits) + 1;
+        int len = (int) (rowCount & mask);
         if (len == 0) {
             rowBlockCount--;
             len = rowBlockLen;
@@ -315,7 +324,7 @@ public class KVIndex implements Closeable {
 
         for (int i = rowBlockCount - 1; i >= 0; i--) {
             address = rData.getAddress(rowBlockOffset - rowBlockSize, rowBlockSize);
-            int z = i * rowBlockLen;
+            int z = i << bits;
             for (int k = 0; k < len; k++) {
                 values.set(z + k, Unsafe.getUnsafe().getLong(address));
                 address += 8;
@@ -340,7 +349,7 @@ public class KVIndex implements Closeable {
         long address = keyAddressOrError(key);
         long rowBlockOffset = Unsafe.getUnsafe().getLong(address);
         long rowCount = Unsafe.getUnsafe().getLong(address + 8);
-        int cellIndex = (int) ((rowCount - 1) % rowBlockLen);
+        int cellIndex = (int) ((rowCount - 1) & mask);
         return getLong(rData, rowBlockOffset - rowBlockSize + 8 * cellIndex);
     }
 
@@ -361,7 +370,7 @@ public class KVIndex implements Closeable {
             long keyBlockAddress = kData.getAddress(offset, ENTRY_SIZE);
             long rowBlockOffset = Unsafe.getUnsafe().getLong(keyBlockAddress);
             long rowCount = Unsafe.getUnsafe().getLong(keyBlockAddress + 8);
-            int len = (int) (rowCount % rowBlockLen);
+            int len = (int) (rowCount & mask);
 
             if (len == 0) {
                 len = rowBlockLen;
@@ -472,12 +481,12 @@ public class KVIndex implements Closeable {
 
         public long next() {
             if (remainingRowCount > 0) {
-                return Unsafe.getUnsafe().getLong(address + --this.remainingRowCount * 8);
+                return Unsafe.getUnsafe().getLong(address + ((--this.remainingRowCount) << 3));
             } else {
                 remainingBlockCount--;
-                this.address = rData.getAddress(Unsafe.getUnsafe().getLong(address + rowBlockLen * 8) - rowBlockSize, rowBlockSize);
-                this.remainingRowCount = rowBlockLen;
-                return Unsafe.getUnsafe().getLong(address + --this.remainingRowCount * 8);
+                this.address = rData.getAddress(Unsafe.getUnsafe().getLong(address + (rowBlockLen << 3)) - rowBlockSize, rowBlockSize);
+                this.remainingRowCount = mask;
+                return Unsafe.getUnsafe().getLong(address + (this.remainingRowCount << 3));
             }
         }
 
@@ -495,22 +504,21 @@ public class KVIndex implements Closeable {
             }
 
             long addr = kData.getAddress(keyOffset, ENTRY_SIZE);
-            long rowBlockOffset = Unsafe.getUnsafe().getLong(addr);
             this.size = Unsafe.getUnsafe().getLong(addr + 8);
 
             if (size == 0) {
                 return this;
             }
 
-            this.remainingBlockCount = (int) (this.size / rowBlockLen);
-            this.remainingRowCount = (int) (this.size % rowBlockLen);
+            this.remainingBlockCount = (int) (this.size >>> bits);
+            this.remainingRowCount = (int) (this.size & mask);
 
             if (remainingRowCount == 0) {
                 remainingBlockCount--;
                 remainingRowCount = rowBlockLen;
             }
 
-            this.address = rData.getAddress(rowBlockOffset - rowBlockSize, rowBlockSize);
+            this.address = rData.getAddress(Unsafe.getUnsafe().getLong(addr) - rowBlockSize, rowBlockSize);
             return this;
         }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -124,16 +124,16 @@ public class MemoryFile implements Closeable {
     }
 
     public long getAddress(long offset, int size) {
-        if (offset >= cachedBufferLo && offset + size <= cachedBufferHi) {
-            return cachedAddress + offset - cachedBufferLo;
+        if (offset > cachedBufferLo && offset + size < cachedBufferHi) {
+            return cachedAddress + offset - cachedBufferLo - 1;
         } else {
             return allocateAddress(offset, size);
         }
     }
 
     public int getAddressSize(long offset) {
-        if (offset >= cachedBufferLo && offset <= cachedBufferHi) {
-            return (int) (cachedBufferHi - offset);
+        if (offset > cachedBufferLo && offset < cachedBufferHi) {
+            return (int) (cachedBufferHi - offset - 1);
         } else {
             return 0;
         }
@@ -155,12 +155,12 @@ public class MemoryFile implements Closeable {
     }
 
     public MappedByteBuffer getBuffer(long offset, int size) {
-        if (offset >= cachedBufferLo && offset + size <= cachedBufferHi) {
-            cachedBuffer.position((int) (offset - cachedBufferLo));
+        if (offset > cachedBufferLo && offset + size < cachedBufferHi) {
+            cachedBuffer.position((int) (offset - cachedBufferLo - 1));
         } else {
             cachedBuffer = getBufferInternal(offset, size);
-            cachedBufferLo = offset - cachedBuffer.position();
-            cachedBufferHi = cachedBufferLo + cachedBuffer.limit();
+            cachedBufferLo = offset - cachedBuffer.position() - 1;
+            cachedBufferHi = cachedBufferLo + cachedBuffer.limit() + 2;
             cachedAddress = ((DirectBuffer) cachedBuffer).address();
         }
         return cachedBuffer;
@@ -171,41 +171,25 @@ public class MemoryFile implements Closeable {
         return this.getClass().getName() + "[file=" + file + ", appendOffset=" + getAppendOffset() + "]";
     }
 
-    String getFullFileName() {
-        return this.file.getAbsolutePath();
-    }
-
-    final void open() throws JournalException {
-        String m;
-        switch (mode) {
-            case READ:
-            case BULK_READ:
-                m = "r";
-                break;
-            default:
-                m = "rw";
-        }
-        openInternal(m);
-    }
-
     private long allocateAddress(long offset, int size) {
         cachedBuffer = getBufferInternal(offset, size);
-        cachedBufferLo = offset - cachedBuffer.position();
-        cachedBufferHi = cachedBufferLo + cachedBuffer.limit();
-        return (cachedAddress = ((DirectBuffer) cachedBuffer).address()) + cachedBuffer.position();
+        cachedBufferLo = offset - cachedBuffer.position() - 1;
+        cachedBufferHi = cachedBufferLo + cachedBuffer.limit() + 2;
+        cachedAddress = ((DirectBuffer) cachedBuffer).address();
+        return cachedAddress + cachedBuffer.position();
     }
 
     private MappedByteBuffer getBufferInternal(long offset, int size) {
 
         int bufferSize = 1 << bitHint;
-        int bufferIndex = (int) (offset >>> bitHint);
-        long bufferOffset = ((long) bufferIndex) * ((long) bufferSize);
+        int index = (int) (offset >>> bitHint);
+        long bufferOffset = ((long) index) << ((long) bitHint);
         int bufferPos = (int) (offset - bufferOffset);
 
 
-        Lists.advance(buffers, bufferIndex);
+        Lists.advance(buffers, index);
 
-        MappedByteBuffer buffer = buffers.get(bufferIndex);
+        MappedByteBuffer buffer = buffers.get(index);
 
         if (buffer != null && buffer.limit() < bufferPos) {
             buffer = ByteBuffers.release(buffer);
@@ -214,7 +198,7 @@ public class MemoryFile implements Closeable {
         if (buffer == null) {
             buffer = mapBufferInternal(bufferOffset, bufferSize);
             assert bufferSize > 0;
-            buffers.set(bufferIndex, buffer);
+            buffers.set(index, buffer);
             switch (mode) {
                 case BULK_READ:
                 case BULK_APPEND:
@@ -223,7 +207,7 @@ public class MemoryFile implements Closeable {
                     cachedBuffer = null;
                     cachedBufferLo = cachedBufferHi = -1;
                     int ssz = stitches.size();
-                    for (int i = bufferIndex - 1; i >= 0; i--) {
+                    for (int i = index - 1; i >= 0; i--) {
                         MappedByteBuffer b = buffers.get(i);
                         if (b != null) {
                             buffers.set(i, ByteBuffers.release(b));
@@ -246,9 +230,9 @@ public class MemoryFile implements Closeable {
         // a stitch buffer, which would accommodate the size
         if (buffer.remaining() < size) {
 
-            Lists.advance(stitches, bufferIndex);
+            Lists.advance(stitches, index);
 
-            ByteBufferWrapper bufferWrapper = stitches.get(bufferIndex);
+            ByteBufferWrapper bufferWrapper = stitches.get(index);
 
             long stitchOffset = bufferOffset + bufferPos;
             if (bufferWrapper != null) {
@@ -265,12 +249,16 @@ public class MemoryFile implements Closeable {
 
             if (bufferWrapper == null) {
                 bufferWrapper = new ByteBufferWrapper(stitchOffset, mapBufferInternal(stitchOffset, size));
-                stitches.set(bufferIndex, bufferWrapper);
+                stitches.set(index, bufferWrapper);
             }
 
             return bufferWrapper.getByteBuffer();
         }
         return buffer;
+    }
+
+    String getFullFileName() {
+        return this.file.getAbsolutePath();
     }
 
     private MappedByteBuffer mapBufferInternal(long offset, int size) {
@@ -301,6 +289,19 @@ public class MemoryFile implements Closeable {
         } catch (IOException e) {
             throw new JournalRuntimeException("Failed to memory map: %s", e, file.getAbsolutePath());
         }
+    }
+
+    final void open() throws JournalException {
+        String m;
+        switch (mode) {
+            case READ:
+            case BULK_READ:
+                m = "r";
+                break;
+            default:
+                m = "rw";
+        }
+        openInternal(m);
     }
 
     private void openInternal(String mode) throws JournalException {

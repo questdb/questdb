@@ -16,19 +16,23 @@
 
 package com.nfsdb.collections;
 
+import com.nfsdb.utils.Numbers;
+
 import java.util.Arrays;
 
 
 public class IntIntHashMap {
 
-    private static final int FREE = -1;
+    public static final int MIN_INITIAL_CAPACITY = 16;
+    private static final int noEntryValue = -1;
     private final double loadFactor;
     private int[] values;
     private int[] keys;
     private int free;
+    private int mask;
 
     public IntIntHashMap() {
-        this(11);
+        this(8);
     }
 
     public IntIntHashMap(int initialCapacity) {
@@ -37,21 +41,26 @@ public class IntIntHashMap {
 
     @SuppressWarnings("unchecked")
     public IntIntHashMap(int initialCapacity, double loadFactor) {
+        if (loadFactor <= 0d || loadFactor >= 1d) {
+            throw new IllegalArgumentException("0 < loadFactor < 1");
+        }
         int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
+        capacity = capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);
         this.loadFactor = loadFactor;
         values = new int[capacity];
         keys = new int[capacity];
         free = initialCapacity;
+        mask = capacity - 1;
         clear();
     }
 
     public final void clear() {
-        Arrays.fill(values, FREE);
+        Arrays.fill(values, noEntryValue);
     }
 
     public int get(int key) {
-        int index = (key & 0x7fffffff) % keys.length;
-        if (values[index] == FREE || keys[index] == key) {
+        int index = key & mask;
+        if (values[index] == noEntryValue || keys[index] == key) {
             return values[index];
         }
         return probe(key, index);
@@ -66,12 +75,12 @@ public class IntIntHashMap {
     }
 
     private int insertKey(int key, int value) {
-        int index = (key & 0x7fffffff) % keys.length;
-        if (values[index] == FREE) {
+        int index = key & mask;
+        if (values[index] == noEntryValue) {
             keys[index] = key;
             values[index] = value;
             free--;
-            return FREE;
+            return noEntryValue;
         }
 
         if (keys[index] == key) {
@@ -85,8 +94,8 @@ public class IntIntHashMap {
 
     private int probe(int key, int index) {
         do {
-            index = (index + 1) % keys.length;
-            if (values[index] == FREE || keys[index] == key) {
+            index = (index + 1) & mask;
+            if (values[index] == noEntryValue || keys[index] == key) {
                 return values[index];
             }
         } while (true);
@@ -94,12 +103,12 @@ public class IntIntHashMap {
 
     private int probeInsert(int key, int index, int value) {
         do {
-            index = (index + 1) % keys.length;
-            if (values[index] == FREE) {
+            index = (index + 1) & mask;
+            if (values[index] == noEntryValue) {
                 keys[index] = key;
                 values[index] = value;
                 free--;
-                return FREE;
+                return noEntryValue;
             }
 
             if (key == keys[index]) {
@@ -113,7 +122,8 @@ public class IntIntHashMap {
     @SuppressWarnings({"unchecked"})
     protected void rehash() {
 
-        int newCapacity = Primes.next(values.length << 1);
+        int newCapacity = values.length << 1;
+        mask = newCapacity - 1;
 
         free = (int) (newCapacity * loadFactor);
 
@@ -121,10 +131,10 @@ public class IntIntHashMap {
         int[] oldKeys = keys;
         this.keys = new int[newCapacity];
         this.values = new int[newCapacity];
-        Arrays.fill(values, 0, values.length, FREE);
+        Arrays.fill(values, noEntryValue);
 
         for (int i = oldKeys.length; i-- > 0; ) {
-            if (oldValues[i] != FREE) {
+            if (oldValues[i] != noEntryValue) {
                 insertKey(oldKeys[i], oldValues[i]);
             }
         }

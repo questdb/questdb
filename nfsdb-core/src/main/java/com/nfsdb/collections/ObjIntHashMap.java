@@ -16,6 +16,7 @@
 
 package com.nfsdb.collections;
 
+import com.nfsdb.utils.Numbers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.Arrays;
@@ -23,8 +24,8 @@ import java.util.Iterator;
 
 
 public class ObjIntHashMap<V> implements Iterable<ObjIntHashMap.Entry<V>> {
-
-    private static final Object FREE = new Object();
+    public static final int MIN_INITIAL_CAPACITY = 16;
+    private static final Object noEntryValue = new Object();
     private final int noKeyValue;
     private final double loadFactor;
     private final EntryIterator iterator = new EntryIterator();
@@ -32,9 +33,10 @@ public class ObjIntHashMap<V> implements Iterable<ObjIntHashMap.Entry<V>> {
     private int[] values;
     private int free;
     private int capacity;
+    private int mask;
 
     public ObjIntHashMap() {
-        this(11);
+        this(8);
     }
 
     public ObjIntHashMap(int initialCapacity, int noKeyValue) {
@@ -48,22 +50,24 @@ public class ObjIntHashMap<V> implements Iterable<ObjIntHashMap.Entry<V>> {
     @SuppressWarnings("unchecked")
     public ObjIntHashMap(int initialCapacity, double loadFactor, int noKeyValue) {
         int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
+        capacity = capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);
         this.loadFactor = loadFactor;
         this.noKeyValue = noKeyValue;
         keys = (V[]) new Object[capacity];
         values = new int[capacity];
         free = this.capacity = initialCapacity;
+        mask = capacity - 1;
         clear();
     }
 
     public final void clear() {
-        Arrays.fill(keys, FREE);
+        Arrays.fill(keys, noEntryValue);
     }
 
     public int get(V key) {
-        int index = (key.hashCode() & 0x7fffffff) % keys.length;
+        int index = key.hashCode() & mask;
 
-        if (keys[index] == FREE) {
+        if (keys[index] == noEntryValue) {
             return noKeyValue;
         }
 
@@ -89,8 +93,8 @@ public class ObjIntHashMap<V> implements Iterable<ObjIntHashMap.Entry<V>> {
     }
 
     public boolean putIfAbsent(V key, int value) {
-        int index = (key.hashCode() & 0x7fffffff) % keys.length;
-        if (keys[index] == FREE) {
+        int index = key.hashCode() & mask;
+        if (keys[index] == noEntryValue) {
             keys[index] = key;
             values[index] = value;
             free--;
@@ -108,8 +112,8 @@ public class ObjIntHashMap<V> implements Iterable<ObjIntHashMap.Entry<V>> {
     }
 
     private int insertKey(V key, int value) {
-        int index = (key.hashCode() & 0x7fffffff) % keys.length;
-        if (keys[index] == FREE) {
+        int index = key.hashCode() & mask;
+        if (keys[index] == noEntryValue) {
             keys[index] = key;
             values[index] = value;
             free--;
@@ -130,8 +134,8 @@ public class ObjIntHashMap<V> implements Iterable<ObjIntHashMap.Entry<V>> {
 
     private int probe(V key, int index) {
         do {
-            index = (index + 1) % keys.length;
-            if (keys[index] == FREE) {
+            index = (index + 1) & mask;
+            if (keys[index] == noEntryValue) {
                 return noKeyValue;
             }
             if (keys[index] == key || key.equals(keys[index])) {
@@ -142,8 +146,8 @@ public class ObjIntHashMap<V> implements Iterable<ObjIntHashMap.Entry<V>> {
 
     private int probeInsert(V key, int index, int value) {
         do {
-            index = (index + 1) % keys.length;
-            if (keys[index] == FREE) {
+            index = (index + 1) & mask;
+            if (keys[index] == noEntryValue) {
                 keys[index] = key;
                 values[index] = value;
                 free--;
@@ -163,8 +167,8 @@ public class ObjIntHashMap<V> implements Iterable<ObjIntHashMap.Entry<V>> {
 
     private boolean probeInsertIfAbsent(V key, int index, int value) {
         do {
-            index = (index + 1) % keys.length;
-            if (keys[index] == FREE) {
+            index = (index + 1) & mask;
+            if (keys[index] == noEntryValue) {
                 keys[index] = key;
                 values[index] = value;
                 free--;
@@ -183,16 +187,17 @@ public class ObjIntHashMap<V> implements Iterable<ObjIntHashMap.Entry<V>> {
     @SuppressWarnings({"unchecked"})
     protected void rehash() {
 
-        int newCapacity = Primes.next(values.length << 1);
+        int newCapacity = values.length << 1;
+        mask = newCapacity - 1;
         free = capacity = (int) (newCapacity * loadFactor);
         int[] oldValues = values;
         V[] oldKeys = keys;
         this.keys = (V[]) new Object[newCapacity];
         this.values = new int[newCapacity];
-        Arrays.fill(keys, FREE);
+        Arrays.fill(keys, noEntryValue);
 
         for (int i = oldKeys.length; i-- > 0; ) {
-            if (oldKeys[i] != FREE) {
+            if (oldKeys[i] != noEntryValue) {
                 insertKey(oldKeys[i], oldValues[i]);
             }
         }
@@ -210,7 +215,7 @@ public class ObjIntHashMap<V> implements Iterable<ObjIntHashMap.Entry<V>> {
 
         @Override
         public boolean hasNext() {
-            return index < values.length && (keys[index] != FREE || scan());
+            return index < values.length && (keys[index] != noEntryValue || scan());
         }
 
         @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
@@ -222,7 +227,7 @@ public class ObjIntHashMap<V> implements Iterable<ObjIntHashMap.Entry<V>> {
         }
 
         private boolean scan() {
-            while (index < values.length && keys[index] == FREE) {
+            while (index < values.length && keys[index] == noEntryValue) {
                 index++;
             }
             return index < values.length;
