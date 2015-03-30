@@ -9,6 +9,10 @@ public final class RecordColumn implements com.nfsdb.factory.configuration.Recor
     private final ColumnType type;
     private final SymbolTable sTable;
 
+    public RecordColumn(String name, ColumnType type) {
+        this(name, type, null);
+    }
+
     public RecordColumn(String name, ColumnType type, SymbolTable sTable) {
         this.name = name;
         this.type = type;

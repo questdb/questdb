@@ -434,9 +434,12 @@ public class Partition<T> implements Iterable<T>, Closeable {
     }
 
     Partition<T> access() {
-        this.lastAccessed = getJournal().getTimerCache().getCachedMillis();
+        if (journal.getMetadata().getTimestampIndex() >= 0) {
+            this.lastAccessed = getJournal().getTimerCache().getCachedMillis();
+        }
         return this;
     }
+
 
     void append(Iterator<T> it) throws JournalException {
         while (it.hasNext()) {
@@ -571,7 +574,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
     private void appendBin(T obj, int i, ColumnMetadata meta) {
         ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, meta.offset);
-        if (buf == null || buf.remaining() == 0) {
+        if (buf == null) {
             ((VariableColumn) columns[i]).putNull();
         } else {
             ((VariableColumn) columns[i]).putBin(buf);

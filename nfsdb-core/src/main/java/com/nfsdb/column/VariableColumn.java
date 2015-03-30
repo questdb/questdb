@@ -405,6 +405,7 @@ public class VariableColumn extends AbstractColumn {
 
                 address += readBlockLen;
                 workOffset += readBlockLen;
+                blockAddress += readBlockLen;
                 if (targetAddress - address > 0) {
                     renew();
                 }

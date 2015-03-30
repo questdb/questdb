@@ -3,31 +3,29 @@ package com.nfsdb.collections;
 import com.nfsdb.lang.cst.impl.qry.Record;
 import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
 import com.nfsdb.lang.cst.impl.qry.RecordSource;
+import com.nfsdb.utils.Unsafe;
+
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Iterator;
 
 public class DirectRecordLinkedList implements Closeable, RecordSource<Record> {
     private final RecordMetadata recordMetadata;
-    private final DirectLinkedBuffer buffer;
+    private final DirectPagedBuffer buffer;
     private final DirectRecord bufferRecord;
-    private long appendOffset;
     private long readOffset = -1;
 
     public DirectRecordLinkedList(RecordMetadata recordMetadata, long recordCount, long avgRecSize) {
         this.recordMetadata = recordMetadata;
-        this.buffer = new DirectLinkedBuffer(
+        this.buffer = new DirectPagedBuffer(
                 (long)(Math.ceil(recordCount * avgRecSize / 2.0 / AbstractDirectList.CACHE_LINE_SIZE)) * AbstractDirectList.CACHE_LINE_SIZE);
         bufferRecord = new DirectRecord(recordMetadata, buffer);
-        appendOffset = 0;
     }
 
     public long append(Record record, long prevRecordOffset) {
-        long recordAddressBegin = appendOffset;
-        buffer.writeLong(prevRecordOffset, appendOffset);
-        appendOffset += 8;
-        bufferRecord.init(appendOffset);
-        appendOffset += bufferRecord.write(record);
+        long recordAddressBegin = buffer.getWriteOffsetQuick(8 + bufferRecord.getFixedBlockLength());
+        Unsafe.getUnsafe().putLong(buffer.toAddress(recordAddressBegin), prevRecordOffset);
+        bufferRecord.write(record);
         return recordAddressBegin;
     }
 
@@ -48,7 +46,6 @@ public class DirectRecordLinkedList implements Closeable, RecordSource<Record> {
 
     private void free() throws IOException {
         buffer.close();
-        bufferRecord.close();
     }
 
     @Override
@@ -74,7 +71,7 @@ public class DirectRecordLinkedList implements Closeable, RecordSource<Record> {
     @Override
     public Record next() {
         bufferRecord.init(readOffset + 8);
-        readOffset = buffer.readLong(readOffset);
+        readOffset = Unsafe.getUnsafe().getLong(buffer.toAddress(readOffset));
         return bufferRecord;
     }
 

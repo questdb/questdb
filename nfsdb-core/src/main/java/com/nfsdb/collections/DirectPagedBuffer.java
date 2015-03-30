@@ -1,58 +1,117 @@
 package com.nfsdb.collections;
-
 import com.nfsdb.column.DirectInputStream;
+import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.utils.Unsafe;
+
 import java.io.Closeable;
 import java.io.IOException;
+import java.io.OutputStream;
 
-public class DirectLinkedBuffer implements Closeable {
-    private static final long CACHE_LINE_SIZE = AbstractDirectList.CACHE_LINE_SIZE;
+public class DirectPagedBuffer implements Closeable {
     private long pageCapacity;
-    private DirectLongList buffers;
-    private long localBufferAddress;
+    private DirectLongList pages;
+    private long cachedPageOffsetLo;
+    private long cachedPageOffsetHi;
+    private long cachedPageOffset;
 
-    public DirectLinkedBuffer() {
-        this(CACHE_LINE_SIZE);
-    }
-
-    public DirectLinkedBuffer(long pageCapacity) {
+    public DirectPagedBuffer(long pageCapacity) {
         this.pageCapacity = pageCapacity;
-        long address = Unsafe.getUnsafe().allocateMemory(pageCapacity);
-        buffers = new DirectLongList(1);
-        buffers.add(address);
-        localBufferAddress = Unsafe.getUnsafe().allocateMemory(8);
+        pages = new DirectLongList(1);
+        allocateAddress();
     }
 
-    public void write(long readFrom, long writeOffset, long size) {
+    public long getWriteOffsetQuick(long length) {
+        if (cachedPageOffset + length <= cachedPageOffsetHi) {
+            // Increment currentAddress and return original value
+            return (cachedPageOffset += length) - length;
+        } else {
+            cachedPageOffset = allocateAddress();
+            return (cachedPageOffset += length) - length;
+        }
+    }
+
+    public long getWriteOffsetWithChecks(long length) {
+        if (cachedPageOffset + length <= cachedPageOffsetHi) {
+            return (cachedPageOffset += length) - length;
+        } else {
+            cachedPageOffset = allocateAddressChecked(length);
+            return (cachedPageOffset += length) - length;
+        }
+    }
+
+    public long toAddress(long offset) {
+        int pageIndex = (int) (offset / pageCapacity);
+        int pageOffset = (int) (offset % pageCapacity);
+        assert pageIndex < pages.size();
+        assert pages.get(pageIndex) != 0;
+
+        return pages.get(pageIndex) + pageOffset;
+    }
+
+    private long allocateAddressChecked(long length) {
+        if (length > pageCapacity) {
+            throw new JournalRuntimeException("Failed to allocate page of length %d. Maximum page size %d", length, pageCapacity);
+        }
+        return allocateAddress();
+    }
+
+    private long allocateAddress() {
+        cachedPageOffsetLo = allocatePage();
+        cachedPageOffsetHi = cachedPageOffsetLo + pageCapacity;
+        return cachedPageOffsetLo;
+    }
+
+    private long allocatePage() {
+        long address = Unsafe.getUnsafe().allocateMemory(pageCapacity);
+        pages.add(address);
+        return (pages.size() - 1) * pageCapacity;
+    }
+
+    public void append(DirectInputStream value) {
+        long writeOffset = cachedPageOffset;
+        long size = value.getLength();
         if (size < 0 || writeOffset < 0) {
             throw new IndexOutOfBoundsException();
         }
 
+        // Find last page needed.
         int pageIndex = (int) (writeOffset / pageCapacity);
         long pageOffset = writeOffset % pageCapacity;
         int finalPage = (int) (pageIndex + size / pageCapacity + ((size % pageCapacity + pageOffset) > pageCapacity ? 1 : 0));
-        if (finalPage >= buffers.size()) {
-            for (int i = buffers.size(); i < finalPage + 1; i++) {
-                buffers.add(0);
+
+        // Allocate pages.
+        if (finalPage >= pages.size()) {
+            for (int i = pages.size(); i < finalPage + 1; i++) {
+                pages.add(Unsafe.getUnsafe().allocateMemory(pageCapacity));
             }
         }
 
         do {
-            long writeAddress = buffers.get(pageIndex);
-            if (writeAddress == 0) {
-                writeAddress = Unsafe.getUnsafe().allocateMemory(pageCapacity);
-                buffers.set(pageIndex, writeAddress);
-            }
-
+            long writeAddress = pages.get(pageIndex);
             pageOffset = writeOffset % pageCapacity;
             writeAddress += pageOffset;
             long writeSize = Math.min(size, pageCapacity - pageOffset);
-            Unsafe.getUnsafe().copyMemory(readFrom, writeAddress, writeSize);
-            readFrom += writeSize;
+            value.copyTo(writeAddress, 0, writeSize);
             size -= writeSize;
+            cachedPageOffset += writeSize;
             writeOffset = 0;
             pageIndex++;
         } while (size > 0);
+    }
+
+    public void read(OutputStream stream, long offset, long len) throws IOException {
+        long position = offset;
+        long copied = 0;
+        while (copied < len) {
+            long address = toAddress(offset);
+            long blockEndOffset = getBlockLen(offset);
+            long copyEndOffset = Math.min(blockEndOffset, len - copied);
+            len += copyEndOffset - position;
+
+            while(position < copyEndOffset) {
+                stream.write(Unsafe.getUnsafe().getByte(address + position++));
+            }
+        }
     }
 
     public long read(long writeTo, long readOffset, long size) {
@@ -64,12 +123,12 @@ public class DirectLinkedBuffer implements Closeable {
         long pageOffset = readOffset % pageCapacity;
         long readLen = 0;
 
-        if (pageIndex >= buffers.size()) {
+        if (pageIndex >= pages.size()) {
             return readLen;
         }
 
         do {
-            long readAddress = buffers.get(pageIndex);
+            long readAddress = pages.get(pageIndex);
             if (readAddress == 0) {
                 return readLen;
             }
@@ -77,6 +136,7 @@ public class DirectLinkedBuffer implements Closeable {
             long toRead = Math.min(size, pageCapacity - pageOffset);
             Unsafe.getUnsafe().copyMemory(readAddress + pageOffset, writeTo, toRead);
             writeTo += toRead;
+            readLen += toRead;
             size -= toRead;
             pageOffset = 0;
             pageIndex++;
@@ -91,13 +151,13 @@ public class DirectLinkedBuffer implements Closeable {
     }
 
     private void free() {
-        for(int i = 0; i < buffers.size(); i++) {
-            long address = buffers.get(i);
+        for(int i = 0; i < pages.size(); i++) {
+            long address = pages.get(i);
             if (address != 0) {
-                Unsafe.getUnsafe().freeMemory(buffers.get(i));
+                Unsafe.getUnsafe().freeMemory(pages.get(i));
             }
         }
-        buffers.close();
+        pages.close();
     }
 
     @Override
@@ -106,20 +166,26 @@ public class DirectLinkedBuffer implements Closeable {
         super.finalize();
     }
 
+    public long getBlockLen(long offset) {
+        return pageCapacity - offset % pageCapacity;
+    }
+
+/*
     public byte getByte(long readOffset) {
         int pageIndex = (int) (readOffset / pageCapacity);
         long pageOffset = readOffset % pageCapacity;
-        if (pageIndex >= buffers.size()) {
+        if (pageIndex >= pages.size()) {
             throw new IndexOutOfBoundsException();
         }
 
-        long readAddress = buffers.get(pageIndex);
+        long readAddress = pages.get(pageIndex);
         if (readAddress == 0) {
             throw new IndexOutOfBoundsException();
         }
 
         return Unsafe.getUnsafe().getByte(readAddress + pageOffset);
     }
+
 
     public int readInt(long l) {
         this.read(localBufferAddress, l, 4);
@@ -148,53 +214,62 @@ public class DirectLinkedBuffer implements Closeable {
 
     public int writeByte(byte value, long offset) {
         Unsafe.getUnsafe().putByte(localBufferAddress, value);
-        this.write(localBufferAddress, offset, 1);
+        this.append(localBufferAddress, offset, 1);
         return 1;
     }
 
     public int writeDouble(double value, long offset) {
         Unsafe.getUnsafe().putDouble(localBufferAddress, value);
-        this.write(localBufferAddress, offset, 8);
+        this.append(localBufferAddress, offset, 8);
         return 8;
     }
 
     public int writeInt(int value, long offset) {
         Unsafe.getUnsafe().putInt(localBufferAddress, value);
-        this.write(localBufferAddress, offset, 4);
+        this.append(localBufferAddress, offset, 4);
         return 4;
     }
 
     public int writeLong(long value, long offset) {
         Unsafe.getUnsafe().putLong(localBufferAddress, value);
-        this.write(localBufferAddress, offset, 8);
+        this.append(localBufferAddress, offset, 8);
         return 8;
     }
 
     public int writeShort(short value, long offset) {
         Unsafe.getUnsafe().putShort(localBufferAddress, value);
-        this.write(localBufferAddress, offset, 2);
+        this.append(localBufferAddress, offset, 2);
         return 2;
     }
 
     public int writeString(CharSequence value, long offset) {
-        this.writeInt(value.length(), offset);
+        int len = value == null ? -1 : value.length();
+        this.writeInt(len, offset);
+        if (len <= 0) {
+            return 4;
+        }
+
         offset += 2;
         for(int i = 0; i < value.length(); i++) {
             Unsafe.getUnsafe().putChar(localBufferAddress, value.charAt(i));
-            this.write(localBufferAddress, offset += 2, 2);
+            this.append(localBufferAddress, offset += 2, 2);
         }
         return value.length() + 4;
     }
 
     public int writeBinary(DirectInputStream value, long offset) {
         long initialOffset = offset;
+        long len = value.getLength();
         this.writeInt((int) value.getLength(), offset);
+        if (len <= 0) {
+            return 4;
+        }
         offset -= 4;
         long copied;
         do {
             do {
-                copied = value.copyTo(localBufferAddress, 0, 8);
-                this.write(localBufferAddress, offset += 8, copied);
+                copied = value.read(localBufferAddress, 0, 8);
+                this.append(localBufferAddress, offset += 8, copied);
             }
             while (copied == 8);
             offset -= 8 - copied;
@@ -202,4 +277,5 @@ public class DirectLinkedBuffer implements Closeable {
         while (copied > 0);
         return (int)(offset + 8 - initialOffset);
     }
+    */
 }
