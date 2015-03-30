@@ -18,6 +18,7 @@ package com.nfsdb.lang.parser;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.collections.IntObjHashMap;
+import com.nfsdb.utils.Chars;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
 import sun.reflect.generics.reflectiveObjects.NotImplementedException;
@@ -153,6 +154,16 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
             }
         }
         return last = floatingSequence;
+    }
+
+    public CharSequence optionTok() {
+        while (hasNext()) {
+            CharSequence cs = next();
+            if (!Chars.equals(cs, ' ')) {
+                return cs;
+            }
+        }
+        return null;
     }
 
     public int position() {

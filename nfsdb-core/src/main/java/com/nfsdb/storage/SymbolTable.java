@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,16 +19,15 @@ package com.nfsdb.storage;
 import com.nfsdb.JournalMode;
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.collections.ObjIntHashMap;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalInvalidSymbolValueException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Hash;
-import com.nfsdb.utils.Lists;
 
 import java.io.Closeable;
 import java.io.File;
-import java.util.ArrayList;
 
 public class SymbolTable implements Closeable {
 
@@ -41,7 +40,7 @@ public class SymbolTable implements Closeable {
     private final int hashKeyCount;
     private final String column;
     private final ObjIntHashMap<CharSequence> valueCache;
-    private final ArrayList<String> keyCache;
+    private final ObjList<String> keyCache;
     private final boolean noCache;
     private VariableColumn data;
     private KVIndex index;
@@ -74,7 +73,7 @@ public class SymbolTable implements Closeable {
 
         this.index = new KVIndex(new File(directory, column + HASH_INDEX_FILE_SUFFIX), this.hashKeyCount, keyCount, txCountHint, mode, indexTxAddress);
         this.valueCache = new ObjIntHashMap<>(noCache ? 0 : keyCount, VALUE_NOT_FOUND);
-        this.keyCache = new ArrayList<>(noCache ? 0 : keyCount);
+        this.keyCache = new ObjList<>(noCache ? 0 : keyCount);
     }
 
     public void alignSize() {
@@ -196,7 +195,7 @@ public class SymbolTable implements Closeable {
             throw new JournalRuntimeException("Invalid symbol key: " + key);
         }
 
-        String value = key < keyCache.size() ? keyCache.get(key) : null;
+        String value = key < keyCache.size() ? keyCache.getQuick(key) : null;
         if (value == null) {
             cache(key, value = data.getStr(key));
         }
@@ -232,8 +231,7 @@ public class SymbolTable implements Closeable {
         }
 
         valueCache.put(value, key);
-        Lists.advance(keyCache, key);
-        keyCache.set(key, value);
+        keyCache.extendAndSet(key, value);
     }
 
     private void clearCache() {

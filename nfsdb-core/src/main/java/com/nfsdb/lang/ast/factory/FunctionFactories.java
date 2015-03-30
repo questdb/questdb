@@ -14,11 +14,20 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ha.krb;
+package com.nfsdb.lang.ast.factory;
 
-import com.nfsdb.JournalKey;
-import com.nfsdb.collections.ObjList;
+import com.nfsdb.collections.ObjObjHashMap;
+import com.nfsdb.lang.ast.Signature;
+import com.nfsdb.storage.ColumnType;
 
-public interface KrbAuthorizer {
-    boolean isAuthorized(String principal, ObjList<JournalKey> requestedKeys) throws Exception;
+public final class FunctionFactories {
+    private static final ObjObjHashMap<Signature, FunctionFactory> factories = new ObjObjHashMap<>();
+
+    public static FunctionFactory find(Signature sig) {
+        return factories.get(sig);
+    }
+
+    static {
+        factories.put(new Signature().setName("+").setParamCount(2).addParamType(ColumnType.DOUBLE).addParamType(ColumnType.DOUBLE), new AddDoubleOperatorFactory());
+    }
 }

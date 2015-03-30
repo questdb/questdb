@@ -18,6 +18,7 @@ package com.nfsdb.factory.configuration;
 
 import com.nfsdb.PartitionType;
 import com.nfsdb.collections.ObjIntHashMap;
+import com.nfsdb.collections.ObjObjHashMap;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.ByteBuffers;
@@ -28,11 +29,13 @@ import java.io.File;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
-    private final Map<String, ColumnMetadata> columnMetadata = new HashMap<>();
+    private final ObjObjHashMap<String, ColumnMetadata> columnMetadata = new ObjObjHashMap<>();
     private final Class<T> modelClass;
     private Constructor<T> constructor;
     private ObjIntHashMap<String> nameToIndexMap;
@@ -111,9 +114,9 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
 
         ColumnMetadata metadata[] = new ColumnMetadata[nameToIndexMap.size()];
 
-        for (Map.Entry<String, ColumnMetadata> e : columnMetadata.entrySet()) {
-            int index = nameToIndexMap.get(e.getKey());
-            ColumnMetadata meta = e.getValue();
+        for (ObjObjHashMap.Entry<String, ColumnMetadata> e : columnMetadata.immutableIterator()) {
+            int index = nameToIndexMap.get(e.key);
+            ColumnMetadata meta = e.value;
 
 
             if (meta.indexed && meta.distinctCountHint <= 1) {

@@ -17,6 +17,8 @@
 package com.nfsdb;
 
 import com.nfsdb.collections.DirectLongList;
+import com.nfsdb.collections.ObjList;
+import com.nfsdb.collections.ObjObjHashMap;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.JournalClosingListener;
@@ -54,8 +56,8 @@ public class Journal<T> implements Iterable<T>, Closeable {
     final Tx tx = new Tx();
     final JournalMetadata<T> metadata;
     private final File location;
-    private final Map<String, SymbolTable> symbolTableMap = new HashMap<>();
-    private final ArrayList<SymbolTable> symbolTables = new ArrayList<>();
+    private final ObjObjHashMap<String, SymbolTable> symbolTableMap = new ObjObjHashMap<>();
+    private final ObjList<SymbolTable> symbolTables = new ObjList<>();
     private final JournalKey<T> key;
     private final Query<T> query = new QueryImpl<>(this);
     private final TimerCache timerCache;
@@ -108,7 +110,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
 
             closePartitions();
             for (int i = 0, sz = symbolTables.size(); i < sz; i++) {
-                symbolTables.get(i).close();
+                symbolTables.getQuick(i).close();
             }
             txLog.close();
             open = false;
@@ -520,7 +522,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         if (txLog.head(tx)) {
             refreshInternal();
             for (int i = 0, sz = symbolTables.size(); i < sz; i++) {
-                symbolTables.get(i).applyTx(tx.symbolTableSizes[i], tx.symbolTableIndexPointers[i]);
+                symbolTables.getQuick(i).applyTx(tx.symbolTableSizes[i], tx.symbolTableIndexPointers[i]);
             }
             return true;
         }

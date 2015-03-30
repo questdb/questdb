@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,9 +17,8 @@
 package com.nfsdb.ha.krb;
 
 import com.nfsdb.JournalKey;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ha.auth.AuthorizationHandler;
-
-import java.util.List;
 
 public class KrbAuthenticator implements AuthorizationHandler {
 
@@ -38,7 +37,7 @@ public class KrbAuthenticator implements AuthorizationHandler {
     }
 
     @Override
-    public boolean isAuthorized(byte[] token, List<JournalKey> requestedKeys) throws Exception {
+    public boolean isAuthorized(byte[] token, ObjList<JournalKey> requestedKeys) throws Exception {
         try (ActiveDirectoryConnection connection = new ActiveDirectoryConnection(krb5Conf, principal, keyTab)) {
             String principal = connection.decodeServiceToken(serviceName, token);
             return authorizer != null ? authorizer.isAuthorized(principal, requestedKeys) : principal != null;

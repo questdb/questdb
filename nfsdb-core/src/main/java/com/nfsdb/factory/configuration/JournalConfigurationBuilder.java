@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,14 +16,13 @@
 
 package com.nfsdb.factory.configuration;
 
+import com.nfsdb.collections.ObjObjHashMap;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 public class JournalConfigurationBuilder {
     private final List<MetadataBuilder> builders = new ArrayList<>();
@@ -56,7 +55,7 @@ public class JournalConfigurationBuilder {
         }
 
 
-        Map<String, JournalMetadata> metadata = new HashMap<>(builders.size());
+        ObjObjHashMap<String, JournalMetadata> metadata = new ObjObjHashMap<>(builders.size());
         for (int i = 0, sz = builders.size(); i < sz; i++) {
             JournalMetadata meta = builders.get(i).build();
             metadata.put(meta.getId(), meta);

@@ -26,12 +26,11 @@ import java.io.OutputStream;
 import java.util.NoSuchElementException;
 
 public abstract class AbstractVirtualColumn implements VirtualColumn {
-    private final String name;
     protected RecordSourceState state;
+    private String name;
     private ColumnType type;
 
-    public AbstractVirtualColumn(String name, ColumnType type) {
-        this.name = name;
+    public AbstractVirtualColumn(ColumnType type) {
         this.type = type;
     }
 
@@ -88,6 +87,11 @@ public abstract class AbstractVirtualColumn implements VirtualColumn {
     @Override
     public String getName() {
         return name;
+    }
+
+    @Override
+    public void setName(String name) {
+        this.name = name;
     }
 
     @Override

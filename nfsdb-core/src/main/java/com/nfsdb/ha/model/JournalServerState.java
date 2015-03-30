@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,11 @@
 
 package com.nfsdb.ha.model;
 
-import com.nfsdb.utils.Lists;
-
-import java.util.ArrayList;
+import com.nfsdb.collections.ObjList;
 
 public class JournalServerState {
 
-    private final ArrayList<PartitionMetadata> partitionMetadata = new ArrayList<>();
+    private final ObjList<PartitionMetadata> partitionMetadata = new ObjList<>();
     private final PartitionMetadata lagPartitionMetadata = new PartitionMetadata();
     private boolean symbolTables = false;
     private int nonLagPartitionCount = 0;
@@ -57,10 +55,10 @@ public class JournalServerState {
             throw new ArrayIndexOutOfBoundsException(index);
         }
 
-        PartitionMetadata result = partitionMetadata.get(index);
+        PartitionMetadata result = partitionMetadata.getQuiet(index);
         if (result == null) {
             result = new PartitionMetadata();
-            partitionMetadata.set(index, result);
+            partitionMetadata.extendAndSet(index, result);
         }
         return result;
     }
@@ -71,7 +69,6 @@ public class JournalServerState {
 
     public void setNonLagPartitionCount(int nonLagPartitionCount) {
         this.nonLagPartitionCount = nonLagPartitionCount;
-        Lists.advance(partitionMetadata, nonLagPartitionCount - 1);
     }
 
     public long getTxPin() {

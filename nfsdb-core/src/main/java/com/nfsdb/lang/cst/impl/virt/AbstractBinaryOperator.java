@@ -16,47 +16,30 @@
 
 package com.nfsdb.lang.cst.impl.virt;
 
-import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.RecordSourceState;
 import com.nfsdb.storage.ColumnType;
 
-import java.io.InputStream;
-import java.io.OutputStream;
+public abstract class AbstractBinaryOperator extends AbstractVirtualColumn {
+    protected VirtualColumn lhs;
+    protected VirtualColumn rhs;
 
-public interface VirtualColumn {
+    public AbstractBinaryOperator(ColumnType type) {
+        super(type);
+    }
 
-    void configure(RecordMetadata metadata, RecordSourceState state);
+    @Override
+    public void configure(RecordMetadata metadata, RecordSourceState state) {
+        super.configure(metadata, state);
+        lhs.configure(metadata, state);
+        rhs.configure(metadata, state);
+    }
 
-    byte get();
+    public void setLhs(VirtualColumn lhs) {
+        this.lhs = lhs;
+    }
 
-    void getBin(OutputStream s);
-
-    InputStream getBin();
-
-    boolean getBool();
-
-    long getDate();
-
-    double getDouble();
-
-    float getFloat();
-
-    int getInt();
-
-    long getLong();
-
-    String getName();
-
-    void setName(String name);
-
-    short getShort();
-
-    CharSequence getStr();
-
-    void getStr(CharSink sink);
-
-    String getSym();
-
-    ColumnType getType();
+    public void setRhs(VirtualColumn rhs) {
+        this.rhs = rhs;
+    }
 }

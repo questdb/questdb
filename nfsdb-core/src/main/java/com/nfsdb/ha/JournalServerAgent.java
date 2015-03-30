@@ -20,6 +20,7 @@ import com.nfsdb.Journal;
 import com.nfsdb.JournalKey;
 import com.nfsdb.collections.DirectIntList;
 import com.nfsdb.collections.IntIntHashMap;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalDisconnectedChannelException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
@@ -39,15 +40,12 @@ import com.nfsdb.ha.protocol.CommandConsumer;
 import com.nfsdb.ha.protocol.CommandProducer;
 import com.nfsdb.ha.protocol.Version;
 import com.nfsdb.ha.protocol.commands.*;
-import com.nfsdb.utils.Lists;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.net.SocketAddress;
 import java.nio.channels.ByteChannel;
 import java.nio.channels.WritableByteChannel;
-import java.util.ArrayList;
-import java.util.List;
 
 @SuppressFBWarnings({"PL_PARALLEL_LISTS", "LII_LIST_INDEXED_ITERATING", "LII_LIST_INDEXED_ITERATING"})
 public class JournalServerAgent {
@@ -63,9 +61,9 @@ public class JournalServerAgent {
     private final JournalClientStateConsumer journalClientStateConsumer = new JournalClientStateConsumer();
     private final IntResponseProducer intResponseProducer = new IntResponseProducer();
     private final IntResponseConsumer intResponseConsumer = new IntResponseConsumer();
-    private final List<Journal> readers = new ArrayList<>();
-    private final List<JournalDeltaProducer> producers = new ArrayList<>();
-    private final List<JournalClientState> clientStates = new ArrayList<>();
+    private final ObjList<Journal> readers = new ObjList<>();
+    private final ObjList<JournalDeltaProducer> producers = new ObjList<>();
+    private final ObjList<JournalClientState> clientStates = new ObjList<>();
     private final StatsCollectingWritableByteChannel statsChannel;
     private final JournalEventProcessor eventProcessor;
     private final EventHandler handler = new EventHandler();
@@ -96,7 +94,7 @@ public class JournalServerAgent {
         stringResponseProducer.free();
         intResponseProducer.free();
         for (int i = 0, k = producers.size(); i < k; i++) {
-            producers.get(i).free();
+            producers.getQuick(i).free();
         }
     }
 
@@ -148,9 +146,9 @@ public class JournalServerAgent {
     private void authorize(WritableByteChannel channel, byte[] value) throws JournalNetworkException {
         if (!authorized) {
             try {
-                ArrayList<JournalKey> keys = new ArrayList<>(readers.size());
-                for (int i = 0, sz = readers.size(); i < sz; i++) {
-                    keys.add(readers.get(i).getKey());
+                ObjList<JournalKey> keys = new ObjList<>(readers.size());
+                for (int i = 0, k = readers.size(); i < k; i++) {
+                    keys.add(readers.getQuick(i).getKey());
                 }
                 authorized = authorizationHandler.isAuthorized(value, keys);
             } catch (Throwable e) {
@@ -182,16 +180,14 @@ public class JournalServerAgent {
     }
 
     private <T> void createReader(int index, JournalKey<T> key) throws JournalException {
-        Lists.advance(readers, index);
-        Journal journal = readers.get(index);
+        Journal journal = readers.getQuiet(index);
         if (journal == null) {
-            readers.set(index, journal = server.getFactory().reader(key));
+            readers.extendAndSet(index, journal = server.getFactory().reader(key));
         }
 
-        Lists.advance(producers, index);
-        JournalDeltaProducer producer = producers.get(index);
+        JournalDeltaProducer producer = producers.getQuiet(index);
         if (producer == null) {
-            producers.set(index, new JournalDeltaProducer(journal));
+            producers.extendAndSet(index, new JournalDeltaProducer(journal));
         }
     }
 
@@ -305,8 +301,8 @@ public class JournalServerAgent {
             // this loop does two things:
             // 1. attempts to dispatch0 journals that didn't receive updates, dispatch0 method would check timeout and decide.
             // 2. reset writer update received status
-            for (int i = 0, sz = clientStates.size(); i < sz; i++) {
-                JournalClientState state = clientStates.get(i);
+            for (int i = 0, k = clientStates.size(); i < k; i++) {
+                JournalClientState state = clientStates.getQuick(i);
                 if (state.isWaitingOnEvents()) {
                     dataSent = dispatch0(channel, i) || dataSent;
                 }
@@ -338,8 +334,7 @@ public class JournalServerAgent {
     }
 
     private void sendMetadata(WritableByteChannel channel, int index) throws JournalException, JournalNetworkException {
-        Journal r = readers.get(index);
-        try (HugeBufferProducer h = new HugeBufferProducer(new File(r.getLocation(), JournalConfiguration.FILE_NAME))) {
+        try (HugeBufferProducer h = new HugeBufferProducer(new File(readers.get(index).getLocation(), JournalConfiguration.FILE_NAME))) {
             h.write(channel);
         }
     }
@@ -375,12 +370,10 @@ public class JournalServerAgent {
         if (readerToWriterMap.get(index) == JOURNAL_INDEX_NOT_FOUND) {
             error(channel, "Journal index does not match key request");
         } else {
-            Lists.advance(clientStates, index);
-
-            JournalClientState r = clientStates.get(index);
+            JournalClientState r = clientStates.getQuiet(index);
             if (r == null) {
                 r = new JournalClientState();
-                clientStates.set(index, r);
+                clientStates.extendAndSet(index, r);
             }
             request.deepCopy(r);
             r.invalidateClientState();

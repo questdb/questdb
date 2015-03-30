@@ -23,11 +23,11 @@ import com.nfsdb.lang.cst.RecordSourceState;
 import java.io.InputStream;
 import java.io.OutputStream;
 
-public class ConcreteColumn extends AbstractVirtualColumn {
+public class RecordSourceColumn extends AbstractVirtualColumn {
     private int index;
 
-    public ConcreteColumn(String name) {
-        super(name, null);
+    public RecordSourceColumn() {
+        super(null);
     }
 
     @Override

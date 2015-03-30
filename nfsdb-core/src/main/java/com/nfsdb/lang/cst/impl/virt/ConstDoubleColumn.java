@@ -21,8 +21,8 @@ import com.nfsdb.storage.ColumnType;
 public class ConstDoubleColumn extends AbstractVirtualColumn {
     private final double value;
 
-    public ConstDoubleColumn(String name, double value) {
-        super(name, ColumnType.FLOAT);
+    public ConstDoubleColumn(double value) {
+        super(ColumnType.FLOAT);
         this.value = value;
     }
 

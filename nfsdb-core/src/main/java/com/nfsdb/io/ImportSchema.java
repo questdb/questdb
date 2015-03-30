@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.nfsdb.io;
 
+import com.nfsdb.collections.ObjObjHashMap;
 import com.nfsdb.io.parser.CsvParser;
 import com.nfsdb.io.parser.listener.Listener;
 import com.nfsdb.logging.Logger;
@@ -32,16 +33,14 @@ import java.io.RandomAccessFile;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 @SuppressFBWarnings({"CLI_CONSTANT_LIST_INDEX"})
 public class ImportSchema {
 
     private static final Logger LOGGER = Logger.getLogger(ImportSchema.class);
 
-    private static final Map<CharSequence, ImportedColumnType> importedTypeLookup = new HashMap<CharSequence, ImportedColumnType>() {{
+    private static final ObjObjHashMap<CharSequence, ImportedColumnType> importedTypeLookup = new ObjObjHashMap<CharSequence, ImportedColumnType>() {{
         put("YYYY-MM-DDThh:mm:ss", ImportedColumnType.DATE_ISO);
         put("YYYY-MM-DD hh:mm:ss", ImportedColumnType.DATE_1);
         put("MM/DD/YYYY", ImportedColumnType.DATE_2);

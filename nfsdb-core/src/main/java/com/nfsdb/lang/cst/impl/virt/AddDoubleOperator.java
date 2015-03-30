@@ -16,24 +16,26 @@
 
 package com.nfsdb.lang.cst.impl.virt;
 
-import com.nfsdb.lang.cst.RecordMetadata;
-import com.nfsdb.lang.cst.RecordSourceState;
 import com.nfsdb.storage.ColumnType;
 
-public abstract class AbstractDyadicColumn extends AbstractVirtualColumn {
-    protected final VirtualColumn l;
-    protected final VirtualColumn r;
+public class AddDoubleOperator extends AbstractBinaryOperator {
 
-    public AbstractDyadicColumn(String name, ColumnType type, VirtualColumn l, VirtualColumn r) {
-        super(name, type);
-        this.l = l;
-        this.r = r;
+    public AddDoubleOperator() {
+        super(ColumnType.DOUBLE);
     }
 
     @Override
-    public void configure(RecordMetadata metadata, RecordSourceState state) {
-        super.configure(metadata, state);
-        l.configure(metadata, state);
-        r.configure(metadata, state);
+    public double getDouble() {
+        return lhs.getDouble() + rhs.getDouble();
+    }
+
+    @Override
+    public float getFloat() {
+        return (float) (lhs.getDouble() + rhs.getDouble());
+    }
+
+    @Override
+    public int getInt() {
+        return (int) (lhs.getDouble() + rhs.getDouble());
     }
 }

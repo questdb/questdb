@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,13 +18,13 @@ package org.nfsdb.examples.ha.authentication;
 
 import com.nfsdb.JournalKey;
 import com.nfsdb.JournalWriter;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.ha.JournalServer;
 import com.nfsdb.ha.auth.AuthorizationHandler;
 import org.nfsdb.examples.model.Price;
 
-import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 public class AuthReplicationServerMain {
@@ -43,7 +43,7 @@ public class AuthReplicationServerMain {
         JournalFactory factory = new JournalFactory(location);
         JournalServer server = new JournalServer(factory, new AuthorizationHandler() {
             @Override
-            public boolean isAuthorized(byte[] token, List<JournalKey> requestedKeys) throws Exception {
+            public boolean isAuthorized(byte[] token, ObjList<JournalKey> requestedKeys) throws Exception {
                 return "MY SECRET".equals(new String(token, "UTF8"));
             }
         });

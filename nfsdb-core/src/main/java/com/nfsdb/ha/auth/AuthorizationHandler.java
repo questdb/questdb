@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,9 +17,8 @@
 package com.nfsdb.ha.auth;
 
 import com.nfsdb.JournalKey;
-
-import java.util.List;
+import com.nfsdb.collections.ObjList;
 
 public interface AuthorizationHandler {
-    boolean isAuthorized(byte[] token, List<JournalKey> requestedKeys) throws Exception;
+    boolean isAuthorized(byte[] token, ObjList<JournalKey> requestedKeys) throws Exception;
 }

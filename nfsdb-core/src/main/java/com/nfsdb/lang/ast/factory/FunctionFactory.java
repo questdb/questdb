@@ -14,28 +14,10 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.virt;
+package com.nfsdb.lang.ast.factory;
 
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.lang.cst.impl.virt.VirtualColumn;
 
-public class PlusDoubleColumn extends AbstractDyadicColumn {
-
-    public PlusDoubleColumn(String name, VirtualColumn l, VirtualColumn r) {
-        super(name, ColumnType.DOUBLE, l, r);
-    }
-
-    @Override
-    public double getDouble() {
-        return l.getDouble() + r.getDouble();
-    }
-
-    @Override
-    public float getFloat() {
-        return (float) (l.getDouble() + r.getDouble());
-    }
-
-    @Override
-    public int getInt() {
-        return (int) (l.getDouble() + r.getDouble());
-    }
+public interface FunctionFactory {
+    VirtualColumn newInstance();
 }

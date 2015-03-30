@@ -20,20 +20,19 @@ import com.nfsdb.Journal;
 import com.nfsdb.JournalBulkReader;
 import com.nfsdb.JournalKey;
 import com.nfsdb.TimerCache;
+import com.nfsdb.collections.ObjObjHashMap;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class JournalCachingFactory extends AbstractJournalReaderFactory implements JournalClosingListener {
 
-    private final Map<JournalKey, Journal> readers = new HashMap<>();
-    private final Map<JournalKey, JournalBulkReader> bulkReaders = new HashMap<>();
+    private final ObjObjHashMap<JournalKey, Journal> readers = new ObjObjHashMap<>();
+    private final ObjObjHashMap<JournalKey, JournalBulkReader> bulkReaders = new ObjObjHashMap<>();
     private final List<Journal> journalList = new ArrayList<>();
     private JournalPool pool;
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.nfsdb.ha;
 import com.nfsdb.Journal;
 import com.nfsdb.JournalKey;
 import com.nfsdb.JournalWriter;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.ha.auth.AuthorizationHandler;
@@ -34,7 +35,6 @@ import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -57,7 +57,7 @@ public class AuthorizationTest extends AbstractTest {
                 ,
                 new AuthorizationHandler() {
                     @Override
-                    public boolean isAuthorized(byte[] token, List<JournalKey> requestedKeys) {
+                    public boolean isAuthorized(byte[] token, ObjList<JournalKey> requestedKeys) {
                         return "SECRET".equals(new String(token));
                     }
                 });
@@ -85,7 +85,7 @@ public class AuthorizationTest extends AbstractTest {
                 ,
                 new AuthorizationHandler() {
                     @Override
-                    public boolean isAuthorized(byte[] token, List<JournalKey> requestedKeys) {
+                    public boolean isAuthorized(byte[] token, ObjList<JournalKey> requestedKeys) {
                         return "SECRET".equals(new String(token));
                     }
                 });
@@ -116,7 +116,7 @@ public class AuthorizationTest extends AbstractTest {
                 ,
                 new AuthorizationHandler() {
                     @Override
-                    public boolean isAuthorized(byte[] token, List<JournalKey> requestedKeys) {
+                    public boolean isAuthorized(byte[] token, ObjList<JournalKey> requestedKeys) {
                         return "SECRET".equals(new String(token));
                     }
                 });
@@ -142,7 +142,7 @@ public class AuthorizationTest extends AbstractTest {
                 ,
                 new AuthorizationHandler() {
                     @Override
-                    public boolean isAuthorized(byte[] token, List<JournalKey> requestedKeys) {
+                    public boolean isAuthorized(byte[] token, ObjList<JournalKey> requestedKeys) {
                         throw new RuntimeException("BANG!");
                     }
                 });
@@ -173,7 +173,7 @@ public class AuthorizationTest extends AbstractTest {
                 ,
                 new AuthorizationHandler() {
                     @Override
-                    public boolean isAuthorized(byte[] token, List<JournalKey> requestedKeys) {
+                    public boolean isAuthorized(byte[] token, ObjList<JournalKey> requestedKeys) {
                         return "SECRET".equals(new String(token));
                     }
                 });

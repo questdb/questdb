@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.nfsdb.ha.producer;
 
 import com.nfsdb.Journal;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.ha.ChannelProducer;
 import com.nfsdb.storage.SymbolTable;
@@ -26,12 +27,11 @@ import com.nfsdb.utils.ByteBuffers;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.WritableByteChannel;
-import java.util.ArrayList;
 
 public class JournalSymbolTableProducer implements ChannelProducer {
 
-    private final ArrayList<VariableColumnDeltaProducer> symbolTableProducers = new ArrayList<>();
-    private final ArrayList<SymbolTable> symbolTables = new ArrayList<>();
+    private final ObjList<VariableColumnDeltaProducer> symbolTableProducers = new ObjList<>();
+    private final ObjList<SymbolTable> symbolTables = new ObjList<>();
     private final ByteBuffer buffer;
     private boolean hasContent = false;
 
@@ -48,10 +48,10 @@ public class JournalSymbolTableProducer implements ChannelProducer {
     public void configure(Tx tx) {
         hasContent = false;
         buffer.rewind();
-        for (int i = 0, sz = symbolTables.size(); i < sz; i++) {
-            SymbolTable tab = symbolTables.get(i);
+        for (int i = 0, k = symbolTables.size(); i < k; i++) {
+            SymbolTable tab = symbolTables.getQuick(i);
             if (tab != null) {
-                VariableColumnDeltaProducer p = symbolTableProducers.get(i);
+                VariableColumnDeltaProducer p = symbolTableProducers.getQuick(i);
                 p.configure(i < tx.symbolTableSizes.length ? tx.symbolTableSizes[i] : 0, tab.size());
                 if (p.hasContent()) {
                     buffer.put((byte) 1);
@@ -67,8 +67,8 @@ public class JournalSymbolTableProducer implements ChannelProducer {
 
     @Override
     public void free() {
-        for (int i = 0, sz = symbolTableProducers.size(); i < sz; i++) {
-            symbolTableProducers.get(i).free();
+        for (int i = 0, k = symbolTableProducers.size(); i < k; i++) {
+            symbolTableProducers.getQuick(i).free();
         }
         ByteBuffers.release(buffer);
     }
@@ -82,8 +82,8 @@ public class JournalSymbolTableProducer implements ChannelProducer {
     public void write(WritableByteChannel channel) throws JournalNetworkException {
         buffer.flip();
         ByteBuffers.copy(buffer, channel);
-        for (int i = 0, sz = symbolTableProducers.size(); i < sz; i++) {
-            VariableColumnDeltaProducer p = symbolTableProducers.get(i);
+        for (int i = 0, k = symbolTableProducers.size(); i < k; i++) {
+            VariableColumnDeltaProducer p = symbolTableProducers.getQuick(i);
             if (p != null && p.hasContent()) {
                 p.write(channel);
             }

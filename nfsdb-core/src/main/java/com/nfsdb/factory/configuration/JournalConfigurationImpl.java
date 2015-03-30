@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,19 +18,19 @@ package com.nfsdb.factory.configuration;
 
 import com.nfsdb.JournalKey;
 import com.nfsdb.JournalMode;
+import com.nfsdb.collections.ObjObjHashMap;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalMetadataException;
 import com.nfsdb.storage.HugeBuffer;
 
 import java.io.File;
-import java.util.Map;
 
 public class JournalConfigurationImpl implements JournalConfiguration {
 
-    private final Map<String, JournalMetadata> journalMetadata;
+    private final ObjObjHashMap<String, JournalMetadata> journalMetadata;
     private final File journalBase;
 
-    public JournalConfigurationImpl(File journalBase, Map<String, JournalMetadata> journalMetadata) {
+    public JournalConfigurationImpl(File journalBase, ObjObjHashMap<String, JournalMetadata> journalMetadata) {
         this.journalBase = journalBase;
         this.journalMetadata = journalMetadata;
     }

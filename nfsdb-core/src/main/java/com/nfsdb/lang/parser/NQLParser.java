@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,24 +17,21 @@
 package com.nfsdb.lang.parser;
 
 import com.nfsdb.PartitionType;
-import com.nfsdb.collections.IntStack;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.GenericIntBuilder;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StdoutSink;
-import com.nfsdb.lang.ast.*;
+import com.nfsdb.lang.ast.QueryModel;
+import com.nfsdb.lang.ast.Statement;
+import com.nfsdb.lang.ast.StatementType;
 import com.nfsdb.lang.cst.Record;
 import com.nfsdb.lang.cst.RecordSource;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Numbers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
 
 public class NQLParser {
 
@@ -45,13 +42,6 @@ public class NQLParser {
         defineSymbol(",");
         defineSymbol("+");
     }};
-
-    @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
-    public NQLParser() {
-        for (int i = 0, k = Operator.operators.size(); i < k; i++) {
-            tokenStream.defineSymbol(Operator.operators.get(i).token);
-        }
-    }
 
     public static void main(String[] args) throws ParserException, JournalException {
         NQLParser parser = new NQLParser();
@@ -82,28 +72,6 @@ public class NQLParser {
 
     public void setContent(CharSequence cs) {
         tokenStream.setContent(cs);
-    }
-
-    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
-    private static void addNode(ExprNode node, Deque<ExprNode> stack) {
-        switch (node.paramCount) {
-            case 0:
-                break;
-            case 1:
-                node.rhs = stack.pollFirst();
-                break;
-            case 2:
-                node.rhs = stack.pollFirst();
-                node.lhs = stack.pollFirst();
-                break;
-            default:
-                ArrayList<ExprNode> a = new ArrayList<>();
-                for (int i = 0; i < node.paramCount; i++) {
-                    a.add(stack.pollFirst());
-                }
-                node.args = a;
-        }
-        stack.push(node);
     }
 
     private ParserException err(String msg) {
@@ -158,188 +126,6 @@ public class NQLParser {
         }
 
         throw err("journal expected");
-    }
-
-    @SuppressWarnings("ConstantConditions")
-    @SuppressFBWarnings({"CC_CYCLOMATIC_COMPLEXITY", "SF_SWITCH_NO_DEFAULT"})
-    ExprNode parseExpr() throws ParserException {
-        Deque<ExprNode> opStack = new ArrayDeque<>();
-        Deque<ExprNode> astStack = new ArrayDeque<>();
-        IntStack paramCountStack = new IntStack();
-
-        int tokCount = 0;
-        int opAt = 0;
-        int paramCount = 0;
-        int braceCount = 0;
-
-        ExprNode node;
-        CharSequence tok;
-        char thisChar = 0, prevChar;
-        Branch prevBranch;
-        Branch thisBranch = Branch.NONE;
-
-        OUT:
-        while ((tok = optionTok()) != null) {
-            tokCount++;
-            prevChar = thisChar;
-            thisChar = tok.charAt(0);
-            prevBranch = thisBranch;
-
-            switch (thisChar) {
-                case ',':
-                    thisBranch = Branch.COMMA;
-                    if (prevChar == ',') {
-                        throw new ParserException(tokenStream.position(), "Missing argument");
-                    }
-
-                    if (braceCount == 0) {
-                        // comma outside of braces
-                        tokenStream.unparse();
-                        break OUT;
-                    }
-
-                    // If the token is a function argument separator (e.g., a comma):
-                    // Until the token at the top of the stack is a left parenthesis,
-                    // pop operators off the stack onto the output queue. If no left
-                    // parentheses are encountered, either the separator was misplaced or
-                    // parentheses were mismatched.
-                    while ((node = opStack.pollFirst()) != null && node.token.charAt(0) != '(') {
-                        addNode(node, astStack);
-                    }
-
-                    if (node != null) {
-                        opStack.push(node);
-                    }
-
-                    opAt = tokCount;
-                    paramCount++;
-                    break;
-
-                case '(':
-                    thisBranch = Branch.LEFT_BRACE;
-                    braceCount++;
-                    // If the token is a left parenthesis, then push it onto the stack.
-                    paramCountStack.push(paramCount);
-                    paramCount = 0;
-                    opStack.push(new ExprNode(ExprNode.NodeType.CONTROL, "(", Integer.MAX_VALUE, tokenStream.position()));
-                    opAt = tokCount;
-                    break;
-
-                case ')':
-                    if (prevChar == ',') {
-                        throw new ParserException(tokenStream.position(), "Missing argument");
-                    }
-                    if (braceCount == 0) {
-                        throw new ParserException(tokenStream.position(), "Unbalanced )");
-                    }
-
-                    thisBranch = Branch.RIGHT_BRACE;
-                    braceCount--;
-                    // If the token is a right parenthesis:
-                    // Until the token at the top of the stack is a left parenthesis, pop operators off the stack onto the output queue.
-                    // Pop the left parenthesis from the stack, but not onto the output queue.
-                    //        If the token at the top of the stack is a function token, pop it onto the output queue.
-                    //        If the stack runs out without finding a left parenthesis, then there are mismatched parentheses.
-                    while ((node = opStack.pollFirst()) != null && node.token.charAt(0) != '(') {
-                        addNode(node, astStack);
-                    }
-
-                    if ((node = opStack.peek()) != null && node.type == ExprNode.NodeType.LITERAL) {
-                        node.type = ExprNode.NodeType.FUNCTION;
-                        node.paramCount = prevChar == '(' ? 0 : paramCount + 1;
-                        addNode(node, astStack);
-                        opStack.pollFirst();
-                        if (paramCountStack.notEmpty()) {
-                            paramCount = paramCountStack.pop();
-                        }
-                    }
-                    break;
-                case '0':
-                case '1':
-                case '2':
-                case '3':
-                case '4':
-                case '5':
-                case '6':
-                case '7':
-                case '8':
-                case '9':
-                case '"':
-                    thisBranch = Branch.CONSTANT;
-                    // If the token is a number, then add it to the output queue.
-                    astStack.push(new ExprNode(ExprNode.NodeType.CONSTANT, tok.toString(), 0, tokenStream.position()));
-                    break;
-                default:
-                    Operator op;
-                    if ((op = Operator.opMap.get(tok)) != null) {
-
-                        thisBranch = Branch.OPERATOR;
-
-                        // If the token is an operator, o1, then:
-                        // while there is an operator token, o2, at the top of the operator stack, and either
-                        // o1 is left-associative and its precedence is less than or equal to that of o2, or
-                        // o1 is right associative, and has precedence less than that of o2,
-                        //        then pop o2 off the operator stack, onto the output queue;
-                        // push o1 onto the operator stack.
-
-                        Operator.OperatorType type = op.type;
-
-
-                        switch (thisChar) {
-                            case '-':
-                                switch (prevBranch) {
-                                    case OPERATOR:
-                                    case COMMA:
-                                    case NONE:
-                                        // we have unary minus
-                                        type = Operator.OperatorType.UNARY;
-                                }
-                        }
-
-                        opAt = tokCount;
-                        ExprNode other;
-                        // UNARY operators must never pop BINARY ones regardless of precedence
-                        // this is to maintain correctness of -a^b
-                        while ((other = opStack.peek()) != null) {
-                            boolean greaterPrecedence = (op.leftAssociative && op.precedence >= other.precedence) || (!op.leftAssociative && op.precedence > other.precedence);
-                            if (greaterPrecedence &&
-                                    (type == Operator.OperatorType.BINARY || (type == Operator.OperatorType.UNARY && other.paramCount == 1))) {
-
-                                addNode(other, astStack);
-                                opStack.pollFirst();
-                            } else {
-                                break;
-                            }
-                        }
-                        node = new ExprNode(ExprNode.NodeType.OPERATION, op.token, op.precedence, tokenStream.position());
-                        switch (type) {
-                            case UNARY:
-                                node.paramCount = 1;
-                                break;
-                            default:
-                                node.paramCount = 2;
-                        }
-                        opStack.push(node);
-                    } else if (opAt == 0 || opAt == tokCount - 1) {
-                        thisBranch = Branch.LITERAL;
-                        // If the token is a function token, then push it onto the stack.
-                        opStack.push(new ExprNode(ExprNode.NodeType.LITERAL, tok.toString(), Integer.MIN_VALUE, tokenStream.position()));
-                    } else {
-                        // literal can be at start of input, after a bracket or part of an operator
-                        // all other cases are illegal and will be considered end-of-input
-                        tokenStream.unparse();
-                        break OUT;
-                    }
-            }
-        }
-
-        while ((node = opStack.poll()) != null) {
-            if (node.token.charAt(0) == '(') {
-                throw new ParserException(node.position, "Unbalanced (");
-            }
-            addNode(node, astStack);
-        }
-        return astStack.pollFirst();
     }
 
     @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE"})
@@ -447,15 +233,10 @@ public class NQLParser {
     }
 
     private CharSequence tok() throws ParserException {
-
-        CharSequence tok = optionTok();
+        CharSequence tok = tokenStream.optionTok();
         if (tok == null) {
             throw err("Unexpected end of input");
         }
         return tok;
-    }
-
-    private enum Branch {
-        NONE, COMMA, LEFT_BRACE, RIGHT_BRACE, CONSTANT, OPERATOR, LITERAL
     }
 }

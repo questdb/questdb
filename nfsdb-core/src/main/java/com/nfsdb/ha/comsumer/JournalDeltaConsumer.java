@@ -18,23 +18,22 @@ package com.nfsdb.ha.comsumer;
 
 import com.nfsdb.JournalWriter;
 import com.nfsdb.Partition;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.IncompatibleJournalException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.ha.AbstractChannelConsumer;
 import com.nfsdb.ha.model.JournalServerState;
 import com.nfsdb.utils.Interval;
-import com.nfsdb.utils.Lists;
 
 import java.nio.channels.ReadableByteChannel;
-import java.util.ArrayList;
 
 public class JournalDeltaConsumer extends AbstractChannelConsumer {
 
     private final JournalWriter journal;
     private final JournalServerStateConsumer journalServerStateConsumer = new JournalServerStateConsumer();
     private final JournalSymbolTableConsumer journalSymbolTableConsumer;
-    private final ArrayList<PartitionDeltaConsumer> partitionDeltaConsumers = new ArrayList<>();
+    private final ObjList<PartitionDeltaConsumer> partitionDeltaConsumers = new ObjList<>();
     private JournalServerState state;
     private PartitionDeltaConsumer lagPartitionDeltaConsumer;
 
@@ -119,7 +118,7 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
 
     private void reset() throws JournalException {
         for (int i = 0, k = partitionDeltaConsumers.size(); i < k; i++) {
-            PartitionDeltaConsumer c = partitionDeltaConsumers.set(i, null);
+            PartitionDeltaConsumer c = partitionDeltaConsumers.setQuick(i, null);
             if (c != null) {
                 c.free();
             }
@@ -139,12 +138,10 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
     }
 
     private PartitionDeltaConsumer getPartitionDeltaConsumer(int partitionIndex) throws JournalException {
-        Lists.advance(partitionDeltaConsumers, partitionIndex);
-
-        PartitionDeltaConsumer consumer = partitionDeltaConsumers.get(partitionIndex);
+        PartitionDeltaConsumer consumer = partitionDeltaConsumers.getQuiet(partitionIndex);
         if (consumer == null) {
             consumer = new PartitionDeltaConsumer(journal.getPartition(partitionIndex, true));
-            partitionDeltaConsumers.set(partitionIndex, consumer);
+            partitionDeltaConsumers.extendAndSet(partitionIndex, consumer);
         }
 
         return consumer;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,6 +41,10 @@ public class ObjList<T> {
         setQuick(pos++, value);
     }
 
+    public void clear() {
+        pos = 0;
+    }
+
     public void extendAndSet(int index, T value) {
         if (index >= buffer.length) {
             extend(Numbers.ceilPow2(index));
@@ -53,8 +57,30 @@ public class ObjList<T> {
     }
 
     @SuppressWarnings("unchecked")
+    public T get(int index) {
+        if (index < pos) {
+            return (T) Unsafe.getUnsafe().getObject(buffer, OFFSET + index * SCALE);
+        }
+        throw new ArrayIndexOutOfBoundsException(index);
+    }
+
+    @SuppressWarnings("unchecked")
     public T getQuick(int index) {
         return (T) Unsafe.getUnsafe().getObject(buffer, OFFSET + index * SCALE);
+    }
+
+    @SuppressWarnings("unchecked")
+    public T getQuiet(int index) {
+        if (index < pos) {
+            return (T) Unsafe.getUnsafe().getObject(buffer, OFFSET + index * SCALE);
+        }
+        return null;
+    }
+
+    public T setQuick(int index, T value) {
+        T v = getQuick(index);
+        Unsafe.getUnsafe().putObject(buffer, OFFSET + index * SCALE, value);
+        return v;
     }
 
     public int size() {
@@ -68,11 +94,5 @@ public class ObjList<T> {
             Unsafe.getUnsafe().putObject(buf, p, Unsafe.getUnsafe().getObject(buffer, p));
         }
         this.buffer = buf;
-    }
-
-    private T setQuick(int index, T value) {
-        T v = getQuick(index);
-        Unsafe.getUnsafe().putObject(buffer, OFFSET + index * SCALE, value);
-        return v;
     }
 }

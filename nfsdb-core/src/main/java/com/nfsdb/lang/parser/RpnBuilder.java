@@ -14,11 +14,20 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ha.krb;
+package com.nfsdb.lang.parser;
 
-import com.nfsdb.JournalKey;
-import com.nfsdb.collections.ObjList;
+import com.nfsdb.io.sink.StringSink;
+import com.nfsdb.lang.ast.ExprNode;
 
-public interface KrbAuthorizer {
-    boolean isAuthorized(String principal, ObjList<JournalKey> requestedKeys) throws Exception;
+public class RpnBuilder implements ExprListener {
+    private final StringSink sink = new StringSink();
+
+    @Override
+    public void onNode(ExprNode node) {
+        sink.put(node.token);
+    }
+
+    public final CharSequence rpn() {
+        return sink;
+    }
 }

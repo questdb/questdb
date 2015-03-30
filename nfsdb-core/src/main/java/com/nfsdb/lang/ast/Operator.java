@@ -16,9 +16,12 @@
 
 package com.nfsdb.lang.ast;
 
+import com.nfsdb.collections.ObjObjHashMap;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class Operator {
@@ -39,12 +42,12 @@ public class Operator {
         add(new Operator("||", 11, true, OperatorType.BINARY));
     }});
     public final String token;
-    public static final Map<CharSequence, Operator> opMap = Collections.unmodifiableMap(new HashMap<CharSequence, Operator>() {{
+    public static final ObjObjHashMap<CharSequence, Operator> opMap = new ObjObjHashMap<CharSequence, Operator>() {{
         for (int i = 0, k = operators.size(); i < k; i++) {
             Operator op = operators.get(i);
             put(op.token, op);
         }
-    }});
+    }};
     public final int precedence;
     public final boolean leftAssociative;
     public final OperatorType type;

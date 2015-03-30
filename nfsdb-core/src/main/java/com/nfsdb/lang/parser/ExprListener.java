@@ -14,11 +14,10 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ha.krb;
+package com.nfsdb.lang.parser;
 
-import com.nfsdb.JournalKey;
-import com.nfsdb.collections.ObjList;
+import com.nfsdb.lang.ast.ExprNode;
 
-public interface KrbAuthorizer {
-    boolean isAuthorized(String principal, ObjList<JournalKey> requestedKeys) throws Exception;
+public interface ExprListener {
+    void onNode(ExprNode node);
 }

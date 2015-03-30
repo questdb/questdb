@@ -23,38 +23,32 @@ import java.util.Arrays;
 import java.util.Iterator;
 
 
-public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>> {
+public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>> {
     public static final int MIN_INITIAL_CAPACITY = 16;
     private static final Object noEntryValue = new Object();
-    private final int noKeyValue;
     private final double loadFactor;
     private final EntryIterator iterator = new EntryIterator();
     private K[] keys;
-    private int[] values;
+    private V[] values;
     private int free;
     private int capacity;
     private int mask;
 
-    public ObjIntHashMap() {
+    public ObjObjHashMap() {
         this(8);
     }
 
-    public ObjIntHashMap(int initialCapacity, int noKeyValue) {
-        this(initialCapacity, 0.5, noKeyValue);
-    }
-
-    public ObjIntHashMap(int initialCapacity) {
-        this(initialCapacity, 0.5, -1);
+    public ObjObjHashMap(int initialCapacity) {
+        this(initialCapacity, 0.5);
     }
 
     @SuppressWarnings("unchecked")
-    public ObjIntHashMap(int initialCapacity, double loadFactor, int noKeyValue) {
+    public ObjObjHashMap(int initialCapacity, double loadFactor) {
         int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
         capacity = capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);
         this.loadFactor = loadFactor;
-        this.noKeyValue = noKeyValue;
         keys = (K[]) new Object[capacity];
-        values = new int[capacity];
+        values = (V[]) new Object[capacity];
         free = this.capacity = initialCapacity;
         mask = capacity - 1;
         clear();
@@ -64,11 +58,11 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>> {
         Arrays.fill(keys, noEntryValue);
     }
 
-    public int get(K key) {
+    public V get(K key) {
         int index = key.hashCode() & mask;
 
         if (keys[index] == noEntryValue) {
-            return noKeyValue;
+            return null;
         }
 
         if (keys[index] == key || key.equals(keys[index])) {
@@ -78,21 +72,21 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>> {
         return probe(key, index);
     }
 
-    public Iterable<Entry<K>> immutableIterator() {
+    public Iterable<Entry<K, V>> immutableIterator() {
         return new EntryIterator();
     }
 
     @Override
-    public Iterator<Entry<K>> iterator() {
+    public Iterator<Entry<K, V>> iterator() {
         iterator.index = 0;
         return iterator;
     }
 
-    public int put(K key, int value) {
+    public V put(K key, V value) {
         return insertKey(key, value);
     }
 
-    public boolean putIfAbsent(K key, int value) {
+    public boolean putIfAbsent(K key, V value) {
         int index = key.hashCode() & mask;
         if (keys[index] == noEntryValue) {
             keys[index] = key;
@@ -117,10 +111,10 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>> {
         int newCapacity = values.length << 1;
         mask = newCapacity - 1;
         free = capacity = (int) (newCapacity * loadFactor);
-        int[] oldValues = values;
+        V[] oldValues = values;
         K[] oldKeys = keys;
         this.keys = (K[]) new Object[newCapacity];
-        this.values = new int[newCapacity];
+        this.values = (V[]) new Object[newCapacity];
         Arrays.fill(keys, noEntryValue);
 
         for (int i = oldKeys.length; i-- > 0; ) {
@@ -130,7 +124,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>> {
         }
     }
 
-    private int insertKey(K key, int value) {
+    private V insertKey(K key, V value) {
         int index = key.hashCode() & mask;
         if (keys[index] == noEntryValue) {
             keys[index] = key;
@@ -139,11 +133,11 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>> {
             if (free == 0) {
                 rehash();
             }
-            return noKeyValue;
+            return null;
         }
 
         if (keys[index] == key || key.equals(keys[index])) {
-            int old = values[index];
+            V old = values[index];
             values[index] = value;
             return old;
         }
@@ -151,11 +145,11 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>> {
         return probeInsert(key, index, value);
     }
 
-    private int probe(K key, int index) {
+    private V probe(K key, int index) {
         do {
             index = (index + 1) & mask;
             if (keys[index] == noEntryValue) {
-                return noKeyValue;
+                return null;
             }
             if (keys[index] == key || key.equals(keys[index])) {
                 return values[index];
@@ -163,7 +157,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>> {
         } while (true);
     }
 
-    private int probeInsert(K key, int index, int value) {
+    private V probeInsert(K key, int index, V value) {
         do {
             index = (index + 1) & mask;
             if (keys[index] == noEntryValue) {
@@ -173,18 +167,18 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>> {
                 if (free == 0) {
                     rehash();
                 }
-                return noKeyValue;
+                return null;
             }
 
             if (keys[index] == key || key.equals(keys[index])) {
-                int old = values[index];
+                V old = values[index];
                 values[index] = value;
                 return old;
             }
         } while (true);
     }
 
-    private boolean probeInsertIfAbsent(K key, int index, int value) {
+    private boolean probeInsertIfAbsent(K key, int index, V value) {
         do {
             index = (index + 1) & mask;
             if (keys[index] == noEntryValue) {
@@ -203,14 +197,14 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>> {
         } while (true);
     }
 
-    public static class Entry<V> {
-        public V key;
-        public int value;
+    public static class Entry<K, V> {
+        public K key;
+        public V value;
     }
 
-    public class EntryIterator extends AbstractImmutableIterator<Entry<K>> {
+    public class EntryIterator extends AbstractImmutableIterator<Entry<K, V>> {
 
-        private final Entry<K> entry = new Entry<>();
+        private final Entry<K, V> entry = new Entry<>();
         private int index = 0;
 
         @Override
@@ -220,7 +214,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>> {
 
         @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
         @Override
-        public Entry<K> next() {
+        public Entry<K, V> next() {
             entry.key = keys[index];
             entry.value = values[index++];
             return entry;

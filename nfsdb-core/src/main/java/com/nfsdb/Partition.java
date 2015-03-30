@@ -16,6 +16,7 @@
 
 package com.nfsdb;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
@@ -38,7 +39,6 @@ import java.io.File;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 
@@ -46,7 +46,7 @@ import java.util.concurrent.TimeUnit;
 public class Partition<T> implements Iterable<T>, Closeable {
     private static final Logger LOGGER = Logger.getLogger(Partition.class);
     private final Journal<T> journal;
-    private final ArrayList<SymbolIndexProxy<T>> indexProxies = new ArrayList<>();
+    private final ObjList<SymbolIndexProxy<T>> indexProxies = new ObjList<>();
     private final Interval interval;
     private final int columnCount;
     private final ColumnMetadata[] columnMetadata;
@@ -73,8 +73,8 @@ public class Partition<T> implements Iterable<T>, Closeable {
     public void applyTx(long txLimit, long[] indexTxAddresses) {
         if (this.txLimit != txLimit) {
             this.txLimit = txLimit;
-            for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
-                SymbolIndexProxy<T> proxy = indexProxies.get(i);
+            for (int i = 0, k = indexProxies.size(); i < k; i++) {
+                SymbolIndexProxy<T> proxy = indexProxies.getQuick(i);
                 proxy.setTxAddress(indexTxAddresses == null ? 0 : indexTxAddresses[proxy.getColumnIndex()]);
             }
         }
@@ -99,8 +99,8 @@ public class Partition<T> implements Iterable<T>, Closeable {
             LOGGER.trace("Partition %s closed", partitionDir);
         }
 
-        for (int i = 0, sz = indexProxies.size(); i < sz; i++) {
-            indexProxies.get(i).close();
+        for (int i = 0, k = indexProxies.size(); i < k; i++) {
+            indexProxies.getQuick(i).close();
         }
     }
 
@@ -128,8 +128,8 @@ public class Partition<T> implements Iterable<T>, Closeable {
             }
         }
 
-        for (int i = 0, sz = indexProxies.size(); i < sz; i++) {
-            indexProxies.get(i).getIndex().compact();
+        for (int i = 0, k = indexProxies.size(); i < k; i++) {
+            indexProxies.getQuick(i).getIndex().compact();
         }
     }
 
@@ -427,8 +427,8 @@ public class Partition<T> implements Iterable<T>, Closeable {
     public void updateIndexes(long oldSize, long newSize) {
         if (oldSize < newSize) {
             try {
-                for (int i1 = 0, sz = indexProxies.size(); i1 < sz; i1++) {
-                    SymbolIndexProxy<T> proxy = indexProxies.get(i1);
+                for (int n = 0, k = indexProxies.size(); n < k; n++) {
+                    SymbolIndexProxy<T> proxy = indexProxies.getQuick(n);
                     KVIndex index = proxy.getIndex();
                     FixedColumn col = getFixedWidthColumn(proxy.getColumnIndex());
                     for (long i = oldSize; i < newSize; i++) {
@@ -514,16 +514,15 @@ public class Partition<T> implements Iterable<T>, Closeable {
     }
 
     void commit() throws JournalException {
-        for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
-            SymbolIndexProxy<T> proxy = indexProxies.get(i);
-            proxy.getIndex().commit();
+        for (int i = 0, k = indexProxies.size(); i < k; i++) {
+            indexProxies.getQuick(i).getIndex().commit();
         }
     }
 
     void expireOpenIndices() {
         long expiry = System.currentTimeMillis() - journal.getMetadata().getOpenFileTTL();
-        for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
-            SymbolIndexProxy<T> proxy = indexProxies.get(i);
+        for (int i = 0, k = indexProxies.size(); i < k; i++) {
+            SymbolIndexProxy<T> proxy = indexProxies.getQuick(i);
             if (expiry > proxy.getLastAccessed()) {
                 proxy.close();
             }
@@ -531,9 +530,8 @@ public class Partition<T> implements Iterable<T>, Closeable {
     }
 
     void force() throws JournalException {
-        for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
-            SymbolIndexProxy<T> proxy = indexProxies.get(i);
-            proxy.getIndex().force();
+        for (int i = 0, k = indexProxies.size(); i < k; i++) {
+            indexProxies.getQuick(i).getIndex().force();
         }
 
         if (columns != null) {
@@ -547,8 +545,8 @@ public class Partition<T> implements Iterable<T>, Closeable {
     }
 
     void getIndexPointers(long[] pointers) throws JournalException {
-        for (int i = 0, indexProxiesSize = indexProxies.size(); i < indexProxiesSize; i++) {
-            SymbolIndexProxy<T> proxy = indexProxies.get(i);
+        for (int i = 0, k = indexProxies.size(); i < k; i++) {
+            SymbolIndexProxy<T> proxy = indexProxies.getQuick(i);
             pointers[proxy.getColumnIndex()] = proxy.getIndex().getTxAddress();
         }
     }
@@ -563,9 +561,8 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
     void truncate(long newSize) throws JournalException {
         if (isOpen() && size() > newSize) {
-            for (int i = 0, sz = indexProxies.size(); i < sz; i++) {
-                SymbolIndexProxy<T> proxy = indexProxies.get(i);
-                proxy.getIndex().truncate(newSize);
+            for (int i = 0, k = indexProxies.size(); i < k; i++) {
+                indexProxies.getQuick(i).getIndex().truncate(newSize);
             }
             for (int i = 0; i < columns.length; i++) {
                 if (columns[i] != null) {

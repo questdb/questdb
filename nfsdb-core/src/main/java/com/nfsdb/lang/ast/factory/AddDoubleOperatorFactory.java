@@ -14,11 +14,14 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ha.krb;
+package com.nfsdb.lang.ast.factory;
 
-import com.nfsdb.JournalKey;
-import com.nfsdb.collections.ObjList;
+import com.nfsdb.lang.cst.impl.virt.AddDoubleOperator;
+import com.nfsdb.lang.cst.impl.virt.VirtualColumn;
 
-public interface KrbAuthorizer {
-    boolean isAuthorized(String principal, ObjList<JournalKey> requestedKeys) throws Exception;
+public class AddDoubleOperatorFactory implements FunctionFactory {
+    @Override
+    public VirtualColumn newInstance() {
+        return new AddDoubleOperator();
+    }
 }
