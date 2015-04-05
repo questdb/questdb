@@ -29,10 +29,7 @@ import com.nfsdb.model.Album;
 import com.nfsdb.model.Band;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.utils.Files;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.*;
 
 public class HashJoinTest {
     @Rule
@@ -86,6 +83,6 @@ public class HashJoinTest {
         p.printColumns(
                 joinResult, joinResult.getMetadata().getColumnIndex("genre")
         );
-        Assert.assertEquals("pop\trock\tmetal\tpop\trock\t", sink.toString());
+        Assert.assertEquals("rock\tpop\tmetal\trock\tpop\t", sink.toString());
     }
 }

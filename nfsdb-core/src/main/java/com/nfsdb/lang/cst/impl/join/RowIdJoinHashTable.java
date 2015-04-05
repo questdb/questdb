@@ -1,25 +1,22 @@
 package com.nfsdb.lang.cst.impl.join;
 
-import com.nfsdb.collections.mmap.MapValues;
 import com.nfsdb.collections.mmap.MultiMap;
 import com.nfsdb.collections.mmap.MultiRecordMap;
 import com.nfsdb.column.ColumnType;
+import com.nfsdb.column.DirectInputStream;
+import com.nfsdb.exp.CharSink;
+import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.lang.cst.impl.qry.*;
-import sun.reflect.generics.reflectiveObjects.NotImplementedException;
-
-import javax.swing.plaf.multi.MultiInternalFrameUI;
 import java.io.Closeable;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.util.Iterator;
 
 public class RowIdJoinHashTable implements JoinHashTable, Closeable {
-    private final static String keyColumnName = "KY_0C81_=";
-    // Some hardly used in real column life name.
-    private final static String valueColumnName = "VAL_0C81_=";
-
     public final MultiRecordMap hashTable;
     private final RandomAccessRecordSource<? extends Record> source;
+
 
     public RowIdJoinHashTable(RandomAccessRecordSource<? extends Record> source, String hashColumn) {
         this.source = source;
@@ -32,44 +29,41 @@ public class RowIdJoinHashTable implements JoinHashTable, Closeable {
 
     @Override
     public RecordSource<? extends Record> getRows(Record master, int columnIndex, ColumnType type) {
-        throw new NotImplementedException();
-//        MultiMap.Key mapKey = hashTable.claimKey();
-//        MultiMap.putKey(mapKey, master, columnIndex, type);
-//        final MapValues values = hashTable.claimSlot(mapKey);
-//        final int count = values.isNew() ? 0 : values.getInt(0);
-//
-//        return new RecordSource<Record>() {
-//            int i = 0;
-//
-//            @Override
-//            public RecordMetadata getMetadata() {
-//                return source.getMetadata();
-//            }
-//
-//            @Override
-//            public void reset() {
-//                i = -1;
-//            }
-//
-//            @Override
-//            public Iterator<Record> iterator() {
-//                return this;
-//            }
-//
-//            @Override
-//            public boolean hasNext() {
-//                return i++ < count;
-//            }
-//
-//            @Override
-//            public Record next() {
-//                return source.getByRowId(values.getLong(i));
-//            }
-//
-//            @Override
-//            public void remove() {
-//            }
-//        };
+        MultiMap.Key mapKey = hashTable.claimKey();
+        MultiMap.putKey(mapKey, master, columnIndex, type);
+        mapKey.commit();
+        final RecordSource<Record> ids = hashTable.get(mapKey);
+
+        return new RecordSource<Record>() {
+            @Override
+            public RecordMetadata getMetadata() {
+                return source.getMetadata();
+            }
+
+            @Override
+            public void reset() {
+                ids.reset();
+            }
+
+            @Override
+            public Iterator<Record> iterator() {
+                return this;
+            }
+
+            @Override
+            public boolean hasNext() {
+                return ids.hasNext();
+            }
+
+            @Override
+            public Record next() {
+                return source.getByRowId(ids.next().getLong(0));
+            }
+
+            @Override
+            public void remove() {
+            }
+        };
     }
 
     private MultiRecordMap buildHashTable(RandomAccessRecordSource<? extends Record> source, String hashColumn) {
@@ -77,22 +71,152 @@ public class RowIdJoinHashTable implements JoinHashTable, Closeable {
         RecordColumnMetadata key = source.getMetadata().getColumn(colIndex);
         ColumnType colType = key.getType();
 
+        IdRecordWrapper wrapper = new IdRecordWrapper();
         MultiRecordMap.Builder builder = new MultiRecordMap.Builder();
         builder.keyColumn(key);
-//        List<>
-//        RecordMetadata valueMetadata = new ColumnListRecordMetadata();
-//
-//        for(Record r : source) {
-//            MultiMap.Key mapKey = map.claimKey();
-//            MultiMap.putKey(mapKey, r, colIndex, colType);
-//            mapKey.commit();
-//
-//            MapValues values = map.claimSlot(mapKey);
-//            int nextIndex = values.isNew() ? 1 : values.getInt(0) + 1;
-//            values.putInt(0, nextIndex);
-//            values.putLong(nextIndex, r.getRowId());
-//        }
+        builder.setRecordMetadata(wrapper.getMetadata());
+        MultiRecordMap map = builder.build();
 
-        return builder.build();
+        for(Record r : source) {
+            MultiMap.Key mapKey = map.claimKey();
+            MultiMap.putKey(mapKey, r, colIndex, colType);
+            mapKey.commit();
+            wrapper.setId(r.getRowId());
+            map.add(mapKey, wrapper);
+        }
+
+        return map;
+    }
+
+    private static class IdRecordWrapper implements Record {
+        private final static String keyColumnName = "KY_0C81_=";
+        private final static RecordMetadata idColumnMetadata;
+        private long id;
+
+        static {
+            ColumnMetadata idColumn = new ColumnMetadata();
+            idColumn.setType(ColumnType.LONG);
+            idColumn.setName(keyColumnName);
+            idColumnMetadata = new ColumnListRecordMetadata(idColumn);
+        }
+
+        public void setId (long id) {
+            this.id = id;
+        }
+
+        @Override
+        public long getRowId() {
+            return id;
+        }
+
+        @Override
+        public RecordMetadata getMetadata() {
+            return idColumnMetadata;
+        }
+
+        @Override
+        public byte get(String column) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public byte get(int col) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void getBin(int col, OutputStream s) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void getBin(String column, OutputStream s) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean getBool(String column) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean getBool(int col) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getDate(int col) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public double getDouble(String column) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public double getDouble(int col) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getInt(String column) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getInt(int col) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getLong(String column) {
+            return id;
+        }
+
+        @Override
+        public long getLong(int col) {
+            return id;
+        }
+
+        @Override
+        public short getShort(int col) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSequence getStr(String column) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSequence getStr(int col) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void getStr(int col, CharSink sink) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public String getSym(String column) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public String getSym(int col) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public DirectInputStream getBin(String column) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public DirectInputStream getBin(int col) {
+            throw new UnsupportedOperationException();
+        }
     }
 }
