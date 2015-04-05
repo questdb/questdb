@@ -22,7 +22,10 @@ import com.nfsdb.exceptions.JournalException;
 import java.io.File;
 
 public interface JournalConfiguration {
-    <T> JournalMetadata<T> augmentMetadata(JMetadataBuilder<T> builder) throws JournalException;
+
+    String FILE_NAME = "_meta2";
+
+    <T> JournalMetadata<T> augmentMetadata(MetadataBuilder<T> builder) throws JournalException;
 
     <T> JournalMetadata<T> createMetadata(JournalKey<T> key) throws JournalException;
 

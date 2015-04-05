@@ -1,11 +1,11 @@
 package com.nfsdb.collections;
 
-import com.nfsdb.column.ColumnType;
 import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.exp.CharSink;
-import com.nfsdb.lang.cst.impl.qry.Record;
-import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
+import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.lang.cst.Record;
+import com.nfsdb.lang.cst.RecordMetadata;
+import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
@@ -157,6 +157,16 @@ public class DirectRecord implements Record, Closeable {
     @Override
     public double getDouble(int col) {
         return buffer.readDouble(address + findOffset(col));
+    }
+
+    @Override
+    public float getFloat(String column) {
+        return getFloat(metadata.getColumnIndex(column));
+    }
+
+    @Override
+    public float getFloat(int col) {
+        return 0;
     }
 
     @Override

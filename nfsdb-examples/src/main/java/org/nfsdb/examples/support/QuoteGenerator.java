@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,10 +18,12 @@ package org.nfsdb.examples.support;
 
 import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalException;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.nfsdb.examples.model.Quote;
 
 import java.util.Random;
 
+@SuppressFBWarnings({"SACM_STATIC_ARRAY_CREATED_IN_METHOD", "PREDICTABLE_RANDOM"})
 public class QuoteGenerator {
     public static void generateQuoteData(JournalWriter<Quote> w, int count) throws JournalException {
         generateQuoteData(w, count, 30);
@@ -56,6 +58,14 @@ public class QuoteGenerator {
         w.commit();
     }
 
+    public static String randomString(Random random, int len) {
+        char chars[] = new char[len];
+        for (int i = 0; i < len; i++) {
+            chars[i] = (char) (Math.abs(random.nextInt() % 25) + 66);
+        }
+        return new String(chars);
+    }
+
     public static String[] randomSymbols(int count) {
         Random r = new Random(System.currentTimeMillis());
         String[] result = new String[count];
@@ -63,13 +73,5 @@ public class QuoteGenerator {
             result[i] = randomString(r, 4) + ".L";
         }
         return result;
-    }
-
-    public static String randomString(Random random, int len) {
-        char chars[] = new char[len];
-        for (int i = 0; i < len; i++) {
-            chars[i] = (char) (Math.abs(random.nextInt() % 25) + 66);
-        }
-        return new String(chars);
     }
 }

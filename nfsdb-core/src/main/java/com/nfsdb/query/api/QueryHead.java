@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,8 @@
 
 package com.nfsdb.query.api;
 
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.map.JournalMap;
-
 public interface QueryHead<T> {
     QueryHeadBuilder<T> withKeys(String... values);
 
     QueryHeadBuilder<T> withSymValues(String symbol, String... values);
-
-    JournalMap<T> map() throws JournalException;
 }

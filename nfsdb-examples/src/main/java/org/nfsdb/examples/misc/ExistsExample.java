@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,10 +19,10 @@ package org.nfsdb.examples.misc;
 import com.nfsdb.Journal;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.PartitionType;
-import com.nfsdb.column.SymbolTable;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
+import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.utils.Files;
 import org.nfsdb.examples.model.Quote;
 import org.nfsdb.examples.support.QuoteGenerator;

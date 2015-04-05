@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,32 +17,29 @@
 package com.nfsdb;
 
 import com.nfsdb.collections.DirectLongList;
-import com.nfsdb.column.ColumnType;
-import com.nfsdb.column.FixedColumn;
-import com.nfsdb.column.SymbolTable;
-import com.nfsdb.concurrent.TimerCache;
+import com.nfsdb.collections.ObjList;
+import com.nfsdb.collections.ObjObjHashMap;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.JournalClosingListener;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.Constants;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.iterators.ConcurrentIterator;
-import com.nfsdb.iterators.JournalPeekingIterator;
-import com.nfsdb.iterators.JournalRowBufferedIterator;
+import com.nfsdb.lang.cst.JournalRecordSource;
 import com.nfsdb.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.lang.cst.impl.psrc.JournalPartitionSource;
-import com.nfsdb.lang.cst.impl.qry.JournalRecordSource;
 import com.nfsdb.lang.cst.impl.rsrc.AllRowSource;
+import com.nfsdb.query.AbstractResultSetBuilder;
 import com.nfsdb.query.api.Query;
+import com.nfsdb.query.iterator.ConcurrentIterator;
+import com.nfsdb.query.iterator.JournalPeekingIterator;
 import com.nfsdb.query.spi.QueryImpl;
-import com.nfsdb.tx.Tx;
-import com.nfsdb.tx.TxIterator;
-import com.nfsdb.tx.TxLog;
+import com.nfsdb.storage.*;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Interval;
 import com.nfsdb.utils.Rows;
 import com.nfsdb.utils.Unsafe;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.File;
@@ -50,6 +47,7 @@ import java.io.FileFilter;
 import java.lang.reflect.Array;
 import java.util.*;
 
+@SuppressFBWarnings({"PATH_TRAVERSAL_IN", "LII_LIST_INDEXED_ITERATING", "CD_CIRCULAR_DEPENDENCY"})
 public class Journal<T> implements Iterable<T>, Closeable {
 
     public static final long TX_LIMIT_EVAL = -1L;
@@ -58,8 +56,8 @@ public class Journal<T> implements Iterable<T>, Closeable {
     final Tx tx = new Tx();
     final JournalMetadata<T> metadata;
     private final File location;
-    private final Map<String, SymbolTable> symbolTableMap = new HashMap<>();
-    private final ArrayList<SymbolTable> symbolTables = new ArrayList<>();
+    private final ObjObjHashMap<String, SymbolTable> symbolTableMap = new ObjObjHashMap<>();
+    private final ObjList<SymbolTable> symbolTables = new ObjList<>();
     private final JournalKey<T> key;
     private final Query<T> query = new QueryImpl<>(this);
     private final TimerCache timerCache;
@@ -80,6 +78,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
     private TxIterator txIterator;
 
 
+    @SuppressFBWarnings({"PCOA_PARTIALLY_CONSTRUCTED_OBJECT_ACCESS"})
     public Journal(JournalMetadata<T> metadata, JournalKey<T> key, TimerCache timerCache) throws JournalException {
         this.metadata = metadata;
         this.key = key;
@@ -97,10 +96,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
         return query().all().bufferedIterator();
     }
 
-    public JournalRowBufferedIterator<T> bufferedRowIterator() {
-        return query().all().bufferedRowIterator();
-    }
-
     /**
      * Closes all columns in all partitions.
      */
@@ -115,7 +110,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
 
             closePartitions();
             for (int i = 0, sz = symbolTables.size(); i < sz; i++) {
-                symbolTables.get(i).close();
+                symbolTables.getQuick(i).close();
             }
             txLog.close();
             open = false;
@@ -155,13 +150,19 @@ public class Journal<T> implements Iterable<T>, Closeable {
         }
 
         while (--partitionIndex >= 0) {
-            Partition p = getPartition(partitionIndex, true);
-            if (p.size() > 0) {
-                return Rows.toRowID(partitionIndex, p.size() - 1);
+            long sz = getPartition(partitionIndex, true).size();
+            if (sz > 0) {
+                return Rows.toRowID(partitionIndex, sz - 1);
             }
         }
 
         return -1;
+    }
+
+    @SuppressWarnings("EqualsBetweenInconvertibleTypes")
+    @Override
+    public boolean equals(Object o) {
+        return this == o || !(o == null || getClass() != o.getClass()) && key.equals(((Journal) o).key);
     }
 
     public void expireOpenFiles() {
@@ -180,7 +181,12 @@ public class Journal<T> implements Iterable<T>, Closeable {
     }
 
     public Tx find(long txn, long txPin) {
-        txLog.read(txLog.findAddress(txn, txPin), tx);
+        long address = txLog.findAddress(txn, txPin);
+        if (address == -1) {
+            return null;
+        }
+
+        txLog.read(address, tx);
         return tx;
     }
 
@@ -258,8 +264,9 @@ public class Journal<T> implements Iterable<T>, Closeable {
             return 0;
         }
         FixedColumn column = p.getTimestampColumn();
-        if (column.size() > 0) {
-            return column.getLong(column.size() - 1);
+        long sz = column.size();
+        if (sz > 0) {
+            return column.getLong(sz - 1);
         } else {
             return 0;
         }
@@ -270,7 +277,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      *
      * @return the Journal's metadata
      */
-    public JournalMetadata<T> getMetadata() {
+    public final JournalMetadata<T> getMetadata() {
         return metadata;
     }
 
@@ -342,16 +349,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
     @Override
     public int hashCode() {
         return key.hashCode();
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        return this == o || !(o == null || getClass() != o.getClass()) && key.equals(((Journal) o).key);
-    }
-
-    @Override
-    public String toString() {
-        return getClass().getName() + "[location=" + location + ", " + "mode=" + getMode() + ", " + ", metadata=" + metadata + "]";
     }
 
     /**
@@ -448,9 +445,10 @@ public class Journal<T> implements Iterable<T>, Closeable {
 
     public Partition<T> lastNonEmptyNonLag() throws JournalException {
 
-        if (nonLagPartitionCount() > 0) {
+        int count = nonLagPartitionCount();
+        if (count > 0) {
 
-            Partition<T> result = getPartition(nonLagPartitionCount() - 1, true);
+            Partition<T> result = getPartition(count - 1, true);
 
             while (true) {
                 if (result.size() > 0) {
@@ -524,7 +522,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         if (txLog.head(tx)) {
             refreshInternal();
             for (int i = 0, sz = symbolTables.size(); i < sz; i++) {
-                symbolTables.get(i).applyTx(tx.symbolTableSizes[i], tx.symbolTableIndexPointers[i]);
+                symbolTables.getQuick(i).applyTx(tx.symbolTableSizes[i], tx.symbolTableIndexPointers[i]);
             }
             return true;
         }
@@ -568,6 +566,11 @@ public class Journal<T> implements Iterable<T>, Closeable {
         return result;
     }
 
+    @Override
+    public String toString() {
+        return getClass().getName() + "[location=" + location + ", " + "mode=" + getMode() + ", " + ", metadata=" + metadata + "]";
+    }
+
     public TxIterator transactions() {
         if (txIterator == null) {
             txIterator = new TxIterator(txLog);
@@ -593,99 +596,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
         configureColumns();
         configureSymbolTableSynonyms();
         configurePartitions();
-    }
-
-    private void configureColumns() throws JournalException {
-        int columnCount = getMetadata().getColumnCount();
-        for (int i = 0; i < columnCount; i++) {
-            ColumnMetadata meta = metadata.getColumnMetadata(i);
-            if (meta.type == ColumnType.SYMBOL && meta.sameAs == null) {
-                int tabIndex = symbolTables.size();
-                int tabSize = tx.symbolTableSizes.length > tabIndex ? tx.symbolTableSizes[tabIndex] : 0;
-                long indexTxAddress = tx.symbolTableIndexPointers.length > tabIndex ? tx.symbolTableIndexPointers[tabIndex] : 0;
-                SymbolTable tab = new SymbolTable(meta.distinctCountHint, meta.avgSize, getMetadata().getTxCountHint(), location, meta.name, getMode(), tabSize, indexTxAddress, meta.noCache);
-                symbolTables.add(tab);
-                symbolTableMap.put(meta.name, tab);
-                meta.symbolTable = tab;
-            }
-        }
-    }
-
-    private void configureIrregularPartition() throws JournalException {
-        String lagPartitionName = tx.lagName;
-        if (lagPartitionName != null && (irregularPartition == null || !lagPartitionName.equals(irregularPartition.getName()))) {
-            // new lag partition
-            // try to lock lag directory before any activity
-            Partition<T> temp = createTempPartition(lagPartitionName);
-            temp.applyTx(tx.lagSize, tx.lagIndexPointers);
-            setIrregularPartition(temp);
-            // exit out of while loop
-        } else if (lagPartitionName != null && irregularPartition != null && lagPartitionName.equals(irregularPartition.getName())) {
-            irregularPartition.applyTx(tx.lagSize, tx.lagIndexPointers);
-        } else if (lagPartitionName == null && irregularPartition != null) {
-            removeIrregularPartitionInternal();
-        }
-    }
-
-    private void configurePartitions() throws JournalException {
-        File[] files = getLocation().listFiles(new FileFilter() {
-            public boolean accept(File f) {
-                return f.isDirectory() && !f.getName().startsWith(Constants.TEMP_DIRECTORY_PREFIX);
-            }
-        });
-
-        int partitionIndex = 0;
-        if (files != null && tx.journalMaxRowID > 0) {
-            Arrays.sort(files);
-            for (int i = 0; i < files.length; i++) {
-                File f = files[i];
-
-                if (partitionIndex > Rows.toPartitionIndex(tx.journalMaxRowID)) {
-                    break;
-                }
-
-                Partition<T> partition = null;
-
-                if (partitionIndex < partitions.size()) {
-                    partition = partitions.get(partitionIndex);
-                }
-
-                long txLimit = Journal.TX_LIMIT_EVAL;
-                long[] indexTxAddresses = null;
-                if (partitionIndex == Rows.toPartitionIndex(tx.journalMaxRowID)) {
-                    txLimit = Rows.toLocalRowID(tx.journalMaxRowID);
-                    indexTxAddresses = tx.indexPointers;
-                }
-
-                Interval interval = new Interval(f.getName(), getMetadata().getPartitionType());
-                if (partition != null) {
-                    if (partition.getInterval() == null || partition.getInterval().equals(interval)) {
-                        partition.applyTx(txLimit, indexTxAddresses);
-                        partitionIndex++;
-                    } else {
-                        if (partition.isOpen()) {
-                            partition.close();
-                        }
-                        partitions.remove(partitionIndex);
-                    }
-                } else {
-                    partitions.add(new Partition<>(this, interval, partitionIndex, txLimit, indexTxAddresses));
-                    partitionIndex++;
-                }
-            }
-        }
-        configureIrregularPartition();
-    }
-
-    private void configureSymbolTableSynonyms() {
-        for (int i = 0; i < getMetadata().getColumnCount(); i++) {
-            ColumnMetadata meta = metadata.getColumnMetadata(i);
-            if (meta.type == ColumnType.SYMBOL && meta.sameAs != null) {
-                SymbolTable tab = getSymbolTable(meta.sameAs);
-                symbolTableMap.put(meta.name, tab);
-                meta.symbolTable = tab;
-            }
-        }
     }
 
     BitSet getInactiveColumns() {
@@ -727,6 +637,100 @@ public class Journal<T> implements Iterable<T>, Closeable {
                 irregularPartition.close();
             }
             irregularPartition = null;
+        }
+    }
+
+    private void configureColumns() throws JournalException {
+        int columnCount = getMetadata().getColumnCount();
+        for (int i = 0; i < columnCount; i++) {
+            ColumnMetadata meta = metadata.getColumnMetadata(i);
+            if (meta.type == ColumnType.SYMBOL && meta.sameAs == null) {
+                int tabIndex = symbolTables.size();
+                int tabSize = tx.symbolTableSizes.length > tabIndex ? tx.symbolTableSizes[tabIndex] : 0;
+                long indexTxAddress = tx.symbolTableIndexPointers.length > tabIndex ? tx.symbolTableIndexPointers[tabIndex] : 0;
+                SymbolTable tab = new SymbolTable(meta.distinctCountHint, meta.avgSize, getMetadata().getTxCountHint(), location, meta.name, getMode(), tabSize, indexTxAddress, meta.noCache);
+                symbolTables.add(tab);
+                symbolTableMap.put(meta.name, tab);
+                meta.symbolTable = tab;
+            }
+        }
+    }
+
+    private void configureIrregularPartition() throws JournalException {
+        String lagPartitionName = tx.lagName;
+        if (lagPartitionName != null && (irregularPartition == null || !lagPartitionName.equals(irregularPartition.getName()))) {
+            // new lag partition
+            // try to lock lag directory before any activity
+            Partition<T> temp = createTempPartition(lagPartitionName);
+            temp.applyTx(tx.lagSize, tx.lagIndexPointers);
+            setIrregularPartition(temp);
+            // exit out of while loop
+        } else if (lagPartitionName != null && lagPartitionName.equals(irregularPartition.getName())) {
+            irregularPartition.applyTx(tx.lagSize, tx.lagIndexPointers);
+        } else if (lagPartitionName == null && irregularPartition != null) {
+            removeIrregularPartitionInternal();
+        }
+    }
+
+    private void configurePartitions() throws JournalException {
+        File[] files = getLocation().listFiles(new FileFilter() {
+            public boolean accept(File f) {
+                return f.isDirectory() && !f.getName().startsWith(Constants.TEMP_DIRECTORY_PREFIX);
+            }
+        });
+
+        int partitionIndex = 0;
+        if (files != null && tx.journalMaxRowID > 0) {
+            Arrays.sort(files);
+            for (int i = 0; i < files.length; i++) {
+                File f = files[i];
+
+                if (partitionIndex > Rows.toPartitionIndex(tx.journalMaxRowID)) {
+                    break;
+                }
+
+                Partition<T> partition = null;
+
+                if (partitionIndex < partitions.size()) {
+                    partition = partitions.get(partitionIndex);
+                }
+
+                long txLimit = Journal.TX_LIMIT_EVAL;
+                long[] indexTxAddresses = null;
+                if (partitionIndex == Rows.toPartitionIndex(tx.journalMaxRowID)) {
+                    txLimit = Rows.toLocalRowID(tx.journalMaxRowID);
+                    indexTxAddresses = tx.indexPointers;
+                }
+
+                Interval interval = new Interval(f.getName(), getMetadata().getPartitionType());
+                if (partition != null) {
+                    Interval that = partition.getInterval();
+                    if (that == null || that.equals(interval)) {
+                        partition.applyTx(txLimit, indexTxAddresses);
+                        partitionIndex++;
+                    } else {
+                        if (partition.isOpen()) {
+                            partition.close();
+                        }
+                        partitions.remove(partitionIndex);
+                    }
+                } else {
+                    partitions.add(new Partition<>(this, interval, partitionIndex, txLimit, indexTxAddresses));
+                    partitionIndex++;
+                }
+            }
+        }
+        configureIrregularPartition();
+    }
+
+    private void configureSymbolTableSynonyms() {
+        for (int i = 0; i < getMetadata().getColumnCount(); i++) {
+            ColumnMetadata meta = metadata.getColumnMetadata(i);
+            if (meta.type == ColumnType.SYMBOL && meta.sameAs != null) {
+                SymbolTable tab = getSymbolTable(meta.sameAs);
+                symbolTableMap.put(meta.name, tab);
+                meta.symbolTable = tab;
+            }
         }
     }
 }

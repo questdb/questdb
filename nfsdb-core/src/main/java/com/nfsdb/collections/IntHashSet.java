@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,19 +16,23 @@
 
 package com.nfsdb.collections;
 
+import com.nfsdb.utils.Numbers;
+
 import java.util.Arrays;
 
 
 public class IntHashSet {
 
+    public static final int MIN_INITIAL_CAPACITY = 16;
     private static final int noEntryValue = -1;
     private final double loadFactor;
     private int[] keys;
     private int free;
     private int capacity;
+    private int mask;
 
     public IntHashSet() {
-        this(11);
+        this(8);
     }
 
     public IntHashSet(int initialCapacity) {
@@ -37,28 +41,15 @@ public class IntHashSet {
 
     @SuppressWarnings("unchecked")
     public IntHashSet(int initialCapacity, double loadFactor) {
+        if (loadFactor <= 0d || loadFactor >= 1d) {
+            throw new IllegalArgumentException("0 < loadFactor < 1");
+        }
         int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
         this.loadFactor = loadFactor;
-        keys = new int[capacity];
+        keys = new int[capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity)];
+        mask = keys.length - 1;
         free = this.capacity = initialCapacity;
         clear();
-    }
-
-    @SuppressWarnings({"unchecked"})
-    protected void rehash() {
-        int newCapacity = Primes.next(keys.length << 1);
-
-        free = capacity = (int) (newCapacity * loadFactor);
-
-        int[] oldKeys = keys;
-        this.keys = new int[newCapacity];
-        Arrays.fill(keys, noEntryValue);
-
-        for (int i = oldKeys.length; i-- > 0; ) {
-            if (oldKeys[i] != noEntryValue) {
-                insertKey(oldKeys[i]);
-            }
-        }
     }
 
     public boolean add(int key) {
@@ -69,8 +60,16 @@ public class IntHashSet {
         return r;
     }
 
+    public final void clear() {
+        Arrays.fill(keys, noEntryValue);
+    }
+
+    public int size() {
+        return capacity - free;
+    }
+
     private boolean insertKey(int key) {
-        int index = (key & 0x7fffffff) % keys.length;
+        int index = key & mask;
         if (keys[index] == noEntryValue) {
             keys[index] = key;
             free--;
@@ -81,7 +80,7 @@ public class IntHashSet {
 
     private boolean probeInsert(int key, int index) {
         do {
-            index = (index + 1) % keys.length;
+            index = (index + 1) & mask;
             if (keys[index] == noEntryValue) {
                 keys[index] = key;
                 free--;
@@ -94,11 +93,20 @@ public class IntHashSet {
         } while (true);
     }
 
-    public void clear() {
-        Arrays.fill(keys, 0, keys.length, noEntryValue);
-    }
+    @SuppressWarnings({"unchecked"})
+    protected void rehash() {
+        int newCapacity = keys.length << 1;
+        mask = newCapacity - 1;
+        free = capacity = (int) (newCapacity * loadFactor);
 
-    public int size() {
-        return capacity - free;
+        int[] oldKeys = keys;
+        this.keys = new int[newCapacity];
+        Arrays.fill(keys, noEntryValue);
+
+        for (int i = oldKeys.length; i-- > 0; ) {
+            if (oldKeys[i] != noEntryValue) {
+                insertKey(oldKeys[i]);
+            }
+        }
     }
 }

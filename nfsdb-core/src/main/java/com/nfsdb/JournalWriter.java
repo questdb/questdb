@@ -17,36 +17,30 @@
 package com.nfsdb;
 
 import com.nfsdb.collections.PeekingListIterator;
-import com.nfsdb.column.BSearchType;
-import com.nfsdb.column.FixedColumn;
-import com.nfsdb.column.HugeBuffer;
-import com.nfsdb.column.SymbolTable;
-import com.nfsdb.concurrent.PartitionCleaner;
-import com.nfsdb.concurrent.TimerCache;
+import com.nfsdb.exceptions.IncompatibleJournalException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.exp.FlexBufferSink;
-import com.nfsdb.exp.RecordSourcePrinter;
 import com.nfsdb.factory.configuration.Constants;
+import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.iterators.ConcurrentIterator;
-import com.nfsdb.iterators.MergingIterator;
-import com.nfsdb.iterators.PeekingIterator;
+import com.nfsdb.io.RecordSourcePrinter;
+import com.nfsdb.io.sink.FlexBufferSink;
+import com.nfsdb.lang.cst.Record;
+import com.nfsdb.lang.cst.RecordSource;
 import com.nfsdb.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.lang.cst.impl.psrc.JournalTailPartitionSource;
-import com.nfsdb.lang.cst.impl.qry.Record;
-import com.nfsdb.lang.cst.impl.qry.RecordSource;
 import com.nfsdb.lang.cst.impl.rsrc.AllRowSource;
-import com.nfsdb.locks.Lock;
-import com.nfsdb.locks.LockManager;
 import com.nfsdb.logging.Logger;
-import com.nfsdb.tx.Tx;
-import com.nfsdb.tx.TxListener;
-import com.nfsdb.tx.TxLog;
+import com.nfsdb.query.ResultSet;
+import com.nfsdb.query.iterator.ConcurrentIterator;
+import com.nfsdb.query.iterator.MergingIterator;
+import com.nfsdb.query.iterator.PeekingIterator;
+import com.nfsdb.storage.*;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Files;
 import com.nfsdb.utils.Interval;
 import com.nfsdb.utils.Rows;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.io.FileFilter;
@@ -59,6 +53,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
+@SuppressFBWarnings({"PATH_TRAVERSAL_IN", "EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
 public class JournalWriter<T> extends Journal<T> {
     private static final Logger LOGGER = Logger.getLogger(JournalWriter.class);
     private final long lagMillis;
@@ -184,7 +179,7 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     @Override
-    public void close() {
+    public final void close() {
         if (open) {
             if (partitionCleaner != null) {
                 partitionCleaner.halt();
@@ -276,6 +271,7 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
+    @SuppressWarnings("EqualsBetweenInconvertibleTypes")
     @Override
     public boolean equals(Object o) {
         return this == o || !(o == null || getClass() != o.getClass()) && getKey().equals(((Journal) o).getKey());
@@ -284,10 +280,11 @@ public class JournalWriter<T> extends Journal<T> {
     public Partition<T> getAppendPartition(long timestamp) throws JournalException {
         int sz = partitions.size();
         if (sz > 0) {
-            Partition<T> result = partitions.get(sz - 1);
-            if (result.getInterval() == null || result.getInterval().contains(timestamp)) {
-                return result.open().access();
-            } else if (result.getInterval().isBefore(timestamp)) {
+            Partition<T> par = partitions.get(sz - 1);
+            Interval interval = par.getInterval();
+            if (interval == null || interval.contains(timestamp)) {
+                return par.open().access();
+            } else if (interval.isBefore(timestamp)) {
                 return createPartition(new Interval(timestamp, getMetadata().getPartitionType()), sz);
             } else {
                 throw new JournalException("%s cannot be appended to %s", Dates.toString(timestamp), this);
@@ -324,22 +321,6 @@ public class JournalWriter<T> extends Journal<T> {
     @Override
     public JournalMode getMode() {
         return JournalMode.APPEND;
-    }
-
-    public Partition<T> getPartitionForTimestamp(long timestamp) {
-        int sz = partitions.size();
-        for (int i = 0; i < sz; i++) {
-            Partition<T> result = partitions.get(i);
-            if (result.getInterval() == null || result.getInterval().contains(timestamp)) {
-                return result.access();
-            }
-        }
-
-        if (partitions.get(0).getInterval().isAfter(timestamp)) {
-            return partitions.get(0).access();
-        } else {
-            return partitions.get(sz - 1).access();
-        }
     }
 
     @Override
@@ -492,6 +473,16 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
+    public void notifyTxError() {
+        if (txListener != null) {
+            try {
+                txListener.onError();
+            } catch (Throwable e) {
+                LOGGER.error("Error in listener", e);
+            }
+        }
+    }
+
     /**
      * Opens existing lag partition if it exists or creates new one if parent journal is configured to
      * have lag partitions.
@@ -608,7 +599,7 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     Partition<T> createTempPartition() throws JournalException {
-        return createTempPartition(Constants.TEMP_DIRECTORY_PREFIX + "." + System.currentTimeMillis() + "." + UUID.randomUUID().toString());
+        return createTempPartition(Constants.TEMP_DIRECTORY_PREFIX + "." + System.currentTimeMillis() + "." + UUID.randomUUID());
     }
 
     Partition<T> getAppendPartition() throws JournalException {
@@ -645,7 +636,7 @@ public class JournalWriter<T> extends Journal<T> {
         }
         txLog.head(tx);
 
-        File meta = new File(getLocation(), "_meta2");
+        File meta = new File(getLocation(), JournalConfiguration.FILE_NAME);
         if (!meta.exists()) {
             try (HugeBuffer hb = new HugeBuffer(meta, 12, JournalMode.APPEND)) {
                 getMetadata().write(hb);
@@ -737,8 +728,10 @@ public class JournalWriter<T> extends Journal<T> {
     private void rollback0(long address, boolean writeDiscard) throws JournalException {
 
         if (address == -1L) {
-            throw new JournalException("Wrong txn/txPin. Incompatible journals?");
+            notifyTxError();
+            throw new IncompatibleJournalException("Server txn is not compatible with %s", this.getLocation());
         }
+
         txLog.read(address, tx);
 
         if (tx.address == 0) {

@@ -3,6 +3,10 @@ jdk:
   - oraclejdk7
   - openjdk7
   - oraclejdk8
+  
+os:
+  - linux
+  - osx
 
 branches:
   only:

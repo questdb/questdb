@@ -1,7 +1,8 @@
 package com.nfsdb.lang.cst.impl.qry;
 
-import com.nfsdb.column.ColumnType;
-import com.nfsdb.column.SymbolTable;
+
+import com.nfsdb.storage.ColumnType;
+import com.nfsdb.storage.SymbolTable;
 
 public final class RecordColumn implements com.nfsdb.factory.configuration.RecordColumnMetadata {
 

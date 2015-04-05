@@ -18,10 +18,12 @@ package com.nfsdb.lang.cst.impl.rsrc;
 
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.index.KVIndex;
 import com.nfsdb.lang.cst.*;
 import com.nfsdb.lang.cst.impl.ref.StringRef;
+import com.nfsdb.storage.KVIndex;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
 public class KvIndexHeadRowSource implements RowSource, RowCursor {
 
     private final StringRef column;

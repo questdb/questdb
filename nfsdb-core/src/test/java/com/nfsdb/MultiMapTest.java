@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,13 +18,13 @@ package com.nfsdb;
 
 import com.nfsdb.collections.mmap.MapValues;
 import com.nfsdb.collections.mmap.MultiMap;
-import com.nfsdb.column.ColumnType;
-import com.nfsdb.exp.CharSink;
-import com.nfsdb.exp.RecordSourcePrinter;
-import com.nfsdb.exp.StringSink;
 import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.io.RecordSourcePrinter;
+import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.lang.cst.impl.qry.JournalRecord;
 import com.nfsdb.model.Quote;
+import com.nfsdb.storage.ColumnType;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Dates;
@@ -38,66 +38,66 @@ public class MultiMapTest extends AbstractTest {
     @Test
     public void testCount() throws Exception {
 
-        final String expected = "186\t2014-12-30T03:08:00.000Z\tAGK.L\t\n" +
-                "185\t2014-12-30T03:08:00.000Z\tBP.L\t\n" +
-                "216\t2014-12-30T03:08:00.000Z\tRRS.L\t\n" +
-                "196\t2014-12-30T03:08:00.000Z\tBT-A.L\t\n" +
-                "214\t2014-12-30T03:08:00.000Z\tGKN.L\t\n" +
-                "184\t2014-12-30T03:08:00.000Z\tLLOY.L\t\n" +
-                "187\t2014-12-30T03:08:00.000Z\tABF.L\t\n" +
-                "196\t2014-12-30T03:08:00.000Z\tWTB.L\t\n" +
-                "193\t2014-12-30T03:08:00.000Z\tTLW.L\t\n" +
-                "192\t2014-12-30T03:08:00.000Z\tADM.L\t\n" +
-                "189\t2014-12-30T03:09:00.000Z\tBP.L\t\n" +
-                "203\t2014-12-30T03:09:00.000Z\tGKN.L\t\n" +
-                "201\t2014-12-30T03:09:00.000Z\tADM.L\t\n" +
-                "187\t2014-12-30T03:09:00.000Z\tTLW.L\t\n" +
-                "168\t2014-12-30T03:09:00.000Z\tRRS.L\t\n" +
-                "213\t2014-12-30T03:09:00.000Z\tAGK.L\t\n" +
-                "214\t2014-12-30T03:09:00.000Z\tBT-A.L\t\n" +
-                "204\t2014-12-30T03:09:00.000Z\tLLOY.L\t\n" +
-                "214\t2014-12-30T03:09:00.000Z\tWTB.L\t\n" +
-                "207\t2014-12-30T03:09:00.000Z\tABF.L\t\n" +
-                "185\t2014-12-30T03:10:00.000Z\tBP.L\t\n" +
-                "221\t2014-12-30T03:10:00.000Z\tWTB.L\t\n" +
-                "206\t2014-12-30T03:10:00.000Z\tLLOY.L\t\n" +
-                "215\t2014-12-30T03:10:00.000Z\tBT-A.L\t\n" +
-                "195\t2014-12-30T03:10:00.000Z\tTLW.L\t\n" +
-                "203\t2014-12-30T03:10:00.000Z\tADM.L\t\n" +
-                "220\t2014-12-30T03:10:00.000Z\tAGK.L\t\n" +
-                "194\t2014-12-30T03:10:00.000Z\tGKN.L\t\n" +
-                "172\t2014-12-30T03:10:00.000Z\tRRS.L\t\n" +
-                "189\t2014-12-30T03:10:00.000Z\tABF.L\t\n" +
-                "213\t2014-12-30T03:11:00.000Z\tADM.L\t\n" +
-                "195\t2014-12-30T03:11:00.000Z\tLLOY.L\t\n" +
-                "185\t2014-12-30T03:11:00.000Z\tBP.L\t\n" +
-                "198\t2014-12-30T03:11:00.000Z\tBT-A.L\t\n" +
-                "210\t2014-12-30T03:11:00.000Z\tRRS.L\t\n" +
-                "213\t2014-12-30T03:11:00.000Z\tGKN.L\t\n" +
-                "194\t2014-12-30T03:11:00.000Z\tAGK.L\t\n" +
-                "220\t2014-12-30T03:11:00.000Z\tWTB.L\t\n" +
-                "190\t2014-12-30T03:11:00.000Z\tABF.L\t\n" +
-                "182\t2014-12-30T03:11:00.000Z\tTLW.L\t\n" +
-                "212\t2014-12-30T03:12:00.000Z\tABF.L\t\n" +
-                "214\t2014-12-30T03:12:00.000Z\tAGK.L\t\n" +
-                "186\t2014-12-30T03:12:00.000Z\tTLW.L\t\n" +
-                "231\t2014-12-30T03:12:00.000Z\tBP.L\t\n" +
-                "191\t2014-12-30T03:12:00.000Z\tLLOY.L\t\n" +
-                "209\t2014-12-30T03:12:00.000Z\tRRS.L\t\n" +
-                "196\t2014-12-30T03:12:00.000Z\tGKN.L\t\n" +
-                "191\t2014-12-30T03:12:00.000Z\tADM.L\t\n" +
-                "186\t2014-12-30T03:12:00.000Z\tBT-A.L\t\n" +
-                "184\t2014-12-30T03:12:00.000Z\tWTB.L\t\n" +
-                "4\t2014-12-30T03:13:00.000Z\tBP.L\t\n" +
-                "6\t2014-12-30T03:13:00.000Z\tGKN.L\t\n" +
-                "7\t2014-12-30T03:13:00.000Z\tTLW.L\t\n" +
-                "7\t2014-12-30T03:13:00.000Z\tABF.L\t\n" +
-                "6\t2014-12-30T03:13:00.000Z\tADM.L\t\n" +
-                "3\t2014-12-30T03:13:00.000Z\tWTB.L\t\n" +
-                "5\t2014-12-30T03:13:00.000Z\tRRS.L\t\n" +
-                "6\t2014-12-30T03:13:00.000Z\tLLOY.L\t\n" +
-                "4\t2014-12-30T03:13:00.000Z\tAGK.L\t\n" +
-                "3\t2014-12-30T03:13:00.000Z\tBT-A.L\t\n";
+        final String expected = "186\t2014-12-30T03:08:00.000Z\tAGK.L\n" +
+                "185\t2014-12-30T03:08:00.000Z\tBP.L\n" +
+                "216\t2014-12-30T03:08:00.000Z\tRRS.L\n" +
+                "196\t2014-12-30T03:08:00.000Z\tBT-A.L\n" +
+                "214\t2014-12-30T03:08:00.000Z\tGKN.L\n" +
+                "184\t2014-12-30T03:08:00.000Z\tLLOY.L\n" +
+                "187\t2014-12-30T03:08:00.000Z\tABF.L\n" +
+                "196\t2014-12-30T03:08:00.000Z\tWTB.L\n" +
+                "193\t2014-12-30T03:08:00.000Z\tTLW.L\n" +
+                "192\t2014-12-30T03:08:00.000Z\tADM.L\n" +
+                "189\t2014-12-30T03:09:00.000Z\tBP.L\n" +
+                "203\t2014-12-30T03:09:00.000Z\tGKN.L\n" +
+                "201\t2014-12-30T03:09:00.000Z\tADM.L\n" +
+                "187\t2014-12-30T03:09:00.000Z\tTLW.L\n" +
+                "168\t2014-12-30T03:09:00.000Z\tRRS.L\n" +
+                "213\t2014-12-30T03:09:00.000Z\tAGK.L\n" +
+                "214\t2014-12-30T03:09:00.000Z\tBT-A.L\n" +
+                "204\t2014-12-30T03:09:00.000Z\tLLOY.L\n" +
+                "214\t2014-12-30T03:09:00.000Z\tWTB.L\n" +
+                "207\t2014-12-30T03:09:00.000Z\tABF.L\n" +
+                "185\t2014-12-30T03:10:00.000Z\tBP.L\n" +
+                "221\t2014-12-30T03:10:00.000Z\tWTB.L\n" +
+                "206\t2014-12-30T03:10:00.000Z\tLLOY.L\n" +
+                "215\t2014-12-30T03:10:00.000Z\tBT-A.L\n" +
+                "195\t2014-12-30T03:10:00.000Z\tTLW.L\n" +
+                "203\t2014-12-30T03:10:00.000Z\tADM.L\n" +
+                "220\t2014-12-30T03:10:00.000Z\tAGK.L\n" +
+                "194\t2014-12-30T03:10:00.000Z\tGKN.L\n" +
+                "172\t2014-12-30T03:10:00.000Z\tRRS.L\n" +
+                "189\t2014-12-30T03:10:00.000Z\tABF.L\n" +
+                "213\t2014-12-30T03:11:00.000Z\tADM.L\n" +
+                "195\t2014-12-30T03:11:00.000Z\tLLOY.L\n" +
+                "185\t2014-12-30T03:11:00.000Z\tBP.L\n" +
+                "198\t2014-12-30T03:11:00.000Z\tBT-A.L\n" +
+                "210\t2014-12-30T03:11:00.000Z\tRRS.L\n" +
+                "213\t2014-12-30T03:11:00.000Z\tGKN.L\n" +
+                "194\t2014-12-30T03:11:00.000Z\tAGK.L\n" +
+                "220\t2014-12-30T03:11:00.000Z\tWTB.L\n" +
+                "190\t2014-12-30T03:11:00.000Z\tABF.L\n" +
+                "182\t2014-12-30T03:11:00.000Z\tTLW.L\n" +
+                "212\t2014-12-30T03:12:00.000Z\tABF.L\n" +
+                "214\t2014-12-30T03:12:00.000Z\tAGK.L\n" +
+                "186\t2014-12-30T03:12:00.000Z\tTLW.L\n" +
+                "231\t2014-12-30T03:12:00.000Z\tBP.L\n" +
+                "191\t2014-12-30T03:12:00.000Z\tLLOY.L\n" +
+                "209\t2014-12-30T03:12:00.000Z\tRRS.L\n" +
+                "196\t2014-12-30T03:12:00.000Z\tGKN.L\n" +
+                "191\t2014-12-30T03:12:00.000Z\tADM.L\n" +
+                "186\t2014-12-30T03:12:00.000Z\tBT-A.L\n" +
+                "184\t2014-12-30T03:12:00.000Z\tWTB.L\n" +
+                "4\t2014-12-30T03:13:00.000Z\tBP.L\n" +
+                "6\t2014-12-30T03:13:00.000Z\tGKN.L\n" +
+                "7\t2014-12-30T03:13:00.000Z\tTLW.L\n" +
+                "7\t2014-12-30T03:13:00.000Z\tABF.L\n" +
+                "6\t2014-12-30T03:13:00.000Z\tADM.L\n" +
+                "3\t2014-12-30T03:13:00.000Z\tWTB.L\n" +
+                "5\t2014-12-30T03:13:00.000Z\tRRS.L\n" +
+                "6\t2014-12-30T03:13:00.000Z\tLLOY.L\n" +
+                "4\t2014-12-30T03:13:00.000Z\tAGK.L\n" +
+                "3\t2014-12-30T03:13:00.000Z\tBT-A.L\n";
 
 
         JournalWriter<Quote> w = factory.writer(Quote.class);
@@ -122,11 +122,10 @@ public class MultiMapTest extends AbstractTest {
         for (JournalRecord e : w.rows()) {
             long ts = e.getLong(tsIndex);
 
-            MapValues val = map.claimSlot(
-                    map.claimKey()
+            MapValues val = map.values(
+                    map.keyWriter()
                             .putLong(Dates.floorMI(ts))
                             .putInt(e.getInt(symIndex))
-                            .commit()
             );
 
             val.putInt(0, val.isNew() ? 1 : val.getInt(0) + 1);

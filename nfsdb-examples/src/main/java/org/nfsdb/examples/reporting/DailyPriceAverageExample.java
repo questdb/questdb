@@ -19,13 +19,14 @@ package org.nfsdb.examples.reporting;
 import com.nfsdb.Journal;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exp.StringSink;
 import com.nfsdb.factory.JournalFactory;
+import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.printer.JournalPrinter;
 import com.nfsdb.printer.appender.StdOutAppender;
 import com.nfsdb.query.api.QueryAllBuilder;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Files;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.nfsdb.examples.model.ModelConfiguration;
 import org.nfsdb.examples.model.Quote;
 import org.nfsdb.examples.support.QuoteGenerator;
@@ -36,6 +37,7 @@ import java.util.concurrent.TimeUnit;
 
 public class DailyPriceAverageExample {
 
+    @SuppressFBWarnings({"CC_CYCLOMATIC_COMPLEXITY"})
     public static void main(String[] args) throws JournalException, IOException {
         if (args.length != 1) {
             System.out.println("Usage: " + DailyPriceAverageExample.class.getName() + " <path>");

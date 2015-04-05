@@ -19,19 +19,20 @@ package com.nfsdb.factory;
 import com.nfsdb.Journal;
 import com.nfsdb.JournalBulkReader;
 import com.nfsdb.JournalKey;
-import com.nfsdb.concurrent.TimerCache;
+import com.nfsdb.TimerCache;
+import com.nfsdb.collections.ObjObjHashMap;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
+@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class JournalCachingFactory extends AbstractJournalReaderFactory implements JournalClosingListener {
 
-    private final Map<JournalKey, Journal> readers = new HashMap<>();
-    private final Map<JournalKey, JournalBulkReader> bulkReaders = new HashMap<>();
+    private final ObjObjHashMap<JournalKey, Journal> readers = new ObjObjHashMap<>();
+    private final ObjObjHashMap<JournalKey, JournalBulkReader> bulkReaders = new ObjObjHashMap<>();
     private final List<Journal> journalList = new ArrayList<>();
     private JournalPool pool;
 
@@ -42,6 +43,19 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
     public JournalCachingFactory(JournalConfiguration configuration, TimerCache timerCache, JournalPool pool) {
         super(configuration, timerCache);
         this.pool = pool;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
+        JournalBulkReader<T> result = bulkReaders.get(key);
+        if (result == null) {
+            result = new JournalBulkReader<>(getOrCreateMetadata(key), key, getTimerCache());
+            result.setCloseListener(this);
+            bulkReaders.put(key, result);
+            journalList.add(result);
+        }
+        return result;
     }
 
     @Override
@@ -92,18 +106,5 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
         for (int i = 0, sz = journalList.size(); i < sz; i++) {
             journalList.get(i).expireOpenFiles();
         }
-    }
-
-    @Override
-    @SuppressWarnings("unchecked")
-    public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
-        JournalBulkReader<T> result = bulkReaders.get(key);
-        if (result == null) {
-            result = new JournalBulkReader<>(getOrCreateMetadata(key), key, getTimerCache());
-            result.setCloseListener(this);
-            bulkReaders.put(key, result);
-            journalList.add(result);
-        }
-        return result;
     }
 }

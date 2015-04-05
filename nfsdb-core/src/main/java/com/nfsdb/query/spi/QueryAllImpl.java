@@ -17,21 +17,23 @@
 package com.nfsdb.query.spi;
 
 import com.nfsdb.Journal;
-import com.nfsdb.OrderedResultSet;
-import com.nfsdb.OrderedResultSetBuilder;
 import com.nfsdb.Partition;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.iterators.*;
+import com.nfsdb.query.OrderedResultSet;
+import com.nfsdb.query.OrderedResultSetBuilder;
 import com.nfsdb.query.api.QueryAll;
 import com.nfsdb.query.api.QueryAllBuilder;
+import com.nfsdb.query.iterator.*;
 import com.nfsdb.utils.Interval;
 import com.nfsdb.utils.Rows;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
+@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public class QueryAllImpl<T> implements QueryAll<T> {
 
     private final Journal<T> journal;
@@ -54,48 +56,8 @@ public class QueryAllImpl<T> implements QueryAll<T> {
     }
 
     @Override
-    public long size() {
-        try {
-            return journal.size();
-        } catch (JournalException e) {
-            throw new JournalRuntimeException(e);
-        }
-    }
-
-    @Override
-    public QueryAllBuilder<T> withKeys(String... values) {
-        return withSymValues(journal.getMetadata().getKey(), values);
-    }
-
-    @Override
-    public QueryAllBuilder<T> withSymValues(String symbol, String... values) {
-        QueryAllBuilderImpl<T> result = new QueryAllBuilderImpl<>(journal);
-        result.setSymbol(symbol, values);
-        return result;
-    }
-
-    @Override
-    public Iterator<T> iterator() {
-        return new JournalIteratorImpl<>(journal, createRanges());
-    }
-
-    @Override
     public JournalPeekingIterator<T> bufferedIterator() {
         return new JournalBufferedIterator<>(journal, createRanges());
-    }
-
-    public JournalRowBufferedIterator<T> bufferedRowIterator() {
-        return new JournalRowBufferedIterator<>(journal, createRanges());
-    }
-
-    @Override
-    public AbstractConcurrentIterator<T> concurrentIterator() {
-        return new JournalConcurrentIterator<>(journal, createRanges(), 1024);
-    }
-
-    @Override
-    public JournalIterator<T> iterator(Interval interval) {
-        return new JournalIteratorImpl<>(journal, createRanges(interval));
     }
 
     @Override
@@ -104,18 +66,23 @@ public class QueryAllImpl<T> implements QueryAll<T> {
     }
 
     @Override
+    public JournalPeekingIterator<T> bufferedIterator(long rowid) {
+        return new JournalBufferedIterator<>(journal, createRanges(rowid));
+    }
+
+    @Override
+    public AbstractConcurrentIterator<T> concurrentIterator() {
+        return new JournalConcurrentIterator<>(journal, createRanges(), 1024);
+    }
+
+    @Override
     public AbstractConcurrentIterator<T> concurrentIterator(Interval interval) {
         return new JournalConcurrentIterator<>(journal, createRanges(interval), 1024);
     }
 
     @Override
-    public JournalPeekingIterator<T> iterator(long rowid) {
-        return new JournalIteratorImpl<>(journal, createRanges(rowid));
-    }
-
-    @Override
-    public JournalPeekingIterator<T> bufferedIterator(long rowid) {
-        return new JournalBufferedIterator<>(journal, createRanges(rowid));
+    public AbstractConcurrentIterator<T> concurrentIterator(long rowid) {
+        return new JournalConcurrentIterator<>(journal, createRanges(rowid), 1024);
     }
 
     @Override
@@ -141,8 +108,39 @@ public class QueryAllImpl<T> implements QueryAll<T> {
     }
 
     @Override
-    public AbstractConcurrentIterator<T> concurrentIterator(long rowid) {
-        return new JournalConcurrentIterator<>(journal, createRanges(rowid), 1024);
+    public JournalIterator<T> iterator(Interval interval) {
+        return new JournalIteratorImpl<>(journal, createRanges(interval));
+    }
+
+    @Override
+    public JournalPeekingIterator<T> iterator(long rowid) {
+        return new JournalIteratorImpl<>(journal, createRanges(rowid));
+    }
+
+    @Override
+    public Iterator<T> iterator() {
+        return new JournalIteratorImpl<>(journal, createRanges());
+    }
+
+    @Override
+    public long size() {
+        try {
+            return journal.size();
+        } catch (JournalException e) {
+            throw new JournalRuntimeException(e);
+        }
+    }
+
+    @Override
+    public QueryAllBuilder<T> withKeys(String... values) {
+        return withSymValues(journal.getMetadata().getKey(), values);
+    }
+
+    @Override
+    public QueryAllBuilder<T> withSymValues(String symbol, String... values) {
+        QueryAllBuilderImpl<T> result = new QueryAllBuilderImpl<>(journal);
+        result.setSymbol(symbol, values);
+        return result;
     }
 
     private List<JournalIteratorRange> createRanges() {

@@ -16,10 +16,12 @@
 
 package com.nfsdb.factory.configuration;
 
-import com.nfsdb.column.ColumnType;
-import com.nfsdb.column.HugeBuffer;
-import com.nfsdb.column.SymbolTable;
+import com.nfsdb.storage.ColumnType;
+import com.nfsdb.storage.HugeBuffer;
+import com.nfsdb.storage.SymbolTable;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+@SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
 public class ColumnMetadata implements RecordColumnMetadata {
     public String name;
     public ColumnType type;
@@ -33,23 +35,6 @@ public class ColumnMetadata implements RecordColumnMetadata {
     public String sameAs;
     public boolean noCache = false;
     public SymbolTable symbolTable;
-
-    @Override
-    public String toString() {
-        return "ColumnMetadata{" +
-                "name*='" + name + '\'' +
-                ", type*=" + type +
-                ", offset=" + offset +
-                ", size*=" + size +
-                ", avgSize=" + avgSize +
-                ", indexed=" + indexed +
-                ", bitHint=" + bitHint +
-                ", indexBitHint=" + indexBitHint +
-                ", distinctCountHint=" + distinctCountHint +
-                ", sameAs='" + sameAs + '\'' +
-                ", noCache=" + noCache +
-                '}';
-    }
 
     public ColumnMetadata copy(ColumnMetadata from) {
         this.name = from.name;
@@ -66,40 +51,18 @@ public class ColumnMetadata implements RecordColumnMetadata {
         return this;
     }
 
-    public ColumnMetadata setType(ColumnType type) {
-        this.type = type;
-        return this;
-    }
-
-    public ColumnMetadata setName(String name) {
-        this.name = name;
-        return this;
-    }
-
-    public void write(HugeBuffer buf) {
-        buf.put(name);
-        buf.put(type.name());
-        buf.put(size);
-        buf.put(avgSize);
-        buf.put(indexed);
-        buf.put(bitHint);
-        buf.put(indexBitHint);
-        buf.put(distinctCountHint);
-        buf.put(sameAs);
-        buf.put(noCache);
-    }
-
-    public void read(HugeBuffer buf) {
-        name = buf.getStr();
-        type = ColumnType.valueOf(buf.getStr());
-        size = buf.getInt();
-        avgSize = buf.getInt();
-        indexed = buf.getBool();
-        bitHint = buf.getInt();
-        indexBitHint = buf.getInt();
-        distinctCountHint = buf.getInt();
-        sameAs = buf.getStr();
-        noCache = buf.getBool();
+    @Override
+    public int hashCode() {
+        int result = name.hashCode();
+        result = 31 * result + type.hashCode();
+        result = 31 * result + size;
+        result = 31 * result + avgSize;
+        result = 31 * result + (indexed ? 1 : 0);
+        result = 31 * result + bitHint;
+        result = 31 * result + indexBitHint;
+        result = 31 * result + distinctCountHint;
+        result = 31 * result + (sameAs != null ? sameAs.hashCode() : 0);
+        return 31 * result + (noCache ? 1 : 0);
     }
 
     @Override
@@ -123,32 +86,55 @@ public class ColumnMetadata implements RecordColumnMetadata {
     }
 
     @Override
-    public int hashCode() {
-        int result = name.hashCode();
-        result = 31 * result + type.hashCode();
-        result = 31 * result + size;
-        result = 31 * result + avgSize;
-        result = 31 * result + (indexed ? 1 : 0);
-        result = 31 * result + bitHint;
-        result = 31 * result + indexBitHint;
-        result = 31 * result + distinctCountHint;
-        result = 31 * result + (sameAs != null ? sameAs.hashCode() : 0);
-        result = 31 * result + (noCache ? 1 : 0);
-        return result;
+    public String toString() {
+        return "ColumnMetadata{" +
+                "name*='" + name + '\'' +
+                ", type*=" + type +
+                ", offset=" + offset +
+                ", size*=" + size +
+                ", avgSize=" + avgSize +
+                ", indexed=" + indexed +
+                ", bitHint=" + bitHint +
+                ", indexBitHint=" + indexBitHint +
+                ", distinctCountHint=" + distinctCountHint +
+                ", sameAs='" + sameAs + '\'' +
+                ", noCache=" + noCache +
+                '}';
     }
 
-    @Override
-    public ColumnType getType() {
-        return type;
+    public void read(HugeBuffer buf) {
+        name = buf.getStr();
+        type = ColumnType.valueOf(buf.getStr());
+        size = buf.getInt();
+        avgSize = buf.getInt();
+        indexed = buf.getBool();
+        bitHint = buf.getInt();
+        indexBitHint = buf.getInt();
+        distinctCountHint = buf.getInt();
+        sameAs = buf.getStr();
+        noCache = buf.getBool();
     }
 
-    @Override
-    public SymbolTable getSymbolTable() {
-        return symbolTable;
+    public ColumnMetadata setName(String name) {
+        this.name = name;
+        return this;
     }
 
-    @Override
-    public String getName() {
-        return name;
+    public ColumnMetadata setType(ColumnType type) {
+        this.type = type;
+        return this;
+    }
+
+    public void write(HugeBuffer buf) {
+        buf.put(name);
+        buf.put(type.name());
+        buf.put(size);
+        buf.put(avgSize);
+        buf.put(indexed);
+        buf.put(bitHint);
+        buf.put(indexBitHint);
+        buf.put(distinctCountHint);
+        buf.put(sameAs);
+        buf.put(noCache);
     }
 }

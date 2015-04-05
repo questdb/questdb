@@ -18,8 +18,8 @@ package com.nfsdb.lang.cst.impl.dsrc;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.lang.cst.DataSource;
+import com.nfsdb.lang.cst.JournalRecordSource;
 import com.nfsdb.lang.cst.impl.qry.JournalRecord;
-import com.nfsdb.lang.cst.impl.qry.JournalRecordSource;
 
 public class DataSourceImpl<T> extends AbstractImmutableIterator<T> implements DataSource<T> {
     private final JournalRecordSource journalRowSource;
@@ -31,22 +31,14 @@ public class DataSourceImpl<T> extends AbstractImmutableIterator<T> implements D
     }
 
     @Override
-    public boolean hasNext() {
-        return journalRowSource.hasNext();
-    }
-
-    @SuppressWarnings("unchecked")
-    @Override
-    public T next() {
-        JournalRecord item = journalRowSource.next();
-        item.partition.read(item.rowid, container);
-        return container;
-    }
-
-    @Override
     public DataSource<T> $new() {
         journalRowSource.reset();
         return this;
+    }
+
+    @Override
+    public boolean hasNext() {
+        return journalRowSource.hasNext();
     }
 
     @Override
@@ -56,5 +48,13 @@ public class DataSourceImpl<T> extends AbstractImmutableIterator<T> implements D
         } else {
             return null;
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public T next() {
+        JournalRecord item = journalRowSource.next();
+        item.partition.read(item.rowid, container);
+        return container;
     }
 }

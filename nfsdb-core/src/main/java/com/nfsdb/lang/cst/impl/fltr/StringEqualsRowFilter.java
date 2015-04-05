@@ -16,8 +16,6 @@
 
 package com.nfsdb.lang.cst.impl.fltr;
 
-import com.nfsdb.column.AbstractColumn;
-import com.nfsdb.column.VariableColumn;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.lang.cst.Choice;
@@ -25,6 +23,9 @@ import com.nfsdb.lang.cst.PartitionSlice;
 import com.nfsdb.lang.cst.RowAcceptor;
 import com.nfsdb.lang.cst.RowFilter;
 import com.nfsdb.lang.cst.impl.ref.StringRef;
+import com.nfsdb.storage.AbstractColumn;
+import com.nfsdb.storage.VariableColumn;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class StringEqualsRowFilter implements RowFilter, RowAcceptor {
     private final StringRef column;
@@ -36,6 +37,12 @@ public class StringEqualsRowFilter implements RowFilter, RowAcceptor {
         this.value = value;
     }
 
+    @Override
+    public Choice accept(long localRowID) {
+        return columnRef.cmpStr(localRowID, value.value) ? Choice.PICK : Choice.SKIP;
+    }
+
+    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
     @Override
     public RowAcceptor acceptor(PartitionSlice a) {
         try {
@@ -50,10 +57,5 @@ public class StringEqualsRowFilter implements RowFilter, RowAcceptor {
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
-    }
-
-    @Override
-    public Choice accept(long localRowID) {
-        return columnRef.cmpStr(localRowID, value.value) ? Choice.PICK : Choice.SKIP;
     }
 }

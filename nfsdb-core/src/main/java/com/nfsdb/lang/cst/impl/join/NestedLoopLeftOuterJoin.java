@@ -17,7 +17,11 @@
 package com.nfsdb.lang.cst.impl.join;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.lang.cst.impl.qry.*;
+import com.nfsdb.lang.cst.Record;
+import com.nfsdb.lang.cst.RecordMetadata;
+import com.nfsdb.lang.cst.RecordSource;
+import com.nfsdb.lang.cst.impl.qry.SplitRecord;
+import com.nfsdb.lang.cst.impl.qry.SplitRecordMetadata;
 
 public class NestedLoopLeftOuterJoin extends AbstractImmutableIterator<SplitRecord> implements RecordSource<SplitRecord> {
     private final RecordSource<? extends Record> masterSource;
@@ -29,15 +33,10 @@ public class NestedLoopLeftOuterJoin extends AbstractImmutableIterator<SplitReco
     public NestedLoopLeftOuterJoin(RecordSource<? extends Record> masterSource, RecordSource<? extends Record> slaveSource) {
         this.masterSource = masterSource;
         this.slaveSource = slaveSource;
-        this.metadata = new SplitRecordMetadata(masterSource.getMetadata(), slaveSource.getMetadata());
-        this.record = new SplitRecord(metadata, masterSource.getMetadata().getColumnCount());
-    }
 
-    @Override
-    public void reset() {
-        masterSource.reset();
-        slaveSource.reset();
-        nextSlave = false;
+        RecordMetadata mm = masterSource.getMetadata();
+        this.metadata = new SplitRecordMetadata(mm, slaveSource.getMetadata());
+        this.record = new SplitRecord(metadata, mm.getColumnCount());
     }
 
     @Override
@@ -65,5 +64,12 @@ public class NestedLoopLeftOuterJoin extends AbstractImmutableIterator<SplitReco
             nextSlave = false;
         }
         return record;
+    }
+
+    @Override
+    public void reset() {
+        masterSource.reset();
+        slaveSource.reset();
+        nextSlave = false;
     }
 }

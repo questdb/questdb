@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,12 +17,14 @@
 package com.nfsdb;
 
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.iterators.ConcurrentIterator;
-import com.nfsdb.iterators.JournalIterator;
 import com.nfsdb.model.Quote;
+import com.nfsdb.query.ResultSet;
+import com.nfsdb.query.UnorderedResultSet;
 import com.nfsdb.query.api.Query;
 import com.nfsdb.query.api.QueryAllBuilder;
 import com.nfsdb.query.api.QueryHeadBuilder;
+import com.nfsdb.query.iterator.ConcurrentIterator;
+import com.nfsdb.query.iterator.JournalIterator;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestData;
 import com.nfsdb.test.tools.TestUtils;
@@ -44,6 +46,28 @@ public class QueryTest extends AbstractTest {
         w = factory.writer(Quote.class);
         q = w.query();
         TestData.appendQuoteData2(w);
+    }
+
+    @Test
+    public void testAll() throws Exception {
+        Assert.assertEquals(1000, q.all().size());
+    }
+
+    @Test
+    public void testAllByKeyOverInterval() throws Exception {
+        String expected = "2013-05-03T15:23:20.000Z\tGKN.L\t0.5275167947685228\t0.5630377869323533\t1843235138\t1122238976\tFast trading\tGR\n" +
+                "2013-05-02T21:20:00.000Z\tGKN.L\t0.4057095419320843\t0.2930651074363966\t970097888\t1768370800\tFast trading\tGR\n" +
+                "2013-05-02T11:36:40.000Z\tGKN.L\t0.7299258007491024\t0.6912012922060378\t980854034\t1765743108\tFast trading\tLXE\n" +
+                "2013-05-02T08:50:00.000Z\tGKN.L\t0.3679378100903369\t0.9382300968477628\t1388063503\t1125355543\tFast trading\tSK\n" +
+                "2013-05-02T01:53:20.000Z\tGKN.L\t0.6061689700945626\t0.3112527710614069\t765148442\t1939054544\tFast trading\tGR\n" +
+                "2013-05-01T12:00:00.000Z\tGKN.L\t0.5962940647708228\t0.8037097062216977\t1034412808\t1681490823\tFast trading\tLXE\n" +
+                "2013-05-01T02:16:40.000Z\tGKN.L\t0.8979439248915824\t0.2195123104786394\t1682785535\t1705950772\tFast trading\tLXE\n" +
+                "2013-04-30T17:56:40.000Z\tGKN.L\t0.9957244238271116\t0.22502876454673404\t1074244114\t1402712074\tFast trading\tLXE\n" +
+                "2013-04-29T11:23:20.000Z\tGKN.L\t0.4466437532316928\t0.32495899970572273\t2015090903\t1376158663\tFast trading\tLXE\n" +
+                "2013-04-29T05:50:00.000Z\tGKN.L\t0.17560585850669297\t0.6791795548403247\t2114761437\t561608998\tFast trading\tLXE";
+        ResultSet<Quote> rs = q.all().withKeys("GKN.L").slice(new Interval(ts2, ts1)).asResultSet();
+        TestUtils.assertOrderDesc(rs.bufferedIterator());
+        TestUtils.assertEquals(expected, rs);
     }
 
     @Test
@@ -76,23 +100,6 @@ public class QueryTest extends AbstractTest {
                 "2013-04-28T18:43:20.000Z\tRRS.L\t0.18670502698896196\t0.0885706583279452\t505468688\t2038459861\tFast trading\tGR";
 
         ResultSet<Quote> rs = q.all().withKeys("RRS.L").slice(new Interval(ts2, ts1)).asResultSet();
-        TestUtils.assertOrderDesc(rs.bufferedIterator());
-        TestUtils.assertEquals(expected, rs);
-    }
-
-    @Test
-    public void testAllByKeyOverInterval() throws Exception {
-        String expected = "2013-05-03T15:23:20.000Z\tGKN.L\t0.5275167947685228\t0.5630377869323533\t1843235138\t1122238976\tFast trading\tGR\n" +
-                "2013-05-02T21:20:00.000Z\tGKN.L\t0.4057095419320843\t0.2930651074363966\t970097888\t1768370800\tFast trading\tGR\n" +
-                "2013-05-02T11:36:40.000Z\tGKN.L\t0.7299258007491024\t0.6912012922060378\t980854034\t1765743108\tFast trading\tLXE\n" +
-                "2013-05-02T08:50:00.000Z\tGKN.L\t0.3679378100903369\t0.9382300968477628\t1388063503\t1125355543\tFast trading\tSK\n" +
-                "2013-05-02T01:53:20.000Z\tGKN.L\t0.6061689700945626\t0.3112527710614069\t765148442\t1939054544\tFast trading\tGR\n" +
-                "2013-05-01T12:00:00.000Z\tGKN.L\t0.5962940647708228\t0.8037097062216977\t1034412808\t1681490823\tFast trading\tLXE\n" +
-                "2013-05-01T02:16:40.000Z\tGKN.L\t0.8979439248915824\t0.2195123104786394\t1682785535\t1705950772\tFast trading\tLXE\n" +
-                "2013-04-30T17:56:40.000Z\tGKN.L\t0.9957244238271116\t0.22502876454673404\t1074244114\t1402712074\tFast trading\tLXE\n" +
-                "2013-04-29T11:23:20.000Z\tGKN.L\t0.4466437532316928\t0.32495899970572273\t2015090903\t1376158663\tFast trading\tLXE\n" +
-                "2013-04-29T05:50:00.000Z\tGKN.L\t0.17560585850669297\t0.6791795548403247\t2114761437\t561608998\tFast trading\tLXE";
-        ResultSet<Quote> rs = q.all().withKeys("GKN.L").slice(new Interval(ts2, ts1)).asResultSet();
         TestUtils.assertOrderDesc(rs.bufferedIterator());
         TestUtils.assertEquals(expected, rs);
     }
@@ -397,178 +404,6 @@ public class QueryTest extends AbstractTest {
     }
 
     @Test
-    public void testLatestBySymbol() throws Exception {
-        String expected = "2013-05-06T23:56:40.000Z\tBT-A.L\t0.8883345886748325\t0.7737938544972554\t1750740931\t1514907397\tFast trading\tGR\n" +
-                "2013-05-07T04:06:40.000Z\tADM.L\t0.861499400556018\t0.5243336208514339\t648366676\t698699955\tFast trading\tSK\n" +
-                "2013-05-07T05:30:00.000Z\tTLW.L\t0.5405954330001682\t0.23821846687340553\t1057951361\t1833806187\tFast trading\tLXE\n";
-
-
-        Query<Quote> qq = factory.reader(Quote.class).query();
-        UnorderedResultSet<Quote> rs = qq.head().withSymValues("ex").asResultSet();
-        TestUtils.assertEquals(expected, rs.sort());
-    }
-
-    @Test
-    public void testLatestByKey() throws Exception {
-        String expected = "2013-05-06T01:43:20.000Z\tWTB.L\t0.4191390374952899\t0.601628162260468\t2104114979\t1431449453\tFast trading\tLXE\n" +
-                "2013-05-06T05:53:20.000Z\tGKN.L\t0.6692538497726956\t0.38655868492682444\t1851982635\t389597203\tFast trading\tSK\n" +
-                "2013-05-06T17:00:00.000Z\tABF.L\t0.9643251238886018\t0.8129177499445661\t1945548281\t499978914\tFast trading\tSK\n" +
-                "2013-05-06T19:46:40.000Z\tLLOY.L\t0.7193355196302277\t0.9404701555734597\t704067095\t1668582762\tFast trading\tGR\n" +
-                "2013-05-06T22:33:20.000Z\tBP.L\t0.46114752131469783\t0.8979723557722048\t1579801637\t2117833235\tFast trading\tGR\n" +
-                "2013-05-06T23:56:40.000Z\tBT-A.L\t0.8883345886748325\t0.7737938544972554\t1750740931\t1514907397\tFast trading\tGR\n" +
-                "2013-05-07T01:20:00.000Z\tAGK.L\t0.5217691943089976\t0.28956673106743125\t681718809\t1972465127\tFast trading\tLXE\n" +
-                "2013-05-07T02:43:20.000Z\tRRS.L\t0.7051458116683191\t0.40922139034207683\t631143150\t997183581\tFast trading\tLXE\n" +
-                "2013-05-07T04:06:40.000Z\tADM.L\t0.861499400556018\t0.5243336208514339\t648366676\t698699955\tFast trading\tSK\n" +
-                "2013-05-07T05:30:00.000Z\tTLW.L\t0.5405954330001682\t0.23821846687340553\t1057951361\t1833806187\tFast trading\tLXE\n";
-
-        UnorderedResultSet<Quote> rs = q.head().withKeys().asResultSet();
-        TestUtils.assertEquals(expected, rs.sort());
-    }
-
-    @Test
-    public void testLatestByKeyNewerThanRowid() throws Exception {
-        Query<Quote> q = buildQuery2();
-
-        String expected = "2013-05-06T01:43:20.000Z\tWTB.L\t0.4191390374952899\t0.601628162260468\t2104114979\t1431449453\tFast trading\tLXE\n" +
-                "2013-05-06T05:53:20.000Z\tGKN.L\t0.6692538497726956\t0.38655868492682444\t1851982635\t389597203\tFast trading\tSK\n" +
-                "2013-05-06T17:00:00.000Z\tABF.L\t0.9643251238886018\t0.8129177499445661\t1945548281\t499978914\tFast trading\tSK\n" +
-                "2013-05-06T19:46:40.000Z\tLLOY.L\t0.7193355196302277\t0.9404701555734597\t704067095\t1668582762\tFast trading\tGR\n" +
-                "2013-05-06T22:33:20.000Z\tBP.L\t0.46114752131469783\t0.8979723557722048\t1579801637\t2117833235\tFast trading\tGR\n" +
-                "2013-05-06T23:56:40.000Z\tBT-A.L\t0.8883345886748325\t0.7737938544972554\t1750740931\t1514907397\tFast trading\tGR\n" +
-                "2013-05-07T01:20:00.000Z\tAGK.L\t0.5217691943089976\t0.28956673106743125\t681718809\t1972465127\tFast trading\tLXE\n" +
-                "2013-05-07T02:43:20.000Z\tRRS.L\t0.7051458116683191\t0.40922139034207683\t631143150\t997183581\tFast trading\tLXE\n" +
-                "2013-05-07T04:06:40.000Z\tADM.L\t0.861499400556018\t0.5243336208514339\t648366676\t698699955\tFast trading\tSK\n" +
-                "2013-05-07T05:30:00.000Z\tTLW.L\t0.5405954330001682\t0.23821846687340553\t1057951361\t1833806187\tFast trading\tLXE\n";
-
-        QueryHeadBuilder<Quote> b = q.head().withKeys().limit(35184372088930L);
-        UnorderedResultSet<Quote> rs = b.asResultSet();
-        TestUtils.assertEquals(expected, rs.sort());
-        Assert.assertEquals(13, b.limit(-1L).asResultSet().size());
-    }
-
-    @Test
-    public void testLatestByKeyFilter() throws Exception {
-        String expected = "2013-05-06T19:46:40.000Z\tLLOY.L\t0.7193355196302277\t0.9404701555734597\t704067095\t1668582762\tFast trading\tGR\n" +
-                "2013-05-06T22:33:20.000Z\tBP.L\t0.46114752131469783\t0.8979723557722048\t1579801637\t2117833235\tFast trading\tGR\n" +
-                "2013-05-06T23:56:40.000Z\tBT-A.L\t0.8883345886748325\t0.7737938544972554\t1750740931\t1514907397\tFast trading\tGR\n";
-
-        UnorderedResultSet<Quote> rs = q.head().withKeys().filter("ex", "GR").strict(true).asResultSet();
-        TestUtils.assertEquals(expected, rs.sort());
-    }
-
-    @Test
-    public void testLatestByKeyFilterNonStrict() throws Exception {
-        String expected = "2013-05-02T14:23:20.000Z\tWTB.L\t0.7858327043313086\t0.7679013186397453\t150870909\t427886371\tFast trading\tGR\n" +
-                "2013-05-04T13:36:40.000Z\tGKN.L\t0.5485152099626798\t0.3847951638258288\t543254483\t1530188749\tFast trading\tGR\n" +
-                "2013-05-05T06:16:40.000Z\tADM.L\t0.32183591222731356\t0.9190720816969892\t1035899527\t1133552627\tFast trading\tGR\n" +
-                "2013-05-05T13:13:20.000Z\tAGK.L\t0.38085166997373454\t0.11179154015541148\t1241766823\t1944335528\tFast trading\tGR\n" +
-                "2013-05-05T17:23:20.000Z\tTLW.L\t0.312007395214155\t0.5316391740370102\t872516781\t358245103\tFast trading\tGR\n" +
-                "2013-05-06T04:30:00.000Z\tABF.L\t0.6642987021593373\t0.6390097534838051\t288643332\t844966286\tFast trading\tGR\n" +
-                "2013-05-06T15:36:40.000Z\tRRS.L\t0.1944696111340929\t0.9477868235286393\t823976883\t1563711959\tFast trading\tGR\n" +
-                "2013-05-06T19:46:40.000Z\tLLOY.L\t0.7193355196302277\t0.9404701555734597\t704067095\t1668582762\tFast trading\tGR\n" +
-                "2013-05-06T22:33:20.000Z\tBP.L\t0.46114752131469783\t0.8979723557722048\t1579801637\t2117833235\tFast trading\tGR\n" +
-                "2013-05-06T23:56:40.000Z\tBT-A.L\t0.8883345886748325\t0.7737938544972554\t1750740931\t1514907397\tFast trading\tGR\n";
-
-        UnorderedResultSet<Quote> rs = q.head().withKeys().filter("ex", "GR").strict(false).asResultSet();
-        TestUtils.assertEquals(expected, rs.sort());
-    }
-
-    @Test
-    public void testLatestBySymbolFilter() throws Exception {
-        String expected = "2013-02-10T11:22:30.000Z\tHSBA.L\t0.30903524429086027\t0.10792189935863805\t954532266\t632039501\tFast trading\tLN";
-
-        Query<Quote> q = buildQuery2();
-        QueryHeadBuilder<Quote> builder = q.head().withSymValues("sym").filter("ex", "LN");
-        UnorderedResultSet<Quote> rs = builder.asResultSet();
-        TestUtils.assertEquals(expected, rs);
-
-        builder.resetFilter();
-        try {
-            builder.filter("ex", "NOP");
-            Assert.fail("Expected exception");
-        } catch (Exception e) {
-            // good
-        }
-    }
-
-    @Test
-    public void testLatestByKeyWithinMonths() throws Exception {
-        Query<Quote> q = advanceTestData();
-        long millis;
-        Interval interval = new Interval(Dates.addMonths(millis = System.currentTimeMillis(), -1), millis);
-        UnorderedResultSet<Quote> rs = q.getJournal().query().head().withKeys().limit(interval).asResultSet();
-        Assert.assertEquals(10, rs.size());
-    }
-
-    @Test
-    public void testLatestByKeyOverInterval() throws Exception {
-        String expected = "2013-04-29T15:33:20.000Z\tABF.L\t0.04835893598200669\t0.6684826049193934\t272519515\t1459187837\tFast trading\tGR\n" +
-                "2013-05-03T01:30:00.000Z\tWTB.L\t0.6696457609278927\t0.7177695674107006\t1859909396\t1567568718\tFast trading\tSK\n" +
-                "2013-05-03T05:40:00.000Z\tTLW.L\t0.7180950271706947\t0.7189931302044412\t683609150\t1494093736\tFast trading\tGR\n" +
-                "2013-05-03T07:03:20.000Z\tBT-A.L\t0.008144226019699663\t0.8149620429664706\t1492076657\t2143247261\tFast trading\tLXE\n" +
-                "2013-05-03T09:50:00.000Z\tRRS.L\t0.5590262812936236\t0.13652035496254744\t1522957952\t1962377774\tFast trading\tLXE\n" +
-                "2013-05-03T15:23:20.000Z\tGKN.L\t0.5275167947685228\t0.5630377869323533\t1843235138\t1122238976\tFast trading\tGR\n" +
-                "2013-05-03T18:10:00.000Z\tBP.L\t0.02942030917851568\t0.572757460747041\t683641977\t1362036057\tFast trading\tLXE\n" +
-                "2013-05-03T19:33:20.000Z\tADM.L\t0.8577260763596468\t0.01591134909601677\t901921998\t767627517\tFast trading\tSK\n" +
-                "2013-05-03T22:20:00.000Z\tAGK.L\t0.9788182552381814\t0.3069421348721998\t2053761104\t1032198554\tFast trading\tLXE\n" +
-                "2013-05-03T23:43:20.000Z\tLLOY.L\t0.26716989176964423\t0.21548997929605662\t1042166874\t578687855\tFast trading\tSK\n";
-        UnorderedResultSet<Quote> rs = q.head().withKeys().limit(new Interval(ts2, ts1)).asResultSet();
-        TestUtils.assertEquals(expected, rs.sort());
-    }
-
-    @Test
-    public void testLatestBySymbolOverInterval() throws Exception {
-        String expected = "2013-05-03T22:20:00.000Z\tAGK.L\t0.9788182552381814\t0.3069421348721998\t2053761104\t1032198554\tFast trading\tLXE\n" +
-                "2013-05-03T16:46:40.000Z\tBP.L\t0.800516898126557\t0.17852653385834039\t39877735\t1842395295\tFast trading\tGR\n" +
-                "2013-05-03T23:43:20.000Z\tLLOY.L\t0.26716989176964423\t0.21548997929605662\t1042166874\t578687855\tFast trading\tSK\n";
-        UnorderedResultSet<Quote> rs = q.head().withSymValues("ex").limit(new Interval(ts2, ts1)).asResultSet();
-        TestUtils.assertEquals(expected, rs);
-    }
-
-    @Test
-    public void testLatestByKeyValuesOverInterval() throws Exception {
-        String expected = "2013-05-03T18:10:00.000Z\tBP.L\t0.02942030917851568\t0.572757460747041\t683641977\t1362036057\tFast trading\tLXE\n" +
-                "2013-05-03T22:20:00.000Z\tAGK.L\t0.9788182552381814\t0.3069421348721998\t2053761104\t1032198554\tFast trading\tLXE\n";
-        UnorderedResultSet<Quote> rs = q.head().withKeys("BP.L", "AGK.L", "BAD").limit(new Interval(ts2, ts1)).asResultSet();
-        TestUtils.assertEquals(expected, rs);
-    }
-
-    @Test
-    public void testLatestByKeyValues() throws Exception {
-        String expected = "2013-05-06T22:33:20.000Z\tBP.L\t0.46114752131469783\t0.8979723557722048\t1579801637\t2117833235\tFast trading\tGR\n" +
-                "2013-05-07T01:20:00.000Z\tAGK.L\t0.5217691943089976\t0.28956673106743125\t681718809\t1972465127\tFast trading\tLXE\n";
-        UnorderedResultSet<Quote> rs = q.head().withKeys("BP.L", "AGK.L").asResultSet();
-        TestUtils.assertEquals(expected, rs.sort());
-    }
-
-    @Test
-    public void testLatestBySymbolValues() throws Exception {
-        Query<Quote> q = buildQuery2();
-        String expected = "2013-02-10T11:22:30.000Z\tHSBA.L\t0.30903524429086027\t0.10792189935863805\t954532266\t632039501\tFast trading\tLN\n" +
-                "2013-05-06T23:56:40.000Z\tBT-A.L\t0.8883345886748325\t0.7737938544972554\t1750740931\t1514907397\tFast trading\tGR\n" +
-                "2013-05-07T05:30:00.000Z\tTLW.L\t0.5405954330001682\t0.23821846687340553\t1057951361\t1833806187\tFast trading\tLXE\n";
-        UnorderedResultSet<Quote> rs = q.getJournal().query().head().withSymValues("ex", "LXE", "GR", "LN").asResultSet();
-        TestUtils.assertEquals(expected, rs.sort());
-    }
-
-    @Test
-    public void testLatestByKeyValuesFilter() throws Exception {
-        String expected = "2013-05-06T01:43:20.000Z\tWTB.L\t0.4191390374952899\t0.601628162260468\t2104114979\t1431449453\tFast trading\tLXE\n" +
-                "2013-05-07T01:20:00.000Z\tAGK.L\t0.5217691943089976\t0.28956673106743125\t681718809\t1972465127\tFast trading\tLXE\n";
-        UnorderedResultSet<Quote> rs = q.head().withKeys("WTB.L", "AGK.L").filter("ex", "LXE").asResultSet();
-        TestUtils.assertEquals(expected, rs);
-    }
-
-    @Test
-    public void testLatestBySymbolValuesFilter() throws Exception {
-        Query<Quote> q = buildQuery2();
-        String expected = "2013-05-06T01:43:20.000Z\tWTB.L\t0.4191390374952899\t0.601628162260468\t2104114979\t1431449453\tFast trading\tLXE\n" +
-                "2013-05-07T01:20:00.000Z\tAGK.L\t0.5217691943089976\t0.28956673106743125\t681718809\t1972465127\tFast trading\tLXE\n";
-        UnorderedResultSet<Quote> rs = q.getJournal().query().head().withKeys("WTB.L", "AGK.L", "HSBA.L").filter("ex", "LXE").asResultSet();
-        TestUtils.assertEquals(expected, rs);
-    }
-
-    @Test
     public void testAllSinceRowid() throws Exception {
         String expected = "2013-05-06T17:00:00.000Z\tABF.L\t0.9643251238886018\t0.8129177499445661\t1945548281\t499978914\tFast trading\tSK\n" +
                 "2013-05-06T18:23:20.000Z\tBP.L\t0.45621034230309654\t0.1747016272521107\t1179616540\t908015035\tFast trading\tGR\n" +
@@ -582,35 +417,6 @@ public class QueryTest extends AbstractTest {
                 "2013-05-07T05:30:00.000Z\tTLW.L\t0.5405954330001682\t0.23821846687340553\t1057951361\t1833806187\tFast trading\tLXE\n";
 
         TestUtils.assertEquals(expected, q.all().bufferedIterator(35184372088930L));
-    }
-
-    @Test
-    public void testAll() throws Exception {
-        Assert.assertEquals(1000, q.all().size());
-    }
-
-    @Test
-    public void testIterate() throws Exception {
-        int count = 0;
-        long timestamp = 0;
-        for (Quote a : q.all().bufferedIterator()) {
-            count++;
-            Assert.assertTrue(timestamp <= a.getTimestamp());
-            timestamp = a.getTimestamp();
-        }
-        Assert.assertEquals(1000, count);
-    }
-
-    @Test
-    public void testIterateOverInterval() throws Exception {
-        int count = 0;
-        long timestamp = 0;
-        for (Quote a : q.all().bufferedIterator(new Interval(ts2, ts1))) {
-            count++;
-            Assert.assertTrue(timestamp <= a.getTimestamp());
-            timestamp = a.getTimestamp();
-        }
-        Assert.assertEquals(92, count);
     }
 
     @Test
@@ -648,10 +454,206 @@ public class QueryTest extends AbstractTest {
     }
 
     @Test
+    public void testIterate() throws Exception {
+        int count = 0;
+        long timestamp = 0;
+        for (Quote a : q.all().bufferedIterator()) {
+            count++;
+            Assert.assertTrue(timestamp <= a.getTimestamp());
+            timestamp = a.getTimestamp();
+        }
+        Assert.assertEquals(1000, count);
+    }
+
+    @Test
+    public void testIterateOverInterval() throws Exception {
+        int count = 0;
+        long timestamp = 0;
+        for (Quote a : q.all().bufferedIterator(new Interval(ts2, ts1))) {
+            count++;
+            Assert.assertTrue(timestamp <= a.getTimestamp());
+            timestamp = a.getTimestamp();
+        }
+        Assert.assertEquals(92, count);
+    }
+
+    @Test
+    public void testLatestByKey() throws Exception {
+        String expected = "2013-05-06T01:43:20.000Z\tWTB.L\t0.4191390374952899\t0.601628162260468\t2104114979\t1431449453\tFast trading\tLXE\n" +
+                "2013-05-06T05:53:20.000Z\tGKN.L\t0.6692538497726956\t0.38655868492682444\t1851982635\t389597203\tFast trading\tSK\n" +
+                "2013-05-06T17:00:00.000Z\tABF.L\t0.9643251238886018\t0.8129177499445661\t1945548281\t499978914\tFast trading\tSK\n" +
+                "2013-05-06T19:46:40.000Z\tLLOY.L\t0.7193355196302277\t0.9404701555734597\t704067095\t1668582762\tFast trading\tGR\n" +
+                "2013-05-06T22:33:20.000Z\tBP.L\t0.46114752131469783\t0.8979723557722048\t1579801637\t2117833235\tFast trading\tGR\n" +
+                "2013-05-06T23:56:40.000Z\tBT-A.L\t0.8883345886748325\t0.7737938544972554\t1750740931\t1514907397\tFast trading\tGR\n" +
+                "2013-05-07T01:20:00.000Z\tAGK.L\t0.5217691943089976\t0.28956673106743125\t681718809\t1972465127\tFast trading\tLXE\n" +
+                "2013-05-07T02:43:20.000Z\tRRS.L\t0.7051458116683191\t0.40922139034207683\t631143150\t997183581\tFast trading\tLXE\n" +
+                "2013-05-07T04:06:40.000Z\tADM.L\t0.861499400556018\t0.5243336208514339\t648366676\t698699955\tFast trading\tSK\n" +
+                "2013-05-07T05:30:00.000Z\tTLW.L\t0.5405954330001682\t0.23821846687340553\t1057951361\t1833806187\tFast trading\tLXE\n";
+
+        UnorderedResultSet<Quote> rs = q.head().withKeys().asResultSet();
+        TestUtils.assertEquals(expected, rs.sort());
+    }
+
+    @Test
+    public void testLatestByKeyFilter() throws Exception {
+        String expected = "2013-05-06T19:46:40.000Z\tLLOY.L\t0.7193355196302277\t0.9404701555734597\t704067095\t1668582762\tFast trading\tGR\n" +
+                "2013-05-06T22:33:20.000Z\tBP.L\t0.46114752131469783\t0.8979723557722048\t1579801637\t2117833235\tFast trading\tGR\n" +
+                "2013-05-06T23:56:40.000Z\tBT-A.L\t0.8883345886748325\t0.7737938544972554\t1750740931\t1514907397\tFast trading\tGR\n";
+
+        UnorderedResultSet<Quote> rs = q.head().withKeys().filter("ex", "GR").strict(true).asResultSet();
+        TestUtils.assertEquals(expected, rs.sort());
+    }
+
+    @Test
+    public void testLatestByKeyFilterNonStrict() throws Exception {
+        String expected = "2013-05-02T14:23:20.000Z\tWTB.L\t0.7858327043313086\t0.7679013186397453\t150870909\t427886371\tFast trading\tGR\n" +
+                "2013-05-04T13:36:40.000Z\tGKN.L\t0.5485152099626798\t0.3847951638258288\t543254483\t1530188749\tFast trading\tGR\n" +
+                "2013-05-05T06:16:40.000Z\tADM.L\t0.32183591222731356\t0.9190720816969892\t1035899527\t1133552627\tFast trading\tGR\n" +
+                "2013-05-05T13:13:20.000Z\tAGK.L\t0.38085166997373454\t0.11179154015541148\t1241766823\t1944335528\tFast trading\tGR\n" +
+                "2013-05-05T17:23:20.000Z\tTLW.L\t0.312007395214155\t0.5316391740370102\t872516781\t358245103\tFast trading\tGR\n" +
+                "2013-05-06T04:30:00.000Z\tABF.L\t0.6642987021593373\t0.6390097534838051\t288643332\t844966286\tFast trading\tGR\n" +
+                "2013-05-06T15:36:40.000Z\tRRS.L\t0.1944696111340929\t0.9477868235286393\t823976883\t1563711959\tFast trading\tGR\n" +
+                "2013-05-06T19:46:40.000Z\tLLOY.L\t0.7193355196302277\t0.9404701555734597\t704067095\t1668582762\tFast trading\tGR\n" +
+                "2013-05-06T22:33:20.000Z\tBP.L\t0.46114752131469783\t0.8979723557722048\t1579801637\t2117833235\tFast trading\tGR\n" +
+                "2013-05-06T23:56:40.000Z\tBT-A.L\t0.8883345886748325\t0.7737938544972554\t1750740931\t1514907397\tFast trading\tGR\n";
+
+        UnorderedResultSet<Quote> rs = q.head().withKeys().filter("ex", "GR").strict(false).asResultSet();
+        TestUtils.assertEquals(expected, rs.sort());
+    }
+
+    @Test
+    public void testLatestByKeyNewerThanRowid() throws Exception {
+        Query<Quote> q = buildQuery2();
+
+        String expected = "2013-05-06T01:43:20.000Z\tWTB.L\t0.4191390374952899\t0.601628162260468\t2104114979\t1431449453\tFast trading\tLXE\n" +
+                "2013-05-06T05:53:20.000Z\tGKN.L\t0.6692538497726956\t0.38655868492682444\t1851982635\t389597203\tFast trading\tSK\n" +
+                "2013-05-06T17:00:00.000Z\tABF.L\t0.9643251238886018\t0.8129177499445661\t1945548281\t499978914\tFast trading\tSK\n" +
+                "2013-05-06T19:46:40.000Z\tLLOY.L\t0.7193355196302277\t0.9404701555734597\t704067095\t1668582762\tFast trading\tGR\n" +
+                "2013-05-06T22:33:20.000Z\tBP.L\t0.46114752131469783\t0.8979723557722048\t1579801637\t2117833235\tFast trading\tGR\n" +
+                "2013-05-06T23:56:40.000Z\tBT-A.L\t0.8883345886748325\t0.7737938544972554\t1750740931\t1514907397\tFast trading\tGR\n" +
+                "2013-05-07T01:20:00.000Z\tAGK.L\t0.5217691943089976\t0.28956673106743125\t681718809\t1972465127\tFast trading\tLXE\n" +
+                "2013-05-07T02:43:20.000Z\tRRS.L\t0.7051458116683191\t0.40922139034207683\t631143150\t997183581\tFast trading\tLXE\n" +
+                "2013-05-07T04:06:40.000Z\tADM.L\t0.861499400556018\t0.5243336208514339\t648366676\t698699955\tFast trading\tSK\n" +
+                "2013-05-07T05:30:00.000Z\tTLW.L\t0.5405954330001682\t0.23821846687340553\t1057951361\t1833806187\tFast trading\tLXE\n";
+
+        QueryHeadBuilder<Quote> b = q.head().withKeys().limit(35184372088930L);
+        UnorderedResultSet<Quote> rs = b.asResultSet();
+        TestUtils.assertEquals(expected, rs.sort());
+        Assert.assertEquals(13, b.limit(-1L).asResultSet().size());
+    }
+
+    @Test
+    public void testLatestByKeyOverInterval() throws Exception {
+        String expected = "2013-04-29T15:33:20.000Z\tABF.L\t0.04835893598200669\t0.6684826049193934\t272519515\t1459187837\tFast trading\tGR\n" +
+                "2013-05-03T01:30:00.000Z\tWTB.L\t0.6696457609278927\t0.7177695674107006\t1859909396\t1567568718\tFast trading\tSK\n" +
+                "2013-05-03T05:40:00.000Z\tTLW.L\t0.7180950271706947\t0.7189931302044412\t683609150\t1494093736\tFast trading\tGR\n" +
+                "2013-05-03T07:03:20.000Z\tBT-A.L\t0.008144226019699663\t0.8149620429664706\t1492076657\t2143247261\tFast trading\tLXE\n" +
+                "2013-05-03T09:50:00.000Z\tRRS.L\t0.5590262812936236\t0.13652035496254744\t1522957952\t1962377774\tFast trading\tLXE\n" +
+                "2013-05-03T15:23:20.000Z\tGKN.L\t0.5275167947685228\t0.5630377869323533\t1843235138\t1122238976\tFast trading\tGR\n" +
+                "2013-05-03T18:10:00.000Z\tBP.L\t0.02942030917851568\t0.572757460747041\t683641977\t1362036057\tFast trading\tLXE\n" +
+                "2013-05-03T19:33:20.000Z\tADM.L\t0.8577260763596468\t0.01591134909601677\t901921998\t767627517\tFast trading\tSK\n" +
+                "2013-05-03T22:20:00.000Z\tAGK.L\t0.9788182552381814\t0.3069421348721998\t2053761104\t1032198554\tFast trading\tLXE\n" +
+                "2013-05-03T23:43:20.000Z\tLLOY.L\t0.26716989176964423\t0.21548997929605662\t1042166874\t578687855\tFast trading\tSK\n";
+        UnorderedResultSet<Quote> rs = q.head().withKeys().limit(new Interval(ts2, ts1)).asResultSet();
+        TestUtils.assertEquals(expected, rs.sort());
+    }
+
+    @Test
     public void testLatestByKeyValueOverInterval() throws JournalException {
         Quote Quote = q.head().withKeys("RRS.L").limit(new Interval(ts2, ts1)).asResultSet().readFirst();
         Assert.assertNotNull(Quote);
         Assert.assertEquals(0.5590262812936236, Quote.getBid(), 0.00000000001);
+    }
+
+    @Test
+    public void testLatestByKeyValues() throws Exception {
+        String expected = "2013-05-06T22:33:20.000Z\tBP.L\t0.46114752131469783\t0.8979723557722048\t1579801637\t2117833235\tFast trading\tGR\n" +
+                "2013-05-07T01:20:00.000Z\tAGK.L\t0.5217691943089976\t0.28956673106743125\t681718809\t1972465127\tFast trading\tLXE\n";
+        UnorderedResultSet<Quote> rs = q.head().withKeys("BP.L", "AGK.L").asResultSet();
+        TestUtils.assertEquals(expected, rs.sort());
+    }
+
+    @Test
+    public void testLatestByKeyValuesFilter() throws Exception {
+        String expected = "2013-05-06T01:43:20.000Z\tWTB.L\t0.4191390374952899\t0.601628162260468\t2104114979\t1431449453\tFast trading\tLXE\n" +
+                "2013-05-07T01:20:00.000Z\tAGK.L\t0.5217691943089976\t0.28956673106743125\t681718809\t1972465127\tFast trading\tLXE\n";
+        UnorderedResultSet<Quote> rs = q.head().withKeys("WTB.L", "AGK.L").filter("ex", "LXE").asResultSet();
+        TestUtils.assertEquals(expected, rs);
+    }
+
+    @Test
+    public void testLatestByKeyValuesOverInterval() throws Exception {
+        String expected = "2013-05-03T18:10:00.000Z\tBP.L\t0.02942030917851568\t0.572757460747041\t683641977\t1362036057\tFast trading\tLXE\n" +
+                "2013-05-03T22:20:00.000Z\tAGK.L\t0.9788182552381814\t0.3069421348721998\t2053761104\t1032198554\tFast trading\tLXE\n";
+        UnorderedResultSet<Quote> rs = q.head().withKeys("BP.L", "AGK.L", "BAD").limit(new Interval(ts2, ts1)).asResultSet();
+        TestUtils.assertEquals(expected, rs);
+    }
+
+    @Test
+    public void testLatestByKeyWithinMonths() throws Exception {
+        Query<Quote> q = advanceTestData();
+        long millis;
+        Interval interval = new Interval(Dates.addMonths(millis = System.currentTimeMillis(), -1), millis);
+        UnorderedResultSet<Quote> rs = q.getJournal().query().head().withKeys().limit(interval).asResultSet();
+        Assert.assertEquals(10, rs.size());
+    }
+
+    @Test
+    public void testLatestBySymbol() throws Exception {
+        String expected = "2013-05-06T23:56:40.000Z\tBT-A.L\t0.8883345886748325\t0.7737938544972554\t1750740931\t1514907397\tFast trading\tGR\n" +
+                "2013-05-07T04:06:40.000Z\tADM.L\t0.861499400556018\t0.5243336208514339\t648366676\t698699955\tFast trading\tSK\n" +
+                "2013-05-07T05:30:00.000Z\tTLW.L\t0.5405954330001682\t0.23821846687340553\t1057951361\t1833806187\tFast trading\tLXE\n";
+
+
+        Query<Quote> qq = factory.reader(Quote.class).query();
+        UnorderedResultSet<Quote> rs = qq.head().withSymValues("ex").asResultSet();
+        TestUtils.assertEquals(expected, rs.sort());
+    }
+
+    @Test
+    public void testLatestBySymbolFilter() throws Exception {
+        String expected = "2013-02-10T11:22:30.000Z\tHSBA.L\t0.30903524429086027\t0.10792189935863805\t954532266\t632039501\tFast trading\tLN";
+
+        Query<Quote> q = buildQuery2();
+        QueryHeadBuilder<Quote> builder = q.head().withSymValues("sym").filter("ex", "LN");
+        UnorderedResultSet<Quote> rs = builder.asResultSet();
+        TestUtils.assertEquals(expected, rs);
+
+        builder.resetFilter();
+        try {
+            builder.filter("ex", "NOP");
+            Assert.fail("Expected exception");
+        } catch (Exception e) {
+            // good
+        }
+    }
+
+    @Test
+    public void testLatestBySymbolOverInterval() throws Exception {
+        String expected = "2013-05-03T22:20:00.000Z\tAGK.L\t0.9788182552381814\t0.3069421348721998\t2053761104\t1032198554\tFast trading\tLXE\n" +
+                "2013-05-03T16:46:40.000Z\tBP.L\t0.800516898126557\t0.17852653385834039\t39877735\t1842395295\tFast trading\tGR\n" +
+                "2013-05-03T23:43:20.000Z\tLLOY.L\t0.26716989176964423\t0.21548997929605662\t1042166874\t578687855\tFast trading\tSK\n";
+        UnorderedResultSet<Quote> rs = q.head().withSymValues("ex").limit(new Interval(ts2, ts1)).asResultSet();
+        TestUtils.assertEquals(expected, rs);
+    }
+
+    @Test
+    public void testLatestBySymbolValues() throws Exception {
+        Query<Quote> q = buildQuery2();
+        String expected = "2013-02-10T11:22:30.000Z\tHSBA.L\t0.30903524429086027\t0.10792189935863805\t954532266\t632039501\tFast trading\tLN\n" +
+                "2013-05-06T23:56:40.000Z\tBT-A.L\t0.8883345886748325\t0.7737938544972554\t1750740931\t1514907397\tFast trading\tGR\n" +
+                "2013-05-07T05:30:00.000Z\tTLW.L\t0.5405954330001682\t0.23821846687340553\t1057951361\t1833806187\tFast trading\tLXE\n";
+        UnorderedResultSet<Quote> rs = q.getJournal().query().head().withSymValues("ex", "LXE", "GR", "LN").asResultSet();
+        TestUtils.assertEquals(expected, rs.sort());
+    }
+
+    @Test
+    public void testLatestBySymbolValuesFilter() throws Exception {
+        Query<Quote> q = buildQuery2();
+        String expected = "2013-05-06T01:43:20.000Z\tWTB.L\t0.4191390374952899\t0.601628162260468\t2104114979\t1431449453\tFast trading\tLXE\n" +
+                "2013-05-07T01:20:00.000Z\tAGK.L\t0.5217691943089976\t0.28956673106743125\t681718809\t1972465127\tFast trading\tLXE\n";
+        UnorderedResultSet<Quote> rs = q.getJournal().query().head().withKeys("WTB.L", "AGK.L", "HSBA.L").filter("ex", "LXE").asResultSet();
+        TestUtils.assertEquals(expected, rs);
     }
 
     @Test

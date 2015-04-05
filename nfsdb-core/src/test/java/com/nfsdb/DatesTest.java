@@ -16,7 +16,7 @@
 
 package com.nfsdb;
 
-import com.nfsdb.exp.StringSink;
+import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.utils.Dates;
 import org.junit.Assert;
 import org.junit.Before;
@@ -27,7 +27,7 @@ public class DatesTest {
     private final StringSink sink = new StringSink();
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         sink.clear();
     }
 

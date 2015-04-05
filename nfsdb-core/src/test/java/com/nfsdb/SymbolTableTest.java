@@ -16,9 +16,9 @@
 
 package com.nfsdb;
 
-import com.nfsdb.column.SymbolTable;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalInvalidSymbolValueException;
+import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.test.tools.AbstractTest;
 import org.junit.After;
 import org.junit.Assert;
@@ -30,9 +30,21 @@ public class SymbolTableTest extends AbstractTest {
     private SymbolTable tab = null;
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         if (tab != null) {
             tab.close();
+        }
+    }
+
+    @Test
+    public void testCachePreLoad() throws Exception {
+        String data[] = createData();
+        createTestTable(data);
+        // check that values match keys after cache heat up
+        try (SymbolTable tab = getReader().preLoad()) {
+            for (int i = 0; i < data.length; i++) {
+                Assert.assertEquals(i, tab.getQuick(data[i]));
+            }
         }
     }
 
@@ -50,41 +62,33 @@ public class SymbolTableTest extends AbstractTest {
         }
     }
 
-    @Test
-    public void testValueKeyMatch() throws Exception {
-        String data[] = createData();
-        createTestTable(data);
-
-        // check that values match keys
+    @Test(expected = JournalInvalidSymbolValueException.class)
+    public void testLoudCheckKey() throws Exception {
+        createTestTable(createData());
         try (SymbolTable tab = getReader()) {
-            for (int i = 0; i < data.length; i++) {
-                Assert.assertEquals(i, tab.getQuick(data[i]));
-            }
+            Assert.assertEquals(420, tab.get("TEST420"));
+            // exception
+            tab.get("650");
         }
     }
 
     @Test
-    public void testCachePreLoad() throws Exception {
-        String data[] = createData();
+    public void testNullValues() throws Exception {
+        String data[] = {null, null};
         createTestTable(data);
-        // check that values match keys after cache heat up
-        try (SymbolTable tab = getReader().preLoad()) {
-            for (int i = 0; i < data.length; i++) {
-                Assert.assertEquals(i, tab.getQuick(data[i]));
-            }
+
+        SymbolTable tab = getReader();
+        try {
+            Assert.assertEquals(0, tab.size());
+        } finally {
+            tab.close();
         }
-    }
 
-    @Test
-    public void testValueIterator() throws Exception {
-        String data[] = createData();
-        createTestTable(data);
-
-        try (SymbolTable tab = getReader()) {
-            int key = 0;
-            for (String s : tab.values()) {
-                Assert.assertEquals(data[key++], s);
-            }
+        tab = getReader().preLoad();
+        try {
+            Assert.assertEquals(0, tab.size());
+        } finally {
+            tab.close();
         }
     }
 
@@ -125,26 +129,6 @@ public class SymbolTableTest extends AbstractTest {
     }
 
     @Test
-    public void testNullValues() throws Exception {
-        String data[] = {null, null};
-        createTestTable(data);
-
-        SymbolTable tab = getReader();
-        try {
-            Assert.assertEquals(0, tab.size());
-        } finally {
-            tab.close();
-        }
-
-        tab = getReader().preLoad();
-        try {
-            Assert.assertEquals(0, tab.size());
-        } finally {
-            tab.close();
-        }
-    }
-
-    @Test
     public void testRepeatedValues() throws Exception {
         String data[] = {"VAL1", null, "VAL2", "", "VAL2", "", null, "VAL1", "VAL3"};
         int expectedKeys[] = {0, -1, 1, 2, 1, 2, -1, 0, 3};
@@ -155,16 +139,6 @@ public class SymbolTableTest extends AbstractTest {
             for (int i = 0; i < data.length; i++) {
                 Assert.assertEquals(expectedKeys[i], tab.getQuick(data[i]));
             }
-        }
-    }
-
-    @Test(expected = JournalInvalidSymbolValueException.class)
-    public void testLoudCheckKey() throws Exception {
-        createTestTable(createData());
-        try (SymbolTable tab = getReader()) {
-            Assert.assertEquals(420, tab.get("TEST420"));
-            // exception
-            tab.get("650");
         }
     }
 
@@ -179,6 +153,32 @@ public class SymbolTableTest extends AbstractTest {
             tab.truncate();
             Assert.assertEquals(0, tab.size());
             Assert.assertFalse(tab.valueExists("TEST25"));
+        }
+    }
+
+    @Test
+    public void testValueIterator() throws Exception {
+        String data[] = createData();
+        createTestTable(data);
+
+        try (SymbolTable tab = getReader()) {
+            int key = 0;
+            for (String s : tab.values()) {
+                Assert.assertEquals(data[key++], s);
+            }
+        }
+    }
+
+    @Test
+    public void testValueKeyMatch() throws Exception {
+        String data[] = createData();
+        createTestTable(data);
+
+        // check that values match keys
+        try (SymbolTable tab = getReader()) {
+            for (int i = 0; i < data.length; i++) {
+                Assert.assertEquals(i, tab.getQuick(data[i]));
+            }
         }
     }
 

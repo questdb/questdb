@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.lang.cst.PartitionSlice;
 import com.nfsdb.lang.cst.PartitionSource;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class JournalPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource {
 
@@ -38,10 +39,16 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
     }
 
     @Override
+    public Journal getJournal() {
+        return journal;
+    }
+
+    @Override
     public boolean hasNext() {
         return partitionIndex < partitionCount;
     }
 
+    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
     @Override
     public PartitionSlice next() {
         try {
@@ -55,13 +62,8 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
     }
 
     @Override
-    public void reset() {
+    public final void reset() {
         partitionCount = journal.getPartitionCount();
         partitionIndex = 0;
-    }
-
-    @Override
-    public Journal getJournal() {
-        return journal;
     }
 }

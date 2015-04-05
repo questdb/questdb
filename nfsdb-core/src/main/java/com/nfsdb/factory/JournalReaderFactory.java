@@ -26,7 +26,19 @@ import java.io.Closeable;
 
 public interface JournalReaderFactory extends Closeable {
 
+    <T> JournalBulkReader<T> bulkReader(Class<T> clazz, String location) throws JournalException;
+
+    <T> JournalBulkReader<T> bulkReader(Class<T> clazz) throws JournalException;
+
+    JournalBulkReader bulkReader(String location) throws JournalException;
+
+    <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException;
+
     void close();
+
+    JournalExistenceCheck exists(String location);
+
+    JournalConfiguration getConfiguration();
 
     <T> Journal<T> reader(JournalKey<T> key) throws JournalException;
 
@@ -36,15 +48,10 @@ public interface JournalReaderFactory extends Closeable {
 
     Journal reader(String location) throws JournalException;
 
-    <T> JournalBulkReader<T> bulkReader(Class<T> clazz, String location) throws JournalException;
-
     <T> Journal<T> reader(Class<T> clazz, String location, int recordHint) throws JournalException;
 
-    <T> JournalBulkReader<T> bulkReader(Class<T> clazz) throws JournalException;
+    enum JournalExistenceCheck {
+        EXISTS, DOES_NOT_EXIST, EXISTS_FOREIGN
+    }
 
-    JournalBulkReader bulkReader(String location) throws JournalException;
-
-    <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException;
-
-    JournalConfiguration getConfiguration();
 }

@@ -16,6 +16,8 @@
 
 package com.nfsdb.lang.cst.impl.qry;
 
+import com.nfsdb.lang.cst.Record;
+import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.column.DirectInputStream;
 import java.io.OutputStream;
 
@@ -28,13 +30,28 @@ public abstract class AbstractRecord implements Record {
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
+    public byte get(String column) {
+        return get(metadata.getColumnIndex(column));
     }
 
     @Override
-    public byte get(String column) {
-        return get(metadata.getColumnIndex(column));
+    public void getBin(String column, OutputStream s) {
+        getBin(metadata.getColumnIndex(column), s);
+    }
+
+    @Override
+    public boolean getBool(String column) {
+        return getBool(metadata.getColumnIndex(column));
+    }
+
+    @Override
+    public double getDouble(String column) {
+        return getDouble(metadata.getColumnIndex(column));
+    }
+
+    @Override
+    public float getFloat(String column) {
+        return getFloat(metadata.getColumnIndex(column));
     }
 
     @Override
@@ -48,10 +65,15 @@ public abstract class AbstractRecord implements Record {
     }
 
     @Override
-    public double getDouble(String column) {
-        return getDouble(metadata.getColumnIndex(column));
+    public RecordMetadata getMetadata() {
+        return metadata;
     }
 
+    @Override
+    public DirectInputStream getBin(String column) {
+        return getBin(metadata.getColumnIndex(column));
+    }
+    
     @Override
     public CharSequence getStr(String column) {
         return getStr(metadata.getColumnIndex(column));
@@ -60,20 +82,5 @@ public abstract class AbstractRecord implements Record {
     @Override
     public String getSym(String column) {
         return getSym(metadata.getColumnIndex(column));
-    }
-
-    @Override
-    public boolean getBool(String column) {
-        return getBool(metadata.getColumnIndex(column));
-    }
-
-    @Override
-    public void getBin(String column, OutputStream s) {
-        getBin(metadata.getColumnIndex(column), s);
-    }
-
-    @Override
-    public DirectInputStream getBin(String column) {
-        return getBin(metadata.getColumnIndex(column));
     }
 }

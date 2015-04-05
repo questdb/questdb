@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,14 +16,14 @@
 
 package com.nfsdb;
 
-import com.nfsdb.exp.CharSink;
-import com.nfsdb.exp.StringSink;
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.io.sink.DelimitedCharSink;
+import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.model.Quote;
+import com.nfsdb.storage.Tx;
+import com.nfsdb.storage.TxLog;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
-import com.nfsdb.tx.Tx;
-import com.nfsdb.tx.TxLog;
-import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Rows;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -35,6 +35,16 @@ import java.io.File;
 public class TxLogTest extends AbstractTest {
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
+
+    public static void main(String[] args) throws JournalException {
+        TxLog server = new TxLog(new File("D:\\data\\org.nfsdb.examples.model.Price"), JournalMode.READ);
+        TxLog client = new TxLog(new File("D:\\data\\price-copy"), JournalMode.READ);
+
+        System.out.println(client.getCurrentTxn());
+        System.out.println(client.getCurrentTxnPin());
+        System.out.println(server.getCurrentTxn());
+        System.out.println(server.getCurrentTxnPin());
+    }
 
     @Test
     public void testTx() throws Exception {
@@ -103,45 +113,15 @@ public class TxLogTest extends AbstractTest {
                 "1\t0\t100\n" +
                 "0\t0\t0\n";
 
-        CharSink sink = new StringSink();
+        DelimitedCharSink sink = new DelimitedCharSink(new StringSink(), '\t', "\n");
         for (Tx tx : w.transactions()) {
-            Numbers.append(sink, tx.txn);
-            sink.put('\t');
-            Numbers.append(sink, tx.journalMaxRowID == -1 ? 0 : Rows.toPartitionIndex(tx.journalMaxRowID));
-            sink.put('\t');
-            Numbers.append(sink, tx.journalMaxRowID == -1 ? 0 : Rows.toLocalRowID(tx.journalMaxRowID));
-            sink.put('\n');
-            sink.flush();
+            sink.put(tx.txn);
+            sink.put(tx.journalMaxRowID == -1 ? 0 : Rows.toPartitionIndex(tx.journalMaxRowID));
+            sink.put(tx.journalMaxRowID == -1 ? 0 : Rows.toLocalRowID(tx.journalMaxRowID));
+            sink.eol();
         }
+        sink.flush();
         Assert.assertEquals(expected, sink.toString());
     }
-
-    //todo: test rollback
-//
-//    @Test
-//    public void testTxLogWalk() throws Exception {
-//        JournalWriter<Quote> writer = factory.writer(Quote.class);
-//        // tx1
-//        TestUtils.generateQuoteData(writer, 100, System.currentTimeMillis());
-//        writer.commit();
-//        // tx2
-//        TestUtils.generateQuoteData(writer, 100, System.currentTimeMillis());
-//        writer.commit();
-//        // tx3
-//        TestUtils.generateQuoteData(writer, 100, System.currentTimeMillis());
-//        writer.commit();
-//        // tx4
-//        TestUtils.generateQuoteData(writer, 100, System.currentTimeMillis());
-//        writer.commit();
-//
-//        Assert.assertEquals(400, writer.size());
-//        writer.rollback(writer.txLog.prevAddress(writer.txLog.headAddress()));
-//        Assert.assertEquals(300, writer.size());
-//
-//        Tx tx = new Tx();
-//        long address = writer.txLog.headAddress();
-//        writer.txLog.read(address, tx);
-//        Assert.assertEquals(300, tx.journalMaxRowID);
-//    }
 }
 

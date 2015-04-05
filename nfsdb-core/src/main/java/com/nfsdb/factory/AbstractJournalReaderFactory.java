@@ -17,14 +17,16 @@
 package com.nfsdb.factory;
 
 import com.nfsdb.*;
-import com.nfsdb.concurrent.TimerCache;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.storage.TxLog;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.File;
 
+@SuppressFBWarnings({"PATH_TRAVERSAL_IN"})
 public abstract class AbstractJournalReaderFactory implements JournalReaderFactory, Closeable {
 
     private final TimerCache timerCache;
@@ -44,10 +46,42 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
     }
 
     @Override
+    public <T> JournalBulkReader<T> bulkReader(Class<T> clazz, String location) throws JournalException {
+        return bulkReader(new JournalKey<>(clazz, location));
+    }
+
+    @Override
+    public <T> JournalBulkReader<T> bulkReader(Class<T> clazz) throws JournalException {
+        return bulkReader(new JournalKey<>(clazz));
+    }
+
+    @Override
+    public JournalBulkReader bulkReader(String location) throws JournalException {
+        return bulkReader(new JournalKey<>(location));
+    }
+
+    @Override
     public void close() {
         if (ownTimerCache) {
             timerCache.halt();
         }
+    }
+
+    public JournalExistenceCheck exists(String location) {
+        File base = new File(getConfiguration().getJournalBase(), location);
+        if (!base.exists()) {
+            return JournalExistenceCheck.DOES_NOT_EXIST;
+        }
+
+        if (new File(base, TxLog.FILE_NAME).exists() && new File(base, JournalConfiguration.FILE_NAME).exists()) {
+            return JournalExistenceCheck.EXISTS;
+        }
+
+        return JournalExistenceCheck.EXISTS_FOREIGN;
+    }
+
+    public JournalConfiguration getConfiguration() {
+        return configuration;
     }
 
     @Override
@@ -66,27 +100,8 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
     }
 
     @Override
-    public <T> JournalBulkReader<T> bulkReader(Class<T> clazz, String location) throws JournalException {
-        return bulkReader(new JournalKey<>(clazz, location));
-    }
-
-    @Override
     public <T> Journal<T> reader(Class<T> clazz, String location, int recordHint) throws JournalException {
         return reader(new JournalKey<>(clazz, location, PartitionType.DEFAULT, recordHint));
-    }
-
-    @Override
-    public <T> JournalBulkReader<T> bulkReader(Class<T> clazz) throws JournalException {
-        return bulkReader(new JournalKey<>(clazz));
-    }
-
-    @Override
-    public JournalBulkReader bulkReader(String location) throws JournalException {
-        return bulkReader(new JournalKey<>(location));
-    }
-
-    public JournalConfiguration getConfiguration() {
-        return configuration;
     }
 
     <T> JournalMetadata<T> getOrCreateMetadata(JournalKey<T> key) throws JournalException {

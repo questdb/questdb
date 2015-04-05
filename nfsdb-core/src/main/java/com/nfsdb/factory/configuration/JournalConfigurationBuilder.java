@@ -16,16 +16,16 @@
 
 package com.nfsdb.factory.configuration;
 
+import com.nfsdb.collections.ObjObjHashMap;
 import com.nfsdb.exceptions.JournalConfigurationException;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 public class JournalConfigurationBuilder {
-    private final List<JMetadataBuilder> builders = new ArrayList<>();
+    private final List<MetadataBuilder> builders = new ArrayList<>();
 
     public <T> JournalMetadataBuilder<T> $(Class<T> clazz) {
         JournalMetadataBuilder<T> builder = new JournalMetadataBuilder<>(clazz);
@@ -39,10 +39,12 @@ public class JournalConfigurationBuilder {
         return builder;
     }
 
+    @SuppressFBWarnings({"PATH_TRAVERSAL_IN"})
     public JournalConfiguration build(String journalBase) {
         return build(new File(journalBase));
     }
 
+    @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public JournalConfiguration build(File journalBase) {
         if (!journalBase.isDirectory()) {
             throw new JournalConfigurationException("Not a directory: %s", journalBase);
@@ -53,7 +55,7 @@ public class JournalConfigurationBuilder {
         }
 
 
-        Map<String, JournalMetadata> metadata = new HashMap<>(builders.size());
+        ObjObjHashMap<String, JournalMetadata> metadata = new ObjObjHashMap<>(builders.size());
         for (int i = 0, sz = builders.size(); i < sz; i++) {
             JournalMetadata meta = builders.get(i).build();
             metadata.put(meta.getId(), meta);

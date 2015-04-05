@@ -18,10 +18,12 @@ package com.nfsdb.lang.cst.impl.rsrc;
 
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.index.KVIndex;
 import com.nfsdb.lang.cst.*;
 import com.nfsdb.lang.cst.impl.ref.StringRef;
+import com.nfsdb.storage.KVIndex;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
 public class KvIndexTopRowSource implements RowSource, RowCursor {
 
     private final StringRef column;
@@ -32,7 +34,6 @@ public class KvIndexTopRowSource implements RowSource, RowCursor {
     private KeyCursor keyCursor;
     private long lo;
     private long hi;
-    private KVIndex.IndexCursor indexCursor;
     private long localRowID;
     private RowAcceptor rowAcceptor;
 
@@ -63,7 +64,7 @@ public class KvIndexTopRowSource implements RowSource, RowCursor {
             return false;
         }
 
-        indexCursor = index.cachedCursor(keyCursor.next());
+        KVIndex.IndexCursor indexCursor = index.cachedCursor(keyCursor.next());
         while (indexCursor.hasNext()) {
             localRowID = indexCursor.next();
             if (localRowID >= lo && localRowID <= hi && (rowAcceptor == null || rowAcceptor.accept(localRowID) == Choice.PICK)) {
@@ -86,6 +87,5 @@ public class KvIndexTopRowSource implements RowSource, RowCursor {
     @Override
     public void reset() {
         keySource.reset();
-        indexCursor = null;
     }
 }

@@ -1,8 +1,9 @@
 package com.nfsdb.collections;
 
-import com.nfsdb.lang.cst.impl.qry.Record;
-import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
-import com.nfsdb.lang.cst.impl.qry.RecordSource;
+import com.nfsdb.lang.cst.Record;
+import com.nfsdb.lang.cst.RecordMetadata;
+import com.nfsdb.lang.cst.RecordSource;
+
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Iterator;

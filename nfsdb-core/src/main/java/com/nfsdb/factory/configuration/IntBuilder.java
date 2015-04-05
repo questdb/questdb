@@ -16,20 +16,23 @@
 
 package com.nfsdb.factory.configuration;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+
 public class IntBuilder<T> extends AbstractMetadataBuilder<T> {
 
+    @SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
     public IntBuilder(JournalMetadataBuilder<T> parent, ColumnMetadata meta) {
         super(parent, meta);
         this.meta.size = 4;
     }
 
-    public IntBuilder<T> index() {
-        this.meta.indexed = true;
+    public IntBuilder<T> buckets(int buckets) {
+        this.meta.distinctCountHint = buckets;
         return this;
     }
 
-    public IntBuilder<T> buckets(int buckets) {
-        this.meta.distinctCountHint = buckets;
+    public IntBuilder<T> index() {
+        this.meta.indexed = true;
         return this;
     }
 }

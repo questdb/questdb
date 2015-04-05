@@ -1,13 +1,11 @@
 package com.nfsdb.collections.mmap;
 
 import com.nfsdb.collections.DirectRecordLinkedList;
-import com.nfsdb.column.ColumnType;
-import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.lang.cst.impl.qry.Record;
+import com.nfsdb.lang.cst.Record;
+import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.impl.qry.RecordColumn;
-import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
-import com.nfsdb.lang.cst.impl.qry.RecordSource;
+import com.nfsdb.storage.ColumnType;
 import com.sun.javaws.exceptions.InvalidArgumentException;
 
 import java.io.Closeable;
@@ -32,12 +30,12 @@ public class MultiRecordMap implements Closeable {
         records = new DirectRecordLinkedList(valueMetadata, capacity, avgRecSize);
     }
 
-    public MultiMap.Key claimKey() {
-        return map.claimKey();
+    public MultiMap.KeyWriter claimKey() {
+        return map.keyWriter();
     }
 
-    public void add(MultiMap.Key key, Record value) {
-        MapValues values = map.claimSlot(key);
+    public void add(MultiMap.KeyWriter key, Record value) {
+        MapValues values = map.values(key);
         long prevVal = values.isNew() ? -1 : values.getLong(0);
         long newVal = records.append(value, prevVal);
         values.putLong(0, newVal);

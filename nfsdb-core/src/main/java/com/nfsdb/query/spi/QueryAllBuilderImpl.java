@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,11 +17,11 @@
 package com.nfsdb.query.spi;
 
 import com.nfsdb.Journal;
-import com.nfsdb.UnorderedResultSet;
 import com.nfsdb.collections.DirectIntList;
-import com.nfsdb.column.SymbolTable;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.query.UnorderedResultSet;
 import com.nfsdb.query.api.QueryAllBuilder;
+import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.utils.Interval;
 
 import java.util.ArrayList;
@@ -41,26 +41,8 @@ public class QueryAllBuilderImpl<T> implements QueryAllBuilder<T> {
     }
 
     @Override
-    public QueryAllBuilder<T> slice(Interval interval) {
-        setInterval(interval);
-        return this;
-    }
-
-    @Override
     public UnorderedResultSet<T> asResultSet() throws JournalException {
         return journal.iteratePartitionsDesc(new QueryAllResultSetBuilder<T>(interval, symbol, symbolKeys, filterSymbols, filterSymbolKeys));
-    }
-
-    public void setSymbol(String symbol, String... values) {
-        this.symbol = symbol;
-        SymbolTable symbolTable = journal.getSymbolTable(symbol);
-        this.symbolKeys.reset();
-        for (int i = 0; i < values.length; i++) {
-            int key = symbolTable.getQuick(values[i]);
-            if (key != SymbolTable.VALUE_NOT_FOUND) {
-                symbolKeys.add(key);
-            }
-        }
     }
 
     @Override
@@ -78,7 +60,25 @@ public class QueryAllBuilderImpl<T> implements QueryAllBuilder<T> {
         filterSymbolKeys.reset();
     }
 
+    @Override
+    public QueryAllBuilder<T> slice(Interval interval) {
+        setInterval(interval);
+        return this;
+    }
+
     public void setInterval(Interval interval) {
         this.interval = interval;
+    }
+
+    public void setSymbol(String symbol, String... values) {
+        this.symbol = symbol;
+        SymbolTable symbolTable = journal.getSymbolTable(symbol);
+        this.symbolKeys.reset();
+        for (int i = 0; i < values.length; i++) {
+            int key = symbolTable.getQuick(values[i]);
+            if (key != SymbolTable.VALUE_NOT_FOUND) {
+                symbolKeys.add(key);
+            }
+        }
     }
 }

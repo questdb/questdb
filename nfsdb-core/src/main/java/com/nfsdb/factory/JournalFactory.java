@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,18 +17,19 @@
 package com.nfsdb.factory;
 
 import com.nfsdb.*;
-import com.nfsdb.concurrent.TimerCache;
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.factory.configuration.JMetadataBuilder;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.factory.configuration.MetadataBuilder;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.File;
 
 public class JournalFactory extends AbstractJournalReaderFactory implements JournalReaderFactory, JournalWriterFactory, Closeable {
 
+    @SuppressFBWarnings({"SCII_SPOILED_CHILD_INTERFACE_IMPLEMENTOR"})
     public JournalFactory(String journalBase) {
         super(new JournalConfigurationBuilder().build(journalBase));
     }
@@ -43,6 +44,36 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
 
     protected JournalFactory(JournalConfiguration configuration, TimerCache timerCache) {
         super(configuration, timerCache);
+    }
+
+    @Override
+    public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
+        return new JournalBulkReader<>(getOrCreateMetadata(key), key, getTimerCache());
+    }
+
+    @Override
+    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
+        return new Journal<>(getOrCreateMetadata(key), key, getTimerCache());
+    }
+
+    @Override
+    public <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz) throws JournalException {
+        return bulkWriter(new JournalKey<>(clazz));
+    }
+
+    @Override
+    public <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz, String location) throws JournalException {
+        return bulkWriter(new JournalKey<>(clazz, location));
+    }
+
+    @Override
+    public <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz, String location, int recordHint) throws JournalException {
+        return bulkWriter(new JournalKey<>(clazz, location, PartitionType.DEFAULT, recordHint));
+    }
+
+    @Override
+    public <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException {
+        return new JournalBulkWriter<>(getConfiguration().createMetadata(key), key, getTimerCache());
     }
 
     @Override
@@ -71,38 +102,9 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
     }
 
     @Override
-    public <T> JournalWriter<T> writer(JMetadataBuilder<T> b) throws JournalException {
+    public <T> JournalWriter<T> writer(MetadataBuilder<T> b) throws JournalException {
+        String location = b.getLocation();
         JournalMetadata<T> metadata = getConfiguration().augmentMetadata(b);
-        return new JournalWriter<>(metadata, metadata.deriveKey(), getTimerCache());
-    }
-
-    @Override
-    public <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException {
-        return new JournalBulkWriter<>(getConfiguration().createMetadata(key), key, getTimerCache());
-    }
-
-    @Override
-    public <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz) throws JournalException {
-        return bulkWriter(new JournalKey<>(clazz));
-    }
-
-    @Override
-    public <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz, String location) throws JournalException {
-        return bulkWriter(new JournalKey<>(clazz, location));
-    }
-
-    @Override
-    public <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz, String location, int recordHint) throws JournalException {
-        return bulkWriter(new JournalKey<>(clazz, location, PartitionType.DEFAULT, recordHint));
-    }
-
-    @Override
-    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        return new Journal<>(getOrCreateMetadata(key), key, getTimerCache());
-    }
-
-    @Override
-    public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
-        return new JournalBulkReader<>(getOrCreateMetadata(key), key, getTimerCache());
+        return new JournalWriter<>(metadata, metadata.deriveKey(location), getTimerCache());
     }
 }

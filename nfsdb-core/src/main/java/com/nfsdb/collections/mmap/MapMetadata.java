@@ -17,11 +17,9 @@
 package com.nfsdb.collections.mmap;
 
 import com.nfsdb.collections.ObjIntHashMap;
-import com.nfsdb.column.ColumnType;
-import com.nfsdb.column.SymbolTable;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
+import com.nfsdb.lang.cst.RecordMetadata;
 
 import java.util.List;
 
@@ -54,22 +52,12 @@ public final class MapMetadata implements RecordMetadata {
     }
 
     @Override
-    public ColumnType getColumnType(int x) {
-        return getColumn(x).getType();
-    }
-
-    @Override
     public int getColumnIndex(CharSequence name) {
         int index = nameCache.get(name);
         if (index == -1) {
             throw new JournalRuntimeException("No such column: " + name);
         }
         return index;
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int index) {
-        return getColumn(index).getSymbolTable();
     }
 
     @Override

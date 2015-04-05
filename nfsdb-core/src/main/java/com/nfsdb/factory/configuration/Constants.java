@@ -18,8 +18,7 @@ package com.nfsdb.factory.configuration;
 
 public class Constants {
     public static final String TEMP_DIRECTORY_PREFIX = "temp";
-    public static final String JOURNAL_META_FILE = "_meta";
     public static final int NULL_RECORD_HINT = 0;
     public static final int DEFAULT_STRING_AVG_SIZE = 12;
-    public static final int PIPE_BIT_HINT = 16;
+    public static final int HB_HINT = 16;
 }

@@ -18,6 +18,7 @@ package com.nfsdb.utils;
 
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -25,6 +26,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.Charset;
 
+@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public final class Files {
 
     public static final Charset UTF_8;
@@ -45,6 +47,7 @@ public final class Files {
         }
     }
 
+    @SuppressFBWarnings({"MDM_THREAD_YIELD"})
     public static void deleteOrException(File file) throws JournalException {
         if (!file.exists()) {
             return;
@@ -63,13 +66,30 @@ public final class Files {
         }
     }
 
-    public static void writeStringToFile(File file, String s) throws JournalException {
+    public static File makeTempDir() {
+        File result;
         try {
-            try (FileOutputStream fos = new FileOutputStream(file)) {
-                fos.write(s.getBytes(UTF_8));
-            }
+            result = File.createTempFile("nfsdb", "");
+            deleteOrException(result);
+            mkDirsOrException(result);
+        } catch (Exception e) {
+            throw new JournalRuntimeException("Exception when creating temp dir", e);
+        }
+        return result;
+    }
+
+    public static File makeTempFile() {
+        try {
+            return File.createTempFile("nfsdb", "");
         } catch (IOException e) {
-            throw new JournalException("Cannot write to %s", e, file.getAbsolutePath());
+            throw new JournalRuntimeException(e);
+        }
+
+    }
+
+    public static void mkDirsOrException(File dir) {
+        if (!dir.mkdirs()) {
+            throw new JournalRuntimeException("Cannot create temp directory: %s", dir);
         }
     }
 
@@ -89,24 +109,17 @@ public final class Files {
         }
     }
 
-    public static File makeTempDir() {
-        File result;
+    public static void writeStringToFile(File file, String s) throws JournalException {
         try {
-            result = File.createTempFile("journal", "");
-            deleteOrException(result);
-            mkDirsOrException(result);
-        } catch (Exception e) {
-            throw new JournalRuntimeException("Exception when creating temp dir", e);
-        }
-        return result;
-    }
-
-    public static void mkDirsOrException(File dir) {
-        if (!dir.mkdirs()) {
-            throw new JournalRuntimeException("Cannot create temp directory: %s", dir);
+            try (FileOutputStream fos = new FileOutputStream(file)) {
+                fos.write(s.getBytes(UTF_8));
+            }
+        } catch (IOException e) {
+            throw new JournalException("Cannot write to %s", e, file.getAbsolutePath());
         }
     }
 
+    @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE"})
     private static void deleteDirContentsOrException(File file) throws JournalException {
         if (!file.exists()) {
             return;

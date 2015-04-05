@@ -16,14 +16,16 @@
 
 package com.nfsdb.lang.cst.impl.ksrc;
 
-import com.nfsdb.column.SymbolTable;
 import com.nfsdb.lang.cst.KeyCursor;
 import com.nfsdb.lang.cst.KeySource;
 import com.nfsdb.lang.cst.PartitionSlice;
 import com.nfsdb.lang.cst.impl.ref.StringRef;
+import com.nfsdb.storage.SymbolTable;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.List;
 
+@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class PartialSymbolKeySource implements KeySource, KeyCursor {
 
     private final StringRef symbol;
@@ -46,7 +48,7 @@ public class PartialSymbolKeySource implements KeySource, KeyCursor {
             }
             this.symbolTable = slice.partition.getJournal().getSymbolTable(symbol.value);
             int keyCount = 0;
-            for (int i = 0; i < values.size(); i++) {
+            for (int i = 0, k = values.size(); i < k; i++) {
                 int key = symbolTable.getQuick(values.get(i));
                 if (key >= 0) {
                     keys[keyCount++] = key;
@@ -69,13 +71,13 @@ public class PartialSymbolKeySource implements KeySource, KeyCursor {
     }
 
     @Override
-    public int size() {
-        return keyCount;
-    }
-
-    @Override
     public void reset() {
         symbolTable = null;
         keyIndex = 0;
+    }
+
+    @Override
+    public int size() {
+        return keyCount;
     }
 }

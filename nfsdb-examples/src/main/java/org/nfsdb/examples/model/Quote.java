@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,44 +38,12 @@ public class Quote {
         this.ex = null;
     }
 
-    public long getTimestamp() {
-        return timestamp;
-    }
-
-    public void setTimestamp(long timestamp) {
-        this.timestamp = timestamp;
-    }
-
-    public String getSym() {
-        return sym;
-    }
-
-    public void setSym(String sym) {
-        this.sym = sym;
-    }
-
-    public double getBid() {
-        return bid;
-    }
-
-    public void setBid(double bid) {
-        this.bid = bid;
-    }
-
     public double getAsk() {
         return ask;
     }
 
     public void setAsk(double ask) {
         this.ask = ask;
-    }
-
-    public int getBidSize() {
-        return bidSize;
-    }
-
-    public void setBidSize(int bidSize) {
-        this.bidSize = bidSize;
     }
 
     public int getAskSize() {
@@ -86,12 +54,20 @@ public class Quote {
         this.askSize = askSize;
     }
 
-    public String getMode() {
-        return mode;
+    public double getBid() {
+        return bid;
     }
 
-    public void setMode(String mode) {
-        this.mode = mode;
+    public void setBid(double bid) {
+        this.bid = bid;
+    }
+
+    public int getBidSize() {
+        return bidSize;
+    }
+
+    public void setBidSize(int bidSize) {
+        this.bidSize = bidSize;
     }
 
     public String getEx() {
@@ -102,18 +78,44 @@ public class Quote {
         this.ex = ex;
     }
 
+    public String getMode() {
+        return mode;
+    }
+
+    public void setMode(String mode) {
+        this.mode = mode;
+    }
+
+    public String getSym() {
+        return sym;
+    }
+
+    public void setSym(String sym) {
+        this.sym = sym;
+    }
+
+    public long getTimestamp() {
+        return timestamp;
+    }
+
+    public void setTimestamp(long timestamp) {
+        this.timestamp = timestamp;
+    }
+
     @Override
-    public String toString() {
-        return "Quote{" +
-                "timestamp=" + timestamp +
-                ", sym='" + sym + '\'' +
-                ", bid=" + bid +
-                ", ask=" + ask +
-                ", bidSize=" + bidSize +
-                ", askSize=" + askSize +
-                ", mode='" + mode + '\'' +
-                ", ex='" + ex + '\'' +
-                '}';
+    public int hashCode() {
+        int result;
+        long temp;
+        result = (int) (timestamp ^ (timestamp >>> 32));
+        result = 31 * result + (sym != null ? sym.hashCode() : 0);
+        temp = Double.doubleToLongBits(bid);
+        result = 31 * result + (int) (temp ^ (temp >>> 32));
+        temp = Double.doubleToLongBits(ask);
+        result = 31 * result + (int) (temp ^ (temp >>> 32));
+        result = 31 * result + bidSize;
+        result = 31 * result + askSize;
+        result = 31 * result + (mode != null ? mode.hashCode() : 0);
+        return 31 * result + (ex != null ? ex.hashCode() : 0);
     }
 
     @Override
@@ -135,19 +137,16 @@ public class Quote {
     }
 
     @Override
-    public int hashCode() {
-        int result;
-        long temp;
-        result = (int) (timestamp ^ (timestamp >>> 32));
-        result = 31 * result + (sym != null ? sym.hashCode() : 0);
-        temp = Double.doubleToLongBits(bid);
-        result = 31 * result + (int) (temp ^ (temp >>> 32));
-        temp = Double.doubleToLongBits(ask);
-        result = 31 * result + (int) (temp ^ (temp >>> 32));
-        result = 31 * result + bidSize;
-        result = 31 * result + askSize;
-        result = 31 * result + (mode != null ? mode.hashCode() : 0);
-        result = 31 * result + (ex != null ? ex.hashCode() : 0);
-        return result;
+    public String toString() {
+        return "Quote{" +
+                "timestamp=" + timestamp +
+                ", sym='" + sym + '\'' +
+                ", bid=" + bid +
+                ", ask=" + ask +
+                ", bidSize=" + bidSize +
+                ", askSize=" + askSize +
+                ", mode='" + mode + '\'' +
+                ", ex='" + ex + '\'' +
+                '}';
     }
 }

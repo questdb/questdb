@@ -20,6 +20,9 @@ import com.nfsdb.Partition;
 import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.column.FixedColumn;
 import com.nfsdb.exp.CharSink;
+import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.lang.cst.RecordMetadata;
+import com.nfsdb.storage.FixedColumn;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -60,6 +63,11 @@ public class JournalRecord extends AbstractRecord {
     @Override
     public double getDouble(int col) {
         return partition.getDouble(rowid, col);
+    }
+
+    @Override
+    public float getFloat(int col) {
+        return partition.getFloat(rowid, col);
     }
 
     @Override

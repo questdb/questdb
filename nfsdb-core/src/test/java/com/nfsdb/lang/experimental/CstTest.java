@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,22 +21,18 @@ import com.nfsdb.JournalWriter;
 import com.nfsdb.Partition;
 import com.nfsdb.collections.mmap.MapValues;
 import com.nfsdb.collections.mmap.MultiMap;
-import com.nfsdb.column.ColumnType;
-import com.nfsdb.column.FixedColumn;
-import com.nfsdb.column.SymbolTable;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.lang.cst.StatefulJournalSource;
+import com.nfsdb.lang.cst.JournalRecordSource;
+import com.nfsdb.lang.cst.Record;
+import com.nfsdb.lang.cst.RecordSource;
 import com.nfsdb.lang.cst.impl.join.NestedLoopLeftOuterJoin;
 import com.nfsdb.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.lang.cst.impl.jsrc.StatefulJournalSourceImpl;
 import com.nfsdb.lang.cst.impl.ksrc.SingleKeySource;
 import com.nfsdb.lang.cst.impl.psrc.JournalPartitionSource;
 import com.nfsdb.lang.cst.impl.qry.JournalRecord;
-import com.nfsdb.lang.cst.impl.qry.JournalRecordSource;
-import com.nfsdb.lang.cst.impl.qry.Record;
-import com.nfsdb.lang.cst.impl.qry.RecordSource;
 import com.nfsdb.lang.cst.impl.ref.MutableIntVariableSource;
 import com.nfsdb.lang.cst.impl.ref.StringRef;
 import com.nfsdb.lang.cst.impl.ref.SymbolXTabVariableSource;
@@ -46,6 +42,9 @@ import com.nfsdb.lang.cst.impl.rsrc.KvIndexTopRowSource;
 import com.nfsdb.model.Album;
 import com.nfsdb.model.Band;
 import com.nfsdb.model.Quote;
+import com.nfsdb.storage.ColumnType;
+import com.nfsdb.storage.FixedColumn;
+import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.test.tools.TestData;
 import com.nfsdb.test.tools.TestUtils;
@@ -85,6 +84,84 @@ public class CstTest {
     @BeforeClass
     public static void setUp() throws Exception {
         TestData.appendQuoteData2(factory.writer(Quote.class, "quote"));
+    }
+
+    @Test
+    public void testJoinHead() throws Exception {
+
+        int c = 1000000;
+        JournalWriter<Quote> w = factory.writer(Quote.class, "q", c);
+        TestUtils.generateQuoteData(w, c);
+        w.close();
+
+        Journal<Quote> master = factory.reader(Quote.class, "q", c);
+        Journal<Quote> slave = factory.reader(Quote.class, "q", c);
+
+        StringRef sym = new StringRef("sym");
+        StatefulJournalSourceImpl m;
+        RecordSource<? extends Record> src = new NestedLoopLeftOuterJoin(
+                m = new StatefulJournalSourceImpl(
+                        new JournalSourceImpl(new JournalPartitionSource(master, false), new AllRowSource())
+                )
+                ,
+                new JournalSourceImpl(new JournalPartitionSource(slave, false), new KvIndexTopRowSource(sym, new SingleKeySource(new SymbolXTabVariableSource(m.getMetadata(), "sym", "sym", m)), null))
+        );
+
+        long count = 0;
+        long t = 0;
+        for (int i = -20; i < 20; i++) {
+            if (i == 0) {
+                t = System.nanoTime();
+                count = 0;
+            }
+            src.reset();
+            for (Record d : src) {
+                d.getDate(0);
+                d.getDouble(2);
+                d.getDouble(3);
+                count++;
+            }
+        }
+        System.out.println(count);
+        System.out.println((System.nanoTime() - t) / 20);
+    }
+
+    @Test
+    public void testJoinN() throws Exception {
+
+        int c = 10000;
+        JournalWriter<Quote> w = factory.writer(Quote.class, "q2", c);
+        TestUtils.generateQuoteData(w, c);
+        w.close();
+
+        Journal<Quote> master = factory.reader(Quote.class, "q2", c);
+        Journal<Quote> slave = factory.reader(Quote.class, "q2", c);
+
+        StringRef sym = new StringRef("sym");
+        StatefulJournalSourceImpl m;
+        RecordSource<? extends Record> src = new NestedLoopLeftOuterJoin(
+                m = new StatefulJournalSourceImpl(
+                        new JournalSourceImpl(new JournalPartitionSource(master, false), new AllRowSource())
+                )
+                ,
+                new JournalSourceImpl(new JournalPartitionSource(slave, false), new KvIndexHeadRowSource(sym, new SingleKeySource(new SymbolXTabVariableSource(m.getMetadata(), "sym", "sym", m)), 1000, 0, null))
+        );
+
+        long count = 0;
+        long t = 0;
+        for (int i = -2; i < 20; i++) {
+            if (i == 0) {
+                t = System.nanoTime();
+                count = 0;
+            }
+            src.reset();
+            for (Record d : src) {
+                count++;
+            }
+        }
+        System.out.println(count);
+        System.out.println(System.nanoTime() - t);
+
     }
 
     @Test
@@ -152,84 +229,6 @@ public class CstTest {
         System.out.println(System.nanoTime() - t);
     }
 
-    @Test
-    public void testJoinN() throws Exception {
-
-        int c = 10000;
-        JournalWriter<Quote> w = factory.writer(Quote.class, "q2", c);
-        TestUtils.generateQuoteData(w, c);
-        w.close();
-
-        Journal<Quote> master = factory.reader(Quote.class, "q2", c);
-        Journal<Quote> slave = factory.reader(Quote.class, "q2", c);
-
-        StringRef sym = new StringRef("sym");
-        StatefulJournalSource m;
-        RecordSource<? extends Record> src = new NestedLoopLeftOuterJoin(
-                m = new StatefulJournalSourceImpl(
-                        new JournalSourceImpl(new JournalPartitionSource(master, false), new AllRowSource())
-                )
-                ,
-                new JournalSourceImpl(new JournalPartitionSource(slave, false), new KvIndexHeadRowSource(sym, new SingleKeySource(new SymbolXTabVariableSource(m, "sym", "sym")), 1000, 0, null))
-        );
-
-        long count = 0;
-        long t = 0;
-        for (int i = -2; i < 20; i++) {
-            if (i == 0) {
-                t = System.nanoTime();
-                count = 0;
-            }
-            src.reset();
-            for (Record d : src) {
-                count++;
-            }
-        }
-        System.out.println(count);
-        System.out.println(System.nanoTime() - t);
-
-    }
-
-    @Test
-    public void testJoinHead() throws Exception {
-
-        int c = 1000000;
-        JournalWriter<Quote> w = factory.writer(Quote.class, "q", c);
-        TestUtils.generateQuoteData(w, c);
-        w.close();
-
-        Journal<Quote> master = factory.reader(Quote.class, "q", c);
-        Journal<Quote> slave = factory.reader(Quote.class, "q", c);
-
-        StringRef sym = new StringRef("sym");
-        StatefulJournalSource m;
-        RecordSource<? extends Record> src = new NestedLoopLeftOuterJoin(
-                m = new StatefulJournalSourceImpl(
-                        new JournalSourceImpl(new JournalPartitionSource(master, false), new AllRowSource())
-                )
-                ,
-                new JournalSourceImpl(new JournalPartitionSource(slave, false), new KvIndexTopRowSource(sym, new SingleKeySource(new SymbolXTabVariableSource(m, "sym", "sym")), null))
-        );
-
-        long count = 0;
-        long t = 0;
-        for (int i = -20; i < 20; i++) {
-            if (i == 0) {
-                t = System.nanoTime();
-                count = 0;
-            }
-            src.reset();
-            for (Record d : src) {
-                d.getDate(0);
-                d.getDouble(2);
-                d.getDouble(3);
-                count++;
-            }
-        }
-        System.out.println(count);
-        System.out.println((System.nanoTime() - t) / 20);
-    }
-
     public void testResamplingPerformance() throws Exception {
 
         JournalFactory factory = new JournalFactory("d:/data");
@@ -265,11 +264,10 @@ public class CstTest {
                     prev = ts;
                 }
 
-                MapValues val = map.claimSlot(
-                        map.claimKey()
+                MapValues val = map.values(
+                        map.keyWriter()
                                 .putLong(ts)
                                 .putInt(e.getInt(symIndex))
-                                .commit()
                 );
 
                 val.putInt(0, val.isNew() ? 1 : val.getInt(0) + 1);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,7 @@
 
 package com.nfsdb.factory;
 
-import com.nfsdb.JournalBulkWriter;
-import com.nfsdb.JournalKey;
-import com.nfsdb.JournalWriter;
-import com.nfsdb.PartitionType;
-import com.nfsdb.concurrent.TimerCache;
+import com.nfsdb.*;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 
@@ -32,6 +28,26 @@ public abstract class AbstractJournalWriterFactory extends AbstractJournalReader
 
     public AbstractJournalWriterFactory(JournalConfiguration configuration, TimerCache timerCache) {
         super(configuration, timerCache);
+    }
+
+    @Override
+    public <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz) throws JournalException {
+        return bulkWriter(new JournalKey<>(clazz));
+    }
+
+    @Override
+    public <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz, String location) throws JournalException {
+        return bulkWriter(new JournalKey<>(clazz, location));
+    }
+
+    @Override
+    public <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz, String location, int recordHint) throws JournalException {
+        return bulkWriter(new JournalKey<>(clazz, location, PartitionType.DEFAULT, recordHint));
+    }
+
+    @Override
+    public <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException {
+        return new JournalBulkWriter<>(getConfiguration().createMetadata(key), key, getTimerCache());
     }
 
     @Override
@@ -52,25 +68,5 @@ public abstract class AbstractJournalWriterFactory extends AbstractJournalReader
     @Override
     public JournalWriter writer(String location) throws JournalException {
         return writer(new JournalKey<>(location));
-    }
-
-    @Override
-    public <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException {
-        return new JournalBulkWriter<>(getConfiguration().createMetadata(key), key, getTimerCache());
-    }
-
-    @Override
-    public <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz) throws JournalException {
-        return bulkWriter(new JournalKey<>(clazz));
-    }
-
-    @Override
-    public <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz, String location) throws JournalException {
-        return bulkWriter(new JournalKey<>(clazz, location));
-    }
-
-    @Override
-    public <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz, String location, int recordHint) throws JournalException {
-        return bulkWriter(new JournalKey<>(clazz, location, PartitionType.DEFAULT, recordHint));
     }
 }

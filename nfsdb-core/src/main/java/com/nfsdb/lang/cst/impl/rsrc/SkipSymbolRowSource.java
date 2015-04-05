@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,11 +17,11 @@
 package com.nfsdb.lang.cst.impl.rsrc;
 
 import com.nfsdb.collections.IntHashSet;
-import com.nfsdb.column.FixedColumn;
 import com.nfsdb.lang.cst.PartitionSlice;
 import com.nfsdb.lang.cst.RowCursor;
 import com.nfsdb.lang.cst.RowSource;
 import com.nfsdb.lang.cst.impl.ref.StringRef;
+import com.nfsdb.storage.FixedColumn;
 
 /**
  * Takes stream of rowids, converts them to int values of FixedColumn and
@@ -46,6 +46,23 @@ public class SkipSymbolRowSource implements RowSource, RowCursor {
     }
 
     @Override
+    public RowCursor cursor(PartitionSlice slice) {
+        if (columnIndex == -1) {
+            columnIndex = slice.partition.getJournal().getMetadata().getColumnIndex(symbolName.value);
+        }
+        column = (FixedColumn) slice.partition.getAbstractColumn(columnIndex);
+        cursor = delegate.cursor(slice);
+        return this;
+    }
+
+    @Override
+    public void reset() {
+        columnIndex = -1;
+        delegate.reset();
+        set.clear();
+    }
+
+    @Override
     public boolean hasNext() {
         long rowid;
         while (cursor.hasNext()) {
@@ -62,22 +79,5 @@ public class SkipSymbolRowSource implements RowSource, RowCursor {
     @Override
     public long next() {
         return rowid;
-    }
-
-    @Override
-    public RowCursor cursor(PartitionSlice slice) {
-        if (columnIndex == -1) {
-            columnIndex = slice.partition.getJournal().getMetadata().getColumnIndex(symbolName.value);
-        }
-        column = (FixedColumn) slice.partition.getAbstractColumn(columnIndex);
-        cursor = delegate.cursor(slice);
-        return this;
-    }
-
-    @Override
-    public void reset() {
-        columnIndex = -1;
-        delegate.reset();
-        set.clear();
     }
 }

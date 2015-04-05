@@ -16,16 +16,17 @@
 
 package com.nfsdb;
 
-import com.nfsdb.column.SymbolTable;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.model.Quote;
 import com.nfsdb.model.TestEntity;
+import com.nfsdb.query.ResultSet;
+import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.storage.TxListener;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestData;
 import com.nfsdb.test.tools.TestUtils;
-import com.nfsdb.tx.TxListener;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Files;
 import com.nfsdb.utils.Rnd;
@@ -499,6 +500,11 @@ public class JournalTest extends AbstractTest {
         @Override
         public void onCommit() {
             notifyAsyncNoWait = true;
+        }
+
+        @Override
+        public void onError() {
+
         }
 
         public void reset() {

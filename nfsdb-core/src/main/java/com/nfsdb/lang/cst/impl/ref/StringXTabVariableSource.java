@@ -16,26 +16,31 @@
 
 package com.nfsdb.lang.cst.impl.ref;
 
-import com.nfsdb.column.SymbolTable;
-import com.nfsdb.lang.cst.IntVariable;
-import com.nfsdb.lang.cst.IntVariableSource;
-import com.nfsdb.lang.cst.PartitionSlice;
-import com.nfsdb.lang.cst.StatefulJournalSource;
+import com.nfsdb.lang.cst.*;
+import com.nfsdb.storage.SymbolTable;
 
 /**
  * Reads partition/rowid from current position of JoinedSource, reads symbol column value based on current position of said JoinedSource
  */
 public class StringXTabVariableSource implements IntVariableSource, IntVariable {
-    private final StatefulJournalSource masterSource;
+    private final RecordSourceState state;
     private final String slaveSymbol;
     private final int masterColumnIndex;
     private SymbolTable slaveTab;
     private int slaveKey;
 
-    public StringXTabVariableSource(StatefulJournalSource masterSource, String masterSymbol, String slaveSymbol) {
-        this.masterSource = masterSource;
+    public StringXTabVariableSource(RecordMetadata masterMetadata, String masterSymbol, String slaveSymbol, RecordSourceState state) {
         this.slaveSymbol = slaveSymbol;
-        this.masterColumnIndex = masterSource.getMetadata().getColumnIndex(masterSymbol);
+        this.masterColumnIndex = masterMetadata.getColumnIndex(masterSymbol);
+        this.state = state;
+    }
+
+    @Override
+    public int getValue() {
+        if (slaveKey == -3) {
+            slaveKey = slaveTab.getQuick(state.currentRecord().getStr(masterColumnIndex).toString());
+        }
+        return slaveKey;
     }
 
     @Override
@@ -44,14 +49,6 @@ public class StringXTabVariableSource implements IntVariableSource, IntVariable 
             slaveTab = slice.partition.getJournal().getSymbolTable(slaveSymbol);
         }
         return this;
-    }
-
-    @Override
-    public int getValue() {
-        if (slaveKey == -3) {
-            slaveKey = slaveTab.getQuick(masterSource.current().getStr(masterColumnIndex).toString());
-        }
-        return slaveKey;
     }
 
     @Override

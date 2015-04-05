@@ -16,11 +16,12 @@
 
 package com.nfsdb.factory;
 
-import com.nfsdb.concurrent.NamedDaemonThreadFactory;
-import com.nfsdb.concurrent.TimerCache;
+import com.nfsdb.TimerCache;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.logging.Logger;
+import com.nfsdb.utils.NamedDaemonThreadFactory;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -28,6 +29,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+@SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
 public class JournalPool implements Closeable {
     private static final Logger LOGGER = Logger.getLogger(JournalPool.class);
 
@@ -44,16 +46,6 @@ public class JournalPool implements Closeable {
         }
     }
 
-    public JournalCachingFactory get() throws InterruptedException, JournalException {
-        if (running.get()) {
-            JournalCachingFactory factory = pool.take();
-            factory.refresh();
-            return factory;
-        } else {
-            throw new InterruptedException("Journal pool has been closed");
-        }
-    }
-
     @Override
     public void close() {
         if (running.compareAndSet(true, false)) {
@@ -63,6 +55,16 @@ public class JournalPool implements Closeable {
             }
         }
         timerCache.halt();
+    }
+
+    public JournalCachingFactory get() throws InterruptedException, JournalException {
+        if (running.get()) {
+            JournalCachingFactory factory = pool.take();
+            factory.refresh();
+            return factory;
+        } else {
+            throw new InterruptedException("Journal pool has been closed");
+        }
     }
 
     void release(final JournalCachingFactory factory) {

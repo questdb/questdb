@@ -19,10 +19,9 @@ package com.nfsdb.lang;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.exp.RecordSourcePrinter;
-import com.nfsdb.exp.StringSink;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.lang.cst.StatefulJournalSource;
+import com.nfsdb.io.RecordSourcePrinter;
+import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.lang.cst.impl.join.NestedLoopLeftOuterJoin;
 import com.nfsdb.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.lang.cst.impl.jsrc.StatefulJournalSourceImpl;
@@ -80,9 +79,9 @@ public class JoinStringToSymbolTest {
     @Test
     public void testOuterOneToOneHead() throws Exception {
 
-        final String expected = "band1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband1\thttp://new.band1.com\tjazz\t\t\n" +
-                "band1\talbum BZ\trock\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband1\thttp://new.band1.com\tjazz\t\t\n" +
-                "band3\talbum Y\tmetal\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband3\thttp://band3.com\tjazz\t\t\n";
+        final String expected = "band1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband1\thttp://new.band1.com\tjazz\t\n" +
+                "band1\talbum BZ\trock\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband1\thttp://new.band1.com\tjazz\t\n" +
+                "band3\talbum Y\tmetal\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband3\thttp://band3.com\tjazz\t\n";
 
         bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
         bw.append(new Band().setName("band2").setType("hiphop").setUrl("http://band2.com"));
@@ -98,7 +97,7 @@ public class JoinStringToSymbolTest {
         aw.commit();
 
         StringRef name = new StringRef("name");
-        StatefulJournalSource master;
+        StatefulJournalSourceImpl master;
 
 
         StringSink sink = new StringSink();
@@ -114,7 +113,7 @@ public class JoinStringToSymbolTest {
                                 new JournalPartitionSource(bw, false),
                                 new KvIndexTopRowSource(
                                         name
-                                        , new SingleKeySource(new StringXTabVariableSource(master, "band", "name"))
+                                        , new SingleKeySource(new StringXTabVariableSource(master.getMetadata(), "band", "name", master))
                                         , null
                                 ))
                 )

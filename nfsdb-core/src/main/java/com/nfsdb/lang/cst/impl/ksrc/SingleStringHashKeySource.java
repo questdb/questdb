@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ import com.nfsdb.lang.cst.KeyCursor;
 import com.nfsdb.lang.cst.KeySource;
 import com.nfsdb.lang.cst.PartitionSlice;
 import com.nfsdb.lang.cst.impl.ref.StringRef;
-import com.nfsdb.utils.Checksum;
+import com.nfsdb.utils.Hash;
 
 public class SingleStringHashKeySource implements KeySource, KeyCursor {
     private final StringRef column;
@@ -43,17 +43,6 @@ public class SingleStringHashKeySource implements KeySource, KeyCursor {
     }
 
     @Override
-    public boolean hasNext() {
-        return hasNext;
-    }
-
-    @Override
-    public int next() {
-        hasNext = false;
-        return Checksum.hash(value.value, bucketCount);
-    }
-
-    @Override
     public int size() {
         return 1;
     }
@@ -61,5 +50,16 @@ public class SingleStringHashKeySource implements KeySource, KeyCursor {
     @Override
     public void reset() {
         bucketCount = -1;
+    }
+
+    @Override
+    public boolean hasNext() {
+        return hasNext;
+    }
+
+    @Override
+    public int next() {
+        hasNext = false;
+        return Hash.boundedHash(value.value, bucketCount);
     }
 }

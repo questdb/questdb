@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.JournalStructure;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.*;
 import java.util.zip.GZIPOutputStream;
@@ -28,6 +29,7 @@ import java.util.zip.GZIPOutputStream;
 public class FileSystemIndexer {
     private static final byte[] buffer = new byte[1024 * 1024];
 
+    @SuppressFBWarnings({"PATH_TRAVERSAL_IN"})
     public static void main(String[] args) throws JournalException, IOException {
 
         final String nfsdb = args[0];

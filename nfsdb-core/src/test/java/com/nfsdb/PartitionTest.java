@@ -16,15 +16,33 @@
 
 package com.nfsdb;
 
-import com.nfsdb.column.BSearchType;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.model.Quote;
+import com.nfsdb.storage.BSearchType;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.utils.Dates;
+import com.nfsdb.utils.Interval;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class PartitionTest extends AbstractTest {
+
+    public <T> Partition<T> getPartitionForTimestamp(Journal<T> journal, long timestamp) throws JournalException {
+        int sz = journal.getPartitionCount();
+        for (int i = 0; i < sz; i++) {
+            Partition<T> result = journal.getPartition(i, false);
+            Interval interval = result.getInterval();
+            if (interval == null || interval.contains(timestamp)) {
+                return result;
+            }
+        }
+
+        if (journal.getPartition(0, false).getInterval().isAfter(timestamp)) {
+            return journal.getPartition(0, false);
+        } else {
+            return journal.getPartition(sz - 1, false);
+        }
+    }
 
     @Test
     public void testIndexOf() throws JournalException {
@@ -64,7 +82,7 @@ public class PartitionTest extends AbstractTest {
 
         long tsA = Dates.parseDateTime("2012-06-15T00:00:00.000");
 
-        Partition<Quote> partition1 = journal.getPartitionForTimestamp(tsA).open();
+        Partition<Quote> partition1 = getPartitionForTimestamp(journal, tsA).open();
         Assert.assertNotNull("getPartition(timestamp) failed", partition1);
 
         Assert.assertEquals(-2, partition1.indexOf(tsA, BSearchType.NEWER_OR_SAME));
@@ -78,4 +96,5 @@ public class PartitionTest extends AbstractTest {
         long result = p.indexOf(Dates.parseDateTime("2012-06-15T00:00:00.000"), BSearchType.OLDER_OR_SAME);
         Assert.assertEquals(-1, result);
     }
+
 }

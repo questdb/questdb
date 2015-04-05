@@ -16,7 +16,7 @@
 
 package com.nfsdb;
 
-import com.nfsdb.exp.StringSink;
+import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Rnd;
 import org.junit.Assert;
@@ -30,7 +30,7 @@ public class NumbersTest {
     private Rnd rnd;
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         rnd = new Rnd();
         sink.clear();
     }
@@ -79,6 +79,17 @@ public class NumbersTest {
             String expected = Double.toString(d);
             Assert.assertEquals(Double.parseDouble(expected), Double.parseDouble(actual), 0.000001);
         }
+    }
+
+    @Test
+    public void testFormatDoubleNoPadding() throws Exception {
+        sink.clear();
+        Numbers.appendTrim(sink, 40.2345d, 12);
+        Assert.assertEquals("40.2345", sink.toString());
+
+        sink.clear();
+        Numbers.appendTrim(sink, 4000, 12);
+        Assert.assertEquals("4000.0", sink.toString());
     }
 
     @Test

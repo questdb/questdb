@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,22 +16,22 @@
 
 package com.nfsdb.query.api;
 
-import com.nfsdb.UnorderedResultSet;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.query.UnorderedResultSet;
 import com.nfsdb.utils.Interval;
 
 public interface QueryHeadBuilder<T> {
+
+    UnorderedResultSet<T> asResultSet() throws JournalException;
+
+    QueryHeadBuilder<T> filter(String symbol, String value);
 
     QueryHeadBuilder<T> limit(Interval interval);
 
     QueryHeadBuilder<T> limit(long minRowID);
 
-    QueryHeadBuilder<T> filter(String symbol, String value);
-
-    QueryHeadBuilder<T> strict(boolean strict);
-
     void resetFilter();
 
-    UnorderedResultSet<T> asResultSet() throws JournalException;
+    QueryHeadBuilder<T> strict(boolean strict);
 
 }

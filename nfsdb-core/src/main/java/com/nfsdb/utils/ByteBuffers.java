@@ -18,7 +18,6 @@ package com.nfsdb.utils;
 
 import com.nfsdb.exceptions.JournalDisconnectedChannelException;
 import com.nfsdb.exceptions.JournalNetworkException;
-import sun.misc.Cleaner;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.IOException;
@@ -36,7 +35,7 @@ public final class ByteBuffers {
 
     public static void copy(ByteBuffer from, WritableByteChannel to) throws JournalNetworkException {
         try {
-            if (to.write(from) <= 0) {
+            if (to.write(from) < 1) {
                 throw new JournalNetworkException("Write to closed channel");
             }
         } catch (IOException e) {
@@ -45,7 +44,7 @@ public final class ByteBuffers {
     }
 
     public static int copy(ByteBuffer from, WritableByteChannel to, long count) throws JournalNetworkException {
-        if (count <= 0 || !from.hasRemaining()) {
+        if (count < 1 || !from.hasRemaining()) {
             return 0;
         }
 
@@ -53,7 +52,7 @@ public final class ByteBuffers {
 
         try {
             if (count >= from.remaining()) {
-                if ((result = to.write(from)) <= 0) {
+                if ((result = to.write(from)) < 1) {
                     throw new JournalNetworkException("Write to closed channel");
                 }
                 return result;
@@ -62,7 +61,7 @@ public final class ByteBuffers {
             int limit = from.limit();
             try {
                 from.limit((int) (from.position() + count));
-                if ((result = to.write(from)) <= 0) {
+                if ((result = to.write(from)) < 1) {
                     throw new JournalNetworkException("Write to closed channel");
                 }
 
@@ -77,15 +76,16 @@ public final class ByteBuffers {
 
     public static int copy(ReadableByteChannel from, ByteBuffer to) throws JournalNetworkException {
         try {
-            int count = 0;
-            while (to.hasRemaining()) {
+            int r = to.remaining();
+            int target = r;
+            while (target > 0) {
                 int result = from.read(to);
                 if (result == -1) {
                     throw new JournalDisconnectedChannelException();
                 }
-                count += result;
+                target -= result;
             }
-            return count;
+            return r;
         } catch (IOException e) {
             throw new JournalNetworkException(e);
         }
@@ -99,7 +99,9 @@ public final class ByteBuffers {
     }
 
     public static int copy(ByteBuffer from, ByteBuffer to) {
-        int result = from.remaining();
+        int x = from.remaining();
+        int y = to.remaining();
+        int result = x < y ? x : y;
         if ((from instanceof DirectBuffer) && (to instanceof DirectBuffer)) {
             Unsafe.getUnsafe().copyMemory(((DirectBuffer) from).address() + from.position(), ((DirectBuffer) to).address() + to.position(), result);
             from.position(from.position() + result);
@@ -108,30 +110,6 @@ public final class ByteBuffers {
             to.put(from);
         }
         return result;
-    }
-
-    public static void copy(ByteBuffer from, ByteBuffer to, int count) {
-
-        if (count <= 0) {
-            return;
-        }
-
-        if (count > to.remaining()) {
-            count = to.remaining();
-        }
-
-        if (from.remaining() <= count) {
-            copy(from, to);
-            return;
-        }
-
-        int limit = from.limit();
-        try {
-            from.limit(from.position() + count);
-            copy(from, to);
-        } finally {
-            from.limit(limit);
-        }
     }
 
     public static int getBitHint(int recSize, int recCount) {
@@ -162,7 +140,13 @@ public final class ByteBuffers {
         return resultBits;
     }
 
-    public static void putStr(ByteBuffer buffer, String value) {
+    public static long getMaxMappedBufferSize(long channelSize) {
+        long max = Os.getSystemMemory() / 4;
+        max = max > Integer.MAX_VALUE ? Integer.MAX_VALUE : max;
+        return channelSize > max ? max : channelSize;
+    }
+
+    public static void putStr(ByteBuffer buffer, CharSequence value) {
         int p = buffer.position();
         for (int i = 0; i < value.length(); i++) {
             buffer.putChar(p, value.charAt(i));
@@ -190,7 +174,7 @@ public final class ByteBuffers {
     }
 
     /**
-     * Releases ByteBuffer is possible. Call semantics should be as follows:
+     * Releases ByteBuffer if possible. Call semantics should be as follows:
      * <p/>
      * ByteBuffer buffer = ....
      * <p/>
@@ -200,14 +184,9 @@ public final class ByteBuffers {
      * @return null if buffer is released or same buffer if release is not possible.
      */
     public static <T extends ByteBuffer> T release(final T buffer) {
-        if (buffer != null) {
-            if (buffer instanceof DirectBuffer) {
-                Cleaner cleaner = ((DirectBuffer) buffer).cleaner();
-                if (cleaner != null) {
-                    cleaner.clean();
-                    return null;
-                }
-            }
+        if (buffer instanceof DirectBuffer) {
+            ((DirectBuffer) buffer).cleaner().clean();
+            return null;
         }
         return buffer;
     }
@@ -230,4 +209,6 @@ public final class ByteBuffers {
         }
         return result;
     }
+
+
 }

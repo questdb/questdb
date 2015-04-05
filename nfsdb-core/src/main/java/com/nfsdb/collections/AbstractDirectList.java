@@ -18,7 +18,7 @@ package com.nfsdb.collections;
 
 import com.nfsdb.utils.Unsafe;
 
-public class AbstractDirectList extends DirectMemory {
+public class AbstractDirectList extends DirectMemoryStructure {
     public static final int CACHE_LINE_SIZE = 64;
     private final int pow2;
     private final int onePow2;
@@ -39,7 +39,7 @@ public class AbstractDirectList extends DirectMemory {
         add(that);
     }
 
-    public void add(AbstractDirectList that) {
+    public final void add(AbstractDirectList that) {
         int count = (int) (that.pos - that.start);
         if (limit - pos < count) {
             extend((int) (this.limit - this.start + count) >> 1);

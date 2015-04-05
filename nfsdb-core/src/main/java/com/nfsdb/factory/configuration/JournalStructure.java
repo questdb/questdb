@@ -18,11 +18,12 @@ package com.nfsdb.factory.configuration;
 
 import com.nfsdb.PartitionType;
 import com.nfsdb.collections.ObjIntHashMap;
-import com.nfsdb.column.ColumnType;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.logging.Logger;
+import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Unsafe;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.lang.reflect.Constructor;
@@ -33,7 +34,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-public class JournalStructure implements JMetadataBuilder<Object> {
+@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
+public class JournalStructure implements MetadataBuilder<Object> {
     private static final Logger LOGGER = Logger.getLogger(JournalStructure.class);
     private final List<ColumnMetadata> metadata = new ArrayList<>();
     private final ObjIntHashMap<String> nameToIndexMap = new ObjIntHashMap<>();
@@ -53,6 +55,15 @@ public class JournalStructure implements JMetadataBuilder<Object> {
         this.location = location;
     }
 
+    public JournalStructure(String location, ColumnMetadata columnMetadata[]) {
+        this.location = location;
+        for (int i = 0, sz = columnMetadata.length; i < sz; i++) {
+            ColumnMetadata to = new ColumnMetadata();
+            metadata.add(to.copy(columnMetadata[i]));
+            nameToIndexMap.put(to.name, i);
+        }
+    }
+
     public JournalStructure(JournalMetadata model) {
         this.location = model.getLocation();
         this.tsColumnIndex = model.getTimestampIndex();
@@ -69,34 +80,12 @@ public class JournalStructure implements JMetadataBuilder<Object> {
         }
     }
 
-    public GenericSymbolBuilder $sym(String name) {
-        return new GenericSymbolBuilder(this, newMeta(name));
-    }
-
-    public GenericStringBuilder $str(String name) {
-        return new GenericStringBuilder(this, newMeta(name));
-    }
-
     public GenericBinaryBuilder $bin(String name) {
         return new GenericBinaryBuilder(this, newMeta(name));
     }
 
-    public GenericIntBuilder $int(String name) {
-        return new GenericIntBuilder(this, newMeta(name));
-    }
-
-    public JournalStructure $ts() {
-        return $ts("timestamp");
-    }
-
     public JournalStructure $bool(String name) {
         return $meta(name, ColumnType.BOOLEAN);
-    }
-
-    public JournalStructure $ts(String name) {
-        $meta(name, ColumnType.DATE);
-        tsColumnIndex = nameToIndexMap.get(name);
-        return this;
     }
 
     public JournalStructure $date(String name) {
@@ -107,6 +96,14 @@ public class JournalStructure implements JMetadataBuilder<Object> {
         return $meta(name, ColumnType.DOUBLE);
     }
 
+    public JournalStructure $float(String name) {
+        return $meta(name, ColumnType.FLOAT);
+    }
+
+    public GenericIntBuilder $int(String name) {
+        return new GenericIntBuilder(this, newMeta(name));
+    }
+
     public JournalStructure $long(String name) {
         return $meta(name, ColumnType.LONG);
     }
@@ -115,42 +112,22 @@ public class JournalStructure implements JMetadataBuilder<Object> {
         return $meta(name, ColumnType.SHORT);
     }
 
-    public JournalStructure partitionBy(PartitionType type) {
-        if (type != PartitionType.DEFAULT) {
-            this.partitionBy = type;
-        }
-        return this;
+    public GenericStringBuilder $str(String name) {
+        return new GenericStringBuilder(this, newMeta(name));
     }
 
-    public JournalStructure recordCountHint(int count) {
-        if (count > 0) {
-            this.recordCountHint = count;
-        }
-        return this;
+    public GenericSymbolBuilder $sym(String name) {
+        return new GenericSymbolBuilder(this, newMeta(name));
     }
 
-    public JournalStructure txCountHint(int count) {
-        this.txCountHint = count;
-        return this;
+    public JournalStructure $ts() {
+        return $ts("timestamp");
     }
 
-    public JournalStructure key(String key) {
-        this.key = key;
+    public JournalStructure $ts(String name) {
+        $meta(name, ColumnType.DATE);
+        tsColumnIndex = nameToIndexMap.get(name);
         return this;
-    }
-
-    public JournalStructure openFileTTL(long time, TimeUnit unit) {
-        this.openFileTTL = unit.toMillis(time);
-        return this;
-    }
-
-    public JournalStructure lag(long time, TimeUnit unit) {
-        this.lag = (int) unit.toHours(time);
-        return this;
-    }
-
-    public String getLocation() {
-        return location;
     }
 
     public JournalMetadata<Object> build() {
@@ -195,7 +172,7 @@ public class JournalStructure implements JMetadataBuilder<Object> {
             m[i] = meta;
         }
 
-        return new JournalMetadataImpl<>(
+        return new JournalMetadata<>(
                 location
                 , modelClass
                 , constructor
@@ -212,6 +189,20 @@ public class JournalStructure implements JMetadataBuilder<Object> {
         );
     }
 
+    public String getLocation() {
+        return location;
+    }
+
+    public JournalStructure key(String key) {
+        this.key = key;
+        return this;
+    }
+
+    public JournalStructure lag(long time, TimeUnit unit) {
+        this.lag = (int) unit.toHours(time);
+        return this;
+    }
+
     @Override
     public JournalStructure location(String location) {
         this.location = location;
@@ -224,6 +215,7 @@ public class JournalStructure implements JMetadataBuilder<Object> {
         return this;
     }
 
+    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS", "LEST_LOST_EXCEPTION_STACK_TRACE"})
     @SuppressWarnings("unchecked")
     public JournalMetadata map(Class clazz) {
         List<Field> classFields = getAllFields(new ArrayList<Field>(), clazz);
@@ -261,36 +253,35 @@ public class JournalStructure implements JMetadataBuilder<Object> {
         return this.build();
     }
 
+    public JournalStructure openFileTTL(long time, TimeUnit unit) {
+        this.openFileTTL = unit.toMillis(time);
+        return this;
+    }
+
+    public JournalStructure partitionBy(PartitionType type) {
+        if (type != PartitionType.DEFAULT) {
+            this.partitionBy = type;
+        }
+        return this;
+    }
+
+    public JournalStructure recordCountHint(int count) {
+        if (count > 0) {
+            this.recordCountHint = count;
+        }
+        return this;
+    }
+
+    public JournalStructure txCountHint(int count) {
+        this.txCountHint = count;
+        return this;
+    }
+
     private JournalStructure $meta(String name, ColumnType type) {
         ColumnMetadata m = newMeta(name);
         m.type = type;
         m.size = type.size();
         return this;
-    }
-
-    private ColumnMetadata newMeta(String name) {
-        int index = nameToIndexMap.get(name);
-        if (index == -1) {
-            ColumnMetadata meta = new ColumnMetadata().setName(name);
-            metadata.add(meta);
-            nameToIndexMap.put(name, metadata.size() - 1);
-            return meta;
-        } else {
-            throw new JournalConfigurationException("Duplicate column: " + name);
-        }
-    }
-
-    private boolean missingMappings() {
-        boolean mappingMissing = false;
-        for (int i = 0, metadataSize = metadata.size(); i < metadataSize; i++) {
-            ColumnMetadata m = metadata.get(i);
-            if (m.offset == 0) {
-                mappingMissing = true;
-                LOGGER.warn("Unmapped data column: %s", m.name);
-            }
-        }
-
-        return mappingMissing;
     }
 
     private void checkTypes(ColumnType expected, ColumnType actual) {
@@ -309,6 +300,39 @@ public class JournalStructure implements JMetadataBuilder<Object> {
         throw new JournalConfigurationException("Type mismatch: expected=" + expected + ", actual=" + actual);
     }
 
+    private List<Field> getAllFields(List<Field> fields, Class<?> type) {
+        Collections.addAll(fields, type.getDeclaredFields());
+        if (type.getSuperclass() != null) {
+            fields = getAllFields(fields, type.getSuperclass());
+        }
+        return fields;
+    }
+
+    private boolean missingMappings() {
+        boolean mappingMissing = false;
+        for (int i = 0, metadataSize = metadata.size(); i < metadataSize; i++) {
+            ColumnMetadata m = metadata.get(i);
+            if (m.offset == 0) {
+                mappingMissing = true;
+                LOGGER.warn("Unmapped data column: %s", m.name);
+            }
+        }
+
+        return mappingMissing;
+    }
+
+    private ColumnMetadata newMeta(String name) {
+        int index = nameToIndexMap.get(name);
+        if (index == -1) {
+            ColumnMetadata meta = new ColumnMetadata().setName(name);
+            metadata.add(meta);
+            nameToIndexMap.put(name, metadata.size() - 1);
+            return meta;
+        } else {
+            throw new JournalConfigurationException("Duplicate column: " + name);
+        }
+    }
+
     private ColumnType toColumnType(Class type) {
         for (ColumnType t : ColumnType.values()) {
             if (t.matches(type)) {
@@ -316,13 +340,5 @@ public class JournalStructure implements JMetadataBuilder<Object> {
             }
         }
         return null;
-    }
-
-    private List<Field> getAllFields(List<Field> fields, Class<?> type) {
-        Collections.addAll(fields, type.getDeclaredFields());
-        if (type.getSuperclass() != null) {
-            fields = getAllFields(fields, type.getSuperclass());
-        }
-        return fields;
     }
 }

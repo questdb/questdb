@@ -17,12 +17,9 @@
 package com.nfsdb.lang.cst.impl.jsrc;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.lang.cst.StatefulJournalSource;
-import com.nfsdb.lang.cst.impl.qry.Record;
-import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
-import com.nfsdb.lang.cst.impl.qry.RecordSource;
+import com.nfsdb.lang.cst.*;
 
-public class StatefulJournalSourceImpl extends AbstractImmutableIterator<Record> implements StatefulJournalSource {
+public class StatefulJournalSourceImpl extends AbstractImmutableIterator<Record> implements GenericRecordSource, RecordSourceState {
     private final RecordSource<? extends Record> delegate;
     private Record current;
 
@@ -31,13 +28,13 @@ public class StatefulJournalSourceImpl extends AbstractImmutableIterator<Record>
     }
 
     @Override
-    public Record current() {
+    public Record currentRecord() {
         return current;
     }
 
     @Override
-    public void reset() {
-        delegate.reset();
+    public RecordMetadata getMetadata() {
+        return delegate.getMetadata();
     }
 
     @Override
@@ -51,7 +48,7 @@ public class StatefulJournalSourceImpl extends AbstractImmutableIterator<Record>
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return delegate.getMetadata();
+    public void reset() {
+        delegate.reset();
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,9 @@
 
 package com.nfsdb;
 
-import com.nfsdb.column.BSearchType;
-import com.nfsdb.column.FixedColumn;
-import com.nfsdb.column.MappedFileImpl;
+import com.nfsdb.storage.BSearchType;
+import com.nfsdb.storage.FixedColumn;
+import com.nfsdb.storage.MemoryFile;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
@@ -31,11 +31,11 @@ public class BinarySearchTest {
 
     @Before
     public void setUp() throws Exception {
-        column = new FixedColumn(new MappedFileImpl(temp.newFile(), 16, JournalMode.APPEND), 8);
+        column = new FixedColumn(new MemoryFile(temp.newFile(), 16, JournalMode.APPEND), 8);
     }
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         column.close();
     }
 

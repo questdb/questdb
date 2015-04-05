@@ -16,12 +16,13 @@
 
 package com.nfsdb.lang.cst.impl.fltr;
 
-import com.nfsdb.column.AbstractColumn;
-import com.nfsdb.column.FixedColumn;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.lang.cst.*;
 import com.nfsdb.lang.cst.impl.ref.StringRef;
+import com.nfsdb.storage.AbstractColumn;
+import com.nfsdb.storage.FixedColumn;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class IntEqualsRowFilter implements RowFilter, RowAcceptor {
     private final StringRef column;
@@ -34,6 +35,12 @@ public class IntEqualsRowFilter implements RowFilter, RowAcceptor {
         this.variableSource = variableSource;
     }
 
+    @Override
+    public Choice accept(long localRowID) {
+        return columnRef.getInt(localRowID) == var.getValue() ? Choice.PICK : Choice.SKIP;
+    }
+
+    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
     @Override
     public RowAcceptor acceptor(PartitionSlice slice) {
         try {
@@ -48,10 +55,5 @@ public class IntEqualsRowFilter implements RowFilter, RowAcceptor {
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
-    }
-
-    @Override
-    public Choice accept(long localRowID) {
-        return columnRef.getInt(localRowID) == var.getValue() ? Choice.PICK : Choice.SKIP;
     }
 }

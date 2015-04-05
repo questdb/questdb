@@ -93,7 +93,7 @@ public class JournalMetadataException extends JournalException {
     private void pad(int w, String value) {
         int pad = value == null ? w : w - value.length();
         for (int i = 0; i < pad; i++) {
-            b.append(" ");
+            b.append(' ');
         }
         if (value != null) {
             b.append(value);

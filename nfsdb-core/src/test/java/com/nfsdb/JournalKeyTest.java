@@ -39,7 +39,7 @@ public class JournalKeyTest {
         Assert.assertEquals(key.getBufferSize(), buffer.position());
 
         buffer.flip();
-        JournalKey key2 = JournalKey.fromBuffer(buffer);
+        JournalKey<Quote> key2 = JournalKey.fromBuffer(buffer);
         Assert.assertEquals(key, key2);
     }
 
@@ -51,7 +51,7 @@ public class JournalKeyTest {
         Assert.assertEquals(key.getBufferSize(), buffer.position());
 
         buffer.flip();
-        JournalKey key2 = JournalKey.fromBuffer(buffer);
+        JournalKey<Quote> key2 = JournalKey.fromBuffer(buffer);
         Assert.assertEquals(key, key2);
     }
 }

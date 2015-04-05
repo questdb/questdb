@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@ package com.nfsdb.utils;
 
 import com.nfsdb.PartitionType;
 import com.nfsdb.exceptions.JournalUnsupportedTypeException;
-import com.nfsdb.exp.StringSink;
+import com.nfsdb.io.sink.StringSink;
 
 public class Interval {
     private final long lo;
@@ -89,14 +89,6 @@ public class Interval {
         return (x >= lo && x < hi);
     }
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        Interval interval = (Interval) o;
-        return hi == interval.hi && lo == interval.lo;
-    }
-
     public String getDirName(PartitionType t) {
         StringSink sink = new StringSink();
         switch (t) {
@@ -126,8 +118,15 @@ public class Interval {
     @Override
     public int hashCode() {
         int result = (int) (lo ^ (lo >>> 32));
-        result = 31 * result + (int) (hi ^ (hi >>> 32));
-        return result;
+        return 31 * result + (int) (hi ^ (hi >>> 32));
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Interval interval = (Interval) o;
+        return hi == interval.hi && lo == interval.lo;
     }
 
     public boolean isAfter(long x) {

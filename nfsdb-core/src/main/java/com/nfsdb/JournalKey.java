@@ -100,7 +100,7 @@ public class JournalKey<T> {
         this.ordered = ordered;
     }
 
-    public static JournalKey<Object> fromBuffer(ByteBuffer buffer) {
+    public static <X> JournalKey<X> fromBuffer(ByteBuffer buffer) {
         // id
         int clazzLen = buffer.getInt();
         byte[] clazz = new byte[clazzLen];
@@ -122,6 +122,10 @@ public class JournalKey<T> {
         boolean ordered = buffer.get() == 1;
 
         return new JournalKey<>(new String(clazz, Files.UTF_8), location == null ? null : new String(location), partitionType, recordHint, ordered);
+    }
+
+    public String derivedLocation() {
+        return location == null ? id : location;
     }
 
     @Override
@@ -157,17 +161,16 @@ public class JournalKey<T> {
         return recordHint;
     }
 
+    //////////////////////// REPLICATION CODE //////////////////////
+
     @Override
     public int hashCode() {
         int result = id != null ? id.hashCode() : 0;
         result = 31 * result + (location != null ? location.hashCode() : 0);
         result = 31 * result + (partitionType != null ? partitionType.hashCode() : 0);
         result = 31 * result + recordHint;
-        result = 31 * result + (ordered ? 1 : 0);
-        return result;
+        return 31 * result + (ordered ? 1 : 0);
     }
-
-    //////////////////////// REPLICATION CODE //////////////////////
 
     public boolean isOrdered() {
         return ordered;
