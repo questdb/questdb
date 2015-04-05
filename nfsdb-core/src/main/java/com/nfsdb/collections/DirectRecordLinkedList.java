@@ -25,7 +25,7 @@ public class DirectRecordLinkedList implements Closeable, RecordSource<Record> {
     public long append(Record record, long prevRecordOffset) {
         long recordAddressBegin = buffer.getWriteOffsetQuick(8 + bufferRecord.getFixedBlockLength());
         Unsafe.getUnsafe().putLong(buffer.toAddress(recordAddressBegin), prevRecordOffset);
-        bufferRecord.write(record);
+        bufferRecord.write(record, recordAddressBegin + 8);
         return recordAddressBegin;
     }
 

@@ -68,8 +68,11 @@ public class DirectRecord implements Record {
     }
 
     public long write(Record record) {
-        // Write to end always.
-        long recordStartOffset = buffer.getWriteOffsetQuick(headerSize + fixedSize);
+        // Append to the end.
+        return write(record, buffer.getWriteOffsetQuick(headerSize + fixedSize));
+    }
+
+    public long write(Record record, long recordStartOffset) {
         long headerAddress = buffer.toAddress(recordStartOffset);
         long writeAddress = headerAddress + headerSize;
 

@@ -10,7 +10,6 @@ import java.io.OutputStream;
 public class DirectPagedBuffer implements Closeable {
     private long pageCapacity;
     private DirectLongList pages;
-    private long cachedPageOffsetLo;
     private long cachedPageOffsetHi;
     private long cachedPageOffset;
 
@@ -56,7 +55,7 @@ public class DirectPagedBuffer implements Closeable {
     }
 
     private long allocateAddress() {
-        cachedPageOffsetLo = allocatePage();
+        long cachedPageOffsetLo = allocatePage();
         cachedPageOffsetHi = cachedPageOffsetLo + pageCapacity;
         return cachedPageOffsetLo;
     }
@@ -151,13 +150,16 @@ public class DirectPagedBuffer implements Closeable {
     }
 
     private void free() {
-        for(int i = 0; i < pages.size(); i++) {
-            long address = pages.get(i);
-            if (address != 0) {
-                Unsafe.getUnsafe().freeMemory(pages.get(i));
+        if (pages != null) {
+            for (int i = 0; i < pages.size(); i++) {
+                long address = pages.get(i);
+                if (address != 0) {
+                    Unsafe.getUnsafe().freeMemory(pages.get(i));
+                }
             }
+            pages.close();
+            pages = null;
         }
-        pages.close();
     }
 
     @Override
@@ -169,113 +171,4 @@ public class DirectPagedBuffer implements Closeable {
     public long getBlockLen(long offset) {
         return pageCapacity - offset % pageCapacity;
     }
-
-/*
-    public byte getByte(long readOffset) {
-        int pageIndex = (int) (readOffset / pageCapacity);
-        long pageOffset = readOffset % pageCapacity;
-        if (pageIndex >= pages.size()) {
-            throw new IndexOutOfBoundsException();
-        }
-
-        long readAddress = pages.get(pageIndex);
-        if (readAddress == 0) {
-            throw new IndexOutOfBoundsException();
-        }
-
-        return Unsafe.getUnsafe().getByte(readAddress + pageOffset);
-    }
-
-
-    public int readInt(long l) {
-        this.read(localBufferAddress, l, 4);
-        return Unsafe.getUnsafe().getInt(localBufferAddress);
-    }
-
-    public long readLong(long l) {
-        this.read(localBufferAddress, l, 8);
-        return Unsafe.getUnsafe().getLong(localBufferAddress);
-    }
-
-    public double readDouble(long l) {
-        this.read(localBufferAddress, l, 8);
-        return Unsafe.getUnsafe().getDouble(localBufferAddress);
-    }
-
-    public short readShort(long l) {
-        this.read(localBufferAddress, l, 2);
-        return Unsafe.getUnsafe().getShort(localBufferAddress);
-    }
-
-    public char readChar(long l) {
-        this.read(localBufferAddress, l, 2);
-        return Unsafe.getUnsafe().getChar(localBufferAddress);
-    }
-
-    public int writeByte(byte value, long offset) {
-        Unsafe.getUnsafe().putByte(localBufferAddress, value);
-        this.append(localBufferAddress, offset, 1);
-        return 1;
-    }
-
-    public int writeDouble(double value, long offset) {
-        Unsafe.getUnsafe().putDouble(localBufferAddress, value);
-        this.append(localBufferAddress, offset, 8);
-        return 8;
-    }
-
-    public int writeInt(int value, long offset) {
-        Unsafe.getUnsafe().putInt(localBufferAddress, value);
-        this.append(localBufferAddress, offset, 4);
-        return 4;
-    }
-
-    public int writeLong(long value, long offset) {
-        Unsafe.getUnsafe().putLong(localBufferAddress, value);
-        this.append(localBufferAddress, offset, 8);
-        return 8;
-    }
-
-    public int writeShort(short value, long offset) {
-        Unsafe.getUnsafe().putShort(localBufferAddress, value);
-        this.append(localBufferAddress, offset, 2);
-        return 2;
-    }
-
-    public int writeString(CharSequence value, long offset) {
-        int len = value == null ? -1 : value.length();
-        this.writeInt(len, offset);
-        if (len <= 0) {
-            return 4;
-        }
-
-        offset += 2;
-        for(int i = 0; i < value.length(); i++) {
-            Unsafe.getUnsafe().putChar(localBufferAddress, value.charAt(i));
-            this.append(localBufferAddress, offset += 2, 2);
-        }
-        return value.length() + 4;
-    }
-
-    public int writeBinary(DirectInputStream value, long offset) {
-        long initialOffset = offset;
-        long len = value.getLength();
-        this.writeInt((int) value.getLength(), offset);
-        if (len <= 0) {
-            return 4;
-        }
-        offset -= 4;
-        long copied;
-        do {
-            do {
-                copied = value.read(localBufferAddress, 0, 8);
-                this.append(localBufferAddress, offset += 8, copied);
-            }
-            while (copied == 8);
-            offset -= 8 - copied;
-        }
-        while (copied > 0);
-        return (int)(offset + 8 - initialOffset);
-    }
-    */
 }
