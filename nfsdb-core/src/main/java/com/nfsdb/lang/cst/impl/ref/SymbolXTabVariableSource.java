@@ -37,7 +37,7 @@ public class SymbolXTabVariableSource implements IntVariableSource, IntVariable 
         this.state = state;
         this.slaveSymbol = slaveSymbol;
         this.masterColumnIndex = masterMetadata.getColumnIndex(masterSymbol);
-        this.masterTab = masterMetadata.getSymbolTable(masterColumnIndex);
+        this.masterTab = masterMetadata.getColumn(masterColumnIndex).getSymbolTable();
         map = new int[masterTab.size()];
         Arrays.fill(map, -1);
     }

@@ -14,11 +14,12 @@
  * limitations under the License.
  */
 
-package com.nfsdb.exp;
+package com.nfsdb.io;
 
-import com.nfsdb.lang.cst.impl.qry.Record;
-import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
-import com.nfsdb.lang.cst.impl.qry.RecordSource;
+import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.lang.cst.Record;
+import com.nfsdb.lang.cst.RecordMetadata;
+import com.nfsdb.lang.cst.RecordSource;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Numbers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -41,6 +42,9 @@ public class RecordSourcePrinter {
     public void print(Record r, RecordMetadata m) {
 
         for (int i = 0, sz = m.getColumnCount(); i < sz; i++) {
+            if (i > 0) {
+                sink.put(delimiter);
+            }
             printRecord(r, m, i);
         }
         sink.put("\n");
@@ -48,8 +52,8 @@ public class RecordSourcePrinter {
     }
 
     public void printColumns(Record r, RecordMetadata m, int... columns) {
-        for (int i = 0; i < columns.length; i++) {
-            printRecord(r, m, columns[i]);
+        for (int column : columns) {
+            printRecord(r, m, column);
         }
     }
 
@@ -66,7 +70,7 @@ public class RecordSourcePrinter {
     }
 
     private void printRecord(Record r, RecordMetadata m, int i) {
-        switch (m.getColumnType(i)) {
+        switch (m.getColumn(i).getType()) {
             case DATE:
                 Dates.appendDateTime(sink, r.getLong(i));
                 break;
@@ -97,6 +101,5 @@ public class RecordSourcePrinter {
 //                default:
 //                    throw new JournalRuntimeException("Unsupported type: " + r.getColumnType(i));
         }
-        sink.put('\t');
     }
 }

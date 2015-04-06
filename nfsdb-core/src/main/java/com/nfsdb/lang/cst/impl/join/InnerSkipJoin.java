@@ -17,10 +17,10 @@
 package com.nfsdb.lang.cst.impl.join;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.lang.cst.GenericRecordSource;
 import com.nfsdb.lang.cst.Record;
 import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.RecordSource;
+import com.nfsdb.lang.cst.impl.qry.GenericRandomAccessRecordSource;
 import com.nfsdb.lang.cst.impl.qry.SplitRecord;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 

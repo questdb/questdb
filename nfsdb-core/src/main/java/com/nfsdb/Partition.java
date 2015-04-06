@@ -17,6 +17,7 @@
 package com.nfsdb;
 
 import com.nfsdb.collections.ObjList;
+import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;

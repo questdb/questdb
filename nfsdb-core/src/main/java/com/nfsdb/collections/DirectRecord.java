@@ -1,15 +1,14 @@
 package com.nfsdb.collections;
 
 import com.nfsdb.column.DirectInputStream;
-import com.nfsdb.column.SymbolTable;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.lang.cst.Record;
 import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.storage.ColumnType;
+import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.utils.Unsafe;
 import org.jetbrains.annotations.NotNull;
-
 import java.io.IOException;
 import java.io.OutputStream;
 
@@ -35,7 +34,7 @@ public class DirectRecord implements Record {
         int lastIndex = 0;
         int varColIndex = 0;
         for(int i = 0; i < offsets.length; i++) {
-            ColumnType ct = metadata.getColumnType(i);
+            ColumnType ct = metadata.getColumn(i).getType();
             if (ct.size() != 0) {
                 // Fixed columns.
                 fixedSize += ct.size();
@@ -47,7 +46,7 @@ public class DirectRecord implements Record {
 
         // Init order of var len fields
         for(int i = 0; i < offsets.length; i++) {
-            if (metadata.getColumnType(i).size() == 0) {
+            if (metadata.getColumn(i).getType().size() == 0) {
                 //colIndex[i] = lastIndex++;
                 offsets[i] = -(varColIndex++);
             }
@@ -78,7 +77,7 @@ public class DirectRecord implements Record {
 
         for(int i = 0; i < offsets.length; i++) {
             //int i = colIndex[col];
-            ColumnType columnType = metadata.getColumnType(i);
+            ColumnType columnType = metadata.getColumn(i).getType();
             switch (columnType) {
                 case BOOLEAN:
                     Unsafe.getUnsafe().putByte(writeAddress, (byte) (record.getBool(i) ? 1 : 0));

@@ -16,6 +16,7 @@
 
 package com.nfsdb.storage;
 
+import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.io.sink.CharSink;

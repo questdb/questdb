@@ -4,6 +4,7 @@ import com.nfsdb.collections.DirectRecordLinkedList;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.lang.cst.Record;
 import com.nfsdb.lang.cst.RecordMetadata;
+import com.nfsdb.lang.cst.RecordSource;
 import com.nfsdb.lang.cst.impl.qry.RecordColumn;
 import com.nfsdb.storage.ColumnType;
 import com.sun.javaws.exceptions.InvalidArgumentException;
@@ -41,8 +42,8 @@ public class MultiRecordMap implements Closeable {
         values.putLong(0, newVal);
     }
 
-    public RecordSource<Record> get(MultiMap.Key key) {
-        MapValues values = map.claimSlot(key);
+    public RecordSource<Record> get(MultiMap.KeyWriter key) {
+        MapValues values = map.values(key);
         long offset = values.isNew() ? -1 : values.getLong(0);
         records.init(offset);
         return records;
@@ -117,7 +118,7 @@ public class MultiRecordMap implements Closeable {
         public int getAvgRecordSize(RecordMetadata metadata) {
             int size = 0;
             for(int i = 0; i <  metadata.getColumnCount(); i++) {
-                ColumnType type = metadata.getColumnType(i);
+                ColumnType type = metadata.getColumn(i).getType();
                 int colSize = type.size();
                 if (colSize == 0) {
                     colSize = 64 * 1024;

@@ -18,6 +18,7 @@ package com.nfsdb.lang.cst.impl.virt;
 
 import com.nfsdb.collections.ObjIntHashMap;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
@@ -52,20 +53,12 @@ public class VirtualRecordMetadata implements RecordMetadata {
     }
 
     @Override
-    public String getColumnName(int index) {
-        return index < split ? base.getColumnName(index) : virtualColumns.get(index - split).getName();
+    public RecordColumnMetadata getColumn(int index) {
+        return index < split ? base.getColumn(index) : virtualColumns.get(index - split);
     }
 
     @Override
-    public ColumnType getColumnType(int index) {
-        return index < split ? base.getColumnType(index) : virtualColumns.get(index - split).getType();
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int index) {
-        if (index < split) {
-            return base.getSymbolTable(index);
-        }
-        throw new JournalRuntimeException("Virtual columns do not support symbol tables.");
+    public RecordColumnMetadata getColumn(CharSequence name) {
+        return getColumn(getColumnIndex(name));
     }
 }

@@ -278,6 +278,15 @@ public class MultiMap extends DirectMemoryStructure {
         private long dataSize = 4096;
         private float loadFactor = 0.5f;
 
+        public MultiMap build() {
+            return new MultiMap(capacity, dataSize, loadFactor, valueColumns, keyColumns, interceptors);
+        }
+
+        public Builder interceptor(MapRecordValueInterceptor interceptor) {
+            interceptors.add(interceptor);
+            return this;
+        }
+
         public Builder valueColumn(RecordColumnMetadata metadata) {
             valueColumns.add(metadata);
             return this;
@@ -300,11 +309,6 @@ public class MultiMap extends DirectMemoryStructure {
 
         public Builder setLoadFactor(float loadFactor) {
             this.loadFactor = loadFactor;
-            return this;
-        }
-
-        public Builder valueColumn(ColumnMetadata metadata) {
-            valueColumns.add(metadata);
             return this;
         }
     }

@@ -18,22 +18,17 @@ package com.nfsdb.lang.cst.impl.virt;
 
 import com.nfsdb.collections.ObjIntHashMap;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.lang.cst.RecordMetadata;
-import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.SymbolTable;
-
 import java.util.List;
 
 public class SelectedColumnsMetadata implements RecordMetadata {
     private final RecordMetadata delegate;
-    private final List<String> names;
     private final int reindex[];
     private final ObjIntHashMap<CharSequence> nameIndex;
 
     public SelectedColumnsMetadata(RecordMetadata delegate, List<String> names) {
         this.delegate = delegate;
-        this.names = names;
-
         int k = names.size();
         this.nameIndex = new ObjIntHashMap<>(k);
         this.reindex = new int[k];
@@ -58,17 +53,12 @@ public class SelectedColumnsMetadata implements RecordMetadata {
     }
 
     @Override
-    public String getColumnName(int index) {
-        return names.get(index);
+    public RecordColumnMetadata getColumn(int index) {
+        return delegate.getColumn(reindex[index]);
     }
 
     @Override
-    public ColumnType getColumnType(int index) {
-        return delegate.getColumnType(reindex[index]);
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int index) {
-        return delegate.getSymbolTable(reindex[index]);
+    public RecordColumnMetadata getColumn(CharSequence name) {
+        return getColumn(getColumnIndex(name));
     }
 }

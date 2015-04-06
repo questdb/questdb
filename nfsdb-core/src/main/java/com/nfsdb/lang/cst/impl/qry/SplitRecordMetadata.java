@@ -17,12 +17,8 @@
 package com.nfsdb.lang.cst.impl.qry;
 
 import com.nfsdb.collections.ObjIntHashMap;
-import com.nfsdb.column.ColumnType;
-import com.nfsdb.column.SymbolTable;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.lang.cst.RecordMetadata;
-import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.SymbolTable;
 
 public class SplitRecordMetadata implements RecordMetadata {
     private final RecordMetadata a;
@@ -63,30 +59,6 @@ public class SplitRecordMetadata implements RecordMetadata {
     }
 
     @Override
-    public String getColumnName(int index) {
-        return columnNames[index];
-    }
-
-    @Override
-    public ColumnType getColumnType(int index) {
-        if (index < split) {
-            return a.getColumnType(index);
-        } else {
-            return b.getColumnType(index - split);
-        }
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int index) {
-        return columns[index].getSymbolTable();
-    }
-
-    @Override
-    public int getColumnIndex(CharSequence name) {
-        return columnIndices.get(name);
-    }
-
-    @Override
     public RecordColumnMetadata getColumn(int index) {
         return columns[index];
     }
@@ -94,14 +66,5 @@ public class SplitRecordMetadata implements RecordMetadata {
     @Override
     public RecordColumnMetadata getColumn(CharSequence name) {
         return columns[getColumnIndex(name)];
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int index) {
-        if (index < split) {
-            return a.getSymbolTable(index);
-        } else {
-            return b.getSymbolTable(index - split);
-        }
     }
 }

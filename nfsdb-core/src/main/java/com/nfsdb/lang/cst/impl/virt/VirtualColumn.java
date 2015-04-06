@@ -16,6 +16,8 @@
 
 package com.nfsdb.lang.cst.impl.virt;
 
+import com.nfsdb.column.DirectInputStream;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.RecordSourceState;
@@ -24,7 +26,7 @@ import com.nfsdb.storage.ColumnType;
 import java.io.InputStream;
 import java.io.OutputStream;
 
-public interface VirtualColumn {
+public interface VirtualColumn extends RecordColumnMetadata {
 
     void configure(RecordMetadata metadata, RecordSourceState state);
 
@@ -32,7 +34,7 @@ public interface VirtualColumn {
 
     void getBin(OutputStream s);
 
-    InputStream getBin();
+    DirectInputStream getBin();
 
     boolean getBool();
 
@@ -46,8 +48,6 @@ public interface VirtualColumn {
 
     long getLong();
 
-    String getName();
-
     void setName(String name);
 
     short getShort();
@@ -57,6 +57,4 @@ public interface VirtualColumn {
     void getStr(CharSink sink);
 
     String getSym();
-
-    ColumnType getType();
 }

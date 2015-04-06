@@ -55,13 +55,4 @@ public class TopRecordSource extends AbstractImmutableIterator<Record> implement
         delegate.reset();
         this.remaining = count;
     }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return delegate.getMetadata();
-    }
-
-    public JournalRecord getByRowId(long rowId) {
-        return delegate.getByRowId(rowId);
-    }
 }

@@ -137,4 +137,18 @@ public class ColumnMetadata implements RecordColumnMetadata {
         buf.put(sameAs);
         buf.put(noCache);
     }
+    @Override
+    public ColumnType getType() {
+        return type;
+    }
+
+    @Override
+    public SymbolTable getSymbolTable() {
+        return symbolTable;
+    }
+
+    @Override
+    public String getName() {
+        return name;
+    }
 }

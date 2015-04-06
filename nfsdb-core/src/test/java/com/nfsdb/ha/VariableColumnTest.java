@@ -17,18 +17,12 @@
 package com.nfsdb.ha;
 
 import com.nfsdb.JournalMode;
-import com.nfsdb.collections.Primes;
 import com.nfsdb.column.DirectInputStream;
-import com.nfsdb.column.MappedFile;
-import com.nfsdb.column.MappedFileImpl;
-import com.nfsdb.column.VariableColumn;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.ha.comsumer.VariableColumnDeltaConsumer;
 import com.nfsdb.ha.producer.VariableColumnDeltaProducer;
 import com.nfsdb.storage.MemoryFile;
 import com.nfsdb.storage.VariableColumn;
-import com.nfsdb.net.comsumer.VariableColumnDeltaConsumer;
-import com.nfsdb.net.producer.VariableColumnDeltaProducer;
 import com.nfsdb.utils.Unsafe;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
@@ -95,7 +89,7 @@ public class VariableColumnTest {
     @Test
     public void testReadBinaryColumnData() throws Exception {
         int bitHint = 8;
-        try (MappedFile smallFile = new MappedFileImpl(new File(temporaryFolder.getRoot(), "small.d"), bitHint, JournalMode.APPEND)) {
+        try (MemoryFile smallFile = new MemoryFile(new File(temporaryFolder.getRoot(), "small.d"), bitHint, JournalMode.APPEND)) {
             VariableColumn col1 = new VariableColumn(smallFile, indexFile);
 
             int max = (int) Math.pow(2, bitHint) * 10 + 1;
@@ -121,7 +115,7 @@ public class VariableColumnTest {
     @Test
     public void testCopyBinaryColumnData() throws Exception {
         int bitHint = 8;
-        try (MappedFile smallFile = new MappedFileImpl(new File(temporaryFolder.getRoot(), "small.d"), bitHint, JournalMode.APPEND)) {
+        try (MemoryFile smallFile = new MemoryFile(new File(temporaryFolder.getRoot(), "small.d"), bitHint, JournalMode.APPEND)) {
             VariableColumn col1 = new VariableColumn(smallFile, indexFile);
 
             int max = (int) Math.pow(2, bitHint) * 10 + 1;
@@ -132,7 +126,7 @@ public class VariableColumnTest {
             writeStream.flush();
             col1.commit();
 
-            int shift = Primes.next(max / 4);
+            int shift = (int) Math.ceil(max / 4.0);
             for (int offset = 0; offset < max; offset += shift) {
                 int readLen = max - offset;
                 DirectInputStream readStream = col1.getBin(0);

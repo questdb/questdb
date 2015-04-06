@@ -1,11 +1,8 @@
 package com.nfsdb.lang.cst.impl.qry;
 
 import com.nfsdb.collections.ObjIntHashMap;
-import com.nfsdb.column.ColumnType;
-import com.nfsdb.column.SymbolTable;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-
-import java.util.ArrayList;
+import com.nfsdb.lang.cst.RecordMetadata;
 import java.util.Arrays;
 import java.util.List;
 
@@ -20,16 +17,6 @@ public class ColumnListRecordMetadata implements RecordMetadata {
     @Override
     public int getColumnCount() {
         return columns.size();
-    }
-
-    @Override
-    public ColumnType getColumnType(int index) {
-        return columns.get(index).getType();
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int index) {
-        return columns.get(index).getSymbolTable();
     }
 
     @Override

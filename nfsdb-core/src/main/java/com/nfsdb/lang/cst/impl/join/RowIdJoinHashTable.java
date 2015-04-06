@@ -2,12 +2,16 @@ package com.nfsdb.lang.cst.impl.join;
 
 import com.nfsdb.collections.mmap.MultiMap;
 import com.nfsdb.collections.mmap.MultiRecordMap;
-import com.nfsdb.column.ColumnType;
 import com.nfsdb.column.DirectInputStream;
-import com.nfsdb.exp.CharSink;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
+import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.lang.cst.Record;
+import com.nfsdb.lang.cst.RecordMetadata;
+import com.nfsdb.lang.cst.RecordSource;
 import com.nfsdb.lang.cst.impl.qry.*;
+import com.nfsdb.storage.ColumnType;
+
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -29,7 +33,7 @@ public class RowIdJoinHashTable implements JoinHashTable, Closeable {
 
     @Override
     public RecordSource<? extends Record> getRows(Record master, int columnIndex, ColumnType type) {
-        MultiMap.Key mapKey = hashTable.claimKey();
+        MultiMap.KeyWriter mapKey = hashTable.claimKey();
         MultiMap.putKey(mapKey, master, columnIndex, type);
         mapKey.commit();
         final RecordSource<Record> ids = hashTable.get(mapKey);
@@ -78,7 +82,7 @@ public class RowIdJoinHashTable implements JoinHashTable, Closeable {
         MultiRecordMap map = builder.build();
 
         for(Record r : source) {
-            MultiMap.Key mapKey = map.claimKey();
+            MultiMap.KeyWriter mapKey = map.claimKey();
             MultiMap.putKey(mapKey, r, colIndex, colType);
             mapKey.commit();
             wrapper.setId(r.getRowId());
@@ -156,6 +160,16 @@ public class RowIdJoinHashTable implements JoinHashTable, Closeable {
 
         @Override
         public double getDouble(int col) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public float getFloat(String column) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public float getFloat(int col) {
             throw new UnsupportedOperationException();
         }
 

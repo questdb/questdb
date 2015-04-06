@@ -17,13 +17,9 @@
 package com.nfsdb.lang.cst.impl.jsrc;
 
 import com.nfsdb.Journal;
-import com.nfsdb.lang.cst.PartitionSlice;
-import com.nfsdb.lang.cst.PartitionSource;
-import com.nfsdb.lang.cst.RowCursor;
-import com.nfsdb.lang.cst.RowSource;
+import com.nfsdb.lang.cst.*;
 import com.nfsdb.lang.cst.impl.qry.AbstractJournalSource;
 import com.nfsdb.lang.cst.impl.qry.JournalRecord;
-import com.nfsdb.lang.cst.impl.qry.RecordMetadata;
 
 public class JournalSourceImpl extends AbstractJournalSource {
     private final PartitionSource partitionSource;

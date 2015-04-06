@@ -16,11 +16,12 @@
 
 package com.nfsdb.lang.cst.impl.virt;
 
+import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.RecordSourceState;
+import com.nfsdb.storage.SymbolTable;
 
-import java.io.InputStream;
 import java.io.OutputStream;
 
 public class RecordSourceColumn extends AbstractVirtualColumn {
@@ -34,7 +35,7 @@ public class RecordSourceColumn extends AbstractVirtualColumn {
     public void configure(RecordMetadata metadata, RecordSourceState state) {
         super.configure(metadata, state);
         this.index = metadata.getColumnIndex(getName());
-        setType(metadata.getColumnType(index));
+        setType(metadata.getColumn(index).getType());
     }
 
     @Override
@@ -48,7 +49,7 @@ public class RecordSourceColumn extends AbstractVirtualColumn {
     }
 
     @Override
-    public InputStream getBin() {
+    public DirectInputStream getBin() {
         return state.currentRecord().getBin(index);
     }
 
@@ -100,5 +101,10 @@ public class RecordSourceColumn extends AbstractVirtualColumn {
     @Override
     public String getSym() {
         return state.currentRecord().getSym(index);
+    }
+
+    @Override
+    public SymbolTable getSymbolTable() {
+        return null;
     }
 }

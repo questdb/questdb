@@ -16,8 +16,11 @@
 package com.nfsdb.lang.cst.impl.join;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.column.ColumnType;
+import com.nfsdb.lang.cst.Record;
+import com.nfsdb.lang.cst.RecordMetadata;
+import com.nfsdb.lang.cst.RecordSource;
 import com.nfsdb.lang.cst.impl.qry.*;
+import com.nfsdb.storage.ColumnType;
 import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 
 public class HashJoin extends AbstractImmutableIterator<SplitRecord> implements RecordSource<SplitRecord> {
@@ -34,8 +37,8 @@ public class HashJoin extends AbstractImmutableIterator<SplitRecord> implements 
         this.metadata = new SplitRecordMetadata(masterSource.getMetadata(), hashedSource.getMetadata());
         this.joinHashTable = buildColumnHash(hashedSource, hashedSourceColumn);
         this.currentRecord = new SplitRecord(metadata, masterSource.getMetadata().getColumnCount());
-        this.masterColType = masterSource.getMetadata().getColumnType(
-                this.masterColIndex = masterSource.getMetadata().getColumnIndex(masterColumn));
+        this.masterColType = masterSource.getMetadata().getColumn(
+                this.masterColIndex = masterSource.getMetadata().getColumnIndex(masterColumn)).getType();
     }
 
     private static JoinHashTable buildColumnHash(RecordSource<? extends Record> source, String expression) {
