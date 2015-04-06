@@ -16,12 +16,12 @@
 package com.nfsdb.lang.cst.impl.join;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
+import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.lang.cst.Record;
 import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.RecordSource;
 import com.nfsdb.lang.cst.impl.qry.*;
 import com.nfsdb.storage.ColumnType;
-import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 
 public class HashJoin extends AbstractImmutableIterator<SplitRecord> implements RecordSource<SplitRecord> {
     private final RecordSource<? extends Record> masterSource;
@@ -48,7 +48,7 @@ public class HashJoin extends AbstractImmutableIterator<SplitRecord> implements 
         }
 
         // Supports sequential read only.
-        throw new NotImplementedException();
+        throw new JournalRuntimeException("Not implemented yet");
     }
 
     private static JoinHashTable buildRandomAccessColumnHash(RandomAccessRecordSource<? extends Record> source, String expression) {

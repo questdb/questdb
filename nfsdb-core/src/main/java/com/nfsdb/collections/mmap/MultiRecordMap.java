@@ -7,8 +7,6 @@ import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.RecordSource;
 import com.nfsdb.lang.cst.impl.qry.RecordColumn;
 import com.nfsdb.storage.ColumnType;
-import com.sun.javaws.exceptions.InvalidArgumentException;
-
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -98,9 +96,9 @@ public class MultiRecordMap implements Closeable {
             return this;
         }
 
-        public Builder setAvgRecordSize(int avgRecordSize) throws InvalidArgumentException {
+        public Builder setAvgRecordSize(int avgRecordSize) throws IllegalArgumentException {
             if (avgRecordSize < 0) {
-                throw new InvalidArgumentException(new String[] { "avgRecordSize must be positive" } );
+                throw new IllegalArgumentException("avgRecordSize must be positive");
             }
             this.avgRecordSize = avgRecordSize;
             return this;
