@@ -83,6 +83,6 @@ public class HashJoinTest {
         p.printColumns(
                 joinResult, joinResult.getMetadata().getColumnIndex("genre")
         );
-        Assert.assertEquals("rock\tpop\tmetal\trock\tpop\t", sink.toString());
+        Assert.assertEquals("rock\tpop\tmetal\trock\tpop", sink.toString());
     }
 }

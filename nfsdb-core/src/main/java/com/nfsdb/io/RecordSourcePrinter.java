@@ -40,7 +40,6 @@ public class RecordSourcePrinter {
     }
 
     public void print(Record r, RecordMetadata m) {
-
         for (int i = 0, sz = m.getColumnCount(); i < sz; i++) {
             if (i > 0) {
                 sink.put(delimiter);
@@ -64,7 +63,11 @@ public class RecordSourcePrinter {
     }
 
     public void printColumns(RecordSource<? extends Record> src, int... columns) {
+        int i = 0;
         while (src.hasNext()) {
+            if (i++ > 0) {
+                sink.put(delimiter);
+            }
             printColumns(src.next(), src.getMetadata(), columns);
         }
     }
