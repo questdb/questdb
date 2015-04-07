@@ -16,11 +16,10 @@
 
 package com.nfsdb.lang.cst.impl.qry;
 
+import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.lang.cst.Record;
 import com.nfsdb.lang.cst.RecordMetadata;
-
-import java.io.InputStream;
 import java.io.OutputStream;
 
 public class SplitRecord extends AbstractRecord {
@@ -31,6 +30,11 @@ public class SplitRecord extends AbstractRecord {
     public SplitRecord(RecordMetadata metadata, int split) {
         super(metadata);
         this.split = split;
+    }
+
+    @Override
+    public long getRowId() {
+        return 0;
     }
 
     @Override
@@ -48,15 +52,6 @@ public class SplitRecord extends AbstractRecord {
             a.getBin(col, s);
         } else if (b != null) {
             b.getBin(col - split, s);
-        }
-    }
-
-    @Override
-    public InputStream getBin(int col) {
-        if (col < split) {
-            return a.getBin(col);
-        } else {
-            return b == null ? null : b.getBin(col - split);
         }
     }
 
@@ -147,6 +142,15 @@ public class SplitRecord extends AbstractRecord {
             return a.getSym(col);
         } else {
             return b == null ? null : b.getSym(col - split);
+        }
+    }
+
+    @Override
+    public DirectInputStream getBin(int col) {
+        if (col < split) {
+            return a.getBin(col);
+        } else {
+            return b == null ? null : b.getBin(col - split);
         }
     }
 

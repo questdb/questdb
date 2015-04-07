@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ import com.nfsdb.storage.SymbolTable;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
-public class ColumnMetadata {
+public class ColumnMetadata implements RecordColumnMetadata {
     public String name;
     public ColumnType type;
     public long offset;
@@ -136,5 +136,19 @@ public class ColumnMetadata {
         buf.put(distinctCountHint);
         buf.put(sameAs);
         buf.put(noCache);
+    }
+    @Override
+    public ColumnType getType() {
+        return type;
+    }
+
+    @Override
+    public SymbolTable getSymbolTable() {
+        return symbolTable;
+    }
+
+    @Override
+    public String getName() {
+        return name;
     }
 }

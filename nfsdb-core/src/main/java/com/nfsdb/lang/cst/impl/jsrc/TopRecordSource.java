@@ -55,6 +55,4 @@ public class TopRecordSource extends AbstractImmutableIterator<Record> implement
         delegate.reset();
         this.remaining = count;
     }
-
-
 }

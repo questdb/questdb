@@ -157,7 +157,7 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
             MultiMap.KeyWriter keyWriter = map.keyWriter();
             keyWriter.putLong(sample);
             for (int i = 0; i < keyIndices.length; i++) {
-                switch (rowSource.getMetadata().getColumnType(i + 1)) {
+                switch (rowSource.getMetadata().getColumn(i + 1).getType()) {
                     case LONG:
                         keyWriter.putLong(rec.getLong(keyIndices[i]));
                         break;
@@ -171,7 +171,7 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
                         keyWriter.putInt(rec.getInt(keyIndices[i]));
                         break;
                     default:
-                        throw new JournalRuntimeException("Unsupported type: " + rowSource.getMetadata().getColumnType(i + 1));
+                        throw new JournalRuntimeException("Unsupported type: " + rowSource.getMetadata().getColumn(i + 1).getType());
                 }
             }
             MapValues values = map.values(keyWriter);

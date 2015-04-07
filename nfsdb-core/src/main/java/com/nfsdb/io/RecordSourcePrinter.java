@@ -20,6 +20,8 @@ import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.lang.cst.Record;
 import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.RecordSource;
+import com.nfsdb.utils.Dates;
+import com.nfsdb.utils.Numbers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT"})
@@ -38,53 +40,69 @@ public class RecordSourcePrinter {
     }
 
     public void print(Record r, RecordMetadata m) {
-
         for (int i = 0, sz = m.getColumnCount(); i < sz; i++) {
             if (i > 0) {
                 sink.put(delimiter);
             }
-            switch (m.getColumnType(i)) {
-                case DATE:
-                    sink.putISODate(r.getLong(i));
-                    break;
-                case DOUBLE:
-                    sink.put(r.getDouble(i), 12);
-                    break;
-                case FLOAT:
-                    sink.put(r.getFloat(i), 6);
-                    break;
-                case INT:
-                    sink.put(r.getInt(i));
-                    break;
-                case STRING:
-                    r.getStr(i, sink);
-                    break;
-                case SYMBOL:
-                    sink.put(r.getSym(i));
-                    break;
-                case SHORT:
-                    sink.put(r.getShort(i));
-                    break;
-                case LONG:
-                    sink.put(r.getLong(i));
-                    break;
-                case BYTE:
-                    sink.put(r.get(i));
-                    break;
-                case BOOLEAN:
-                    sink.put(r.getBool(i));
-                    break;
-//                default:
-//                    throw new JournalRuntimeException("Unsupported type: " + r.getColumnType(i));
-            }
+            printRecord(r, m, i);
         }
         sink.put("\n");
         sink.flush();
     }
 
+    public void printColumns(Record r, RecordMetadata m, int... columns) {
+        for (int column : columns) {
+            printRecord(r, m, column);
+        }
+    }
+
     public void print(RecordSource<? extends Record> src) {
         while (src.hasNext()) {
             print(src.next(), src.getMetadata());
+        }
+    }
+
+    public void printColumns(RecordSource<? extends Record> src, int... columns) {
+        int i = 0;
+        while (src.hasNext()) {
+            if (i++ > 0) {
+                sink.put(delimiter);
+            }
+            printColumns(src.next(), src.getMetadata(), columns);
+        }
+    }
+
+    private void printRecord(Record r, RecordMetadata m, int i) {
+        switch (m.getColumn(i).getType()) {
+            case DATE:
+                Dates.appendDateTime(sink, r.getLong(i));
+                break;
+            case DOUBLE:
+                Numbers.append(sink, r.getDouble(i), 12);
+                break;
+            case INT:
+                Numbers.append(sink, r.getInt(i));
+                break;
+            case STRING:
+                r.getStr(i, sink);
+                break;
+            case SYMBOL:
+                sink.put(r.getSym(i));
+                break;
+            case SHORT:
+                Numbers.append(sink, r.getShort(i));
+                break;
+            case LONG:
+                Numbers.append(sink, r.getLong(i));
+                break;
+            case BYTE:
+                Numbers.append(sink, r.get(i));
+                break;
+            case BOOLEAN:
+                sink.put(r.getBool(i) ? "true" : "false");
+                break;
+//                default:
+//                    throw new JournalRuntimeException("Unsupported type: " + r.getColumnType(i));
         }
     }
 }

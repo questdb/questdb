@@ -17,9 +17,8 @@
 package com.nfsdb.lang.cst.impl.qry;
 
 import com.nfsdb.collections.ObjIntHashMap;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.lang.cst.RecordMetadata;
-import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.SymbolTable;
 
 public class SplitRecordMetadata implements RecordMetadata {
     private final RecordMetadata a;
@@ -27,7 +26,7 @@ public class SplitRecordMetadata implements RecordMetadata {
     private final int split;
     private final int columnCount;
     private final ObjIntHashMap<CharSequence> columnIndices;
-    private final String[] columnNames;
+    private final RecordColumnMetadata[] columns;
 
     public SplitRecordMetadata(RecordMetadata a, RecordMetadata b) {
         this.a = a;
@@ -35,15 +34,17 @@ public class SplitRecordMetadata implements RecordMetadata {
         this.split = a.getColumnCount();
         this.columnCount = this.split + b.getColumnCount();
         this.columnIndices = new ObjIntHashMap<>(columnCount);
-        this.columnNames = new String[columnCount];
+        this.columns = new RecordColumnMetadata[columnCount];
 
         for (int i = 0; i < split; i++) {
-            columnIndices.put(columnNames[i] = a.getColumnName(i), i);
+            RecordColumnMetadata rc = a.getColumn(i);
+            columns[i] = rc;
+            columnIndices.put(columns[i].getName(), i);
         }
 
-        for (int i = 0, c = columnCount - split; c < i; i++) {
-            columnNames[i + split] = b.getColumnName(i);
-            columnIndices.put(columnNames[i + split] = b.getColumnName(i), i + split);
+        for (int i = 0, c = columnCount - split; i < c; i++) {
+            columns[i + split] = b.getColumn(i);
+            columnIndices.put(columns[i + split].getName(), i + split);
         }
     }
 
@@ -58,25 +59,12 @@ public class SplitRecordMetadata implements RecordMetadata {
     }
 
     @Override
-    public String getColumnName(int index) {
-        return columnNames[index];
+    public RecordColumnMetadata getColumn(int index) {
+        return columns[index];
     }
 
     @Override
-    public ColumnType getColumnType(int index) {
-        if (index < split) {
-            return a.getColumnType(index);
-        } else {
-            return b.getColumnType(index - split);
-        }
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int index) {
-        if (index < split) {
-            return a.getSymbolTable(index);
-        } else {
-            return b.getSymbolTable(index - split);
-        }
+    public RecordColumnMetadata getColumn(CharSequence name) {
+        return columns[getColumnIndex(name)];
     }
 }

@@ -17,6 +17,7 @@
 package com.nfsdb.lang.cst.impl.qry;
 
 import com.nfsdb.Partition;
+import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.storage.FixedColumn;
@@ -33,6 +34,11 @@ public class JournalRecord extends AbstractRecord {
     }
 
     @Override
+    public long getRowId() {
+        return rowid;
+    }
+
+    @Override
     public byte get(int col) {
         return ((FixedColumn) partition.getAbstractColumn(col)).getByte(rowid);
     }
@@ -40,11 +46,6 @@ public class JournalRecord extends AbstractRecord {
     @Override
     public void getBin(int col, OutputStream s) {
         partition.getBin(rowid, col, s);
-    }
-
-    @Override
-    public InputStream getBin(int col) {
-        return partition.getBin(rowid, col);
     }
 
     @Override
@@ -97,6 +98,11 @@ public class JournalRecord extends AbstractRecord {
         return partition.getSym(rowid, col);
     }
 
+    @Override
+    public DirectInputStream getBin(int col) {
+        return partition.getBin(rowid, col);
+    }
+    
     @Override
     public String toString() {
         return "DataItem{" +

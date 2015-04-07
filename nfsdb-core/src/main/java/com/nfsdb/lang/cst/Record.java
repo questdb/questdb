@@ -16,12 +16,15 @@
 
 package com.nfsdb.lang.cst;
 
+import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.io.sink.CharSink;
-
-import java.io.InputStream;
 import java.io.OutputStream;
 
 public interface Record {
+
+    long getRowId();
+
+    RecordMetadata getMetadata();
 
     byte get(String column);
 
@@ -30,10 +33,6 @@ public interface Record {
     void getBin(int col, OutputStream s);
 
     void getBin(String column, OutputStream s);
-
-    InputStream getBin(String column);
-
-    InputStream getBin(int col);
 
     boolean getBool(String column);
 
@@ -57,8 +56,6 @@ public interface Record {
 
     long getLong(int col);
 
-    RecordMetadata getMetadata();
-
     short getShort(int col);
 
     CharSequence getStr(String column);
@@ -70,4 +67,8 @@ public interface Record {
     String getSym(String column);
 
     String getSym(int col);
+
+    DirectInputStream getBin(String column);
+
+    DirectInputStream getBin(int col);
 }

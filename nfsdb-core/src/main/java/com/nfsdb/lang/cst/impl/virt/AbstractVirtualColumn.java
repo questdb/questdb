@@ -16,10 +16,12 @@
 
 package com.nfsdb.lang.cst.impl.virt;
 
+import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.RecordSourceState;
 import com.nfsdb.storage.ColumnType;
+import com.nfsdb.storage.SymbolTable;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -50,7 +52,7 @@ public abstract class AbstractVirtualColumn implements VirtualColumn {
     }
 
     @Override
-    public InputStream getBin() {
+    public DirectInputStream getBin() {
         throw new NoSuchElementException();
     }
 
@@ -117,6 +119,11 @@ public abstract class AbstractVirtualColumn implements VirtualColumn {
     @Override
     public ColumnType getType() {
         return type;
+    }
+
+    @Override
+    public SymbolTable getSymbolTable() {
+        throw new NoSuchElementException();
     }
 
     protected void setType(ColumnType type) {

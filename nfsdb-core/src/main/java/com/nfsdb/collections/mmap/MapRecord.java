@@ -16,13 +16,12 @@
 
 package com.nfsdb.collections.mmap;
 
+import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.impl.qry.AbstractRecord;
 import com.nfsdb.utils.Unsafe;
-
-import java.io.InputStream;
 import java.io.OutputStream;
 
 public final class MapRecord extends AbstractRecord {
@@ -53,12 +52,7 @@ public final class MapRecord extends AbstractRecord {
         throw new JournalRuntimeException("Not implemented");
     }
 
-    @Override
-    public InputStream getBin(int col) {
-        throw new JournalRuntimeException("Not implemented");
-    }
-
-    @Override
+     @Override
     public boolean getBool(int index) {
         return Unsafe.getUnsafe().getByte(address0(index)) == 1;
     }
@@ -116,7 +110,7 @@ public final class MapRecord extends AbstractRecord {
 
     @Override
     public String getSym(int index) {
-        return metadata.getSymbolTable(index).value(getInt(index));
+        return metadata.getColumn(index).getSymbolTable().value(getInt(index));
     }
 
     MapRecord init(long address) {
@@ -124,6 +118,10 @@ public final class MapRecord extends AbstractRecord {
         this.address1 = address + keyDataOffset;
         this.address2 = address + keyBlockOffset;
         return this;
+    }
+    @Override
+    public long getRowId() {
+        return address0;
     }
 
     private long address0(int index) {
@@ -137,5 +135,10 @@ public final class MapRecord extends AbstractRecord {
         }
 
         return Unsafe.getUnsafe().getInt(address2 + (index - split - 1) * 4) + address0;
+    }
+  
+    @Override
+    public DirectInputStream getBin(int col) {
+        throw new JournalRuntimeException("Not implemented");
     }
 }

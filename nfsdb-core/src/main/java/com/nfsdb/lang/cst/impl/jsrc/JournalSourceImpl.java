@@ -17,10 +17,7 @@
 package com.nfsdb.lang.cst.impl.jsrc;
 
 import com.nfsdb.Journal;
-import com.nfsdb.lang.cst.PartitionSlice;
-import com.nfsdb.lang.cst.PartitionSource;
-import com.nfsdb.lang.cst.RowCursor;
-import com.nfsdb.lang.cst.RowSource;
+import com.nfsdb.lang.cst.*;
 import com.nfsdb.lang.cst.impl.qry.AbstractJournalSource;
 import com.nfsdb.lang.cst.impl.qry.JournalRecord;
 
@@ -50,6 +47,17 @@ public class JournalSourceImpl extends AbstractJournalSource {
     public JournalRecord next() {
         item.rowid = cursor.next();
         return item;
+    }
+
+    @Override
+    public JournalRecord getByRowId(long rowId) {
+        item.rowid = rowId;
+        return item;
+    }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return this;
     }
 
     @Override

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,16 +16,19 @@
 
 package com.nfsdb.collections.mmap;
 
+import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.collections.AbstractDirectList;
 import com.nfsdb.collections.DirectLongList;
 import com.nfsdb.collections.DirectMemoryStructure;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.lang.cst.Record;
 import com.nfsdb.lang.cst.RecordMetadata;
+import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Hash;
 import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Unsafe;
-
 import java.util.ArrayList;
 import java.util.List;
 
@@ -47,9 +50,8 @@ public class MultiMap extends DirectMemoryStructure {
     private int size = 0;
     private int mask;
 
-
-    private MultiMap(int capacity, long dataSize, float loadFactor, List<ColumnMetadata> valueColumns, List<ColumnMetadata> keyColumns, List<MapRecordValueInterceptor> interceptors) {
-        this.loadFactor = loadFactor;
+    private MultiMap(int capacity, long dataSize, float loadFactor, List<RecordColumnMetadata> valueColumns, List<RecordColumnMetadata> keyColumns, List<MapRecordValueInterceptor> interceptors) {
+       this.loadFactor = loadFactor;
         this.address = Unsafe.getUnsafe().allocateMemory(dataSize + AbstractDirectList.CACHE_LINE_SIZE);
         this.kStart = kPos = this.address + (this.address & (AbstractDirectList.CACHE_LINE_SIZE - 1));
         this.kLimit = kStart + dataSize;
@@ -67,7 +69,7 @@ public class MultiMap extends DirectMemoryStructure {
         int offset = 4;
         for (int i = 0; i < valueOffsets.length; i++) {
             valueOffsets[i] = offset;
-            switch (valueColumns.get(i).type) {
+            switch (valueColumns.get(i).getType()) {
                 case INT:
                 case FLOAT:
                     offset += 4;
@@ -233,9 +235,44 @@ public class MultiMap extends DirectMemoryStructure {
         this.kLimit = kStart + kCapacity;
     }
 
+    public static void putKey(KeyWriter key, Record r, int columnIndex, ColumnType type) {
+        switch (type) {
+            case BOOLEAN:
+                key.putBoolean(r.getBool(columnIndex));
+                break;
+            case BYTE:
+                key.putByte(r.get(columnIndex));
+                break;
+            case DOUBLE:
+                key.putDouble(r.getDouble(columnIndex));
+                break;
+            case INT:
+                key.putInt(r.getInt(columnIndex));
+                break;
+            case LONG:
+                key.putLong(r.getLong(columnIndex));
+                break;
+            case SHORT:
+                key.putShort(r.getShort(columnIndex));
+                break;
+            case STRING:
+                key.putStr(r.getStr(columnIndex));
+                break;
+            case SYMBOL:
+                key.putStr(r.getStr(columnIndex));
+                break;
+            case BINARY:
+                key.putBin(r.getBin(columnIndex));
+                break;
+            case DATE:
+                key.putLong(r.getDate(columnIndex));
+                break;
+        }
+    }
+
     public static class Builder {
-        private final List<ColumnMetadata> valueColumns = new ArrayList<>();
-        private final List<ColumnMetadata> keyColumns = new ArrayList<>();
+        private final List<RecordColumnMetadata> valueColumns = new ArrayList<>();
+        private final List<RecordColumnMetadata> keyColumns = new ArrayList<>();
         private final List<MapRecordValueInterceptor> interceptors = new ArrayList<>();
         private int capacity = 67;
         private long dataSize = 4096;
@@ -250,7 +287,12 @@ public class MultiMap extends DirectMemoryStructure {
             return this;
         }
 
-        public Builder keyColumn(ColumnMetadata metadata) {
+        public Builder valueColumn(RecordColumnMetadata metadata) {
+            valueColumns.add(metadata);
+            return this;
+        }
+
+        public Builder keyColumn(RecordColumnMetadata metadata) {
             keyColumns.add(metadata);
             return this;
         }
@@ -267,11 +309,6 @@ public class MultiMap extends DirectMemoryStructure {
 
         public Builder setLoadFactor(float loadFactor) {
             this.loadFactor = loadFactor;
-            return this;
-        }
-
-        public Builder valueColumn(ColumnMetadata metadata) {
-            valueColumns.add(metadata);
             return this;
         }
     }
@@ -293,6 +330,38 @@ public class MultiMap extends DirectMemoryStructure {
             startAddr = kPos;
             appendAddr = startAddr + keyDataOffset;
             nextColOffset = startAddr + keyBlockOffset;
+            return this;
+        }
+
+        public KeyWriter putByte(byte value) {
+            checkSize(1);
+            Unsafe.getUnsafe().putByte(appendAddr, value);
+            appendAddr += 1;
+            writeOffset();
+            return this;
+        }
+
+        public KeyWriter putBoolean(boolean value) {
+            checkSize(1);
+            Unsafe.getUnsafe().putByte(appendAddr, (byte) (value ? 1 : 0));
+            appendAddr += 1;
+            writeOffset();
+            return this;
+        }
+
+        public KeyWriter putDouble(double value) {
+            checkSize(8);
+            Unsafe.getUnsafe().putDouble(appendAddr, value);
+            appendAddr += 8;
+            writeOffset();
+            return this;
+        }
+
+        public KeyWriter putShort(short value) {
+            checkSize(2);
+            Unsafe.getUnsafe().putShort(appendAddr, value);
+            appendAddr += 2;
+            writeOffset();
             return this;
         }
 
@@ -327,6 +396,14 @@ public class MultiMap extends DirectMemoryStructure {
             }
             appendAddr += len << 1;
             writeOffset();
+            return this;
+        }
+
+        public KeyWriter putBin(DirectInputStream stream) {
+            long length = stream.getLength();
+            checkSize((int) length);
+            length = stream.copyTo(appendAddr, 0, length);
+            appendAddr += length;
             return this;
         }
 

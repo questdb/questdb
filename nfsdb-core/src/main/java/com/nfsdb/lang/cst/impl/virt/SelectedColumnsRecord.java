@@ -16,6 +16,7 @@
 
 package com.nfsdb.lang.cst.impl.virt;
 
+import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.lang.cst.Record;
 import com.nfsdb.lang.cst.RecordMetadata;
@@ -40,6 +41,11 @@ public class SelectedColumnsRecord extends AbstractRecord {
     }
 
     @Override
+    public long getRowId() {
+        return base.getRowId();
+    }
+
+    @Override
     public byte get(int col) {
         return base.get(reindex[col]);
     }
@@ -50,7 +56,7 @@ public class SelectedColumnsRecord extends AbstractRecord {
     }
 
     @Override
-    public InputStream getBin(int col) {
+    public DirectInputStream getBin(int col) {
         return base.getBin(reindex[col]);
     }
 

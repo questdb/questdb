@@ -16,6 +16,7 @@
 
 package com.nfsdb.storage;
 
+import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.io.sink.CharSink;
@@ -132,11 +133,6 @@ public class VariableColumn extends AbstractColumn {
         } catch (IOException e) {
             throw new JournalRuntimeException(e);
         }
-    }
-
-    public InputStream getBin(long localRowID) {
-        binIn.reset(getOffset(localRowID));
-        return binIn;
     }
 
     public int getBinSize(long localRowID) {
@@ -301,6 +297,11 @@ public class VariableColumn extends AbstractColumn {
         preCommit(offset + size);
         return indexColumn.putLong(offset);
     }
+    
+    public DirectInputStream getBin(long localRowID) {
+        binIn.reset(getOffset(localRowID));
+        return binIn;
+    }
 
     private String getStr0(long address, int len) {
         if (buffer.length < len) {
@@ -356,7 +357,7 @@ public class VariableColumn extends AbstractColumn {
         }
     }
 
-    private class BinaryInputStream extends InputStream {
+    private class BinaryInputStream extends DirectInputStream {
         private long workOffset;
         private long blockAddress;
         private int remaining;
@@ -378,15 +379,61 @@ public class VariableColumn extends AbstractColumn {
             return Unsafe.getUnsafe().getByte(blockAddress++);
         }
 
+        private void reset(long offset) {
+            this.workOffset = offset + 4;
+            this.blockRemaining = 0;
+            this.remaining = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
+        }
+
         private void renew() {
             blockAddress = mappedFile.getAddress(workOffset, 1);
             blockRemaining = mappedFile.getAddressSize(workOffset);
         }
 
-        private void reset(long offset) {
-            this.workOffset = offset + 4;
-            this.blockRemaining = 0;
-            this.remaining = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
+        @Override
+        public long getLength() {
+            return remaining;
+        }
+
+        @Override
+        public long copyTo(long address, long start, long length) {
+            skipOffset(start);
+            long totalLen = Math.min(remaining, length);
+            long targetAddress = address + totalLen;
+
+            while(address < targetAddress) {
+                // copy to the block end.
+                long readBlockLen = Math.min(targetAddress - address, blockRemaining);
+                Unsafe.getUnsafe().copyMemory(blockAddress, address, readBlockLen);
+
+                address += readBlockLen;
+                workOffset += readBlockLen;
+                blockAddress += readBlockLen;
+                if (targetAddress - address > 0) {
+                    renew();
+                }
+            }
+            remaining -= totalLen;
+            return totalLen;
+        }
+
+        private void skipOffset(long offset) {
+            if (offset > remaining ) {
+                throw new IndexOutOfBoundsException(String.format("Offset %d is greater than remaining length %d", offset, remaining));
+            }
+            remaining -= offset;
+            long targetWorkOffset = workOffset + offset;
+
+            while (workOffset < targetWorkOffset) {
+                if (blockRemaining == 0) {
+                    renew();
+                }
+
+                long blockSkip = Math.min(targetWorkOffset - workOffset, blockRemaining);
+                workOffset += blockSkip;
+                blockRemaining -= blockSkip;
+                blockAddress += blockSkip;
+            }
         }
     }
 }
