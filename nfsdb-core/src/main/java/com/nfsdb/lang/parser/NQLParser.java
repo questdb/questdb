@@ -17,17 +17,9 @@
 package com.nfsdb.lang.parser;
 
 import com.nfsdb.PartitionType;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.GenericIntBuilder;
 import com.nfsdb.factory.configuration.JournalStructure;
-import com.nfsdb.io.RecordSourcePrinter;
-import com.nfsdb.io.sink.StdoutSink;
-import com.nfsdb.lang.ast.QueryModel;
-import com.nfsdb.lang.ast.Statement;
-import com.nfsdb.lang.ast.StatementType;
-import com.nfsdb.lang.cst.Record;
-import com.nfsdb.lang.cst.RecordSource;
+import com.nfsdb.lang.ast.*;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Numbers;
@@ -42,20 +34,8 @@ public class NQLParser {
         defineSymbol(",");
         defineSymbol("+");
     }};
-
-    public static void main(String[] args) throws ParserException, JournalException {
-        NQLParser parser = new NQLParser();
-        QueryExecutor executor = new QueryExecutor(new JournalFactory("/Users/vlad/dev/data"));
-//        executor.execute(parser.parse("create journal xyz (a INT index buckets 250, b DOUBLE)  partition by MONTH"));
-        RecordSourcePrinter p = new RecordSourcePrinter(new StdoutSink());
-        parser.setContent("select vendorId, medallion, pickupLongitude from trip_data_1.csv");
-        RecordSource<? extends Record> src = executor.execute(parser.parse());
-        if (src != null) {
-            p.print(src);
-        }
-
-        System.out.println("ok");
-    }
+    private final ExprParser exprParser = new ExprParser(tokenStream);
+    private final AstBuilder astBuilder = new AstBuilder();
 
     public Statement parse() throws ParserException {
         CharSequence tok = tok();
@@ -211,12 +191,30 @@ public class NQLParser {
         }
     }
 
-    private Statement parseQuery() throws ParserException {
-
-        QueryModel model = new QueryModel();
+    private void parseSelectColumns(QueryModel model) throws ParserException {
+        CharSequence tok;
         while (true) {
-            model.addColumn(tok().toString());
-            CharSequence tok = tok();
+            ExprNode expr = expr();
+            tok = tok();
+
+            // expect (from | , | [column name])
+
+            if (Chars.equals(tok, "from")) {
+                model.addColumn(new QueryColumn(null, expr));
+                break;
+            }
+
+            if (Chars.equals(tok, ",")) {
+                model.addColumn(new QueryColumn(null, expr));
+                continue;
+            }
+
+            model.addColumn(new QueryColumn(tok.toString(), expr));
+
+            tok = tok();
+
+            // expect (from | , )
+
             if (Chars.equals(tok, "from")) {
                 break;
             }
@@ -225,8 +223,66 @@ public class NQLParser {
                 throw err(", expected");
             }
         }
+    }
+
+    private void parseWhereClause(QueryModel model) throws ParserException {
+        CharSequence tok;
+        while (true) {
+            model.addWhereClause(expr());
+
+            tok = optionTok();
+
+            if (tok == null || !Chars.equals(tok, ",")) {
+                tokenStream.unparse();
+                break;
+            }
+        }
+    }
+
+    private void parseMostRecentBy(QueryModel model, boolean postfix) throws ParserException {
+        expectTok(tok(), "recent");
+        expectTok(tok(), "by");
+        model.setMostRecentBy(expr());
+        model.setMostRecentByPostfix(postfix);
+    }
+
+    private ExprNode expr() throws ParserException {
+        astBuilder.reset();
+        exprParser.parseExpr(astBuilder);
+        return astBuilder.root();
+    }
+
+    private Statement parseQuery() throws ParserException {
+
+        QueryModel model = new QueryModel();
+
+        parseSelectColumns(model);
+
+        // expect (journal name)
 
         model.setJournalName(tok().toString());
+
+        // expect (where | most recent by)
+
+        CharSequence tok = optionTok();
+
+        if (tok != null && Chars.equals(tok, "where")) {
+            parseWhereClause(model);
+
+            tok = optionTok();
+
+            if (tok != null && Chars.equals(tok, "most")) {
+                parseMostRecentBy(model, true);
+            }
+        } else if (tok != null && Chars.equals(tok, "most")) {
+            parseMostRecentBy(model, false);
+
+            tok = optionTok();
+
+            if (tok != null && Chars.equals(tok, "where")) {
+                parseWhereClause(model);
+            }
+        }
 
         return new Statement(StatementType.QUERY_JOURNAL, model);
 

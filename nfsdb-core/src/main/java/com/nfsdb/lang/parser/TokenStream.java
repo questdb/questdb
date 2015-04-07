@@ -202,6 +202,24 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
         }
 
         @Override
+        public boolean equals(Object that) {
+            return that instanceof CharSequence && Chars.equals(this, (CharSequence) that);
+        }
+
+        @Override
+        public int hashCode() {
+            if (_lo == _hi) {
+                return 0;
+            }
+
+            int h = 0;
+            for (int p = _lo; p < _hi; p++) {
+                h = 31 * h + content.charAt(p);
+            }
+            return h;
+        }
+
+        @Override
         public int length() {
             return _hi - _lo;
         }

@@ -23,6 +23,11 @@ import com.nfsdb.lang.cst.impl.ref.StringRef;
 import com.nfsdb.storage.KVIndex;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+
+/**
+ * Streams rowids on assumption that {@link #keySource} produces only one key.
+ * This is used in nested-loop join where "slave" source is scanned for one key at a time.
+ */
 @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
 public class KvIndexTopRowSource implements RowSource, RowCursor {
 

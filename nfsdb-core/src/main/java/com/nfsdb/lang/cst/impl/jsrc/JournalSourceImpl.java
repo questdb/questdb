@@ -37,6 +37,11 @@ public class JournalSourceImpl extends AbstractJournalSource {
     }
 
     @Override
+    public Journal getJournal() {
+        return partitionSource.getJournal();
+    }
+
+    @Override
     public boolean hasNext() {
         return (cursor != null && cursor.hasNext()) || nextSlice();
     }
@@ -54,13 +59,25 @@ public class JournalSourceImpl extends AbstractJournalSource {
         cursor = null;
     }
 
-    @Override
-    public Journal getJournal() {
-        return partitionSource.getJournal();
-    }
-
     @SuppressWarnings("unchecked")
     private boolean nextSlice() {
+        while (partitionSource.hasNext()) {
+            PartitionSlice slice = partitionSource.next();
+            cursor = rowSource.cursor(slice);
+
+            if (cursor == null) {
+                return false;
+            }
+
+            if (cursor.hasNext()) {
+                item.partition = slice.partition;
+                return true;
+            }
+        }
+
+        return false;
+
+/*
         do {
             if (partitionSource.hasNext()) {
                 PartitionSlice slice = partitionSource.next();
@@ -77,5 +94,6 @@ public class JournalSourceImpl extends AbstractJournalSource {
         } while (!cursor.hasNext());
 
         return true;
+*/
     }
 }

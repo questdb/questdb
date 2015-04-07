@@ -50,6 +50,10 @@ public class AstBuilder implements ExprListener {
         stack.push(node);
     }
 
+    public void reset() {
+        stack.clear();
+    }
+
     public ExprNode root() {
         return stack.pollFirst();
     }

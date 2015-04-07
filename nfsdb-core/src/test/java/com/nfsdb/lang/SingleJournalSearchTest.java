@@ -152,27 +152,34 @@ public class SingleJournalSearchTest {
                 "2013-03-12T07:50:00.000Z\tWTB.L\t0.588779883603\t0.245365403760\t1675014181\t2093945023\tFast trading\tGR\n";
         StringRef sym = new StringRef("sym");
 
-        // from quote where timestamp in ("2013-03-12T00:00:00.000Z", "2013-03-13T00:00:00.000Z") and (sym in ("BP.L", "XXX") or sym = "WTB.L")
-        assertEquals(expected, new JournalSourceImpl(new IntervalPartitionSource(new JournalPartitionSource(journal, false), new Interval("2013-03-12T00:00:00.000Z", "2013-03-13T00:00:00.000Z")), new FilteredRowSource(
-                        new UnionRowSource(
-                                new RowSource[]{
-                                        new KvIndexRowSource(
-                                                sym
-                                                ,
-                                                new PartialSymbolKeySource(sym, new ArrayList<String>() {{
-                                                    add("BP.L");
-                                                    add("XXX");
-                                                }})
-                                        ), new KvIndexRowSource(
-                                        sym
-                                        ,
-                                        new PartialSymbolKeySource(sym, new ArrayList<String>() {{
-                                            add("WTB.L");
-                                        }})
-                                )}
-                        )
-                        , new DoubleGreaterThanRowFilter("bid", 0.4)
-                ))
+        // from quote where timestamp in ("2013-03-12T00:00:00.000Z", "2013-03-13T00:00:00.000Z"), (sym in ("BP.L", "XXX") or sym = "WTB.L"), bid > 0.4
+        // this is stupid, "in" is already "or"
+        assertEquals(expected, new JournalSourceImpl(
+                        new IntervalPartitionSource(
+                                new JournalPartitionSource(journal, false),
+                                new Interval("2013-03-12T00:00:00.000Z", "2013-03-13T00:00:00.000Z")
+                        ),
+                        new FilteredRowSource(
+                                new UnionRowSource(
+                                        new RowSource[]{
+                                                new KvIndexRowSource(
+                                                        sym
+                                                        ,
+                                                        new PartialSymbolKeySource(sym, new ArrayList<String>() {{
+                                                            add("BP.L");
+                                                            add("XXX");
+                                                        }})
+                                                ),
+                                                new KvIndexRowSource(
+                                                        sym
+                                                        ,
+                                                        new PartialSymbolKeySource(sym, new ArrayList<String>() {{
+                                                            add("WTB.L");
+                                                        }})
+                                                )}
+                                )
+                                , new DoubleGreaterThanRowFilter("bid", 0.4)
+                        ))
         );
     }
 

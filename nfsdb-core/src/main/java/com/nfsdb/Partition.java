@@ -264,17 +264,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
     public Partition<T> open() throws JournalException {
         access();
         if (columns == null) {
-
-            columns = new AbstractColumn[journal.getMetadata().getColumnCount()];
-
-            for (int i = 0; i < columns.length; i++) {
-                open(i);
-            }
-
-            int tsIndex = journal.getMetadata().getTimestampIndex();
-            if (tsIndex >= 0) {
-                timestampColumn = getFixedWidthColumn(tsIndex);
-            }
+            open0();
         }
         return this;
     }
@@ -572,6 +562,19 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
             commitColumns();
             clearTx();
+        }
+    }
+
+    private void open0() throws JournalException {
+        columns = new AbstractColumn[journal.getMetadata().getColumnCount()];
+
+        for (int i = 0; i < columns.length; i++) {
+            open(i);
+        }
+
+        int tsIndex = journal.getMetadata().getTimestampIndex();
+        if (tsIndex >= 0) {
+            timestampColumn = getFixedWidthColumn(tsIndex);
         }
     }
 

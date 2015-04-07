@@ -26,28 +26,38 @@ import java.util.Deque;
 
 public class ExprParser {
 
-    private final TokenStream toks = new TokenStream();
+    private final TokenStream toks;
 
-    @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
-    public ExprParser() {
+    public ExprParser(TokenStream toks) {
+        this.toks = toks;
         toks.defineSymbol(" ");
         toks.defineSymbol("(");
         toks.defineSymbol(")");
         toks.defineSymbol(",");
         for (int i = 0, k = Operator.operators.size(); i < k; i++) {
-            toks.defineSymbol(Operator.operators.get(i).token);
+            Operator op = Operator.operators.getQuick(i);
+            if (op.symbol) {
+                toks.defineSymbol(op.token);
+            }
         }
+    }
+
+    @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
+    public ExprParser() {
+        this(new TokenStream());
+    }
+
+    public void parseExpr(CharSequence in, ExprListener listener) throws ParserException {
+        toks.setContent(in);
+        parseExpr(listener);
     }
 
     @SuppressWarnings("ConstantConditions")
     @SuppressFBWarnings({"CC_CYCLOMATIC_COMPLEXITY", "SF_SWITCH_NO_DEFAULT"})
-    public void parseExpr(CharSequence in, ExprListener listener) throws ParserException {
-        toks.setContent(in);
+    public void parseExpr(ExprListener listener) throws ParserException {
         Deque<ExprNode> opStack = new ArrayDeque<>();
         IntStack paramCountStack = new IntStack();
 
-        int tokCount = 0;
-        int opAt = 0;
         int paramCount = 0;
         int braceCount = 0;
 
@@ -59,7 +69,6 @@ public class ExprParser {
 
         OUT:
         while ((tok = toks.optionTok()) != null) {
-            tokCount++;
             prevChar = thisChar;
             thisChar = tok.charAt(0);
             prevBranch = thisBranch;
@@ -90,7 +99,6 @@ public class ExprParser {
                         opStack.push(node);
                     }
 
-                    opAt = tokCount;
                     paramCount++;
                     break;
 
@@ -101,7 +109,6 @@ public class ExprParser {
                     paramCountStack.push(paramCount);
                     paramCount = 0;
                     opStack.push(new ExprNode(ExprNode.NodeType.CONTROL, "(", Integer.MAX_VALUE, toks.position()));
-                    opAt = tokCount;
                     break;
 
                 case ')':
@@ -175,7 +182,6 @@ public class ExprParser {
                                 }
                         }
 
-                        opAt = tokCount;
                         ExprNode other;
                         // UNARY operators must never pop BINARY ones regardless of precedence
                         // this is to maintain correctness of -a^b
@@ -198,7 +204,7 @@ public class ExprParser {
                                 node.paramCount = 2;
                         }
                         opStack.push(node);
-                    } else if (opAt == 0 || opAt == tokCount - 1) {
+                    } else if (thisBranch != Branch.RIGHT_BRACE && thisBranch != Branch.CONSTANT && thisBranch != Branch.LITERAL) {
                         thisBranch = Branch.LITERAL;
                         // If the token is a function token, then push it onto the stack.
                         opStack.push(new ExprNode(ExprNode.NodeType.LITERAL, tok.toString(), Integer.MIN_VALUE, toks.position()));

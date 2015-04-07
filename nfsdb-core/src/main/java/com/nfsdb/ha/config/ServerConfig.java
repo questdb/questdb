@@ -107,7 +107,7 @@ public class ServerConfig extends NetworkConfig {
         }
     }
 
-    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS", "MDM_INETADDRESS_GETLOCALHOST"})
+    @SuppressFBWarnings({"MDM_INETADDRESS_GETLOCALHOST"})
     private NetworkInterface getMultiCastInterface0(int instance) throws JournalNetworkException {
         ServerNode node = getNodeByUID(instance);
 

@@ -22,7 +22,7 @@ import com.nfsdb.utils.Unsafe;
 public class ObjList<T> {
     public static final int DEFAULT_ARRAY_SIZE = 16;
     private static long OFFSET = Unsafe.getUnsafe().arrayBaseOffset(Object[].class);
-    private static int SCALE = Unsafe.getUnsafe().arrayIndexScale(Object[].class);
+    private static long SCALE = Unsafe.getUnsafe().arrayIndexScale(Object[].class);
     private Object[] buffer;
     private int pos = 0;
 

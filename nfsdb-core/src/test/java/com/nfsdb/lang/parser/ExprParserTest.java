@@ -50,6 +50,12 @@ public class ExprParserTest {
     }
 
     @Test
+    public void testIn() throws Exception {
+        x("abcin", "a in (b,c)");
+
+    }
+
+    @Test
     public void testLiteralExit() throws Exception {
         x("abxybzc*+", "a + b * c(b(x,y),z) lit");
     }
@@ -92,6 +98,11 @@ public class ExprParserTest {
     @Test
     public void testSimple() throws Exception {
         x("abxyc*2/+", "a + b * c(x,y)/2");
+    }
+
+    @Test
+    public void testSimpleLiteralExit() throws Exception {
+        x("a", "a lit");
     }
 
     @Test

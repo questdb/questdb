@@ -146,8 +146,9 @@ public class JournalServerAgent {
     private void authorize(WritableByteChannel channel, byte[] value) throws JournalNetworkException {
         if (!authorized) {
             try {
-                ObjList<JournalKey> keys = new ObjList<>(readers.size());
-                for (int i = 0, k = readers.size(); i < k; i++) {
+                int k = readers.size();
+                ObjList<JournalKey> keys = new ObjList<>(k);
+                for (int i = 0; i < k; i++) {
                     keys.add(readers.getQuick(i).getKey());
                 }
                 authorized = authorizationHandler.isAuthorized(value, keys);

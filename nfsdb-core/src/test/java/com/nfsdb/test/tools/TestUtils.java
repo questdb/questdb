@@ -221,6 +221,9 @@ public final class TestUtils {
     }
 
     public static void assertEquals(CharSequence expected, CharSequence actual) {
+        if (expected.length() != actual.length()) {
+            Assert.fail("Expected \"" + expected + "\" but have \"" + actual + "\"");
+        }
         Assert.assertEquals(expected.length(), actual.length());
         for (int i = 0; i < expected.length(); i++) {
             Assert.assertEquals(expected.charAt(i), actual.charAt(i));
