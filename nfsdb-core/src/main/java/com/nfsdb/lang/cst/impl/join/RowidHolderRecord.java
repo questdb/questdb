@@ -30,11 +30,13 @@ import java.io.OutputStream;
 
 public class RowidHolderRecord extends AbstractRecord {
 
+    private final static String name = "KY_0C81_";
+
     private long rowid;
 
     public RowidHolderRecord() {
         super(new RecordMetadata() {
-            private final static String name = "KY_0C81_";
+
             private final RecordColumnMetadata columnMetadata = new RecordColumnMetadata() {
                 @Override
                 public String getName() {
@@ -72,7 +74,7 @@ public class RowidHolderRecord extends AbstractRecord {
 
             @Override
             public int getColumnIndex(CharSequence name) {
-                if (Chars.equals(RecordMetadata.name, name)) {
+                if (Chars.equals(RowidHolderRecord.name, name)) {
                     return 0;
                 }
                 throw new JournalRuntimeException("Invalid column name: %s", name);
