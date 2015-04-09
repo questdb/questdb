@@ -16,6 +16,7 @@
 
 package com.nfsdb.storage;
 
+import com.nfsdb.collections.DirectCharSequence;
 import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
@@ -34,6 +35,7 @@ public class VariableColumn extends AbstractColumn {
     private final FixedColumn indexColumn;
     private final BinaryOutputStream binOut = new BinaryOutputStream();
     private final BinaryInputStream binIn = new BinaryInputStream();
+    private final DirectCharSequence charSequence = new DirectCharSequence();
     private char buffer[] = new char[32];
     private byte[] streamBuf;
 
@@ -135,8 +137,23 @@ public class VariableColumn extends AbstractColumn {
         }
     }
 
+    public DirectInputStream getBin(long localRowID) {
+        binIn.reset(getOffset(localRowID));
+        return binIn;
+    }
+
     public int getBinSize(long localRowID) {
         return Unsafe.getUnsafe().getInt(mappedFile.getAddress(getOffset(localRowID), 4));
+    }
+
+    public CharSequence getFlyweightStr(long localRowID) {
+        long offset = indexColumn.getLong(localRowID);
+        int len = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
+        if (len == -1) {
+            return null;
+        }
+        long lo = mappedFile.getAddress(offset + 4, len * 2);
+        return charSequence.init(lo, lo + len * 2);
     }
 
     public FixedColumn getIndexColumn() {
@@ -297,11 +314,6 @@ public class VariableColumn extends AbstractColumn {
         preCommit(offset + size);
         return indexColumn.putLong(offset);
     }
-    
-    public DirectInputStream getBin(long localRowID) {
-        binIn.reset(getOffset(localRowID));
-        return binIn;
-    }
 
     private String getStr0(long address, int len) {
         if (buffer.length < len) {
@@ -364,6 +376,33 @@ public class VariableColumn extends AbstractColumn {
         private int blockRemaining;
 
         @Override
+        public long copyTo(long address, long start, long length) {
+            skipOffset(start);
+            long totalLen = Math.min(remaining, length);
+            long targetAddress = address + totalLen;
+
+            while (address < targetAddress) {
+                // copy to the block end.
+                long readBlockLen = Math.min(targetAddress - address, blockRemaining);
+                Unsafe.getUnsafe().copyMemory(blockAddress, address, readBlockLen);
+
+                address += readBlockLen;
+                workOffset += readBlockLen;
+                blockAddress += readBlockLen;
+                if (targetAddress - address > 0) {
+                    renew();
+                }
+            }
+            remaining -= totalLen;
+            return totalLen;
+        }
+
+        @Override
+        public long getLength() {
+            return remaining;
+        }
+
+        @Override
         public int read() throws IOException {
             if (remaining == 0) {
                 return -1;
@@ -388,33 +427,6 @@ public class VariableColumn extends AbstractColumn {
         private void renew() {
             blockAddress = mappedFile.getAddress(workOffset, 1);
             blockRemaining = mappedFile.getAddressSize(workOffset);
-        }
-
-        @Override
-        public long getLength() {
-            return remaining;
-        }
-
-        @Override
-        public long copyTo(long address, long start, long length) {
-            skipOffset(start);
-            long totalLen = Math.min(remaining, length);
-            long targetAddress = address + totalLen;
-
-            while(address < targetAddress) {
-                // copy to the block end.
-                long readBlockLen = Math.min(targetAddress - address, blockRemaining);
-                Unsafe.getUnsafe().copyMemory(blockAddress, address, readBlockLen);
-
-                address += readBlockLen;
-                workOffset += readBlockLen;
-                blockAddress += readBlockLen;
-                if (targetAddress - address > 0) {
-                    renew();
-                }
-            }
-            remaining -= totalLen;
-            return totalLen;
         }
 
         private void skipOffset(long offset) {

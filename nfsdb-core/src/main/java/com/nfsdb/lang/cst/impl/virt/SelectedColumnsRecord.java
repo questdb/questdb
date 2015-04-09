@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@ import com.nfsdb.lang.cst.Record;
 import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.impl.qry.AbstractRecord;
 
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.List;
 
@@ -38,11 +37,6 @@ public class SelectedColumnsRecord extends AbstractRecord {
         for (int i = 0; i < k; i++) {
             reindex[i] = metadata.getColumnIndex(names.get(i));
         }
-    }
-
-    @Override
-    public long getRowId() {
-        return base.getRowId();
     }
 
     @Override
@@ -81,6 +75,11 @@ public class SelectedColumnsRecord extends AbstractRecord {
     }
 
     @Override
+    public CharSequence getFlyweightStr(int col) {
+        return base.getFlyweightStr(reindex[col]);
+    }
+
+    @Override
     public int getInt(int col) {
         return base.getInt(reindex[col]);
     }
@@ -88,6 +87,11 @@ public class SelectedColumnsRecord extends AbstractRecord {
     @Override
     public long getLong(int col) {
         return base.getLong(reindex[col]);
+    }
+
+    @Override
+    public long getRowId() {
+        return base.getRowId();
     }
 
     @Override

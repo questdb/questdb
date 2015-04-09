@@ -98,18 +98,17 @@ public final class ByteBuffers {
         return copy0(from, to, count);
     }
 
-    public static int copy(ByteBuffer from, ByteBuffer to) {
+    public static void copy(ByteBuffer from, ByteBuffer to) {
         int x = from.remaining();
         int y = to.remaining();
-        int result = x < y ? x : y;
+        int d = x < y ? x : y;
         if ((from instanceof DirectBuffer) && (to instanceof DirectBuffer)) {
-            Unsafe.getUnsafe().copyMemory(((DirectBuffer) from).address() + from.position(), ((DirectBuffer) to).address() + to.position(), result);
-            from.position(from.position() + result);
-            to.position(to.position() + result);
+            Unsafe.getUnsafe().copyMemory(((DirectBuffer) from).address() + from.position(), ((DirectBuffer) to).address() + to.position(), d);
+            from.position(from.position() + d);
+            to.position(to.position() + d);
         } else {
             to.put(from);
         }
-        return result;
     }
 
     public static int getBitHint(int recSize, int recCount) {

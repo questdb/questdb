@@ -17,11 +17,8 @@
 package com.nfsdb.lang.cst.impl.virt;
 
 import com.nfsdb.collections.ObjIntHashMap;
-import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.lang.cst.RecordMetadata;
-import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.SymbolTable;
 
 import java.util.List;
 
@@ -42,6 +39,16 @@ public class VirtualRecordMetadata implements RecordMetadata {
     }
 
     @Override
+    public RecordColumnMetadata getColumn(int index) {
+        return index < split ? base.getColumn(index) : virtualColumns.get(index - split);
+    }
+
+    @Override
+    public RecordColumnMetadata getColumn(CharSequence name) {
+        return getColumn(getColumnIndex(name));
+    }
+
+    @Override
     public int getColumnCount() {
         return base.getColumnCount() + virtualColumns.size();
     }
@@ -50,15 +57,5 @@ public class VirtualRecordMetadata implements RecordMetadata {
     public int getColumnIndex(CharSequence name) {
         int index = nameToIndexMap.get(name);
         return index == -1 ? base.getColumnIndex(name) : index;
-    }
-
-    @Override
-    public RecordColumnMetadata getColumn(int index) {
-        return index < split ? base.getColumn(index) : virtualColumns.get(index - split);
-    }
-
-    @Override
-    public RecordColumnMetadata getColumn(CharSequence name) {
-        return getColumn(getColumnIndex(name));
     }
 }

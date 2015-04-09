@@ -23,6 +23,7 @@ import com.nfsdb.ha.comsumer.VariableColumnDeltaConsumer;
 import com.nfsdb.ha.producer.VariableColumnDeltaProducer;
 import com.nfsdb.storage.MemoryFile;
 import com.nfsdb.storage.VariableColumn;
+import com.nfsdb.utils.Rnd;
 import com.nfsdb.utils.Unsafe;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
@@ -83,63 +84,6 @@ public class VariableColumnTest {
 
         for (int i = 0; i < max; i++) {
             Assert.assertEquals("test123" + (max - i), col2.getStr(i));
-        }
-    }
-
-    @Test
-    public void testReadBinaryColumnData() throws Exception {
-        int bitHint = 8;
-        try (MemoryFile smallFile = new MemoryFile(new File(temporaryFolder.getRoot(), "small.d"), bitHint, JournalMode.APPEND)) {
-            VariableColumn col1 = new VariableColumn(smallFile, indexFile);
-
-            int max = (int) Math.pow(2, bitHint) * 10 + 1;
-            OutputStream writeStream = col1.putBin();
-            for (int i = 0; i < max; i++) {
-                writeStream.write(i % 255);
-            }
-            writeStream.flush();
-            col1.commit();
-
-            DirectInputStream readStream = col1.getBin(0);
-
-            byte[] result = new byte[max];
-            readStream.read(result);
-            for (int i = 0; i < max; i++) {
-                byte expected = (byte) (i % 255);
-                byte actual = result[i];
-                Assert.assertEquals(String.format("difference at index %d", i), expected, actual);
-            }
-        }
-    }
-
-    @Test
-    public void testCopyBinaryColumnData() throws Exception {
-        int bitHint = 8;
-        try (MemoryFile smallFile = new MemoryFile(new File(temporaryFolder.getRoot(), "small.d"), bitHint, JournalMode.APPEND)) {
-            VariableColumn col1 = new VariableColumn(smallFile, indexFile);
-
-            int max = (int) Math.pow(2, bitHint) * 10 + 1;
-            OutputStream writeStream = col1.putBin();
-            for (int i = 0; i < max; i++) {
-                writeStream.write(i % 255);
-            }
-            writeStream.flush();
-            col1.commit();
-
-            int shift = (int) Math.ceil(max / 4.0);
-            for (int offset = 0; offset < max; offset += shift) {
-                int readLen = max - offset;
-                DirectInputStream readStream = col1.getBin(0);
-
-                long readAddress = Unsafe.getUnsafe().allocateMemory(readLen);
-                readStream.copyTo(readAddress, offset, readLen);
-                for (int i = 0; i < readLen; i++) {
-                    byte expected = (byte) ((offset + i) % 255);
-                    byte actual = Unsafe.getUnsafe().getByte(readAddress + i);
-                    Assert.assertEquals(String.format("difference at index %n with read offset %n", i, offset), expected, actual);
-                }
-                Unsafe.getUnsafe().freeMemory(readAddress);
-            }
         }
     }
 
@@ -247,6 +191,37 @@ public class VariableColumnTest {
     }
 
     @Test
+    public void testCopyBinaryColumnData() throws Exception {
+        int bitHint = 8;
+        try (MemoryFile smallFile = new MemoryFile(new File(temporaryFolder.getRoot(), "small.d"), bitHint, JournalMode.APPEND)) {
+            VariableColumn col1 = new VariableColumn(smallFile, indexFile);
+
+            int max = (int) Math.pow(2, bitHint) * 10 + 1;
+            OutputStream writeStream = col1.putBin();
+            for (int i = 0; i < max; i++) {
+                writeStream.write(i % 255);
+            }
+            writeStream.flush();
+            col1.commit();
+
+            int shift = (int) Math.ceil(max / 4.0);
+            for (int offset = 0; offset < max; offset += shift) {
+                int readLen = max - offset;
+                DirectInputStream readStream = col1.getBin(0);
+
+                long readAddress = Unsafe.getUnsafe().allocateMemory(readLen);
+                readStream.copyTo(readAddress, offset, readLen);
+                for (int i = 0; i < readLen; i++) {
+                    byte expected = (byte) ((offset + i) % 255);
+                    byte actual = Unsafe.getUnsafe().getByte(readAddress + i);
+                    Assert.assertEquals(String.format("difference at index %d with read offset %d", i, offset), expected, actual);
+                }
+                Unsafe.getUnsafe().freeMemory(readAddress);
+            }
+        }
+    }
+
+    @Test
     public void testEmptyConsumerAndPopulatedProducer() throws Exception {
         VariableColumn col1 = new VariableColumn(file, indexFile);
         VariableColumn col2 = new VariableColumn(file2, indexFile2);
@@ -303,5 +278,34 @@ public class VariableColumnTest {
 
         Assert.assertEquals(1, col1.size());
         Assert.assertEquals(1, col2.size());
+    }
+
+    @Test
+    public void testReadBinaryColumnData() throws Exception {
+        int bitHint = 8;
+        try (MemoryFile smallFile = new MemoryFile(new File(temporaryFolder.getRoot(), "small.d"), bitHint, JournalMode.APPEND)) {
+            VariableColumn col1 = new VariableColumn(smallFile, indexFile);
+
+            int max = (int) Math.pow(2, bitHint) * 10 + 1;
+
+            Rnd rnd = new Rnd();
+            OutputStream writeStream = col1.putBin();
+            for (int i = 0; i < max; i++) {
+                writeStream.write(rnd.nextInt());
+            }
+            writeStream.flush();
+            col1.commit();
+
+            DirectInputStream readStream = col1.getBin(0);
+
+            byte b;
+            int count = 0;
+            Rnd exp = new Rnd();
+
+            while ((b = (byte) readStream.read()) != -1) {
+                Assert.assertEquals(String.format("difference at index %d", count), (byte) exp.nextInt(), b);
+                count++;
+            }
+        }
     }
 }

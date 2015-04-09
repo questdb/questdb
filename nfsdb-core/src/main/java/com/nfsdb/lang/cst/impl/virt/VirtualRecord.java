@@ -22,7 +22,6 @@ import com.nfsdb.lang.cst.Record;
 import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.impl.qry.AbstractRecord;
 
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.List;
 
@@ -35,11 +34,6 @@ public class VirtualRecord extends AbstractRecord {
         super(metadata);
         this.split = split;
         this.virtualColumns = virtualColumns;
-    }
-
-    @Override
-    public long getRowId() {
-        return 0;
     }
 
     @Override
@@ -82,6 +76,11 @@ public class VirtualRecord extends AbstractRecord {
     }
 
     @Override
+    public CharSequence getFlyweightStr(int col) {
+        return col < split ? base.getFlyweightStr(col) : virtualColumns.get(col - split).getFlyweightStr();
+    }
+
+    @Override
     public int getInt(int col) {
         return col < split ? base.getInt(col) : virtualColumns.get(col - split).getInt();
     }
@@ -89,6 +88,11 @@ public class VirtualRecord extends AbstractRecord {
     @Override
     public long getLong(int col) {
         return col < split ? base.getLong(col) : virtualColumns.get(col - split).getLong();
+    }
+
+    @Override
+    public long getRowId() {
+        return 0;
     }
 
     @Override

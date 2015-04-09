@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,10 @@
 
 package com.nfsdb.lang.cst.impl.qry;
 
+import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.lang.cst.Record;
 import com.nfsdb.lang.cst.RecordMetadata;
-import com.nfsdb.column.DirectInputStream;
+
 import java.io.OutputStream;
 
 public abstract class AbstractRecord implements Record {
@@ -40,6 +41,11 @@ public abstract class AbstractRecord implements Record {
     }
 
     @Override
+    public DirectInputStream getBin(String column) {
+        return getBin(metadata.getColumnIndex(column));
+    }
+
+    @Override
     public boolean getBool(String column) {
         return getBool(metadata.getColumnIndex(column));
     }
@@ -52,6 +58,11 @@ public abstract class AbstractRecord implements Record {
     @Override
     public float getFloat(String column) {
         return getFloat(metadata.getColumnIndex(column));
+    }
+
+    @Override
+    public CharSequence getFlyweightStr(String column) {
+        return getFlyweightStr(metadata.getColumnIndex(column));
     }
 
     @Override
@@ -69,11 +80,6 @@ public abstract class AbstractRecord implements Record {
         return metadata;
     }
 
-    @Override
-    public DirectInputStream getBin(String column) {
-        return getBin(metadata.getColumnIndex(column));
-    }
-    
     @Override
     public CharSequence getStr(String column) {
         return getStr(metadata.getColumnIndex(column));

@@ -21,18 +21,13 @@ import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.lang.cst.RecordMetadata;
 
 public class SplitRecordMetadata implements RecordMetadata {
-    private final RecordMetadata a;
-    private final RecordMetadata b;
-    private final int split;
     private final int columnCount;
     private final ObjIntHashMap<CharSequence> columnIndices;
     private final RecordColumnMetadata[] columns;
 
     public SplitRecordMetadata(RecordMetadata a, RecordMetadata b) {
-        this.a = a;
-        this.b = b;
-        this.split = a.getColumnCount();
-        this.columnCount = this.split + b.getColumnCount();
+        int split = a.getColumnCount();
+        this.columnCount = split + b.getColumnCount();
         this.columnIndices = new ObjIntHashMap<>(columnCount);
         this.columns = new RecordColumnMetadata[columnCount];
 
@@ -49,16 +44,6 @@ public class SplitRecordMetadata implements RecordMetadata {
     }
 
     @Override
-    public int getColumnCount() {
-        return columnCount;
-    }
-
-    @Override
-    public int getColumnIndex(CharSequence name) {
-        return columnIndices.get(name);
-    }
-
-    @Override
     public RecordColumnMetadata getColumn(int index) {
         return columns[index];
     }
@@ -66,5 +51,15 @@ public class SplitRecordMetadata implements RecordMetadata {
     @Override
     public RecordColumnMetadata getColumn(CharSequence name) {
         return columns[getColumnIndex(name)];
+    }
+
+    @Override
+    public int getColumnCount() {
+        return columnCount;
+    }
+
+    @Override
+    public int getColumnIndex(CharSequence name) {
+        return columnIndices.get(name);
     }
 }

@@ -21,9 +21,7 @@ import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.RecordSourceState;
-import com.nfsdb.storage.ColumnType;
 
-import java.io.InputStream;
 import java.io.OutputStream;
 
 public interface VirtualColumn extends RecordColumnMetadata {
@@ -44,11 +42,11 @@ public interface VirtualColumn extends RecordColumnMetadata {
 
     float getFloat();
 
+    CharSequence getFlyweightStr();
+
     int getInt();
 
     long getLong();
-
-    void setName(String name);
 
     short getShort();
 
@@ -57,4 +55,6 @@ public interface VirtualColumn extends RecordColumnMetadata {
     void getStr(CharSink sink);
 
     String getSym();
+
+    void setName(String name);
 }

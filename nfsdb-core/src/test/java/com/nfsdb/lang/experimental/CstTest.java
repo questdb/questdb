@@ -274,7 +274,7 @@ public class CstTest {
                     prev = ts;
                 }
 
-                MapValues val = map.values(
+                MapValues val = map.getOrCreateValues(
                         map.keyWriter()
                                 .putLong(ts)
                                 .putInt(e.getInt(symIndex))

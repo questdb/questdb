@@ -22,7 +22,6 @@ import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.storage.FixedColumn;
 
-import java.io.InputStream;
 import java.io.OutputStream;
 
 public class JournalRecord extends AbstractRecord {
@@ -34,11 +33,6 @@ public class JournalRecord extends AbstractRecord {
     }
 
     @Override
-    public long getRowId() {
-        return rowid;
-    }
-
-    @Override
     public byte get(int col) {
         return ((FixedColumn) partition.getAbstractColumn(col)).getByte(rowid);
     }
@@ -46,6 +40,11 @@ public class JournalRecord extends AbstractRecord {
     @Override
     public void getBin(int col, OutputStream s) {
         partition.getBin(rowid, col, s);
+    }
+
+    @Override
+    public DirectInputStream getBin(int col) {
+        return partition.getBin(rowid, col);
     }
 
     @Override
@@ -69,6 +68,11 @@ public class JournalRecord extends AbstractRecord {
     }
 
     @Override
+    public CharSequence getFlyweightStr(int col) {
+        return partition.getFlyweightStr(rowid, col);
+    }
+
+    @Override
     public int getInt(int col) {
         return partition.getInt(rowid, col);
     }
@@ -76,6 +80,11 @@ public class JournalRecord extends AbstractRecord {
     @Override
     public long getLong(int col) {
         return partition.getLong(rowid, col);
+    }
+
+    @Override
+    public long getRowId() {
+        return rowid;
     }
 
     @Override
@@ -96,11 +105,6 @@ public class JournalRecord extends AbstractRecord {
     @Override
     public String getSym(int col) {
         return partition.getSym(rowid, col);
-    }
-
-    @Override
-    public DirectInputStream getBin(int col) {
-        return partition.getBin(rowid, col);
     }
     
     @Override

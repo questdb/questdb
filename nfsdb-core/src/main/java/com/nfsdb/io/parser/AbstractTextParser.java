@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,10 @@
 
 package com.nfsdb.io.parser;
 
+import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.io.parser.listener.Listener;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.utils.Unsafe;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractTextParser implements TextParser {
     private final static Logger LOGGER = Logger.getLogger(AbstractTextParser.class);
@@ -35,7 +34,7 @@ public abstract class AbstractTextParser implements TextParser {
     protected long lineRollBufCur;
     protected boolean ignoreEolOnce;
     private Listener listener;
-    private DirectCharSequence fields[];
+    private DirectByteCharSequence fields[];
     private boolean calcFields;
     private long lastLineStart;
     private long lineRollBufLen = 4 * 1024L;
@@ -100,31 +99,6 @@ public abstract class AbstractTextParser implements TextParser {
         this.header = header;
     }
 
-    private void calcField() {
-        if (fields == null || fields.length == fieldIndex) {
-            DirectCharSequence sa[] = new DirectCharSequence[fieldIndex + 1];
-            if (fields != null) {
-                System.arraycopy(fields, 0, sa, 0, fieldIndex);
-            }
-            sa[fieldIndex] = new DirectCharSequence();
-            fields = sa;
-        }
-    }
-
-    private void growRollBuf(long len) {
-        LOGGER.warn("Resizing line roll buffer: " + lineRollBufLen + " -> " + len);
-        long p = Unsafe.getUnsafe().allocateMemory(len);
-        long l = lineRollBufCur - lineRollBufPtr;
-        if (l > 0) {
-            Unsafe.getUnsafe().copyMemory(lineRollBufPtr, p, l);
-        }
-        Unsafe.getUnsafe().freeMemory(lineRollBufPtr);
-        shift(lineRollBufPtr - p);
-        lineRollBufCur = p + l;
-        lineRollBufPtr = p;
-        lineRollBufLen = len;
-    }
-
     protected void ignoreEolOnce() {
         eol = true;
         fieldIndex = 0;
@@ -161,18 +135,6 @@ public abstract class AbstractTextParser implements TextParser {
         shift(lo + lastLineStart - lineRollBufPtr);
     }
 
-    private void shift(long d) {
-        for (int i = 0; i < fieldIndex; i++) {
-            fields[i].lo -= d;
-            fields[i].hi -= d;
-        }
-        this.fieldLo -= d;
-        this.fieldHi -= d;
-        if (lastQuotePos > -1) {
-            this.lastQuotePos -= d;
-        }
-    }
-
     protected void stashField() {
         if (calcFields) {
             calcField();
@@ -185,14 +147,13 @@ public abstract class AbstractTextParser implements TextParser {
             return;
         }
 
-        DirectCharSequence seq = fields[fieldIndex];
-        seq.lo = this.fieldLo;
+        DirectByteCharSequence seq = fields[fieldIndex];
 
         if (lastQuotePos > -1) {
-            seq.hi = lastQuotePos - 1;
+            seq.init(this.fieldLo, lastQuotePos - 1);
             lastQuotePos = -1;
         } else {
-            seq.hi = this.fieldHi - 1;
+            seq.init(this.fieldLo, this.fieldHi - 1);
         }
 
         this.fieldLo = this.fieldHi;
@@ -230,76 +191,39 @@ public abstract class AbstractTextParser implements TextParser {
         this.lastLineStart = this.fieldLo - lo;
     }
 
-    public class DirectCharSequence implements CharSequence {
-        private long lo;
-        private long hi;
-        private StringBuilder builder;
-
-        @Override
-        public int hashCode() {
-            if (lo == hi) {
-                return 0;
+    private void calcField() {
+        if (fields == null || fields.length == fieldIndex) {
+            DirectByteCharSequence sa[] = new DirectByteCharSequence[fieldIndex + 1];
+            if (fields != null) {
+                System.arraycopy(fields, 0, sa, 0, fieldIndex);
             }
-
-            int h = 0;
-            for (long p = lo; p < hi; p++) {
-                h = 31 * h + (char) Unsafe.getUnsafe().getByte(p);
-            }
-            return h;
+            sa[fieldIndex] = new DirectByteCharSequence();
+            fields = sa;
         }
+    }
 
-        @Override
-        public boolean equals(Object obj) {
-            if (this == obj) {
-                return true;
-            }
-
-            if (obj instanceof CharSequence) {
-                CharSequence cs = (CharSequence) obj;
-                int l;
-                if ((l = this.length()) != cs.length()) {
-                    return false;
-                }
-
-                for (int i = 0; i < l; i++) {
-                    if (charAt(i) != cs.charAt(i)) {
-                        return false;
-                    }
-                }
-                return true;
-            } else {
-                return false;
-            }
+    private void growRollBuf(long len) {
+        LOGGER.warn("Resizing line roll buffer: " + lineRollBufLen + " -> " + len);
+        long p = Unsafe.getUnsafe().allocateMemory(len);
+        long l = lineRollBufCur - lineRollBufPtr;
+        if (l > 0) {
+            Unsafe.getUnsafe().copyMemory(lineRollBufPtr, p, l);
         }
+        Unsafe.getUnsafe().freeMemory(lineRollBufPtr);
+        shift(lineRollBufPtr - p);
+        lineRollBufCur = p + l;
+        lineRollBufPtr = p;
+        lineRollBufLen = len;
+    }
 
-        @SuppressFBWarnings({"RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE"})
-        @NotNull
-        @Override
-        public String toString() {
-            if (builder == null) {
-                builder = new StringBuilder();
-            } else {
-                builder.setLength(0);
-            }
-            return builder.append(this).toString();
+    private void shift(long d) {
+        for (int i = 0; i < fieldIndex; i++) {
+            fields[i].lshift(d);
         }
-
-        @Override
-        public int length() {
-            return (int) (hi - lo);
-        }
-
-        @Override
-        public char charAt(int index) {
-            return (char) Unsafe.getUnsafe().getByte(lo + index);
-        }
-
-        @Override
-        public CharSequence subSequence(int start, int end) {
-            DirectCharSequence seq = new DirectCharSequence();
-            seq.lo = this.lo + start;
-            seq.hi = this.lo + end;
-            return seq;
+        this.fieldLo -= d;
+        this.fieldHi -= d;
+        if (lastQuotePos > -1) {
+            this.lastQuotePos -= d;
         }
     }
 }

@@ -22,10 +22,9 @@ import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.RecordSourceState;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
+import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 
-import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.NoSuchElementException;
 
 public abstract class AbstractVirtualColumn implements VirtualColumn {
     protected RecordSourceState state;
@@ -43,47 +42,52 @@ public abstract class AbstractVirtualColumn implements VirtualColumn {
 
     @Override
     public byte get() {
-        throw new NoSuchElementException();
+        throw new NotImplementedException();
     }
 
     @Override
     public void getBin(OutputStream s) {
-        throw new NoSuchElementException();
+        throw new NotImplementedException();
     }
 
     @Override
     public DirectInputStream getBin() {
-        throw new NoSuchElementException();
+        throw new NotImplementedException();
     }
 
     @Override
     public boolean getBool() {
-        throw new NoSuchElementException();
+        throw new NotImplementedException();
     }
 
     @Override
     public long getDate() {
-        throw new NoSuchElementException();
+        throw new NotImplementedException();
     }
 
     @Override
     public double getDouble() {
-        throw new NoSuchElementException();
+        throw new NotImplementedException();
     }
 
     @Override
     public float getFloat() {
-        throw new NoSuchElementException();
+        throw new NotImplementedException();
+    }
+
+    @Override
+    public CharSequence getFlyweightStr() {
+        throw new NotImplementedException();
     }
 
     @Override
     public int getInt() {
-        throw new NoSuchElementException();
+        throw new NotImplementedException();
     }
 
     @Override
     public long getLong() {
-        throw new NoSuchElementException();
+        throw new NotImplementedException();
     }
 
     @Override
@@ -98,32 +102,32 @@ public abstract class AbstractVirtualColumn implements VirtualColumn {
 
     @Override
     public short getShort() {
-        throw new NoSuchElementException();
+        throw new NotImplementedException();
     }
 
     @Override
     public CharSequence getStr() {
-        throw new NoSuchElementException();
+        throw new NotImplementedException();
     }
 
     @Override
     public void getStr(CharSink sink) {
-        throw new NoSuchElementException();
+        throw new NotImplementedException();
     }
 
     @Override
     public String getSym() {
-        throw new NoSuchElementException();
+        throw new NotImplementedException();
+    }
+
+    @Override
+    public SymbolTable getSymbolTable() {
+        throw new NotImplementedException();
     }
 
     @Override
     public ColumnType getType() {
         return type;
-    }
-
-    @Override
-    public SymbolTable getSymbolTable() {
-        throw new NoSuchElementException();
     }
 
     protected void setType(ColumnType type) {

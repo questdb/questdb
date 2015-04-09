@@ -37,7 +37,6 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.File;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
@@ -159,6 +158,11 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
     public float getFloat(long localRowID, int columnIndex) {
         return getFixedWidthColumn(columnIndex).getFloat(localRowID);
+    }
+
+    public CharSequence getFlyweightStr(long localRowID, int columnIndex) {
+        checkColumnIndex(columnIndex);
+        return ((VariableColumn) columns[columnIndex]).getFlyweightStr(localRowID);
     }
 
     public KVIndex getIndexForColumn(String columnName) throws JournalException {
@@ -434,10 +438,13 @@ public class Partition<T> implements Iterable<T>, Closeable {
     }
 
     Partition<T> access() {
-        if (journal.getMetadata().getTimestampIndex() >= 0) {
-            this.lastAccessed = getJournal().getTimerCache().getCachedMillis();
+        switch (journal.getMetadata().getPartitionType()) {
+            case NONE:
+                return this;
+            default:
+                this.lastAccessed = journal.getTimerCache().getCachedMillis();
+                return this;
         }
-        return this;
     }
 
 

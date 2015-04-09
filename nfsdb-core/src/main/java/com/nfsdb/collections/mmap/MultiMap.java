@@ -16,19 +16,17 @@
 
 package com.nfsdb.collections.mmap;
 
-import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.collections.AbstractDirectList;
 import com.nfsdb.collections.DirectLongList;
 import com.nfsdb.collections.DirectMemoryStructure;
+import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.factory.configuration.ColumnMetadata;
-import com.nfsdb.lang.cst.Record;
 import com.nfsdb.lang.cst.RecordMetadata;
-import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Hash;
 import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Unsafe;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -103,19 +101,7 @@ public class MultiMap extends DirectMemoryStructure {
         return recordSource.getMetadata();
     }
 
-    public MapRecordSource getRecordSource() {
-        return recordSource.init(kStart, size);
-    }
-
-    public KeyWriter keyWriter() {
-        return keyWriter.init();
-    }
-
-    public int size() {
-        return size;
-    }
-
-    public MapValues values(KeyWriter keyWriter) {
+    public MapValues getOrCreateValues(KeyWriter keyWriter) {
         keyWriter.commit();
         // calculate hash remembering "key" structure
         // [ len | value block | key offset block | key data block ]
@@ -136,6 +122,39 @@ public class MultiMap extends DirectMemoryStructure {
         } else {
             return probe0(keyWriter, index);
         }
+    }
+
+    public MapRecordSource getRecordSource() {
+        return recordSource.init(kStart, size);
+    }
+
+    public MapValues getValues(KeyWriter keyWriter) {
+        keyWriter.commit();
+        // rollback key right away
+        kPos = keyWriter.startAddr;
+        int index = Hash.hashMem(keyWriter.startAddr + keyBlockOffset, keyWriter.len - keyBlockOffset) & mask;
+        long offset = offsets.get(index);
+
+        if (offset == -1) {
+            return null;
+        } else if (eq(keyWriter, offset)) {
+            return values.init(kStart + offset, false);
+        } else {
+            return probeReadOnly(keyWriter, index);
+        }
+    }
+
+    public KeyWriter keyWriter() {
+        return keyWriter.init();
+    }
+
+    public int size() {
+        return size;
+    }
+
+    @Override
+    protected void freeInternal() {
+        offsets.free();
     }
 
     private boolean eq(KeyWriter keyWriter, long offset) {
@@ -169,11 +188,6 @@ public class MultiMap extends DirectMemoryStructure {
         return true;
     }
 
-    @Override
-    protected void freeInternal() {
-        offsets.free();
-    }
-
     private MapValues probe0(KeyWriter keyWriter, int index) {
         long offset;
         while ((offset = offsets.get(index = (++index & mask))) != -1) {
@@ -190,6 +204,16 @@ public class MultiMap extends DirectMemoryStructure {
 
         size++;
         return values.init(keyWriter.startAddr, true);
+    }
+
+    private MapValues probeReadOnly(KeyWriter keyWriter, int index) {
+        long offset;
+        while ((offset = offsets.get(index = (++index & mask))) != -1) {
+            if (eq(keyWriter, offset)) {
+                return values.init(kStart + offset, false);
+            }
+        }
+        return null;
     }
 
     private void rehash() {
@@ -235,41 +259,6 @@ public class MultiMap extends DirectMemoryStructure {
         this.kLimit = kStart + kCapacity;
     }
 
-    public static void putKey(KeyWriter key, Record r, int columnIndex, ColumnType type) {
-        switch (type) {
-            case BOOLEAN:
-                key.putBoolean(r.getBool(columnIndex));
-                break;
-            case BYTE:
-                key.putByte(r.get(columnIndex));
-                break;
-            case DOUBLE:
-                key.putDouble(r.getDouble(columnIndex));
-                break;
-            case INT:
-                key.putInt(r.getInt(columnIndex));
-                break;
-            case LONG:
-                key.putLong(r.getLong(columnIndex));
-                break;
-            case SHORT:
-                key.putShort(r.getShort(columnIndex));
-                break;
-            case STRING:
-                key.putStr(r.getStr(columnIndex));
-                break;
-            case SYMBOL:
-                key.putStr(r.getStr(columnIndex));
-                break;
-            case BINARY:
-                key.putBin(r.getBin(columnIndex));
-                break;
-            case DATE:
-                key.putLong(r.getDate(columnIndex));
-                break;
-        }
-    }
-
     public static class Builder {
         private final List<RecordColumnMetadata> valueColumns = new ArrayList<>();
         private final List<RecordColumnMetadata> keyColumns = new ArrayList<>();
@@ -284,11 +273,6 @@ public class MultiMap extends DirectMemoryStructure {
 
         public Builder interceptor(MapRecordValueInterceptor interceptor) {
             interceptors.add(interceptor);
-            return this;
-        }
-
-        public Builder valueColumn(RecordColumnMetadata metadata) {
-            valueColumns.add(metadata);
             return this;
         }
 
@@ -309,6 +293,11 @@ public class MultiMap extends DirectMemoryStructure {
 
         public Builder setLoadFactor(float loadFactor) {
             this.loadFactor = loadFactor;
+            return this;
+        }
+
+        public Builder valueColumn(RecordColumnMetadata metadata) {
+            valueColumns.add(metadata);
             return this;
         }
     }
@@ -333,11 +322,18 @@ public class MultiMap extends DirectMemoryStructure {
             return this;
         }
 
-        public KeyWriter putByte(byte value) {
-            checkSize(1);
-            Unsafe.getUnsafe().putByte(appendAddr, value);
-            appendAddr += 1;
+        public void put(long address, int len) {
+            checkSize(len);
+            Unsafe.getUnsafe().copyMemory(address, appendAddr, len);
+            appendAddr += len;
             writeOffset();
+        }
+
+        public KeyWriter putBin(DirectInputStream stream) {
+            long length = stream.getLength();
+            checkSize((int) length);
+            length = stream.copyTo(appendAddr, 0, length);
+            appendAddr += length;
             return this;
         }
 
@@ -349,27 +345,20 @@ public class MultiMap extends DirectMemoryStructure {
             return this;
         }
 
+        public KeyWriter putByte(byte value) {
+            checkSize(1);
+            Unsafe.getUnsafe().putByte(appendAddr, value);
+            appendAddr += 1;
+            writeOffset();
+            return this;
+        }
+
         public KeyWriter putDouble(double value) {
             checkSize(8);
             Unsafe.getUnsafe().putDouble(appendAddr, value);
             appendAddr += 8;
             writeOffset();
             return this;
-        }
-
-        public KeyWriter putShort(short value) {
-            checkSize(2);
-            Unsafe.getUnsafe().putShort(appendAddr, value);
-            appendAddr += 2;
-            writeOffset();
-            return this;
-        }
-
-        public void put(long address, int len) {
-            checkSize(len);
-            Unsafe.getUnsafe().copyMemory(address, appendAddr, len);
-            appendAddr += len;
-            writeOffset();
         }
 
         public KeyWriter putInt(int value) {
@@ -388,6 +377,14 @@ public class MultiMap extends DirectMemoryStructure {
             return this;
         }
 
+        public KeyWriter putShort(short value) {
+            checkSize(2);
+            Unsafe.getUnsafe().putShort(appendAddr, value);
+            appendAddr += 2;
+            writeOffset();
+            return this;
+        }
+
         public KeyWriter putStr(CharSequence value) {
             int len = value.length();
             checkSize(len << 1);
@@ -396,14 +393,6 @@ public class MultiMap extends DirectMemoryStructure {
             }
             appendAddr += len << 1;
             writeOffset();
-            return this;
-        }
-
-        public KeyWriter putBin(DirectInputStream stream) {
-            long length = stream.getLength();
-            checkSize((int) length);
-            length = stream.copyTo(appendAddr, 0, length);
-            appendAddr += length;
             return this;
         }
 

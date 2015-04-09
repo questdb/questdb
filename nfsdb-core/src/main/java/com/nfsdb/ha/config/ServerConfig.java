@@ -61,7 +61,6 @@ public class ServerConfig extends NetworkConfig {
 
         try {
             // default IP address and port
-            // todo: there is possible bug where InetAddress.getByName may return null
             if (node == null && getIfName() == null) {
                 NetworkInterface ifn = NetworkInterface.getByInetAddress(
                         InetAddress.getByName(InetAddress.getLocalHost().getHostName()

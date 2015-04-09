@@ -16,12 +16,14 @@
 
 package com.nfsdb.collections.mmap;
 
+import com.nfsdb.collections.DirectCharSequence;
 import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.impl.qry.AbstractRecord;
 import com.nfsdb.utils.Unsafe;
+
 import java.io.OutputStream;
 
 public final class MapRecord extends AbstractRecord {
@@ -29,6 +31,7 @@ public final class MapRecord extends AbstractRecord {
     private final int keyDataOffset;
     private final int keyBlockOffset;
     private final int valueOffsets[];
+    private final DirectCharSequence charSequence = new DirectCharSequence();
     private long address0;
     private long address1;
     private long address2;
@@ -49,6 +52,11 @@ public final class MapRecord extends AbstractRecord {
 
     @Override
     public void getBin(int col, OutputStream s) {
+        throw new JournalRuntimeException("Not implemented");
+    }
+
+    @Override
+    public DirectInputStream getBin(int col) {
         throw new JournalRuntimeException("Not implemented");
     }
 
@@ -73,6 +81,11 @@ public final class MapRecord extends AbstractRecord {
     }
 
     @Override
+    public CharSequence getFlyweightStr(int index) {
+        return charSequence.init(address0(index), address0(index + 1));
+    }
+
+    @Override
     public int getInt(int index) {
         return Unsafe.getUnsafe().getInt(address0(index));
     }
@@ -80,6 +93,11 @@ public final class MapRecord extends AbstractRecord {
     @Override
     public long getLong(int index) {
         return Unsafe.getUnsafe().getLong(address0(index));
+    }
+
+    @Override
+    public long getRowId() {
+        return address0;
     }
 
     @Override
@@ -119,10 +137,6 @@ public final class MapRecord extends AbstractRecord {
         this.address2 = address + keyBlockOffset;
         return this;
     }
-    @Override
-    public long getRowId() {
-        return address0;
-    }
 
     private long address0(int index) {
 
@@ -135,10 +149,5 @@ public final class MapRecord extends AbstractRecord {
         }
 
         return Unsafe.getUnsafe().getInt(address2 + (index - split - 1) * 4) + address0;
-    }
-  
-    @Override
-    public DirectInputStream getBin(int col) {
-        throw new JournalRuntimeException("Not implemented");
     }
 }

@@ -174,7 +174,7 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
                         throw new JournalRuntimeException("Unsupported type: " + rowSource.getMetadata().getColumn(i + 1).getType());
                 }
             }
-            MapValues values = map.values(keyWriter);
+            MapValues values = map.getOrCreateValues(keyWriter);
 
             for (int i = 0, sz = aggregators.size(); i < sz; i++) {
                 aggregators.get(i).calculate(rec, values);

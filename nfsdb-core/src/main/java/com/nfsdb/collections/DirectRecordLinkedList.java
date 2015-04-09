@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.nfsdb.collections;
 
 import com.nfsdb.lang.cst.Record;
@@ -5,11 +21,9 @@ import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.RecordSource;
 import com.nfsdb.utils.Unsafe;
 
-import java.io.Closeable;
-import java.io.IOException;
 import java.util.Iterator;
 
-public class DirectRecordLinkedList implements Closeable, RecordSource<Record> {
+public class DirectRecordLinkedList extends DirectMemoryStructure implements RecordSource<Record> {
     private final RecordMetadata recordMetadata;
     private final DirectPagedBuffer buffer;
     private final DirectRecord bufferRecord;
@@ -17,8 +31,7 @@ public class DirectRecordLinkedList implements Closeable, RecordSource<Record> {
 
     public DirectRecordLinkedList(RecordMetadata recordMetadata, long recordCount, long avgRecSize) {
         this.recordMetadata = recordMetadata;
-        this.buffer = new DirectPagedBuffer(
-                (long)(Math.ceil(recordCount * avgRecSize / 2.0 / AbstractDirectList.CACHE_LINE_SIZE)) * AbstractDirectList.CACHE_LINE_SIZE);
+        this.buffer = new DirectPagedBuffer((recordCount * avgRecSize > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) (recordCount * avgRecSize)) / 2);
         bufferRecord = new DirectRecord(recordMetadata, buffer);
     }
 
@@ -29,23 +42,8 @@ public class DirectRecordLinkedList implements Closeable, RecordSource<Record> {
         return recordAddressBegin;
     }
 
-    public void init(long offset) {
-        this.readOffset = offset;
-    }
-
-    @Override
-    public void close() throws IOException {
-        free();
-    }
-
-    @Override
-    protected void finalize() throws Throwable {
-        free();
-        super.finalize();
-    }
-
-    private void free() throws IOException {
-        buffer.close();
+    public void free() {
+        buffer.free();
     }
 
     @Override
@@ -54,18 +52,17 @@ public class DirectRecordLinkedList implements Closeable, RecordSource<Record> {
     }
 
     @Override
-    public void reset() {
-        throw new UnsupportedOperationException();
+    public boolean hasNext() {
+        return readOffset >= 0;
+    }
+
+    public void init(long offset) {
+        this.readOffset = offset;
     }
 
     @Override
     public Iterator<Record> iterator() {
         return this;
-    }
-
-    @Override
-    public boolean hasNext() {
-        return readOffset >= 0;
     }
 
     @Override
@@ -77,6 +74,11 @@ public class DirectRecordLinkedList implements Closeable, RecordSource<Record> {
 
     @Override
     public void remove() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void reset() {
         throw new UnsupportedOperationException();
     }
 }

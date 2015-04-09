@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.nfsdb.collections;
 
 import com.nfsdb.JournalWriter;
@@ -10,15 +26,18 @@ import com.nfsdb.lang.cst.JournalRecordSource;
 import com.nfsdb.lang.cst.Record;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.utils.Files;
-import junit.framework.TestCase;
 import org.junit.Rule;
 import org.junit.Test;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
-public class DirectRecordTest extends TestCase {
+import static org.junit.Assert.assertEquals;
+
+
+public class DirectRecordTest {
     @Rule
     public final JournalTestFactory factory;
 
@@ -34,18 +53,98 @@ public class DirectRecordTest extends TestCase {
     }
 
     @Test
+    public void testAllFieldTypesField() throws JournalException, IOException {
+        writeAndReadRecords(factory.writer(AllFieldTypes.class), 1000, 64 * 1024,
+                new RecordGenerator<AllFieldTypes>() {
+
+                    @Override
+                    public void assertRecord(Record value, int i) throws IOException {
+                        AllFieldTypes expected = generate(i);
+                        int col = 0;
+                        String failedMsg = "Record " + i;
+                        assertEquals(failedMsg, expected.aBool, value.getBool(col++));
+                        assertEquals(failedMsg, expected.aString, value.getStr(col++).toString());
+                        assertEquals(failedMsg, expected.aByte, value.get(col++));
+                        assertEquals(failedMsg, expected.aShort, value.getShort(col++));
+                        assertEquals(failedMsg, expected.anInt, value.getInt(col++));
+                        DirectInputStream binCol = value.getBin(col++);
+                        byte[] expectedBin = expected.aBinary.array();
+                        assertEquals(failedMsg, expectedBin.length, binCol.getLength());
+                        for (int j = 0; j < expectedBin.length; j++) {
+                            assertEquals(failedMsg + " byte " + j, expectedBin[j], (byte) binCol.read());
+                        }
+                        assertEquals(failedMsg, expected.aLong, value.getLong(col++));
+                        assertEquals(failedMsg, expected.aDouble, value.getDouble(col), 0.0001);
+                    }
+
+                    @Override
+                    public AllFieldTypes generate(int i) {
+                        AllFieldTypes af = new AllFieldTypes();
+                        byte[] bin = new byte[i];
+                        for (int j = 0; j < i; j++) {
+                            bin[j] = (byte) (j % 255);
+                        }
+                        af.aBinary = ByteBuffer.wrap(bin);
+                        af.aBool = i % 2 == 0;
+                        af.aByte = (byte) (i % 255);
+                        af.aDouble = i * Math.PI;
+                        af.aLong = i * 2;
+                        af.anInt = i;
+                        af.aShort = (short) (i / 2);
+                        StringBuilder sb = new StringBuilder(i);
+                        for (int j = 0; j < i; j++) {
+                            sb.append((char) j);
+                        }
+                        af.aString = sb.toString();
+                        return af;
+                    }
+                });
+    }
+
+    @Test
+    public void testSaveBinOverPageEdge() throws JournalException, IOException {
+        final int pageLen = 100;
+        writeAndReadRecords(factory.writer(Binary.class), 1, pageLen,
+                new RecordGenerator<Binary>(){
+
+                    @Override
+                    public void assertRecord(Record value, int i) throws IOException {
+                        DirectInputStream binCol = value.getBin(0);
+                        Binary expected = generate(i);
+                        byte[] expectedBin = expected.aBinary.array();
+                        assertEquals(expectedBin.length, binCol.getLength());
+                        for (int j = 0; j < expectedBin.length; j++) {
+                            assertEquals(expectedBin[j], (byte) binCol.read());
+                        }
+                    }
+
+                    @Override
+                    public Binary generate(int i) {
+                        Binary af = new Binary();
+                        byte[] bin = new byte[pageLen];
+                        for(int j = 0; j < bin.length; j++) {
+                            bin[j] = (byte)(j % 255);
+                        }
+                        af.aBinary = ByteBuffer.wrap(bin);
+                        return af;
+                    }
+                });
+    }
+
+    @Test
     public void testSaveLongField() throws JournalException, IOException {
         writeAndReadRecords(factory.writer(LongValue.class), 100, 450,
-                new RecordGenerator<LongValue>(){
+                new RecordGenerator<LongValue>() {
+
+
+                    @Override
+                    public void assertRecord(Record value, int i) {
+                        assertEquals((long) i, value.getLong(0));
+                    }
 
                     @Override
                     public LongValue generate(int i) {
                         return new LongValue(i);
-                    }
-
-                    @Override
-                    public void assertRecord(Record value, int i) {
-                        assertEquals((long)i, value.getLong(0));
                     }
                 });
     }
@@ -54,16 +153,7 @@ public class DirectRecordTest extends TestCase {
     public void testSaveNullBinAndStrings() throws JournalException, IOException {
         final int pageLen = 100;
         writeAndReadRecords(factory.writer(StringLongBinary.class), 3, pageLen,
-                new RecordGenerator<StringLongBinary>(){
-
-                    @Override
-                    public StringLongBinary generate(int i) {
-                        StringLongBinary af = new StringLongBinary();
-                        af.aLong = i;
-                        af.aString = i == 0 ? "A" : null;
-                        af.aBinary = i == 1 ?  ByteBuffer.wrap(new byte[2]) : null;
-                        return af;
-                    }
+                new RecordGenerator<StringLongBinary>() {
 
                     @Override
                     public void assertRecord(Record value, int i) throws IOException {
@@ -77,90 +167,19 @@ public class DirectRecordTest extends TestCase {
                         assertEquals(expected.aLong, value.getLong(1));
 
                         DirectInputStream binCol = value.getBin(2);
-                        if (expected.aBinary != null || binCol != null) {
+                        if (expected.aBinary != null && binCol != null) {
                             byte[] expectedBin = expected.aBinary.array();
                             assertEquals(expectedBin.length, binCol.getLength());
                         }
                     }
-                });
-    }
-
-    @Test
-    public void testSaveBinOverPageEdge() throws JournalException, IOException {
-        final int pageLen = 100;
-        writeAndReadRecords(factory.writer(Binary.class), 1, pageLen,
-                new RecordGenerator<Binary>(){
 
                     @Override
-                    public Binary generate(int i) {
-                        Binary af = new Binary();
-                        byte[] bin = new byte[pageLen];
-                        for(int j = 0; j < bin.length; j++) {
-                            bin[j] = (byte)(j % 255);
-                        }
-                        af.aBinary = ByteBuffer.wrap(bin);
+                    public StringLongBinary generate(int i) {
+                        StringLongBinary af = new StringLongBinary();
+                        af.aLong = i;
+                        af.aString = i == 0 ? "A" : null;
+                        af.aBinary = i == 1 ? ByteBuffer.wrap(new byte[2]) : null;
                         return af;
-                    }
-
-                    @Override
-                    public void assertRecord(Record value, int i) throws IOException {
-                        DirectInputStream binCol = value.getBin(0);
-                        Binary expected = generate(i);
-                        byte[] expectedBin = expected.aBinary.array();
-                        assertEquals(expectedBin.length, binCol.getLength());
-                        for(int j = 0; j < expectedBin.length; j++) {
-                            assertEquals(expectedBin[j], (byte)binCol.read());
-                        }
-                    }
-                });
-    }
-
-
-    @Test
-    public void testAllFieldTypesField() throws JournalException, IOException {
-        writeAndReadRecords(factory.writer(AllFieldTypes.class), 1000, 64*1024,
-                new RecordGenerator<AllFieldTypes>() {
-
-                    @Override
-                    public AllFieldTypes generate(int i) {
-                        AllFieldTypes af = new AllFieldTypes();
-                        byte[] bin = new byte[i];
-                        for(int j = 0; j < i; j++) {
-                            bin[j] = (byte)(j % 255);
-                        }
-                        af.aBinary = ByteBuffer.wrap(bin);
-                        af.aBool = i%2 == 0 ? true : false;
-                        af.aByte = (byte)(i % 255);
-                        af.aDouble = i * Math.PI;
-                        af.aLong = i * 2;
-                        af.anInt = i;
-                        af.aShort = (short) (i / 2);
-                        StringBuilder sb = new StringBuilder(i);
-                        for (int j = 0; j < i; j++) {
-                            sb.append((char)j);
-                        }
-                        af.aString = sb.toString();
-                        return af;
-                    }
-
-                    @Override
-                    public void assertRecord(Record value, int i) throws IOException {
-                        AllFieldTypes expected = generate(i);
-                        int col = 0;
-                        String failedMsg = "Record " + i;
-                        assertEquals(failedMsg, expected.aBool, value.getBool(col++));
-                        assertEquals(failedMsg,expected.aString, value.getStr(col++).toString());
-                        assertEquals(failedMsg,expected.aByte, value.get(col++));
-                        assertEquals(failedMsg,expected.aShort, value.getShort(col++));
-                        assertEquals(failedMsg,expected.anInt, value.getInt(col++));
-                        DirectInputStream binCol = value.getBin(col++);
-                        byte[] expectedBin = expected.aBinary.array();
-                        assertEquals(failedMsg, expectedBin.length, binCol.getLength());
-                        for(int j = 0; j < expectedBin.length; j++) {
-                            assertEquals(failedMsg + " byte " + j, expectedBin[j], (byte)binCol.read());
-                        }
-                        assertEquals(failedMsg, expected.aLong, value.getLong(col++));
-                        assertEquals(failedMsg, expected.aDouble, value.getDouble(col++));
                     }
                 });
     }
@@ -186,9 +205,10 @@ public class DirectRecordTest extends TestCase {
         }
     }
 
-    private static interface RecordGenerator<T> {
-        T generate(int i);
+    private interface RecordGenerator<T> {
         void assertRecord(Record value, int i) throws IOException;
+
+        T generate(int i);
     }
 
     private static class LongValue {

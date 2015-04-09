@@ -1,5 +1,5 @@
 /*
- * NFSdb. Copyright (c) 2014-2015.
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,13 @@
 package com.nfsdb.lang;
 
 import com.nfsdb.JournalWriter;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
+import com.nfsdb.io.ExportManager;
 import com.nfsdb.io.RecordSourcePrinter;
+import com.nfsdb.io.TextFileFormat;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.lang.cst.impl.join.HashJoin;
 import com.nfsdb.lang.cst.impl.jsrc.JournalSourceImpl;
@@ -27,9 +30,13 @@ import com.nfsdb.lang.cst.impl.psrc.JournalPartitionSource;
 import com.nfsdb.lang.cst.impl.rsrc.AllRowSource;
 import com.nfsdb.model.Album;
 import com.nfsdb.model.Band;
+import com.nfsdb.model.Quote;
 import com.nfsdb.test.tools.JournalTestFactory;
+import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Files;
 import org.junit.*;
+
+import java.io.File;
 
 public class HashJoinTest {
     @Rule
@@ -76,13 +83,53 @@ public class HashJoinTest {
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
         HashJoin joinResult = new HashJoin(
                 new JournalSourceImpl(new JournalPartitionSource(bw, false), new AllRowSource()),
-                "name",
+                new ObjList<String>() {{
+                    add("name");
+                }},
                 new JournalSourceImpl(new JournalPartitionSource(aw, false), new AllRowSource()),
-                "band"
+                new ObjList<String>() {{
+                    add("band");
+                }}
         );
         p.printColumns(
                 joinResult, joinResult.getMetadata().getColumnIndex("genre")
         );
         Assert.assertEquals("rock\tpop\tmetal\trock\tpop", sink.toString());
+    }
+
+    @Test
+    @Ignore
+    public void testHashJoinPerformance() throws Exception {
+        JournalWriter<Quote> w1 = factory.writer(Quote.class, "q1");
+        TestUtils.generateQuoteData(w1, 10000);
+
+        JournalWriter<Quote> w2 = factory.writer(Quote.class, "q2");
+        TestUtils.generateQuoteData(w2, 10000);
+
+        HashJoin j = new HashJoin(
+                new JournalSourceImpl(new JournalPartitionSource(w1, false), new AllRowSource()),
+                new ObjList<String>() {{
+                    add("sym");
+                }},
+                new JournalSourceImpl(new JournalPartitionSource(w2, false), new AllRowSource()),
+                new ObjList<String>() {{
+                    add("sym");
+                }}
+        );
+
+        long t = System.currentTimeMillis();
+        int count = 0;
+        ExportManager.export(j, new File("d:/join.csv"), TextFileFormat.TAB);
+//        while (j.hasNext()) {
+//            j.next();
+//            count++;
+//        }
+        System.out.println(System.currentTimeMillis() - t);
+        System.out.println(count);
+
+
+//        ExportManager.export(factory, "q1", new File("d:/q1.csv"), TextFileFormat.TAB);
+//        ExportManager.export(factory, "q2", new File("d:/q2.csv"), TextFileFormat.TAB);
+//        ExportManager.export(j, new File("d:/join.csv"), TextFileFormat.TAB);
     }
 }

@@ -74,6 +74,11 @@ public class RecordSourceColumn extends AbstractVirtualColumn {
     }
 
     @Override
+    public CharSequence getFlyweightStr() {
+        return state.currentRecord().getFlyweightStr(index);
+    }
+
+    @Override
     public int getInt() {
         return state.currentRecord().getInt(index);
     }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ import java.util.concurrent.locks.LockSupport;
 public class TimerCache {
     private final long updateFrequency;
     private final ExecutorService service = Executors.newCachedThreadPool(new NamedDaemonThreadFactory("nfsdb-timer-cache", true));
-    private volatile long millis = System.currentTimeMillis();
+    private long millis = System.currentTimeMillis();
 
     public TimerCache() {
         this.updateFrequency = TimeUnit.SECONDS.toNanos(1);
