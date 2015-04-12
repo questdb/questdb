@@ -83,12 +83,11 @@ public class DelimitedCharSink extends AbstractCharSink implements CharSink, Clo
         return delegate.toString();
     }
 
-    private DelimitedCharSink delimiter() {
+    private void delimiter() {
         if (del) {
             delegate.put(delimiter);
         } else {
             del = true;
         }
-        return this;
     }
 }

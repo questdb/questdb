@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,17 +41,6 @@ final public class Dates {
     };
     private static final long[] MIN_MONTH_OF_YEAR_MILLIS = new long[12];
     private static final long[] MAX_MONTH_OF_YEAR_MILLIS = new long[12];
-
-    static {
-        long minSum = 0;
-        long maxSum = 0;
-        for (int i = 0; i < 11; i++) {
-            minSum += DAYS_PER_MONTH[i] * DAY_MILLIS;
-            MIN_MONTH_OF_YEAR_MILLIS[i + 1] = minSum;
-            maxSum += getDaysPerMonth(i + 1, true) * DAY_MILLIS;
-            MAX_MONTH_OF_YEAR_MILLIS[i + 1] = maxSum;
-        }
-    }
 
     private Dates() {
     }
@@ -385,7 +374,6 @@ final public class Dates {
                 + mil;
     }
 
-
     // YYYY-MM-DD hh:mm:ss
     @SuppressFBWarnings({"ICAST_INTEGER_MULTIPLY_CAST_TO_LONG"})
     public static long parseDateTimeFmt1(CharSequence seq) {
@@ -474,25 +462,23 @@ final public class Dates {
         return (year * 365L + (leapYears - DAYS_0000_TO_1970)) * DAY_MILLIS;
     }
 
-    private static CharSink append0(CharSink sink, int val) {
+    private static void append0(CharSink sink, int val) {
         if (val < 10) {
             sink.put('0');
         }
         Numbers.append(sink, val);
-        return sink;
     }
 
-    private static CharSink append00(CharSink sink, int val) {
+    private static void append00(CharSink sink, int val) {
         if (val < 10) {
             sink.put('0').put('0');
         } else if (val < 100) {
             sink.put('0');
         }
         Numbers.append(sink, val);
-        return sink;
     }
 
-    private static CharSink append0000(CharSink sink, int val) {
+    private static void append0000(CharSink sink, int val) {
         if (val < 10) {
             sink.put('0').put('0').put('0');
         } else if (val < 100) {
@@ -501,7 +487,6 @@ final public class Dates {
             sink.put('0');
         }
         Numbers.append(sink, val);
-        return sink;
     }
 
     private static void checkChar(CharSequence s, int p, char c) {
@@ -513,6 +498,17 @@ final public class Dates {
     private static void checkRange(int x, int min, int max, String what) {
         if (x < min || x > max) {
             throw new NumberFormatException(what + " not in range: " + x);
+        }
+    }
+
+    static {
+        long minSum = 0;
+        long maxSum = 0;
+        for (int i = 0; i < 11; i++) {
+            minSum += DAYS_PER_MONTH[i] * DAY_MILLIS;
+            MIN_MONTH_OF_YEAR_MILLIS[i + 1] = minSum;
+            maxSum += getDaysPerMonth(i + 1, true) * DAY_MILLIS;
+            MAX_MONTH_OF_YEAR_MILLIS[i + 1] = maxSum;
         }
     }
 

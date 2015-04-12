@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,12 +16,11 @@
 
 package com.nfsdb.lang.ast.factory;
 
-import com.nfsdb.lang.cst.impl.virt.AddDoubleOperator;
-import com.nfsdb.lang.cst.impl.virt.VirtualColumn;
+import com.nfsdb.lang.cst.impl.ops.AddDoubleOperator;
 
 public class AddDoubleOperatorFactory implements FunctionFactory {
     @Override
-    public VirtualColumn newInstance() {
+    public Function newInstance() {
         return new AddDoubleOperator();
     }
 }

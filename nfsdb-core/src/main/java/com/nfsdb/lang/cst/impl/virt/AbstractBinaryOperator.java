@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,13 @@
 
 package com.nfsdb.lang.cst.impl.virt;
 
+import com.nfsdb.lang.ast.factory.Function;
 import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.RecordSourceState;
+import com.nfsdb.lang.parser.ParserException;
 import com.nfsdb.storage.ColumnType;
 
-public abstract class AbstractBinaryOperator extends AbstractVirtualColumn {
+public abstract class AbstractBinaryOperator extends AbstractVirtualColumn implements Function {
     protected VirtualColumn lhs;
     protected VirtualColumn rhs;
 
@@ -33,6 +35,20 @@ public abstract class AbstractBinaryOperator extends AbstractVirtualColumn {
         super.configure(metadata, state);
         lhs.configure(metadata, state);
         rhs.configure(metadata, state);
+    }
+
+    @Override
+    public void setArg(int pos, VirtualColumn arg) throws ParserException {
+        switch (pos) {
+            case 0:
+                lhs = arg;
+                break;
+            case 1:
+                rhs = arg;
+                break;
+            default:
+                throw new ParserException(0, "Too many arguments");
+        }
     }
 
     public void setLhs(VirtualColumn lhs) {

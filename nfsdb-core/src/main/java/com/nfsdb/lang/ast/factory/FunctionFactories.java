@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,6 +28,20 @@ public final class FunctionFactories {
     }
 
     static {
-        factories.put(new Signature().setName("+").setParamCount(2).addParamType(ColumnType.DOUBLE).addParamType(ColumnType.DOUBLE), new AddDoubleOperatorFactory());
+        factories.put(new Signature().setName("+").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.DOUBLE), new AddDoubleOperatorFactory());
+        factories.put(new Signature().setName("+").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.INT), new AddDoubleOperatorFactory());
+        factories.put(new Signature().setName("+").setParamCount(2).paramType(0, ColumnType.INT).paramType(1, ColumnType.DOUBLE), new AddDoubleOperatorFactory());
+
+        factories.put(new Signature().setName("/").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.DOUBLE), new DivDoubleOperatorFactory());
+        factories.put(new Signature().setName("/").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.INT), new DivDoubleOperatorFactory());
+        factories.put(new Signature().setName("/").setParamCount(2).paramType(0, ColumnType.INT).paramType(1, ColumnType.DOUBLE), new DivDoubleOperatorFactory());
+
+        factories.put(new Signature().setName("*").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.DOUBLE), new MultDoubleOperatorFactory());
+        factories.put(new Signature().setName("*").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.INT), new MultDoubleOperatorFactory());
+        factories.put(new Signature().setName("*").setParamCount(2).paramType(0, ColumnType.INT).paramType(1, ColumnType.DOUBLE), new MultDoubleOperatorFactory());
+
+        factories.put(new Signature().setName("-").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.DOUBLE), new MinusDoubleOperatorFactory());
+        factories.put(new Signature().setName("-").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.INT), new MinusDoubleOperatorFactory());
+        factories.put(new Signature().setName("-").setParamCount(2).paramType(0, ColumnType.INT).paramType(1, ColumnType.DOUBLE), new MinusDoubleOperatorFactory());
     }
 }

@@ -14,30 +14,29 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.virt;
+package com.nfsdb.lang.cst.impl.ops;
 
+import com.nfsdb.lang.cst.impl.virt.AbstractBinaryOperator;
 import com.nfsdb.storage.ColumnType;
 
-public class ConstDoubleColumn extends AbstractVirtualColumn {
-    private final double value;
+public class AddDoubleOperator extends AbstractBinaryOperator {
 
-    public ConstDoubleColumn(double value) {
+    public AddDoubleOperator() {
         super(ColumnType.DOUBLE);
-        this.value = value;
     }
 
     @Override
     public double getDouble() {
-        return value;
+        return lhs.getDouble() + rhs.getDouble();
     }
 
     @Override
     public float getFloat() {
-        return (float) value;
+        return (float) (lhs.getDouble() + rhs.getDouble());
     }
 
     @Override
     public int getInt() {
-        return (int) value;
+        return (int) (lhs.getDouble() + rhs.getDouble());
     }
 }

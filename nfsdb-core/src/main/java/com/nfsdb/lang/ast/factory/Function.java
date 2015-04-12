@@ -14,30 +14,11 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.virt;
+package com.nfsdb.lang.ast.factory;
 
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.lang.cst.impl.virt.VirtualColumn;
+import com.nfsdb.lang.parser.ParserException;
 
-public class ConstDoubleColumn extends AbstractVirtualColumn {
-    private final double value;
-
-    public ConstDoubleColumn(double value) {
-        super(ColumnType.DOUBLE);
-        this.value = value;
-    }
-
-    @Override
-    public double getDouble() {
-        return value;
-    }
-
-    @Override
-    public float getFloat() {
-        return (float) value;
-    }
-
-    @Override
-    public int getInt() {
-        return (int) value;
-    }
+public interface Function extends VirtualColumn {
+    void setArg(int pos, VirtualColumn arg) throws ParserException;
 }

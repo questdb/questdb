@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -112,8 +112,8 @@ public class PerformanceTest extends AbstractTest {
                 if (i == 0) {
                     t = System.nanoTime();
                 }
-                for (Record r : rs) {
-
+                for (Iterator<? extends Record> iterator = rs.iterator(); iterator.hasNext(); ) {
+                    iterator.next();
                 }
                 rs.reset();
             }

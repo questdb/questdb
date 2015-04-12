@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,19 +17,18 @@
 package com.nfsdb.lang.cst.impl.virt;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.lang.cst.GenericRecordSource;
 import com.nfsdb.lang.cst.Record;
 import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.RecordSource;
-
-import java.util.List;
 
 public class SelectedColumnsRecordSource extends AbstractImmutableIterator<Record> implements GenericRecordSource {
     private final RecordSource<? extends Record> delegate;
     private final RecordMetadata metadata;
     private final SelectedColumnsRecord record;
 
-    public SelectedColumnsRecordSource(RecordSource<? extends Record> delegate, List<String> names) {
+    public SelectedColumnsRecordSource(RecordSource<? extends Record> delegate, ObjList<String> names) {
         this.delegate = delegate;
         RecordMetadata dm = delegate.getMetadata();
         this.metadata = new SelectedColumnsMetadata(dm, names);
@@ -42,6 +41,11 @@ public class SelectedColumnsRecordSource extends AbstractImmutableIterator<Recor
     }
 
     @Override
+    public void reset() {
+        delegate.reset();
+    }
+
+    @Override
     public boolean hasNext() {
         return delegate.hasNext();
     }
@@ -50,10 +54,5 @@ public class SelectedColumnsRecordSource extends AbstractImmutableIterator<Recor
     public Record next() {
         record.setBase(delegate.next());
         return record;
-    }
-
-    @Override
-    public void reset() {
-        delegate.reset();
     }
 }

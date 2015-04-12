@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,27 +42,19 @@ public class DirectRecordLinkedList extends DirectMemoryStructure implements Rec
         return recordAddressBegin;
     }
 
-    public void free() {
-        buffer.free();
-    }
-
     @Override
     public RecordMetadata getMetadata() {
         return recordMetadata;
     }
 
     @Override
-    public boolean hasNext() {
-        return readOffset >= 0;
-    }
-
-    public void init(long offset) {
-        this.readOffset = offset;
+    public void reset() {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public Iterator<Record> iterator() {
-        return this;
+    public boolean hasNext() {
+        return readOffset >= 0;
     }
 
     @Override
@@ -77,8 +69,17 @@ public class DirectRecordLinkedList extends DirectMemoryStructure implements Rec
         throw new UnsupportedOperationException();
     }
 
+    public void init(long offset) {
+        this.readOffset = offset;
+    }
+
     @Override
-    public void reset() {
-        throw new UnsupportedOperationException();
+    public Iterator<Record> iterator() {
+        return this;
+    }
+
+    @Override
+    protected void freeInternal() {
+        buffer.free();
     }
 }

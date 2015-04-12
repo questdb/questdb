@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,13 +29,13 @@ public class SignatureTest {
     public void testMapBehaviour() throws Exception {
         ObjObjHashMap<Signature, String> sigs = new ObjObjHashMap<Signature, String>() {{
 
-            put(new Signature().setName("-").setParamCount(1).addParamType(ColumnType.INT), "sig1");
+            put(new Signature().setName("-").setParamCount(1).paramType(0, ColumnType.INT), "sig1");
             // overload
-            put(new Signature().setName("-").setParamCount(1).addParamType(ColumnType.DOUBLE), "sig2");
+            put(new Signature().setName("-").setParamCount(1).paramType(0, ColumnType.DOUBLE), "sig2");
             // overload 2
-            put(new Signature().setName("-").setParamCount(2).addParamType(ColumnType.INT).addParamType(ColumnType.INT), "sig3");
+            put(new Signature().setName("-").setParamCount(2).paramType(0, ColumnType.INT).paramType(1, ColumnType.INT), "sig3");
             // dupe
-            put(new Signature().setName("-").setParamCount(1).addParamType(ColumnType.INT), "sig4");
+            put(new Signature().setName("-").setParamCount(1).paramType(0, ColumnType.INT), "sig4");
         }};
 
         Assert.assertEquals(3, sigs.size());

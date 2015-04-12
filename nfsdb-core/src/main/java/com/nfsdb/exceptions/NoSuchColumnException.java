@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,28 +14,11 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.virt;
+package com.nfsdb.exceptions;
 
-import com.nfsdb.storage.ColumnType;
+public class NoSuchColumnException extends JournalRuntimeException {
 
-public class AddDoubleOperator extends AbstractBinaryOperator {
-
-    public AddDoubleOperator() {
-        super(ColumnType.DOUBLE);
-    }
-
-    @Override
-    public double getDouble() {
-        return lhs.getDouble() + rhs.getDouble();
-    }
-
-    @Override
-    public float getFloat() {
-        return (float) (lhs.getDouble() + rhs.getDouble());
-    }
-
-    @Override
-    public int getInt() {
-        return (int) (lhs.getDouble() + rhs.getDouble());
+    public NoSuchColumnException(String message, Object... args) {
+        super(message, args);
     }
 }

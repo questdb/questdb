@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.RecordSourceState;
+import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
 
 import java.io.OutputStream;
@@ -27,8 +28,9 @@ import java.io.OutputStream;
 public class RecordSourceColumn extends AbstractVirtualColumn {
     private int index;
 
-    public RecordSourceColumn() {
-        super(null);
+    public RecordSourceColumn(String name, ColumnType type) {
+        super(type);
+        setName(name);
     }
 
     @Override

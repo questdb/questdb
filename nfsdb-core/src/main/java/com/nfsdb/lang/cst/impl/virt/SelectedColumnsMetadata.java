@@ -17,17 +17,17 @@
 package com.nfsdb.lang.cst.impl.virt;
 
 import com.nfsdb.collections.ObjIntHashMap;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.lang.cst.RecordMetadata;
-import java.util.List;
 
 public class SelectedColumnsMetadata implements RecordMetadata {
     private final RecordMetadata delegate;
     private final int reindex[];
     private final ObjIntHashMap<CharSequence> nameIndex;
 
-    public SelectedColumnsMetadata(RecordMetadata delegate, List<String> names) {
+    public SelectedColumnsMetadata(RecordMetadata delegate, ObjList<String> names) {
         this.delegate = delegate;
         int k = names.size();
         this.nameIndex = new ObjIntHashMap<>(k);

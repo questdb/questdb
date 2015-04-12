@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,18 +18,19 @@ package com.nfsdb.lang;
 
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.lang.cst.Record;
 import com.nfsdb.lang.cst.RecordSource;
+import com.nfsdb.lang.cst.impl.ops.AddDoubleOperator;
 import com.nfsdb.lang.cst.impl.virt.*;
+import com.nfsdb.storage.ColumnType;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.utils.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.util.ArrayList;
 
 public class VirtualColumnTest extends AbstractTest {
 
@@ -55,12 +56,10 @@ public class VirtualColumnTest extends AbstractTest {
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
 
         // select ccy, bid, bid+12.5 plus from xyz
-        VirtualColumnRecordSource src = new VirtualColumnRecordSource(w.rows(), new ArrayList<VirtualColumn>() {{
+        VirtualColumnRecordSource src = new VirtualColumnRecordSource(w.rows(), new ObjList<VirtualColumn>() {{
             add(new AddDoubleOperator() {{
                 setName("plus");
-                setLhs(new RecordSourceColumn() {{
-                    setName("bid");
-                }});
+                setLhs(new RecordSourceColumn("bid", ColumnType.DOUBLE));
                 setRhs(new ConstDoubleColumn(12.5));
             }});
         }});
@@ -196,17 +195,15 @@ public class VirtualColumnTest extends AbstractTest {
         RecordSource<? extends Record> src = new SelectedColumnsRecordSource(
                 new VirtualColumnRecordSource(
                         w.rows(),
-                        new ArrayList<VirtualColumn>() {{
+                        new ObjList<VirtualColumn>() {{
                             add(new AddDoubleOperator() {{
                                 setName("plus");
-                                setLhs(new RecordSourceColumn() {{
-                                    setName("bid");
-                                }});
+                                setLhs(new RecordSourceColumn("bid", ColumnType.DOUBLE));
                                 setRhs(new ConstDoubleColumn(12.5));
                             }});
                         }}
                 ),
-                new ArrayList<String>() {{
+                new ObjList<String>() {{
                     add("ccy");
                     add("plus");
                 }});

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.nfsdb.lang.cst.impl.virt;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.lang.cst.Record;
@@ -23,14 +24,13 @@ import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.impl.qry.AbstractRecord;
 
 import java.io.OutputStream;
-import java.util.List;
 
 public class VirtualRecord extends AbstractRecord {
     private final int split;
-    private final List<VirtualColumn> virtualColumns;
+    private final ObjList<VirtualColumn> virtualColumns;
     private Record base;
 
-    public VirtualRecord(RecordMetadata metadata, int split, List<VirtualColumn> virtualColumns) {
+    public VirtualRecord(RecordMetadata metadata, int split, ObjList<VirtualColumn> virtualColumns) {
         super(metadata);
         this.split = split;
         this.virtualColumns = virtualColumns;

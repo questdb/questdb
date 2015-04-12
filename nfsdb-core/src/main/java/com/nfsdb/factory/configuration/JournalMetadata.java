@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import com.nfsdb.PartitionType;
 import com.nfsdb.collections.ObjIntHashMap;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.exceptions.NoSuchColumnException;
 import com.nfsdb.storage.HugeBuffer;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
@@ -139,7 +140,7 @@ public class JournalMetadata<T> {
     public int getColumnIndex(CharSequence columnName) {
         int result = columnIndexLookup.get(columnName);
         if (result == -1) {
-            throw new JournalRuntimeException("Invalid column name: %s", columnName);
+            throw new NoSuchColumnException("Invalid column name: %s", columnName);
         }
         return result;
     }

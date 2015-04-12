@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,6 +34,7 @@ public class NQLParser {
         defineSymbol(",");
         defineSymbol("+");
     }};
+
     private final ExprParser exprParser = new ExprParser(tokenStream);
     private final AstBuilder astBuilder = new AstBuilder();
 
@@ -63,6 +64,12 @@ public class NQLParser {
             throw err("\"" + expected + "\" expected");
         }
 
+    }
+
+    private ExprNode expr() throws ParserException {
+        astBuilder.reset();
+        exprParser.parseExpr(astBuilder);
+        return astBuilder.root();
     }
 
     private boolean isFieldTerm(CharSequence tok) {
@@ -191,6 +198,40 @@ public class NQLParser {
         }
     }
 
+    private void parseLatestBy(QueryModel model) throws ParserException {
+        expectTok(tok(), "by");
+        model.setMostRecentBy(expr());
+    }
+
+    private Statement parseQuery() throws ParserException {
+
+        QueryModel model = new QueryModel();
+
+        parseSelectColumns(model);
+
+        // expect (journal name)
+
+        model.setJournalName(tok().toString());
+
+        // expect [latest by]
+
+        CharSequence tok = optionTok();
+
+        if (tok != null && Chars.equals(tok, "latest")) {
+            parseLatestBy(model);
+            tok = optionTok();
+        }
+
+        // expect [where]
+
+        if (tok != null && Chars.equals(tok, "where")) {
+            parseWhereClause(model);
+        }
+
+        return new Statement(StatementType.QUERY_JOURNAL, model);
+
+    }
+
     private void parseSelectColumns(QueryModel model) throws ParserException {
         CharSequence tok;
         while (true) {
@@ -237,55 +278,6 @@ public class NQLParser {
                 break;
             }
         }
-    }
-
-    private void parseMostRecentBy(QueryModel model, boolean postfix) throws ParserException {
-        expectTok(tok(), "recent");
-        expectTok(tok(), "by");
-        model.setMostRecentBy(expr());
-        model.setMostRecentByPostfix(postfix);
-    }
-
-    private ExprNode expr() throws ParserException {
-        astBuilder.reset();
-        exprParser.parseExpr(astBuilder);
-        return astBuilder.root();
-    }
-
-    private Statement parseQuery() throws ParserException {
-
-        QueryModel model = new QueryModel();
-
-        parseSelectColumns(model);
-
-        // expect (journal name)
-
-        model.setJournalName(tok().toString());
-
-        // expect (where | most recent by)
-
-        CharSequence tok = optionTok();
-
-        if (tok != null && Chars.equals(tok, "where")) {
-            parseWhereClause(model);
-
-            tok = optionTok();
-
-            if (tok != null && Chars.equals(tok, "most")) {
-                parseMostRecentBy(model, true);
-            }
-        } else if (tok != null && Chars.equals(tok, "most")) {
-            parseMostRecentBy(model, false);
-
-            tok = optionTok();
-
-            if (tok != null && Chars.equals(tok, "where")) {
-                parseWhereClause(model);
-            }
-        }
-
-        return new Statement(StatementType.QUERY_JOURNAL, model);
-
     }
 
     private CharSequence tok() throws ParserException {

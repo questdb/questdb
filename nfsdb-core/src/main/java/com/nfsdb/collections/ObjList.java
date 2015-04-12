@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ public class ObjList<T> {
     private static final long SCALE = Unsafe.getUnsafe().arrayIndexScale(Object[].class);
     private Object[] buffer;
     private int pos = 0;
+    private StringBuilder toStringBuilder;
 
     public ObjList() {
         this.buffer = new Object[DEFAULT_ARRAY_SIZE];
@@ -43,6 +44,13 @@ public class ObjList<T> {
 
     public void clear() {
         pos = 0;
+    }
+
+    public void ensureCapacity(int capacity) {
+        if (capacity > buffer.length) {
+            extend(capacity);
+        }
+        pos = capacity;
     }
 
     public void extendAndSet(int index, T value) {
@@ -85,6 +93,24 @@ public class ObjList<T> {
 
     public int size() {
         return pos;
+    }
+
+    @Override
+    public String toString() {
+        if (toStringBuilder == null) {
+            toStringBuilder = new StringBuilder();
+        }
+
+        toStringBuilder.setLength(0);
+        toStringBuilder.append('[');
+        for (int i = 0, k = size(); i < k; i++) {
+            if (i > 0) {
+                toStringBuilder.append(',');
+            }
+            toStringBuilder.append(get(i));
+        }
+        toStringBuilder.append(']');
+        return toStringBuilder.toString();
     }
 
     private void extend(int capacity) {

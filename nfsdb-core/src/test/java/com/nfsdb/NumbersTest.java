@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -168,6 +168,23 @@ public class NumbersTest {
 
         Numbers.append(sink, Integer.MIN_VALUE);
         Assert.assertEquals(Integer.MIN_VALUE, Numbers.parseInt(sink));
+    }
+
+    @Test
+    public void testLong() throws Exception {
+        Rnd rnd = new Rnd();
+        StringSink sink = new StringSink();
+        for (int i = 0; i < 100; i++) {
+            long l1 = rnd.nextLong();
+            long l2 = rnd.nextLong();
+            sink.clear();
+
+            Numbers.append(sink, l1);
+            int p = sink.length();
+            Numbers.append(sink, l2);
+            Assert.assertEquals(l1, Numbers.parseLong(sink, 0, p));
+            Assert.assertEquals(l2, Numbers.parseLong(sink, p, sink.length()));
+        }
     }
 
     @Test

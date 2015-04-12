@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.nfsdb.lang.cst.impl.virt;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.lang.cst.Record;
@@ -23,13 +24,12 @@ import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.impl.qry.AbstractRecord;
 
 import java.io.OutputStream;
-import java.util.List;
 
 public class SelectedColumnsRecord extends AbstractRecord {
     private final int reindex[];
     private Record base;
 
-    public SelectedColumnsRecord(RecordMetadata metadata, List<String> names) {
+    public SelectedColumnsRecord(RecordMetadata metadata, ObjList<String> names) {
         super(metadata);
         int k = names.size();
         this.reindex = new int[k];

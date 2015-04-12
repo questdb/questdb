@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@ public class QueryModel {
     private final ObjList<ExprNode> whereClauses = new ObjList<>();
     private String journalName;
     private ExprNode mostRecentBy;
-    private boolean mostRecentByPostfix;
 
     public void addColumn(QueryColumn column) {
         columns.add(column);
@@ -56,13 +55,5 @@ public class QueryModel {
 
     public ObjList<ExprNode> getWhereClauses() {
         return whereClauses;
-    }
-
-    public boolean isMostRecentByPostfix() {
-        return mostRecentByPostfix;
-    }
-
-    public void setMostRecentByPostfix(boolean mostRecentByPostfix) {
-        this.mostRecentByPostfix = mostRecentByPostfix;
     }
 }

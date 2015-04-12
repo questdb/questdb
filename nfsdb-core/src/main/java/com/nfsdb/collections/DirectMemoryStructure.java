@@ -25,11 +25,11 @@ public class DirectMemoryStructure implements Closeable {
     protected long address;
 
     @Override
-    public void close() {
+    public final void close() {
         free();
     }
 
-    public void free() {
+    public final void free() {
         if (address != 0) {
             Unsafe.getUnsafe().freeMemory(address);
             address = 0;

@@ -18,11 +18,11 @@ package com.nfsdb.lang.cst.impl.virt;
 
 import com.nfsdb.storage.ColumnType;
 
-public class ConstDoubleColumn extends AbstractVirtualColumn {
-    private final double value;
+public class ConstIntColumn extends AbstractVirtualColumn {
+    private final int value;
 
-    public ConstDoubleColumn(double value) {
-        super(ColumnType.DOUBLE);
+    public ConstIntColumn(int value) {
+        super(ColumnType.INT);
         this.value = value;
     }
 
@@ -33,11 +33,11 @@ public class ConstDoubleColumn extends AbstractVirtualColumn {
 
     @Override
     public float getFloat() {
-        return (float) value;
+        return value;
     }
 
     @Override
     public int getInt() {
-        return (int) value;
+        return value;
     }
 }

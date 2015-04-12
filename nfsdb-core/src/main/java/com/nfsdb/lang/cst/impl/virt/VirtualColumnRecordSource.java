@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,10 +17,9 @@
 package com.nfsdb.lang.cst.impl.virt;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.lang.cst.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-
-import java.util.List;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record> implements GenericRecordSource, RecordSourceState {
@@ -29,7 +28,7 @@ public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record>
     private final VirtualRecord current;
 
 
-    public VirtualColumnRecordSource(RecordSource<? extends Record> delegate, List<VirtualColumn> virtualColumns) {
+    public VirtualColumnRecordSource(RecordSource<? extends Record> delegate, ObjList<VirtualColumn> virtualColumns) {
         this.delegate = delegate;
         RecordMetadata dm = delegate.getMetadata();
         for (int i = 0, k = virtualColumns.size(); i < k; i++) {
@@ -50,6 +49,11 @@ public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record>
     }
 
     @Override
+    public void reset() {
+        delegate.reset();
+    }
+
+    @Override
     public boolean hasNext() {
         return delegate.hasNext();
     }
@@ -58,10 +62,5 @@ public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record>
     public Record next() {
         current.setBase(delegate.next());
         return current;
-    }
-
-    @Override
-    public void reset() {
-        delegate.reset();
     }
 }

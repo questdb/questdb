@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,20 +16,22 @@
 
 package com.nfsdb.lang.ast;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.storage.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-import java.util.ArrayList;
-import java.util.List;
-
 public class Signature {
-    public final List<ColumnType> paramTypes = new ArrayList<>();
+    public final ObjList<ColumnType> paramTypes = new ObjList<>();
     public CharSequence name;
     public int paramCount;
 
-    public Signature addParamType(ColumnType type) {
-        paramTypes.add(type);
-        return this;
+    public void clear() {
+        paramTypes.clear();
+    }
+
+    @Override
+    public int hashCode() {
+        return typesHashCode(31 * name.hashCode() + paramCount);
     }
 
     @Override
@@ -41,8 +43,16 @@ public class Signature {
     }
 
     @Override
-    public int hashCode() {
-        return typesHashCode(31 * name.hashCode() + paramCount);
+    public String toString() {
+        return "Signature{" +
+                "name=" + name +
+                ", paramTypes=" + paramTypes +
+                '}';
+    }
+
+    public Signature paramType(int pos, ColumnType type) {
+        paramTypes.setQuick(pos, type);
+        return this;
     }
 
     public Signature setName(CharSequence name) {
@@ -52,16 +62,8 @@ public class Signature {
 
     public Signature setParamCount(int paramCount) {
         this.paramCount = paramCount;
+        this.paramTypes.ensureCapacity(paramCount);
         return this;
-    }
-
-    @Override
-    public String toString() {
-        return "Signature{" +
-                "name=" + name +
-                ", paramCount=" + paramCount +
-                ", paramTypes=" + paramTypes +
-                '}';
     }
 
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
