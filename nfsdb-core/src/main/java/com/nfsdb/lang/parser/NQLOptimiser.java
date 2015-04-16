@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -152,7 +152,7 @@ public class NQLOptimiser {
 
     private VirtualColumn lookupColumn(ExprNode node, RecordSource<? extends Record> recordSource) throws ParserException {
         try {
-            return new RecordSourceColumn(node.token, recordSource.getMetadata().getColumn(node.token).getType());
+            return new RecordSourceColumn(node.token, recordSource);
         } catch (NoSuchColumnException e) {
             throw new ParserException(node.position, "No such column: " + node.token);
         }
@@ -168,13 +168,13 @@ public class NQLOptimiser {
 
     private VirtualColumn parseConstant(ExprNode node) throws ParserException {
         try {
-            return new ConstIntColumn(Numbers.parseInt(node.token));
+            return new IntConstant(Numbers.parseInt(node.token));
         } catch (NumberFormatException ignore) {
 
         }
 
         try {
-            return new ConstDoubleColumn(Numbers.parseDouble(node.token));
+            return new DoubleConstant(Numbers.parseDouble(node.token));
         } catch (NumberFormatException ignore) {
 
         }

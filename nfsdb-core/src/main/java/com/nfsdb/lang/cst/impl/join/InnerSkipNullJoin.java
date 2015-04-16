@@ -25,23 +25,23 @@ import com.nfsdb.lang.cst.impl.qry.SplitRecord;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
-public class InnerSkipJoin extends AbstractImmutableIterator<Record> implements GenericRandomAccessRecordSource {
+public class InnerSkipNullJoin extends AbstractImmutableIterator<Record> implements GenericRandomAccessRecordSource {
 
     private final RecordSource<? extends SplitRecord> delegate;
     private Record data;
 
-    public InnerSkipJoin(RecordSource<? extends SplitRecord> delegate) {
+    public InnerSkipNullJoin(RecordSource<? extends SplitRecord> delegate) {
         this.delegate = delegate;
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return delegate.getMetadata();
     }
 
     @Override
     public Record getByRowId(long rowId) {
         return null;
+    }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return delegate.getMetadata();
     }
 
     @Override

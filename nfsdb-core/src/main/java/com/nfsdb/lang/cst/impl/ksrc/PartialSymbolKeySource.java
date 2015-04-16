@@ -19,7 +19,6 @@ package com.nfsdb.lang.cst.impl.ksrc;
 import com.nfsdb.lang.cst.KeyCursor;
 import com.nfsdb.lang.cst.KeySource;
 import com.nfsdb.lang.cst.PartitionSlice;
-import com.nfsdb.lang.cst.impl.ref.StringRef;
 import com.nfsdb.storage.SymbolTable;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -28,14 +27,14 @@ import java.util.List;
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class PartialSymbolKeySource implements KeySource, KeyCursor {
 
-    private final StringRef symbol;
+    private final String symbol;
     private final List<String> values;
     private int[] keys;
     private SymbolTable symbolTable;
     private int keyIndex;
     private int keyCount;
 
-    public PartialSymbolKeySource(StringRef symbol, List<String> values) {
+    public PartialSymbolKeySource(String symbol, List<String> values) {
         this.symbol = symbol;
         this.values = values;
     }
@@ -46,7 +45,7 @@ public class PartialSymbolKeySource implements KeySource, KeyCursor {
             if (this.keys == null || this.keys.length < values.size()) {
                 this.keys = new int[values.size()];
             }
-            this.symbolTable = slice.partition.getJournal().getSymbolTable(symbol.value);
+            this.symbolTable = slice.partition.getJournal().getSymbolTable(symbol);
             int keyCount = 0;
             for (int i = 0, k = values.size(); i < k; i++) {
                 int key = symbolTable.getQuick(values.get(i));

@@ -108,8 +108,8 @@ public class MultiMapTest extends AbstractTest {
         int symIndex = w.getMetadata().getColumnIndex("sym");
 
         MultiMap map = new MultiMap.Builder()
-                .keyColumn(w.getMetadata().getColumnMetadata(tsIndex))
-                .keyColumn(w.getMetadata().getColumnMetadata(symIndex))
+                .keyColumn(w.getMetadata().getColumn(tsIndex))
+                .keyColumn(w.getMetadata().getColumn(symIndex))
                 .valueColumn(new ColumnMetadata() {{
                     name = "count";
                     type = ColumnType.INT;

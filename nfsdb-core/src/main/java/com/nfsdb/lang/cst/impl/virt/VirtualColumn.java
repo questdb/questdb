@@ -19,14 +19,13 @@ package com.nfsdb.lang.cst.impl.virt;
 import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.io.sink.CharSink;
-import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.RecordSourceState;
 
 import java.io.OutputStream;
 
 public interface VirtualColumn extends RecordColumnMetadata {
 
-    void configure(RecordMetadata metadata, RecordSourceState state);
+    void configureSource(RecordSourceState state);
 
     byte get();
 

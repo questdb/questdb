@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,30 +14,13 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.virt;
+package com.nfsdb.lang.ast.factory;
 
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.lang.cst.impl.ops.IntEqualsOperator;
 
-public class ConstIntColumn extends AbstractVirtualColumn {
-    private final int value;
-
-    public ConstIntColumn(int value) {
-        super(ColumnType.INT);
-        this.value = value;
-    }
-
+public class IntEqualsOperatorFactory implements FunctionFactory {
     @Override
-    public double getDouble() {
-        return value;
-    }
-
-    @Override
-    public float getFloat() {
-        return value;
-    }
-
-    @Override
-    public int getInt() {
-        return value;
+    public Function newInstance() {
+        return new IntEqualsOperator();
     }
 }

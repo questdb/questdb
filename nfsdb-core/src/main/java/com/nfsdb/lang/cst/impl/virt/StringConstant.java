@@ -14,24 +14,31 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ha;
+package com.nfsdb.lang.cst.impl.virt;
 
-import com.nfsdb.exceptions.JournalNetworkException;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.storage.ColumnType;
 
-import java.nio.channels.ReadableByteChannel;
+public class StringConstant extends AbstractVirtualColumn {
+    private final String value;
 
-public abstract class AbstractChannelConsumer implements ChannelConsumer {
+    public StringConstant(String value) {
+        super(ColumnType.STRING);
+        this.value = value;
+    }
 
     @Override
-    public final void read(ReadableByteChannel channel) throws JournalNetworkException {
-            doRead(channel);
-            commit();
+    public CharSequence getFlyweightStr() {
+        return value;
     }
 
-    @SuppressFBWarnings({"ACEM_ABSTRACT_CLASS_EMPTY_METHODS"})
-    protected void commit() throws JournalNetworkException {
+    @Override
+    public CharSequence getStr() {
+        return value;
     }
 
-    protected abstract void doRead(ReadableByteChannel channel) throws JournalNetworkException;
+    @Override
+    public void getStr(CharSink sink) {
+        sink.put(value);
+    }
 }

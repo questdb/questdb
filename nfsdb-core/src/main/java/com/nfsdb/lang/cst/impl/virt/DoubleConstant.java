@@ -14,24 +14,30 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ha;
+package com.nfsdb.lang.cst.impl.virt;
 
-import com.nfsdb.exceptions.JournalNetworkException;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import com.nfsdb.storage.ColumnType;
 
-import java.nio.channels.ReadableByteChannel;
+public class DoubleConstant extends AbstractVirtualColumn {
+    private final double value;
 
-public abstract class AbstractChannelConsumer implements ChannelConsumer {
+    public DoubleConstant(double value) {
+        super(ColumnType.DOUBLE);
+        this.value = value;
+    }
 
     @Override
-    public final void read(ReadableByteChannel channel) throws JournalNetworkException {
-            doRead(channel);
-            commit();
+    public double getDouble() {
+        return value;
     }
 
-    @SuppressFBWarnings({"ACEM_ABSTRACT_CLASS_EMPTY_METHODS"})
-    protected void commit() throws JournalNetworkException {
+    @Override
+    public float getFloat() {
+        return (float) value;
     }
 
-    protected abstract void doRead(ReadableByteChannel channel) throws JournalNetworkException;
+    @Override
+    public int getInt() {
+        return (int) value;
+    }
 }

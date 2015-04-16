@@ -14,8 +14,30 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst;
+package com.nfsdb.lang.cst.impl.virt;
 
-public interface RowFilter {
-    RowAcceptor acceptor(PartitionSlice a);
+import com.nfsdb.storage.ColumnType;
+
+public class IntConstant extends AbstractVirtualColumn {
+    private final int value;
+
+    public IntConstant(int value) {
+        super(ColumnType.INT);
+        this.value = value;
+    }
+
+    @Override
+    public double getDouble() {
+        return value;
+    }
+
+    @Override
+    public float getFloat() {
+        return value;
+    }
+
+    @Override
+    public int getInt() {
+        return value;
+    }
 }

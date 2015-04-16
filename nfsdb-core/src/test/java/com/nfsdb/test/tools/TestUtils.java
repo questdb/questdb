@@ -93,8 +93,8 @@ public final class TestUtils {
         ArrayList<Integer> colKeyCount = new ArrayList<>();
 
         for (int k = 0; k < expected.getMetadata().getColumnCount(); k++) {
-            SymbolTable et = expected.getMetadata().getColumnMetadata(k).symbolTable;
-            SymbolTable at = actual.getMetadata().getColumnMetadata(k).symbolTable;
+            SymbolTable et = expected.getMetadata().getColumn(k).symbolTable;
+            SymbolTable at = actual.getMetadata().getColumn(k).symbolTable;
 
             if (et == null && at == null) {
                 continue;
@@ -138,7 +138,7 @@ public final class TestUtils {
             }
 
             for (int k = 0; k < expected.getMetadata().getColumnCount(); k++) {
-                if (expected.getMetadata().getColumnMetadata(k).indexed) {
+                if (expected.getMetadata().getColumn(k).indexed) {
                     KVIndex ei = ep.getIndexForColumn(k);
                     KVIndex ai = ap.getIndexForColumn(k);
 
@@ -150,7 +150,7 @@ public final class TestUtils {
                         ei.getValues(j, ev);
                         ai.getValues(j, av);
 
-                        Assert.assertEquals("Values mismatch. partition=" + i + ",column=" + expected.getMetadata().getColumnMetadata(k).name + ", key=" + j + ": ", ev.size(), av.size());
+                        Assert.assertEquals("Values mismatch. partition=" + i + ",column=" + expected.getMetadata().getColumn(k).name + ", key=" + j + ": ", ev.size(), av.size());
                         for (int l = 0; l < ev.size(); l++) {
                             Assert.assertEquals(ev.get(l), av.get(l));
                         }
@@ -256,9 +256,9 @@ public final class TestUtils {
 
     public static void compareSymbolTables(Journal a, Journal b) {
         for (int i = 0; i < a.getMetadata().getColumnCount(); i++) {
-            SymbolTable m = a.getMetadata().getColumnMetadata(i).symbolTable;
+            SymbolTable m = a.getMetadata().getColumn(i).symbolTable;
             if (m != null) {
-                SymbolTable s = b.getMetadata().getColumnMetadata(i).symbolTable;
+                SymbolTable s = b.getMetadata().getColumn(i).symbolTable;
                 for (String value : m.values()) {
                     Assert.assertEquals(m.getQuick(value), s.getQuick(value));
                 }
@@ -270,7 +270,7 @@ public final class TestUtils {
         p.types(meta.getModelClass());
 
         for (int i = 0; i < meta.getColumnCount(); i++) {
-            ColumnMetadata m = meta.getColumnMetadata(i);
+            ColumnMetadata m = meta.getColumn(i);
             if (m.offset != 0) {
                 JournalPrinter.Field f = p.f(m.name);
                 if (m.type == ColumnType.DATE) {

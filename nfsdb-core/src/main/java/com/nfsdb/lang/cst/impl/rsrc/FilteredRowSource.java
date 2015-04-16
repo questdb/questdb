@@ -16,68 +16,57 @@
 
 package com.nfsdb.lang.cst.impl.rsrc;
 
+import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.lang.cst.*;
+import com.nfsdb.lang.cst.impl.qry.JournalRecord;
+import com.nfsdb.lang.cst.impl.virt.VirtualColumn;
 
-public class FilteredRowSource implements RowSource, RowCursor {
+public class FilteredRowSource extends AbstractRowSource implements RecordSourceState {
 
     private final RowSource delegate;
-    private final RowFilter filter;
+    private final VirtualColumn filter;
     private RowCursor underlying;
-    private RowAcceptor acceptor;
-    private long rowid;
-    private boolean skip;
+    private JournalRecord rec;
 
-    public FilteredRowSource(RowSource delegate, RowFilter filter) {
+    public FilteredRowSource(RowSource delegate, VirtualColumn filter) {
         this.delegate = delegate;
         this.filter = filter;
     }
 
     @Override
+    public void configure(JournalMetadata metadata) {
+        super.configure(metadata);
+        this.delegate.configure(metadata);
+        this.filter.configureSource(this);
+        this.rec = new JournalRecord(metadata);
+    }
+
+    @Override
+    public Record currentRecord() {
+        return rec;
+    }
+
+    @Override
     public RowCursor cursor(PartitionSlice slice) {
         this.underlying = delegate.cursor(slice);
-        this.acceptor = filter.acceptor(slice);
-        this.rowid = -1;
-        this.skip = false;
+        this.rec.partition = slice.partition;
         return this;
     }
 
     @Override
     public boolean hasNext() {
-        if (this.rowid == -1) {
-
-            if (skip) {
-                return false;
-            }
-
-            long rowid;
-
-            A:
-            while (underlying.hasNext()) {
-                rowid = underlying.next();
-
-                Choice choice = acceptor.accept(rowid);
-                switch (choice) {
-                    case SKIP:
-                        break;
-                    case PICK:
-                        this.rowid = rowid;
-                        break A;
-                    case PICK_AND_SKIP_PARTITION:
-                        this.rowid = rowid;
-                        this.skip = true;
-                        break A;
-
-                }
+        while (underlying.hasNext()) {
+            rec.rowid = underlying.next();
+            if (filter.getBool()) {
+                return true;
             }
         }
-        return this.rowid > -1;
+        return false;
     }
 
     @Override
     public long next() {
-        long rowid = this.rowid;
-        this.rowid = -1;
-        return rowid;
+        return rec.rowid;
     }
 
     @Override

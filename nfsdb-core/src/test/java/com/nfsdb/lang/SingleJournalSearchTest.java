@@ -23,18 +23,20 @@ import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.lang.cst.Record;
 import com.nfsdb.lang.cst.RecordSource;
 import com.nfsdb.lang.cst.RowSource;
-import com.nfsdb.lang.cst.impl.fltr.DoubleGreaterThanRowFilter;
-import com.nfsdb.lang.cst.impl.fltr.SymbolEqualsRowFilter;
 import com.nfsdb.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.lang.cst.impl.ksrc.PartialSymbolKeySource;
 import com.nfsdb.lang.cst.impl.ksrc.SymbolKeySource;
+import com.nfsdb.lang.cst.impl.ops.DoubleGreaterThanOperator;
+import com.nfsdb.lang.cst.impl.ops.IntEqualsOperator;
 import com.nfsdb.lang.cst.impl.psrc.IntervalPartitionSource;
 import com.nfsdb.lang.cst.impl.psrc.JournalPartitionSource;
-import com.nfsdb.lang.cst.impl.ref.StringRef;
 import com.nfsdb.lang.cst.impl.rsrc.FilteredRowSource;
 import com.nfsdb.lang.cst.impl.rsrc.KvIndexHeadRowSource;
 import com.nfsdb.lang.cst.impl.rsrc.KvIndexRowSource;
 import com.nfsdb.lang.cst.impl.rsrc.UnionRowSource;
+import com.nfsdb.lang.cst.impl.virt.DoubleConstant;
+import com.nfsdb.lang.cst.impl.virt.IntConstant;
+import com.nfsdb.lang.cst.impl.virt.RecordSourceColumn;
 import com.nfsdb.model.Album;
 import com.nfsdb.model.Band;
 import com.nfsdb.model.Quote;
@@ -95,7 +97,6 @@ public class SingleJournalSearchTest {
                 "2013-03-14T12:36:40.000Z\tBP.L\t0.655503453217\t0.564446918384\t1419046110\t950920455\tFast trading\tSK\n" +
                 "2013-03-14T04:16:40.000Z\tLLOY.L\t0.660138895170\t0.757562030419\t1968010178\t461392040\tFast trading\tGR\n";
 
-        StringRef sym = new StringRef("sym");
         // from quote head by sym where timestamp in ("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z")
         assertEquals(expected,
                 new JournalSourceImpl(
@@ -104,8 +105,8 @@ public class SingleJournalSearchTest {
                                 , new Interval("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z")
                         ),
                         new KvIndexHeadRowSource(
-                                sym,
-                                new SymbolKeySource(sym)
+                                "sym",
+                                new SymbolKeySource("sym")
                                 , 1
                                 , 0
                                 , null
@@ -126,9 +127,9 @@ public class SingleJournalSearchTest {
                 "2013-03-14T12:36:40.000Z\tBP.L\t0.655503453217\t0.564446918384\t1419046110\t950920455\tFast trading\tSK\n" +
                 "2013-03-13T14:23:20.000Z\tLLOY.L\t0.491420610092\t0.691007955236\t1742184590\t1402169094\tFast trading\tSK\n";
 
-        StringRef sym = new StringRef("sym");
-        StringRef ex = new StringRef("ex");
-        StringRef exValue = new StringRef("SK");
+        IntEqualsOperator filter = new IntEqualsOperator();
+        filter.setLhs(new RecordSourceColumn("ex", journal));
+        filter.setRhs(new IntConstant(journal.getSymbolTable("ex").getQuick("SK")));
 
         assertEquals(expected,
                 new JournalSourceImpl(
@@ -139,7 +140,13 @@ public class SingleJournalSearchTest {
                                 )
                                 , new Interval("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z"))
                         ,
-                        new KvIndexHeadRowSource(sym, new SymbolKeySource(sym), 1, 0, new SymbolEqualsRowFilter(ex, exValue))
+                        new KvIndexHeadRowSource(
+                                "sym",
+                                new SymbolKeySource("sym"),
+                                1,
+                                0,
+                                filter
+                        )
                 )
         );
 
@@ -150,7 +157,12 @@ public class SingleJournalSearchTest {
 
         final String expected = "2013-03-12T13:23:20.000Z\tBP.L\t0.754494592594\t0.069385533063\t1360360213\t403082481\tFast trading\tSK\n" +
                 "2013-03-12T07:50:00.000Z\tWTB.L\t0.588779883603\t0.245365403760\t1675014181\t2093945023\tFast trading\tGR\n";
-        StringRef sym = new StringRef("sym");
+
+        // filter expression
+        DoubleGreaterThanOperator gt = new DoubleGreaterThanOperator();
+        gt.setLhs(new RecordSourceColumn("bid", journal));
+        gt.setRhs(new DoubleConstant(0.4));
+
 
         // from quote where timestamp in ("2013-03-12T00:00:00.000Z", "2013-03-13T00:00:00.000Z"), (sym in ("BP.L", "XXX") or sym = "WTB.L"), bid > 0.4
         // this is stupid, "in" is already "or"
@@ -163,22 +175,22 @@ public class SingleJournalSearchTest {
                                 new UnionRowSource(
                                         new RowSource[]{
                                                 new KvIndexRowSource(
-                                                        sym
+                                                        "sym"
                                                         ,
-                                                        new PartialSymbolKeySource(sym, new ArrayList<String>() {{
+                                                        new PartialSymbolKeySource("sym", new ArrayList<String>() {{
                                                             add("BP.L");
                                                             add("XXX");
+                                                            add("WTB.L");
                                                         }})
                                                 ),
                                                 new KvIndexRowSource(
-                                                        sym
+                                                        "sym"
                                                         ,
-                                                        new PartialSymbolKeySource(sym, new ArrayList<String>() {{
-                                                            add("WTB.L");
+                                                        new PartialSymbolKeySource("sym", new ArrayList<String>() {{
                                                         }})
                                                 )}
                                 )
-                                , new DoubleGreaterThanRowFilter("bid", 0.4)
+                                , gt
                         ))
         );
     }

@@ -14,31 +14,20 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.ref;
+package com.nfsdb.lang.cst.impl.ops;
 
-import com.nfsdb.lang.cst.IntVariable;
-import com.nfsdb.lang.cst.IntVariableSource;
-import com.nfsdb.lang.cst.PartitionSlice;
+import com.nfsdb.lang.cst.impl.virt.AbstractBinaryOperator;
+import com.nfsdb.storage.ColumnType;
+import com.nfsdb.utils.Chars;
 
-public class MutableIntVariableSource implements IntVariableSource, IntVariable {
+public class StringEqualsOperator extends AbstractBinaryOperator {
 
-    private int value;
-
-    @Override
-    public IntVariable getVariable(PartitionSlice slice) {
-        return this;
+    public StringEqualsOperator() {
+        super(ColumnType.BOOLEAN);
     }
 
     @Override
-    public int getValue() {
-        return value;
-    }
-
-    public void setValue(int value) {
-        this.value = value;
-    }
-
-    @Override
-    public void reset() {
+    public boolean getBool() {
+        return Chars.equals(lhs.getFlyweightStr(), rhs.getFlyweightStr());
     }
 }

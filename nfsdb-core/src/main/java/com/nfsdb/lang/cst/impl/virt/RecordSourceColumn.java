@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,28 +16,28 @@
 
 package com.nfsdb.lang.cst.impl.virt;
 
+import com.nfsdb.Journal;
 import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.io.sink.CharSink;
-import com.nfsdb.lang.cst.RecordMetadata;
-import com.nfsdb.lang.cst.RecordSourceState;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.lang.cst.Record;
+import com.nfsdb.lang.cst.RecordSource;
 import com.nfsdb.storage.SymbolTable;
 
 import java.io.OutputStream;
 
 public class RecordSourceColumn extends AbstractVirtualColumn {
-    private int index;
+    private final int index;
 
-    public RecordSourceColumn(String name, ColumnType type) {
-        super(type);
+    public RecordSourceColumn(String name, RecordSource<? extends Record> rs) {
+        super(rs.getMetadata().getColumn(name).getType());
+        this.index = rs.getMetadata().getColumnIndex(name);
         setName(name);
     }
 
-    @Override
-    public void configure(RecordMetadata metadata, RecordSourceState state) {
-        super.configure(metadata, state);
-        this.index = metadata.getColumnIndex(getName());
-        setType(metadata.getColumn(index).getType());
+    public RecordSourceColumn(String name, Journal journal) {
+        super(journal.getMetadata().getColumn(name).getType());
+        this.index = journal.getMetadata().getColumnIndex(name);
+        setName(name);
     }
 
     @Override
@@ -77,7 +77,12 @@ public class RecordSourceColumn extends AbstractVirtualColumn {
 
     @Override
     public CharSequence getFlyweightStr() {
-        return state.currentRecord().getFlyweightStr(index);
+        switch (getType()) {
+            case SYMBOL:
+                return state.currentRecord().getSym(index);
+            default:
+                return state.currentRecord().getFlyweightStr(index);
+        }
     }
 
     @Override

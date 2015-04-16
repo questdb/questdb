@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,39 +19,27 @@ package com.nfsdb.lang.cst.impl.ksrc;
 import com.nfsdb.lang.cst.KeyCursor;
 import com.nfsdb.lang.cst.KeySource;
 import com.nfsdb.lang.cst.PartitionSlice;
-import com.nfsdb.lang.cst.impl.ref.StringRef;
 import com.nfsdb.storage.SymbolTable;
 
 public class SymbolKeySource implements KeySource, KeyCursor {
 
-    private final StringRef symbol;
+    private final String symbol;
     private SymbolTable symbolTable;
     private int keyIndex;
     private int keyCount;
 
-    public SymbolKeySource(StringRef symbol) {
+    public SymbolKeySource(String symbol) {
         this.symbol = symbol;
     }
 
     @Override
     public KeyCursor cursor(PartitionSlice slice) {
         if (this.symbolTable == null) {
-            this.symbolTable = slice.partition.getJournal().getSymbolTable(symbol.value);
+            this.symbolTable = slice.partition.getJournal().getSymbolTable(symbol);
             this.keyCount = symbolTable.size();
         }
         this.keyIndex = 0;
         return this;
-    }
-
-    @Override
-    public int size() {
-        return keyCount;
-    }
-
-    @Override
-    public void reset() {
-        symbolTable = null;
-        keyIndex = 0;
     }
 
     @Override
@@ -62,5 +50,16 @@ public class SymbolKeySource implements KeySource, KeyCursor {
     @Override
     public int next() {
         return keyIndex++;
+    }
+
+    @Override
+    public void reset() {
+        symbolTable = null;
+        keyIndex = 0;
+    }
+
+    @Override
+    public int size() {
+        return keyCount;
     }
 }

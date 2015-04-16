@@ -24,18 +24,30 @@ import com.nfsdb.lang.cst.impl.qry.JournalRecord;
 public class JournalSourceImpl extends AbstractJournalSource {
     private final PartitionSource partitionSource;
     private final RowSource rowSource;
-    private final JournalRecord item = new JournalRecord(this);
+    private final JournalRecord rec = new JournalRecord(this);
     private RowCursor cursor;
 
     public JournalSourceImpl(PartitionSource partitionSource, RowSource rowSource) {
         super(partitionSource.getJournal().getMetadata());
         this.partitionSource = partitionSource;
+        rowSource.configure(partitionSource.getJournal().getMetadata());
         this.rowSource = rowSource;
+    }
+
+    @Override
+    public JournalRecord getByRowId(long rowId) {
+        rec.rowid = rowId;
+        return rec;
     }
 
     @Override
     public Journal getJournal() {
         return partitionSource.getJournal();
+    }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return this;
     }
 
     @Override
@@ -45,19 +57,8 @@ public class JournalSourceImpl extends AbstractJournalSource {
 
     @Override
     public JournalRecord next() {
-        item.rowid = cursor.next();
-        return item;
-    }
-
-    @Override
-    public JournalRecord getByRowId(long rowId) {
-        item.rowid = rowId;
-        return item;
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return this;
+        rec.rowid = cursor.next();
+        return rec;
     }
 
     @Override
@@ -78,30 +79,11 @@ public class JournalSourceImpl extends AbstractJournalSource {
             }
 
             if (cursor.hasNext()) {
-                item.partition = slice.partition;
+                rec.partition = slice.partition;
                 return true;
             }
         }
 
         return false;
-
-/*
-        do {
-            if (partitionSource.hasNext()) {
-                PartitionSlice slice = partitionSource.next();
-                cursor = rowSource.cursor(slice);
-
-                if (cursor == null) {
-                    return false;
-                }
-
-                item.partition = slice.partition;
-            } else {
-                return false;
-            }
-        } while (!cursor.hasNext());
-
-        return true;
-*/
     }
 }

@@ -14,8 +14,34 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst;
+package com.nfsdb.lang.cst.impl.virt;
 
-public enum Choice {
-    PICK, PICK_AND_SKIP_PARTITION, SKIP
+import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.storage.ColumnType;
+
+public class StringParameter extends AbstractVirtualColumn {
+    private String value;
+
+    public StringParameter() {
+        super(ColumnType.STRING);
+    }
+
+    @Override
+    public CharSequence getFlyweightStr() {
+        return value;
+    }
+
+    @Override
+    public CharSequence getStr() {
+        return value;
+    }
+
+    @Override
+    public void getStr(CharSink sink) {
+        sink.put(value);
+    }
+
+    public void setValue(String value) {
+        this.value = value;
+    }
 }

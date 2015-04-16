@@ -16,49 +16,46 @@
 
 package com.nfsdb.lang.cst.impl.ksrc;
 
-import com.nfsdb.collections.DirectIntList;
 import com.nfsdb.lang.cst.KeyCursor;
 import com.nfsdb.lang.cst.KeySource;
 import com.nfsdb.lang.cst.PartitionSlice;
-import com.nfsdb.lang.cst.impl.ref.StringRef;
+import com.nfsdb.lang.cst.impl.virt.VirtualColumn;
+import com.nfsdb.storage.SymbolTable;
 
-public class IntHashKeySource implements KeySource, KeyCursor {
-    private final StringRef column;
-    private final DirectIntList values;
-    private int bucketCount = -1;
-    private int valueIndex;
+public class SymBySymLookupKeySource implements KeySource, KeyCursor {
 
-    public IntHashKeySource(StringRef column, DirectIntList values) {
-        this.column = column;
-        this.values = values;
+    private final VirtualColumn masterKey;
+    private final SymbolTable slave;
+    private boolean hasNext = true;
+
+    public SymBySymLookupKeySource(SymbolTable slave, VirtualColumn masterKey) {
+        this.masterKey = masterKey;
+        this.slave = slave;
     }
 
     @Override
     public KeyCursor cursor(PartitionSlice slice) {
-        if (bucketCount == -1) {
-            bucketCount = slice.partition.getJournal().getMetadata().getColumnMetadata(column.value).distinctCountHint;
-        }
-        this.valueIndex = 0;
         return this;
     }
 
     @Override
     public boolean hasNext() {
-        return valueIndex < values.size();
+        return hasNext;
     }
 
     @Override
     public int next() {
-        return values.get(valueIndex++) % bucketCount;
-    }
-
-    @Override
-    public int size() {
-        return values.size();
+        hasNext = false;
+        return slave.getQuick(masterKey.getSym());
     }
 
     @Override
     public void reset() {
-        bucketCount = -1;
+        hasNext = true;
+    }
+
+    @Override
+    public int size() {
+        return 1;
     }
 }

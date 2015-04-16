@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,18 +19,17 @@ package com.nfsdb.lang.cst.impl.ksrc;
 import com.nfsdb.lang.cst.KeyCursor;
 import com.nfsdb.lang.cst.KeySource;
 import com.nfsdb.lang.cst.PartitionSlice;
-import com.nfsdb.lang.cst.impl.ref.StringRef;
 import com.nfsdb.utils.Hash;
 
 import java.util.List;
 
 public class StringHashKeySource implements KeySource, KeyCursor {
-    private final StringRef column;
+    private final String column;
     private final List<String> values;
     private int bucketCount = -1;
     private int valueIndex;
 
-    public StringHashKeySource(StringRef column, List<String> values) {
+    public StringHashKeySource(String column, List<String> values) {
         this.column = column;
         this.values = values;
     }
@@ -38,20 +37,10 @@ public class StringHashKeySource implements KeySource, KeyCursor {
     @Override
     public KeyCursor cursor(PartitionSlice slice) {
         if (bucketCount == -1) {
-            bucketCount = slice.partition.getJournal().getMetadata().getColumnMetadata(column.value).distinctCountHint;
+            bucketCount = slice.partition.getJournal().getMetadata().getColumn(column).distinctCountHint;
         }
         this.valueIndex = 0;
         return this;
-    }
-
-    @Override
-    public int size() {
-        return values.size();
-    }
-
-    @Override
-    public void reset() {
-        bucketCount = -1;
     }
 
     @Override
@@ -62,5 +51,15 @@ public class StringHashKeySource implements KeySource, KeyCursor {
     @Override
     public int next() {
         return Hash.boundedHash(values.get(valueIndex++), bucketCount);
+    }
+
+    @Override
+    public void reset() {
+        bucketCount = -1;
+    }
+
+    @Override
+    public int size() {
+        return values.size();
     }
 }

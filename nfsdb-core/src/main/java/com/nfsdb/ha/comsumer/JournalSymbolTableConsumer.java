@@ -61,7 +61,6 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
 
     @Override
     public void free() {
-        super.free();
         ByteBuffers.release(buffer);
         for (int i = 0; i < tabCount; i++) {
             symbolTableConsumers.get(i).free();

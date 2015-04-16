@@ -35,7 +35,6 @@ public abstract class AbstractObjectConsumer extends AbstractChannelConsumer {
     public void free() {
         valueBuffer = ByteBuffers.release(valueBuffer);
         ByteBuffers.release(header);
-        super.free();
     }
 
     final ByteBuffer getValueBuffer() {

@@ -16,16 +16,26 @@
 
 package com.nfsdb.lang.cst.impl.ksrc;
 
-import com.nfsdb.lang.cst.*;
+import com.nfsdb.lang.cst.KeyCursor;
+import com.nfsdb.lang.cst.KeySource;
+import com.nfsdb.lang.cst.PartitionSlice;
+import com.nfsdb.lang.cst.impl.virt.VirtualColumn;
+import com.nfsdb.storage.SymbolTable;
 
-public class SingleKeySource implements KeySource, KeyCursor {
+public class SymByStrLookupKeySource implements KeySource, KeyCursor {
 
-    private final IntVariableSource variableSource;
-    private IntVariable var;
+    private final VirtualColumn masterKey;
+    private final SymbolTable slave;
     private boolean hasNext = true;
 
-    public SingleKeySource(IntVariableSource variableSource) {
-        this.variableSource = variableSource;
+    public SymByStrLookupKeySource(SymbolTable slave, VirtualColumn masterKey) {
+        this.masterKey = masterKey;
+        this.slave = slave;
+    }
+
+    @Override
+    public KeyCursor cursor(PartitionSlice slice) {
+        return this;
     }
 
     @Override
@@ -36,23 +46,16 @@ public class SingleKeySource implements KeySource, KeyCursor {
     @Override
     public int next() {
         hasNext = false;
-        return var.getValue();
+        return slave.getQuick(masterKey.getFlyweightStr());
     }
 
     @Override
-    public KeyCursor cursor(PartitionSlice slice) {
-        var = variableSource.getVariable(slice);
-        return this;
+    public void reset() {
+        hasNext = true;
     }
 
     @Override
     public int size() {
         return 1;
-    }
-
-    @Override
-    public void reset() {
-        this.variableSource.reset();
-        hasNext = true;
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,10 +17,10 @@
 package com.nfsdb.lang.cst.impl.rsrc;
 
 import com.nfsdb.collections.IntHashSet;
+import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.lang.cst.PartitionSlice;
 import com.nfsdb.lang.cst.RowCursor;
 import com.nfsdb.lang.cst.RowSource;
-import com.nfsdb.lang.cst.impl.ref.StringRef;
 import com.nfsdb.storage.FixedColumn;
 
 /**
@@ -30,25 +30,31 @@ import com.nfsdb.storage.FixedColumn;
  * One of use cases might be streaming of journal in reverse chronological order (latest rows first)
  * via this filter to receive last records for every value of given column.
  */
-public class SkipSymbolRowSource implements RowSource, RowCursor {
+public class DistinctSymbolRowSource extends AbstractRowSource {
 
     private final RowSource delegate;
-    private final StringRef symbolName;
+    private final String symbol;
     private final IntHashSet set = new IntHashSet();
     private FixedColumn column;
     private int columnIndex = -1;
     private RowCursor cursor;
     private long rowid;
 
-    public SkipSymbolRowSource(RowSource delegate, StringRef symbolName) {
+    public DistinctSymbolRowSource(RowSource delegate, String symbol) {
         this.delegate = delegate;
-        this.symbolName = symbolName;
+        this.symbol = symbol;
+    }
+
+    @Override
+    public void configure(JournalMetadata metadata) {
+        super.configure(metadata);
+        delegate.configure(metadata);
     }
 
     @Override
     public RowCursor cursor(PartitionSlice slice) {
         if (columnIndex == -1) {
-            columnIndex = slice.partition.getJournal().getMetadata().getColumnIndex(symbolName.value);
+            columnIndex = slice.partition.getJournal().getMetadata().getColumnIndex(symbol);
         }
         column = (FixedColumn) slice.partition.getAbstractColumn(columnIndex);
         cursor = delegate.cursor(slice);
@@ -56,19 +62,10 @@ public class SkipSymbolRowSource implements RowSource, RowCursor {
     }
 
     @Override
-    public void reset() {
-        columnIndex = -1;
-        delegate.reset();
-        set.clear();
-    }
-
-    @Override
     public boolean hasNext() {
-        long rowid;
         while (cursor.hasNext()) {
-            rowid = cursor.next();
-            int key = column.getInt(rowid);
-            if (set.add(key)) {
+            long rowid = cursor.next();
+            if (set.add(column.getInt(rowid))) {
                 this.rowid = rowid;
                 return true;
             }
@@ -79,5 +76,12 @@ public class SkipSymbolRowSource implements RowSource, RowCursor {
     @Override
     public long next() {
         return rowid;
+    }
+
+    @Override
+    public void reset() {
+        columnIndex = -1;
+        delegate.reset();
+        set.clear();
     }
 }

@@ -25,7 +25,7 @@ import com.nfsdb.storage.FixedColumn;
 import java.io.OutputStream;
 
 public class JournalRecord extends AbstractRecord {
-    public Partition<Object> partition;
+    public Partition partition;
     public long rowid;
 
     public JournalRecord(RecordMetadata metadata) {

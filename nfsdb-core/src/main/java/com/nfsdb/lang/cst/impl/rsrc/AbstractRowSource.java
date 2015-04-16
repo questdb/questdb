@@ -14,15 +14,14 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.ref;
+package com.nfsdb.lang.cst.impl.rsrc;
 
-public class StringRef {
-    public String value;
+import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.lang.cst.RowCursor;
+import com.nfsdb.lang.cst.RowSource;
 
-    public StringRef() {
-    }
-
-    public StringRef(String value) {
-        this.value = value;
+public abstract class AbstractRowSource implements RowSource, RowCursor {
+    @Override
+    public void configure(JournalMetadata metadata) {
     }
 }

@@ -16,29 +16,27 @@
 
 package com.nfsdb.lang.cst.impl.ksrc;
 
+import com.nfsdb.collections.IntIntHashMap;
 import com.nfsdb.lang.cst.KeyCursor;
 import com.nfsdb.lang.cst.KeySource;
 import com.nfsdb.lang.cst.PartitionSlice;
 import com.nfsdb.lang.cst.impl.virt.VirtualColumn;
-import com.nfsdb.utils.Hash;
+import com.nfsdb.storage.SymbolTable;
 
-public class SingleStringHashKeySource implements KeySource, KeyCursor {
-    private final String column;
-    private final VirtualColumn value;
-    private int bucketCount = -1;
-    private boolean hasNext;
+public class SymBySymCachingLookupKeySource implements KeySource, KeyCursor {
 
-    public SingleStringHashKeySource(String column, VirtualColumn value) {
-        this.column = column;
-        this.value = value;
+    private final VirtualColumn masterKey;
+    private final SymbolTable slave;
+    private boolean hasNext = true;
+    private IntIntHashMap map = new IntIntHashMap();
+
+    public SymBySymCachingLookupKeySource(SymbolTable slave, VirtualColumn masterKey) {
+        this.masterKey = masterKey;
+        this.slave = slave;
     }
 
     @Override
     public KeyCursor cursor(PartitionSlice slice) {
-        if (bucketCount == -1) {
-            bucketCount = slice.partition.getJournal().getMetadata().getColumn(column).distinctCountHint;
-        }
-        this.hasNext = true;
         return this;
     }
 
@@ -50,12 +48,17 @@ public class SingleStringHashKeySource implements KeySource, KeyCursor {
     @Override
     public int next() {
         hasNext = false;
-        return Hash.boundedHash(value.getFlyweightStr(), bucketCount);
+        int m;
+        int key = map.get(m = masterKey.getInt());
+        if (key == -1) {
+            map.put(m, key = slave.getQuick(masterKey.getSym()));
+        }
+        return key;
     }
 
     @Override
     public void reset() {
-        bucketCount = -1;
+        hasNext = true;
     }
 
     @Override

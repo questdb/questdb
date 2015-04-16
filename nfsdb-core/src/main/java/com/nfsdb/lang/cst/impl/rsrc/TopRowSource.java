@@ -16,11 +16,12 @@
 
 package com.nfsdb.lang.cst.impl.rsrc;
 
+import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.lang.cst.PartitionSlice;
 import com.nfsdb.lang.cst.RowCursor;
 import com.nfsdb.lang.cst.RowSource;
 
-public class TopRowSource implements RowSource, RowCursor {
+public class TopRowSource extends AbstractRowSource {
 
     private final RowSource delegate;
     private final int count;
@@ -35,16 +36,15 @@ public class TopRowSource implements RowSource, RowCursor {
     }
 
     @Override
-    public RowCursor cursor(PartitionSlice partition) {
-        this.cursor = delegate.cursor(partition);
-        return this;
+    public void configure(JournalMetadata metadata) {
+        super.configure(metadata);
+        delegate.configure(metadata);
     }
 
     @Override
-    public void reset() {
-        delegate.reset();
-        this.remaining = count;
-
+    public RowCursor cursor(PartitionSlice partition) {
+        this.cursor = delegate.cursor(partition);
+        return this;
     }
 
     @Override
@@ -56,5 +56,12 @@ public class TopRowSource implements RowSource, RowCursor {
     public long next() {
         remaining--;
         return cursor.next();
+    }
+
+    @Override
+    public void reset() {
+        delegate.reset();
+        this.remaining = count;
+
     }
 }

@@ -18,8 +18,10 @@ package com.nfsdb.lang.cst.impl.rsrc;
 
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.lang.cst.*;
-import com.nfsdb.lang.cst.impl.ref.StringRef;
+import com.nfsdb.lang.cst.impl.qry.JournalRecord;
+import com.nfsdb.lang.cst.impl.virt.VirtualColumn;
 import com.nfsdb.storage.KVIndex;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -29,33 +31,46 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
  * This is used in nested-loop join where "slave" source is scanned for one key at a time.
  */
 @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
-public class KvIndexTopRowSource implements RowSource, RowCursor {
+public class KvIndexTopRowSource extends AbstractRowSource implements RecordSourceState {
 
-    private final StringRef column;
-    private final RowFilter filter;
+    private final String column;
+    private final VirtualColumn filter;
     private final KeySource keySource;
+    private JournalRecord rec;
 
     private KVIndex index;
     private KeyCursor keyCursor;
     private long lo;
     private long hi;
-    private long localRowID;
-    private RowAcceptor rowAcceptor;
 
-    public KvIndexTopRowSource(StringRef column, KeySource keySource, RowFilter filter) {
+    public KvIndexTopRowSource(String column, KeySource keySource, VirtualColumn filter) {
         this.column = column;
         this.keySource = keySource;
+        if (filter != null) {
+            filter.configureSource(this);
+        }
         this.filter = filter;
     }
 
     @Override
+    public void configure(JournalMetadata metadata) {
+        super.configure(metadata);
+        this.rec = new JournalRecord(metadata);
+    }
+
+    @Override
+    public Record currentRecord() {
+        return rec;
+    }
+
+    @Override
     public RowCursor cursor(PartitionSlice slice) {
-        rowAcceptor = filter != null ? filter.acceptor(slice) : null;
         try {
-            this.index = slice.partition.getIndexForColumn(column.value);
+            this.index = slice.partition.getIndexForColumn(column);
             this.lo = slice.lo;
             this.hi = slice.calcHi ? slice.partition.open().size() - 1 : slice.hi;
             this.keyCursor = keySource.cursor(slice);
+            this.rec.partition = slice.partition;
             return this;
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
@@ -71,12 +86,12 @@ public class KvIndexTopRowSource implements RowSource, RowCursor {
 
         KVIndex.IndexCursor indexCursor = index.cachedCursor(keyCursor.next());
         while (indexCursor.hasNext()) {
-            localRowID = indexCursor.next();
-            if (localRowID >= lo && localRowID <= hi && (rowAcceptor == null || rowAcceptor.accept(localRowID) == Choice.PICK)) {
+            rec.rowid = indexCursor.next();
+            if (rec.rowid >= lo && rec.rowid <= hi && (filter == null || filter.getBool())) {
                 return true;
             }
 
-            if (localRowID < lo) {
+            if (rec.rowid < lo) {
                 break;
             }
         }
@@ -86,7 +101,7 @@ public class KvIndexTopRowSource implements RowSource, RowCursor {
 
     @Override
     public long next() {
-        return localRowID;
+        return rec.rowid;
     }
 
     @Override

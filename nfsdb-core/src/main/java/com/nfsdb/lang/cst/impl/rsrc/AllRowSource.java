@@ -20,10 +20,9 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.lang.cst.PartitionSlice;
 import com.nfsdb.lang.cst.RowCursor;
-import com.nfsdb.lang.cst.RowSource;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class AllRowSource implements RowSource, RowCursor {
+public class AllRowSource extends AbstractRowSource {
     private long lo;
     private long hi;
 

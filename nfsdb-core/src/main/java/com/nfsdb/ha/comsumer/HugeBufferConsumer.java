@@ -47,7 +47,6 @@ public class HugeBufferConsumer implements ChannelConsumer, Closeable {
         free();
     }
 
-    @Override
     public void free() {
         hb.close();
     }

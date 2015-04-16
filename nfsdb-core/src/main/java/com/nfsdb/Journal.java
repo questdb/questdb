@@ -643,7 +643,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
     private void configureColumns() throws JournalException {
         int columnCount = getMetadata().getColumnCount();
         for (int i = 0; i < columnCount; i++) {
-            ColumnMetadata meta = metadata.getColumnMetadata(i);
+            ColumnMetadata meta = metadata.getColumn(i);
             if (meta.type == ColumnType.SYMBOL && meta.sameAs == null) {
                 int tabIndex = symbolTables.size();
                 int tabSize = tx.symbolTableSizes.length > tabIndex ? tx.symbolTableSizes[tabIndex] : 0;
@@ -725,7 +725,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
 
     private void configureSymbolTableSynonyms() {
         for (int i = 0; i < getMetadata().getColumnCount(); i++) {
-            ColumnMetadata meta = metadata.getColumnMetadata(i);
+            ColumnMetadata meta = metadata.getColumn(i);
             if (meta.type == ColumnType.SYMBOL && meta.sameAs != null) {
                 SymbolTable tab = getSymbolTable(meta.sameAs);
                 symbolTableMap.put(meta.name, tab);

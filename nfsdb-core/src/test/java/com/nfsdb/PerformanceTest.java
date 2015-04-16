@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ import com.nfsdb.lang.cst.impl.ksrc.PartialSymbolKeySource;
 import com.nfsdb.lang.cst.impl.psrc.IntervalPartitionSource;
 import com.nfsdb.lang.cst.impl.psrc.JournalPartitionSource;
 import com.nfsdb.lang.cst.impl.qry.JournalRecord;
-import com.nfsdb.lang.cst.impl.ref.StringRef;
 import com.nfsdb.lang.cst.impl.rsrc.KvIndexRowSource;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.model.Quote;
@@ -91,7 +90,6 @@ public class PerformanceTest extends AbstractTest {
             Interval interval = new Interval(Dates.parseDateTime("2013-10-15T10:00:00.000Z"), Dates.parseDateTime("2013-10-05T10:00:00.000Z"));
             long t = 0;
 
-            StringRef sym = new StringRef("sym");
             RecordSource<? extends Record> rs = new JournalSourceImpl(
                     new IntervalPartitionSource(
                             new JournalPartitionSource(journal, false)
@@ -99,9 +97,9 @@ public class PerformanceTest extends AbstractTest {
                     )
                     ,
                     new KvIndexRowSource(
-                            sym
+                            "sym"
                             ,
-                            new PartialSymbolKeySource(sym, new ArrayList<String>() {{
+                            new PartialSymbolKeySource("sym", new ArrayList<String>() {{
                                 add("LLOY.L");
                             }})
                     )

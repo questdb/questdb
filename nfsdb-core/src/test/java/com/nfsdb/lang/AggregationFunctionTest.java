@@ -52,7 +52,7 @@ public class AggregationFunctionTest extends AbstractTest {
     @Test
     public void testAvgDouble() throws Exception {
         assertFunc(
-                new AvgDoubleAggregationFunction(r.getMetadata().getColumnMetadata("ask"))
+                new AvgDoubleAggregationFunction(r.getMetadata().getColumn("ask"))
                 , "52\t7858.423721313780\t151.123533102188\t2015-01-01T00:00:00.000Z\tAGK.L\n" +
                         "66\t14082.423625444866\t213.370054930983\t2015-01-01T00:00:00.000Z\tBP.L\n" +
                         "58\t13335.940655007168\t229.930011293227\t2015-01-01T00:00:00.000Z\tRRS.L\n" +
@@ -137,7 +137,7 @@ public class AggregationFunctionTest extends AbstractTest {
     @Test
     public void testFirstDouble() throws Exception {
         assertFunc(
-                new FirstDoubleAggregationFunction(r.getMetadata().getColumnMetadata("bid"))
+                new FirstDoubleAggregationFunction(r.getMetadata().getColumn("bid"))
                 , "0.000001189157\t2015-01-01T00:00:00.000Z\tAGK.L\n" +
                         "104.021850585938\t2015-01-01T00:00:00.000Z\tBP.L\n" +
                         "768.000000000000\t2015-01-01T00:00:00.000Z\tRRS.L\n" +
@@ -193,7 +193,7 @@ public class AggregationFunctionTest extends AbstractTest {
     @Test
     public void testLastDouble() throws Exception {
         assertFunc(
-                new LastDoubleAggregationFunction(r.getMetadata().getColumnMetadata("bid"))
+                new LastDoubleAggregationFunction(r.getMetadata().getColumn("bid"))
                 , "405.717071533203\t2015-01-01T00:00:00.000Z\tAGK.L\n" +
                         "896.000000000000\t2015-01-01T00:00:00.000Z\tBP.L\n" +
                         "1024.000000000000\t2015-01-01T00:00:00.000Z\tRRS.L\n" +
@@ -249,7 +249,7 @@ public class AggregationFunctionTest extends AbstractTest {
     @Test
     public void testSumDouble() throws Exception {
         assertFunc(
-                new SumDoubleAggregationFunction(r.getMetadata().getColumnMetadata("ask"))
+                new SumDoubleAggregationFunction(r.getMetadata().getColumn("ask"))
                 , "7858.423721313780\t2015-01-01T00:00:00.000Z\tAGK.L\n" +
                         "14082.423625444866\t2015-01-01T00:00:00.000Z\tBP.L\n" +
                         "13335.940655007168\t2015-01-01T00:00:00.000Z\tRRS.L\n" +
@@ -277,7 +277,7 @@ public class AggregationFunctionTest extends AbstractTest {
     @Test
     public void testSumInt() throws Exception {
         assertFunc(
-                new SumIntAggregationFunction(r.getMetadata().getColumnMetadata("askSize"))
+                new SumIntAggregationFunction(r.getMetadata().getColumn("askSize"))
                 , "936298421\t2015-01-01T00:00:00.000Z\tAGK.L\n" +
                         "1261867203\t2015-01-01T00:00:00.000Z\tBP.L\n" +
                         "-1040054830\t2015-01-01T00:00:00.000Z\tRRS.L\n" +
@@ -306,7 +306,7 @@ public class AggregationFunctionTest extends AbstractTest {
     @Test
     public void testSumIntToLong() throws Exception {
         assertFunc(
-                new SumIntToLongAggregationFunction(r.getMetadata().getColumnMetadata("askSize"))
+                new SumIntToLongAggregationFunction(r.getMetadata().getColumn("askSize"))
                 , "56770873269\t2015-01-01T00:00:00.000Z\tAGK.L\n" +
                         "65686376643\t2015-01-01T00:00:00.000Z\tBP.L\n" +
                         "63384454610\t2015-01-01T00:00:00.000Z\tRRS.L\n" +
@@ -339,7 +339,7 @@ public class AggregationFunctionTest extends AbstractTest {
                 )
                 ,
                 new ArrayList<ColumnMetadata>() {{
-                    add(r.getMetadata().getColumnMetadata("sym"));
+                    add(r.getMetadata().getColumn("sym"));
                 }}
                 ,
                 new ArrayList<AggregatorFunction>() {{

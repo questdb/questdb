@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import com.nfsdb.collections.ObjIntHashMap;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.exceptions.NoSuchColumnException;
+import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.storage.HugeBuffer;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
@@ -29,7 +30,7 @@ import org.jetbrains.annotations.NotNull;
 import java.lang.StringBuilder;
 import java.lang.reflect.Constructor;
 
-public class JournalMetadata<T> {
+public class JournalMetadata<T> implements RecordMetadata {
 
     private static final int TO_STRING_COL1_PAD = 20;
     private static final int TO_STRING_COL2_PAD = 55;
@@ -133,6 +134,17 @@ public class JournalMetadata<T> {
         }
     }
 
+    @Override
+    @NotNull
+    public ColumnMetadata getColumn(CharSequence name) {
+        return getColumn(getColumnIndex(name));
+    }
+
+    @Override
+    public ColumnMetadata getColumn(int columnIndex) {
+        return columnMetadata[columnIndex];
+    }
+
     public int getColumnCount() {
         return columnCount;
     }
@@ -143,15 +155,6 @@ public class JournalMetadata<T> {
             throw new NoSuchColumnException("Invalid column name: %s", columnName);
         }
         return result;
-    }
-
-    @NotNull
-    public ColumnMetadata getColumnMetadata(CharSequence name) {
-        return getColumnMetadata(getColumnIndex(name));
-    }
-
-    public ColumnMetadata getColumnMetadata(int columnIndex) {
-        return columnMetadata[columnIndex];
     }
 
     public String getId() {
@@ -214,8 +217,8 @@ public class JournalMetadata<T> {
         }
 
         for (int i = 0, k = getColumnCount(); i < k; i++) {
-            ColumnMetadata thisM = this.getColumnMetadata(i);
-            ColumnMetadata thatM = that.getColumnMetadata(i);
+            ColumnMetadata thisM = this.getColumn(i);
+            ColumnMetadata thatM = that.getColumn(i);
 
             if (!thisM.name.equals(thatM.name)
                     || thisM.type != thatM.type

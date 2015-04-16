@@ -16,7 +16,12 @@
 
 package com.nfsdb.lang.cst;
 
+import com.nfsdb.factory.configuration.JournalMetadata;
+
 public interface RowSource {
+
+    void configure(JournalMetadata metadata);
+
     RowCursor cursor(PartitionSlice slice);
 
     void reset();

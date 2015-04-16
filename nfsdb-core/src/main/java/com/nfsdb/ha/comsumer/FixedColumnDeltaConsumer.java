@@ -38,10 +38,8 @@ public class FixedColumnDeltaConsumer extends AbstractChannelConsumer {
         this.column = column;
     }
 
-    @Override
     public void free() {
         ByteBuffers.release(header);
-        super.free();
     }
 
     @Override

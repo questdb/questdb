@@ -603,9 +603,10 @@ public class Partition<T> implements Iterable<T>, Closeable {
             throw new JournalRuntimeException("Partition is closed: %s", this);
         }
 
-        if (i < 0 || i >= columns.length) {
-            throw new JournalRuntimeException("Invalid column index: %d in %s", i, this);
+        if (i > -1 && i < columnCount) {
+            return;
         }
+        throw new JournalRuntimeException("Invalid column index: %d in %s", i, this);
     }
 
     @SuppressWarnings("unchecked")

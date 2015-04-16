@@ -16,28 +16,28 @@
 
 package com.nfsdb.lang.cst.impl.ksrc;
 
-import com.nfsdb.lang.cst.*;
-import com.nfsdb.lang.cst.impl.ref.StringRef;
+import com.nfsdb.lang.cst.KeyCursor;
+import com.nfsdb.lang.cst.KeySource;
+import com.nfsdb.lang.cst.PartitionSlice;
+import com.nfsdb.lang.cst.impl.virt.VirtualColumn;
 
 public class SingleIntHashKeySource implements KeySource, KeyCursor {
-    private final StringRef column;
-    private final IntVariableSource variableSource;
+    private final String column;
+    private final VirtualColumn filter;
     private int bucketCount = -1;
     private boolean hasNext;
-    private IntVariable var;
 
-    public SingleIntHashKeySource(StringRef column, IntVariableSource variableSource) {
+    public SingleIntHashKeySource(String column, VirtualColumn filter) {
         this.column = column;
-        this.variableSource = variableSource;
+        this.filter = filter;
     }
 
     @Override
     public KeyCursor cursor(PartitionSlice slice) {
         if (bucketCount == -1) {
-            bucketCount = slice.partition.getJournal().getMetadata().getColumnMetadata(column.value).distinctCountHint;
+            bucketCount = slice.partition.getJournal().getMetadata().getColumn(column).distinctCountHint;
         }
         this.hasNext = true;
-        this.var = variableSource.getVariable(slice);
         return this;
     }
 
@@ -49,16 +49,16 @@ public class SingleIntHashKeySource implements KeySource, KeyCursor {
     @Override
     public int next() {
         hasNext = false;
-        return var.getValue() % bucketCount;
-    }
-
-    @Override
-    public int size() {
-        return 1;
+        return filter.getInt() % bucketCount;
     }
 
     @Override
     public void reset() {
         bucketCount = -1;
+    }
+
+    @Override
+    public int size() {
+        return 1;
     }
 }

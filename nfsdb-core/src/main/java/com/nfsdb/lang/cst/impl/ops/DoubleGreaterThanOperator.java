@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,30 +14,19 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst.impl.virt;
+package com.nfsdb.lang.cst.impl.ops;
 
+import com.nfsdb.lang.cst.impl.virt.AbstractBinaryOperator;
 import com.nfsdb.storage.ColumnType;
 
-public class ConstDoubleColumn extends AbstractVirtualColumn {
-    private final double value;
+public class DoubleGreaterThanOperator extends AbstractBinaryOperator {
 
-    public ConstDoubleColumn(double value) {
-        super(ColumnType.DOUBLE);
-        this.value = value;
+    public DoubleGreaterThanOperator() {
+        super(ColumnType.BOOLEAN);
     }
 
     @Override
-    public double getDouble() {
-        return value;
-    }
-
-    @Override
-    public float getFloat() {
-        return (float) value;
-    }
-
-    @Override
-    public int getInt() {
-        return (int) value;
+    public boolean getBool() {
+        return lhs.getDouble() > rhs.getDouble();
     }
 }

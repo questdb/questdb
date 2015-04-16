@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ import com.nfsdb.lang.cst.Record;
 import com.nfsdb.lang.cst.RecordSource;
 import com.nfsdb.lang.cst.impl.ops.AddDoubleOperator;
 import com.nfsdb.lang.cst.impl.virt.*;
-import com.nfsdb.storage.ColumnType;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.utils.Rnd;
 import org.junit.Assert;
@@ -37,7 +36,7 @@ public class VirtualColumnTest extends AbstractTest {
     @Test
     public void testPlusDouble() throws Exception {
 
-        JournalWriter w = factory.writer(new JournalStructure("xyz") {{
+        final JournalWriter w = factory.writer(new JournalStructure("xyz") {{
             $str("ccy");
             $double("bid");
         }});
@@ -59,8 +58,8 @@ public class VirtualColumnTest extends AbstractTest {
         VirtualColumnRecordSource src = new VirtualColumnRecordSource(w.rows(), new ObjList<VirtualColumn>() {{
             add(new AddDoubleOperator() {{
                 setName("plus");
-                setLhs(new RecordSourceColumn("bid", ColumnType.DOUBLE));
-                setRhs(new ConstDoubleColumn(12.5));
+                setLhs(new RecordSourceColumn("bid", w));
+                setRhs(new DoubleConstant(12.5));
             }});
         }});
 
@@ -173,7 +172,7 @@ public class VirtualColumnTest extends AbstractTest {
     @Test
     public void testSelectedColumns() throws Exception {
 
-        JournalWriter w = factory.writer(new JournalStructure("xyz") {{
+        final JournalWriter w = factory.writer(new JournalStructure("xyz") {{
             $str("ccy");
             $double("bid");
         }});
@@ -198,8 +197,8 @@ public class VirtualColumnTest extends AbstractTest {
                         new ObjList<VirtualColumn>() {{
                             add(new AddDoubleOperator() {{
                                 setName("plus");
-                                setLhs(new RecordSourceColumn("bid", ColumnType.DOUBLE));
-                                setRhs(new ConstDoubleColumn(12.5));
+                                setLhs(new RecordSourceColumn("bid", w));
+                                setRhs(new DoubleConstant(12.5));
                             }});
                         }}
                 ),

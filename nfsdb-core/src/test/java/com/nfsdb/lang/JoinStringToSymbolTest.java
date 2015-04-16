@@ -25,12 +25,13 @@ import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.lang.cst.impl.join.NestedLoopLeftOuterJoin;
 import com.nfsdb.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.lang.cst.impl.jsrc.StatefulJournalSourceImpl;
-import com.nfsdb.lang.cst.impl.ksrc.SingleKeySource;
+import com.nfsdb.lang.cst.impl.ksrc.SymByStrLookupKeySource;
+import com.nfsdb.lang.cst.impl.ops.StringEqualsOperator;
 import com.nfsdb.lang.cst.impl.psrc.JournalPartitionSource;
-import com.nfsdb.lang.cst.impl.ref.StringRef;
-import com.nfsdb.lang.cst.impl.ref.StringXTabVariableSource;
 import com.nfsdb.lang.cst.impl.rsrc.AllRowSource;
 import com.nfsdb.lang.cst.impl.rsrc.KvIndexTopRowSource;
+import com.nfsdb.lang.cst.impl.virt.RecordSourceColumn;
+import com.nfsdb.lang.cst.impl.virt.StringConstant;
 import com.nfsdb.model.Album;
 import com.nfsdb.model.Band;
 import com.nfsdb.test.tools.JournalTestFactory;
@@ -96,29 +97,81 @@ public class JoinStringToSymbolTest {
 
         aw.commit();
 
-        StringRef name = new StringRef("name");
-        StatefulJournalSourceImpl master;
+        StatefulJournalSourceImpl master = new StatefulJournalSourceImpl(
+                new JournalSourceImpl(
+                        new JournalPartitionSource(aw, false), new AllRowSource()
+                )
+        );
 
+        RecordSourceColumn band = new RecordSourceColumn("band", master);
+        band.configureSource(master);
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
         p.print(
                 new NestedLoopLeftOuterJoin(
-                        master = new StatefulJournalSourceImpl(
-                                new JournalSourceImpl(
-                                        new JournalPartitionSource(aw, false), new AllRowSource()
-                                )
-                        ),
+                        master,
                         new JournalSourceImpl(
                                 new JournalPartitionSource(bw, false),
                                 new KvIndexTopRowSource(
-                                        name
-                                        , new SingleKeySource(new StringXTabVariableSource(master.getMetadata(), "band", "name", master))
+                                        "name"
+                                        , new SymByStrLookupKeySource(bw.getSymbolTable("name"), band)
                                         , null
+                                ))
+                )
+        );
+//        System.out.println(sink.toString());
+        Assert.assertEquals(expected, sink.toString());
+    }
+
+    @Test
+    public void testOuterOneToOneHeadAndFilter() throws Exception {
+
+        final String expected = "band1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband1\thttp://old.band1.com\trock\t\n" +
+                "band1\talbum BZ\trock\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband1\thttp://old.band1.com\trock\t\n" +
+                "band3\talbum Y\tmetal\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tnull\t\tnull\t\n";
+
+        bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
+        bw.append(new Band().setName("band1").setType("rock").setUrl("http://old.band1.com"));
+        bw.append(new Band().setName("band2").setType("hiphop").setUrl("http://band2.com"));
+        bw.append(new Band().setName("band3").setType("jazz").setUrl("http://band3.com"));
+        bw.append(new Band().setName("band1").setType("jazz").setUrl("http://new.band1.com"));
+
+        bw.commit();
+
+        aw.append(new Album().setName("album X").setBand("band1").setGenre("pop"));
+        aw.append(new Album().setName("album BZ").setBand("band1").setGenre("rock"));
+        aw.append(new Album().setName("album Y").setBand("band3").setGenre("metal"));
+
+        aw.commit();
+
+        StatefulJournalSourceImpl master = new StatefulJournalSourceImpl(
+                new JournalSourceImpl(
+                        new JournalPartitionSource(aw, false), new AllRowSource()
+                )
+        );
+
+        RecordSourceColumn band = new RecordSourceColumn("band", master);
+        band.configureSource(master);
+
+        StringEqualsOperator filter = new StringEqualsOperator();
+        filter.setLhs(new RecordSourceColumn("type", bw));
+        filter.setRhs(new StringConstant("rock"));
+
+        StringSink sink = new StringSink();
+        RecordSourcePrinter p = new RecordSourcePrinter(sink);
+        p.print(
+                new NestedLoopLeftOuterJoin(
+                        master,
+                        new JournalSourceImpl(
+                                new JournalPartitionSource(bw, false),
+                                new KvIndexTopRowSource(
+                                        "name"
+                                        , new SymByStrLookupKeySource(bw.getSymbolTable("name"), band)
+                                        , filter
                                 ))
                 )
         );
         Assert.assertEquals(expected, sink.toString());
     }
-
 }

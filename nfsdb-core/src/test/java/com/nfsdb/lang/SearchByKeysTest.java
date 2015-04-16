@@ -23,15 +23,16 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.lang.cst.DataSource;
 import com.nfsdb.lang.cst.impl.dsrc.DataSourceImpl;
-import com.nfsdb.lang.cst.impl.fltr.IntEqualsRowFilter;
-import com.nfsdb.lang.cst.impl.fltr.StringEqualsRowFilter;
 import com.nfsdb.lang.cst.impl.jsrc.JournalSourceImpl;
 import com.nfsdb.lang.cst.impl.ksrc.SingleIntHashKeySource;
 import com.nfsdb.lang.cst.impl.ksrc.SingleStringHashKeySource;
+import com.nfsdb.lang.cst.impl.ops.IntEqualsOperator;
+import com.nfsdb.lang.cst.impl.ops.StringEqualsOperator;
 import com.nfsdb.lang.cst.impl.psrc.JournalDescPartitionSource;
-import com.nfsdb.lang.cst.impl.ref.MutableIntVariableSource;
-import com.nfsdb.lang.cst.impl.ref.StringRef;
 import com.nfsdb.lang.cst.impl.rsrc.KvIndexHeadRowSource;
+import com.nfsdb.lang.cst.impl.virt.IntParameter;
+import com.nfsdb.lang.cst.impl.virt.RecordSourceColumn;
+import com.nfsdb.lang.cst.impl.virt.StringParameter;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Files;
@@ -71,19 +72,30 @@ public class SearchByKeysTest {
     public void testSearchByIntKey() throws Exception {
 
         Journal<Order> journal = prepareTestData();
-        StringRef intCol = new StringRef("id");
-        MutableIntVariableSource intId = new MutableIntVariableSource();
+        IntParameter param = new IntParameter();
+        IntEqualsOperator filter = new IntEqualsOperator();
+        filter.setLhs(new RecordSourceColumn("id", journal));
+        filter.setRhs(param);
 
         //**QUERY
         // from order head by id = 123
         // **selects latest version of record with int id 123
         DataSource<Order> dsInt = new DataSourceImpl<>(
                 new JournalSourceImpl(
-                        new JournalDescPartitionSource(journal, false), new KvIndexHeadRowSource(intCol, new SingleIntHashKeySource(intCol, intId), 1, 0, new IntEqualsRowFilter(intCol, intId))), new Order());
+                        new JournalDescPartitionSource(journal, false),
+                        new KvIndexHeadRowSource("id",
+                                new SingleIntHashKeySource("id", param),
+                                1,
+                                0,
+                                filter
+                        )
+                ),
+                new Order()
+        );
 
         // assert
         for (int i = 0; i < 1000; i++) {
-            intId.setValue(i);
+            param.setValue(i);
             Order o = dsInt.$new().head();
             Assert.assertEquals(i, o.id);
             Assert.assertEquals("Mismatch for INT " + i, timestamp + i * inc + (i >= 500 ? 1000 * inc + 3000 : 0), o.timestamp);
@@ -94,20 +106,22 @@ public class SearchByKeysTest {
     public void testSearchByStringKey() throws Exception {
         Journal<Order> journal = prepareTestData();
 
+        StringParameter param = new StringParameter();
+        StringEqualsOperator filter = new StringEqualsOperator();
+        filter.setLhs(new RecordSourceColumn("strId", journal));
+        filter.setRhs(param);
+
         //**QUERY
         // from order head by strId = "123"
         // **selects latest version of record with string id 123
-        StringRef strCol = new StringRef("strId");
-        StringRef strId = new StringRef();
         DataSource<Order> dsStr = new DataSourceImpl<>(
                 new JournalSourceImpl(
                         new JournalDescPartitionSource(journal, false),
-                        new KvIndexHeadRowSource(
-                                strCol,
-                                new SingleStringHashKeySource(strCol, strId)
-                                , 1
-                                , 0,
-                                new StringEqualsRowFilter(strCol, strId)
+                        new KvIndexHeadRowSource("strId",
+                                new SingleStringHashKeySource("strId", param),
+                                1,
+                                0,
+                                filter
                         )
                 )
                 , new Order()
@@ -115,9 +129,10 @@ public class SearchByKeysTest {
 
         //assert
         for (int i = 0; i < 1000; i++) {
-            strId.value = Integer.toString(i);
+            String s = Integer.toString(i);
+            param.setValue(s);
             Order o = dsStr.$new().head();
-            Assert.assertEquals(strId.value, o.strId);
+            Assert.assertEquals(s, o.strId);
             Assert.assertEquals("Mismatch for STRING " + i, timestamp + i * inc + (i >= 500 ? 1000 * inc + 3000 : 0), o.timestamp);
         }
     }

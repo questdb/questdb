@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -79,7 +79,7 @@ class SymbolIndexProxy<T> implements Closeable {
         lastAccessed = timerCache.getCachedMillis();
         if (index == null) {
             JournalMetadata<T> meta = partition.getJournal().getMetadata();
-            ColumnMetadata columnMetadata = meta.getColumnMetadata(columnIndex);
+            ColumnMetadata columnMetadata = meta.getColumn(columnIndex);
 
             if (!columnMetadata.indexed) {
                 throw new JournalException("There is no index for column: %s", columnMetadata.name);

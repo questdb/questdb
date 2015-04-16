@@ -14,8 +14,13 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.cst;
+package com.nfsdb.lang.ast.factory;
 
-public interface RowAcceptor {
-    Choice accept(long localRowID);
+import com.nfsdb.lang.cst.impl.ops.DoubleGreaterThanOperator;
+
+public class DoubleGreaterThanOperatorFactory implements FunctionFactory {
+    @Override
+    public Function newInstance() {
+        return new DoubleGreaterThanOperator();
+    }
 }

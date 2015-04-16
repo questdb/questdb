@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -230,13 +230,13 @@ public class ResampledSourceTest extends AbstractTest {
                 )
                 ,
                 new ArrayList<ColumnMetadata>() {{
-                    add(r.getMetadata().getColumnMetadata("sym"));
+                        add(r.getMetadata().getColumn("sym"));
                 }}
                 ,
                 new ArrayList<AggregatorFunction>() {{
                     add(new CountIntAggregatorFunction("count"));
-                    add(new FirstDoubleAggregationFunction(r.getMetadata().getColumnMetadata("ask")));
-                    add(new LastDoubleAggregationFunction(r.getMetadata().getColumnMetadata("ask")));
+                        add(new FirstDoubleAggregationFunction(r.getMetadata().getColumn("ask")));
+                        add(new LastDoubleAggregationFunction(r.getMetadata().getColumn("ask")));
                 }}
                 , r.getMetadata().getTimestampMetadata()
                 , ResampledSource.SampleBy.MINUTE

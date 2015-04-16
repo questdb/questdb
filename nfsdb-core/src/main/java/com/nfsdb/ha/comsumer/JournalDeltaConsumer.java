@@ -44,7 +44,6 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
 
     @Override
     public void free() {
-        super.free();
         journalServerStateConsumer.free();
         journalSymbolTableConsumer.free();
         for (int i = 0, k = partitionDeltaConsumers.size(); i < k; i++) {

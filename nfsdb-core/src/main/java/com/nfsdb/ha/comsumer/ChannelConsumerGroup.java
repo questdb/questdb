@@ -31,6 +31,13 @@ public class ChannelConsumerGroup extends AbstractChannelConsumer {
     }
 
     @Override
+    public void free() {
+        for (int i = 0; i < consumers.length; i++) {
+            consumers[i].free();
+        }
+    }
+
+    @Override
     protected void doRead(ReadableByteChannel channel) throws JournalNetworkException {
         for (int i = 0; i < consumers.length; i++) {
             consumers[i].read(channel);

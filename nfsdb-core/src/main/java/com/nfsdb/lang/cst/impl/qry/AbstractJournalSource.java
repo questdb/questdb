@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,6 +30,16 @@ public abstract class AbstractJournalSource extends AbstractImmutableIterator<Jo
     }
 
     @Override
+    public RecordColumnMetadata getColumn(int index) {
+        return metadata.getColumn(index);
+    }
+
+    @Override
+    public RecordColumnMetadata getColumn(CharSequence name) {
+        return metadata.getColumn(name);
+    }
+
+    @Override
     public int getColumnCount() {
         return metadata.getColumnCount();
     }
@@ -37,15 +47,5 @@ public abstract class AbstractJournalSource extends AbstractImmutableIterator<Jo
     @Override
     public int getColumnIndex(CharSequence name) {
         return metadata.getColumnIndex(name);
-    }
-
-    @Override
-    public RecordColumnMetadata getColumn(int index) {
-        return metadata.getColumnMetadata(index);
-    }
-
-    @Override
-    public RecordColumnMetadata getColumn(CharSequence name) {
-        return metadata.getColumnMetadata(name);
     }
 }

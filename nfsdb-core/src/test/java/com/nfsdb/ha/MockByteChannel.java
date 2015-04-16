@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,9 +24,13 @@ import java.nio.channels.ByteChannel;
 class MockByteChannel extends ByteArrayOutputStream implements ByteChannel {
 
     private int offset = 0;
-    private boolean blocking = true;
     private int cutoffIndex = -1;
     private boolean interrupted = false;
+
+    @Override
+    public void close() throws IOException {
+
+    }
 
     @Override
     public boolean isOpen() {
@@ -42,7 +46,6 @@ class MockByteChannel extends ByteArrayOutputStream implements ByteChannel {
 
         if (interrupted) {
             interrupted = false;
-            blocking = true;
             cutoffIndex = -1;
 
             return 0;
@@ -51,9 +54,6 @@ class MockByteChannel extends ByteArrayOutputStream implements ByteChannel {
         // calculate cutoff point on first read
         // this is to simulate non-blocking socket mode, where there is
         // suddenly nothing to read from socket
-        if (!blocking && cutoffIndex == -1) {
-            cutoffIndex = buf.length / 3;
-        }
 
         int oldOffset = offset;
         while (dst.remaining() > 0 && offset < buf.length) {
@@ -69,20 +69,11 @@ class MockByteChannel extends ByteArrayOutputStream implements ByteChannel {
         return offset - oldOffset;
     }
 
-    public void setBlocking(boolean blocking) {
-        this.blocking = blocking;
-    }
-
     @Override
     public String toString() {
         return "MockByteChannel{" +
                 "offset=" + offset +
                 '}';
-    }
-
-    @Override
-    public void close() throws IOException {
-
     }
 
     @Override

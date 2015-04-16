@@ -14,22 +14,19 @@
  * limitations under the License.
  */
 
-package com.nfsdb.lang.parser;
+package com.nfsdb.lang.cst.impl.ops;
 
-public class Token {
-    final String text;
-    private final boolean hidden;
+import com.nfsdb.lang.cst.impl.virt.AbstractBinaryOperator;
+import com.nfsdb.storage.ColumnType;
 
-    public Token(String text) {
-        this.text = text;
-        this.hidden = false;
+public class IntEqualsOperator extends AbstractBinaryOperator {
+
+    public IntEqualsOperator() {
+        super(ColumnType.BOOLEAN);
     }
 
     @Override
-    public String toString() {
-        return "Token{" +
-                "text='" + text + '\'' +
-                ", hidden=" + hidden +
-                '}';
+    public boolean getBool() {
+        return lhs.getInt() == rhs.getInt();
     }
 }

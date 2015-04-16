@@ -16,12 +16,13 @@
 
 package com.nfsdb.lang.cst.impl.rsrc;
 
+import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.lang.cst.PartitionSlice;
 import com.nfsdb.lang.cst.RowCursor;
 import com.nfsdb.lang.cst.RowSource;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class UnionRowSource implements RowSource, RowCursor {
+public class UnionRowSource extends AbstractRowSource {
     private final RowSource[] sources;
     private final RowCursor[] cursors;
     private int cursorIndex;
@@ -33,10 +34,17 @@ public class UnionRowSource implements RowSource, RowCursor {
     }
 
     @Override
+    public void configure(JournalMetadata metadata) {
+        super.configure(metadata);
+        for (int i = 0; i < sources.length; i++) {
+            sources[i].configure(metadata);
+        }
+    }
+
+    @Override
     public RowCursor cursor(PartitionSlice slice) {
         for (int i = 0; i < sources.length; i++) {
-            RowSource source = sources[i];
-            cursors[i] = source.cursor(slice);
+            cursors[i] = sources[i].cursor(slice);
         }
         cursorIndex = 0;
         return this;

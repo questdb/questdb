@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,10 +30,10 @@ public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record>
 
     public VirtualColumnRecordSource(RecordSource<? extends Record> delegate, ObjList<VirtualColumn> virtualColumns) {
         this.delegate = delegate;
-        RecordMetadata dm = delegate.getMetadata();
         for (int i = 0, k = virtualColumns.size(); i < k; i++) {
-            virtualColumns.get(i).configure(dm, this);
+            virtualColumns.get(i).configureSource(this);
         }
+        RecordMetadata dm = delegate.getMetadata();
         this.metadata = new VirtualRecordMetadata(dm, virtualColumns);
         this.current = new VirtualRecord(this.metadata, dm.getColumnCount(), virtualColumns);
     }
@@ -49,11 +49,6 @@ public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record>
     }
 
     @Override
-    public void reset() {
-        delegate.reset();
-    }
-
-    @Override
     public boolean hasNext() {
         return delegate.hasNext();
     }
@@ -62,5 +57,10 @@ public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record>
     public Record next() {
         current.setBase(delegate.next());
         return current;
+    }
+
+    @Override
+    public void reset() {
+        delegate.reset();
     }
 }

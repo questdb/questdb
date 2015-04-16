@@ -50,8 +50,8 @@ public class JournalMetadataException extends JournalException {
 
         int i = 0;
         while (true) {
-            ColumnMetadata cmo = i < mo.getColumnCount() ? mo.getColumnMetadata(i) : null;
-            ColumnMetadata cmn = i < mn.getColumnCount() ? mn.getColumnMetadata(i) : null;
+            ColumnMetadata cmo = i < mo.getColumnCount() ? mo.getColumn(i) : null;
+            ColumnMetadata cmn = i < mn.getColumnCount() ? mn.getColumn(i) : null;
 
             if (cmo == null && cmn == null) {
                 break;

@@ -133,7 +133,6 @@ public class JournalConfigurationImpl implements JournalConfiguration {
         if (location.exists()) {
             File metaFile = new File(location, FILE_NAME);
             if (!metaFile.exists()) {
-                // todo: read old meta file for compatibility
                 throw new JournalException(location + " is not a recognised journal");
             }
 

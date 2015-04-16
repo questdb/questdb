@@ -18,7 +18,6 @@ package com.nfsdb.lang.cst.impl.virt;
 
 import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.io.sink.CharSink;
-import com.nfsdb.lang.cst.RecordMetadata;
 import com.nfsdb.lang.cst.RecordSourceState;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
@@ -27,16 +26,16 @@ import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 import java.io.OutputStream;
 
 public abstract class AbstractVirtualColumn implements VirtualColumn {
+    private final ColumnType type;
     protected RecordSourceState state;
     private String name;
-    private ColumnType type;
 
     public AbstractVirtualColumn(ColumnType type) {
         this.type = type;
     }
 
     @Override
-    public void configure(RecordMetadata metadata, RecordSourceState state) {
+    public void configureSource(RecordSourceState state) {
         this.state = state;
     }
 
@@ -128,9 +127,5 @@ public abstract class AbstractVirtualColumn implements VirtualColumn {
     @Override
     public ColumnType getType() {
         return type;
-    }
-
-    protected void setType(ColumnType type) {
-        this.type = type;
     }
 }

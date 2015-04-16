@@ -18,19 +18,22 @@ package com.nfsdb.lang.cst.impl.rsrc;
 
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.lang.cst.*;
-import com.nfsdb.lang.cst.impl.ref.StringRef;
+import com.nfsdb.lang.cst.impl.qry.JournalRecord;
+import com.nfsdb.lang.cst.impl.virt.VirtualColumn;
 import com.nfsdb.storage.KVIndex;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
-public class KvIndexHeadRowSource implements RowSource, RowCursor {
+public class KvIndexHeadRowSource extends AbstractRowSource implements RecordSourceState {
 
-    private final StringRef column;
+    private final String column;
     private final KeySource keySource;
     private final int count;
     private final int tailOffset;
-    private final RowFilter filter;
+    private final VirtualColumn filter;
+    private JournalRecord rec;
 
     // state
     private int remainingKeys[];
@@ -41,16 +44,28 @@ public class KvIndexHeadRowSource implements RowSource, RowCursor {
     private long hi;
     private int keyIndex;
     private KVIndex.IndexCursor indexCursor;
-    private long localRowID;
     private int keyCount = -1;
-    private RowAcceptor rowAcceptor;
 
-    public KvIndexHeadRowSource(StringRef column, KeySource keySource, int count, int tailOffset, RowFilter filter) {
+    public KvIndexHeadRowSource(String column, KeySource keySource, int count, int tailOffset, VirtualColumn filter) {
         this.column = column;
         this.keySource = keySource;
         this.count = count;
         this.tailOffset = tailOffset;
         this.filter = filter;
+    }
+
+    @Override
+    public void configure(JournalMetadata metadata) {
+        super.configure(metadata);
+        this.rec = new JournalRecord(metadata);
+        if (filter != null) {
+            this.filter.configureSource(this);
+        }
+    }
+
+    @Override
+    public Record currentRecord() {
+        return rec;
     }
 
     @Override
@@ -76,10 +91,9 @@ public class KvIndexHeadRowSource implements RowSource, RowCursor {
             this.keyCount = remainingKeys.length;
         }
 
-        rowAcceptor = filter != null ? filter.acceptor(slice) : null;
-
         try {
-            this.index = slice.partition.getIndexForColumn(column.value);
+            this.rec.partition = slice.partition;
+            this.index = slice.partition.getIndexForColumn(column);
             this.lo = slice.lo;
             this.hi = slice.calcHi ? slice.partition.open().size() - 1 : slice.hi;
             this.keyIndex = 0;
@@ -94,8 +108,8 @@ public class KvIndexHeadRowSource implements RowSource, RowCursor {
         int cnt;
         int o;
         if (indexCursor != null && (cnt = remainingCounts[keyIndex]) > 0 && indexCursor.hasNext()) {
-            localRowID = indexCursor.next();
-            if (localRowID >= lo && localRowID <= hi && (rowAcceptor == null || rowAcceptor.accept(localRowID) == Choice.PICK)) {
+            rec.rowid = indexCursor.next();
+            if (rec.rowid >= lo && rec.rowid <= hi && (filter == null || filter.getBool())) {
                 if ((o = remainingOffsets[keyIndex]) == 0) {
                     remainingCounts[keyIndex] = cnt - 1;
                     return true;
@@ -109,7 +123,7 @@ public class KvIndexHeadRowSource implements RowSource, RowCursor {
 
     @Override
     public long next() {
-        return localRowID;
+        return rec.rowid;
     }
 
     @Override
@@ -131,11 +145,11 @@ public class KvIndexHeadRowSource implements RowSource, RowCursor {
             int cnt = remainingCounts[keyIndex];
             if (cnt > 0) {
                 while (indexCursor.hasNext()) {
-                    if ((localRowID = indexCursor.next()) < lo) {
+                    if ((rec.rowid = indexCursor.next()) < lo) {
                         break;
                     }
                     // this is a good rowid
-                    if (localRowID <= hi && (rowAcceptor == null || rowAcceptor.accept(localRowID) == Choice.PICK)) {
+                    if (rec.rowid <= hi && (filter == null || filter.getBool())) {
                         if (o == 0) {
                             remainingCounts[keyIndex] = cnt - 1;
                             return true;

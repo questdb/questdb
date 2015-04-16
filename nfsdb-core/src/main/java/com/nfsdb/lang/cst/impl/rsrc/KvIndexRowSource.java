@@ -18,16 +18,18 @@ package com.nfsdb.lang.cst.impl.rsrc;
 
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.lang.cst.*;
-import com.nfsdb.lang.cst.impl.ref.StringRef;
+import com.nfsdb.lang.cst.KeyCursor;
+import com.nfsdb.lang.cst.KeySource;
+import com.nfsdb.lang.cst.PartitionSlice;
+import com.nfsdb.lang.cst.RowCursor;
 import com.nfsdb.storage.Cursor;
 import com.nfsdb.storage.KVIndex;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
-public class KvIndexRowSource implements RowSource, RowCursor {
+public class KvIndexRowSource extends AbstractRowSource {
 
-    private final StringRef symbol;
+    private final String symbol;
     private final KeySource keySource;
     private KVIndex index;
     private Cursor indexCursor;
@@ -37,7 +39,7 @@ public class KvIndexRowSource implements RowSource, RowCursor {
     private boolean full;
     private long rowid;
 
-    public KvIndexRowSource(StringRef symbol, KeySource keySource) {
+    public KvIndexRowSource(String symbol, KeySource keySource) {
         this.symbol = symbol;
         this.keySource = keySource;
     }
@@ -45,7 +47,7 @@ public class KvIndexRowSource implements RowSource, RowCursor {
     @Override
     public RowCursor cursor(PartitionSlice slice) {
         try {
-            this.index = slice.partition.getIndexForColumn(symbol.value);
+            this.index = slice.partition.getIndexForColumn(symbol);
             this.keyCursor = this.keySource.cursor(slice);
             this.indexCursor = null;
             this.full = slice.lo == 0 && slice.calcHi;
@@ -60,35 +62,54 @@ public class KvIndexRowSource implements RowSource, RowCursor {
     @Override
     public boolean hasNext() {
 
-        if (indexCursor == null && !keyCursor.hasNext()) {
-            return false;
-        }
+        if (indexCursor != null && indexCursor.hasNext()) {
+            if (full) {
+                this.rowid = indexCursor.next();
+                return true;
+            }
 
-        if (indexCursor == null) {
-            this.indexCursor = index.cachedCursor(keyCursor.next());
-        }
-
-        if (full) {
-            return indexCursor.hasNext();
-        } else {
-            while (indexCursor.hasNext()) {
+            do {
                 long rowid = indexCursor.next();
                 if (rowid >= lo && rowid <= hi) {
                     this.rowid = rowid;
                     return true;
                 }
-            }
-            return false;
+            } while (indexCursor.hasNext());
         }
+
+        return hasNext0();
     }
 
     @Override
     public long next() {
-        return full ? indexCursor.next() : this.rowid;
+        return rowid;
     }
 
     @Override
     public void reset() {
         keySource.reset();
+    }
+
+    private boolean hasNext0() {
+        while (keyCursor.hasNext()) {
+            indexCursor = index.cachedCursor(keyCursor.next());
+
+            if (indexCursor.hasNext()) {
+                if (full) {
+                    this.rowid = indexCursor.next();
+                    return true;
+                }
+
+                do {
+                    long rowid = indexCursor.next();
+                    if (rowid >= lo && rowid <= hi) {
+                        this.rowid = rowid;
+                        return true;
+                    }
+                } while (indexCursor.hasNext());
+            }
+        }
+
+        return false;
     }
 }

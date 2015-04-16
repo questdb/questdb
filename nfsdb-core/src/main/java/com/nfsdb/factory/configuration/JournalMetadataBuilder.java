@@ -65,7 +65,7 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
         this.openFileTTL = model.getOpenFileTTL();
         this.lag = model.getLag();
         for (int i = 0; i < model.getColumnCount(); i++) {
-            ColumnMetadata from = model.getColumnMetadata(i);
+            ColumnMetadata from = model.getColumn(i);
             columnMetadata.get(from.name).copy(from);
         }
     }

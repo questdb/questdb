@@ -30,7 +30,6 @@ public class IntResponseConsumer implements ChannelConsumer {
     private final ByteBuffer buffer = ByteBuffer.allocateDirect(4).order(ByteOrder.LITTLE_ENDIAN);
     private final long address = ((DirectBuffer) buffer).address();
 
-    @Override
     public void free() {
         ByteBuffers.release(buffer);
     }

@@ -75,7 +75,7 @@ public class JournalStructure implements MetadataBuilder<Object> {
         this.lag = model.getLag();
         for (int i = 0; i < model.getColumnCount(); i++) {
             ColumnMetadata to = new ColumnMetadata();
-            metadata.add(to.copy(model.getColumnMetadata(i)));
+            metadata.add(to.copy(model.getColumn(i)));
             nameToIndexMap.put(to.name, i);
         }
     }
