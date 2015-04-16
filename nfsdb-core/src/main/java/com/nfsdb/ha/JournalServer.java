@@ -190,7 +190,7 @@ public class JournalServer {
         if (isRunning()) {
             this.passiveNotified = false;
             this.clusterStatusListener = clusterStatusListener;
-            fwdElectionMessage(uid, Command.ELECTION, 0);
+            fwdElectionMessage(ElectionMessageReason.R1, uid, Command.ELECTION, 0);
         }
     }
 
@@ -239,13 +239,13 @@ public class JournalServer {
                         leader = false;
                     }
 
-                    fwdElectionMessage(theirUuid, Command.ELECTED, hops + 1);
+                    fwdElectionMessage(ElectionMessageReason.R2, theirUuid, Command.ELECTED, hops + 1);
                     if (!passiveNotified && clusterStatusListener != null) {
                         clusterStatusListener.onNodePassive(config.getNodeByUID(theirUuid));
                         passiveNotified = true;
                     }
                 } else {
-                    fwdElectionMessage(ourUuid, Command.ELECTION, 0);
+                    fwdElectionMessage(ElectionMessageReason.R3, ourUuid, Command.ELECTION, 0);
                 }
             } else if (leader) {
                 if (!activeNotified && clusterStatusListener != null) {
@@ -270,26 +270,26 @@ public class JournalServer {
                 // if it is ELECTION message and we are the leader
                 // cry foul and attempt to curb the thread by sending ELECTED message wit our uid
                 LOGGER.info("%d is insisting on leadership", ourUid);
-                fwdElectionMessage(ourUid, Command.ELECTED, 0);
+                fwdElectionMessage(ElectionMessageReason.R4, ourUid, Command.ELECTED, 0);
             } else if (theirUid > ourUid) {
                 // if theirUid is greater than ours - forward message on
                 // with exception where hop count is greater than node count
                 // this can happen when max uid node send election message and disappears from network
                 // before this message is stopped.
                 if (hops < config.getNodeCount() + 2) {
-                    fwdElectionMessage(theirUid, Command.ELECTION, hops + 1);
+                    fwdElectionMessage(ElectionMessageReason.R5, theirUid, Command.ELECTION, hops + 1);
                 } else {
                     // when infinite loop is detected, start voting exisitng node - "us"
-                    fwdElectionMessage(ourUid, Command.ELECTION, 0);
+                    fwdElectionMessage(ElectionMessageReason.R6, ourUid, Command.ELECTION, 0);
                 }
             } else if (theirUid < ourUid && !participant) {
                 // if thier Uid is smaller than ours - send ours and become participant
-                fwdElectionMessage(ourUid, Command.ELECTION, 0);
+                fwdElectionMessage(ElectionMessageReason.R7, ourUid, Command.ELECTION, 0);
             } else if (!leader && theirUid == ourUid) {
                 // our message came back to us, announce our uid as the LEADER
                 leader = true;
                 participant = false;
-                fwdElectionMessage(ourUid, Command.ELECTED, 0);
+                fwdElectionMessage(ElectionMessageReason.R8, ourUid, Command.ELECTED, 0);
             }
             intResponseProducer.write(channel, 0xfc);
         } else {
@@ -325,9 +325,9 @@ public class JournalServer {
         }
     }
 
-    private synchronized void fwdElectionMessage(int uid, Command command, int count) {
+    private synchronized void fwdElectionMessage(ElectionMessageReason reason, int uid, Command command, int count) {
         this.participant = true;
-        service.submit(new ElectionForwarder(uid, command, count));
+        service.submit(new ElectionForwarder(reason, uid, command, count));
     }
 
     private SocketChannel openSocketChannel0(ServerNode node, long timeout) throws IOException {
@@ -365,6 +365,10 @@ public class JournalServer {
         }
     }
 
+    private enum ElectionMessageReason {
+        R1, R2, R3, R4, R5, R6, R7, R8
+    }
+
     private class ElectionForwarder implements Runnable {
         private final CommandProducer commandProducer = new CommandProducer();
         private final IntResponseProducer intResponseProducer = new IntResponseProducer();
@@ -372,8 +376,10 @@ public class JournalServer {
         private final Command command;
         private final int uid;
         private final int count;
+        private final ElectionMessageReason reason;
 
-        public ElectionForwarder(int uid, Command command, int count) {
+        public ElectionForwarder(ElectionMessageReason reason, int uid, Command command, int count) {
+            this.reason = reason;
             this.command = command;
             this.uid = uid;
             this.count = count;
@@ -392,7 +398,7 @@ public class JournalServer {
                     commandProducer.write(channel, command);
                     intResponseProducer.write(channel, uid);
                     intResponseProducer.write(channel, count);
-                    LOGGER.info("%s [%d]{%d} %d -> %d", command, count, uid, JournalServer.this.uid, node.getId());
+                    LOGGER.info("%s> %s [%d]{%d} %d -> %d", reason, command, uid, count, JournalServer.this.uid, node.getId());
                     if (intResponseConsumer.getValue(channel) == 0xfc) {
                         break;
                     } else {
