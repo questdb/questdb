@@ -169,6 +169,7 @@ public class ClusterControllerTest extends AbstractTest {
 
     @Test
     public void testFiveNodesVoting() throws Exception {
+
         AtomicInteger active = new AtomicInteger();
         AtomicInteger standby = new AtomicInteger();
         AtomicInteger shutdown = new AtomicInteger();
@@ -229,7 +230,7 @@ public class ClusterControllerTest extends AbstractTest {
 
         System.out.println("=========================");
         t = System.currentTimeMillis();
-        while ((active.get() < 1 || standby.get() < 3) && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 120) {
+        while ((active.get() < 1 || standby.get() < 3) && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 180) {
             Thread.yield();
         }
         System.out.println("LOOKING FOR LEADER");

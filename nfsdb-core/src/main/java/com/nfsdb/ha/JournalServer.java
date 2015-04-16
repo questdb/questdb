@@ -283,7 +283,7 @@ public class JournalServer {
                     fwdElectionMessage(ourUid, Command.ELECTION, 0);
                 }
             } else if (theirUid < ourUid && !participant) {
-                // if thierUid is smaller than ours - send ours and become participant
+                // if thier Uid is smaller than ours - send ours and become participant
                 fwdElectionMessage(ourUid, Command.ELECTION, 0);
             } else if (!leader && theirUid == ourUid) {
                 // our message came back to us, announce our uid as the LEADER
@@ -392,7 +392,7 @@ public class JournalServer {
                     commandProducer.write(channel, command);
                     intResponseProducer.write(channel, uid);
                     intResponseProducer.write(channel, count);
-                    LOGGER.info("%s [%d] %d -> %d", command, uid, JournalServer.this.uid, node.getId());
+                    LOGGER.info("%s [%d]{%d} %d -> %d", command, count, uid, JournalServer.this.uid, node.getId());
                     if (intResponseConsumer.getValue(channel) == 0xfc) {
                         break;
                     } else {
