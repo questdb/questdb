@@ -25,12 +25,12 @@ import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.FlexBufferSink;
-import com.nfsdb.lang.cst.Record;
-import com.nfsdb.lang.cst.RecordSource;
-import com.nfsdb.lang.cst.impl.jsrc.JournalSourceImpl;
-import com.nfsdb.lang.cst.impl.psrc.JournalTailPartitionSource;
-import com.nfsdb.lang.cst.impl.rsrc.AllRowSource;
 import com.nfsdb.logging.Logger;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordSource;
+import com.nfsdb.ql.impl.AllRowSource;
+import com.nfsdb.ql.impl.JournalSource;
+import com.nfsdb.ql.impl.JournalTailPartitionSource;
 import com.nfsdb.query.ResultSet;
 import com.nfsdb.query.iterator.ConcurrentIterator;
 import com.nfsdb.query.iterator.MergingIterator;
@@ -855,7 +855,7 @@ public class JournalWriter<T> extends Journal<T> {
     private void writeDiscardFile(long rowid) throws JournalException {
 
         File f = new File(metadata.getLocation(), "discard.txt");
-        RecordSource<? extends Record> rs = new JournalSourceImpl(
+        RecordSource<? extends Record> rs = new JournalSource(
                 new JournalTailPartitionSource(this, false, rowid)
                 , new AllRowSource()
         );

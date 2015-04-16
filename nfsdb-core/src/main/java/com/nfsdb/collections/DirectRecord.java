@@ -16,12 +16,11 @@
 
 package com.nfsdb.collections;
 
-import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.io.sink.CharSink;
-import com.nfsdb.lang.cst.Record;
-import com.nfsdb.lang.cst.RecordMetadata;
-import com.nfsdb.lang.cst.impl.qry.AbstractRecord;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordMetadata;
+import com.nfsdb.ql.impl.AbstractRecord;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;

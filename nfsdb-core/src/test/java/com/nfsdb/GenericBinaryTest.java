@@ -18,7 +18,7 @@ package com.nfsdb;
 
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalStructure;
-import com.nfsdb.lang.cst.impl.qry.JournalRecord;
+import com.nfsdb.ql.impl.JournalRecord;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.utils.Rnd;
 import org.junit.Assert;
@@ -30,6 +30,65 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class GenericBinaryTest extends AbstractTest {
+
+    @Test
+    public void testInputObject() throws Exception {
+        List<byte[]> bytes = getBytes();
+        try (JournalWriter generic = getGenericWriter()) {
+            writeInputStream(generic, bytes);
+        }
+        assertEquals(bytes, readObject(getWriter()));
+    }
+
+    @Test
+    public void testInputOutput() throws Exception {
+        JournalWriter writer = getGenericWriter();
+        List<byte[]> expected = getBytes();
+        writeInputStream(writer, expected);
+        assertEquals(expected, readOutputStream(writer));
+    }
+
+    @Test
+    public void testOutputInput() throws Exception {
+        JournalWriter writer = getGenericWriter();
+        List<byte[]> expected = getBytes();
+        writeOutputStream(writer, expected);
+
+        List<byte[]> actual = new ArrayList<>();
+        for (JournalRecord e : writer.rows()) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            InputStream in = e.getBin(0);
+
+            int b;
+            while ((b = in.read()) != -1) {
+                out.write(b);
+            }
+            actual.add(out.toByteArray());
+        }
+
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    public void testOutputOutput() throws Exception {
+        JournalWriter writer = getGenericWriter();
+        List<byte[]> expected = getBytes();
+        writeOutputStream(writer, expected);
+        assertEquals(expected, readOutputStream(writer));
+    }
+
+    @Test
+    public void testUnclosedOutputOutput() throws Exception {
+        JournalWriter writer = getGenericWriter();
+        List<byte[]> expected = getBytes();
+        for (int i = 0; i < expected.size(); i++) {
+            JournalEntryWriter w = writer.entryWriter();
+            w.putBin(0).write(expected.get(i));
+            w.append();
+        }
+        writer.commit();
+        assertEquals(expected, readOutputStream(writer));
+    }
 
     private JournalWriter getGenericWriter() throws JournalException {
         return factory.writer(new JournalStructure("bintest") {{
@@ -98,65 +157,6 @@ public class GenericBinaryTest extends AbstractTest {
         for (int i = 0; i < expected.size(); i++) {
             Assert.assertArrayEquals(expected.get(i), actual.get(i));
         }
-    }
-
-    @Test
-    public void testInputOutput() throws Exception {
-        JournalWriter writer = getGenericWriter();
-        List<byte[]> expected = getBytes();
-        writeInputStream(writer, expected);
-        assertEquals(expected, readOutputStream(writer));
-    }
-
-    @Test
-    public void testInputObject() throws Exception {
-        List<byte[]> bytes = getBytes();
-        try (JournalWriter generic = getGenericWriter()) {
-            writeInputStream(generic, bytes);
-        }
-        assertEquals(bytes, readObject(getWriter()));
-    }
-
-    @Test
-    public void testOutputOutput() throws Exception {
-        JournalWriter writer = getGenericWriter();
-        List<byte[]> expected = getBytes();
-        writeOutputStream(writer, expected);
-        assertEquals(expected, readOutputStream(writer));
-    }
-
-    @Test
-    public void testUnclosedOutputOutput() throws Exception {
-        JournalWriter writer = getGenericWriter();
-        List<byte[]> expected = getBytes();
-        for (int i = 0; i < expected.size(); i++) {
-            JournalEntryWriter w = writer.entryWriter();
-            w.putBin(0).write(expected.get(i));
-            w.append();
-        }
-        writer.commit();
-        assertEquals(expected, readOutputStream(writer));
-    }
-
-    @Test
-    public void testOutputInput() throws Exception {
-        JournalWriter writer = getGenericWriter();
-        List<byte[]> expected = getBytes();
-        writeOutputStream(writer, expected);
-
-        List<byte[]> actual = new ArrayList<>();
-        for (JournalRecord e : writer.rows()) {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            InputStream in = e.getBin(0);
-
-            int b;
-            while ((b = in.read()) != -1) {
-                out.write(b);
-            }
-            actual.add(out.toByteArray());
-        }
-
-        assertEquals(expected, actual);
     }
 
     public static class BinContainer {

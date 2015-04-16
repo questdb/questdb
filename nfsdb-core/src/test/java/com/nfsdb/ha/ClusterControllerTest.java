@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,8 +19,6 @@ package com.nfsdb.ha;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.ha.cluster.ClusterController;
-import com.nfsdb.ha.cluster.ClusterStatusListener;
 import com.nfsdb.ha.config.ClientConfig;
 import com.nfsdb.ha.config.ServerConfig;
 import com.nfsdb.ha.config.ServerNode;

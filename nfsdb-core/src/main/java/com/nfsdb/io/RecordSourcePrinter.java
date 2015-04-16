@@ -17,9 +17,9 @@
 package com.nfsdb.io;
 
 import com.nfsdb.io.sink.CharSink;
-import com.nfsdb.lang.cst.Record;
-import com.nfsdb.lang.cst.RecordMetadata;
-import com.nfsdb.lang.cst.RecordSource;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordMetadata;
+import com.nfsdb.ql.RecordSource;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Numbers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -50,15 +50,15 @@ public class RecordSourcePrinter {
         sink.flush();
     }
 
-    public void printColumns(Record r, RecordMetadata m, int... columns) {
-        for (int column : columns) {
-            printRecord(r, m, column);
-        }
-    }
-
     public void print(RecordSource<? extends Record> src) {
         while (src.hasNext()) {
             print(src.next(), src.getMetadata());
+        }
+    }
+
+    public void printColumns(Record r, RecordMetadata m, int... columns) {
+        for (int column : columns) {
+            printRecord(r, m, column);
         }
     }
 

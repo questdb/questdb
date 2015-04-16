@@ -17,12 +17,12 @@
 package com.nfsdb.collections.mmap;
 
 import com.nfsdb.collections.AbstractDirectList;
+import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.collections.DirectLongList;
 import com.nfsdb.collections.DirectMemoryStructure;
-import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.lang.cst.RecordMetadata;
+import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.utils.Hash;
 import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Unsafe;

@@ -17,9 +17,9 @@
 package com.nfsdb.collections.mmap;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.lang.cst.Record;
-import com.nfsdb.lang.cst.RecordMetadata;
-import com.nfsdb.lang.cst.RecordSource;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordMetadata;
+import com.nfsdb.ql.RecordSource;
 import com.nfsdb.utils.Unsafe;
 
 import java.util.List;

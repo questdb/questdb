@@ -17,11 +17,11 @@
 package com.nfsdb.collections.mmap;
 
 import com.nfsdb.collections.DirectCharSequence;
-import com.nfsdb.column.DirectInputStream;
+import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.io.sink.CharSink;
-import com.nfsdb.lang.cst.RecordMetadata;
-import com.nfsdb.lang.cst.impl.qry.AbstractRecord;
+import com.nfsdb.ql.RecordMetadata;
+import com.nfsdb.ql.impl.AbstractRecord;
 import com.nfsdb.utils.Unsafe;
 
 import java.io.OutputStream;

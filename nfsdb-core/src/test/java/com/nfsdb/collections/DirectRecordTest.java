@@ -17,13 +17,12 @@
 package com.nfsdb.collections;
 
 import com.nfsdb.JournalWriter;
-import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.lang.cst.JournalRecordSource;
-import com.nfsdb.lang.cst.Record;
+import com.nfsdb.ql.JournalRecordSource;
+import com.nfsdb.ql.Record;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.utils.Files;
 import org.junit.Rule;

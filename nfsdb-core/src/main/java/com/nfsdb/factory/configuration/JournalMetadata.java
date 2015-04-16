@@ -22,7 +22,7 @@ import com.nfsdb.collections.ObjIntHashMap;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.exceptions.NoSuchColumnException;
-import com.nfsdb.lang.cst.RecordMetadata;
+import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.storage.HugeBuffer;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;

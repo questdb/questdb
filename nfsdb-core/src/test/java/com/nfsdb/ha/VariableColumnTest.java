@@ -17,7 +17,7 @@
 package com.nfsdb.ha;
 
 import com.nfsdb.JournalMode;
-import com.nfsdb.column.DirectInputStream;
+import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.ha.comsumer.VariableColumnDeltaConsumer;
 import com.nfsdb.ha.producer.VariableColumnDeltaProducer;

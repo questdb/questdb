@@ -18,17 +18,12 @@ package com.nfsdb;
 
 import com.nfsdb.collections.DirectLongList;
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.lang.cst.JournalRecordSource;
-import com.nfsdb.lang.cst.Record;
-import com.nfsdb.lang.cst.RecordSource;
-import com.nfsdb.lang.cst.impl.jsrc.JournalSourceImpl;
-import com.nfsdb.lang.cst.impl.ksrc.PartialSymbolKeySource;
-import com.nfsdb.lang.cst.impl.psrc.IntervalPartitionSource;
-import com.nfsdb.lang.cst.impl.psrc.JournalPartitionSource;
-import com.nfsdb.lang.cst.impl.qry.JournalRecord;
-import com.nfsdb.lang.cst.impl.rsrc.KvIndexRowSource;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.model.Quote;
+import com.nfsdb.ql.RandomAccessRecordSource;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordSource;
+import com.nfsdb.ql.impl.*;
 import com.nfsdb.query.api.QueryAllBuilder;
 import com.nfsdb.query.api.QueryHeadBuilder;
 import com.nfsdb.storage.KVIndex;
@@ -90,7 +85,7 @@ public class PerformanceTest extends AbstractTest {
             Interval interval = new Interval(Dates.parseDateTime("2013-10-15T10:00:00.000Z"), Dates.parseDateTime("2013-10-05T10:00:00.000Z"));
             long t = 0;
 
-            RecordSource<? extends Record> rs = new JournalSourceImpl(
+            RecordSource<? extends Record> rs = new JournalSource(
                     new IntervalPartitionSource(
                             new JournalPartitionSource(journal, false)
                             , interval
@@ -215,7 +210,7 @@ public class PerformanceTest extends AbstractTest {
             if (i == 0) {
                 t = System.nanoTime();
             }
-            JournalRecordSource s = w.rows();
+            RandomAccessRecordSource<JournalRecord> s = w.rows();
             int cnt = 0;
             for (JournalRecord r : s) {
                 r.getLong(0);

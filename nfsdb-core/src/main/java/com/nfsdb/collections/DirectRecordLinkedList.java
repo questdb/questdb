@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,9 @@
 
 package com.nfsdb.collections;
 
-import com.nfsdb.lang.cst.Record;
-import com.nfsdb.lang.cst.RecordMetadata;
-import com.nfsdb.lang.cst.RecordSource;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordMetadata;
+import com.nfsdb.ql.RecordSource;
 import com.nfsdb.utils.Unsafe;
 
 import java.util.Iterator;
@@ -48,13 +48,17 @@ public class DirectRecordLinkedList extends DirectMemoryStructure implements Rec
     }
 
     @Override
-    public void reset() {
-        throw new UnsupportedOperationException();
+    public boolean hasNext() {
+        return readOffset >= 0;
+    }
+
+    public void init(long offset) {
+        this.readOffset = offset;
     }
 
     @Override
-    public boolean hasNext() {
-        return readOffset >= 0;
+    public Iterator<Record> iterator() {
+        return this;
     }
 
     @Override
@@ -69,13 +73,9 @@ public class DirectRecordLinkedList extends DirectMemoryStructure implements Rec
         throw new UnsupportedOperationException();
     }
 
-    public void init(long offset) {
-        this.readOffset = offset;
-    }
-
     @Override
-    public Iterator<Record> iterator() {
-        return this;
+    public void reset() {
+        throw new UnsupportedOperationException();
     }
 
     @Override

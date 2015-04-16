@@ -18,11 +18,11 @@ package com.nfsdb.collections.mmap;
 
 import com.nfsdb.collections.DirectMemoryStructure;
 import com.nfsdb.collections.DirectRecordLinkedList;
+import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.lang.cst.Record;
-import com.nfsdb.lang.cst.RecordMetadata;
-import com.nfsdb.lang.cst.RecordSource;
-import com.nfsdb.lang.cst.impl.qry.RecordColumn;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordMetadata;
+import com.nfsdb.ql.RecordSource;
 import com.nfsdb.storage.ColumnType;
 
 import java.util.ArrayList;
@@ -37,7 +37,10 @@ public class MultiRecordMap extends DirectMemoryStructure {
         for(RecordColumnMetadata key : keyColumns) {
             builder.keyColumn(key);
         }
-        builder.valueColumn(new RecordColumn("offset", ColumnType.LONG, null));
+        builder.valueColumn(new ColumnMetadata() {{
+            setName("offset");
+            setType(ColumnType.LONG);
+        }});
         builder.setLoadFactor(loadFactor);
         builder.setDataSize(dataSize);
         builder.setCapacity(capacity);

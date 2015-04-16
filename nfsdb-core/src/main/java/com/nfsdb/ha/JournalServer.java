@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@ import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.ha.auth.AuthorizationHandler;
 import com.nfsdb.ha.bridge.JournalEventBridge;
-import com.nfsdb.ha.cluster.ClusterStatusListener;
 import com.nfsdb.ha.config.ServerConfig;
 import com.nfsdb.ha.config.ServerNode;
 import com.nfsdb.ha.mcast.OnDemandAddressSender;
@@ -215,39 +214,6 @@ public class JournalServer {
         service.execute(new Acceptor());
     }
 
-    private void addChannel(SocketChannelHolder holder) {
-        channels.add(holder);
-    }
-
-    private void closeChannel(SocketChannelHolder holder, boolean force) {
-        if (holder != null) {
-            try {
-                if (holder.socketAddress != null) {
-                    if (force) {
-                        LOGGER.info("Server node %d: Client forced out: %s", uid, holder.socketAddress);
-                    } else {
-                        LOGGER.info("Server node %d: Client disconnected: %s", uid, holder.socketAddress);
-                    }
-                }
-                holder.byteChannel.close();
-
-            } catch (IOException e) {
-                LOGGER.error("Server node %d: Cannot close channel [%s]: %s", uid, holder.byteChannel, e.getMessage());
-            }
-        }
-    }
-
-    private void closeChannels() {
-        while (channels.size() > 0) {
-            closeChannel(channels.remove(0), true);
-        }
-    }
-
-    private synchronized void fwdElectionMessage(int uid, Command command, int count) {
-        this.participant = true;
-        service.submit(new ElectionForwarder(uid, command, count));
-    }
-
     @SuppressWarnings("unchecked")
     IndexedJournalKey getWriterIndex0(JournalKey key) {
         for (ObjIntHashMap.Entry<JournalWriter> e : writers.immutableIterator()) {
@@ -329,6 +295,39 @@ public class JournalServer {
         } else {
             intResponseProducer.write(channel, 0xfd);
         }
+    }
+
+    private void addChannel(SocketChannelHolder holder) {
+        channels.add(holder);
+    }
+
+    private void closeChannel(SocketChannelHolder holder, boolean force) {
+        if (holder != null) {
+            try {
+                if (holder.socketAddress != null) {
+                    if (force) {
+                        LOGGER.info("Server node %d: Client forced out: %s", uid, holder.socketAddress);
+                    } else {
+                        LOGGER.info("Server node %d: Client disconnected: %s", uid, holder.socketAddress);
+                    }
+                }
+                holder.byteChannel.close();
+
+            } catch (IOException e) {
+                LOGGER.error("Server node %d: Cannot close channel [%s]: %s", uid, holder.byteChannel, e.getMessage());
+            }
+        }
+    }
+
+    private void closeChannels() {
+        while (channels.size() > 0) {
+            closeChannel(channels.remove(0), true);
+        }
+    }
+
+    private synchronized void fwdElectionMessage(int uid, Command command, int count) {
+        this.participant = true;
+        service.submit(new ElectionForwarder(uid, command, count));
     }
 
     private SocketChannel openSocketChannel0(ServerNode node, long timeout) throws IOException {

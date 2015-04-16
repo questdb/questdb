@@ -16,7 +16,6 @@
 
 package com.nfsdb.collections;
 
-import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Unsafe;

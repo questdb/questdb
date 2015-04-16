@@ -25,10 +25,10 @@ import com.nfsdb.factory.JournalClosingListener;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.Constants;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.lang.cst.JournalRecordSource;
-import com.nfsdb.lang.cst.impl.jsrc.JournalSourceImpl;
-import com.nfsdb.lang.cst.impl.psrc.JournalPartitionSource;
-import com.nfsdb.lang.cst.impl.rsrc.AllRowSource;
+import com.nfsdb.ql.JournalRecordSource;
+import com.nfsdb.ql.impl.AllRowSource;
+import com.nfsdb.ql.impl.JournalPartitionSource;
+import com.nfsdb.ql.impl.JournalSource;
 import com.nfsdb.query.AbstractResultSetBuilder;
 import com.nfsdb.query.api.Query;
 import com.nfsdb.query.iterator.ConcurrentIterator;
@@ -530,7 +530,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
     }
 
     public JournalRecordSource rows() {
-        return new JournalSourceImpl(
+        return new JournalSource(
                 new JournalPartitionSource(this, true)
                 , new AllRowSource()
         );

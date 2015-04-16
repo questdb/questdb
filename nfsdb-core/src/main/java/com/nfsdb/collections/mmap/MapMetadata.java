@@ -19,7 +19,7 @@ package com.nfsdb.collections.mmap;
 import com.nfsdb.collections.ObjIntHashMap;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.lang.cst.RecordMetadata;
+import com.nfsdb.ql.RecordMetadata;
 
 import java.util.List;
 
@@ -47,6 +47,16 @@ public final class MapMetadata implements RecordMetadata {
     }
 
     @Override
+    public RecordColumnMetadata getColumn(int index) {
+        return columns[index];
+    }
+
+    @Override
+    public RecordColumnMetadata getColumn(CharSequence name) {
+        return columns[getColumnIndex(name)];
+    }
+
+    @Override
     public int getColumnCount() {
         return columnCount;
     }
@@ -58,15 +68,5 @@ public final class MapMetadata implements RecordMetadata {
             throw new JournalRuntimeException("No such column: " + name);
         }
         return index;
-    }
-
-    @Override
-    public RecordColumnMetadata getColumn(int index) {
-        return columns[index];
-    }
-
-    @Override
-    public RecordColumnMetadata getColumn(CharSequence name) {
-        return columns[getColumnIndex(name)];
     }
 }

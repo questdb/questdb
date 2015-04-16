@@ -20,8 +20,8 @@ import com.nfsdb.Journal;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.io.sink.FileSink;
-import com.nfsdb.lang.cst.Record;
-import com.nfsdb.lang.cst.RecordSource;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordSource;
 
 import java.io.File;
 import java.io.IOException;

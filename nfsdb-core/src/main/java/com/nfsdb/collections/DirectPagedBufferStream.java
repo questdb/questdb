@@ -16,7 +16,6 @@
 
 package com.nfsdb.collections;
 
-import com.nfsdb.column.DirectInputStream;
 import com.nfsdb.utils.Unsafe;
 
 import java.io.IOException;
