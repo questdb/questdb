@@ -204,6 +204,11 @@ public class ClusterControllerTest extends AbstractTest {
         }
         Assert.assertEquals(1, active.get());
 
+        // on slower system instances can be subject to staggered startup, which can create noise in message loop
+        // this noise should get cancelled out given some time.
+        // 1 second should be plenty of time for any ELECTION message to be suppressed.
+        Thread.sleep(1000);
+
         standby.set(0);
         active.set(0);
 
