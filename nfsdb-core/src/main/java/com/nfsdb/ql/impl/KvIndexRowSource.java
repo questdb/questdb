@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,6 @@ import com.nfsdb.ql.KeyCursor;
 import com.nfsdb.ql.KeySource;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.RowCursor;
-import com.nfsdb.storage.Cursor;
 import com.nfsdb.storage.KVIndex;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -33,7 +32,7 @@ public class KvIndexRowSource extends AbstractRowSource {
     private final String symbol;
     private final KeySource keySource;
     private KVIndex index;
-    private Cursor indexCursor;
+    private KVIndex.IndexCursor indexCursor;
     private KeyCursor keyCursor;
     private long lo;
     private long hi;
@@ -65,6 +64,11 @@ public class KvIndexRowSource extends AbstractRowSource {
     }
 
     @Override
+    public void reset() {
+        keySource.reset();
+    }
+
+    @Override
     public boolean hasNext() {
 
         if (indexCursor != null && indexCursor.hasNext()) {
@@ -88,11 +92,6 @@ public class KvIndexRowSource extends AbstractRowSource {
     @Override
     public long next() {
         return rowid;
-    }
-
-    @Override
-    public void reset() {
-        keySource.reset();
     }
 
     private boolean hasNext0() {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,13 +45,16 @@ import java.io.Closeable;
 import java.io.File;
 import java.io.FileFilter;
 import java.lang.reflect.Array;
-import java.util.*;
+import java.util.Arrays;
+import java.util.BitSet;
+import java.util.Comparator;
+import java.util.Iterator;
 
 @SuppressFBWarnings({"PATH_TRAVERSAL_IN", "LII_LIST_INDEXED_ITERATING", "CD_CIRCULAR_DEPENDENCY"})
 public class Journal<T> implements Iterable<T>, Closeable {
 
     public static final long TX_LIMIT_EVAL = -1L;
-    final List<Partition<T>> partitions = new ArrayList<>();
+    final ObjList<Partition<T>> partitions = new ObjList<>();
     // empty container for current transaction
     final Tx tx = new Tx();
     final JournalMetadata<T> metadata;
@@ -131,8 +134,8 @@ public class Journal<T> implements Iterable<T>, Closeable {
 
         Interval interval = null;
         if (getMetadata().getPartitionType() != PartitionType.NONE) {
-            if (nonLagPartitionCount() > 0) {
-                Interval lastPartitionInterval = partitions.get(nonLagPartitionCount() - 1).getInterval();
+            if (partitions.size() > 0) {
+                Interval lastPartitionInterval = partitions.getQuick(partitions.size() - 1).getInterval();
                 interval = new Interval(lastPartitionInterval.getLo(), Dates.addHours(lastPartitionInterval.getHi(), lag));
             } else {
                 interval = new Interval(System.currentTimeMillis(), getMetadata().getPartitionType());
@@ -159,18 +162,12 @@ public class Journal<T> implements Iterable<T>, Closeable {
         return -1;
     }
 
-    @SuppressWarnings("EqualsBetweenInconvertibleTypes")
-    @Override
-    public boolean equals(Object o) {
-        return this == o || !(o == null || getClass() != o.getClass()) && key.equals(((Journal) o).key);
-    }
-
     public void expireOpenFiles() {
         long ttl = getMetadata().getOpenFileTTL();
         if (ttl > 0) {
             long delta = System.currentTimeMillis() - ttl;
             for (int i = 0, sz = partitions.size(); i < sz; i++) {
-                Partition<T> partition = partitions.get(i);
+                Partition<T> partition = partitions.getQuick(i);
                 if (delta > partition.getLastAccessed() && partition.isOpen()) {
                     partition.close();
                 } else {
@@ -212,12 +209,16 @@ public class Journal<T> implements Iterable<T>, Closeable {
         }
 
         if (irregularPartition != null) {
-            result = irregularPartition.open();
+            result = irregularPartition;
         } else {
-            result = partitions.get(partitions.size() - 1).open();
+            result = partitions.getLast();
         }
 
-        Partition<T> intermediate = result;
+        if (result == null) {
+            throw new JournalException("No available partitions");
+        }
+
+        Partition<T> intermediate = result.open();
         while (true) {
             if (intermediate.size() > 0) {
                 return intermediate;
@@ -349,6 +350,17 @@ public class Journal<T> implements Iterable<T>, Closeable {
     @Override
     public int hashCode() {
         return key.hashCode();
+    }
+
+    @SuppressWarnings("EqualsBetweenInconvertibleTypes")
+    @Override
+    public boolean equals(Object o) {
+        return this == o || !(o == null || getClass() != o.getClass()) && key.equals(((Journal) o).key);
+    }
+
+    @Override
+    public String toString() {
+        return getClass().getName() + "[location=" + location + ", " + "mode=" + getMode() + ", " + ", metadata=" + metadata + "]";
     }
 
     /**
@@ -566,11 +578,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
         return result;
     }
 
-    @Override
-    public String toString() {
-        return getClass().getName() + "[location=" + location + ", " + "mode=" + getMode() + ", " + ", metadata=" + metadata + "]";
-    }
-
     public TxIterator transactions() {
         if (txIterator == null) {
             txIterator = new TxIterator(txLog);
@@ -586,7 +593,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
             irregularPartition.close();
         }
         for (int i = 0, sz = partitions.size(); i < sz; i++) {
-            partitions.get(i).close();
+            partitions.getQuick(i).close();
         }
         partitions.clear();
     }
@@ -596,48 +603,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
         configureColumns();
         configureSymbolTableSynonyms();
         configurePartitions();
-    }
-
-    BitSet getInactiveColumns() {
-        return inactiveColumns;
-    }
-
-    TimerCache getTimerCache() {
-        return timerCache;
-    }
-
-    long getTimestampOffset() {
-        return timestampOffset;
-    }
-
-    /**
-     * Replaces current Lag partition, which is cached in this instance of Partition Manager with Lag partition,
-     * which was written to _lag file by another process.
-     */
-    void refreshInternal() throws JournalException {
-
-        assert tx.address > 0;
-
-        int txPartitionIndex = tx.journalMaxRowID == -1 ? 0 : Rows.toPartitionIndex(tx.journalMaxRowID);
-        if (partitions.size() != txPartitionIndex + 1 || tx.journalMaxRowID <= 0) {
-            if (tx.journalMaxRowID <= 0 || partitions.size() > txPartitionIndex + 1) {
-                closePartitions();
-            }
-            configurePartitions();
-        } else {
-            long txPartitionSize = tx.journalMaxRowID == -1 ? 0 : Rows.toLocalRowID(tx.journalMaxRowID);
-            partitions.get(txPartitionIndex).applyTx(txPartitionSize, tx.indexPointers);
-            configureIrregularPartition();
-        }
-    }
-
-    void removeIrregularPartitionInternal() {
-        if (irregularPartition != null) {
-            if (irregularPartition.isOpen()) {
-                irregularPartition.close();
-            }
-            irregularPartition = null;
-        }
     }
 
     private void configureColumns() throws JournalException {
@@ -692,7 +657,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
                 Partition<T> partition = null;
 
                 if (partitionIndex < partitions.size()) {
-                    partition = partitions.get(partitionIndex);
+                    partition = partitions.getQuick(partitionIndex);
                 }
 
                 long txLimit = Journal.TX_LIMIT_EVAL;
@@ -731,6 +696,48 @@ public class Journal<T> implements Iterable<T>, Closeable {
                 symbolTableMap.put(meta.name, tab);
                 meta.symbolTable = tab;
             }
+        }
+    }
+
+    BitSet getInactiveColumns() {
+        return inactiveColumns;
+    }
+
+    TimerCache getTimerCache() {
+        return timerCache;
+    }
+
+    long getTimestampOffset() {
+        return timestampOffset;
+    }
+
+    /**
+     * Replaces current Lag partition, which is cached in this instance of Partition Manager with Lag partition,
+     * which was written to _lag file by another process.
+     */
+    void refreshInternal() throws JournalException {
+
+        assert tx.address > 0;
+
+        int txPartitionIndex = tx.journalMaxRowID == -1 ? 0 : Rows.toPartitionIndex(tx.journalMaxRowID);
+        if (partitions.size() != txPartitionIndex + 1 || tx.journalMaxRowID <= 0) {
+            if (tx.journalMaxRowID <= 0 || partitions.size() > txPartitionIndex + 1) {
+                closePartitions();
+            }
+            configurePartitions();
+        } else {
+            long txPartitionSize = tx.journalMaxRowID == -1 ? 0 : Rows.toLocalRowID(tx.journalMaxRowID);
+            partitions.get(txPartitionIndex).applyTx(txPartitionSize, tx.indexPointers);
+            configureIrregularPartition();
+        }
+    }
+
+    void removeIrregularPartitionInternal() {
+        if (irregularPartition != null) {
+            if (irregularPartition.isOpen()) {
+                irregularPartition.close();
+            }
+            irregularPartition = null;
         }
     }
 }

@@ -17,13 +17,13 @@
 package com.nfsdb.storage;
 
 import com.nfsdb.JournalMode;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNoSuchFileException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Files;
-import com.nfsdb.utils.Lists;
 import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import sun.nio.ch.DirectBuffer;
@@ -32,8 +32,6 @@ import java.io.*;
 import java.nio.ByteOrder;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
-import java.util.ArrayList;
-import java.util.List;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS", "EXS_EXCEPTION_SOFTENING_HAS_CHECKED"})
 public class MemoryFile implements Closeable {
@@ -47,8 +45,8 @@ public class MemoryFile implements Closeable {
     private final int bitHint;
     private FileChannel channel;
     private MappedByteBuffer offsetBuffer;
-    private List<MappedByteBuffer> buffers;
-    private List<ByteBufferWrapper> stitches;
+    private ObjList<MappedByteBuffer> buffers;
+    private ObjList<ByteBufferWrapper> stitches;
     private MappedByteBuffer cachedBuffer;
     private long cachedBufferLo = -1;
     private long cachedBufferHi = -1;
@@ -64,8 +62,8 @@ public class MemoryFile implements Closeable {
         }
         this.bitHint = bitHint;
         open();
-        this.buffers = new ArrayList<>((int) (size() >>> bitHint) + 1);
-        this.stitches = new ArrayList<>(buffers.size());
+        this.buffers = new ObjList<>((int) (size() >>> bitHint) + 1);
+        this.stitches = new ObjList<>(buffers.size());
     }
 
     @Override
@@ -186,10 +184,7 @@ public class MemoryFile implements Closeable {
         long bufferOffset = ((long) index) << ((long) bitHint);
         int bufferPos = (int) (offset - bufferOffset);
 
-
-        Lists.advance(buffers, index);
-
-        MappedByteBuffer buffer = buffers.get(index);
+        MappedByteBuffer buffer = buffers.getQuiet(index);
 
         if (buffer != null && buffer.limit() < bufferPos) {
             buffer = ByteBuffers.release(buffer);
@@ -198,7 +193,7 @@ public class MemoryFile implements Closeable {
         if (buffer == null) {
             buffer = mapBufferInternal(bufferOffset, bufferSize);
             assert bufferSize > 0;
-            buffers.set(index, buffer);
+            buffers.extendAndSet(index, buffer);
             switch (mode) {
                 case BULK_READ:
                 case BULK_APPEND:
@@ -208,16 +203,15 @@ public class MemoryFile implements Closeable {
                     cachedBufferLo = cachedBufferHi = -1;
                     int ssz = stitches.size();
                     for (int i = index - 1; i >= 0; i--) {
-                        MappedByteBuffer b = buffers.get(i);
+                        MappedByteBuffer b = buffers.setQuick(i, null);
                         if (b != null) {
-                            buffers.set(i, ByteBuffers.release(b));
+                            ByteBuffers.release(b);
                         }
 
                         if (i < ssz) {
-                            ByteBufferWrapper stitch = stitches.get(i);
+                            ByteBufferWrapper stitch = stitches.setQuick(i, null);
                             if (stitch != null) {
                                 stitch.release();
-                                stitches.set(i, null);
                             }
                         }
                     }
@@ -230,9 +224,7 @@ public class MemoryFile implements Closeable {
         // a stitch buffer, which would accommodate the size
         if (buffer.remaining() < size) {
 
-            Lists.advance(stitches, index);
-
-            ByteBufferWrapper bufferWrapper = stitches.get(index);
+            ByteBufferWrapper bufferWrapper = stitches.getQuiet(index);
 
             long stitchOffset = bufferOffset + bufferPos;
             if (bufferWrapper != null) {
@@ -249,7 +241,7 @@ public class MemoryFile implements Closeable {
 
             if (bufferWrapper == null) {
                 bufferWrapper = new ByteBufferWrapper(stitchOffset, mapBufferInternal(stitchOffset, size));
-                stitches.set(index, bufferWrapper);
+                stitches.extendAndSet(index, bufferWrapper);
             }
 
             return bufferWrapper.getByteBuffer();

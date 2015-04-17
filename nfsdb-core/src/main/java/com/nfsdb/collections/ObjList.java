@@ -73,6 +73,14 @@ public class ObjList<T> {
     }
 
     @SuppressWarnings("unchecked")
+    public T getLast() {
+        if (pos > 0) {
+            return (T) Unsafe.getUnsafe().getObject(buffer, OFFSET + (pos - 1) * SCALE);
+        }
+        return null;
+    }
+
+    @SuppressWarnings("unchecked")
     public T getQuick(int index) {
         return (T) Unsafe.getUnsafe().getObject(buffer, OFFSET + index * SCALE);
     }
@@ -83,6 +91,19 @@ public class ObjList<T> {
             return (T) Unsafe.getUnsafe().getObject(buffer, OFFSET + index * SCALE);
         }
         return null;
+    }
+
+    public T remove(int index) {
+        if (pos < 1 || index >= pos) {
+            return null;
+        }
+        T v = getQuick(index);
+        int move = pos - index - 1;
+        if (move > 0) {
+            System.arraycopy(buffer, index + 1, buffer, index, move);
+        }
+        Unsafe.getUnsafe().putObject(buffer, OFFSET + (--pos) * SCALE, null);
+        return v;
     }
 
     public T setQuick(int index, T value) {

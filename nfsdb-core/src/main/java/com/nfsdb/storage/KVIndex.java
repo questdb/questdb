@@ -469,7 +469,7 @@ public class KVIndex implements Closeable {
         inTransaction = true;
     }
 
-    public class IndexCursor implements Cursor {
+    public class IndexCursor {
         private int remainingBlockCount;
         private int remainingRowCount;
         private long size;
