@@ -18,6 +18,7 @@ package com.nfsdb.ql;
 
 import com.nfsdb.Journal;
 import com.nfsdb.JournalWriter;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
@@ -34,8 +35,6 @@ import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Dates;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.util.ArrayList;
 
 public class ResampledSourceTest extends AbstractTest {
 
@@ -228,11 +227,11 @@ public class ResampledSourceTest extends AbstractTest {
                         , new AllRowSource()
                 )
                 ,
-                new ArrayList<ColumnMetadata>() {{
+                new ObjList<ColumnMetadata>() {{
                         add(r.getMetadata().getColumn("sym"));
                 }}
                 ,
-                new ArrayList<AggregatorFunction>() {{
+                new ObjList<AggregatorFunction>() {{
                     add(new CountIntAggregatorFunction("count"));
                         add(new FirstDoubleAggregationFunction(r.getMetadata().getColumn("ask")));
                         add(new LastDoubleAggregationFunction(r.getMetadata().getColumn("ask")));

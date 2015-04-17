@@ -27,8 +27,8 @@ public class SymBySymCachingLookupKeySource implements KeySource, KeyCursor {
 
     private final VirtualColumn masterKey;
     private final SymbolTable slave;
+    private final IntIntHashMap map = new IntIntHashMap();
     private boolean hasNext = true;
-    private IntIntHashMap map = new IntIntHashMap();
 
     public SymBySymCachingLookupKeySource(SymbolTable slave, VirtualColumn masterKey) {
         this.masterKey = masterKey;

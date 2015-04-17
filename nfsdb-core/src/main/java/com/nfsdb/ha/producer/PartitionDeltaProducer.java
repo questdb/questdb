@@ -17,6 +17,7 @@
 package com.nfsdb.ha.producer;
 
 import com.nfsdb.Partition;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.storage.AbstractColumn;
@@ -24,7 +25,6 @@ import com.nfsdb.storage.VariableColumn;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.nio.channels.WritableByteChannel;
-import java.util.List;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class PartitionDeltaProducer extends ChannelProducerGroup<ColumnDeltaProducer> {
@@ -42,9 +42,9 @@ public class PartitionDeltaProducer extends ChannelProducerGroup<ColumnDeltaProd
     public void configure(long localRowID) throws JournalException {
         partition.open();
         long limit = partition.size();
-        List<ColumnDeltaProducer> producers = getProducers();
+        ObjList<ColumnDeltaProducer> producers = getProducers();
         for (int i = 0, sz = producers.size(); i < sz; i++) {
-            producers.get(i).configure(localRowID, limit);
+            producers.getQuick(i).configure(localRowID, limit);
         }
         computeHasContent();
     }

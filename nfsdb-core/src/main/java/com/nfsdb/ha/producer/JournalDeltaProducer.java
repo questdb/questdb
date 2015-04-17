@@ -18,19 +18,17 @@ package com.nfsdb.ha.producer;
 
 import com.nfsdb.Journal;
 import com.nfsdb.Partition;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.ha.ChannelProducer;
 import com.nfsdb.ha.model.JournalServerState;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.storage.Tx;
-import com.nfsdb.utils.Lists;
 import com.nfsdb.utils.Rows;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.nio.channels.WritableByteChannel;
-import java.util.ArrayList;
-import java.util.List;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class JournalDeltaProducer implements ChannelProducer {
@@ -38,8 +36,8 @@ public class JournalDeltaProducer implements ChannelProducer {
     private final Journal journal;
     private final JournalServerState journalServerState = new JournalServerState();
     private final JournalServerStateProducer journalServerStateProducer = new JournalServerStateProducer();
-    private final List<PartitionDeltaProducer> partitionDeltaProducers = new ArrayList<>();
-    private final List<PartitionDeltaProducer> partitionDeltaProducerCache = new ArrayList<>();
+    private final ObjList<PartitionDeltaProducer> partitionDeltaProducers = new ObjList<>();
+    private final ObjList<PartitionDeltaProducer> partitionDeltaProducerCache = new ObjList<>();
     private final JournalSymbolTableProducer journalSymbolTableProducer;
     private PartitionDeltaProducer lagPartitionDeltaProducer;
     private boolean rollback;
@@ -82,7 +80,7 @@ public class JournalDeltaProducer implements ChannelProducer {
         }
 
         for (int i = 0, sz = partitionDeltaProducerCache.size(); i < sz; i++) {
-            PartitionDeltaProducer p = partitionDeltaProducerCache.get(i);
+            PartitionDeltaProducer p = partitionDeltaProducerCache.getQuick(i);
             if (p != null) {
                 p.free();
             }
@@ -103,7 +101,7 @@ public class JournalDeltaProducer implements ChannelProducer {
         }
 
         for (int i = 0, sz = partitionDeltaProducers.size(); i < sz; i++) {
-            partitionDeltaProducers.get(i).write(channel);
+            partitionDeltaProducers.getQuick(i).write(channel);
         }
 
         if (lagPartitionDeltaProducer != null && lagPartitionDeltaProducer.hasContent()) {
@@ -192,14 +190,10 @@ public class JournalDeltaProducer implements ChannelProducer {
     }
 
     private PartitionDeltaProducer getPartitionDeltaProducer(int partitionIndex) throws JournalException {
-        // make sure we have delegate list populated for random access
-        Lists.advance(partitionDeltaProducerCache, partitionIndex);
-
-        PartitionDeltaProducer producer = partitionDeltaProducerCache.get(partitionIndex);
-
+        PartitionDeltaProducer producer = partitionDeltaProducerCache.getQuiet(partitionIndex);
         if (producer == null) {
             producer = new PartitionDeltaProducer(journal.getPartition(partitionIndex, true));
-            partitionDeltaProducerCache.set(partitionIndex, producer);
+            partitionDeltaProducerCache.extendAndSet(partitionIndex, producer);
         }
 
         return producer;

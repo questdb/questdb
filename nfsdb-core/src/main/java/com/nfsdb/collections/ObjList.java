@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,18 +21,18 @@ import com.nfsdb.utils.Unsafe;
 
 public class ObjList<T> {
     public static final int DEFAULT_ARRAY_SIZE = 16;
-    private static final long OFFSET = Unsafe.getUnsafe().arrayBaseOffset(Object[].class);
-    private static final long SCALE = Unsafe.getUnsafe().arrayIndexScale(Object[].class);
-    private Object[] buffer;
+    private T[] buffer;
     private int pos = 0;
     private StringBuilder toStringBuilder;
 
+    @SuppressWarnings("unchecked")
     public ObjList() {
-        this.buffer = new Object[DEFAULT_ARRAY_SIZE];
+        this.buffer = (T[]) new Object[DEFAULT_ARRAY_SIZE];
     }
 
+    @SuppressWarnings("unchecked")
     public ObjList(int capacity) {
-        this.buffer = new Object[capacity < DEFAULT_ARRAY_SIZE ? DEFAULT_ARRAY_SIZE : Numbers.ceilPow2(capacity)];
+        this.buffer = (T[]) new Object[capacity < DEFAULT_ARRAY_SIZE ? DEFAULT_ARRAY_SIZE : Numbers.ceilPow2(capacity)];
     }
 
     public void add(T value) {
@@ -67,7 +67,7 @@ public class ObjList<T> {
     @SuppressWarnings("unchecked")
     public T get(int index) {
         if (index < pos) {
-            return (T) Unsafe.getUnsafe().getObject(buffer, OFFSET + index * SCALE);
+            return Unsafe.arrayGet(buffer, index);
         }
         throw new ArrayIndexOutOfBoundsException(index);
     }
@@ -75,20 +75,20 @@ public class ObjList<T> {
     @SuppressWarnings("unchecked")
     public T getLast() {
         if (pos > 0) {
-            return (T) Unsafe.getUnsafe().getObject(buffer, OFFSET + (pos - 1) * SCALE);
+            return Unsafe.arrayGet(buffer, pos - 1);
         }
         return null;
     }
 
     @SuppressWarnings("unchecked")
     public T getQuick(int index) {
-        return (T) Unsafe.getUnsafe().getObject(buffer, OFFSET + index * SCALE);
+        return Unsafe.arrayGet(buffer, index);
     }
 
     @SuppressWarnings("unchecked")
     public T getQuiet(int index) {
         if (index < pos) {
-            return (T) Unsafe.getUnsafe().getObject(buffer, OFFSET + index * SCALE);
+            return Unsafe.arrayGet(buffer, index);
         }
         return null;
     }
@@ -97,18 +97,18 @@ public class ObjList<T> {
         if (pos < 1 || index >= pos) {
             return null;
         }
-        T v = getQuick(index);
+        T v = Unsafe.arrayGet(buffer, index);
         int move = pos - index - 1;
         if (move > 0) {
             System.arraycopy(buffer, index + 1, buffer, index, move);
         }
-        Unsafe.getUnsafe().putObject(buffer, OFFSET + (--pos) * SCALE, null);
+        Unsafe.arrayPut(buffer, --pos, null);
         return v;
     }
 
     public T setQuick(int index, T value) {
-        T v = getQuick(index);
-        Unsafe.getUnsafe().putObject(buffer, OFFSET + index * SCALE, value);
+        T v = Unsafe.arrayGet(buffer, index);
+        Unsafe.arrayPut(buffer, index, value);
         return v;
     }
 
@@ -134,12 +134,10 @@ public class ObjList<T> {
         return toStringBuilder.toString();
     }
 
+    @SuppressWarnings("unchecked")
     private void extend(int capacity) {
-        Object[] buf = new Object[capacity];
-        for (int i = 0, k = buffer.length; i < k; i++) {
-            long p = OFFSET + i * SCALE;
-            Unsafe.getUnsafe().putObject(buf, p, Unsafe.getUnsafe().getObject(buffer, p));
-        }
+        T[] buf = (T[]) new Object[capacity];
+        System.arraycopy(buffer, 0, buf, 0, buffer.length);
         this.buffer = buf;
     }
 }

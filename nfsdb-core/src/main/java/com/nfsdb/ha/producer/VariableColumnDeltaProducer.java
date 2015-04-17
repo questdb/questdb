@@ -16,10 +16,9 @@
 
 package com.nfsdb.ha.producer;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.storage.VariableColumn;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-
-import java.util.List;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class VariableColumnDeltaProducer extends ChannelProducerGroup<ColumnDeltaProducer> implements ColumnDeltaProducer {
@@ -30,9 +29,9 @@ public class VariableColumnDeltaProducer extends ChannelProducerGroup<ColumnDelt
     }
 
     public void configure(long localRowID, long limit) {
-        List<ColumnDeltaProducer> producers = getProducers();
+        ObjList<ColumnDeltaProducer> producers = getProducers();
         for (int i = 0, sz = producers.size(); i < sz; i++) {
-            producers.get(i).configure(localRowID, limit);
+            producers.getQuick(i).configure(localRowID, limit);
         }
         computeHasContent();
     }

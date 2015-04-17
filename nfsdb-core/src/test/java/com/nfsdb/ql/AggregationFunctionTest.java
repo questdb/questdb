@@ -18,6 +18,7 @@ package com.nfsdb.ql;
 
 import com.nfsdb.Journal;
 import com.nfsdb.JournalWriter;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
@@ -33,8 +34,6 @@ import com.nfsdb.utils.Dates;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-
-import java.util.ArrayList;
 
 public class AggregationFunctionTest extends AbstractTest {
 
@@ -337,11 +336,11 @@ public class AggregationFunctionTest extends AbstractTest {
                         , new AllRowSource()
                 )
                 ,
-                new ArrayList<ColumnMetadata>() {{
+                new ObjList<ColumnMetadata>() {{
                     add(r.getMetadata().getColumn("sym"));
                 }}
                 ,
-                new ArrayList<AggregatorFunction>() {{
+                new ObjList<AggregatorFunction>() {{
                     add(func);
                 }}
                 , r.getMetadata().getTimestampMetadata()

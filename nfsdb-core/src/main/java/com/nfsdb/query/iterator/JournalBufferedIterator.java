@@ -19,16 +19,15 @@ package com.nfsdb.query.iterator;
 import com.nfsdb.Journal;
 import com.nfsdb.Partition;
 import com.nfsdb.collections.AbstractImmutableIterator;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.utils.Rows;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-import java.util.List;
-
 @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public class JournalBufferedIterator<T> extends AbstractImmutableIterator<T> implements JournalPeekingIterator<T> {
-    private final List<JournalIteratorRange> ranges;
+    private final ObjList<JournalIteratorRange> ranges;
     private final Journal<T> journal;
     private final T obj;
     private boolean hasNext = true;
@@ -37,7 +36,7 @@ public class JournalBufferedIterator<T> extends AbstractImmutableIterator<T> imp
     private long currentUpperBound;
     private Partition<T> partition;
 
-    public JournalBufferedIterator(Journal<T> journal, List<JournalIteratorRange> ranges) {
+    public JournalBufferedIterator(Journal<T> journal, ObjList<JournalIteratorRange> ranges) {
         this.ranges = ranges;
         this.journal = journal;
         this.obj = journal.newObject();
@@ -56,7 +55,7 @@ public class JournalBufferedIterator<T> extends AbstractImmutableIterator<T> imp
 
     @Override
     public boolean isEmpty() {
-        return ranges == null || ranges.isEmpty();
+        return ranges == null || ranges.size() == 0;
     }
 
     @Override
@@ -84,7 +83,7 @@ public class JournalBufferedIterator<T> extends AbstractImmutableIterator<T> imp
 
     @Override
     public T peekLast() {
-        JournalIteratorRange w = ranges.get(ranges.size() - 1);
+        JournalIteratorRange w = ranges.getLast();
         try {
             journal.read(Rows.toRowID(w.partitionID, w.hi), obj);
             return obj;
@@ -95,7 +94,7 @@ public class JournalBufferedIterator<T> extends AbstractImmutableIterator<T> imp
 
     private void updateVariables() {
         if (currentIndex < ranges.size()) {
-            JournalIteratorRange w = ranges.get(currentIndex);
+            JournalIteratorRange w = ranges.getQuick(currentIndex);
             currentRowID = w.lo;
             currentUpperBound = w.hi;
             try {

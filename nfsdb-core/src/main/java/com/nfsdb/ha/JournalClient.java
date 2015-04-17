@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,11 @@
 
 package com.nfsdb.ha;
 
-import com.nfsdb.Journal;
 import com.nfsdb.JournalKey;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.PartitionType;
 import com.nfsdb.collections.DirectIntList;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.IncompatibleJournalException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
@@ -46,7 +46,6 @@ import com.nfsdb.ha.protocol.commands.*;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.storage.TxListener;
 import com.nfsdb.utils.Files;
-import com.nfsdb.utils.Lists;
 import com.nfsdb.utils.NamedDaemonThreadFactory;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -54,8 +53,6 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.channels.ByteChannel;
 import java.nio.channels.SocketChannel;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -66,11 +63,11 @@ public class JournalClient {
     private static final AtomicInteger counter = new AtomicInteger(0);
     private static final Logger LOGGER = Logger.getLogger(JournalClient.class);
     private final static ThreadFactory CLIENT_THREAD_FACTORY = new NamedDaemonThreadFactory("journal-client", false);
-    private final List<JournalKey> remoteKeys = new ArrayList<>();
-    private final List<JournalKey> localKeys = new ArrayList<>();
-    private final List<TxListener> listeners = new ArrayList<>();
-    private final List<JournalWriter> writers = new ArrayList<>();
-    private final List<JournalDeltaConsumer> deltaConsumers = new ArrayList<>();
+    private final ObjList<JournalKey> remoteKeys = new ObjList<>();
+    private final ObjList<JournalKey> localKeys = new ObjList<>();
+    private final ObjList<TxListener> listeners = new ObjList<>();
+    private final ObjList<JournalWriter> writers = new ObjList<>();
+    private final ObjList<JournalDeltaConsumer> deltaConsumers = new ObjList<>();
     private final DirectIntList statusSentList = new DirectIntList();
     private final JournalWriterFactory factory;
     private final CommandProducer commandProducer = new CommandProducer();
@@ -230,7 +227,7 @@ public class JournalClient {
 
         closeChannel();
         for (int i = 0, sz = writers.size(); i < sz; i++) {
-            writers.get(i).close();
+            writers.getQuick(i).close();
         }
 
         writers.clear();
@@ -337,8 +334,8 @@ public class JournalClient {
 
 
             try {
-                if (i >= writers.size() || writers.get(i) == null) {
-                    set0(i, factory.writer(new JournalStructure(metadata).location(localKeys.get(i).derivedLocation())), listeners.get(i));
+                if (writers.getQuiet(i) == null) {
+                    set0(i, factory.writer(new JournalStructure(metadata).location(localKeys.getQuick(i).derivedLocation())), listeners.getQuick(i));
                 }
             } catch (JournalException e) {
                 throw new JournalNetworkException(e);
@@ -360,9 +357,8 @@ public class JournalClient {
     private void sendState() throws JournalNetworkException {
         for (int i = 0, sz = writers.size(); i < sz; i++) {
             if (statusSentList.get(i) == 0) {
-                Journal journal = writers.get(i);
                 commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
-                journalClientStateProducer.write(channel, new IndexedJournal(i, journal));
+                journalClientStateProducer.write(channel, new IndexedJournal(i, writers.getQuick(i)));
                 checkAck();
                 statusSentList.set(i, 1);
             }
@@ -371,12 +367,9 @@ public class JournalClient {
     }
 
     private <T> void set0(int index, JournalWriter<T> writer, TxListener txListener) {
-        Lists.advance(deltaConsumers, index);
-        Lists.advance(writers, index);
         statusSentList.extendAndSet(index, 0);
-
-        deltaConsumers.set(index, new JournalDeltaConsumer(writer.setCommitOnClose(false)));
-        writers.set(index, writer);
+        deltaConsumers.extendAndSet(index, new JournalDeltaConsumer(writer.setCommitOnClose(false)));
+        writers.extendAndSet(index, writer);
         if (txListener != null) {
             writer.setTxListener(txListener);
         }
@@ -452,7 +445,7 @@ public class JournalClient {
                         case JOURNAL_DELTA_CMD:
                             statsChannel.setDelegate(channel);
                             int index = intResponseConsumer.getValue(statsChannel);
-                            deltaConsumers.get(index).read(statsChannel);
+                            deltaConsumers.getQuick(index).read(statsChannel);
                             statusSentList.set(index, 0);
                             statsChannel.logStats();
                             break;

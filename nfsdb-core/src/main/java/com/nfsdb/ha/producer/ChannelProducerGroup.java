@@ -16,18 +16,17 @@
 
 package com.nfsdb.ha.producer;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.ha.ChannelProducer;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.nio.channels.WritableByteChannel;
-import java.util.ArrayList;
-import java.util.List;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class ChannelProducerGroup<T extends ChannelProducer> implements ChannelProducer {
 
-    private final List<T> producers = new ArrayList<>();
+    private final ObjList<T> producers = new ObjList<>();
     private boolean hasContent = false;
 
     @Override
@@ -53,7 +52,7 @@ public class ChannelProducerGroup<T extends ChannelProducer> implements ChannelP
     public void write(WritableByteChannel channel) throws JournalNetworkException {
         if (hasContent) {
             for (int i = 0, sz = producers.size(); i < sz; i++) {
-                producers.get(i).write(channel);
+                producers.getQuick(i).write(channel);
             }
             hasContent = false;
         }
@@ -65,13 +64,13 @@ public class ChannelProducerGroup<T extends ChannelProducer> implements ChannelP
 
     void computeHasContent() {
         for (int i = 0, sz = producers.size(); i < sz; i++) {
-            if (this.hasContent = producers.get(i).hasContent()) {
+            if (this.hasContent = producers.getQuick(i).hasContent()) {
                 break;
             }
         }
     }
 
-    protected List<T> getProducers() {
+    protected ObjList<T> getProducers() {
         return producers;
     }
 }

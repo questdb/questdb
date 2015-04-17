@@ -18,6 +18,7 @@ package com.nfsdb.query.spi;
 
 import com.nfsdb.Journal;
 import com.nfsdb.Partition;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.query.OrderedResultSet;
@@ -29,9 +30,7 @@ import com.nfsdb.utils.Interval;
 import com.nfsdb.utils.Rows;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-import java.util.ArrayList;
 import java.util.Iterator;
-import java.util.List;
 
 @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public class QueryAllImpl<T> implements QueryAll<T> {
@@ -143,9 +142,9 @@ public class QueryAllImpl<T> implements QueryAll<T> {
         return result;
     }
 
-    private List<JournalIteratorRange> createRanges() {
+    private ObjList<JournalIteratorRange> createRanges() {
         final int partitionCount = journal.getPartitionCount();
-        List<JournalIteratorRange> ranges = new ArrayList<>(partitionCount);
+        ObjList<JournalIteratorRange> ranges = new ObjList<>(partitionCount);
         try {
             for (int i = 0; i < partitionCount; i++) {
                 Partition<T> p = journal.getPartition(i, true);
@@ -160,8 +159,8 @@ public class QueryAllImpl<T> implements QueryAll<T> {
         return ranges;
     }
 
-    private List<JournalIteratorRange> createRanges(Interval interval) {
-        final List<JournalIteratorRange> ranges = new ArrayList<>();
+    private ObjList<JournalIteratorRange> createRanges(Interval interval) {
+        final ObjList<JournalIteratorRange> ranges = new ObjList<>();
         try {
             journal.iteratePartitions(new OrderedResultSetBuilder<T>(interval) {
                 @Override
@@ -175,8 +174,8 @@ public class QueryAllImpl<T> implements QueryAll<T> {
         return ranges;
     }
 
-    private List<JournalIteratorRange> createRanges(long lo) {
-        List<JournalIteratorRange> ranges = new ArrayList<>();
+    private ObjList<JournalIteratorRange> createRanges(long lo) {
+        ObjList<JournalIteratorRange> ranges = new ObjList<>();
         int loPartitionID = Rows.toPartitionIndex(lo);
         long loLocalRowID = Rows.toLocalRowID(lo);
 

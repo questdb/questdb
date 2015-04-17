@@ -22,21 +22,34 @@ import java.lang.reflect.Field;
 
 public final class Unsafe {
     private static final sun.misc.Unsafe UNSAFE;
+    private static final long OFFSET;
+    private static final long SCALE;
+
+    private Unsafe() {
+    }
+
+    @SuppressWarnings("unchecked")
+    public static <T> T arrayGet(T[] array, int index) {
+        return (T) Unsafe.getUnsafe().getObject(array, OFFSET + (index * SCALE));
+    }
+
+    public static <T> void arrayPut(T[] array, int index, T obj) {
+        Unsafe.getUnsafe().putObject(array, OFFSET + index * SCALE, obj);
+    }
+
+    public static sun.misc.Unsafe getUnsafe() {
+        return UNSAFE;
+    }
 
     static {
         try {
             Field theUnsafe = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
             theUnsafe.setAccessible(true);
             UNSAFE = (sun.misc.Unsafe) theUnsafe.get(null);
+            OFFSET = Unsafe.getUnsafe().arrayBaseOffset(Object[].class);
+            SCALE = Unsafe.getUnsafe().arrayIndexScale(Object[].class);
         } catch (Exception e) {
             throw new JournalRuntimeException(e);
         }
-    }
-
-    private Unsafe() {
-    }
-
-    public static sun.misc.Unsafe getUnsafe() {
-        return UNSAFE;
     }
 }

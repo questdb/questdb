@@ -20,6 +20,7 @@ import com.nfsdb.Journal;
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.Partition;
+import com.nfsdb.collections.DirectIntList;
 import com.nfsdb.collections.DirectLongList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
@@ -43,7 +44,6 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -90,7 +90,7 @@ public final class TestUtils {
         Assert.assertEquals(expected.getPartitionCount(), actual.getPartitionCount());
         // check if SymbolIndexes are the same
 
-        ArrayList<Integer> colKeyCount = new ArrayList<>();
+        DirectIntList colKeyCount = new DirectIntList();
 
         for (int k = 0; k < expected.getMetadata().getColumnCount(); k++) {
             SymbolTable et = expected.getMetadata().getColumn(k).symbolTable;
@@ -105,10 +105,7 @@ public final class TestUtils {
             }
 
             Assert.assertEquals(et.size(), at.size());
-
-            Lists.advance(colKeyCount, k);
-
-            colKeyCount.set(k, et.size());
+            colKeyCount.extendAndSet(k, et.size());
 
             for (int i = 0; i < et.size(); i++) {
                 String ev = et.value(i);

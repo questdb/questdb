@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,17 +17,16 @@
 package com.nfsdb.query.iterator;
 
 import com.nfsdb.Journal;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.utils.Rows;
 
-import java.util.List;
-
 public class JournalConcurrentIterator<T> extends AbstractConcurrentIterator<T> {
     private final Journal<T> journal;
-    private final List<JournalIteratorRange> ranges;
+    private final ObjList<JournalIteratorRange> ranges;
 
-    public JournalConcurrentIterator(Journal<T> journal, List<JournalIteratorRange> ranges, int bufferSize) {
+    public JournalConcurrentIterator(Journal<T> journal, ObjList<JournalIteratorRange> ranges, int bufferSize) {
         super(bufferSize);
         this.journal = journal;
         this.ranges = ranges;
@@ -79,7 +78,7 @@ public class JournalConcurrentIterator<T> extends AbstractConcurrentIterator<T> 
 
             private void updateVariables() {
                 if (currentIndex < ranges.size()) {
-                    JournalIteratorRange w = ranges.get(currentIndex);
+                    JournalIteratorRange w = ranges.getQuick(currentIndex);
                     currentRowID = w.lo;
                     currentUpperBound = w.hi;
                     currentPartitionID = w.partitionID;

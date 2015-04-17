@@ -16,6 +16,7 @@
 
 package com.nfsdb.io;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.ObjObjHashMap;
 import com.nfsdb.io.parser.CsvParser;
 import com.nfsdb.io.parser.listener.Listener;
@@ -32,8 +33,6 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
-import java.util.ArrayList;
-import java.util.List;
 
 @SuppressFBWarnings({"CLI_CONSTANT_LIST_INDEX"})
 public class ImportSchema {
@@ -46,7 +45,7 @@ public class ImportSchema {
         put("MM/DD/YYYY", ImportedColumnType.DATE_2);
     }};
 
-    private final List<ImportedColumnMetadata> metadata = new ArrayList<>();
+    private final ObjList<ImportedColumnMetadata> metadata = new ObjList<>();
 
     public ImportSchema(String content) {
         final long mem = Unsafe.getUnsafe().allocateMemory(content.length());
@@ -75,7 +74,7 @@ public class ImportSchema {
 
     }
 
-    public List<ImportedColumnMetadata> getMetadata() {
+    public ObjList<ImportedColumnMetadata> getMetadata() {
         return metadata;
     }
 

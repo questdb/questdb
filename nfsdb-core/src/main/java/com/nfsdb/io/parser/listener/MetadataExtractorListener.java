@@ -16,6 +16,7 @@
 
 package com.nfsdb.io.parser.listener;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.mmap.MultiMap;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.io.ImportManager;
@@ -27,7 +28,6 @@ import com.nfsdb.storage.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
-import java.util.List;
 
 @SuppressFBWarnings({"PL_PARALLEL_LISTS", "LII_LIST_INDEXED_ITERATING"})
 public class MetadataExtractorListener implements Listener, Closeable {
@@ -173,9 +173,9 @@ public class MetadataExtractorListener implements Listener, Closeable {
 
         // override calculated types with user-supplied information
         if (importSchema != null) {
-            List<ImportedColumnMetadata> override = importSchema.getMetadata();
+            ObjList<ImportedColumnMetadata> override = importSchema.getMetadata();
             for (int i = 0, k = override.size(); i < k; i++) {
-                ImportedColumnMetadata m = override.get(i);
+                ImportedColumnMetadata m = override.getQuick(i);
                 if (m.columnIndex < fieldCount) {
                     metadata[m.columnIndex].importedType = m.importedType;
                     metadata[m.columnIndex].type = m.type;

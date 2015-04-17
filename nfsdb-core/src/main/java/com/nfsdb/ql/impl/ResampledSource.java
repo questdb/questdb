@@ -18,6 +18,7 @@ package com.nfsdb.ql.impl;
 
 
 import com.nfsdb.collections.AbstractImmutableIterator;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.mmap.MapRecordSource;
 import com.nfsdb.collections.mmap.MapRecordValueInterceptor;
 import com.nfsdb.collections.mmap.MapValues;
@@ -28,8 +29,6 @@ import com.nfsdb.ql.*;
 import com.nfsdb.utils.Dates;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-import java.util.List;
-
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class ResampledSource extends AbstractImmutableIterator<Record> implements GenericRecordSource {
 
@@ -37,13 +36,19 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
     private final RecordSource<? extends Record> rowSource;
     private final int[] keyIndices;
     private final int tsIndex;
-    private final List<AggregatorFunction> aggregators;
+    private final ObjList<AggregatorFunction> aggregators;
     private final SampleBy sampleBy;
     private MapRecordSource mapRecordSource;
     private Record nextRecord = null;
 
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
-    public ResampledSource(RecordSource<? extends Record> rowSource, List<ColumnMetadata> keyColumns, List<AggregatorFunction> aggregators, ColumnMetadata timestampMetadata, SampleBy sampleBy) {
+    public ResampledSource(
+            RecordSource<? extends Record> rowSource,
+            ObjList<ColumnMetadata> keyColumns,
+            ObjList<AggregatorFunction> aggregators,
+            ColumnMetadata timestampMetadata,
+            SampleBy sampleBy
+    ) {
 
         MultiMap.Builder builder = new MultiMap.Builder();
         int keyColumnsSize = keyColumns.size();
@@ -54,7 +59,7 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
         this.tsIndex = rm.getColumnIndex(timestampMetadata.name);
         builder.keyColumn(timestampMetadata);
         for (int i = 0; i < keyColumnsSize; i++) {
-            ColumnMetadata cm = keyColumns.get(i);
+            ColumnMetadata cm = keyColumns.getQuick(i);
             builder.keyColumn(cm);
             keyIndices[i] = rm.getColumnIndex(cm.name);
         }
@@ -64,7 +69,7 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
         // take value columns from aggregator function
         int index = 0;
         for (int i = 0, sz = aggregators.size(); i < sz; i++) {
-            AggregatorFunction func = aggregators.get(i);
+            AggregatorFunction func = aggregators.getQuick(i);
 
             func.prepareSource(rowSource);
 
@@ -177,7 +182,7 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
             MapValues values = map.getOrCreateValues(keyWriter);
 
             for (int i = 0, sz = aggregators.size(); i < sz; i++) {
-                aggregators.get(i).calculate(rec, values);
+                aggregators.getQuick(i).calculate(rec, values);
             }
 
             if (!rowSource.hasNext()) {

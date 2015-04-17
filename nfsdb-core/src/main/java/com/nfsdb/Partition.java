@@ -91,8 +91,8 @@ public class Partition<T> implements Iterable<T>, Closeable {
     public void close() {
         if (isOpen()) {
             for (int i = 0; i < columns.length; i++) {
-                if (columns[i] != null) {
-                    columns[i].close();
+                if (Unsafe.arrayGet(columns, i) != null) {
+                    Unsafe.arrayGet(columns, i).close();
                 }
             }
             columns = null;
@@ -110,7 +110,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
         // last column. If below loop is to break in the middle partition will assume smallest
         // column size.
         for (int i = 0; i < columnCount; i++) {
-            AbstractColumn col = columns[i];
+            AbstractColumn col = Unsafe.arrayGet(columns, i);
             if (col != null) {
                 col.commit();
             }
@@ -122,9 +122,9 @@ public class Partition<T> implements Iterable<T>, Closeable {
             throw new JournalException("Cannot compact closed partition: %s", this);
         }
 
-        for (int i1 = 0; i1 < columns.length; i1++) {
-            if (columns[i1] != null) {
-                columns[i1].compact();
+        for (int i = 0; i < columns.length; i++) {
+            if (columns[i] != null) {
+                columns[i].compact();
             }
         }
 
@@ -135,7 +135,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
     public AbstractColumn getAbstractColumn(int i) {
         checkColumnIndex(i);
-        return columns[i];
+        return Unsafe.arrayGet(columns, i);
     }
 
     public void getBin(long localRowID, int columnIndex, OutputStream s) {
@@ -295,38 +295,38 @@ public class Partition<T> implements Iterable<T>, Closeable {
     public void read(long localRowID, T obj) {
         for (int i = 0; i < columnCount; i++) {
             ColumnMetadata m;
-            if (journal.getInactiveColumns().get(i) || (m = columnMetadata[i]).offset == 0) {
+            if (journal.getInactiveColumns().get(i) || (m = Unsafe.arrayGet(columnMetadata, i)).offset == 0) {
                 continue;
             }
 
             switch (m.type) {
                 case BOOLEAN:
-                    Unsafe.getUnsafe().putBoolean(obj, m.offset, ((FixedColumn) columns[i]).getBool(localRowID));
+                    Unsafe.getUnsafe().putBoolean(obj, m.offset, ((FixedColumn) Unsafe.arrayGet(columns, i)).getBool(localRowID));
                     break;
                 case BYTE:
-                    Unsafe.getUnsafe().putByte(obj, m.offset, ((FixedColumn) columns[i]).getByte(localRowID));
+                    Unsafe.getUnsafe().putByte(obj, m.offset, ((FixedColumn) Unsafe.arrayGet(columns, i)).getByte(localRowID));
                     break;
                 case DOUBLE:
-                    Unsafe.getUnsafe().putDouble(obj, m.offset, ((FixedColumn) columns[i]).getDouble(localRowID));
+                    Unsafe.getUnsafe().putDouble(obj, m.offset, ((FixedColumn) Unsafe.arrayGet(columns, i)).getDouble(localRowID));
                     break;
                 case FLOAT:
-                    Unsafe.getUnsafe().putFloat(obj, m.offset, ((FixedColumn) columns[i]).getFloat(localRowID));
+                    Unsafe.getUnsafe().putFloat(obj, m.offset, ((FixedColumn) Unsafe.arrayGet(columns, i)).getFloat(localRowID));
                     break;
                 case INT:
-                    Unsafe.getUnsafe().putInt(obj, m.offset, ((FixedColumn) columns[i]).getInt(localRowID));
+                    Unsafe.getUnsafe().putInt(obj, m.offset, ((FixedColumn) Unsafe.arrayGet(columns, i)).getInt(localRowID));
                     break;
                 case LONG:
                 case DATE:
-                    Unsafe.getUnsafe().putLong(obj, m.offset, ((FixedColumn) columns[i]).getLong(localRowID));
+                    Unsafe.getUnsafe().putLong(obj, m.offset, ((FixedColumn) Unsafe.arrayGet(columns, i)).getLong(localRowID));
                     break;
                 case SHORT:
-                    Unsafe.getUnsafe().putShort(obj, m.offset, ((FixedColumn) columns[i]).getShort(localRowID));
+                    Unsafe.getUnsafe().putShort(obj, m.offset, ((FixedColumn) Unsafe.arrayGet(columns, i)).getShort(localRowID));
                     break;
                 case STRING:
-                    Unsafe.getUnsafe().putObject(obj, m.offset, ((VariableColumn) columns[i]).getStr(localRowID));
+                    Unsafe.getUnsafe().putObject(obj, m.offset, ((VariableColumn) Unsafe.arrayGet(columns, i)).getStr(localRowID));
                     break;
                 case SYMBOL:
-                    Unsafe.getUnsafe().putObject(obj, m.offset, m.symbolTable.value(((FixedColumn) columns[i]).getInt(localRowID)));
+                    Unsafe.getUnsafe().putObject(obj, m.offset, m.symbolTable.value(((FixedColumn) Unsafe.arrayGet(columns, i)).getInt(localRowID)));
                     break;
                 case BINARY:
                     readBin(localRowID, obj, i, m);
@@ -380,7 +380,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
             throw new JournalException("Cannot rebuild indexes in closed partition: %s", this);
         }
         for (int i = 0; i < columnCount; i++) {
-            if (columnMetadata[i].indexed) {
+            if (Unsafe.arrayGet(columnMetadata, i).indexed) {
                 rebuildIndex(i);
             }
         }
@@ -397,7 +397,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
         long sz = 0;
         for (int i = columns.length - 1; i >= 0; i--) {
-            AbstractColumn c = columns[i];
+            AbstractColumn c = Unsafe.arrayGet(columns, i);
             if (c != null) {
                 sz = c.size();
                 break;
@@ -458,19 +458,19 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
         try {
             for (int i = 0; i < columnCount; i++) {
-                ColumnMetadata m = columnMetadata[i];
+                ColumnMetadata m = Unsafe.arrayGet(columnMetadata, i);
                 switch (m.type) {
                     case INT:
                         int v = Unsafe.getUnsafe().getInt(obj, m.offset);
                         if (m.indexed) {
-                            sparseIndexProxies[i].getIndex().add(v % m.distinctCountHint, ((FixedColumn) columns[i]).putInt(v));
+                            sparseIndexProxies[i].getIndex().add(v % m.distinctCountHint, ((FixedColumn) Unsafe.arrayGet(columns, i)).putInt(v));
                         } else {
-                            ((FixedColumn) columns[i]).putInt(v);
+                            ((FixedColumn) Unsafe.arrayGet(columns, i)).putInt(v);
                         }
                         break;
                     case STRING:
                         String s = (String) Unsafe.getUnsafe().getObject(obj, m.offset);
-                        long offset = ((VariableColumn) columns[i]).putStr(s);
+                        long offset = ((VariableColumn) Unsafe.arrayGet(columns, i)).putStr(s);
                         if (m.indexed) {
                             sparseIndexProxies[i].getIndex().add(
                                     s == null ? SymbolTable.VALUE_IS_NULL : Hash.boundedHash(s, m.distinctCountHint)
@@ -487,20 +487,20 @@ public class Partition<T> implements Iterable<T>, Closeable {
                             key = m.symbolTable.put(sym);
                         }
                         if (m.indexed) {
-                            sparseIndexProxies[i].getIndex().add(key, ((FixedColumn) columns[i]).putInt(key));
+                            sparseIndexProxies[i].getIndex().add(key, ((FixedColumn) Unsafe.arrayGet(columns, i)).putInt(key));
                         } else {
-                            ((FixedColumn) columns[i]).putInt(key);
+                            ((FixedColumn) Unsafe.arrayGet(columns, i)).putInt(key);
                         }
                         break;
                     case BINARY:
                         appendBin(obj, i, m);
                         break;
                     default:
-                        ((FixedColumn) columns[i]).copy(obj, m.offset);
+                        ((FixedColumn) Unsafe.arrayGet(columns, i)).copy(obj, m.offset);
                         break;
                 }
 
-                columns[i].commit();
+                Unsafe.arrayGet(columns, i).commit();
             }
 
             applyTx(Journal.TX_LIMIT_EVAL, null);
@@ -537,7 +537,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
         if (columns != null) {
             for (int i = 0; i < columns.length; i++) {
-                AbstractColumn column = columns[i];
+                AbstractColumn column = Unsafe.arrayGet(columns, i);
                 if (column != null) {
                     column.force();
                 }
@@ -566,8 +566,8 @@ public class Partition<T> implements Iterable<T>, Closeable {
                 indexProxies.getQuick(i).getIndex().truncate(newSize);
             }
             for (int i = 0; i < columns.length; i++) {
-                if (columns[i] != null) {
-                    columns[i].truncate(newSize);
+                if (Unsafe.arrayGet(columns, i) != null) {
+                    Unsafe.arrayGet(columns, i).truncate(newSize);
                 }
             }
 
@@ -580,7 +580,35 @@ public class Partition<T> implements Iterable<T>, Closeable {
         columns = new AbstractColumn[journal.getMetadata().getColumnCount()];
 
         for (int i = 0; i < columns.length; i++) {
-            open(i);
+            switch (Unsafe.arrayGet(columnMetadata, i).type) {
+                case STRING:
+                case BINARY:
+                    Unsafe.arrayPut(columns, i,
+                            new VariableColumn(
+                                    new MemoryFile(
+                                            new File(partitionDir, Unsafe.arrayGet(columnMetadata, i).name + ".d"),
+                                            Unsafe.arrayGet(columnMetadata, i).bitHint, journal.getMode()
+                                    ),
+                                    new MemoryFile(
+                                            new File(partitionDir, Unsafe.arrayGet(columnMetadata, i).name + ".i"),
+                                            Unsafe.arrayGet(columnMetadata, i).indexBitHint,
+                                            journal.getMode()
+                                    )
+                            )
+                    );
+                    break;
+                default:
+                    Unsafe.arrayPut(columns, i,
+                            new FixedColumn(
+                                    new MemoryFile(
+                                            new File(partitionDir, Unsafe.arrayGet(columnMetadata, i).name + ".d"),
+                                            Unsafe.arrayGet(columnMetadata, i).bitHint,
+                                            journal.getMode()
+                                    ),
+                                    Unsafe.arrayGet(columnMetadata, i).size
+                            )
+                    );
+            }
         }
 
         int tsIndex = journal.getMetadata().getTimestampIndex();
@@ -592,9 +620,9 @@ public class Partition<T> implements Iterable<T>, Closeable {
     private void appendBin(T obj, int i, ColumnMetadata meta) {
         ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, meta.offset);
         if (buf == null) {
-            ((VariableColumn) columns[i]).putNull();
+            ((VariableColumn) Unsafe.arrayGet(columns, i)).putNull();
         } else {
-            ((VariableColumn) columns[i]).putBin(buf);
+            ((VariableColumn) Unsafe.arrayGet(columns, i)).putBin(buf);
         }
     }
 
@@ -617,7 +645,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
 
         for (int i = 0; i < columnCount; i++) {
-            if (columnMetadata[i].indexed) {
+            if (Unsafe.arrayGet(columnMetadata, i).indexed) {
                 SymbolIndexProxy<T> proxy = new SymbolIndexProxy<>(this, i, indexTxAddresses == null ? 0 : indexTxAddresses[i]);
                 indexProxies.add(proxy);
                 sparseIndexProxies[i] = proxy;
@@ -629,26 +657,11 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
     private FixedColumn getFixedWidthColumn(int i) {
         checkColumnIndex(i);
-        return (FixedColumn) columns[i];
-    }
-
-    private void open(int idx) throws JournalException {
-
-        switch (columnMetadata[idx].type) {
-            case STRING:
-            case BINARY:
-                columns[idx] = new VariableColumn(
-                        new MemoryFile(new File(partitionDir, columnMetadata[idx].name + ".d"), columnMetadata[idx].bitHint, journal.getMode())
-                        , new MemoryFile(new File(partitionDir, columnMetadata[idx].name + ".i"), columnMetadata[idx].indexBitHint, journal.getMode()));
-                break;
-            default:
-                columns[idx] = new FixedColumn(
-                        new MemoryFile(new File(partitionDir, columnMetadata[idx].name + ".d"), columnMetadata[idx].bitHint, journal.getMode()), columnMetadata[idx].size);
-        }
+        return (FixedColumn) Unsafe.arrayGet(columns, i);
     }
 
     private void readBin(long localRowID, T obj, int i, ColumnMetadata m) {
-        int size = ((VariableColumn) columns[i]).getBinSize(localRowID);
+        int size = ((VariableColumn) Unsafe.arrayGet(columns, i)).getBinSize(localRowID);
         ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, m.offset);
         if (size == -1) {
             if (buf != null) {
@@ -664,7 +677,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
                 buf.rewind();
             }
             buf.limit(size);
-            ((VariableColumn) columns[i]).getBin(localRowID, buf);
+            ((VariableColumn) Unsafe.arrayGet(columns, i)).getBin(localRowID, buf);
             buf.flip();
         }
     }
