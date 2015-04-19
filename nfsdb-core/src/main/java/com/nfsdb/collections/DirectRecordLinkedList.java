@@ -21,9 +21,11 @@ import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.utils.Unsafe;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.util.Iterator;
 
-public class DirectRecordLinkedList extends DirectMemoryStructure implements RecordSource<Record> {
+public class DirectRecordLinkedList implements RecordSource<Record>, Closeable {
     private final RecordMetadata recordMetadata;
     private final DirectPagedBuffer buffer;
     private final DirectRecord bufferRecord;
@@ -79,7 +81,7 @@ public class DirectRecordLinkedList extends DirectMemoryStructure implements Rec
     }
 
     @Override
-    protected void freeInternal() {
-        buffer.free();
+    public void close() throws IOException {
+        buffer.close();
     }
 }

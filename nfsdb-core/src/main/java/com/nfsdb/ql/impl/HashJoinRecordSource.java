@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. NFSdb.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,12 +21,15 @@ import com.nfsdb.collections.DirectIntList;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.mmap.MultiMap;
 import com.nfsdb.collections.mmap.MultiRecordMap;
+import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.RandomAccessRecordSource;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.ql.RecordSource;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+
+import static com.nfsdb.ql.impl.KeyWriterHelper.setKey;
 
 public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord> implements RecordSource<SplitRecord> {
     private final RecordSource<? extends Record> masterSource;
@@ -38,7 +41,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord>
     private final ObjList<RecordColumnMetadata> slaveColumns = new ObjList<>();
     private final DirectIntList masterColIndex = new DirectIntList();
     private final DirectIntList slaveColIndex = new DirectIntList();
-    private final RowidHolderRecord rowidRecord = new RowidHolderRecord();
+    private final RowIdHolderRecord rowIdRecord = new RowIdHolderRecord();
     private RecordSource<? extends Record> hashTableSource;
     private boolean hashTablePending = true;
 
@@ -63,7 +66,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord>
             this.slaveColumns.add(sm.getColumn(index));
             builder.keyColumn(sm.getColumn(index));
         }
-        builder.setRecordMetadata(rowidRecord.getMetadata());
+        builder.setRecordMetadata(rowIdRecord.getMetadata());
         this.hashTable = builder.build();
     }
 
@@ -93,49 +96,16 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord>
         masterSource.reset();
     }
 
-    @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT"})
     private void buildHashTable() {
         for (Record r : slaveSource) {
             MultiMap.KeyWriter key = hashTable.claimKey();
             for (int i = 0, k = slaveColumns.size(); i < k; i++) {
-                switch (slaveColumns.get(i).getType()) {
-                    case BOOLEAN:
-                        key.putBoolean(r.getBool(slaveColIndex.get(i)));
-                        break;
-                    case BYTE:
-                        key.putByte(r.get(slaveColIndex.get(i)));
-                        break;
-                    case DOUBLE:
-                        key.putDouble(r.getDouble(slaveColIndex.get(i)));
-                        break;
-                    case INT:
-                        key.putInt(r.getInt(slaveColIndex.get(i)));
-                        break;
-                    case LONG:
-                        key.putLong(r.getLong(slaveColIndex.get(i)));
-                        break;
-                    case SHORT:
-                        key.putShort(r.getShort(slaveColIndex.get(i)));
-                        break;
-                    case STRING:
-                        key.putStr(r.getFlyweightStr(slaveColIndex.get(i)));
-                        break;
-                    case SYMBOL:
-                        key.putStr(r.getSym(slaveColIndex.get(i)));
-                        break;
-                    case BINARY:
-                        key.putBin(r.getBin(slaveColIndex.get(i)));
-                        break;
-                    case DATE:
-                        key.putLong(r.getDate(slaveColIndex.get(i)));
-                        break;
-                }
+                setKey(key, r, slaveColumns.get(i).getType(), i);
             }
-            hashTable.add(key, rowidRecord.init(r.getRowId()));
+            hashTable.add(key, rowIdRecord.init(r.getRowId()));
         }
     }
 
-    @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT"})
     private boolean hasNext0() {
 
         if (hashTablePending) {
@@ -151,38 +121,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord>
             MultiMap.KeyWriter key = hashTable.claimKey();
 
             for (int i = 0, k = masterColumns.size(); i < k; i++) {
-                switch (masterColumns.get(i).getType()) {
-                    case BOOLEAN:
-                        key.putBoolean(r.getBool(masterColIndex.get(i)));
-                        break;
-                    case BYTE:
-                        key.putByte(r.get(masterColIndex.get(i)));
-                        break;
-                    case DOUBLE:
-                        key.putDouble(r.getDouble(masterColIndex.get(i)));
-                        break;
-                    case INT:
-                        key.putInt(r.getInt(masterColIndex.get(i)));
-                        break;
-                    case LONG:
-                        key.putLong(r.getLong(masterColIndex.get(i)));
-                        break;
-                    case SHORT:
-                        key.putShort(r.getShort(masterColIndex.get(i)));
-                        break;
-                    case STRING:
-                        key.putStr(r.getFlyweightStr(masterColIndex.get(i)));
-                        break;
-                    case SYMBOL:
-                        key.putStr(r.getSym(masterColIndex.get(i)));
-                        break;
-                    case BINARY:
-                        key.putBin(r.getBin(masterColIndex.get(i)));
-                        break;
-                    case DATE:
-                        key.putLong(r.getDate(masterColIndex.get(i)));
-                        break;
-                }
+                setKey(key, r, masterColumns.get(i).getType(), masterColIndex.get(i));
             }
 
             hashTableSource = hashTable.get(key);

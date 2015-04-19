@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. NFSdb.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 package com.nfsdb.collections.mmap;
 
-import com.nfsdb.collections.DirectMemoryStructure;
 import com.nfsdb.collections.DirectRecordLinkedList;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
@@ -25,10 +24,12 @@ import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.storage.ColumnType;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-public class MultiRecordMap extends DirectMemoryStructure {
+public class MultiRecordMap implements Closeable {
     public final MultiMap map;
     private final DirectRecordLinkedList records;
 
@@ -66,7 +67,7 @@ public class MultiRecordMap extends DirectMemoryStructure {
     }
 
     @Override
-    protected void freeInternal() {
+    public void close() throws IOException {
         map.free();
         records.close();
     }

@@ -24,7 +24,6 @@ import com.nfsdb.ql.impl.AbstractRecord;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-
 import java.io.IOException;
 import java.io.OutputStream;
 
@@ -35,7 +34,6 @@ public class DirectRecord extends AbstractRecord {
     private final int[] offsets;
     private final int fixedBlockLen;
     private int fixedSize;
-    //private int[] colIndex;
     private long address;
 
     public DirectRecord(RecordMetadata metadata, DirectPagedBuffer buffer) {
@@ -50,7 +48,6 @@ public class DirectRecord extends AbstractRecord {
             if (ct.size() != 0) {
                 // Fixed columns.
                 fixedSize += ct.size();
-                //colIndex[i] = lastIndex++;
                 offsets[i] = lastOffset;
                 lastOffset += ct.size();
             }
@@ -59,7 +56,6 @@ public class DirectRecord extends AbstractRecord {
         // Init order of var len fields
         for (int i = 0; i < offsets.length; i++) {
             if (metadata.getColumn(i).getType().size() == 0) {
-                //colIndex[i] = lastIndex++;
                 offsets[i] = -(varColIndex++);
             }
         }
@@ -122,7 +118,8 @@ public class DirectRecord extends AbstractRecord {
 
     @Override
     public float getFloat(int col) {
-        return 0;
+        assert offsets[col] >= 0;
+        return Unsafe.getUnsafe().getFloat(address + offsets[col]);
     }
 
     @Override
@@ -188,13 +185,11 @@ public class DirectRecord extends AbstractRecord {
         return write(record, buffer.getWriteOffsetQuick(headerSize + fixedSize));
     }
 
-    @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT"})
     public long write(Record record, long recordStartOffset) {
         long headerAddress = buffer.toAddress(recordStartOffset);
         long writeAddress = headerAddress + headerSize;
 
         for (int i = 0; i < offsets.length; i++) {
-            //int i = colIndex[col];
             ColumnType columnType = metadata.getColumn(i).getType();
             switch (columnType) {
                 case BOOLEAN:
@@ -229,6 +224,10 @@ public class DirectRecord extends AbstractRecord {
                     Unsafe.getUnsafe().putLong(writeAddress, record.getDate(i));
                     writeAddress += 8;
                     break;
+                case FLOAT:
+                    Unsafe.getUnsafe().putFloat(writeAddress, record.getFloat(i));
+                    writeAddress += 4;
+                    break;
                 case STRING:
                     writeString(headerAddress, record.getFlyweightStr(i));
                     headerAddress += 8;
@@ -237,6 +236,8 @@ public class DirectRecord extends AbstractRecord {
                     writeBinary(headerAddress, record.getBin(i));
                     headerAddress += 8;
                     break;
+                default:
+                    throw new JournalRuntimeException("Unsupported type: " + columnType);
             }
         }
         return recordStartOffset;

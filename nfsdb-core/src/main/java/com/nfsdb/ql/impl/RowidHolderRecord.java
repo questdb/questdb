@@ -27,13 +27,13 @@ import com.nfsdb.utils.Chars;
 
 import java.io.OutputStream;
 
-public class RowidHolderRecord extends AbstractRecord {
+public class RowIdHolderRecord extends AbstractRecord {
 
     private final static String name = "KY_0C81_";
 
-    private long rowid;
+    private long rowId;
 
-    public RowidHolderRecord() {
+    public RowIdHolderRecord() {
         super(new RecordMetadata() {
 
             private final RecordColumnMetadata columnMetadata = new RecordColumnMetadata() {
@@ -73,7 +73,7 @@ public class RowidHolderRecord extends AbstractRecord {
 
             @Override
             public int getColumnIndex(CharSequence name) {
-                if (Chars.equals(RowidHolderRecord.name, name)) {
+                if (Chars.equals(RowIdHolderRecord.name, name)) {
                     return 0;
                 }
                 throw new JournalRuntimeException("Invalid column name: %s", name);
@@ -128,12 +128,12 @@ public class RowidHolderRecord extends AbstractRecord {
 
     @Override
     public long getLong(int col) {
-        return rowid;
+        return rowId;
     }
 
     @Override
     public long getRowId() {
-        return rowid;
+        return rowId;
     }
 
     @Override
@@ -156,8 +156,8 @@ public class RowidHolderRecord extends AbstractRecord {
         throw new UnsupportedOperationException();
     }
 
-    public RowidHolderRecord init(long rowid) {
-        this.rowid = rowid;
+    public RowIdHolderRecord init(long rowid) {
+        this.rowId = rowid;
         return this;
     }
 }

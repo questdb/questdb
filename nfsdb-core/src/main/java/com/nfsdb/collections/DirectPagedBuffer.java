@@ -20,10 +20,11 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Unsafe;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.OutputStream;
 
-public class DirectPagedBuffer extends DirectMemoryStructure {
+public class DirectPagedBuffer implements Closeable {
     private final int pageCapacity;
     private final int mask;
     private final int bits;
@@ -95,8 +96,6 @@ public class DirectPagedBuffer extends DirectMemoryStructure {
     }
 
     public long toAddress(long offset) {
-        //        assert pageIndex < pages.size();
-//        assert pages.get(pageIndex) != 0;
         return pages.get((int) (offset >> bits)) + (offset & mask);
     }
 
@@ -146,20 +145,6 @@ public class DirectPagedBuffer extends DirectMemoryStructure {
         return readLen;
     }
 
-    @Override
-    protected void freeInternal() {
-        if (pages != null) {
-            for (int i = 0; i < pages.size(); i++) {
-                long address = pages.get(i);
-                if (address != 0) {
-                    Unsafe.getUnsafe().freeMemory(address);
-                }
-            }
-            pages.free();
-            pages = null;
-        }
-    }
-
     private long allocateAddressChecked(long length) {
         if (length > pageCapacity) {
             throw new JournalRuntimeException("Failed to allocate page of length %d. Maximum page size %d", length, pageCapacity);
@@ -176,5 +161,19 @@ public class DirectPagedBuffer extends DirectMemoryStructure {
     private long allocatePage() {
         pages.add(Unsafe.getUnsafe().allocateMemory(pageCapacity));
         return (pages.size() - 1) * pageCapacity;
+    }
+
+    @Override
+    public void close() throws IOException {
+        if (pages != null) {
+            for (int i = 0; i < pages.size(); i++) {
+                long address = pages.get(i);
+                if (address != 0) {
+                    Unsafe.getUnsafe().freeMemory(address);
+                }
+            }
+            pages.close();
+            pages = null;
+        }
     }
 }

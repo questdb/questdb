@@ -385,6 +385,14 @@ public class MultiMap extends DirectMemoryStructure {
             return this;
         }
 
+        public KeyWriter putFloat(float value) {
+            checkSize(4);
+            Unsafe.getUnsafe().putFloat(appendAddr, value);
+            appendAddr += 4;
+            writeOffset();
+            return this;
+        }
+
         public KeyWriter putStr(CharSequence value) {
             int len = value.length();
             checkSize(len << 1);
