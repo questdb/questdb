@@ -21,7 +21,6 @@ import com.nfsdb.collections.DirectIntList;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.mmap.MultiMap;
 import com.nfsdb.collections.mmap.MultiRecordMap;
-import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.RandomAccessRecordSource;
 import com.nfsdb.ql.Record;
@@ -29,28 +28,46 @@ import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.ql.RecordSource;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+import java.io.Closeable;
+import java.io.IOException;
+
 import static com.nfsdb.ql.impl.KeyWriterHelper.setKey;
 
-public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord> implements RecordSource<SplitRecord> {
+public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord> implements RecordSource<SplitRecord>, Closeable {
     private final RecordSource<? extends Record> masterSource;
-    private final RandomAccessRecordSource<? extends Record> slaveSource;
+    private final RecordSource<? extends Record> slaveSource;
+    private final HashJoinStoreStrategyContext hashStrategyContext;
     private final SplitRecordMetadata metadata;
-    private final MultiRecordMap hashTable;
+    private MultiRecordMap hashTable;
     private final SplitRecord currentRecord;
     private final ObjList<RecordColumnMetadata> masterColumns = new ObjList<>();
     private final ObjList<RecordColumnMetadata> slaveColumns = new ObjList<>();
     private final DirectIntList masterColIndex = new DirectIntList();
     private final DirectIntList slaveColIndex = new DirectIntList();
-    private final RowIdHolderRecord rowIdRecord = new RowIdHolderRecord();
     private RecordSource<? extends Record> hashTableSource;
     private boolean hashTablePending = true;
 
-    public HashJoinRecordSource(RecordSource<? extends Record> masterSource, ObjList<String> masterColumns, RandomAccessRecordSource<? extends Record> slaveSource, ObjList<String> slaveColumns) {
+    private HashJoinRecordSource(RecordSource<? extends Record> masterSource, ObjList<String> masterColumns,
+                                    RecordSource<? extends Record> slaveSource, ObjList<String> slaveColumns, HashJoinStoreStrategyContext hashStrategyContext) {
         this.masterSource = masterSource;
         this.slaveSource = slaveSource;
+        this.hashStrategyContext = hashStrategyContext;
         this.metadata = new SplitRecordMetadata(masterSource.getMetadata(), slaveSource.getMetadata());
         this.currentRecord = new SplitRecord(metadata, masterSource.getMetadata().getColumnCount());
+        this.hashTable = buildHashTable(masterSource, masterColumns, slaveSource, slaveColumns);
+    }
 
+    public static HashJoinRecordSource fromRandomAccessSource(RecordSource<? extends Record> masterSource, ObjList<String> masterColumns,
+                                                              RandomAccessRecordSource<? extends Record> slaveSource, ObjList<String> slaveColumns) {
+        return new HashJoinRecordSource(masterSource, masterColumns, slaveSource, slaveColumns, new HashJoinRowIdStoreStrategyContext(slaveSource));
+    }
+
+    public static HashJoinRecordSource fromSource(RecordSource<? extends Record> masterSource, ObjList<String> masterColumns,
+                                                              RecordSource<? extends Record> slaveSource, ObjList<String> slaveColumns) {
+        return new HashJoinRecordSource(masterSource, masterColumns, slaveSource, slaveColumns, new HashJoinRecordStoreStrategyContext(slaveSource));
+    }
+
+    protected MultiRecordMap buildHashTable(RecordSource<? extends Record> masterSource, ObjList<String> masterColumns, RecordSource<? extends Record> slaveSource, ObjList<String> slaveColumns) {
         RecordMetadata mm = masterSource.getMetadata();
         for (int i = 0, k = masterColumns.size(); i < k; i++) {
             int index = mm.getColumnIndex(masterColumns.get(i));
@@ -66,8 +83,8 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord>
             this.slaveColumns.add(sm.getColumn(index));
             builder.keyColumn(sm.getColumn(index));
         }
-        builder.setRecordMetadata(rowIdRecord.getMetadata());
-        this.hashTable = builder.build();
+        builder.setRecordMetadata(hashStrategyContext.getHashRecordMetadata());
+        return builder.build();
     }
 
     @Override
@@ -78,7 +95,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord>
     @Override
     public boolean hasNext() {
         if (hashTableSource != null && hashTableSource.hasNext()) {
-            currentRecord.setB(slaveSource.getByRowId(hashTableSource.next().getLong(0)));
+            currentRecord.setB(hashStrategyContext.getNextSlave(hashTableSource.next()));
             return true;
         }
         return hasNext0();
@@ -100,12 +117,11 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord>
         for (Record r : slaveSource) {
             MultiMap.KeyWriter key = hashTable.claimKey();
             for (int i = 0, k = slaveColumns.size(); i < k; i++) {
-                setKey(key, r, slaveColumns.get(i).getType(), i);
+                setKey(key, r, slaveColumns.get(i).getType(), slaveColIndex.get(i));
             }
-            hashTable.add(key, rowIdRecord.init(r.getRowId()));
+            hashTable.add(key, hashStrategyContext.getHashTableRecord(r));
         }
     }
-
     private boolean hasNext0() {
 
         if (hashTablePending) {
@@ -127,10 +143,18 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord>
             hashTableSource = hashTable.get(key);
 
             if (hashTableSource.hasNext()) {
-                currentRecord.setB(slaveSource.getByRowId(hashTableSource.next().getLong(0)));
+                currentRecord.setB(hashStrategyContext.getNextSlave(hashTableSource.next()));
                 return true;
             }
         }
         return false;
+    }
+
+    @Override
+    public void close() throws IOException {
+        if (hashTable != null) {
+            hashTable.close();
+            hashTable = null;
+        }
     }
 }

@@ -66,6 +66,40 @@ public class HashJoinRecordSourceTest {
     }
 
     @Test
+    public void simpleJoinRowId() throws Exception {
+        bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
+        bw.append(new Band().setName("band2").setType("blues").setUrl("http://band2.com"));
+        bw.append(new Band().setName("band3").setType("jazz").setUrl("http://band3.com"));
+        bw.append(new Band().setName("band1").setType("jazz").setUrl("http://new.band1.com"));
+
+        bw.commit();
+
+        aw.append(new Album().setName("album X").setBand("band1").setGenre("pop"));
+        aw.append(new Album().setName("album Y").setBand("band3").setGenre("metal"));
+        aw.append(new Album().setName("album BZ").setBand("band1").setGenre("rock"));
+
+        aw.commit();
+
+        StringSink sink = new StringSink();
+        RecordSourcePrinter p = new RecordSourcePrinter(sink);
+        HashJoinRecordSource joinResult = HashJoinRecordSource.fromRandomAccessSource(
+                new JournalSource(new JournalPartitionSource(bw, false), new AllRowSource()),
+                new ObjList<String>() {{
+                    add("name");
+                }},
+                new JournalSource(new JournalPartitionSource(aw, false), new AllRowSource()),
+                new ObjList<String>() {{
+                    add("band");
+                }}
+        );
+        p.printColumns(
+                joinResult, joinResult.getMetadata().getColumnIndex("genre")
+        );
+        Assert.assertEquals("rock\tpop\tmetal\trock\tpop", sink.toString());
+    }
+
+
+    @Test
     public void simpleJoin() throws Exception {
         bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
         bw.append(new Band().setName("band2").setType("blues").setUrl("http://band2.com"));
@@ -82,7 +116,7 @@ public class HashJoinRecordSourceTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        HashJoinRecordSource joinResult = new HashJoinRecordSource(
+        HashJoinRecordSource joinResult = HashJoinRecordSource.fromSource(
                 new JournalSource(new JournalPartitionSource(bw, false), new AllRowSource()),
                 new ObjList<String>() {{
                     add("name");
@@ -107,7 +141,7 @@ public class HashJoinRecordSourceTest {
         JournalWriter<Quote> w2 = factory.writer(Quote.class, "q2");
         TestUtils.generateQuoteData(w2, 10000);
 
-        HashJoinRecordSource j = new HashJoinRecordSource(
+        HashJoinRecordSource j = HashJoinRecordSource.fromRandomAccessSource(
                 new JournalSource(new JournalPartitionSource(w1, false), new AllRowSource()),
                 new ObjList<String>() {{
                     add("sym");
@@ -120,7 +154,7 @@ public class HashJoinRecordSourceTest {
 
         long t = System.currentTimeMillis();
         int count = 0;
-        ExportManager.export(j, new File("d:/join.csv"), TextFileFormat.TAB);
+        ExportManager.export(j, new File("c:/temp/join.csv"), TextFileFormat.TAB);
 //        while (j.hasNext()) {
 //            j.next();
 //            count++;

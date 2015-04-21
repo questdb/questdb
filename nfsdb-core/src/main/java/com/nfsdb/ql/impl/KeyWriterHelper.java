@@ -28,37 +28,37 @@ public final class KeyWriterHelper {
     public static void setKey(MultiMap.KeyWriter key, Record r, ColumnType columnType, int columnIndex) {
         switch (columnType) {
             case BOOLEAN:
-                key.putBoolean(r.getBool(r.get(columnIndex)));
+                key.putBoolean(r.getBool(columnIndex));
                 break;
             case BYTE:
-                key.putByte(r.get(r.get(columnIndex)));
+                key.putByte(r.get(columnIndex));
                 break;
             case DOUBLE:
-                key.putDouble(r.getDouble(r.get(columnIndex)));
+                key.putDouble(r.getDouble(columnIndex));
                 break;
             case INT:
-                key.putInt(r.getInt(r.get(columnIndex)));
+                key.putInt(r.getInt(columnIndex));
                 break;
             case LONG:
-                key.putLong(r.getLong(r.get(columnIndex)));
+                key.putLong(r.getLong(columnIndex));
                 break;
             case SHORT:
-                key.putShort(r.getShort(r.get(columnIndex)));
+                key.putShort(r.getShort(columnIndex));
                 break;
             case FLOAT:
-                key.putFloat(r.getFloat(r.get(columnIndex)));
+                key.putFloat(r.getFloat(columnIndex));
                 break;
             case STRING:
-                key.putStr(r.getFlyweightStr(r.get(columnIndex)));
+                key.putStr(r.getFlyweightStr(columnIndex));
                 break;
             case SYMBOL:
-                key.putStr(r.getSym(r.get(columnIndex)));
+                key.putStr(r.getSym(columnIndex));
                 break;
             case BINARY:
-                key.putBin(r.getBin(r.get(columnIndex)));
+                key.putBin(r.getBin(columnIndex));
                 break;
             case DATE:
-                key.putLong(r.getDate(r.get(columnIndex)));
+                key.putLong(r.getDate(columnIndex));
                 break;
             default:
                 throw new JournalRuntimeException("Unsupported type: " + columnType);
