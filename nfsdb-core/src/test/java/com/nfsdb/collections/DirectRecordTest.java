@@ -73,7 +73,8 @@ public class DirectRecordTest {
                             assertEquals(failedMsg + " byte " + j, expectedBin[j], (byte) binCol.read());
                         }
                         assertEquals(failedMsg, expected.aLong, value.getLong(col++));
-                        assertEquals(failedMsg, expected.aDouble, value.getDouble(col), 0.0001);
+                        assertEquals(failedMsg, expected.aDouble, value.getDouble(col++), 0.0001);
+                        assertEquals(failedMsg, expected.aFloat, value.getFloat(col), 0.0001);
                     }
 
                     @Override
@@ -87,6 +88,7 @@ public class DirectRecordTest {
                         af.aBool = i % 2 == 0;
                         af.aByte = (byte) (i % 255);
                         af.aDouble = i * Math.PI;
+                        af.aFloat = (float) (Math.PI / i);
                         af.aLong = i * 2;
                         af.anInt = i;
                         af.aShort = (short) (i / 2);
@@ -234,6 +236,7 @@ public class DirectRecordTest {
         ByteBuffer aBinary;
         long aLong;
         double aDouble;
+        float aFloat;
     }
 
     private static class Binary {

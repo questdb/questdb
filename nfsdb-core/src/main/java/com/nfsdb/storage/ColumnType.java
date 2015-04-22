@@ -22,7 +22,7 @@ public enum ColumnType {
     BOOLEAN(boolean.class, 1),
     BYTE(byte.class, 1),
     DOUBLE(double.class, 8),
-    FLOAT(double.class, 4),
+    FLOAT(float.class, 4),
     INT(int.class, 4),
     LONG(long.class, 8),
     SHORT(short.class, 2),
