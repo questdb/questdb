@@ -88,7 +88,7 @@ public class CstTest {
                 )
         );
 
-        RecordSourceColumn sym = new RecordSourceColumn("sym", m);
+        RecordSourceColumn sym = new RecordSourceColumn("sym", m.getMetadata());
         sym.configureSource(m);
 
         RecordSource<? extends Record> src = new NestedLoopJoinRecordSource(

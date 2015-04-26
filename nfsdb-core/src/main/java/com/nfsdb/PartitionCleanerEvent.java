@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,8 +18,8 @@ package com.nfsdb;
 
 import com.lmax.disruptor.EventFactory;
 
-public class PartitionCleanerEvent {
-    public static final EventFactory<PartitionCleanerEvent> EVENT_FACTORY = new EventFactory<PartitionCleanerEvent>() {
+class PartitionCleanerEvent {
+    static final EventFactory<PartitionCleanerEvent> EVENT_FACTORY = new EventFactory<PartitionCleanerEvent>() {
         @Override
         public PartitionCleanerEvent newInstance() {
             return new PartitionCleanerEvent();

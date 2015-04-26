@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,8 @@ package com.nfsdb.collections;
 
 import com.nfsdb.utils.Numbers;
 
+import java.util.Arrays;
+
 public class IntStack {
     public static final int noEntryValue = -1;
     private static final int MIN_INITIAL_CAPACITY = 8;
@@ -32,15 +34,9 @@ public class IntStack {
     }
 
     public void clear() {
-        int h = head;
-        int t = tail;
-        if (h != t) {
+        if (head != tail) {
             head = tail = 0;
-            int i = h;
-            do {
-                elements[i] = noEntryValue;
-                i = (i + 1) & mask;
-            } while (i != t);
+            Arrays.fill(elements, noEntryValue);
         }
     }
 
@@ -62,6 +58,10 @@ public class IntStack {
         return head != tail;
     }
 
+    public int peek() {
+        return elements[head];
+    }
+
     public int pop() {
         int h = head;
         int result = elements[h];
@@ -75,12 +75,17 @@ public class IntStack {
 
     public void push(int e) {
         elements[head = (head - 1) & mask] = e;
-        if (head == tail)
+        if (head == tail) {
             doubleCapacity();
+        }
     }
 
     public int size() {
         return (tail - head) & mask;
+    }
+
+    public void update(int e) {
+        elements[head] = e;
     }
 
     private void allocateElements(int capacity) {

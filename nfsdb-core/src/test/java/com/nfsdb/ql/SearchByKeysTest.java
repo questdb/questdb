@@ -64,7 +64,7 @@ public class SearchByKeysTest {
         Journal<Order> journal = prepareTestData();
         IntParameter param = new IntParameter();
         IntEqualsOperator filter = new IntEqualsOperator();
-        filter.setLhs(new RecordSourceColumn("id", journal));
+        filter.setLhs(new RecordSourceColumn("id", journal.getMetadata()));
         filter.setRhs(param);
 
         //**QUERY
@@ -98,7 +98,7 @@ public class SearchByKeysTest {
 
         StringParameter param = new StringParameter();
         StringEqualsOperator filter = new StringEqualsOperator();
-        filter.setLhs(new RecordSourceColumn("strId", journal));
+        filter.setLhs(new RecordSourceColumn("strId", journal.getMetadata()));
         filter.setRhs(param);
 
         //**QUERY

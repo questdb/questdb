@@ -30,6 +30,7 @@ import com.nfsdb.model.TestEntity;
 import com.nfsdb.printer.JournalPrinter;
 import com.nfsdb.printer.appender.AssertingAppender;
 import com.nfsdb.printer.converter.DateConverter;
+import com.nfsdb.ql.model.ExprNode;
 import com.nfsdb.query.ResultSet;
 import com.nfsdb.query.iterator.JournalIterator;
 import com.nfsdb.storage.ColumnType;
@@ -398,6 +399,23 @@ public final class TestUtils {
         try (JournalPrinter p = new JournalPrinter()) {
             configure(p, iterator.getJournal().getMetadata());
             out(p, iterator);
+        }
+    }
+
+    public static String toRpn(ExprNode node) {
+        switch (node.paramCount) {
+            case 0:
+                return node.token;
+            case 1:
+                return toRpn(node.rhs) + node.token;
+            case 2:
+                return toRpn(node.lhs) + toRpn(node.rhs) + node.token;
+            default:
+                String result = "";
+                for (int i = 0; i < node.paramCount; i++) {
+                    result = toRpn(node.args.get(i)) + result;
+                }
+                return result + node.token;
         }
     }
 

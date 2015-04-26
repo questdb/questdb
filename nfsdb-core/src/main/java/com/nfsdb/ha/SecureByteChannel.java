@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -59,11 +59,6 @@ class SecureByteChannel implements ByteChannel {
     }
 
     @Override
-    public boolean isOpen() {
-        return underlying.isOpen();
-    }
-
-    @Override
     public void close() throws IOException {
         underlying.close();
         ByteBuffers.release(inBuf);
@@ -76,10 +71,15 @@ class SecureByteChannel implements ByteChannel {
         while (!engine.isInboundDone()) {
             try {
                 engine.closeInbound();
-            } catch (SSLException e) {
+            } catch (SSLException ignored) {
                 // ignore
             }
         }
+    }
+
+    @Override
+    public boolean isOpen() {
+        return underlying.isOpen();
     }
 
     @Override
@@ -199,7 +199,6 @@ class SecureByteChannel implements ByteChannel {
                     }
                     outBuf.flip();
                     underlying.write(outBuf);
-//                    LOGGER.info("WRAP: %s", client ? "CLIENT" : "SERVER");
                     break;
                 case NEED_UNWRAP:
 
@@ -211,12 +210,10 @@ class SecureByteChannel implements ByteChannel {
                     }
 
                     try {
-
                         SSLEngineResult res = engine.unwrap(inBuf, swapBuf);
                         handshakeStatus = res.getHandshakeStatus();
                         switch (res.getStatus()) {
                             case BUFFER_UNDERFLOW:
-//                                LOGGER.info("HSH UNDERFL: %s", client ? "CLIENT" : "SERVER");
                                 inBuf.compact();
                                 underlying.read(inBuf);
                                 inBuf.flip();
@@ -224,13 +221,10 @@ class SecureByteChannel implements ByteChannel {
                             case BUFFER_OVERFLOW:
                                 throw new IOException("Did not expect OVERFLOW here");
                             case OK:
-//                                LOGGER.info("HSH OK: %s", client ? "CLIENT" : "SERVER");
                                 break;
                             case CLOSED:
                                 throw new IOException("Did not expect CLOSED");
                         }
-
-//                        LOGGER.info("UNWRAP: %s, %d, %s", client ? "CLIENT" : "SERVER", inBuf.remaining(), res.getStatus());
                     } catch (SSLException e) {
                         LOGGER.error("Client SSL handshake failed: %s", e.getMessage());
                         throw e;
@@ -242,7 +236,6 @@ class SecureByteChannel implements ByteChannel {
                         task.run();
                     }
                     handshakeStatus = engine.getHandshakeStatus();
-//                    LOGGER.info("TASK: %s", client ? "CLIENT" : "SERVER");
                     break;
                 default:
                     throw new JournalRuntimeException("Unknown handshake status: %s", handshakeStatus);
@@ -261,16 +254,13 @@ class SecureByteChannel implements ByteChannel {
             SSLEngineResult.Status status = engine.unwrap(inBuf, dst).getStatus();
             switch (status) {
                 case BUFFER_UNDERFLOW:
-//                    LOGGER.info("UNDERFL: %s", client ? "CLIENT" : "SERVER");
                     inBuf.compact();
                     underlying.read(inBuf);
                     inBuf.flip();
                     break;
                 case BUFFER_OVERFLOW:
-//                    LOGGER.info("OVERFL: %s", client ? "CLIENT" : "SERVER");
                     return false;
                 case OK:
-//                    LOGGER.info("OK: %s", client ? "CLIENT" : "SERVER");
                     break;
                 case CLOSED:
                     throw new IOException("Did not expect CLOSED");

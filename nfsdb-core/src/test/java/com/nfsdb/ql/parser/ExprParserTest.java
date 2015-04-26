@@ -56,6 +56,12 @@ public class ExprParserTest {
     }
 
     @Test
+    public void testInOperator() throws Exception {
+        x("a10=bxyinand", "a = 10 and b in (x,y)");
+
+    }
+
+    @Test
     public void testLiteralExit() throws Exception {
         x("abxybzc*+", "a + b * c(b(x,y),z) lit");
     }

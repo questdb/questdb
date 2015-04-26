@@ -101,7 +101,7 @@ public class JoinSymbolOnSymbolTest {
                 new JournalSource(new JournalPartitionSource(bw, false), new AllRowSource())
         );
 
-        RecordSourceColumn name = new RecordSourceColumn("name", master);
+        RecordSourceColumn name = new RecordSourceColumn("name", master.getMetadata());
         name.configureSource(master);
 
         out.print(
@@ -149,7 +149,7 @@ public class JoinSymbolOnSymbolTest {
                 new JournalSource(new JournalPartitionSource(bw, false), new AllRowSource())
         );
 
-        RecordSourceColumn name = new RecordSourceColumn("name", master);
+        RecordSourceColumn name = new RecordSourceColumn("name", master.getMetadata());
         name.configureSource(master);
 
         out.print(
@@ -231,7 +231,7 @@ public class JoinSymbolOnSymbolTest {
                 )
         );
 
-        RecordSourceColumn name = new RecordSourceColumn("name", master);
+        RecordSourceColumn name = new RecordSourceColumn("name", master.getMetadata());
         name.configureSource(master);
 
         out.print(
@@ -300,7 +300,7 @@ public class JoinSymbolOnSymbolTest {
                 new JournalSource(new JournalPartitionSource(aw, false), new AllRowSource())
         );
 
-        RecordSourceColumn band = new RecordSourceColumn("band", master);
+        RecordSourceColumn band = new RecordSourceColumn("band", master.getMetadata());
         band.configureSource(master);
 
         out.print(new NestedLoopJoinRecordSource(
@@ -325,7 +325,7 @@ public class JoinSymbolOnSymbolTest {
                         new AllRowSource())
         );
 
-        RecordSourceColumn name = new RecordSourceColumn("name", master);
+        RecordSourceColumn name = new RecordSourceColumn("name", master.getMetadata());
         name.configureSource(master);
 
         return new NestedLoopJoinRecordSource(

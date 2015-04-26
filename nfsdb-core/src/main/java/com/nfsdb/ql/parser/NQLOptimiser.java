@@ -22,12 +22,12 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.NoSuchColumnException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.impl.*;
 import com.nfsdb.ql.model.ExprNode;
 import com.nfsdb.ql.model.QueryColumn;
 import com.nfsdb.ql.model.QueryModel;
-import com.nfsdb.ql.model.Signature;
 import com.nfsdb.ql.ops.*;
 import com.nfsdb.ql.ops.fact.FunctionFactories;
 import com.nfsdb.ql.ops.fact.FunctionFactory;
@@ -47,7 +47,8 @@ public class NQLOptimiser {
     }
 
     public RecordSource<? extends Record> compile(QueryModel model) throws ParserException, JournalException {
-        RecordSource<? extends Record> rs = getRecordSource(model);
+        Journal r = factory.reader(model.getJournalName());
+        RecordSource<? extends Record> rs = new JournalSource(new JournalPartitionSource(r, true), new AllRowSource());
 
         ObjList<QueryColumn> columns = model.getColumns();
         ObjList<VirtualColumn> virtualColumns = new ObjList<>();
@@ -64,8 +65,8 @@ public class NQLOptimiser {
                     selectedColumns.add(node.token);
                     break;
                 default:
-                    VirtualColumn c = createVirtualColumn(qc.getAst(), rs);
                     String colName = qc.getName() == null ? "col" + columnSequence++ : qc.getName();
+                    VirtualColumn c = createVirtualColumn(qc.getAst(), rs.getMetadata());
                     c.setName(colName);
                     selectedColumns.add(colName);
                     virtualColumns.add(c);
@@ -79,7 +80,7 @@ public class NQLOptimiser {
         return new SelectedColumnsRecordSource(rs, selectedColumns);
     }
 
-    private void createColumn(ExprNode node, RecordSource<? extends Record> recordSource) throws ParserException {
+    private void createColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
         Function f;
         Signature sig = new Signature();
         ObjList<VirtualColumn> args = new ObjList<>();
@@ -92,7 +93,7 @@ public class NQLOptimiser {
                 switch (node.type) {
                     case LITERAL:
                         // lookup column
-                        stack.addFirst(lookupColumn(node, recordSource));
+                        stack.addFirst(lookupColumn(node, metadata));
                         break;
                     case CONSTANT:
                         stack.addFirst(parseConstant(node));
@@ -118,7 +119,7 @@ public class NQLOptimiser {
         }
     }
 
-    private VirtualColumn createVirtualColumn(ExprNode node, RecordSource<? extends Record> recordSource) throws ParserException {
+    private VirtualColumn createVirtualColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
         // post-order iterative tree traversal
         // see http://en.wikipedia.org/wiki/Tree_traversal
 
@@ -134,24 +135,18 @@ public class NQLOptimiser {
                 if (peek.rhs != null && lastVisited != peek.rhs) {
                     node = peek.rhs;
                 } else {
-                    createColumn(peek, recordSource);
+                    createColumn(peek, metadata);
                     lastVisited = exprStack.pollFirst();
                 }
             }
         }
-
         return stack.pollFirst();
     }
 
-    private RecordSource<? extends Record> getRecordSource(QueryModel model) throws JournalException {
-        Journal r = factory.reader(model.getJournalName());
-        return new JournalSource(new JournalPartitionSource(r, true), new AllRowSource());
-    }
-
     @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE"})
-    private VirtualColumn lookupColumn(ExprNode node, RecordSource<? extends Record> recordSource) throws ParserException {
+    private VirtualColumn lookupColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
         try {
-            return new RecordSourceColumn(node.token, recordSource);
+            return new RecordSourceColumn(node.token, metadata);
         } catch (NoSuchColumnException e) {
             throw new ParserException(node.position, "No such column: " + node.token);
         }

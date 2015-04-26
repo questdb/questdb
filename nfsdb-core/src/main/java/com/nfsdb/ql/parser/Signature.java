@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ql.model;
+package com.nfsdb.ql.parser;
 
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.storage.ColumnType;

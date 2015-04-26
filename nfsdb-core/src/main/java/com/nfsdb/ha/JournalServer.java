@@ -241,7 +241,7 @@ public class JournalServer {
 
                     fwdElectionMessage(ElectionMessageReason.R2, theirUuid, Command.ELECTED, hops + 1);
                     if (!passiveNotified && clusterStatusListener != null) {
-                        clusterStatusListener.onNodePassive(config.getNodeByUID(theirUuid));
+                        clusterStatusListener.goPassive(config.getNodeByUID(theirUuid));
                         passiveNotified = true;
                     }
                 } else {
@@ -250,7 +250,7 @@ public class JournalServer {
             } else if (leader) {
                 if (!activeNotified && clusterStatusListener != null) {
                     LOGGER.info("%d is THE LEADER", ourUuid);
-                    clusterStatusListener.onNodeActive();
+                    clusterStatusListener.goActive();
                     activeNotified = true;
                 }
             }

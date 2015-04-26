@@ -60,7 +60,7 @@ public class VirtualColumnTest extends AbstractTest {
         VirtualColumnRecordSource src = new VirtualColumnRecordSource(w.rows(), new ObjList<VirtualColumn>() {{
             add(new AddDoubleOperator() {{
                 setName("plus");
-                setLhs(new RecordSourceColumn("bid", w));
+                setLhs(new RecordSourceColumn("bid", w.getMetadata()));
                 setRhs(new DoubleConstant(12.5));
             }});
         }});
@@ -199,7 +199,7 @@ public class VirtualColumnTest extends AbstractTest {
                         new ObjList<VirtualColumn>() {{
                             add(new AddDoubleOperator() {{
                                 setName("plus");
-                                setLhs(new RecordSourceColumn("bid", w));
+                                setLhs(new RecordSourceColumn("bid", w.getMetadata()));
                                 setRhs(new DoubleConstant(12.5));
                             }});
                         }}

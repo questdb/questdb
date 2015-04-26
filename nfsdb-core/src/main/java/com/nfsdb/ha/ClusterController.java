@@ -103,16 +103,16 @@ public class ClusterController {
         private int lastActive = -1;
 
         @Override
-        public void onNodeActive() {
+        public void goActive() {
             if (listener != null) {
-                listener.onNodeActive();
+                listener.goActive();
             }
         }
 
         @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
         @Override
         @SuppressWarnings("unchecked")
-        public void onNodePassive(ServerNode activeNode) {
+        public void goPassive(ServerNode activeNode) {
             if (activeNode.getId() != lastActive) {
 
                 lastActive = activeNode.getId();
@@ -151,7 +151,7 @@ public class ClusterController {
                     });
 
                     if (listener != null) {
-                        listener.onNodePassive(activeNode);
+                        listener.goPassive(activeNode);
                     }
 
                 } catch (JournalNetworkException e) {

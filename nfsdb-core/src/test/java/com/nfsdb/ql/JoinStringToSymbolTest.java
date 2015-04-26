@@ -97,7 +97,7 @@ public class JoinStringToSymbolTest {
                 )
         );
 
-        RecordSourceColumn band = new RecordSourceColumn("band", master);
+        RecordSourceColumn band = new RecordSourceColumn("band", master.getMetadata());
         band.configureSource(master);
 
         StringSink sink = new StringSink();
@@ -145,11 +145,11 @@ public class JoinStringToSymbolTest {
                 )
         );
 
-        RecordSourceColumn band = new RecordSourceColumn("band", master);
+        RecordSourceColumn band = new RecordSourceColumn("band", master.getMetadata());
         band.configureSource(master);
 
         StringEqualsOperator filter = new StringEqualsOperator();
-        filter.setLhs(new RecordSourceColumn("type", bw));
+        filter.setLhs(new RecordSourceColumn("type", bw.getMetadata()));
         filter.setRhs(new StringConstant("rock"));
 
         StringSink sink = new StringSink();

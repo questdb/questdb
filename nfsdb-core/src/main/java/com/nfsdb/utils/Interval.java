@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -89,6 +89,14 @@ public class Interval {
         return (x >= lo && x < hi);
     }
 
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Interval interval = (Interval) o;
+        return hi == interval.hi && lo == interval.lo;
+    }
+
     public String getDirName(PartitionType t) {
         StringSink sink = new StringSink();
         switch (t) {
@@ -121,14 +129,6 @@ public class Interval {
         return 31 * result + (int) (hi ^ (hi >>> 32));
     }
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        Interval interval = (Interval) o;
-        return hi == interval.hi && lo == interval.lo;
-    }
-
     public boolean isAfter(long x) {
         return (lo > x);
     }
@@ -137,8 +137,26 @@ public class Interval {
         return hi <= x;
     }
 
+    public Interval overlap(long lo, long hi) {
+        if (this.lo > lo) {
+            lo = this.lo;
+        }
+        if (this.hi < hi) {
+            hi = this.hi;
+        }
+        return new Interval(lo, hi);
+    }
+
     public boolean overlaps(Interval other) {
         return lo < other.hi && other.lo < hi;
+    }
+
+    @Override
+    public String toString() {
+        return "Interval{" +
+                "lo=" + Dates.toString(lo) +
+                ", hi=" + Dates.toString(hi) +
+                '}';
     }
 }
 

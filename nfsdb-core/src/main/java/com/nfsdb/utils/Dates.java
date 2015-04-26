@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -337,90 +337,103 @@ final public class Dates {
     // YYYY-MM-DDThh:mm:ss.mmm
     @SuppressFBWarnings({"ICAST_INTEGER_MULTIPLY_CAST_TO_LONG"})
     public static long parseDateTime(CharSequence seq) {
-        int p = 0;
-        int year = Numbers.parseInt(seq, p, p += 4);
-        checkChar(seq, p++, '-');
-        int month = Numbers.parseInt(seq, p, p += 2);
-        checkRange(month, 1, 12, "Month");
-        checkChar(seq, p++, '-');
-        boolean l = isLeapYear(year);
-        int day = Numbers.parseInt(seq, p, p += 2);
-        checkRange(day, 1, getDaysPerMonth(month, l), "Day");
-        checkChar(seq, p++, 'T');
-        int hour = Numbers.parseInt(seq, p, p += 2);
-        checkRange(hour, 0, 23, "Hour");
-        checkChar(seq, p++, ':');
-        int min = Numbers.parseInt(seq, p, p += 2);
-        checkRange(min, 0, 59, "Minute");
-        checkChar(seq, p++, ':');
-        int sec = Numbers.parseInt(seq, p, p += 2);
-        checkRange(sec, 0, 59, "Second");
-        int mil = 0;
-        if (seq.charAt(p) == '.') {
-            mil = Numbers.parseInt(seq, ++p, p += 3);
-            checkRange(mil, 0, 999, "Millis");
+        try {
+            int p = 0;
+            int year = Numbers.parseInt(seq, p, p += 4);
+            checkChar(seq, p++, '-');
+            int month = Numbers.parseInt(seq, p, p += 2);
+            checkRange(month, 1, 12, "Month");
+            checkChar(seq, p++, '-');
+            boolean l = isLeapYear(year);
+            int day = Numbers.parseInt(seq, p, p += 2);
+            checkRange(day, 1, getDaysPerMonth(month, l), "Day");
+            checkChar(seq, p++, 'T');
+            int hour = Numbers.parseInt(seq, p, p += 2);
+            checkRange(hour, 0, 23, "Hour");
+            checkChar(seq, p++, ':');
+            int min = Numbers.parseInt(seq, p, p += 2);
+            checkRange(min, 0, 59, "Minute");
+            checkChar(seq, p++, ':');
+            int sec = Numbers.parseInt(seq, p, p += 2);
+            checkRange(sec, 0, 59, "Second");
+            int mil = 0;
+            if (seq.charAt(p) == '.') {
+                mil = Numbers.parseInt(seq, ++p, p += 3);
+                checkRange(mil, 0, 999, "Millis");
+            }
+
+            if (p < seq.length()) {
+                checkChar(seq, p, 'Z');
+            }
+            return yearMillis(year, l)
+                    + monthOfYearMillis(month, l)
+                    + (day - 1) * DAY_MILLIS
+                    + hour * HOUR_MILLIS
+                    + min * MINUTE_MILLIS
+                    + sec * SECOND_MILLIS
+                    + mil;
+
+        } catch (StringIndexOutOfBoundsException e) {
+            throw new NumberFormatException("Invalid date: " + seq.toString());
         }
 
-        if (p < seq.length()) {
-            checkChar(seq, p, 'Z');
-        }
-
-        return yearMillis(year, l)
-                + monthOfYearMillis(month, l)
-                + (day - 1) * DAY_MILLIS
-                + hour * HOUR_MILLIS
-                + min * MINUTE_MILLIS
-                + sec * SECOND_MILLIS
-                + mil;
     }
 
     // YYYY-MM-DD hh:mm:ss
     @SuppressFBWarnings({"ICAST_INTEGER_MULTIPLY_CAST_TO_LONG"})
     public static long parseDateTimeFmt1(CharSequence seq) {
-        int p = 0;
-        int year = Numbers.parseInt(seq, p, p += 4);
-        checkChar(seq, p++, '-');
-        int month = Numbers.parseInt(seq, p, p += 2);
-        checkRange(month, 1, 12, "Month");
-        checkChar(seq, p++, '-');
-        boolean l = isLeapYear(year);
-        int day = Numbers.parseInt(seq, p, p += 2);
-        checkRange(day, 1, getDaysPerMonth(month, l), "Day");
-        checkChar(seq, p++, ' ');
-        int hour = Numbers.parseInt(seq, p, p += 2);
-        checkRange(hour, 0, 23, "Hour");
-        checkChar(seq, p++, ':');
-        int min = Numbers.parseInt(seq, p, p += 2);
-        checkRange(min, 0, 59, "Minute");
-        checkChar(seq, p++, ':');
-        int sec = Numbers.parseInt(seq, p, p + 2);
-        checkRange(sec, 0, 59, "Second");
+        try {
+            int p = 0;
+            int year = Numbers.parseInt(seq, p, p += 4);
+            checkChar(seq, p++, '-');
+            int month = Numbers.parseInt(seq, p, p += 2);
+            checkRange(month, 1, 12, "Month");
+            checkChar(seq, p++, '-');
+            boolean l = isLeapYear(year);
+            int day = Numbers.parseInt(seq, p, p += 2);
+            checkRange(day, 1, getDaysPerMonth(month, l), "Day");
+            checkChar(seq, p++, ' ');
+            int hour = Numbers.parseInt(seq, p, p += 2);
+            checkRange(hour, 0, 23, "Hour");
+            checkChar(seq, p++, ':');
+            int min = Numbers.parseInt(seq, p, p += 2);
+            checkRange(min, 0, 59, "Minute");
+            checkChar(seq, p++, ':');
+            int sec = Numbers.parseInt(seq, p, p + 2);
+            checkRange(sec, 0, 59, "Second");
 
-        return yearMillis(year, l)
-                + monthOfYearMillis(month, l)
-                + (day - 1) * DAY_MILLIS
-                + hour * HOUR_MILLIS
-                + min * MINUTE_MILLIS
-                + sec * SECOND_MILLIS;
+            return yearMillis(year, l)
+                    + monthOfYearMillis(month, l)
+                    + (day - 1) * DAY_MILLIS
+                    + hour * HOUR_MILLIS
+                    + min * MINUTE_MILLIS
+                    + sec * SECOND_MILLIS;
+        } catch (StringIndexOutOfBoundsException e) {
+            throw new NumberFormatException("Invalid date: " + seq.toString());
+        }
     }
 
     // MM/DD/YYYY
     public static long parseDateTimeFmt2(CharSequence seq) {
-        int p = 0;
-        int month = Numbers.parseInt(seq, p, p += 2);
-        checkRange(month, 1, 12, "Month");
-        checkChar(seq, p++, '/');
+        try {
+            int p = 0;
+            int month = Numbers.parseInt(seq, p, p += 2);
+            checkRange(month, 1, 12, "Month");
+            checkChar(seq, p++, '/');
 
-        int year = Numbers.parseInt(seq, p + 3, p + 7);
-        boolean l = isLeapYear(year);
+            int year = Numbers.parseInt(seq, p + 3, p + 7);
+            boolean l = isLeapYear(year);
 
-        int day = Numbers.parseInt(seq, p, p += 2);
-        checkRange(day, 1, getDaysPerMonth(month, l), "Day");
-        checkChar(seq, p, '/');
+            int day = Numbers.parseInt(seq, p, p += 2);
+            checkRange(day, 1, getDaysPerMonth(month, l), "Day");
+            checkChar(seq, p, '/');
 
-        return yearMillis(year, l)
-                + monthOfYearMillis(month, l)
-                + (day - 1) * DAY_MILLIS;
+            return yearMillis(year, l)
+                    + monthOfYearMillis(month, l)
+                    + (day - 1) * DAY_MILLIS;
+        } catch (StringIndexOutOfBoundsException e) {
+            throw new NumberFormatException("Invalid date: " + seq.toString());
+        }
     }
 
     public static long toMillis(int y, int m, int d) {
@@ -438,6 +451,20 @@ final public class Dates {
         StringSink sink = new StringSink();
         Dates.appendDateTime(sink, millis);
         return sink.toString();
+    }
+
+    public static long tryParse(CharSequence s) {
+        try {
+            return parseDateTime(s);
+        } catch (NumberFormatException ignore) {
+        }
+
+        try {
+            return parseDateTimeFmt1(s);
+        } catch (NumberFormatException ignore) {
+        }
+
+        return parseDateTimeFmt2(s);
     }
 
     /**
@@ -511,5 +538,4 @@ final public class Dates {
             MAX_MONTH_OF_YEAR_MILLIS[i + 1] = maxSum;
         }
     }
-
 }

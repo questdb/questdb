@@ -19,6 +19,8 @@ package com.nfsdb.collections;
 import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Unsafe;
 
+import java.util.Arrays;
+
 public class ObjList<T> {
     public static final int DEFAULT_ARRAY_SIZE = 16;
     private T[] buffer;
@@ -44,6 +46,7 @@ public class ObjList<T> {
 
     public void clear() {
         pos = 0;
+        Arrays.fill(buffer, null);
     }
 
     public void ensureCapacity(int capacity) {

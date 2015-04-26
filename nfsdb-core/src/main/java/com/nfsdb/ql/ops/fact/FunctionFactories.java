@@ -17,7 +17,7 @@
 package com.nfsdb.ql.ops.fact;
 
 import com.nfsdb.collections.ObjObjHashMap;
-import com.nfsdb.ql.model.Signature;
+import com.nfsdb.ql.parser.Signature;
 import com.nfsdb.storage.ColumnType;
 
 public final class FunctionFactories {

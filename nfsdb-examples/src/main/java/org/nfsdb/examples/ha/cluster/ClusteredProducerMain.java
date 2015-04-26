@@ -89,13 +89,13 @@ public class ClusteredProducerMain {
         }
 
         @Override
-        public void onNodeActive() {
+        public void goActive() {
             System.out.println("This node is active");
             (worker = new Worker(writer)).start();
         }
 
         @Override
-        public void onNodePassive(ServerNode activeNode) {
+        public void goPassive(ServerNode activeNode) {
             System.out.println("This node is standing by");
             stopWorker();
         }

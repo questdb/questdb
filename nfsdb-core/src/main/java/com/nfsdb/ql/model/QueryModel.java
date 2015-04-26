@@ -21,7 +21,7 @@ import com.nfsdb.collections.ObjList;
 public class QueryModel {
     private final ObjList<QueryColumn> columns = new ObjList<>();
     private final ObjList<String> groupByValues = new ObjList<>();
-    private final ObjList<ExprNode> whereClauses = new ObjList<>();
+    private ExprNode whereClause;
     private String journalName;
     private ExprNode mostRecentBy;
 
@@ -29,9 +29,6 @@ public class QueryModel {
         columns.add(column);
     }
 
-    public void addWhereClause(ExprNode node) {
-        whereClauses.add(node);
-    }
 
     public ObjList<QueryColumn> getColumns() {
         return columns;
@@ -53,7 +50,11 @@ public class QueryModel {
         this.mostRecentBy = mostRecentBy;
     }
 
-    public ObjList<ExprNode> getWhereClauses() {
-        return whereClauses;
+    public ExprNode getWhereClause() {
+        return whereClause;
+    }
+
+    public void setWhereClause(ExprNode whereClause) {
+        this.whereClause = whereClause;
     }
 }

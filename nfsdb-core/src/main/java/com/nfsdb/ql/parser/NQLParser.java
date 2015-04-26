@@ -225,7 +225,7 @@ public class NQLParser {
         // expect [where]
 
         if (tok != null && Chars.equals(tok, "where")) {
-            parseWhereClause(model);
+            model.setWhereClause(expr());
         }
 
         return new Statement(StatementType.QUERY_JOURNAL, model);
@@ -262,20 +262,6 @@ public class NQLParser {
 
             if (!Chars.equals(tok, ',')) {
                 throw err(", expected");
-            }
-        }
-    }
-
-    private void parseWhereClause(QueryModel model) throws ParserException {
-        CharSequence tok;
-        while (true) {
-            model.addWhereClause(expr());
-
-            tok = optionTok();
-
-            if (tok == null || !Chars.equals(tok, ",")) {
-                tokenStream.unparse();
-                break;
             }
         }
     }

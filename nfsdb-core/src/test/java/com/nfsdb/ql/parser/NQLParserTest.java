@@ -33,7 +33,7 @@ public class NQLParserTest extends AbstractTest {
     @Test
     public void testMostRecentWhereClause() throws Exception {
         NQLParser parser = new NQLParser();
-        parser.setContent("select a+b*c x, sum(z)+25 ohoh from zyzy latest by x where a in (x,y), b = 10");
+        parser.setContent("select a+b*c x, sum(z)+25 ohoh from zyzy latest by x where a in (x,y) and b = 10");
         Statement statement = parser.parse();
         Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
         // journal name
@@ -43,9 +43,7 @@ public class NQLParserTest extends AbstractTest {
         Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getName());
         Assert.assertEquals("ohoh", statement.getQueryModel().getColumns().get(1).getName());
         // where
-        Assert.assertEquals(2, statement.getQueryModel().getWhereClauses().size());
-        Assert.assertEquals("in", statement.getQueryModel().getWhereClauses().get(0).token);
-        Assert.assertEquals("=", statement.getQueryModel().getWhereClauses().get(1).token);
+        Assert.assertEquals("axyinb10=and", TestUtils.toRpn(statement.getQueryModel().getWhereClause()));
         // most recent by
         Assert.assertNotNull(statement.getQueryModel().getMostRecentBy());
         Assert.assertEquals("x", statement.getQueryModel().getMostRecentBy().token);
@@ -101,13 +99,10 @@ public class NQLParserTest extends AbstractTest {
 
         NQLParser parser = new NQLParser();
         parser.setContent("select sym, 1-(bid+ask)/2 mid, bid, ask from q");
-        Statement statement = parser.parse();
-
         NQLOptimiser opt = new NQLOptimiser(factory);
-
         CharSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        p.print(opt.compile(statement.getQueryModel()));
+        p.print(opt.compile(parser.parse().getQueryModel()));
 
 
         final String expected = "BT-A.L\t0.474883438625\t0.000001189157\t1.050231933594\n" +
@@ -219,7 +214,7 @@ public class NQLParserTest extends AbstractTest {
     @Test
     public void testWhereClause() throws Exception {
         NQLParser parser = new NQLParser();
-        parser.setContent("select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y), b = 10");
+        parser.setContent("select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 10");
         Statement statement = parser.parse();
         Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
         // journal name
@@ -229,8 +224,19 @@ public class NQLParserTest extends AbstractTest {
         Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getName());
         Assert.assertEquals("ohoh", statement.getQueryModel().getColumns().get(1).getName());
         // where
-        Assert.assertEquals(2, statement.getQueryModel().getWhereClauses().size());
-        Assert.assertEquals("in", statement.getQueryModel().getWhereClauses().get(0).token);
-        Assert.assertEquals("=", statement.getQueryModel().getWhereClauses().get(1).token);
+        Assert.assertEquals("axyinb10=and", TestUtils.toRpn(statement.getQueryModel().getWhereClause()));
+    }
+
+    //todo: rework
+    @Test
+    public void testWhereClauseQuery() throws Exception {
+        JournalWriter<Quote> w = factory.writer(Quote.class, "q");
+        TestUtils.generateQuoteData(w, 100);
+
+        NQLParser parser = new NQLParser();
+        parser.setContent("select sym, 1-(bid+ask)/2 mid, bid, ask from q where timestamp in (\"2015-01-01T00:00:00.000Z\", \"2015-01-02T00:00:00.000Z\") and sym in (\"XYZ\")");
+        Statement statement = parser.parse();
+        System.out.println("ok");
+        System.out.println(TestUtils.toRpn(statement.getQueryModel().getWhereClause()));
     }
 }

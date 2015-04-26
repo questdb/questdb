@@ -113,7 +113,7 @@ public class SingleJournalSearchTest {
                 "2013-03-13T14:23:20.000Z\tLLOY.L\t0.491420610092\t0.691007955236\t1742184590\t1402169094\tFast trading\tSK\n";
 
         IntEqualsOperator filter = new IntEqualsOperator();
-        filter.setLhs(new RecordSourceColumn("ex", journal));
+        filter.setLhs(new RecordSourceColumn("ex", journal.getMetadata()));
         filter.setRhs(new IntConstant(journal.getSymbolTable("ex").getQuick("SK")));
 
         assertEquals(expected,
@@ -145,7 +145,7 @@ public class SingleJournalSearchTest {
 
         // filter expression
         DoubleGreaterThanOperator gt = new DoubleGreaterThanOperator();
-        gt.setLhs(new RecordSourceColumn("bid", journal));
+        gt.setLhs(new RecordSourceColumn("bid", journal.getMetadata()));
         gt.setRhs(new DoubleConstant(0.4));
 
 

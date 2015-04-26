@@ -16,7 +16,7 @@
 
 package com.nfsdb.ql.model;
 
-import java.util.List;
+import com.nfsdb.collections.ObjList;
 
 public class ExprNode {
 
@@ -27,7 +27,7 @@ public class ExprNode {
     public ExprNode rhs;
     public NodeType type;
     public int paramCount;
-    public List<ExprNode> args;
+    public ObjList<ExprNode> args;
 
     public ExprNode(NodeType type, String token, int precedence, int position) {
         this.type = type;
@@ -51,6 +51,6 @@ public class ExprNode {
     }
 
     public enum NodeType {
-        OPERATION, CONSTANT, LITERAL, FUNCTION, CONTROL
+        OPERATION, CONSTANT, LITERAL, FUNCTION, CONTROL, SET_OPERATION
     }
 }

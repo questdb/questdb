@@ -18,7 +18,6 @@ package com.nfsdb.ql.parser;
 
 import com.nfsdb.collections.IntStack;
 import com.nfsdb.ql.model.ExprNode;
-import com.nfsdb.ql.model.Operator;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;
@@ -130,9 +129,10 @@ public class ExprParser {
                         listener.onNode(node);
                     }
 
-                    if ((node = opStack.peek()) != null && node.type == ExprNode.NodeType.LITERAL) {
+                    // enable operation or literal absorb parameters
+                    if ((node = opStack.peek()) != null && (node.type == ExprNode.NodeType.LITERAL || (node.type == ExprNode.NodeType.SET_OPERATION))) {
+                        node.paramCount = (prevChar == '(' ? 0 : paramCount + 1) + (node.paramCount == 2 ? 1 : 0);
                         node.type = ExprNode.NodeType.FUNCTION;
-                        node.paramCount = prevChar == '(' ? 0 : paramCount + 1;
                         listener.onNode(node);
                         opStack.pollFirst();
                         if (paramCountStack.notEmpty()) {
@@ -151,6 +151,7 @@ public class ExprParser {
                 case '8':
                 case '9':
                 case '"':
+                case '\'':
                     thisBranch = Branch.CONSTANT;
                     // If the token is a number, then add it to the output queue.
                     listener.onNode(new ExprNode(ExprNode.NodeType.CONSTANT, tok.toString(), 0, toks.position()));
@@ -188,14 +189,19 @@ public class ExprParser {
                         while ((other = opStack.peek()) != null) {
                             boolean greaterPrecedence = (op.leftAssociative && op.precedence >= other.precedence) || (!op.leftAssociative && op.precedence > other.precedence);
                             if (greaterPrecedence &&
-                                    (type == Operator.OperatorType.BINARY || (type == Operator.OperatorType.UNARY && other.paramCount == 1))) {
+                                    (type != Operator.OperatorType.UNARY || (type == Operator.OperatorType.UNARY && other.paramCount == 1))) {
                                 listener.onNode(other);
                                 opStack.pollFirst();
                             } else {
                                 break;
                             }
                         }
-                        node = new ExprNode(ExprNode.NodeType.OPERATION, op.token, op.precedence, toks.position());
+                        node = new ExprNode(
+                                op.type == Operator.OperatorType.SET ? ExprNode.NodeType.SET_OPERATION : ExprNode.NodeType.OPERATION,
+                                op.token,
+                                op.precedence,
+                                toks.position()
+                        );
                         switch (type) {
                             case UNARY:
                                 node.paramCount = 1;

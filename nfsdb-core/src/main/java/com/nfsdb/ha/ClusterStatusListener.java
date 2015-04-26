@@ -24,7 +24,7 @@ public interface ClusterStatusListener {
      * Activates producer on current node. This can only happen once in a lifespan of cluster node.
      * Node cannot become neither passive nor active again unless it cluster controller is restarted.
      */
-    void onNodeActive();
+    void goActive();
 
     /**
      * Notifies producer that current node is passive. Current active node is provided as a parameter.
@@ -33,7 +33,7 @@ public interface ClusterStatusListener {
      *
      * @param activeNode current active node
      */
-    void onNodePassive(ServerNode activeNode);
+    void goPassive(ServerNode activeNode);
 
     /**
      * Cluster controller shutdown callback.

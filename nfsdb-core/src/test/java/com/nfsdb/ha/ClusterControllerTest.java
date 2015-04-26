@@ -84,7 +84,7 @@ public class ClusterControllerTest extends AbstractTest {
                 }},
                 new ClusterStatusListener() {
                     @Override
-                    public void onNodeActive() {
+                    public void goActive() {
                         try {
                             TestUtils.generateQuoteData(writer1, 100000);
                             TestUtils.generateQuoteData(writer1, 100000, writer1.getMaxTimestamp());
@@ -103,7 +103,7 @@ public class ClusterControllerTest extends AbstractTest {
                     }
 
                     @Override
-                    public void onNodePassive(ServerNode activeNode) {
+                    public void goPassive(ServerNode activeNode) {
                     }
 
                     @Override
@@ -129,7 +129,7 @@ public class ClusterControllerTest extends AbstractTest {
                 }},
                 new ClusterStatusListener() {
                     @Override
-                    public void onNodeActive() {
+                    public void goActive() {
                         try {
                             actual.set(writer2.size());
                             active2.countDown();
@@ -139,7 +139,7 @@ public class ClusterControllerTest extends AbstractTest {
                     }
 
                     @Override
-                    public void onNodePassive(ServerNode activeNode) {
+                    public void goPassive(ServerNode activeNode) {
                         standby2.countDown();
                     }
 
@@ -334,9 +334,9 @@ public class ClusterControllerTest extends AbstractTest {
 
         controller.start();
         active.await(5, TimeUnit.SECONDS);
-        Assert.assertEquals("onNodeActive() did not fire", 0, active.getCount());
+        Assert.assertEquals("goActive() did not fire", 0, active.getCount());
         standby.await(200, TimeUnit.MILLISECONDS);
-        Assert.assertEquals("onNodePassive() not expected to fire", 1, standby.getCount());
+        Assert.assertEquals("goPassive() not expected to fire", 1, standby.getCount());
 
         controller.halt();
         shutdown.await(5, TimeUnit.SECONDS);
@@ -423,12 +423,12 @@ public class ClusterControllerTest extends AbstractTest {
                 }},
                 new ClusterStatusListener() {
                     @Override
-                    public void onNodeActive() {
+                    public void goActive() {
                         active.incrementAndGet();
                     }
 
                     @Override
-                    public void onNodePassive(ServerNode activeNode) {
+                    public void goPassive(ServerNode activeNode) {
                         standby.incrementAndGet();
                     }
 
@@ -458,12 +458,12 @@ public class ClusterControllerTest extends AbstractTest {
                 }},
                 new ClusterStatusListener() {
                     @Override
-                    public void onNodeActive() {
+                    public void goActive() {
                         active.countDown();
                     }
 
                     @Override
-                    public void onNodePassive(ServerNode activeNode) {
+                    public void goPassive(ServerNode activeNode) {
                         standby.countDown();
                     }
 

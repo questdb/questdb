@@ -51,6 +51,40 @@ public class TokenStreamTest {
     }
 
     @Test
+    public void testQuotedToken() throws Exception {
+        TokenStream ts = new TokenStream();
+        ts.defineSymbol("+");
+        ts.defineSymbol("++");
+        ts.defineSymbol("*");
+
+        ts.setContent("a+\"b\"*abc");
+
+        StringSink sink = new StringSink();
+        for (CharSequence cs : ts) {
+            sink.put(cs);
+        }
+
+        TestUtils.assertEquals("a+\"b\"*abc", sink);
+    }
+
+    @Test
+    public void testSingleQuotedToken() throws Exception {
+        TokenStream ts = new TokenStream();
+        ts.defineSymbol("+");
+        ts.defineSymbol("++");
+        ts.defineSymbol("*");
+
+        ts.setContent("a+'b'*abc");
+
+        StringSink sink = new StringSink();
+        for (CharSequence cs : ts) {
+            sink.put(cs);
+        }
+
+        TestUtils.assertEquals("a+'b'*abc", sink);
+    }
+
+    @Test
     public void testSymbolLookup() throws Exception {
         TokenStream ts = new TokenStream();
         ts.defineSymbol("+");

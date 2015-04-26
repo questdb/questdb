@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ql.model;
+package com.nfsdb.ql.parser;
 
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.ObjObjHashMap;
@@ -35,9 +35,9 @@ public class Operator {
         add(new Operator(">=", 6, true, OperatorType.BINARY));
         add(new Operator("=", 7, true, OperatorType.BINARY));
         add(new Operator("!=", 7, true, OperatorType.BINARY));
-        add(new Operator("in", 7, true, OperatorType.BINARY, false));
-        add(new Operator("&&", 11, true, OperatorType.BINARY));
-        add(new Operator("||", 11, true, OperatorType.BINARY));
+        add(new Operator("in", 7, true, OperatorType.SET, false));
+        add(new Operator("and", 11, true, OperatorType.BINARY, false));
+        add(new Operator("or", 11, true, OperatorType.BINARY, false));
     }};
 
     public final String token;
@@ -69,6 +69,6 @@ public class Operator {
     }
 
     public enum OperatorType {
-        UNARY, BINARY
+        UNARY, BINARY, SET
     }
 }

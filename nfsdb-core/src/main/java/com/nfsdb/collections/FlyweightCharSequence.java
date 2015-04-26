@@ -14,24 +14,32 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ql.parser;
+package com.nfsdb.collections;
 
-import com.nfsdb.io.sink.StringSink;
-import com.nfsdb.ql.model.ExprNode;
-
-public class RpnBuilder implements ExprListener {
-    private final StringSink sink = new StringSink();
+public class FlyweightCharSequence implements CharSequence {
+    private CharSequence delegate;
+    private int lo;
+    private int len;
 
     @Override
-    public void onNode(ExprNode node) {
-        sink.put(node.token);
+    public char charAt(int index) {
+        return delegate.charAt(index + lo);
     }
 
-    public void reset() {
-        sink.clear();
+    @Override
+    public int length() {
+        return len;
     }
 
-    public final CharSequence rpn() {
-        return sink;
+    public FlyweightCharSequence of(CharSequence delegate, int lo, int len) {
+        this.delegate = delegate;
+        this.lo = lo;
+        this.len = len;
+        return this;
+    }
+
+    @Override
+    public CharSequence subSequence(int start, int end) {
+        return null;
     }
 }

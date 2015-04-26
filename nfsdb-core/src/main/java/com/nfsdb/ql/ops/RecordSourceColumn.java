@@ -16,11 +16,9 @@
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.Journal;
 import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.io.sink.CharSink;
-import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordSource;
+import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.storage.SymbolTable;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -30,16 +28,9 @@ public class RecordSourceColumn extends AbstractVirtualColumn {
     private final int index;
 
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
-    public RecordSourceColumn(String name, RecordSource<? extends Record> rs) {
-        super(rs.getMetadata().getColumn(name).getType());
-        this.index = rs.getMetadata().getColumnIndex(name);
-        setName(name);
-    }
-
-    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
-    public RecordSourceColumn(String name, Journal journal) {
-        super(journal.getMetadata().getColumn(name).getType());
-        this.index = journal.getMetadata().getColumnIndex(name);
+    public RecordSourceColumn(String name, RecordMetadata metadata) {
+        super(metadata.getColumn(name).getType());
+        this.index = metadata.getColumnIndex(name);
         setName(name);
     }
 

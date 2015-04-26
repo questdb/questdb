@@ -139,6 +139,7 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
                 case '\'':
                     switch (c) {
                         case '\'':
+                            _hi += 2;
                             return last = floatingSequence;
                         default:
                             _hi++;
@@ -147,6 +148,7 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
                 case '"':
                     switch (c) {
                         case '"':
+                            _hi += 2;
                             return last = floatingSequence;
                         default:
                             _hi++;

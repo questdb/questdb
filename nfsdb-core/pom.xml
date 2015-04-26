@@ -192,6 +192,5 @@
             <version>3.0.0</version>
             <scope>provided</scope>
         </dependency>
-
     </dependencies>
 </project>

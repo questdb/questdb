@@ -16,11 +16,11 @@
 
 package com.nfsdb.ql.parser;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.model.ExprNode;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.Deque;
 
 public class AstBuilder implements ExprListener {
@@ -41,7 +41,7 @@ public class AstBuilder implements ExprListener {
                 node.lhs = stack.pollFirst();
                 break;
             default:
-                ArrayList<ExprNode> a = new ArrayList<>();
+                ObjList<ExprNode> a = new ObjList<>(node.paramCount);
                 for (int i = 0; i < node.paramCount; i++) {
                     a.add(stack.pollFirst());
                 }
