@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -420,7 +420,7 @@ final public class Dates {
     }
 
     public static long parseDateTimeFmt1(CharSequence seq) {
-        return parseDateTimeFmt1(seq, 0, seq.length() - 1);
+        return parseDateTimeFmt1(seq, 0, seq.length());
     }
     // YYYY-MM-DD hh:mm:ss
     @SuppressFBWarnings({"ICAST_INTEGER_MULTIPLY_CAST_TO_LONG"})
@@ -444,7 +444,7 @@ final public class Dates {
             boolean l = isLeapYear(year);
             int day = Numbers.parseInt(seq, p, p += 2);
             checkRange(day, 1, getDaysPerMonth(month, l), "Day");
-            checkChar(seq, p++, lim, 'T');
+            checkChar(seq, p++, lim, ' ');
             if (p + 2 > lim) {
                 throw new NumberFormatException("Two digit number of hours (24h scale) expected: " + seq);
             }
