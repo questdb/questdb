@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,13 +24,13 @@ import java.util.Iterator;
 public class YearPeriodSource implements IntervalSource {
     private final Interval start;
     private final Interval next;
-    private final int m;
+    private final int period;
     private final int count;
     private int pos;
 
-    public YearPeriodSource(Interval start, int m, int count) {
+    public YearPeriodSource(Interval start, int period, int count) {
         this.start = start;
-        this.m = m;
+        this.period = period;
         this.count = count;
         this.next = new Interval(start.getLo(), start.getHi());
     }
@@ -41,11 +41,16 @@ public class YearPeriodSource implements IntervalSource {
     }
 
     @Override
+    public Iterator<Interval> iterator() {
+        return this;
+    }
+
+    @Override
     public Interval next() {
         if (pos++ == 0) {
             return start;
         } else {
-            next.update(Dates.addYear(next.getLo(), m), Dates.addYear(next.getHi(), m));
+            next.update(Dates.addYear(next.getLo(), period), Dates.addYear(next.getHi(), period));
             return next;
         }
     }
@@ -53,10 +58,5 @@ public class YearPeriodSource implements IntervalSource {
     @Override
     public void remove() {
 
-    }
-
-    @Override
-    public Iterator<Interval> iterator() {
-        return this;
     }
 }

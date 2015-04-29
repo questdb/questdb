@@ -84,6 +84,25 @@ final public class Dates {
         return toMillis(_y, _m, _d) + getTime(millis) + (millis < 0 ? 1 : 0);
     }
 
+    public static long addPeriod(long lo, char type, int period) {
+        switch (type) {
+            case 's':
+                return lo + period * Dates.SECOND_MILLIS;
+            case 'm':
+                return lo + period * Dates.MINUTE_MILLIS;
+            case 'h':
+                return Dates.addHours(lo, period);
+            case 'd':
+                return Dates.addDays(lo, period);
+            case 'M':
+                return Dates.addMonths(lo, period);
+            case 'y':
+                return Dates.addYear(lo, period);
+            default:
+                throw new NumberFormatException("Unsupported period: " + type);
+        }
+    }
+
     public static long addYear(long millis, int years) {
         if (years == 0) {
             return millis;
@@ -209,12 +228,6 @@ final public class Dates {
         append0(sink, getDayOfMonth(millis, y, m, l));
     }
 
-    public static int getDayOfMonth(long millis, int year, int month, boolean leap) {
-        long dateMillis = yearMillis(year, leap);
-        dateMillis += monthOfYearMillis(month, leap);
-        return (int) ((millis - dateMillis) / DAY_MILLIS) + 1;
-    }
-
 //    public static int getDayOfWeek(long millis) {
 //        // 1970-01-01 is Thursday.
 //        long d;
@@ -228,6 +241,12 @@ final public class Dates {
 //        }
 //        return 1 + (int) ((d + 3) % 7);
 //    }
+
+    public static int getDayOfMonth(long millis, int year, int month, boolean leap) {
+        long dateMillis = yearMillis(year, leap);
+        dateMillis += monthOfYearMillis(month, leap);
+        return (int) ((millis - dateMillis) / DAY_MILLIS) + 1;
+    }
 
     /**
      * Days in a given month. This method expects you to know if month is in leap year.
@@ -422,6 +441,7 @@ final public class Dates {
     public static long parseDateTimeFmt1(CharSequence seq) {
         return parseDateTimeFmt1(seq, 0, seq.length());
     }
+
     // YYYY-MM-DD hh:mm:ss
     @SuppressFBWarnings({"ICAST_INTEGER_MULTIPLY_CAST_TO_LONG"})
     public static long parseDateTimeFmt1(CharSequence seq, int lo, int lim) {
@@ -477,6 +497,7 @@ final public class Dates {
     public static long parseDateTimeFmt2(CharSequence seq) {
         return parseDateTimeFmt2(seq, 0, seq.length());
     }
+
     // MM/DD/YYYY
     public static long parseDateTimeFmt2(CharSequence seq, int lo, int lim) {
         try {

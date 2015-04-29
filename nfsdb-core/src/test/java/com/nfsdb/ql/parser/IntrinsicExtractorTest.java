@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -69,6 +69,12 @@ public class IntrinsicExtractorTest extends AbstractTest {
         } catch (ParserException e) {
             Assert.assertTrue(e.getMessage().contains("Unknown date format"));
         }
+    }
+
+    @Test
+    public void testComplexInterval() throws Exception {
+        IntrinsicExtractor.IntrinsicModel m = modelOf("timestamp = '2015-05-10T15;4d;1M;5' and timestamp < '2015-05-11T08:00:55.000Z'");
+        System.out.println(m);
     }
 
     @Test
