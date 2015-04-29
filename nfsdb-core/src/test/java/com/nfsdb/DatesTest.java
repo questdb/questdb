@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -149,6 +149,43 @@ public class DatesTest {
     }
 
     @Test
+    public void testIntervalParse() throws Exception {
+        Assert.assertEquals("Interval{lo=2015-01-01T00:00:00.000Z, hi=2015-12-31T23:59:59.999Z}", Dates.parseInterval("2015").toString());
+        Assert.assertEquals("Interval{lo=2014-03-01T00:00:00.000Z, hi=2014-03-31T23:59:59.999Z}", Dates.parseInterval("2014-03").toString());
+        Assert.assertEquals("Interval{lo=2013-05-10T00:00:00.000Z, hi=2013-05-10T23:59:59.999Z}", Dates.parseInterval("2013-05-10").toString());
+        Assert.assertEquals("Interval{lo=2014-07-10T14:00:00.000Z, hi=2014-07-10T14:59:59.999Z}", Dates.parseInterval("2014-07-10T14").toString());
+        Assert.assertEquals("Interval{lo=2014-09-22T10:15:00.000Z, hi=2014-09-22T10:15:59.999Z}", Dates.parseInterval("2014-09-22T10:15").toString());
+        Assert.assertEquals("Interval{lo=2013-08-06T08:25:30.000Z, hi=2013-08-06T08:25:30.999Z}", Dates.parseInterval("2013-08-06T08:25:30").toString());
+    }
+
+    @Test(expected = NumberFormatException.class)
+    public void testIntervalParseBadValue() throws Exception {
+        Dates.parseInterval("2014-31");
+
+    }
+
+    @Test
+    public void testParseBadISODate() throws Exception {
+        expectExceptionDateTime("201");
+        expectExceptionDateTime("2014");
+        expectExceptionDateTime("2014-");
+        expectExceptionDateTime("2014-0");
+        expectExceptionDateTime("2014-03");
+        expectExceptionDateTime("2014-03-");
+        expectExceptionDateTime("2014-03-1");
+        expectExceptionDateTime("2014-03-10");
+        expectExceptionDateTime("2014-03-10T0");
+        expectExceptionDateTime("2014-03-10T01");
+        expectExceptionDateTime("2014-03-10T01-");
+        expectExceptionDateTime("2014-03-10T01:1");
+        expectExceptionDateTime("2014-03-10T01:19");
+        expectExceptionDateTime("2014-03-10T01:19:");
+        expectExceptionDateTime("2014-03-10T01:19:28.");
+        expectExceptionDateTime("2014-03-10T01:19:28.2");
+        expectExceptionDateTime("2014-03-10T01:19:28.255K");
+    }
+
+    @Test
     public void testParseDateTime() throws Exception {
         String date = "2008-02-29T10:54:01.010Z";
         Dates.appendDateTime(sink, Dates.parseDateTime(date));
@@ -196,5 +233,14 @@ public class DatesTest {
         Dates.appendDateTime(sink, Dates.parseDateTime(date));
         Assert.assertEquals(date, sink.toString());
         sink.clear();
+    }
+
+    private void expectExceptionDateTime(String s) {
+        try {
+            Dates.parseDateTime(s);
+            Assert.fail("Expected exception");
+        } catch (NumberFormatException e) {
+            Assert.assertTrue("Received: " + e.getMessage(), e.getMessage().contains("xpected"));
+        }
     }
 }

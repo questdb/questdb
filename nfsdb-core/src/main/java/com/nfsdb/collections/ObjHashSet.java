@@ -22,64 +22,100 @@ import com.nfsdb.utils.Unsafe;
 import java.util.Arrays;
 
 
-public class IntHashSet {
+public class ObjHashSet<T> {
 
     public static final int MIN_INITIAL_CAPACITY = 16;
-    private static final int noEntryValue = -1;
+    private static final Object noEntryValue = new Object();
     private final double loadFactor;
-    private int[] keys;
+    private final ObjList<T> list;
+    private T[] keys;
     private int free;
     private int capacity;
     private int mask;
 
-    public IntHashSet() {
+    public ObjHashSet() {
         this(8);
     }
 
-    public IntHashSet(int initialCapacity) {
+    public ObjHashSet(int initialCapacity) {
         this(initialCapacity, 0.5f);
     }
 
     @SuppressWarnings("unchecked")
-    public IntHashSet(int initialCapacity, double loadFactor) {
+    public ObjHashSet(int initialCapacity, double loadFactor) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
         int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
         this.loadFactor = loadFactor;
-        keys = new int[capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity)];
+        keys = (T[]) new Object[capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity)];
         mask = keys.length - 1;
         free = this.capacity = initialCapacity;
+        list = new ObjList<>(free);
         clear();
     }
 
-    public boolean add(int key) {
+    public boolean add(T key) {
         boolean r = insertKey(key);
-        if (free == 0) {
-            rehash();
+        if (r) {
+            list.add(key);
+            if (free == 0) {
+                rehash();
+            }
         }
         return r;
     }
 
+    public void addAll(ObjHashSet<T> that) {
+        for (int i = 0, k = that.size(); i < k; i++) {
+            add(that.get(i));
+        }
+    }
+
     public final void clear() {
         Arrays.fill(keys, noEntryValue);
+        list.clear();
+    }
+
+    public T get(int index) {
+        return list.getQuick(index);
+    }
+
+    public boolean remove(T key) {
+        if (list.remove(key)) {
+            int index = key.hashCode() & mask;
+
+            if (key == Unsafe.arrayGet(keys, index) || key.equals(Unsafe.arrayGet(keys, index))) {
+                Unsafe.arrayPut(keys, index, noEntryValue);
+                free++;
+                return true;
+            }
+
+            return probeRemove(key, index);
+        }
+        return false;
     }
 
     public int size() {
         return capacity - free;
     }
 
-    private boolean insertKey(int key) {
-        int index = key & mask;
+    @Override
+    public String toString() {
+        return list.toString();
+    }
+
+    private boolean insertKey(T key) {
+        int index = key.hashCode() & mask;
         if (Unsafe.arrayGet(keys, index) == noEntryValue) {
             Unsafe.arrayPut(keys, index, key);
             free--;
             return true;
         }
-        return Unsafe.arrayGet(keys, index) != key && probeInsert(key, index);
+        return !key.equals(Unsafe.arrayGet(keys, index)) && probeInsert(key, index);
     }
 
-    private boolean probeInsert(int key, int index) {
+    private boolean probeInsert(T key, int index) {
         do {
             index = (index + 1) & mask;
             if (Unsafe.arrayGet(keys, index) == noEntryValue) {
@@ -88,8 +124,21 @@ public class IntHashSet {
                 return true;
             }
 
-            if (key == Unsafe.arrayGet(keys, index)) {
+            if (key.equals(Unsafe.arrayGet(keys, index))) {
                 return false;
+            }
+        } while (true);
+    }
+
+    private boolean probeRemove(T key, int index) {
+        do {
+            index = (index + 1) & mask;
+            if (key == Unsafe.arrayGet(keys, index) || key.equals(Unsafe.arrayGet(keys, index))) {
+                Unsafe.arrayPut(keys, index, noEntryValue);
+                free++;
+                return true;
+
+
             }
         } while (true);
     }
@@ -100,8 +149,8 @@ public class IntHashSet {
         mask = newCapacity - 1;
         free = capacity = (int) (newCapacity * loadFactor);
 
-        int[] oldKeys = keys;
-        this.keys = new int[newCapacity];
+        T[] oldKeys = keys;
+        this.keys = (T[]) new Object[newCapacity];
         Arrays.fill(keys, noEntryValue);
 
         for (int i = oldKeys.length; i-- > 0; ) {

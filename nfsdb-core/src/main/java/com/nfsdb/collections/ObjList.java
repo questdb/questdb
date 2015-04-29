@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,8 +41,9 @@ public class ObjList<T> {
         if (pos == buffer.length) {
             extend(pos << 1);
         }
-        setQuick(pos++, value);
+        Unsafe.arrayPut(buffer, pos++, value);
     }
+
 
     public void clear() {
         pos = 0;
@@ -73,6 +74,12 @@ public class ObjList<T> {
             return Unsafe.arrayGet(buffer, index);
         }
         throw new ArrayIndexOutOfBoundsException(index);
+    }
+
+    public T getAndSet(int index, T value) {
+        T v = Unsafe.arrayGet(buffer, index);
+        Unsafe.arrayPut(buffer, index, value);
+        return v;
     }
 
     @SuppressWarnings("unchecked")
@@ -109,10 +116,31 @@ public class ObjList<T> {
         return v;
     }
 
-    public T setQuick(int index, T value) {
-        T v = Unsafe.arrayGet(buffer, index);
+    public boolean remove(T obj) {
+
+        if (obj == null) {
+            return false;
+        }
+
+        int p = pos;
+        int index = -1;
+        for (int i = 0; i < p; i++) {
+            if (obj == Unsafe.arrayGet(buffer, i) || obj.equals(Unsafe.arrayGet(buffer, i))) {
+                index = i;
+                break;
+            }
+        }
+
+        if (index > -1) {
+            remove(index);
+            return true;
+        }
+
+        return false;
+    }
+
+    public void setQuick(int index, T value) {
         Unsafe.arrayPut(buffer, index, value);
-        return v;
     }
 
     public int size() {

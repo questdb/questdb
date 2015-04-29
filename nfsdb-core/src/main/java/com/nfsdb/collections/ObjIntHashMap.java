@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.nfsdb.collections;
 
 import com.nfsdb.utils.Numbers;
+import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.Arrays;
@@ -67,11 +68,11 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>> {
     public int get(K key) {
         int index = key.hashCode() & mask;
 
-        if (keys[index] == noEntryValue) {
+        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
             return noKeyValue;
         }
 
-        if (keys[index] == key || key.equals(keys[index])) {
+        if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
             return values[index];
         }
 
@@ -94,7 +95,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>> {
 
     public boolean putIfAbsent(K key, int value) {
         int index = key.hashCode() & mask;
-        if (keys[index] == noEntryValue) {
+        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
             keys[index] = key;
             values[index] = value;
             free--;
@@ -104,11 +105,84 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>> {
             return true;
         }
 
-        return !(keys[index] == key || key.equals(keys[index])) && probeInsertIfAbsent(key, index, value);
+        return Unsafe.arrayGet(keys, index) != key && !key.equals(Unsafe.arrayGet(keys, index)) && probeInsertIfAbsent(key, index, value);
     }
 
     public int size() {
         return capacity - free;
+    }
+
+    private int insertKey(K key, int value) {
+        int index = key.hashCode() & mask;
+        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
+            Unsafe.arrayPut(keys, index, key);
+            Unsafe.arrayPut(values, index, value);
+            free--;
+            if (free == 0) {
+                rehash();
+            }
+            return noKeyValue;
+        }
+
+        if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
+            int old = Unsafe.arrayGet(values, index);
+            Unsafe.arrayPut(values, index, value);
+            return old;
+        }
+
+        return probeInsert(key, index, value);
+    }
+
+    private int probe(K key, int index) {
+        do {
+            index = (index + 1) & mask;
+            if (Unsafe.arrayGet(keys, index) == noEntryValue) {
+                return noKeyValue;
+            }
+            if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
+                return Unsafe.arrayGet(values, index);
+            }
+        } while (true);
+    }
+
+    private int probeInsert(K key, int index, int value) {
+        do {
+            index = (index + 1) & mask;
+            if (Unsafe.arrayGet(keys, index) == noEntryValue) {
+                Unsafe.arrayPut(keys, index, key);
+                Unsafe.arrayPut(values, index, value);
+                free--;
+                if (free == 0) {
+                    rehash();
+                }
+                return noKeyValue;
+            }
+
+            if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
+                int old = Unsafe.arrayGet(values, index);
+                Unsafe.arrayPut(values, index, value);
+                return old;
+            }
+        } while (true);
+    }
+
+    private boolean probeInsertIfAbsent(K key, int index, int value) {
+        do {
+            index = (index + 1) & mask;
+            if (Unsafe.arrayGet(keys, index) == noEntryValue) {
+                Unsafe.arrayPut(keys, index, key);
+                Unsafe.arrayPut(values, index, value);
+                free--;
+                if (free == 0) {
+                    rehash();
+                }
+                return true;
+            }
+
+            if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
+                return false;
+            }
+        } while (true);
     }
 
     @SuppressWarnings({"unchecked"})
@@ -124,83 +198,10 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>> {
         Arrays.fill(keys, noEntryValue);
 
         for (int i = oldKeys.length; i-- > 0; ) {
-            if (oldKeys[i] != noEntryValue) {
-                insertKey(oldKeys[i], oldValues[i]);
+            if (Unsafe.arrayGet(oldKeys, i) != noEntryValue) {
+                insertKey(Unsafe.arrayGet(oldKeys, i), Unsafe.arrayGet(oldValues, i));
             }
         }
-    }
-
-    private int insertKey(K key, int value) {
-        int index = key.hashCode() & mask;
-        if (keys[index] == noEntryValue) {
-            keys[index] = key;
-            values[index] = value;
-            free--;
-            if (free == 0) {
-                rehash();
-            }
-            return noKeyValue;
-        }
-
-        if (keys[index] == key || key.equals(keys[index])) {
-            int old = values[index];
-            values[index] = value;
-            return old;
-        }
-
-        return probeInsert(key, index, value);
-    }
-
-    private int probe(K key, int index) {
-        do {
-            index = (index + 1) & mask;
-            if (keys[index] == noEntryValue) {
-                return noKeyValue;
-            }
-            if (keys[index] == key || key.equals(keys[index])) {
-                return values[index];
-            }
-        } while (true);
-    }
-
-    private int probeInsert(K key, int index, int value) {
-        do {
-            index = (index + 1) & mask;
-            if (keys[index] == noEntryValue) {
-                keys[index] = key;
-                values[index] = value;
-                free--;
-                if (free == 0) {
-                    rehash();
-                }
-                return noKeyValue;
-            }
-
-            if (keys[index] == key || key.equals(keys[index])) {
-                int old = values[index];
-                values[index] = value;
-                return old;
-            }
-        } while (true);
-    }
-
-    private boolean probeInsertIfAbsent(K key, int index, int value) {
-        do {
-            index = (index + 1) & mask;
-            if (keys[index] == noEntryValue) {
-                keys[index] = key;
-                values[index] = value;
-                free--;
-                if (free == 0) {
-                    rehash();
-                }
-                return true;
-            }
-
-            if (keys[index] == key || key.equals(keys[index])) {
-                return false;
-            }
-        } while (true);
     }
 
     public static class Entry<V> {
@@ -215,21 +216,22 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>> {
 
         @Override
         public boolean hasNext() {
-            return index < values.length && (keys[index] != noEntryValue || scan());
+            return index < values.length && (Unsafe.arrayGet(keys, index) != noEntryValue || scan());
         }
 
         @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
         @Override
         public Entry<K> next() {
-            entry.key = keys[index];
-            entry.value = values[index++];
+            entry.key = Unsafe.arrayGet(keys, index);
+            entry.value = Unsafe.arrayGet(values, index++);
             return entry;
         }
 
         private boolean scan() {
-            while (index < values.length && keys[index] == noEntryValue) {
+            do {
                 index++;
-            }
+            } while (index < values.length && Unsafe.arrayGet(keys, index) == noEntryValue);
+
             return index < values.length;
         }
     }

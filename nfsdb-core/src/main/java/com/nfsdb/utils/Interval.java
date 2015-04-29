@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,8 +21,8 @@ import com.nfsdb.exceptions.JournalUnsupportedTypeException;
 import com.nfsdb.io.sink.StringSink;
 
 public class Interval {
-    private final long lo;
-    private final long hi;
+    private long lo;
+    private long hi;
 
     public Interval(long lo, long hi) {
         if (hi < lo) {
@@ -89,14 +89,6 @@ public class Interval {
         return (x >= lo && x < hi);
     }
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        Interval interval = (Interval) o;
-        return hi == interval.hi && lo == interval.lo;
-    }
-
     public String getDirName(PartitionType t) {
         StringSink sink = new StringSink();
         switch (t) {
@@ -129,6 +121,22 @@ public class Interval {
         return 31 * result + (int) (hi ^ (hi >>> 32));
     }
 
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Interval interval = (Interval) o;
+        return hi == interval.hi && lo == interval.lo;
+    }
+
+    @Override
+    public String toString() {
+        return "Interval{" +
+                "lo=" + Dates.toString(lo) +
+                ", hi=" + Dates.toString(hi) +
+                '}';
+    }
+
     public boolean isAfter(long x) {
         return (lo > x);
     }
@@ -151,12 +159,9 @@ public class Interval {
         return lo < other.hi && other.lo < hi;
     }
 
-    @Override
-    public String toString() {
-        return "Interval{" +
-                "lo=" + Dates.toString(lo) +
-                ", hi=" + Dates.toString(hi) +
-                '}';
+    public void update(long lo, long hi) {
+        this.lo = lo;
+        this.hi = hi;
     }
 }
 

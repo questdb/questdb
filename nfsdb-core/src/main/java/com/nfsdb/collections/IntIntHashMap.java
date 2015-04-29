@@ -17,6 +17,7 @@
 package com.nfsdb.collections;
 
 import com.nfsdb.utils.Numbers;
+import com.nfsdb.utils.Unsafe;
 
 import java.util.Arrays;
 
@@ -60,8 +61,8 @@ public class IntIntHashMap {
 
     public int get(int key) {
         int index = key & mask;
-        if (values[index] == noEntryValue || keys[index] == key) {
-            return values[index];
+        if (Unsafe.arrayGet(values, index) == noEntryValue || Unsafe.arrayGet(keys, index) == key) {
+            return Unsafe.arrayGet(values, index);
         }
         return probe(key, index);
     }
@@ -76,16 +77,16 @@ public class IntIntHashMap {
 
     private int insertKey(int key, int value) {
         int index = key & mask;
-        if (values[index] == noEntryValue) {
-            keys[index] = key;
-            values[index] = value;
+        if (Unsafe.arrayGet(values, index) == noEntryValue) {
+            Unsafe.arrayPut(keys, index, key);
+            Unsafe.arrayPut(values, index, value);
             free--;
             return noEntryValue;
         }
 
-        if (keys[index] == key) {
-            int r = values[index];
-            values[index] = value;
+        if (Unsafe.arrayGet(keys, index) == key) {
+            int r = Unsafe.arrayGet(values, index);
+            Unsafe.arrayPut(values, index, value);
             return r;
         }
 
@@ -95,8 +96,8 @@ public class IntIntHashMap {
     private int probe(int key, int index) {
         do {
             index = (index + 1) & mask;
-            if (values[index] == noEntryValue || keys[index] == key) {
-                return values[index];
+            if (Unsafe.arrayGet(values, index) == noEntryValue || Unsafe.arrayGet(keys, index) == key) {
+                return Unsafe.arrayGet(values, index);
             }
         } while (true);
     }
@@ -104,16 +105,16 @@ public class IntIntHashMap {
     private int probeInsert(int key, int index, int value) {
         do {
             index = (index + 1) & mask;
-            if (values[index] == noEntryValue) {
-                keys[index] = key;
-                values[index] = value;
+            if (Unsafe.arrayGet(values, index) == noEntryValue) {
+                Unsafe.arrayPut(keys, index, key);
+                Unsafe.arrayPut(values, index, value);
                 free--;
                 return noEntryValue;
             }
 
-            if (key == keys[index]) {
-                int r = values[index];
-                values[index] = value;
+            if (key == Unsafe.arrayGet(keys, index)) {
+                int r = Unsafe.arrayGet(values, index);
+                Unsafe.arrayPut(values, index, value);
                 return r;
             }
         } while (true);
@@ -134,8 +135,8 @@ public class IntIntHashMap {
         Arrays.fill(values, noEntryValue);
 
         for (int i = oldKeys.length; i-- > 0; ) {
-            if (oldValues[i] != noEntryValue) {
-                insertKey(oldKeys[i], oldValues[i]);
+            if (Unsafe.arrayGet(oldValues, i) != noEntryValue) {
+                insertKey(Unsafe.arrayGet(oldKeys, i), Unsafe.arrayGet(oldValues, i));
             }
         }
     }

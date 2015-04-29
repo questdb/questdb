@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,19 +22,29 @@ import java.lang.reflect.Field;
 
 public final class Unsafe {
     private static final sun.misc.Unsafe UNSAFE;
-    private static final long OFFSET;
-    private static final long SCALE;
+    private static final long OBJ_OFFSET;
+    private static final long OBJ_SCALE;
+    private static final long INT_OFFSET;
+    private static final long INT_SCALE;
 
     private Unsafe() {
     }
 
     @SuppressWarnings("unchecked")
     public static <T> T arrayGet(T[] array, int index) {
-        return (T) Unsafe.getUnsafe().getObject(array, OFFSET + (index * SCALE));
+        return (T) Unsafe.getUnsafe().getObject(array, OBJ_OFFSET + (index * OBJ_SCALE));
+    }
+
+    public static int arrayGet(int[] array, int index) {
+        return Unsafe.getUnsafe().getInt(array, INT_OFFSET + (index * INT_SCALE));
     }
 
     public static <T> void arrayPut(T[] array, int index, T obj) {
-        Unsafe.getUnsafe().putObject(array, OFFSET + index * SCALE, obj);
+        Unsafe.getUnsafe().putObject(array, OBJ_OFFSET + index * OBJ_SCALE, obj);
+    }
+
+    public static void arrayPut(int[] array, int index, int value) {
+        Unsafe.getUnsafe().putInt(array, INT_OFFSET + index * INT_SCALE, value);
     }
 
     public static sun.misc.Unsafe getUnsafe() {
@@ -46,8 +56,11 @@ public final class Unsafe {
             Field theUnsafe = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
             theUnsafe.setAccessible(true);
             UNSAFE = (sun.misc.Unsafe) theUnsafe.get(null);
-            OFFSET = Unsafe.getUnsafe().arrayBaseOffset(Object[].class);
-            SCALE = Unsafe.getUnsafe().arrayIndexScale(Object[].class);
+            OBJ_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(Object[].class);
+            OBJ_SCALE = Unsafe.getUnsafe().arrayIndexScale(Object[].class);
+
+            INT_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(int[].class);
+            INT_SCALE = Unsafe.getUnsafe().arrayIndexScale(int[].class);
         } catch (Exception e) {
             throw new JournalRuntimeException(e);
         }

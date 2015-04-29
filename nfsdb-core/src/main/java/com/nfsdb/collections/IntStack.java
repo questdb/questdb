@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.nfsdb.collections;
 
 
 import com.nfsdb.utils.Numbers;
+import com.nfsdb.utils.Unsafe;
 
 import java.util.Arrays;
 
@@ -46,7 +47,7 @@ public class IntStack {
         }
         int i = head;
         int x;
-        while ((x = elements[i]) != noEntryValue) {
+        while ((x = Unsafe.arrayGet(elements, i)) != noEntryValue) {
             if (o == x)
                 return true;
             i = (i + 1) & mask;
@@ -59,22 +60,22 @@ public class IntStack {
     }
 
     public int peek() {
-        return elements[head];
+        return Unsafe.arrayGet(elements, head);
     }
 
     public int pop() {
         int h = head;
-        int result = elements[h];
+        int result = Unsafe.arrayGet(elements, h);
         if (result == noEntryValue) {
             return noEntryValue;
         }
-        elements[h] = noEntryValue;
+        Unsafe.arrayPut(elements, h, noEntryValue);
         head = (h + 1) & mask;
         return result;
     }
 
     public void push(int e) {
-        elements[head = (head - 1) & mask] = e;
+        Unsafe.arrayPut(elements, head = (head - 1) & mask, e);
         if (head == tail) {
             doubleCapacity();
         }

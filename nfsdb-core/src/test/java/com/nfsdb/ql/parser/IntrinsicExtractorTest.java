@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,11 +18,11 @@ package com.nfsdb.ql.parser;
 
 import com.nfsdb.JournalWriter;
 import com.nfsdb.collections.IntStack;
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.model.Quote;
 import com.nfsdb.ql.model.ExprNode;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
+import com.nfsdb.utils.Dates;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -46,7 +46,8 @@ public class IntrinsicExtractorTest extends AbstractTest {
     @Test
     public void testAndBranchWithNonIndexedField() throws Exception {
         IntrinsicExtractor.IntrinsicModel m = modelOf("timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\") and bid > 100");
-        Assert.assertNotNull(m.interval);
+        Assert.assertTrue(m.intervalLo > Long.MIN_VALUE);
+        Assert.assertTrue(m.intervalHi < Long.MAX_VALUE);
         assertFilter(m, "bid100>");
     }
 
@@ -73,36 +74,36 @@ public class IntrinsicExtractorTest extends AbstractTest {
     @Test
     public void testFilterAndInterval() throws Exception {
         IntrinsicExtractor.IntrinsicModel m = modelOf("bid > 100 and timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
-        Assert.assertNotNull(m.interval);
+        Assert.assertTrue(m.intervalLo > Long.MIN_VALUE);
+        Assert.assertTrue(m.intervalHi < Long.MAX_VALUE);
         assertFilter(m, "bid100>");
     }
 
     @Test
     public void testFilterMultipleKeysAndInterval() throws Exception {
         IntrinsicExtractor.IntrinsicModel m = modelOf("sym in (\"a\", \"b\", \"c\") and timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
-        Assert.assertNotNull(m.interval);
-        ObjList<String> set = m.inSets.get("sym");
-        Assert.assertNotNull(set);
-        Assert.assertEquals(3, set.size());
-        Assert.assertEquals("[a,b,c]", set.toString());
+        Assert.assertTrue(m.intervalLo > Long.MIN_VALUE);
+        Assert.assertTrue(m.intervalHi < Long.MAX_VALUE);
+        Assert.assertEquals("sym", m.keyColumn);
+        Assert.assertEquals("[a,b,c]", m.keyValues.toString());
         Assert.assertNull(m.filter);
     }
 
     @Test
     public void testFilterOnIndexedFieldAndInterval() throws Exception {
         IntrinsicExtractor.IntrinsicModel m = modelOf("sym in ('a') and timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
-        Assert.assertNotNull(m.interval);
-        ObjList<String> set = m.inSets.get("sym");
-        Assert.assertNotNull(set);
-        Assert.assertEquals(1, set.size());
-        Assert.assertEquals("a", set.get(0));
+        Assert.assertTrue(m.intervalLo > Long.MIN_VALUE);
+        Assert.assertTrue(m.intervalHi < Long.MAX_VALUE);
+        Assert.assertEquals("sym", m.keyColumn);
+        Assert.assertEquals("[a]", m.keyValues.toString());
         Assert.assertNull(m.filter);
     }
 
     @Test
     public void testFilterOrInterval() throws Exception {
         IntrinsicExtractor.IntrinsicModel m = modelOf("bid > 100 or timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
-        Assert.assertNull(m.interval);
+        Assert.assertTrue(m.intervalLo == Long.MIN_VALUE);
+        Assert.assertTrue(m.intervalHi == Long.MAX_VALUE);
         assertFilter(m, "bid100>\"2014-01-02T12:30:00.000Z\"\"2014-01-01T12:30:00.000Z\"timestampinor");
     }
 
@@ -119,6 +120,34 @@ public class IntrinsicExtractorTest extends AbstractTest {
         } catch (ParserException e) {
             Assert.assertTrue(e.getMessage().contains("Too few arguments"));
         }
+    }
+
+    @Test
+    public void testIntervalGreater1() throws Exception {
+        IntrinsicExtractor.IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and timestamp > '2014-01-01T15:30:00.000Z'");
+        Assert.assertEquals("2014-01-01T15:30:00.001Z", Dates.toString(m.intervalLo));
+        Assert.assertEquals("2014-01-02T12:30:00.000Z", Dates.toString(m.intervalHi));
+    }
+
+    @Test
+    public void testIntervalGreater2() throws Exception {
+        IntrinsicExtractor.IntrinsicModel m = modelOf("timestamp > '2014-01-01T15:30:00.000Z' and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
+        Assert.assertEquals("2014-01-01T15:30:00.001Z", Dates.toString(m.intervalLo));
+        Assert.assertEquals("2014-01-02T12:30:00.000Z", Dates.toString(m.intervalHi));
+    }
+
+    @Test
+    public void testIntervalGreaterOrEq1() throws Exception {
+        IntrinsicExtractor.IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and timestamp >= '2014-01-01T15:30:00.000Z'");
+        Assert.assertEquals("2014-01-01T15:30:00.000Z", Dates.toString(m.intervalLo));
+        Assert.assertEquals("2014-01-02T12:30:00.000Z", Dates.toString(m.intervalHi));
+    }
+
+    @Test
+    public void testIntervalGreaterOrEq2() throws Exception {
+        IntrinsicExtractor.IntrinsicModel m = modelOf("timestamp >= '2014-01-01T15:30:00.000Z' and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
+        Assert.assertEquals("2014-01-01T15:30:00.000Z", Dates.toString(m.intervalLo));
+        Assert.assertEquals("2014-01-02T12:30:00.000Z", Dates.toString(m.intervalHi));
     }
 
     @Test
@@ -154,16 +183,32 @@ public class IntrinsicExtractorTest extends AbstractTest {
     @Test
     public void testLiteralInInterval() throws Exception {
         IntrinsicExtractor.IntrinsicModel m = modelOf("timestamp in (\"2014-01-01T12:30:00.000Z\", c)");
-        Assert.assertNull(m.interval);
+        Assert.assertEquals(Long.MIN_VALUE, m.intervalLo);
+        Assert.assertEquals(Long.MAX_VALUE, m.intervalHi);
         assertFilter(m, "c\"2014-01-01T12:30:00.000Z\"timestampin");
     }
 
     @Test
     public void testLiteralInListOfValues() throws Exception {
         IntrinsicExtractor.IntrinsicModel m = modelOf("sym in (\"a\", z) and timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
-        Assert.assertNotNull(m.interval);
-        Assert.assertEquals(0, m.inSets.size());
+        Assert.assertTrue(m.intervalLo > Long.MIN_VALUE);
+        Assert.assertTrue(m.intervalHi < Long.MAX_VALUE);
+        Assert.assertNull(m.keyColumn);
         assertFilter(m, "z\"a\"symin");
+    }
+
+    @Test
+    public void testManualInterval() throws Exception {
+        IntrinsicExtractor.IntrinsicModel m = modelOf("timestamp >= '2014-01-01T15:30:00.000Z' and timestamp < '2014-01-02T12:30:00.000Z'");
+        Assert.assertEquals("2014-01-01T15:30:00.000Z", Dates.toString(m.intervalLo));
+        Assert.assertEquals("2014-01-02T12:29:59.999Z", Dates.toString(m.intervalHi));
+    }
+
+    @Test
+    public void testManualIntervalInverted() throws Exception {
+        IntrinsicExtractor.IntrinsicModel m = modelOf("'2014-01-02T12:30:00.000Z' > timestamp and '2014-01-01T15:30:00.000Z' <= timestamp ");
+        Assert.assertEquals("2014-01-01T15:30:00.000Z", Dates.toString(m.intervalLo));
+        Assert.assertEquals("2014-01-02T12:29:59.999Z", Dates.toString(m.intervalHi));
     }
 
     @Test
@@ -175,15 +220,17 @@ public class IntrinsicExtractorTest extends AbstractTest {
     @Test
     public void testNestedFunctionTest() throws Exception {
         IntrinsicExtractor.IntrinsicModel m = modelOf("substr(parse(x, 1, 3), 2, 4)");
-        Assert.assertNull(m.interval);
+        Assert.assertEquals(Long.MIN_VALUE, m.intervalLo);
+        Assert.assertEquals(Long.MAX_VALUE, m.intervalHi);
         assertFilter(m, "4231xparsesubstr");
     }
 
     @Test
     public void testNoIntrinsics() throws Exception {
         IntrinsicExtractor.IntrinsicModel m = modelOf("a > 10 or b > 20");
-        Assert.assertNull(m.interval);
-        Assert.assertEquals(0, m.inSets.size());
+        Assert.assertEquals(Long.MIN_VALUE, m.intervalLo);
+        Assert.assertEquals(Long.MAX_VALUE, m.intervalHi);
+        Assert.assertNull(m.keyColumn);
         assertFilter(m, "a10>b20>or");
     }
 
@@ -200,16 +247,18 @@ public class IntrinsicExtractorTest extends AbstractTest {
     @Test
     public void testSimpleInterval() throws Exception {
         IntrinsicExtractor.IntrinsicModel m = modelOf("timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
-        Assert.assertNotNull(m.interval);
-        Assert.assertTrue(m.interval.getLo() < m.interval.getHi());
+        Assert.assertTrue(m.intervalLo > Long.MIN_VALUE);
+        Assert.assertTrue(m.intervalHi < Long.MAX_VALUE);
+        Assert.assertTrue(m.intervalLo < m.intervalHi);
         Assert.assertNull(m.filter);
     }
 
     @Test
     public void testSingleQuoteInterval() throws Exception {
         IntrinsicExtractor.IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
-        Assert.assertNotNull(m.interval);
-        Assert.assertTrue(m.interval.getLo() < m.interval.getHi());
+        Assert.assertTrue(m.intervalLo > Long.MIN_VALUE);
+        Assert.assertTrue(m.intervalHi < Long.MAX_VALUE);
+        Assert.assertTrue(m.intervalLo < m.intervalHi);
         Assert.assertNull(m.filter);
     }
 
@@ -217,24 +266,31 @@ public class IntrinsicExtractorTest extends AbstractTest {
     public void testThreeIntrinsics() throws Exception {
         IntrinsicExtractor.IntrinsicModel m;
         m = modelOf("sym in ('a', 'b') and ex in ('c') and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and bid > 100 and ask < 110");
-        assertFilter(m, "bid100>ask110<and");
-        ObjList<String> set1 = m.inSets.get("sym");
-        ObjList<String> set2 = m.inSets.get("ex");
-        Assert.assertEquals("[a,b]", set1.toString());
-        Assert.assertEquals("[c]", set2.toString());
-        Assert.assertEquals("Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}", m.interval.toString());
+        assertFilter(m, "ex'c'inbid100>andask110<and");
+        Assert.assertEquals("sym", m.keyColumn);
+        Assert.assertEquals("[a,b]", m.keyValues.toString());
+        Assert.assertEquals("2014-01-01T12:30:00.000Z", Dates.toString(m.intervalLo));
+        Assert.assertEquals("2014-01-02T12:30:00.000Z", Dates.toString(m.intervalHi));
     }
 
     @Test
     public void testTwoIntervals() throws Exception {
         IntrinsicExtractor.IntrinsicModel m = modelOf("bid > 100 and timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\") and timestamp in (\"2014-01-01T16:30:00.000Z\", \"2014-01-05T12:30:00.000Z\")");
-        Assert.assertNotNull(m.interval);
-        Assert.assertEquals("Interval{lo=2014-01-01T16:30:00.000Z, hi=2014-01-02T12:30:00.000Z}", m.interval.toString());
+        Assert.assertTrue(m.intervalLo > Long.MIN_VALUE);
+        Assert.assertTrue(m.intervalHi < Long.MAX_VALUE);
+        Assert.assertEquals("2014-01-01T16:30:00.000Z", Dates.toString(m.intervalLo));
+        Assert.assertEquals("2014-01-02T12:30:00.000Z", Dates.toString(m.intervalHi));
     }
 
     private void assertFilter(IntrinsicExtractor.IntrinsicModel m, CharSequence expected) {
         Assert.assertNotNull(m.filter);
         TestUtils.assertEquals(expected, toRpn(m.filter));
+    }
+
+    private IntrinsicExtractor.IntrinsicModel modelOf(CharSequence seq) throws ParserException {
+        IntrinsicExtractor e = new IntrinsicExtractor();
+        p.parseExpr(seq, ast);
+        return e.extract(ast.root(), w);
     }
 
     private CharSequence toRpn(ExprNode node) {
@@ -272,11 +328,5 @@ public class IntrinsicExtractorTest extends AbstractTest {
             }
         }
         return rpn.rpn();
-    }
-
-    private IntrinsicExtractor.IntrinsicModel modelOf(CharSequence seq) throws ParserException {
-        IntrinsicExtractor e = new IntrinsicExtractor();
-        p.parseExpr(seq, ast);
-        return e.extract(ast.root(), w);
     }
 }

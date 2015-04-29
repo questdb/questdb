@@ -203,13 +203,13 @@ public class MemoryFile implements Closeable {
                     cachedBufferLo = cachedBufferHi = -1;
                     int ssz = stitches.size();
                     for (int i = index - 1; i >= 0; i--) {
-                        MappedByteBuffer b = buffers.setQuick(i, null);
+                        MappedByteBuffer b = buffers.getAndSet(i, null);
                         if (b != null) {
                             ByteBuffers.release(b);
                         }
 
                         if (i < ssz) {
-                            ByteBufferWrapper stitch = stitches.setQuick(i, null);
+                            ByteBufferWrapper stitch = stitches.getAndSet(i, null);
                             if (stitch != null) {
                                 stitch.release();
                             }

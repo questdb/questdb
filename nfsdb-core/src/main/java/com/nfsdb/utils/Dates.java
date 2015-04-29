@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,18 +22,18 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 final public class Dates {
 
-    private static final long DAY_MILLIS = 86400000L;
+    public static final long DAY_MILLIS = 86400000L;
+    public static final long HOUR_MILLIS = 3600000L;
+    public static final int MINUTE_MILLIS = 60000;
+    public static final int SECOND_MILLIS = 1000;
     private static final long AVG_YEAR_MILLIS = (long) (365.25 * DAY_MILLIS);
     private static final long YEAR_MILLIS = 365 * DAY_MILLIS;
     private static final long LEAP_YEAR_MILLIS = 366 * DAY_MILLIS;
     private static final long HALF_YEAR_MILLIS = AVG_YEAR_MILLIS / 2;
     private static final long EPOCH_MILLIS = 1970L * AVG_YEAR_MILLIS;
     private static final long HALF_EPOCH_MILLIS = EPOCH_MILLIS / 2;
-    private static final long HOUR_MILLIS = 3600000L;
     private static final int DAY_HOURS = 24;
     private static final int HOUR_MINUTES = 60;
-    private static final int MINUTE_MILLIS = 60000;
-    private static final int SECOND_MILLIS = 1000;
     private static final int MINUTE_SECONDS = 60;
     private static final int DAYS_0000_TO_1970 = 719527;
     private static final int[] DAYS_PER_MONTH = {
@@ -215,6 +215,20 @@ final public class Dates {
         return (int) ((millis - dateMillis) / DAY_MILLIS) + 1;
     }
 
+//    public static int getDayOfWeek(long millis) {
+//        // 1970-01-01 is Thursday.
+//        long d;
+//        if (millis >= 0) {
+//            d = millis / DAY_MILLIS;
+//        } else {
+//            d = (millis - (DAY_MILLIS - 1)) / DAY_MILLIS;
+//            if (d < -3) {
+//                return 7 + (int) ((d + 4) % 7);
+//            }
+//        }
+//        return 1 + (int) ((d + 3) % 7);
+//    }
+
     /**
      * Days in a given month. This method expects you to know if month is in leap year.
      *
@@ -335,35 +349,61 @@ final public class Dates {
     }
 
     // YYYY-MM-DDThh:mm:ss.mmm
-    @SuppressFBWarnings({"ICAST_INTEGER_MULTIPLY_CAST_TO_LONG"})
     public static long parseDateTime(CharSequence seq) {
+        return parseDateTime(seq, 0, seq.length());
+    }
+
+    @SuppressFBWarnings({"ICAST_INTEGER_MULTIPLY_CAST_TO_LONG"})
+    public static long parseDateTime(CharSequence seq, int lo, int lim) {
         try {
-            int p = 0;
+            int p = lo;
+            if (p + 4 > lim) {
+                throw new NumberFormatException("Four digit year expected: " + seq);
+            }
             int year = Numbers.parseInt(seq, p, p += 4);
-            checkChar(seq, p++, '-');
+            checkChar(seq, p++, lim, '-');
+            if (p + 2 > lim) {
+                throw new NumberFormatException("Two digit month expected: " + seq);
+            }
             int month = Numbers.parseInt(seq, p, p += 2);
             checkRange(month, 1, 12, "Month");
-            checkChar(seq, p++, '-');
+            checkChar(seq, p++, lim, '-');
+            if (p + 2 > lim) {
+                throw new NumberFormatException("Two digit day of month expected: " + seq);
+            }
             boolean l = isLeapYear(year);
             int day = Numbers.parseInt(seq, p, p += 2);
             checkRange(day, 1, getDaysPerMonth(month, l), "Day");
-            checkChar(seq, p++, 'T');
+            checkChar(seq, p++, lim, 'T');
+            if (p + 2 > lim) {
+                throw new NumberFormatException("Two digit number of hours (24h scale) expected: " + seq);
+            }
             int hour = Numbers.parseInt(seq, p, p += 2);
             checkRange(hour, 0, 23, "Hour");
-            checkChar(seq, p++, ':');
+            checkChar(seq, p++, lim, ':');
+            if (p + 2 > lim) {
+                throw new NumberFormatException("Two digit number of minutes expected: " + seq);
+            }
             int min = Numbers.parseInt(seq, p, p += 2);
             checkRange(min, 0, 59, "Minute");
-            checkChar(seq, p++, ':');
+            checkChar(seq, p++, lim, ':');
+            if (p + 2 > lim) {
+                throw new NumberFormatException("Two digit number of seconds expected: " + seq);
+            }
             int sec = Numbers.parseInt(seq, p, p += 2);
             checkRange(sec, 0, 59, "Second");
             int mil = 0;
-            if (seq.charAt(p) == '.') {
+            if (p < lim && seq.charAt(p) == '.') {
+
+                if (p + 4 > lim) {
+                    throw new NumberFormatException("Three digit number of millis expected: " + seq);
+                }
                 mil = Numbers.parseInt(seq, ++p, p += 3);
                 checkRange(mil, 0, 999, "Millis");
             }
 
-            if (p < seq.length()) {
-                checkChar(seq, p, 'Z');
+            if (p < lim) {
+                checkChar(seq, p, lim, 'Z');
             }
             return yearMillis(year, l)
                     + monthOfYearMillis(month, l)
@@ -379,26 +419,47 @@ final public class Dates {
 
     }
 
+    public static long parseDateTimeFmt1(CharSequence seq) {
+        return parseDateTimeFmt1(seq, 0, seq.length() - 1);
+    }
     // YYYY-MM-DD hh:mm:ss
     @SuppressFBWarnings({"ICAST_INTEGER_MULTIPLY_CAST_TO_LONG"})
-    public static long parseDateTimeFmt1(CharSequence seq) {
+    public static long parseDateTimeFmt1(CharSequence seq, int lo, int lim) {
         try {
-            int p = 0;
+            int p = lo;
+            if (p + 4 > lim) {
+                throw new NumberFormatException("Four digit year expected: " + seq);
+            }
             int year = Numbers.parseInt(seq, p, p += 4);
-            checkChar(seq, p++, '-');
+            checkChar(seq, p++, lim, '-');
+            if (p + 2 > lim) {
+                throw new NumberFormatException("Two digit month expected: " + seq);
+            }
             int month = Numbers.parseInt(seq, p, p += 2);
             checkRange(month, 1, 12, "Month");
-            checkChar(seq, p++, '-');
+            checkChar(seq, p++, lim, '-');
+            if (p + 2 > lim) {
+                throw new NumberFormatException("Two digit day of month expected: " + seq);
+            }
             boolean l = isLeapYear(year);
             int day = Numbers.parseInt(seq, p, p += 2);
             checkRange(day, 1, getDaysPerMonth(month, l), "Day");
-            checkChar(seq, p++, ' ');
+            checkChar(seq, p++, lim, 'T');
+            if (p + 2 > lim) {
+                throw new NumberFormatException("Two digit number of hours (24h scale) expected: " + seq);
+            }
             int hour = Numbers.parseInt(seq, p, p += 2);
             checkRange(hour, 0, 23, "Hour");
-            checkChar(seq, p++, ':');
+            checkChar(seq, p++, lim, ':');
+            if (p + 2 > lim) {
+                throw new NumberFormatException("Two digit number of minutes expected: " + seq);
+            }
             int min = Numbers.parseInt(seq, p, p += 2);
             checkRange(min, 0, 59, "Minute");
-            checkChar(seq, p++, ':');
+            checkChar(seq, p++, lim, ':');
+            if (p + 2 > lim) {
+                throw new NumberFormatException("Two digit number of seconds expected: " + seq);
+            }
             int sec = Numbers.parseInt(seq, p, p + 2);
             checkRange(sec, 0, 59, "Second");
 
@@ -413,24 +474,158 @@ final public class Dates {
         }
     }
 
-    // MM/DD/YYYY
     public static long parseDateTimeFmt2(CharSequence seq) {
+        return parseDateTimeFmt2(seq, 0, seq.length());
+    }
+    // MM/DD/YYYY
+    public static long parseDateTimeFmt2(CharSequence seq, int lo, int lim) {
         try {
-            int p = 0;
+            int p = lo;
+            if (p + 2 > lim) {
+                throw new NumberFormatException("Two digit month expected: " + seq);
+            }
             int month = Numbers.parseInt(seq, p, p += 2);
             checkRange(month, 1, 12, "Month");
-            checkChar(seq, p++, '/');
+            checkChar(seq, p++, lim, '/');
 
+            if (p + 4 > lim) {
+                throw new NumberFormatException("Four digit year expected: " + seq);
+            }
             int year = Numbers.parseInt(seq, p + 3, p + 7);
             boolean l = isLeapYear(year);
-
+            if (p + 2 > lim) {
+                throw new NumberFormatException("Two digit day of month expected: " + seq);
+            }
             int day = Numbers.parseInt(seq, p, p += 2);
             checkRange(day, 1, getDaysPerMonth(month, l), "Day");
-            checkChar(seq, p, '/');
+            checkChar(seq, p, lim, '/');
 
             return yearMillis(year, l)
                     + monthOfYearMillis(month, l)
                     + (day - 1) * DAY_MILLIS;
+        } catch (StringIndexOutOfBoundsException e) {
+            throw new NumberFormatException("Invalid date: " + seq.toString());
+        }
+    }
+
+    public static Interval parseInterval(CharSequence seq) {
+        return parseInterval(seq, 0, seq.length());
+    }
+
+    public static Interval parseInterval(CharSequence seq, int p, int lim) {
+        int len = lim - p - 1;
+        try {
+            int year = Numbers.parseInt(seq, p, p += 4);
+            boolean l = isLeapYear(year);
+            if (p < len) {
+                checkChar(seq, p++, lim, '-');
+                int month = Numbers.parseInt(seq, p, p += 2);
+                checkRange(month, 1, 12, "Month");
+                if (p < len) {
+                    checkChar(seq, p++, lim, '-');
+                    int day = Numbers.parseInt(seq, p, p += 2);
+                    checkRange(day, 1, getDaysPerMonth(month, l), "Day");
+                    if (p < len) {
+                        checkChar(seq, p++, lim, 'T');
+                        int hour = Numbers.parseInt(seq, p, p += 2);
+                        checkRange(hour, 0, 23, "Hour");
+                        if (p < len) {
+                            checkChar(seq, p++, lim, ':');
+                            int min = Numbers.parseInt(seq, p, p += 2);
+                            checkRange(min, 0, 59, "Minute");
+                            if (p < len) {
+                                checkChar(seq, p++, lim, ':');
+                                int sec = Numbers.parseInt(seq, p, p += 2);
+                                checkRange(sec, 0, 59, "Second");
+                                if (p < len) {
+                                    throw new RuntimeException("not an interval");
+                                } else {
+                                    // seconds
+                                    return new Interval(yearMillis(year, l)
+                                            + monthOfYearMillis(month, l)
+                                            + (day - 1) * DAY_MILLIS
+                                            + hour * HOUR_MILLIS
+                                            + min * MINUTE_MILLIS
+                                            + sec * SECOND_MILLIS,
+                                            yearMillis(year, l)
+                                                    + monthOfYearMillis(month, l)
+                                                    + (day - 1) * DAY_MILLIS
+                                                    + hour * HOUR_MILLIS
+                                                    + min * MINUTE_MILLIS
+                                                    + sec * SECOND_MILLIS
+                                                    + 999
+                                    );
+                                }
+                            } else {
+                                // minute
+                                return new Interval(yearMillis(year, l)
+                                        + monthOfYearMillis(month, l)
+                                        + (day - 1) * DAY_MILLIS
+                                        + hour * HOUR_MILLIS
+                                        + min * MINUTE_MILLIS,
+                                        yearMillis(year, l)
+                                                + monthOfYearMillis(month, l)
+                                                + (day - 1) * DAY_MILLIS
+                                                + hour * HOUR_MILLIS
+                                                + min * MINUTE_MILLIS
+                                                + 59 * SECOND_MILLIS
+                                                + 999
+                                );
+                            }
+                        } else {
+                            // year + month + day + hour
+                            return new Interval(yearMillis(year, l)
+                                    + monthOfYearMillis(month, l)
+                                    + (day - 1) * DAY_MILLIS
+                                    + hour * HOUR_MILLIS,
+                                    yearMillis(year, l)
+                                            + monthOfYearMillis(month, l)
+                                            + (day - 1) * DAY_MILLIS
+                                            + hour * HOUR_MILLIS
+                                            + 59 * MINUTE_MILLIS
+                                            + 59 * SECOND_MILLIS
+                                            + 999
+                            );
+                        }
+                    } else {
+                        // year + month + day
+                        return new Interval(yearMillis(year, l)
+                                + monthOfYearMillis(month, l)
+                                + (day - 1) * DAY_MILLIS,
+                                yearMillis(year, l)
+                                        + monthOfYearMillis(month, l)
+                                        + +(day - 1) * DAY_MILLIS
+                                        + 23 * HOUR_MILLIS
+                                        + 59 * MINUTE_MILLIS
+                                        + 59 * SECOND_MILLIS
+                                        + 999
+                        );
+                    }
+                } else {
+                    // year + month
+                    return new Interval(yearMillis(year, l) + monthOfYearMillis(month, l),
+                            yearMillis(year, l)
+                                    + monthOfYearMillis(month, l)
+                                    + (DAYS_PER_MONTH[month - 1] - 1) * DAY_MILLIS
+                                    + 23 * HOUR_MILLIS
+                                    + 59 * MINUTE_MILLIS
+                                    + 59 * SECOND_MILLIS
+                                    + 999
+                    );
+                }
+            } else {
+                // year
+                return new Interval(yearMillis(year, l) + monthOfYearMillis(1, l),
+                        yearMillis(year, l)
+                                + monthOfYearMillis(12, l)
+                                + (DAYS_PER_MONTH[11] - 1) * DAY_MILLIS
+                                + 23 * HOUR_MILLIS
+                                + 59 * MINUTE_MILLIS
+                                + 59 * SECOND_MILLIS
+                                + 999
+                );
+            }
+
         } catch (StringIndexOutOfBoundsException e) {
             throw new NumberFormatException("Invalid date: " + seq.toString());
         }
@@ -454,17 +649,21 @@ final public class Dates {
     }
 
     public static long tryParse(CharSequence s) {
+        return tryParse(s, 0, s.length());
+    }
+
+    public static long tryParse(CharSequence s, int lo, int lim) {
         try {
-            return parseDateTime(s);
+            return parseDateTime(s, lo, lim);
         } catch (NumberFormatException ignore) {
         }
 
         try {
-            return parseDateTimeFmt1(s);
+            return parseDateTimeFmt1(s, lo, lim);
         } catch (NumberFormatException ignore) {
         }
 
-        return parseDateTimeFmt2(s);
+        return parseDateTimeFmt2(s, lo, lim);
     }
 
     /**
@@ -516,8 +715,8 @@ final public class Dates {
         Numbers.append(sink, val);
     }
 
-    private static void checkChar(CharSequence s, int p, char c) {
-        if (s.charAt(p) != c) {
+    private static void checkChar(CharSequence s, int p, int lim, char c) {
+        if (p >= lim || s.charAt(p) != c) {
             throw new NumberFormatException("Expected " + c + " at " + p);
         }
     }

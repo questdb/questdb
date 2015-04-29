@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ public class ExprNode {
     public NodeType type;
     public int paramCount;
     public ObjList<ExprNode> args;
+    public IntrinsicValue intrinsicValue = IntrinsicValue.UNDEFINED;
 
     public ExprNode(NodeType type, String token, int precedence, int position) {
         this.type = type;

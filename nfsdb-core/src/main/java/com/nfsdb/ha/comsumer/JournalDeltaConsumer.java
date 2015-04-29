@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -115,16 +115,6 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
         }
     }
 
-    private void reset() throws JournalException {
-        for (int i = 0, k = partitionDeltaConsumers.size(); i < k; i++) {
-            PartitionDeltaConsumer c = partitionDeltaConsumers.setQuick(i, null);
-            if (c != null) {
-                c.free();
-            }
-            journal.getPartition(i, false).close();
-        }
-    }
-
     private void createPartitions(JournalServerState metadata) throws JournalException {
         int pc = journal.nonLagPartitionCount();
         for (int i = 0; i < metadata.getNonLagPartitionCount(); i++) {
@@ -144,5 +134,15 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
         }
 
         return consumer;
+    }
+
+    private void reset() throws JournalException {
+        for (int i = 0, k = partitionDeltaConsumers.size(); i < k; i++) {
+            PartitionDeltaConsumer c = partitionDeltaConsumers.getAndSet(i, null);
+            if (c != null) {
+                c.free();
+            }
+            journal.getPartition(i, false).close();
+        }
     }
 }

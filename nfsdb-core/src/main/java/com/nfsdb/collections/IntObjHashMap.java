@@ -17,6 +17,7 @@
 package com.nfsdb.collections;
 
 import com.nfsdb.utils.Numbers;
+import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.Arrays;
@@ -62,12 +63,12 @@ public class IntObjHashMap<V> {
 
     public V get(int key) {
         int index = key & mask;
-        if (values[index] == noEntryValue) {
+        if (Unsafe.arrayGet(values, index) == noEntryValue) {
             return null;
         }
 
-        if (keys[index] == key) {
-            return values[index];
+        if (Unsafe.arrayGet(keys, index) == key) {
+            return Unsafe.arrayGet(values, index);
         }
 
         return probe(key, index);
@@ -92,16 +93,16 @@ public class IntObjHashMap<V> {
 
     private V insertKey(int key, V value) {
         int index = key & mask;
-        if (values[index] == noEntryValue) {
-            keys[index] = key;
-            values[index] = value;
+        if (Unsafe.arrayGet(values, index) == noEntryValue) {
+            Unsafe.arrayPut(keys, index, key);
+            Unsafe.arrayPut(values, index, value);
             free--;
             return null;
         }
 
-        if (keys[index] == key) {
-            V r = values[index];
-            values[index] = value;
+        if (Unsafe.arrayGet(keys, index) == key) {
+            V r = Unsafe.arrayGet(values, index);
+            Unsafe.arrayPut(values, index, value);
             return r;
         }
 
@@ -111,11 +112,11 @@ public class IntObjHashMap<V> {
     private V probe(int key, int index) {
         do {
             index = (index + 1) & mask;
-            if (values[index] == noEntryValue) {
+            if (Unsafe.arrayGet(values, index) == noEntryValue) {
                 return null;
             }
-            if (key == keys[index]) {
-                return values[index];
+            if (key == Unsafe.arrayGet(keys, index)) {
+                return Unsafe.arrayGet(values, index);
             }
         } while (true);
     }
@@ -123,16 +124,16 @@ public class IntObjHashMap<V> {
     private V probeInsert(int key, int index, V value) {
         do {
             index = (index + 1) & mask;
-            if (values[index] == noEntryValue) {
-                keys[index] = key;
-                values[index] = value;
+            if (Unsafe.arrayGet(values, index) == noEntryValue) {
+                Unsafe.arrayPut(keys, index, key);
+                Unsafe.arrayPut(values, index, value);
                 free--;
                 return null;
             }
 
-            if (key == keys[index]) {
-                V r = values[index];
-                values[index] = value;
+            if (key == Unsafe.arrayGet(keys, index)) {
+                V r = Unsafe.arrayGet(values, index);
+                Unsafe.arrayPut(values, index, value);
                 return r;
             }
         } while (true);
@@ -153,8 +154,8 @@ public class IntObjHashMap<V> {
         Arrays.fill(values, 0, values.length, noEntryValue);
 
         for (int i = oldKeys.length; i-- > 0; ) {
-            if (oldValues[i] != noEntryValue) {
-                insertKey(oldKeys[i], oldValues[i]);
+            if (Unsafe.arrayGet(oldValues, i) != noEntryValue) {
+                insertKey(Unsafe.arrayGet(oldKeys, i), Unsafe.arrayGet(oldValues, i));
             }
         }
     }
@@ -164,7 +165,7 @@ public class IntObjHashMap<V> {
 
         @Override
         public boolean hasNext() {
-            return index < values.length && (values[index] != noEntryValue || scan());
+            return index < values.length && (Unsafe.arrayGet(values, index) != noEntryValue || scan());
         }
 
         @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
@@ -174,9 +175,11 @@ public class IntObjHashMap<V> {
         }
 
         private boolean scan() {
-            while (index < values.length && values[index] == noEntryValue) {
+            do {
                 index++;
             }
+            while (index < values.length && Unsafe.arrayGet(values, index) == noEntryValue);
+
             return index < values.length;
         }
     }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,13 +22,18 @@ public class FlyweightCharSequence implements CharSequence {
     private int len;
 
     @Override
+    public int length() {
+        return len;
+    }
+
+    @Override
     public char charAt(int index) {
         return delegate.charAt(index + lo);
     }
 
     @Override
-    public int length() {
-        return len;
+    public CharSequence subSequence(int start, int end) {
+        return null;
     }
 
     public FlyweightCharSequence of(CharSequence delegate, int lo, int len) {
@@ -38,8 +43,7 @@ public class FlyweightCharSequence implements CharSequence {
         return this;
     }
 
-    @Override
-    public CharSequence subSequence(int start, int end) {
-        return null;
+    public FlyweightCharSequence of(CharSequence delegate) {
+        return of(delegate, 1, delegate.length() - 2);
     }
 }
