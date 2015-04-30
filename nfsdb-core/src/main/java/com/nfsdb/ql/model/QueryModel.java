@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,10 +20,9 @@ import com.nfsdb.collections.ObjList;
 
 public class QueryModel {
     private final ObjList<QueryColumn> columns = new ObjList<>();
-    private final ObjList<String> groupByValues = new ObjList<>();
     private ExprNode whereClause;
     private String journalName;
-    private ExprNode mostRecentBy;
+    private ExprNode latestBy;
 
     public void addColumn(QueryColumn column) {
         columns.add(column);
@@ -42,12 +41,12 @@ public class QueryModel {
         this.journalName = journalName;
     }
 
-    public ExprNode getMostRecentBy() {
-        return mostRecentBy;
+    public ExprNode getLatestBy() {
+        return latestBy;
     }
 
-    public void setMostRecentBy(ExprNode mostRecentBy) {
-        this.mostRecentBy = mostRecentBy;
+    public void setLatestBy(ExprNode latestBy) {
+        this.latestBy = latestBy;
     }
 
     public ExprNode getWhereClause() {

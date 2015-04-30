@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -135,14 +135,14 @@ public class JournalMetadata<T> implements RecordMetadata {
     }
 
     @Override
-    @NotNull
-    public ColumnMetadata getColumn(CharSequence name) {
-        return getColumn(getColumnIndex(name));
+    public ColumnMetadata getColumn(int columnIndex) {
+        return columnMetadata[columnIndex];
     }
 
     @Override
-    public ColumnMetadata getColumn(int columnIndex) {
-        return columnMetadata[columnIndex];
+    @NotNull
+    public ColumnMetadata getColumn(CharSequence name) {
+        return getColumn(getColumnIndex(name));
     }
 
     public int getColumnCount() {
@@ -155,6 +155,11 @@ public class JournalMetadata<T> implements RecordMetadata {
             throw new NoSuchColumnException("Invalid column name: %s", columnName);
         }
         return result;
+    }
+
+    @Override
+    public boolean invalidColumn(CharSequence name) {
+        return columnIndexLookup.get(name) == -1;
     }
 
     public String getId() {

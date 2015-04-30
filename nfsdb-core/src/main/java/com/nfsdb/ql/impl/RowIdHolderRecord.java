@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,8 +38,8 @@ public class RowIdHolderRecord extends AbstractRecord {
 
             private final RecordColumnMetadata columnMetadata = new RecordColumnMetadata() {
                 @Override
-                public String getName() {
-                    return name;
+                public ColumnType getType() {
+                    return ColumnType.LONG;
                 }
 
                 @Override
@@ -48,8 +48,8 @@ public class RowIdHolderRecord extends AbstractRecord {
                 }
 
                 @Override
-                public ColumnType getType() {
-                    return ColumnType.LONG;
+                public String getName() {
+                    return name;
                 }
             };
 
@@ -77,6 +77,11 @@ public class RowIdHolderRecord extends AbstractRecord {
                     return 0;
                 }
                 throw new JournalRuntimeException("Invalid column name: %s", name);
+            }
+
+            @Override
+            public boolean invalidColumn(CharSequence name) {
+                return !RowIdHolderRecord.name.equals(name);
             }
         });
     }

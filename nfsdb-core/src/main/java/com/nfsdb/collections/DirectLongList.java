@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -109,11 +109,10 @@ public class DirectLongList extends AbstractDirectList {
         Unsafe.getUnsafe().putLong(start + (p << 3), v);
     }
 
-    public DirectLongList shuffle(Rnd rnd) {
+    public void shuffle(Rnd rnd) {
         for (int i = 0, sz = size(); i < sz; i++) {
             swap(i, rnd.nextPositiveInt() & (sz - 1));
         }
-        return this;
     }
 
     /**
@@ -248,13 +247,6 @@ public class DirectLongList extends AbstractDirectList {
         }
         sb.append("}");
         return sb.toString();
-    }
-
-    private void swap(int a, int b) {
-        long tmp = Unsafe.getUnsafe().getLong(start + (a << 3));
-        Unsafe.getUnsafe().copyMemory(start + (b << 3), start + (a << 3), 8);
-        Unsafe.getUnsafe().putLong(start + (b << 3), tmp);
-
     }
 
     private void let(int a, int b) {
@@ -628,5 +620,12 @@ public class DirectLongList extends AbstractDirectList {
             sort(left, less - 1, leftmost);
             sort(great + 1, right, false);
         }
+    }
+
+    private void swap(int a, int b) {
+        long tmp = Unsafe.getUnsafe().getLong(start + (a << 3));
+        Unsafe.getUnsafe().copyMemory(start + (b << 3), start + (a << 3), 8);
+        Unsafe.getUnsafe().putLong(start + (b << 3), tmp);
+
     }
 }

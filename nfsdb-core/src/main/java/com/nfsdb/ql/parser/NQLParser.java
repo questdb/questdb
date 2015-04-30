@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -200,7 +200,7 @@ public class NQLParser {
 
     private void parseLatestBy(QueryModel model) throws ParserException {
         expectTok(tok(), "by");
-        model.setMostRecentBy(expr());
+        model.setLatestBy(expr());
     }
 
     private Statement parseQuery() throws ParserException {
@@ -226,8 +226,12 @@ public class NQLParser {
 
         if (tok != null && Chars.equals(tok, "where")) {
             model.setWhereClause(expr());
+            tok = optionTok();
         }
 
+        if (tok != null) {
+            throw new ParserException(tokenStream.position(), "Unexpected token: " + tok);
+        }
         return new Statement(StatementType.QUERY_JOURNAL, model);
 
     }

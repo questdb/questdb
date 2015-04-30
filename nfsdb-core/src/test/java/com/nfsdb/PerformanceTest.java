@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.nfsdb;
 
 import com.nfsdb.collections.DirectLongList;
+import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.model.Quote;
@@ -36,7 +37,6 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.File;
-import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 
@@ -86,15 +86,15 @@ public class PerformanceTest extends AbstractTest {
             long t = 0;
 
             RecordSource<? extends Record> rs = new JournalSource(
-                    new IntervalPartitionSource(
-                            new JournalPartitionSource(journal, false)
-                            , interval
-                    )
-                    ,
+                    new MultiIntervalPartitionSource(
+                            new JournalPartitionSource(journal, true),
+                            new SingleIntervalSource(interval)
+
+                    ),
                     new KvIndexRowSource(
                             "sym"
                             ,
-                            new PartialSymbolKeySource("sym", new ArrayList<String>() {{
+                            new PartialSymbolKeySource("sym", new ObjHashSet<String>() {{
                                 add("LLOY.L");
                             }})
                     )

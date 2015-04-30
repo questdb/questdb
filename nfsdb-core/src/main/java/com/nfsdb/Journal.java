@@ -654,12 +654,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
                     break;
                 }
 
-                Partition<T> partition = null;
-
-                if (partitionIndex < partitions.size()) {
-                    partition = partitions.getQuick(partitionIndex);
-                }
-
                 long txLimit = Journal.TX_LIMIT_EVAL;
                 long[] indexTxAddresses = null;
                 if (partitionIndex == Rows.toPartitionIndex(tx.journalMaxRowID)) {
@@ -668,20 +662,18 @@ public class Journal<T> implements Iterable<T>, Closeable {
                 }
 
                 Interval interval = new Interval(f.getName(), getMetadata().getPartitionType());
-                if (partition != null) {
+                if (partitionIndex < partitions.size()) {
+                    Partition<T> partition = partitions.getQuick(partitionIndex);
                     Interval that = partition.getInterval();
                     if (that == null || that.equals(interval)) {
                         partition.applyTx(txLimit, indexTxAddresses);
                         partitionIndex++;
                     } else {
-                        if (partition.isOpen()) {
-                            partition.close();
-                        }
+                        partition.close();
                         partitions.remove(partitionIndex);
                     }
                 } else {
-                    partitions.add(new Partition<>(this, interval, partitionIndex, txLimit, indexTxAddresses));
-                    partitionIndex++;
+                    partitions.add(new Partition<>(this, interval, partitionIndex++, txLimit, indexTxAddresses));
                 }
             }
         }

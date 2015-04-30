@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.ObjIntHashMap;
+import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.RecordMetadata;
 
@@ -60,6 +61,15 @@ public class SplitRecordMetadata implements RecordMetadata {
 
     @Override
     public int getColumnIndex(CharSequence name) {
-        return columnIndices.get(name);
+        int index = columnIndices.get(name);
+        if (index == -1) {
+            throw new JournalRuntimeException("Invalid column: %s", name);
+        }
+        return index;
+    }
+
+    @Override
+    public boolean invalidColumn(CharSequence name) {
+        return columnIndices.get(name) == -1;
     }
 }

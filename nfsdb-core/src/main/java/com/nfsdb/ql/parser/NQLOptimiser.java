@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,16 +21,18 @@ import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.NoSuchColumnException;
 import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordMetadata;
-import com.nfsdb.ql.RecordSource;
+import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.ql.*;
 import com.nfsdb.ql.impl.*;
 import com.nfsdb.ql.model.ExprNode;
+import com.nfsdb.ql.model.IntrinsicModel;
 import com.nfsdb.ql.model.QueryColumn;
 import com.nfsdb.ql.model.QueryModel;
 import com.nfsdb.ql.ops.*;
 import com.nfsdb.ql.ops.fact.FunctionFactories;
 import com.nfsdb.ql.ops.fact.FunctionFactory;
+import com.nfsdb.storage.ColumnType;
+import com.nfsdb.utils.Interval;
 import com.nfsdb.utils.Numbers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -40,6 +42,7 @@ public class NQLOptimiser {
 
     private final ArrayDeque<VirtualColumn> stack = new ArrayDeque<>();
     private final ArrayDeque<ExprNode> exprStack = new ArrayDeque<>();
+    private final IntrinsicExtractor intrinsicExtractor = new IntrinsicExtractor();
     private final JournalFactory factory;
 
     public NQLOptimiser(JournalFactory factory) {
@@ -47,9 +50,8 @@ public class NQLOptimiser {
     }
 
     public RecordSource<? extends Record> compile(QueryModel model) throws ParserException, JournalException {
-        Journal r = factory.reader(model.getJournalName());
-        RecordSource<? extends Record> rs = new JournalSource(new JournalPartitionSource(r, true), new AllRowSource());
-
+        RecordSource<? extends Record> rs = createRecordSource(model);
+        RecordMetadata meta = rs.getMetadata();
         ObjList<QueryColumn> columns = model.getColumns();
         ObjList<VirtualColumn> virtualColumns = new ObjList<>();
         ObjList<String> selectedColumns = new ObjList<>();
@@ -62,6 +64,9 @@ public class NQLOptimiser {
 
             switch (node.type) {
                 case LITERAL:
+                    if (meta.invalidColumn(node.token)) {
+                        throw new InvalidColumnException(node.position);
+                    }
                     selectedColumns.add(node.token);
                     break;
                 default:
@@ -119,6 +124,80 @@ public class NQLOptimiser {
         }
     }
 
+    private RecordSource<? extends Record> createRecordSource(QueryModel model) throws JournalException, ParserException {
+        Journal reader = factory.reader(model.getJournalName());
+
+        PartitionSource ps = new JournalPartitionSource(reader, true);
+        RowSource rs = null;
+
+        String latestByCol = null;
+
+        if (model.getLatestBy() != null) {
+            ExprNode l = model.getLatestBy();
+            if (l.type != ExprNode.NodeType.LITERAL) {
+                throw new ParserException(l.position, "Column name expected");
+            }
+
+            if (reader.getMetadata().invalidColumn(l.token)) {
+                throw new InvalidColumnException(l.position);
+            }
+
+            ColumnMetadata m = reader.getMetadata().getColumn(l.token);
+
+            if (m.type != ColumnType.SYMBOL) {
+                throw new ParserException(l.position, "Expected symbol column, found: " + m.type);
+            }
+
+            if (!m.indexed) {
+                throw new ParserException(l.position, "Column is not indexed");
+            }
+
+            latestByCol = l.token;
+        }
+
+        ExprNode where = model.getWhereClause();
+        if (where != null) {
+            IntrinsicModel im = intrinsicExtractor.extract(where, reader, latestByCol);
+
+            if (im.intervalHi < Long.MAX_VALUE || im.intervalLo > Long.MIN_VALUE) {
+
+                ps = new MultiIntervalPartitionSource(ps,
+                        new SingleIntervalSource(
+                                new Interval(im.intervalLo, im.intervalHi
+                                )
+                        )
+                );
+            }
+
+            if (im.intervalSource != null) {
+                ps = new MultiIntervalPartitionSource(ps, im.intervalSource);
+            }
+
+            if (latestByCol == null) {
+                if (im.keyColumn != null) {
+                    rs = new KvIndexRowSource(im.keyColumn, new PartialSymbolKeySource(im.keyColumn, im.keyValues));
+                }
+
+                if (im.filter != null) {
+                    rs = new FilteredRowSource(rs == null ? new AllRowSource() : rs, createVirtualColumn(im.filter, reader.getMetadata()));
+                }
+            } else {
+
+                if (im.keyColumn != null && im.filter != null) {
+                    rs = new KvIndexHeadRowSource(latestByCol, new PartialSymbolKeySource(latestByCol, im.keyValues), 1, 0, createVirtualColumn(im.filter, reader.getMetadata()));
+                } else if (im.keyColumn != null) {
+                    rs = new KvIndexHeadRowSource(latestByCol, new PartialSymbolKeySource(latestByCol, im.keyValues), 1, 0, null);
+                } else {
+                    rs = new KvIndexHeadRowSource(latestByCol, new SymbolKeySource(latestByCol), 1, 0, null);
+                }
+            }
+        } else if (latestByCol != null) {
+            rs = new KvIndexHeadRowSource(latestByCol, new SymbolKeySource(latestByCol), 1, 0, null);
+        }
+
+        return new JournalSource(ps, rs == null ? new AllRowSource() : rs);
+    }
+
     private VirtualColumn createVirtualColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
         // post-order iterative tree traversal
         // see http://en.wikipedia.org/wiki/Tree_traversal
@@ -127,7 +206,7 @@ public class NQLOptimiser {
 
         while (!exprStack.isEmpty() || node != null) {
             if (node != null) {
-                exprStack.push(node);
+                exprStack.addFirst(node);
                 node = node.lhs;
             } else {
                 ExprNode peek = exprStack.peekFirst();
@@ -148,7 +227,7 @@ public class NQLOptimiser {
         try {
             return new RecordSourceColumn(node.token, metadata);
         } catch (NoSuchColumnException e) {
-            throw new ParserException(node.position, "No such column: " + node.token);
+            throw new InvalidColumnException(node.position);
         }
     }
 

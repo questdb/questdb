@@ -34,18 +34,24 @@ public class ObjHashSet<T> {
     private int mask;
 
     public ObjHashSet() {
-        this(8);
+        this(MIN_INITIAL_CAPACITY);
     }
 
     public ObjHashSet(int initialCapacity) {
-        this(initialCapacity, 0.5f);
+        this(initialCapacity, 0.5, 0.3);
     }
 
     @SuppressWarnings("unchecked")
-    public ObjHashSet(int initialCapacity, double loadFactor) {
+    public ObjHashSet(int initialCapacity, double loadFactor, double hashFactor) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
+
+        if (hashFactor <= 0d || hashFactor >= 1d) {
+            throw new IllegalArgumentException("0 < hashFactor < 1");
+        }
+
+        initialCapacity = (int) (initialCapacity * (1 + hashFactor));
         int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
         this.loadFactor = loadFactor;
         keys = (T[]) new Object[capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity)];
@@ -91,7 +97,8 @@ public class ObjHashSet<T> {
                 return true;
             }
 
-            return probeRemove(key, index);
+            probeRemove(key, index);
+            return true;
         }
         return false;
     }
@@ -112,7 +119,7 @@ public class ObjHashSet<T> {
             free--;
             return true;
         }
-        return !key.equals(Unsafe.arrayGet(keys, index)) && probeInsert(key, index);
+        return !(key == Unsafe.arrayGet(keys, index) || key.equals(Unsafe.arrayGet(keys, index))) && probeInsert(key, index);
     }
 
     private boolean probeInsert(T key, int index) {
@@ -130,15 +137,13 @@ public class ObjHashSet<T> {
         } while (true);
     }
 
-    private boolean probeRemove(T key, int index) {
+    private void probeRemove(T key, int index) {
         do {
             index = (index + 1) & mask;
             if (key == Unsafe.arrayGet(keys, index) || key.equals(Unsafe.arrayGet(keys, index))) {
                 Unsafe.arrayPut(keys, index, noEntryValue);
                 free++;
-                return true;
-
-
+                break;
             }
         } while (true);
     }

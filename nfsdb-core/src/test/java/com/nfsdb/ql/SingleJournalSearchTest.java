@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.nfsdb.ql;
 
 import com.nfsdb.JournalWriter;
+import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
@@ -33,8 +34,6 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Test;
-
-import java.util.ArrayList;
 
 public class SingleJournalSearchTest {
     @ClassRule
@@ -85,9 +84,9 @@ public class SingleJournalSearchTest {
         // from quote head by sym where timestamp in ("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z")
         assertEquals(expected,
                 new JournalSource(
-                        new IntervalPartitionSource(
-                                new JournalPartitionSource(journal, false)
-                                , new Interval("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z")
+                        new MultiIntervalPartitionSource(
+                                new JournalPartitionSource(journal, false),
+                                new SingleIntervalSource(new Interval("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z"))
                         ),
                         new KvIndexHeadRowSource(
                                 "sym",
@@ -118,13 +117,14 @@ public class SingleJournalSearchTest {
 
         assertEquals(expected,
                 new JournalSource(
-                        new IntervalPartitionSource(
+                        new MultiIntervalPartitionSource(
                                 new JournalPartitionSource(
                                         journal
                                         , false
-                                )
-                                , new Interval("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z"))
-                        ,
+                                ),
+                                new SingleIntervalSource(new Interval("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z"))
+
+                        ),
                         new KvIndexHeadRowSource(
                                 "sym",
                                 new SymbolKeySource("sym"),
@@ -152,9 +152,9 @@ public class SingleJournalSearchTest {
         // from quote where timestamp in ("2013-03-12T00:00:00.000Z", "2013-03-13T00:00:00.000Z"), (sym in ("BP.L", "XXX") or sym = "WTB.L"), bid > 0.4
         // this is stupid, "in" is already "or"
         assertEquals(expected, new JournalSource(
-                        new IntervalPartitionSource(
+                        new MultiIntervalPartitionSource(
                                 new JournalPartitionSource(journal, false),
-                                new Interval("2013-03-12T00:00:00.000Z", "2013-03-13T00:00:00.000Z")
+                                new SingleIntervalSource(new Interval("2013-03-12T00:00:00.000Z", "2013-03-13T00:00:00.000Z"))
                         ),
                         new FilteredRowSource(
                                 new UnionRowSource(
@@ -162,7 +162,7 @@ public class SingleJournalSearchTest {
                                                 new KvIndexRowSource(
                                                         "sym"
                                                         ,
-                                                        new PartialSymbolKeySource("sym", new ArrayList<String>() {{
+                                                        new PartialSymbolKeySource("sym", new ObjHashSet<String>() {{
                                                             add("BP.L");
                                                             add("XXX");
                                                         }})
@@ -170,7 +170,7 @@ public class SingleJournalSearchTest {
                                                 new KvIndexRowSource(
                                                         "sym"
                                                         ,
-                                                        new PartialSymbolKeySource("sym", new ArrayList<String>() {{
+                                                        new PartialSymbolKeySource("sym", new ObjHashSet<String>() {{
                                                             add("WTB.L");
                                                         }})
                                                 )}

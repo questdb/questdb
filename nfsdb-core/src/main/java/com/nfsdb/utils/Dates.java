@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -559,7 +559,7 @@ final public class Dates {
                                 int sec = Numbers.parseInt(seq, p, p += 2);
                                 checkRange(sec, 0, 59, "Second");
                                 if (p < len) {
-                                    throw new RuntimeException("not an interval");
+                                    throw new NumberFormatException("not an interval");
                                 } else {
                                     // seconds
                                     return new Interval(yearMillis(year, l)

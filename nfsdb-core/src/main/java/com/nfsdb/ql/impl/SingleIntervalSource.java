@@ -16,10 +16,32 @@
 
 package com.nfsdb.ql.impl;
 
+import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.utils.Interval;
 
-import java.util.Iterator;
+public class SingleIntervalSource extends AbstractImmutableIterator<Interval> implements IntervalSource {
+    private final Interval interval;
+    private Interval next;
 
-public interface IntervalSource extends Iterator<Interval>, Iterable<Interval> {
-    void reset();
+    public SingleIntervalSource(Interval interval) {
+        this.interval = interval;
+        this.next = interval;
+    }
+
+    @Override
+    public boolean hasNext() {
+        return next != null;
+    }
+
+    @Override
+    public Interval next() {
+        Interval v = next;
+        next = null;
+        return v;
+    }
+
+    @Override
+    public void reset() {
+        next = interval;
+    }
 }

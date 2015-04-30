@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,5 +47,10 @@ public abstract class AbstractJournalSource extends AbstractImmutableIterator<Jo
     @Override
     public int getColumnIndex(CharSequence name) {
         return metadata.getColumnIndex(name);
+    }
+
+    @Override
+    public boolean invalidColumn(CharSequence name) {
+        return metadata.invalidColumn(name);
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,19 +16,20 @@
 
 package com.nfsdb.ql.impl;
 
+import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Interval;
 
 import java.util.Iterator;
 
-public class YearPeriodSource implements IntervalSource {
+public class YearIntervalSource extends AbstractImmutableIterator<Interval> implements IntervalSource {
     private final Interval start;
     private final Interval next;
     private final int period;
     private final int count;
     private int pos;
 
-    public YearPeriodSource(Interval start, int period, int count) {
+    public YearIntervalSource(Interval start, int period, int count) {
         this.start = start;
         this.period = period;
         this.count = count;
@@ -38,11 +39,6 @@ public class YearPeriodSource implements IntervalSource {
     @Override
     public boolean hasNext() {
         return pos < count;
-    }
-
-    @Override
-    public Iterator<Interval> iterator() {
-        return this;
     }
 
     @Override
@@ -56,7 +52,13 @@ public class YearPeriodSource implements IntervalSource {
     }
 
     @Override
-    public void remove() {
+    public Iterator<Interval> iterator() {
+        return this;
+    }
 
+    @Override
+    public void reset() {
+        pos = 0;
+        next.update(start.getLo(), start.getHi());
     }
 }

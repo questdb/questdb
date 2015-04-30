@@ -14,12 +14,10 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ql.impl;
+package com.nfsdb.ql.parser;
 
-import com.nfsdb.utils.Interval;
-
-import java.util.Iterator;
-
-public interface IntervalSource extends Iterator<Interval>, Iterable<Interval> {
-    void reset();
+public class InvalidColumnException extends ParserException {
+    public InvalidColumnException(int position) {
+        super(position, "Invalid column");
+    }
 }

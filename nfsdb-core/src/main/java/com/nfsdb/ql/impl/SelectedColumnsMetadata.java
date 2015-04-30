@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -60,5 +60,10 @@ public class SelectedColumnsMetadata implements RecordMetadata {
             throw new JournalRuntimeException("Invalid column name %s", name);
         }
         return index;
+    }
+
+    @Override
+    public boolean invalidColumn(CharSequence name) {
+        return nameIndex.get(name) == -1;
     }
 }

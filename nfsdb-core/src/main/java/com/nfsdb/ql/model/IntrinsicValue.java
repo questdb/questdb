@@ -17,5 +17,5 @@
 package com.nfsdb.ql.model;
 
 public enum IntrinsicValue {
-    UNDEFINED, TRUE
+    UNDEFINED, TRUE, FALSE
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,25 +16,24 @@
 
 package com.nfsdb.ql.impl;
 
+import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.ql.KeyCursor;
 import com.nfsdb.ql.KeySource;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.storage.SymbolTable;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-import java.util.List;
-
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class PartialSymbolKeySource implements KeySource, KeyCursor {
 
     private final String symbol;
-    private final List<String> values;
+    private final ObjHashSet<String> values;
     private int[] keys;
     private SymbolTable symbolTable;
     private int keyIndex;
     private int keyCount;
 
-    public PartialSymbolKeySource(String symbol, List<String> values) {
+    public PartialSymbolKeySource(String symbol, ObjHashSet<String> values) {
         this.symbol = symbol;
         this.values = values;
     }
@@ -60,16 +59,6 @@ public class PartialSymbolKeySource implements KeySource, KeyCursor {
     }
 
     @Override
-    public boolean hasNext() {
-        return keyIndex < keyCount;
-    }
-
-    @Override
-    public int next() {
-        return keys[keyIndex++];
-    }
-
-    @Override
     public void reset() {
         symbolTable = null;
         keyIndex = 0;
@@ -78,5 +67,15 @@ public class PartialSymbolKeySource implements KeySource, KeyCursor {
     @Override
     public int size() {
         return keyCount;
+    }
+
+    @Override
+    public boolean hasNext() {
+        return keyIndex < keyCount;
+    }
+
+    @Override
+    public int next() {
+        return keys[keyIndex++];
     }
 }
