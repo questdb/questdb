@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,8 +19,6 @@ package com.nfsdb.ql.impl;
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Interval;
-
-import java.util.Iterator;
 
 public class YearIntervalSource extends AbstractImmutableIterator<Interval> implements IntervalSource {
     private final Interval start;
@@ -49,11 +47,6 @@ public class YearIntervalSource extends AbstractImmutableIterator<Interval> impl
             next.update(Dates.addYear(next.getLo(), period), Dates.addYear(next.getHi(), period));
             return next;
         }
-    }
-
-    @Override
-    public Iterator<Interval> iterator() {
-        return this;
     }
 
     @Override

@@ -19,7 +19,7 @@ package com.nfsdb.io.sink;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
 
-@SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
+@SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY", "SCII_SPOILED_CHILD_INTERFACE_IMPLEMENTOR"})
 public class StringSink extends AbstractCharSink implements CharSequence {
     private final StringBuilder builder = new StringBuilder();
 

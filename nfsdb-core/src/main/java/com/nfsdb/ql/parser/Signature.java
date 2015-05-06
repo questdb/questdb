@@ -61,7 +61,7 @@ public class Signature {
     @Override
     public String toString() {
         return "Signature{" +
-                "name=" + name +
+                "name='" + name + "'" +
                 ", paramTypes=" + paramTypes +
                 '}';
     }

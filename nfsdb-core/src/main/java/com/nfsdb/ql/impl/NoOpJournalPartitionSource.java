@@ -16,34 +16,38 @@
 
 package com.nfsdb.ql.impl;
 
+import com.nfsdb.Journal;
 import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.utils.Interval;
+import com.nfsdb.ql.PartitionSlice;
+import com.nfsdb.ql.PartitionSource;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class SingleIntervalSource extends AbstractImmutableIterator<Interval> implements IntervalSource {
-    private final Interval interval;
-    private Interval next;
+public class NoOpJournalPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource {
 
-    public SingleIntervalSource(Interval interval) {
-        this.interval = interval;
-        this.next = interval;
+    private final Journal journal;
+
+    public NoOpJournalPartitionSource(Journal journal) {
+        this.journal = journal;
+        reset();
+    }
+
+    @Override
+    public Journal getJournal() {
+        return journal;
     }
 
     @Override
     public boolean hasNext() {
-        return next != null;
+        return false;
     }
 
     @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
     @Override
-    public Interval next() {
-        Interval v = next;
-        next = null;
-        return v;
+    public PartitionSlice next() {
+        return null;
     }
 
     @Override
-    public void reset() {
-        next = interval;
+    public final void reset() {
     }
 }

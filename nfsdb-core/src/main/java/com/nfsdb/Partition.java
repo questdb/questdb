@@ -576,6 +576,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
     }
 
+    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     private void open0() throws JournalException {
         columns = new AbstractColumn[journal.getMetadata().getColumnCount()];
 

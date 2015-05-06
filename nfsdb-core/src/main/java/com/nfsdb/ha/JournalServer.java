@@ -34,6 +34,7 @@ import com.nfsdb.ha.protocol.commands.IntResponseConsumer;
 import com.nfsdb.ha.protocol.commands.IntResponseProducer;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.utils.NamedDaemonThreadFactory;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -330,6 +331,7 @@ public class JournalServer {
         service.submit(new ElectionForwarder(reason, uid, command, count));
     }
 
+    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     private SocketChannel openSocketChannel0(ServerNode node, long timeout) throws IOException {
         InetSocketAddress address = new InetSocketAddress(node.getHostname(), node.getPort());
         SocketChannel channel = SocketChannel.open()

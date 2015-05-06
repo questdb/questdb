@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,10 +25,7 @@ import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.ql.*;
 import com.nfsdb.ql.impl.*;
-import com.nfsdb.ql.model.ExprNode;
-import com.nfsdb.ql.model.IntrinsicModel;
-import com.nfsdb.ql.model.QueryColumn;
-import com.nfsdb.ql.model.QueryModel;
+import com.nfsdb.ql.model.*;
 import com.nfsdb.ql.ops.*;
 import com.nfsdb.ql.ops.fact.FunctionFactories;
 import com.nfsdb.ql.ops.fact.FunctionFactory;
@@ -115,6 +112,9 @@ public class NQLOptimiser {
                 sig.setName(node.token).setParamCount(argCount);
                 for (int n = argCount - 1; n > -1; n--) {
                     VirtualColumn c = stack.pollFirst();
+                    if (c == null) {
+                        throw new ParserException(node.position, "Too few arguments");
+                    }
                     sig.paramType(n, c.getType());
                     args.setQuick(n, c);
                 }
@@ -175,36 +175,41 @@ public class NQLOptimiser {
         if (where != null) {
             IntrinsicModel im = intrinsicExtractor.extract(where, reader, latestByCol);
 
-            if (im.intervalHi < Long.MAX_VALUE || im.intervalLo > Long.MIN_VALUE) {
-
-                ps = new MultiIntervalPartitionSource(ps,
-                        new SingleIntervalSource(
-                                new Interval(im.intervalLo, im.intervalHi
-                                )
-                        )
-                );
-            }
-
-            if (im.intervalSource != null) {
-                ps = new MultiIntervalPartitionSource(ps, im.intervalSource);
-            }
-
-            if (latestByCol == null) {
-                if (im.keyColumn != null) {
-                    rs = new KvIndexRowSource(im.keyColumn, new PartialSymbolKeySource(im.keyColumn, im.keyValues));
-                }
-
-                if (im.filter != null) {
-                    rs = new FilteredRowSource(rs == null ? new AllRowSource() : rs, createVirtualColumn(im.filter, reader.getMetadata()));
-                }
+            if (im.intrinsicValue == IntrinsicValue.FALSE) {
+                ps = new NoOpJournalPartitionSource(reader);
             } else {
 
-                if (im.keyColumn != null && im.filter != null) {
-                    rs = new KvIndexHeadRowSource(latestByCol, new PartialSymbolKeySource(latestByCol, im.keyValues), 1, 0, createVirtualColumn(im.filter, reader.getMetadata()));
-                } else if (im.keyColumn != null) {
-                    rs = new KvIndexHeadRowSource(latestByCol, new PartialSymbolKeySource(latestByCol, im.keyValues), 1, 0, null);
+                if (im.intervalHi < Long.MAX_VALUE || im.intervalLo > Long.MIN_VALUE) {
+
+                    ps = new MultiIntervalPartitionSource(ps,
+                            new SingleIntervalSource(
+                                    new Interval(im.intervalLo, im.intervalHi
+                                    )
+                            )
+                    );
+                }
+
+                if (im.intervalSource != null) {
+                    ps = new MultiIntervalPartitionSource(ps, im.intervalSource);
+                }
+
+                if (latestByCol == null) {
+                    if (im.keyColumn != null) {
+                        rs = new KvIndexRowSource(im.keyColumn, new PartialSymbolKeySource(im.keyColumn, im.keyValues));
+                    }
+
+                    if (im.filter != null) {
+                        rs = new FilteredRowSource(rs == null ? new AllRowSource() : rs, createVirtualColumn(im.filter, reader.getMetadata()));
+                    }
                 } else {
-                    rs = new KvIndexHeadRowSource(latestByCol, new SymbolKeySource(latestByCol), 1, 0, null);
+
+                    if (im.keyColumn != null && im.filter != null) {
+                        rs = new KvIndexHeadRowSource(latestByCol, new PartialSymbolKeySource(latestByCol, im.keyValues), 1, 0, createVirtualColumn(im.filter, reader.getMetadata()));
+                    } else if (im.keyColumn != null) {
+                        rs = new KvIndexHeadRowSource(latestByCol, new PartialSymbolKeySource(latestByCol, im.keyValues), 1, 0, null);
+                    } else {
+                        rs = new KvIndexHeadRowSource(latestByCol, new SymbolKeySource(latestByCol), 1, 0, null);
+                    }
                 }
             }
         } else if (latestByCol != null) {

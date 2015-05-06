@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. NFSdb.
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,12 +38,12 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord>
     private final RecordSource<? extends Record> slaveSource;
     private final HashJoinStoreStrategyContext hashStrategyContext;
     private final SplitRecordMetadata metadata;
-    private MultiRecordMap hashTable;
     private final SplitRecord currentRecord;
     private final ObjList<RecordColumnMetadata> masterColumns = new ObjList<>();
     private final ObjList<RecordColumnMetadata> slaveColumns = new ObjList<>();
     private final DirectIntList masterColIndex = new DirectIntList();
     private final DirectIntList slaveColIndex = new DirectIntList();
+    private MultiRecordMap hashTable;
     private RecordSource<? extends Record> hashTableSource;
     private boolean hashTablePending = true;
 
@@ -67,24 +67,12 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord>
         return new HashJoinRecordSource(masterSource, masterColumns, slaveSource, slaveColumns, new HashJoinRecordStoreStrategyContext(slaveSource));
     }
 
-    protected MultiRecordMap buildHashTable(RecordSource<? extends Record> masterSource, ObjList<String> masterColumns, RecordSource<? extends Record> slaveSource, ObjList<String> slaveColumns) {
-        RecordMetadata mm = masterSource.getMetadata();
-        for (int i = 0, k = masterColumns.size(); i < k; i++) {
-            int index = mm.getColumnIndex(masterColumns.get(i));
-            this.masterColIndex.add(index);
-            this.masterColumns.add(mm.getColumn(index));
+    @Override
+    public void close() throws IOException {
+        if (hashTable != null) {
+            hashTable.close();
+            hashTable = null;
         }
-
-        MultiRecordMap.Builder builder = new MultiRecordMap.Builder();
-        RecordMetadata sm = slaveSource.getMetadata();
-        for (int i = 0, k = slaveColumns.size(); i < k; i++) {
-            int index = sm.getColumnIndex(slaveColumns.get(i));
-            this.slaveColIndex.add(index);
-            this.slaveColumns.add(sm.getColumn(index));
-            builder.keyColumn(sm.getColumn(index));
-        }
-        builder.setRecordMetadata(hashStrategyContext.getHashRecordMetadata());
-        return builder.build();
     }
 
     @Override
@@ -113,6 +101,26 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord>
         masterSource.reset();
     }
 
+    private MultiRecordMap buildHashTable(RecordSource<? extends Record> masterSource, ObjList<String> masterColumns, RecordSource<? extends Record> slaveSource, ObjList<String> slaveColumns) {
+        RecordMetadata mm = masterSource.getMetadata();
+        for (int i = 0, k = masterColumns.size(); i < k; i++) {
+            int index = mm.getColumnIndex(masterColumns.get(i));
+            this.masterColIndex.add(index);
+            this.masterColumns.add(mm.getColumn(index));
+        }
+
+        MultiRecordMap.Builder builder = new MultiRecordMap.Builder();
+        RecordMetadata sm = slaveSource.getMetadata();
+        for (int i = 0, k = slaveColumns.size(); i < k; i++) {
+            int index = sm.getColumnIndex(slaveColumns.get(i));
+            this.slaveColIndex.add(index);
+            this.slaveColumns.add(sm.getColumn(index));
+            builder.keyColumn(sm.getColumn(index));
+        }
+        builder.setRecordMetadata(hashStrategyContext.getHashRecordMetadata());
+        return builder.build();
+    }
+
     private void buildHashTable() {
         for (Record r : slaveSource) {
             MultiMap.KeyWriter key = hashTable.claimKey();
@@ -122,6 +130,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord>
             hashTable.add(key, hashStrategyContext.getHashTableRecord(r));
         }
     }
+
     private boolean hasNext0() {
 
         if (hashTablePending) {
@@ -148,13 +157,5 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord>
             }
         }
         return false;
-    }
-
-    @Override
-    public void close() throws IOException {
-        if (hashTable != null) {
-            hashTable.close();
-            hashTable = null;
-        }
     }
 }

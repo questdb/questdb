@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,8 +24,8 @@ final public class Dates {
 
     public static final long DAY_MILLIS = 86400000L;
     public static final long HOUR_MILLIS = 3600000L;
-    public static final int MINUTE_MILLIS = 60000;
-    public static final int SECOND_MILLIS = 1000;
+    public static final long MINUTE_MILLIS = 60000;
+    public static final long SECOND_MILLIS = 1000;
     private static final long AVG_YEAR_MILLIS = (long) (365.25 * DAY_MILLIS);
     private static final long YEAR_MILLIS = 365 * DAY_MILLIS;
     private static final long LEAP_YEAR_MILLIS = 366 * DAY_MILLIS;
@@ -372,7 +372,7 @@ final public class Dates {
         return parseDateTime(seq, 0, seq.length());
     }
 
-    @SuppressFBWarnings({"ICAST_INTEGER_MULTIPLY_CAST_TO_LONG"})
+    @SuppressFBWarnings({"ICAST_INTEGER_MULTIPLY_CAST_TO_LONG", "LEST_LOST_EXCEPTION_STACK_TRACE"})
     public static long parseDateTime(CharSequence seq, int lo, int lim) {
         try {
             int p = lo;
@@ -443,7 +443,7 @@ final public class Dates {
     }
 
     // YYYY-MM-DD hh:mm:ss
-    @SuppressFBWarnings({"ICAST_INTEGER_MULTIPLY_CAST_TO_LONG"})
+    @SuppressFBWarnings({"ICAST_INTEGER_MULTIPLY_CAST_TO_LONG", "LEST_LOST_EXCEPTION_STACK_TRACE"})
     public static long parseDateTimeFmt1(CharSequence seq, int lo, int lim) {
         try {
             int p = lo;
@@ -499,6 +499,7 @@ final public class Dates {
     }
 
     // MM/DD/YYYY
+    @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE"})
     public static long parseDateTimeFmt2(CharSequence seq, int lo, int lim) {
         try {
             int p = lo;
@@ -533,6 +534,7 @@ final public class Dates {
         return parseInterval(seq, 0, seq.length());
     }
 
+    @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE"})
     public static Interval parseInterval(CharSequence seq, int p, int lim) {
         int len = lim - p - 1;
         try {

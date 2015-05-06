@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Interval;
 import com.nfsdb.utils.Numbers;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;
 
@@ -148,6 +149,7 @@ public class IntrinsicExtractor {
         return analyzeInInterval(col, node) || analyzeListOfValues(col.token, metadata, node);
     }
 
+    @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE", "LEST_LOST_EXCEPTION_STACK_TRACE"})
     private boolean analyzeInInterval(ExprNode col, ExprNode in) throws ParserException {
         if (timestamp == null || !Chars.equals(timestamp.name, col.token)) {
             return false;
@@ -285,7 +287,7 @@ public class IntrinsicExtractor {
         if (node == null || node.intrinsicValue == IntrinsicValue.TRUE) {
             return null;
         }
-        if (node.token.equals("and")) {
+        if ("and".equals(node.token)) {
             if (node.lhs == null || node.lhs.intrinsicValue == IntrinsicValue.TRUE) {
                 return node.rhs;
             }
@@ -300,6 +302,7 @@ public class IntrinsicExtractor {
         return parseInterval(seq, 0, seq.length(), position);
     }
 
+    @SuppressFBWarnings({"CLI_CONSTANT_LIST_INDEX"})
     private boolean parseInterval(CharSequence seq, int lo, int lim, int position) throws ParserException {
         int pos[] = new int[3];
         int p = -1;
