@@ -336,8 +336,10 @@ public class KvIndexTest extends AbstractTest {
                 }
 
                 IndexCursor c = index.fwdCursor(i);
+                int n = 0;
                 while (c.hasNext()) {
-                    System.out.println(c.next());
+                    long l = c.next();
+                    Assert.assertEquals(values[i][n++], l);
                 }
             }
         }

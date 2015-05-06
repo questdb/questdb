@@ -538,13 +538,11 @@ public class KVIndex implements Closeable {
     }
 
     private class FwdIndexCursor implements IndexCursor {
-        private int remainingBlockCount;
         private long rowCount;
         private long size;
         private long address;
 
         public FwdIndexCursor setKey(int key) {
-            this.remainingBlockCount = 0;
             this.rowCount = 0;
             this.size = 0;
 
@@ -564,25 +562,22 @@ public class KVIndex implements Closeable {
                 return this;
             }
 
-            this.remainingBlockCount = (int) (this.size >>> bits);
             this.rowCount = 0;
             this.address = rData.getAddress(Unsafe.getUnsafe().getLong(addr + 16) - rowBlockSize, rowBlockSize);
             return this;
         }
 
         public boolean hasNext() {
-            return this.rowCount < size || this.remainingBlockCount > 0;
+            return this.rowCount < size;
         }
 
         public long next() {
-            int r = (int) (++rowCount & mask);
-            if (r > 0) {
-                return Unsafe.getUnsafe().getLong(address + ((r - 1) << 3));
-            } else {
-                remainingBlockCount--;
+            int r = (int) (rowCount++ & mask);
+            long v = Unsafe.getUnsafe().getLong(address + (r << 3));
+            if (r == mask) {
                 this.address = rData.getAddress(Unsafe.getUnsafe().getLong(address + (rowBlockLen << 3)) - rowBlockSize, rowBlockSize);
-                return Unsafe.getUnsafe().getLong(address + (r << 3));
             }
+            return v;
         }
 
 
