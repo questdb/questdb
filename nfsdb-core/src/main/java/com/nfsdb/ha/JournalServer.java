@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -215,40 +215,6 @@ public class JournalServer {
         service.execute(new Acceptor());
     }
 
-    private void addChannel(SocketChannelHolder holder) {
-        channels.add(holder);
-    }
-
-    private void closeChannel(SocketChannelHolder holder, boolean force) {
-        if (holder != null) {
-            try {
-                if (holder.socketAddress != null) {
-                    if (force) {
-                        LOGGER.info("Server node %d: Client forced out: %s", uid, holder.socketAddress);
-                    } else {
-                        LOGGER.info("Server node %d: Client disconnected: %s", uid, holder.socketAddress);
-                    }
-                }
-                holder.byteChannel.close();
-
-            } catch (IOException e) {
-                LOGGER.error("Server node %d: Cannot close channel [%s]: %s", uid, holder.byteChannel, e.getMessage());
-            }
-        }
-    }
-
-    private void closeChannels() {
-        for (SocketChannelHolder h : channels) {
-            closeChannel(h, true);
-        }
-        channels.clear();
-    }
-
-    private synchronized void fwdElectionMessage(ElectionMessageReason reason, int uid, Command command, int count) {
-        this.participant = true;
-        service.submit(new ElectionForwarder(reason, uid, command, count));
-    }
-
     @SuppressWarnings("unchecked")
     IndexedJournalKey getWriterIndex0(JournalKey key) {
         for (ObjIntHashMap.Entry<JournalWriter> e : writers.immutableIterator()) {
@@ -330,6 +296,40 @@ public class JournalServer {
         } else {
             intResponseProducer.write(channel, 0xfd);
         }
+    }
+
+    private void addChannel(SocketChannelHolder holder) {
+        channels.add(holder);
+    }
+
+    private void closeChannel(SocketChannelHolder holder, boolean force) {
+        if (holder != null) {
+            try {
+                if (holder.socketAddress != null) {
+                    if (force) {
+                        LOGGER.info("Server node %d: Client forced out: %s", uid, holder.socketAddress);
+                    } else {
+                        LOGGER.info("Server node %d: Client disconnected: %s", uid, holder.socketAddress);
+                    }
+                }
+                holder.byteChannel.close();
+
+            } catch (IOException e) {
+                LOGGER.error("Server node %d: Cannot close channel [%s]: %s", uid, holder.byteChannel, e.getMessage());
+            }
+        }
+    }
+
+    private void closeChannels() {
+        for (SocketChannelHolder h : channels) {
+            closeChannel(h, true);
+        }
+        channels.clear();
+    }
+
+    private synchronized void fwdElectionMessage(ElectionMessageReason reason, int uid, Command command, int count) {
+        this.participant = true;
+        service.submit(new ElectionForwarder(reason, uid, command, count));
     }
 
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
@@ -473,7 +473,6 @@ public class JournalServer {
                                 LOGGER.debug("Client died", e);
                             } else {
                                 LOGGER.info("Server node %d: Client died %s: %s", uid, holder.socketAddress, e.getMessage());
-                                e.printStackTrace();
                             }
                         }
                         break;

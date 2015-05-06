@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.nfsdb.io.sink;
 
+import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.utils.ByteBuffers;
 
 import java.io.Closeable;
@@ -53,18 +54,14 @@ public class FlexBufferSink extends AbstractCharSink implements Closeable {
             channel.write(buffer);
             buffer.clear();
         } catch (IOException e) {
-            e.printStackTrace();
+            throw new JournalRuntimeException(e);
         }
     }
 
-    @Override
-    public CharSink put(CharSequence cs) {
-        if (cs != null) {
-            for (int i = 0, len = cs.length(); i < len; i++) {
-                put(cs.charAt(i));
-            }
+    public void free() {
+        if (buffer != null) {
+            ByteBuffers.release(buffer);
         }
-        return this;
     }
 
     @Override
@@ -76,10 +73,14 @@ public class FlexBufferSink extends AbstractCharSink implements Closeable {
         return this;
     }
 
-    public void free() {
-        if (buffer != null) {
-            ByteBuffers.release(buffer);
+    @Override
+    public CharSink put(CharSequence cs) {
+        if (cs != null) {
+            for (int i = 0, len = cs.length(); i < len; i++) {
+                put(cs.charAt(i));
+            }
         }
+        return this;
     }
 
     private void resize() {

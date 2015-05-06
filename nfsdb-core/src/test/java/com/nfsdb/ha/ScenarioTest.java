@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,6 +44,16 @@ public class ScenarioTest extends AbstractTest {
 
     private final ClientConfig clientConfig = new ClientConfig("localhost");
 
+    private static void iteration(String expected, Journal<Quote> origin, JournalWriter<Quote> remote, Journal<Quote> local, int lo, int hi) throws Exception {
+        remote.append(origin.query().all().asResultSet().subset(lo, hi));
+        remote.commit();
+
+        Thread.sleep(100);
+
+        local.refresh();
+        TestUtils.assertEquals(expected, local.query().head().withKeys().asResultSet());
+    }
+
     @Test
     public void testLagTrickle() throws Exception {
 
@@ -52,7 +62,7 @@ public class ScenarioTest extends AbstractTest {
         TestData.appendQuoteData2(origin);
 
         final JournalWriter<Quote> randomOrigin = factory.writer(new JournalKey<>(Quote.class, "origin-rnd", PartitionType.NONE, false));
-        randomOrigin.append(origin.query().all().asResultSet().shuffle(new Rnd(System.currentTimeMillis(), System.nanoTime())));
+        randomOrigin.append(origin.query().all().asResultSet().shuffle(new Rnd()));
         origin.close();
 
         final JournalWriter<Quote> remote = factory.writer(Quote.class, "remote");
@@ -80,7 +90,7 @@ public class ScenarioTest extends AbstractTest {
         lagIteration(randomOrigin, remote, 200, 300);
         lagIteration(randomOrigin, remote, 300, 400);
 
-        Thread.sleep(100);
+        Thread.sleep(200);
 
         server.halt();
         client.halt();
@@ -137,16 +147,6 @@ public class ScenarioTest extends AbstractTest {
 
         client.halt();
         server.halt();
-    }
-
-    private static void iteration(String expected, Journal<Quote> origin, JournalWriter<Quote> remote, Journal<Quote> local, int lo, int hi) throws Exception {
-        remote.append(origin.query().all().asResultSet().subset(lo, hi));
-        remote.commit();
-
-        Thread.sleep(100);
-
-        local.refresh();
-        TestUtils.assertEquals(expected, local.query().head().withKeys().asResultSet());
     }
 
     private <T> void assertEquals(Journal<T> expected, Journal<T> actual) throws JournalException {
