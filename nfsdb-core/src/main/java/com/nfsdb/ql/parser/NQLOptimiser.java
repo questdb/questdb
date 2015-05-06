@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -195,7 +195,14 @@ public class NQLOptimiser {
 
                 if (latestByCol == null) {
                     if (im.keyColumn != null) {
-                        rs = new KvIndexRowSource(im.keyColumn, new PartialSymbolKeySource(im.keyColumn, im.keyValues));
+                        switch (reader.getMetadata().getColumn(im.keyColumn).type) {
+                            case SYMBOL:
+                                rs = new KvIndexRowSource(im.keyColumn, new PartialSymbolKeySource(im.keyColumn, im.keyValues));
+                                break;
+                            case STRING:
+                                rs = new StringKvIndexRowSource(im.keyColumn, im.keyValues);
+                                break;
+                        }
                     }
 
                     if (im.filter != null) {
@@ -265,6 +272,7 @@ public class NQLOptimiser {
         String s = Chars.stripQuotes(node.token);
 
         // by ref comparison
+        //noinspection StringEquality
         if (s != node.token) {
             return new StringConstant(s);
         }

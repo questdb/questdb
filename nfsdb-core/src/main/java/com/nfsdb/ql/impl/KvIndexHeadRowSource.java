@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.*;
 import com.nfsdb.ql.ops.VirtualColumn;
+import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -42,7 +43,7 @@ public class KvIndexHeadRowSource extends AbstractRowSource implements RecordSou
     private long lo;
     private long hi;
     private int keyIndex;
-    private KVIndex.IndexCursor indexCursor;
+    private IndexCursor indexCursor;
     private int keyCount = -1;
 
     public KvIndexHeadRowSource(String column, KeySource keySource, int count, int tailOffset, VirtualColumn filter) {
@@ -59,11 +60,6 @@ public class KvIndexHeadRowSource extends AbstractRowSource implements RecordSou
         if (filter != null) {
             this.filter.configureSource(this);
         }
-    }
-
-    @Override
-    public Record currentRecord() {
-        return rec;
     }
 
     @Override
@@ -102,6 +98,18 @@ public class KvIndexHeadRowSource extends AbstractRowSource implements RecordSou
     }
 
     @Override
+    public void reset() {
+        keyCount = -1;
+        keySource.reset();
+        indexCursor = null;
+    }
+
+    @Override
+    public Record currentRecord() {
+        return rec;
+    }
+
+    @Override
     public boolean hasNext() {
         int cnt;
         int o;
@@ -124,19 +132,12 @@ public class KvIndexHeadRowSource extends AbstractRowSource implements RecordSou
         return rec.rowid;
     }
 
-    @Override
-    public void reset() {
-        keyCount = -1;
-        keySource.reset();
-        indexCursor = null;
-    }
-
     private boolean hasNextKey() {
         while (this.keyIndex < keyCount) {
 
             // running first time for keyIndex?
             if (indexCursor == null) {
-                indexCursor = index.cachedCursor(remainingKeys[this.keyIndex]);
+                indexCursor = index.cursor(remainingKeys[this.keyIndex]);
             }
 
             int o = remainingOffsets[keyIndex];

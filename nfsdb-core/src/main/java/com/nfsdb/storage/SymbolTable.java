@@ -246,7 +246,7 @@ public class SymbolTable implements Closeable {
             return VALUE_NOT_FOUND;
         }
 
-        KVIndex.IndexCursor cursor = index.cachedCursor(hashKey);
+        IndexCursor cursor = index.cursor(hashKey);
         while (cursor.hasNext()) {
             int key;
             if (data.cmpStr((key = (int) cursor.next()), value)) {

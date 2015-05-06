@@ -24,6 +24,7 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.query.UnorderedResultSet;
 import com.nfsdb.query.UnorderedResultSetBuilder;
 import com.nfsdb.query.api.QueryHeadBuilder;
+import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
 import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.utils.Interval;
@@ -75,12 +76,6 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
                     private DirectIntList keys = zone1Keys;
                     private DirectIntList remainingKeys = zone2Keys;
 
-                    {
-                        for (int i = 0; i < filterSymbolRows.length; i++) {
-                            filterSymbolRows[i] = new DirectLongList();
-                        }
-                    }
-
                     @Override
                     public Accept accept(Partition<T> partition) throws JournalException {
                         super.accept(partition);
@@ -109,7 +104,7 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
                             for (int k = 0; k < keys.size(); k++) {
                                 int key = keys.get(k);
                                 boolean found = false;
-                                KVIndex.IndexCursor cursor = index.cachedCursor(key);
+                                IndexCursor cursor = index.cursor(key);
 
                                 NEXT_KEY:
                                 while (cursor.hasNext()) {
@@ -150,6 +145,12 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
                             keys = remainingKeys;
                             remainingKeys = temp;
                             remainingKeys.reset();
+                        }
+                    }
+
+                    {
+                        for (int i = 0; i < filterSymbolRows.length; i++) {
+                            filterSymbolRows[i] = new DirectLongList();
                         }
                     }
                 }

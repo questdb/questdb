@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.nfsdb;
 import com.nfsdb.collections.DirectLongList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
 import com.nfsdb.test.tools.AbstractTest;
 import org.junit.Assert;
@@ -27,7 +28,7 @@ import org.junit.Test;
 
 import java.io.File;
 
-public class IndexTest extends AbstractTest {
+public class KvIndexTest extends AbstractTest {
     private static final int totalKeys = 10;
     private static final int totalValues = 100;
     private File indexFile;
@@ -328,10 +329,15 @@ public class IndexTest extends AbstractTest {
                     Assert.assertEquals(values[i][k], array.get(k));
                 }
 
-                KVIndex.IndexCursor cursor = index.cachedCursor(i);
+                IndexCursor cursor = index.cursor(i);
                 int k = (int) cursor.size();
                 while (cursor.hasNext()) {
                     Assert.assertEquals(values[i][--k], cursor.next());
+                }
+
+                IndexCursor c = index.fwdCursor(i);
+                while (c.hasNext()) {
+                    System.out.println(c.next());
                 }
             }
         }

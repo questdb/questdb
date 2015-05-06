@@ -21,6 +21,7 @@ import com.nfsdb.collections.DirectIntList;
 import com.nfsdb.collections.DirectLongList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.query.UnorderedResultSetBuilder;
+import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
 import com.nfsdb.utils.Interval;
 import com.nfsdb.utils.Rows;
@@ -74,7 +75,7 @@ public class QueryAllResultSetBuilder<T> extends UnorderedResultSetBuilder<T> {
                         if (searchIndices[k].contains(filterSymbolKeys.get(k))) {
                             DirectLongList searchLocalRowIDs = searchIndices[k].getValues(filterSymbolKeys.get(k));
 
-                            KVIndex.IndexCursor cursor = index.cachedCursor(symbolKey);
+                            IndexCursor cursor = index.cursor(symbolKey);
                             while (cursor.hasNext()) {
                                 long localRowID = cursor.next();
                                 if (localRowID < lo) {
@@ -87,7 +88,7 @@ public class QueryAllResultSetBuilder<T> extends UnorderedResultSetBuilder<T> {
                         }
                     }
                 } else {
-                    KVIndex.IndexCursor cursor = index.cachedCursor(symbolKey);
+                    IndexCursor cursor = index.cursor(symbolKey);
                     result.setCapacity((int) cursor.size());
                     while (cursor.hasNext()) {
                         long localRowID = cursor.next();

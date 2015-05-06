@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,15 +17,23 @@
 package com.nfsdb.ql;
 
 import com.nfsdb.Journal;
+import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.PartitionType;
+import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
+import com.nfsdb.factory.configuration.JournalStructure;
+import com.nfsdb.io.RecordSourcePrinter;
+import com.nfsdb.io.sink.StdoutSink;
 import com.nfsdb.ql.impl.*;
-import com.nfsdb.ql.ops.*;
+import com.nfsdb.ql.ops.IntEqualsOperator;
+import com.nfsdb.ql.ops.IntParameter;
+import com.nfsdb.ql.ops.RecordSourceColumn;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Files;
+import com.nfsdb.utils.Rnd;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
@@ -59,6 +67,50 @@ public class SearchByKeysTest {
     }
 
     @Test
+    public void testLookupByString() throws Exception {
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $str("id").index().buckets(256).
+                        $double("x").
+                        $double("y").
+                        $ts()
+
+        );
+
+        Rnd rnd = new Rnd();
+        ObjHashSet<String> names = new ObjHashSet<>();
+        for (int i = 0; i < 1024; i++) {
+            names.add(rnd.nextString(15));
+        }
+
+        int mask = 1023;
+        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+
+        for (int i = 0; i < 100000; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            ew.putStr(0, names.get(rnd.nextInt() & mask));
+            ew.putDouble(1, rnd.nextDouble());
+            ew.putDouble(2, rnd.nextDouble());
+            ew.putDate(3, t += 10);
+            ew.append();
+        }
+        w.commit();
+
+        JournalSource src = new JournalSource(
+                new JournalDescPartitionSource(w, false),
+                new StringKvIndexRowSource("id", new ObjHashSet<String>() {{
+                    add("XTPNHTDCEBYWXBB");
+                    add("DKDWOMDXCBJFRPX");
+                }})
+        );
+
+        RecordSourcePrinter p = new RecordSourcePrinter(new StdoutSink());
+        p.print(src);
+
+    }
+
+    @Test
     public void testSearchByIntKey() throws Exception {
 
         Journal<Order> journal = prepareTestData();
@@ -89,41 +141,6 @@ public class SearchByKeysTest {
             Order o = dsInt.$new().head();
             Assert.assertEquals(i, o.id);
             Assert.assertEquals("Mismatch for INT " + i, timestamp + i * inc + (i >= 500 ? 1000 * inc + 3000 : 0), o.timestamp);
-        }
-    }
-
-    @Test
-    public void testSearchByStringKey() throws Exception {
-        Journal<Order> journal = prepareTestData();
-
-        StringParameter param = new StringParameter();
-        StringEqualsOperator filter = new StringEqualsOperator();
-        filter.setLhs(new RecordSourceColumn("strId", journal.getMetadata()));
-        filter.setRhs(param);
-
-        //**QUERY
-        // from order head by strId = "123"
-        // **selects latest version of record with string id 123
-        DataSource<Order> dsStr = new DataSourceImpl<>(
-                new JournalSource(
-                        new JournalDescPartitionSource(journal, false),
-                        new KvIndexHeadRowSource("strId",
-                                new SingleStringHashKeySource("strId", param),
-                                1,
-                                0,
-                                filter
-                        )
-                )
-                , new Order()
-        );
-
-        //assert
-        for (int i = 0; i < 1000; i++) {
-            String s = Integer.toString(i);
-            param.setValue(s);
-            Order o = dsStr.$new().head();
-            Assert.assertEquals(s, o.strId);
-            Assert.assertEquals("Mismatch for STRING " + i, timestamp + i * inc + (i >= 500 ? 1000 * inc + 3000 : 0), o.timestamp);
         }
     }
 

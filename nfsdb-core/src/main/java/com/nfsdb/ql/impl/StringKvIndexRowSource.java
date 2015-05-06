@@ -16,33 +16,34 @@
 
 package com.nfsdb.ql.impl;
 
+import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.ql.KeyCursor;
-import com.nfsdb.ql.KeySource;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.RowCursor;
 import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import com.nfsdb.storage.VariableColumn;
+import com.nfsdb.utils.Hash;
 
-@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
-public class KvIndexRowSource extends AbstractRowSource {
+public class StringKvIndexRowSource extends AbstractRowSource {
 
-    private final String symbol;
-    private final KeySource keySource;
+    private final String columnName;
+    private final ObjHashSet<String> values;
     private KVIndex index;
     private IndexCursor indexCursor;
-    private KeyCursor keyCursor;
     private long lo;
     private long hi;
-    private boolean full;
     private long rowid;
+    private int valueIndex = 0;
+    private CharSequence currentValue;
+    private VariableColumn column;
+    private int bucketCount;
 
-    public KvIndexRowSource(String symbol, KeySource keySource) {
-        this.symbol = symbol;
-        this.keySource = keySource;
+    public StringKvIndexRowSource(String columnName, ObjHashSet<String> values) {
+        this.columnName = columnName;
+        this.values = values;
     }
 
     @Override
@@ -52,12 +53,14 @@ public class KvIndexRowSource extends AbstractRowSource {
     @Override
     public RowCursor cursor(PartitionSlice slice) {
         try {
-            this.index = slice.partition.getIndexForColumn(symbol);
-            this.keyCursor = this.keySource.cursor(slice);
+            int index = slice.partition.getJournal().getMetadata().getColumnIndex(columnName);
+            this.bucketCount = slice.partition.getJournal().getMetadata().getColumn(index).distinctCountHint;
+            this.column = (VariableColumn) slice.partition.getAbstractColumn(index);
+            this.index = slice.partition.getIndexForColumn(index);
+
             this.indexCursor = null;
-            this.full = slice.lo == 0 && slice.calcHi;
-            this.lo = slice.lo;
-            this.hi = slice.calcHi ? slice.partition.open().size() - 1 : slice.hi;
+            this.lo = slice.lo - 1;
+            this.hi = slice.calcHi ? slice.partition.open().size() : slice.hi + 1;
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
@@ -66,22 +69,18 @@ public class KvIndexRowSource extends AbstractRowSource {
 
     @Override
     public void reset() {
-        keySource.reset();
+        indexCursor = null;
+        valueIndex = 0;
     }
 
     @Override
     public boolean hasNext() {
 
         if (indexCursor != null && indexCursor.hasNext()) {
-            if (full) {
-                this.rowid = indexCursor.next();
-                return true;
-            }
-
             do {
-                long rowid = indexCursor.next();
-                if (rowid >= lo && rowid <= hi) {
-                    this.rowid = rowid;
+                long r = indexCursor.next();
+                if (r > lo && r < hi && column.cmpStr(r, currentValue)) {
+                    this.rowid = r;
                     return true;
                 }
             } while (indexCursor.hasNext());
@@ -96,22 +95,18 @@ public class KvIndexRowSource extends AbstractRowSource {
     }
 
     private boolean hasNext0() {
-        while (keyCursor.hasNext()) {
-            indexCursor = index.fwdCursor(keyCursor.next());
+        while (valueIndex < values.size()) {
+            CharSequence str = values.get(valueIndex++);
+            indexCursor = index.fwdCursor(Hash.boundedHash(str, bucketCount));
 
-            if (indexCursor.hasNext()) {
-                if (full) {
-                    this.rowid = indexCursor.next();
+            while (indexCursor.hasNext()) {
+                long r = indexCursor.next();
+
+                if (r > lo && r < hi && column.cmpStr(r, str)) {
+                    this.rowid = r;
+                    this.currentValue = str;
                     return true;
                 }
-
-                do {
-                    long rowid = indexCursor.next();
-                    if (rowid >= lo && rowid <= hi) {
-                        this.rowid = rowid;
-                        return true;
-                    }
-                } while (indexCursor.hasNext());
             }
         }
 

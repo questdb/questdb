@@ -43,8 +43,9 @@ public class KVIndex implements Closeable {
         }
     */
 
-    private static final int ENTRY_SIZE = 16;
-    private final IndexCursor cachedCursor = new IndexCursor();
+    private static final int ENTRY_SIZE = 32;
+    private final RevIndexCursor cachedCursor = new RevIndexCursor();
+    private final FwdIndexCursor fwdIndexCursor = new FwdIndexCursor();
     private final int rowBlockSize;
     private final int rowBlockLen;
     private final MemoryFile kData;
@@ -90,7 +91,7 @@ public class KVIndex implements Closeable {
         // x >>> bits = x / rowBlockLen
         this.bits = 31 - Integer.numberOfLeadingZeros(rowBlockLen);
         this.firstEntryOffset = keyBlockSizeOffset + 16;
-        this.rowBlockSize = rowBlockLen * 8 + 8;
+        this.rowBlockSize = rowBlockLen * 8 + 16;
         this.rData = new MemoryFile(new File(baseName.getParentFile(), baseName.getName() + ".r"), ByteBuffers.getBitHint(rowBlockSize, keyCount), mode);
     }
 
@@ -142,6 +143,11 @@ public class KVIndex implements Closeable {
             rData.setAppendOffset(rowBlockOffset);
             Unsafe.getUnsafe().putLong(rData.getAddress(rowBlockOffset - 8, 8), prevBlockOffset);
             Unsafe.getUnsafe().putLong(address, rowBlockOffset);
+            if (prevBlockOffset == 0) {
+                Unsafe.getUnsafe().putLong(address + 16, rowBlockOffset);
+            } else {
+                Unsafe.getUnsafe().putLong(rData.getAddress(prevBlockOffset - 16, 8), rowBlockOffset);
+            }
         }
         Unsafe.getUnsafe().putLong(rData.getAddress(rowBlockOffset - rowBlockSize + 8 * cellIndex, 8), value);
         Unsafe.getUnsafe().putLong(address + 8, rowCount + 1);
@@ -149,10 +155,6 @@ public class KVIndex implements Closeable {
         if (maxValue <= value) {
             maxValue = value + 1;
         }
-    }
-
-    public IndexCursor cachedCursor(int key) {
-        return this.cachedCursor.setKey(key);
     }
 
     /**
@@ -194,8 +196,16 @@ public class KVIndex implements Closeable {
         return getValueCount(key) > 0;
     }
 
+    public IndexCursor cursor(int key) {
+        return this.cachedCursor.setKey(key);
+    }
+
     public void force() {
         kData.force();
+    }
+
+    public FwdIndexCursor fwdCursor(int key) {
+        return this.fwdIndexCursor.setKey(key);
     }
 
     public long getTxAddress() {
@@ -330,7 +340,7 @@ public class KVIndex implements Closeable {
                 address += 8;
             }
             if (i > 0) {
-                rowBlockOffset = Unsafe.getUnsafe().getLong(address + (rowBlockLen - len) * 8);
+                rowBlockOffset = Unsafe.getUnsafe().getLong(address + (rowBlockLen - len) * 8 + 8);
             }
             len = rowBlockLen;
         }
@@ -469,7 +479,7 @@ public class KVIndex implements Closeable {
         inTransaction = true;
     }
 
-    public class IndexCursor {
+    private class RevIndexCursor implements IndexCursor {
         private int remainingBlockCount;
         private int remainingRowCount;
         private long size;
@@ -479,20 +489,64 @@ public class KVIndex implements Closeable {
             return this.remainingRowCount > 0 || this.remainingBlockCount > 0;
         }
 
+        public RevIndexCursor setKey(int key) {
+            this.remainingBlockCount = 0;
+            this.remainingRowCount = 0;
+
+            if (key < 0) {
+                return this;
+            }
+
+            long keyOffset = getKeyOffset(key);
+            if (keyOffset < firstEntryOffset + keyBlockSize) {
+                long addr = kData.getAddress(keyOffset, ENTRY_SIZE);
+                this.size = Unsafe.getUnsafe().getLong(addr + 8);
+
+                if (size == 0) {
+                    return this;
+                }
+
+                int k = (int) (size & mask);
+                if (k == 0) {
+                    remainingBlockCount = (int) (this.size >>> bits) - 1;
+                    remainingRowCount = rowBlockLen;
+                } else {
+                    remainingBlockCount = (int) (this.size >>> bits);
+                    remainingRowCount = k;
+                }
+                this.address = rData.getAddress(Unsafe.getUnsafe().getLong(addr) - rowBlockSize, rowBlockSize);
+            }
+
+            return this;
+        }
+
         public long next() {
             if (remainingRowCount > 0) {
                 return Unsafe.getUnsafe().getLong(address + ((--this.remainingRowCount) << 3));
             } else {
                 remainingBlockCount--;
-                this.address = rData.getAddress(Unsafe.getUnsafe().getLong(address + (rowBlockLen << 3)) - rowBlockSize, rowBlockSize);
+                this.address = rData.getAddress(Unsafe.getUnsafe().getLong(address + (rowBlockLen << 3) + 8) - rowBlockSize, rowBlockSize);
                 this.remainingRowCount = mask;
                 return Unsafe.getUnsafe().getLong(address + (this.remainingRowCount << 3));
             }
         }
 
-        public IndexCursor setKey(int key) {
+
+        public long size() {
+            return size;
+        }
+    }
+
+    private class FwdIndexCursor implements IndexCursor {
+        private int remainingBlockCount;
+        private long rowCount;
+        private long size;
+        private long address;
+
+        public FwdIndexCursor setKey(int key) {
             this.remainingBlockCount = 0;
-            this.remainingRowCount = 0;
+            this.rowCount = 0;
+            this.size = 0;
 
             if (key < 0) {
                 return this;
@@ -511,16 +565,26 @@ public class KVIndex implements Closeable {
             }
 
             this.remainingBlockCount = (int) (this.size >>> bits);
-            this.remainingRowCount = (int) (this.size & mask);
-
-            if (remainingRowCount == 0) {
-                remainingBlockCount--;
-                remainingRowCount = rowBlockLen;
-            }
-
-            this.address = rData.getAddress(Unsafe.getUnsafe().getLong(addr) - rowBlockSize, rowBlockSize);
+            this.rowCount = 0;
+            this.address = rData.getAddress(Unsafe.getUnsafe().getLong(addr + 16) - rowBlockSize, rowBlockSize);
             return this;
         }
+
+        public boolean hasNext() {
+            return this.rowCount < size || this.remainingBlockCount > 0;
+        }
+
+        public long next() {
+            int r = (int) (++rowCount & mask);
+            if (r > 0) {
+                return Unsafe.getUnsafe().getLong(address + ((r - 1) << 3));
+            } else {
+                remainingBlockCount--;
+                this.address = rData.getAddress(Unsafe.getUnsafe().getLong(address + (rowBlockLen << 3)) - rowBlockSize, rowBlockSize);
+                return Unsafe.getUnsafe().getLong(address + (r << 3));
+            }
+        }
+
 
         public long size() {
             return size;

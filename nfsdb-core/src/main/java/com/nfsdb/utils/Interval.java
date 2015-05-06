@@ -145,20 +145,6 @@ public class Interval {
         return hi <= x;
     }
 
-    public Interval overlap(long lo, long hi) {
-        if (this.lo > lo) {
-            lo = this.lo;
-        }
-        if (this.hi < hi) {
-            hi = this.hi;
-        }
-        return new Interval(lo, hi);
-    }
-
-    public boolean overlaps(Interval other) {
-        return lo < other.hi && other.lo < hi;
-    }
-
     public void update(long lo, long hi) {
         this.lo = lo;
         this.hi = hi;
