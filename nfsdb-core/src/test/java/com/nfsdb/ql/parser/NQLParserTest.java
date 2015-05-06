@@ -34,7 +34,7 @@ public class NQLParserTest extends AbstractTest {
         Statement statement = parser.parse();
         Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
         // journal name
-        Assert.assertEquals("zyzy", statement.getQueryModel().getJournalName());
+        Assert.assertEquals("zyzy", statement.getQueryModel().getJournalName().token);
         // columns
         Assert.assertEquals(2, statement.getQueryModel().getColumns().size());
         Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getName());
@@ -52,7 +52,7 @@ public class NQLParserTest extends AbstractTest {
         Statement statement = parser.parse();
         Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
         Assert.assertNotNull(statement.getQueryModel());
-        Assert.assertEquals("zyzy", statement.getQueryModel().getJournalName());
+        Assert.assertEquals("zyzy", statement.getQueryModel().getJournalName().token);
         Assert.assertEquals(2, statement.getQueryModel().getColumns().size());
         Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getName());
         Assert.assertEquals("ohoh", statement.getQueryModel().getColumns().get(1).getName());
@@ -64,7 +64,7 @@ public class NQLParserTest extends AbstractTest {
 
         Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
         Assert.assertNotNull(statement.getQueryModel());
-        Assert.assertEquals("t", statement.getQueryModel().getJournalName());
+        Assert.assertEquals("t", statement.getQueryModel().getJournalName().token);
         Assert.assertEquals(3, statement.getQueryModel().getColumns().size());
         for (int i = 0; i < 3; i++) {
             Assert.assertEquals(ExprNode.NodeType.LITERAL, statement.getQueryModel().getColumns().get(i).getAst().type);
@@ -79,7 +79,7 @@ public class NQLParserTest extends AbstractTest {
         Assert.assertEquals(1, statement.getQueryModel().getColumns().size());
         Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getName());
         Assert.assertEquals("+", statement.getQueryModel().getColumns().get(0).getAst().token);
-        Assert.assertEquals("t", statement.getQueryModel().getJournalName());
+        Assert.assertEquals("t", statement.getQueryModel().getJournalName().token);
     }
 
     @Test
@@ -87,7 +87,7 @@ public class NQLParserTest extends AbstractTest {
         Statement statement = parse("select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 10");
         Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
         // journal name
-        Assert.assertEquals("zyzy", statement.getQueryModel().getJournalName());
+        Assert.assertEquals("zyzy", statement.getQueryModel().getJournalName().token);
         // columns
         Assert.assertEquals(2, statement.getQueryModel().getColumns().size());
         Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getName());

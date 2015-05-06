@@ -83,27 +83,16 @@ public class IntrinsicExtractor {
         return model;
     }
 
-    private static String stripQuotes(String s) {
-        int l;
-        if (s == null || (l = s.length()) == 0) {
-            return s;
-        }
-
-        char c = s.charAt(0);
-        if (c == '\'' || c == '"') {
-            return s.substring(1, l - 1);
-        }
-
-        return s;
-    }
-
     private boolean analyzeEquals(ExprNode node) throws ParserException {
         return !(node.paramCount > 2 || timestamp == null) && (analyzeEquals0(node, node.lhs, node.rhs) || analyzeEquals0(node, node.rhs, node.lhs));
     }
 
     private boolean analyzeEquals0(ExprNode node, ExprNode a, ExprNode b) throws ParserException {
+        if (a == null || b == null) {
+            throw new ParserException(node.position, "Argument expected");
+        }
         if (a.type == ExprNode.NodeType.LITERAL && timestamp.name.equals(a.token) && b.type == ExprNode.NodeType.CONSTANT) {
-            boolean reversible = parseInterval(stripQuotes(b.token), b.position);
+            boolean reversible = parseInterval(Chars.stripQuotes(b.token), b.position);
             node.intrinsicValue = IntrinsicValue.TRUE;
             // exact timestamp matches will be returning FALSE
             // which means that they are irreversible and won't be added to timestampNodes.
@@ -253,14 +242,14 @@ public class IntrinsicExtractor {
                 if (node.rhs == null || node.rhs.type != ExprNode.NodeType.CONSTANT) {
                     return false;
                 }
-                keys.add(stripQuotes(node.rhs.token));
+                keys.add(Chars.stripQuotes(node.rhs.token));
             } else {
                 for (i--; i > -1; i--) {
                     ExprNode c = node.args.getQuick(i);
                     if (c.type != ExprNode.NodeType.CONSTANT) {
                         return false;
                     }
-                    keys.add(stripQuotes(c.token));
+                    keys.add(Chars.stripQuotes(c.token));
                 }
             }
 

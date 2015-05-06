@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ public final class Chars {
     }
 
     public static boolean equals(CharSequence l, CharSequence r) {
+
         int ll;
         if ((ll = l.length()) != r.length()) {
             return false;
@@ -60,4 +61,19 @@ public final class Chars {
 
         return true;
     }
+
+    public static String stripQuotes(String s) {
+        int l;
+        if (s == null || (l = s.length()) == 0) {
+            return s;
+        }
+
+        char c = s.charAt(0);
+        if (c == '\'' || c == '"') {
+            return s.substring(1, l - 1);
+        }
+
+        return s;
+    }
+
 }

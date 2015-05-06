@@ -211,7 +211,7 @@ public class NQLParser {
 
         // expect (journal name)
 
-        model.setJournalName(tok().toString());
+        model.setJournalName(expr());
 
         // expect [latest by]
 

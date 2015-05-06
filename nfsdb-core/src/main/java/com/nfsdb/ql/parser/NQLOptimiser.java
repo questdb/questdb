@@ -21,6 +21,7 @@ import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.NoSuchColumnException;
 import com.nfsdb.factory.JournalFactory;
+import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.ql.*;
 import com.nfsdb.ql.impl.*;
@@ -32,6 +33,7 @@ import com.nfsdb.ql.ops.*;
 import com.nfsdb.ql.ops.fact.FunctionFactories;
 import com.nfsdb.ql.ops.fact.FunctionFactory;
 import com.nfsdb.storage.ColumnType;
+import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Interval;
 import com.nfsdb.utils.Numbers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -125,7 +127,21 @@ public class NQLOptimiser {
     }
 
     private RecordSource<? extends Record> createRecordSource(QueryModel model) throws JournalException, ParserException {
-        Journal reader = factory.reader(model.getJournalName());
+
+        ExprNode readerNode = model.getJournalName();
+        if (readerNode.type != ExprNode.NodeType.LITERAL) {
+            throw new ParserException(readerNode.position, "Journal name expected");
+        }
+
+        if (factory.exists(readerNode.token) == JournalReaderFactory.JournalExistenceCheck.DOES_NOT_EXIST) {
+            throw new ParserException(readerNode.position, "Journal does not exist");
+        }
+
+        if (factory.exists(readerNode.token) == JournalReaderFactory.JournalExistenceCheck.EXISTS_FOREIGN) {
+            throw new ParserException(readerNode.position, "Journal directory is of unknown format");
+        }
+
+        Journal reader = factory.reader(readerNode.token);
 
         PartitionSource ps = new JournalPartitionSource(reader, true);
         RowSource rs = null;
@@ -240,6 +256,14 @@ public class NQLOptimiser {
     }
 
     private VirtualColumn parseConstant(ExprNode node) throws ParserException {
+
+        String s = Chars.stripQuotes(node.token);
+
+        // by ref comparison
+        if (s != node.token) {
+            return new StringConstant(s);
+        }
+
         try {
             return new IntConstant(Numbers.parseInt(node.token));
         } catch (NumberFormatException ignore) {

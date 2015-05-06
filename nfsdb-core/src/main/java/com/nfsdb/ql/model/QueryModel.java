@@ -21,7 +21,7 @@ import com.nfsdb.collections.ObjList;
 public class QueryModel {
     private final ObjList<QueryColumn> columns = new ObjList<>();
     private ExprNode whereClause;
-    private String journalName;
+    private ExprNode journalName;
     private ExprNode latestBy;
 
     public void addColumn(QueryColumn column) {
@@ -33,11 +33,11 @@ public class QueryModel {
         return columns;
     }
 
-    public String getJournalName() {
+    public ExprNode getJournalName() {
         return journalName;
     }
 
-    public void setJournalName(String journalName) {
+    public void setJournalName(ExprNode journalName) {
         this.journalName = journalName;
     }
 

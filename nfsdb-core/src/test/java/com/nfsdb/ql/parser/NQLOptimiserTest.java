@@ -16,8 +16,11 @@
 
 package com.nfsdb.ql.parser;
 
+import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
+import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.model.Quote;
@@ -26,6 +29,7 @@ import com.nfsdb.ql.RecordSource;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Dates;
+import com.nfsdb.utils.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -149,6 +153,17 @@ public class NQLOptimiserTest extends AbstractTest {
     }
 
     @Test
+    public void testJournalDoesNotExist() throws Exception {
+        try {
+            compile("select id, x, y, timestamp from q where id = ");
+            Assert.fail("Expected exception");
+        } catch (ParserException e) {
+            Assert.assertEquals(32, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("does not exist"));
+        }
+    }
+
+    @Test
     public void testLatestBy() throws Exception {
         JournalWriter<Quote> w = factory.writer(Quote.class, "q");
         TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
@@ -156,6 +171,145 @@ public class NQLOptimiserTest extends AbstractTest {
 
         final String expected = "GKN.L\t688.000000000000\t256.000000000000\t2015-02-13T02:59:50.000Z\n";
         assertThat(expected, "select sym, bid, ask, timestamp from q latest by sym where sym in ('GKN.L') and ask > 100");
+    }
+
+    @Test
+    public void testMissingEqualsArgument() throws Exception {
+        factory.writer(Quote.class, "q");
+        try {
+            compile("select id, x, y, timestamp from q where id = ");
+            Assert.fail("Expected exception");
+        } catch (ParserException e) {
+            Assert.assertEquals(43, e.getPosition());
+        }
+    }
+
+    @Test
+    public void testSearchByStringIdUnindexed() throws Exception {
+
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $str("id").
+                        $double("x").
+                        $double("y").
+                        $ts()
+
+        );
+
+        Rnd rnd = new Rnd();
+        ObjHashSet<String> names = new ObjHashSet<>();
+        for (int i = 0; i < 1024; i++) {
+            names.add(rnd.nextString(15));
+        }
+
+        int mask = 1023;
+        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+
+        for (int i = 0; i < 100000; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            ew.putStr(0, names.get(rnd.nextInt() & mask));
+            ew.putDouble(1, rnd.nextDouble());
+            ew.putDouble(2, rnd.nextDouble());
+            ew.putDate(3, t += 10);
+            ew.append();
+        }
+        w.commit();
+
+        final String expected = "XTPNHTDCEBYWXBB\t-292.000000000000\t0.000000006354\t2015-03-12T00:00:02.290Z\n" +
+                "XTPNHTDCEBYWXBB\t7.197236061096\t2.818476676941\t2015-03-12T00:00:27.340Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000005481412\t1.312383592129\t2015-03-12T00:00:29.610Z\n" +
+                "XTPNHTDCEBYWXBB\t446.081878662109\t0.000000051478\t2015-03-12T00:00:31.780Z\n" +
+                "XTPNHTDCEBYWXBB\t-809.625000000000\t0.000000104467\t2015-03-12T00:00:33.860Z\n" +
+                "XTPNHTDCEBYWXBB\t560.000000000000\t0.526266053319\t2015-03-12T00:00:37.440Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000000004619\t0.000028377840\t2015-03-12T00:00:46.630Z\n" +
+                "XTPNHTDCEBYWXBB\t-510.983673095703\t-512.000000000000\t2015-03-12T00:00:55.090Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000000527720\t760.000000000000\t2015-03-12T00:01:03.780Z\n" +
+                "XTPNHTDCEBYWXBB\t0.012854952831\t-292.297058105469\t2015-03-12T00:01:09.350Z\n" +
+                "XTPNHTDCEBYWXBB\t0.082818411291\t2.386151432991\t2015-03-12T00:01:10.310Z\n" +
+                "XTPNHTDCEBYWXBB\t330.293212890625\t-268.000000000000\t2015-03-12T00:01:12.810Z\n" +
+                "XTPNHTDCEBYWXBB\t278.125000000000\t0.077817678452\t2015-03-12T00:01:16.670Z\n" +
+                "XTPNHTDCEBYWXBB\t-448.000000000000\t0.000001829988\t2015-03-12T00:02:02.260Z\n" +
+                "XTPNHTDCEBYWXBB\t0.238381892443\t-935.843750000000\t2015-03-12T00:02:33.540Z\n" +
+                "XTPNHTDCEBYWXBB\t0.097852131352\t-120.312500000000\t2015-03-12T00:02:41.600Z\n" +
+                "XTPNHTDCEBYWXBB\t0.034327778034\t0.000000076055\t2015-03-12T00:02:41.860Z\n" +
+                "XTPNHTDCEBYWXBB\t0.016777765006\t1.525665938854\t2015-03-12T00:02:47.630Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000000245470\t0.000000012355\t2015-03-12T00:03:21.880Z\n" +
+                "XTPNHTDCEBYWXBB\t38.482372283936\t156.359012603760\t2015-03-12T00:03:25.470Z\n" +
+                "XTPNHTDCEBYWXBB\t960.000000000000\t-561.500000000000\t2015-03-12T00:03:52.790Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000048914401\t0.000535350249\t2015-03-12T00:03:53.420Z\n" +
+                "XTPNHTDCEBYWXBB\t0.315786086023\t-544.000000000000\t2015-03-12T00:04:02.560Z\n" +
+                "XTPNHTDCEBYWXBB\t-512.000000000000\t512.000000000000\t2015-03-12T00:04:09.410Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000469007500\t0.000000003315\t2015-03-12T00:04:29.330Z\n" +
+                "XTPNHTDCEBYWXBB\t473.774108886719\t0.005739651737\t2015-03-12T00:04:49.240Z\n" +
+                "XTPNHTDCEBYWXBB\t77.079637527466\t-68.750000000000\t2015-03-12T00:04:54.540Z\n" +
+                "XTPNHTDCEBYWXBB\t1017.250000000000\t256.000000000000\t2015-03-12T00:04:59.980Z\n" +
+                "XTPNHTDCEBYWXBB\t979.558593750000\t0.034476440400\t2015-03-12T00:05:00.400Z\n" +
+                "XTPNHTDCEBYWXBB\t0.080838434398\t0.000240437294\t2015-03-12T00:05:16.590Z\n" +
+                "XTPNHTDCEBYWXBB\t837.343750000000\t0.000000003163\t2015-03-12T00:05:22.150Z\n" +
+                "XTPNHTDCEBYWXBB\t-708.738037109375\t12.065711975098\t2015-03-12T00:05:23.960Z\n" +
+                "XTPNHTDCEBYWXBB\t73.905494689941\t968.143554687500\t2015-03-12T00:05:30.160Z\n" +
+                "XTPNHTDCEBYWXBB\t858.125000000000\t0.004347450798\t2015-03-12T00:06:06.300Z\n" +
+                "XTPNHTDCEBYWXBB\t191.156250000000\t692.151489257813\t2015-03-12T00:06:07.380Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000000350446\t0.001085809752\t2015-03-12T00:06:14.550Z\n" +
+                "XTPNHTDCEBYWXBB\t877.107116699219\t0.073764367029\t2015-03-12T00:06:26.310Z\n" +
+                "XTPNHTDCEBYWXBB\t4.980149984360\t0.000000005301\t2015-03-12T00:06:33.470Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000937165081\t-204.000000000000\t2015-03-12T00:06:54.810Z\n" +
+                "XTPNHTDCEBYWXBB\t756.876586914063\t-572.703125000000\t2015-03-12T00:06:56.120Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000000022885\t0.689865306020\t2015-03-12T00:06:57.920Z\n" +
+                "XTPNHTDCEBYWXBB\t723.500000000000\t-592.817382812500\t2015-03-12T00:07:17.570Z\n" +
+                "XTPNHTDCEBYWXBB\t-285.125000000000\t-448.250000000000\t2015-03-12T00:07:20.480Z\n" +
+                "XTPNHTDCEBYWXBB\t4.877287983894\t-870.000000000000\t2015-03-12T00:07:36.830Z\n" +
+                "XTPNHTDCEBYWXBB\t-638.750000000000\t-859.125000000000\t2015-03-12T00:07:38.910Z\n" +
+                "XTPNHTDCEBYWXBB\t757.085937500000\t-128.000000000000\t2015-03-12T00:07:45.970Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000024196771\t44.254640579224\t2015-03-12T00:07:56.400Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000002050660\t113.433692932129\t2015-03-12T00:08:25.690Z\n" +
+                "XTPNHTDCEBYWXBB\t0.001966100186\t401.331298828125\t2015-03-12T00:08:31.180Z\n" +
+                "XTPNHTDCEBYWXBB\t134.605468750000\t0.000778750400\t2015-03-12T00:08:34.070Z\n" +
+                "XTPNHTDCEBYWXBB\t304.000000000000\t170.421752929688\t2015-03-12T00:08:36.400Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000000029559\t0.000033108370\t2015-03-12T00:08:42.110Z\n" +
+                "XTPNHTDCEBYWXBB\t0.064763752744\t-384.000000000000\t2015-03-12T00:08:49.670Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000000000000\t0.016534221359\t2015-03-12T00:09:01.010Z\n" +
+                "XTPNHTDCEBYWXBB\t0.060663623735\t0.377497851849\t2015-03-12T00:09:03.830Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000001439460\t0.000000291427\t2015-03-12T00:09:05.960Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000660118021\t0.000000001520\t2015-03-12T00:09:14.030Z\n" +
+                "XTPNHTDCEBYWXBB\t394.622238159180\t0.245789200068\t2015-03-12T00:09:35.320Z\n" +
+                "XTPNHTDCEBYWXBB\t-1024.000000000000\t0.002625804045\t2015-03-12T00:10:04.300Z\n" +
+                "XTPNHTDCEBYWXBB\t0.021761201322\t-805.171875000000\t2015-03-12T00:10:10.920Z\n" +
+                "XTPNHTDCEBYWXBB\t18.621844291687\t0.003388853336\t2015-03-12T00:10:24.380Z\n" +
+                "XTPNHTDCEBYWXBB\t-514.108642578125\t66.830410003662\t2015-03-12T00:10:30.510Z\n" +
+                "XTPNHTDCEBYWXBB\t1.720549345016\t0.000006926386\t2015-03-12T00:10:37.250Z\n" +
+                "XTPNHTDCEBYWXBB\t-715.183959960938\t22.427126884460\t2015-03-12T00:10:39.680Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000000000000\t0.629212051630\t2015-03-12T00:10:44.310Z\n" +
+                "XTPNHTDCEBYWXBB\t257.433593750000\t0.000087903414\t2015-03-12T00:11:03.210Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000000070390\t-270.520019531250\t2015-03-12T00:11:18.280Z\n" +
+                "XTPNHTDCEBYWXBB\t-439.250000000000\t0.000000093325\t2015-03-12T00:11:25.080Z\n" +
+                "XTPNHTDCEBYWXBB\t256.000000000000\t760.565032958984\t2015-03-12T00:11:35.220Z\n" +
+                "XTPNHTDCEBYWXBB\t634.375000000000\t0.000000033359\t2015-03-12T00:11:55.300Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000031026852\t0.000000000000\t2015-03-12T00:11:58.680Z\n" +
+                "XTPNHTDCEBYWXBB\t90.977296829224\t0.000000124888\t2015-03-12T00:12:06.190Z\n" +
+                "XTPNHTDCEBYWXBB\t0.845079660416\t0.000001311144\t2015-03-12T00:12:12.980Z\n" +
+                "XTPNHTDCEBYWXBB\t-0.500000000000\t216.805793762207\t2015-03-12T00:12:28.700Z\n" +
+                "XTPNHTDCEBYWXBB\t0.021825334989\t0.000000003128\t2015-03-12T00:12:29.420Z\n" +
+                "XTPNHTDCEBYWXBB\t0.307688817382\t516.472656250000\t2015-03-12T00:12:36.300Z\n" +
+                "XTPNHTDCEBYWXBB\t43.792731285095\t0.000372541021\t2015-03-12T00:12:42.040Z\n" +
+                "XTPNHTDCEBYWXBB\t-782.687500000000\t252.748397827148\t2015-03-12T00:12:48.780Z\n" +
+                "XTPNHTDCEBYWXBB\t137.645996093750\t808.000000000000\t2015-03-12T00:13:09.280Z\n" +
+                "XTPNHTDCEBYWXBB\t0.002546578180\t17.097163200378\t2015-03-12T00:13:27.120Z\n" +
+                "XTPNHTDCEBYWXBB\t-264.875000000000\t-419.750000000000\t2015-03-12T00:13:40.020Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000221305789\t53.479209899902\t2015-03-12T00:13:40.660Z\n" +
+                "XTPNHTDCEBYWXBB\t0.030516586266\t-612.226562500000\t2015-03-12T00:13:50.440Z\n" +
+                "XTPNHTDCEBYWXBB\t-1024.000000000000\t17.896668434143\t2015-03-12T00:13:53.350Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000000091829\t0.000000000000\t2015-03-12T00:14:06.090Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000164877347\t0.000000009079\t2015-03-12T00:14:15.960Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000000276606\t512.000000000000\t2015-03-12T00:14:31.890Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000000034906\t-1024.000000000000\t2015-03-12T00:15:19.540Z\n" +
+                "XTPNHTDCEBYWXBB\t478.680068969727\t0.000058549787\t2015-03-12T00:15:19.790Z\n" +
+                "XTPNHTDCEBYWXBB\t430.000000000000\t639.000000000000\t2015-03-12T00:15:33.890Z\n" +
+                "XTPNHTDCEBYWXBB\t0.000000236331\t-960.000000000000\t2015-03-12T00:15:38.790Z\n" +
+                "XTPNHTDCEBYWXBB\t81.210937500000\t0.000056687957\t2015-03-12T00:15:43.330Z\n" +
+                "XTPNHTDCEBYWXBB\t648.112548828125\t0.000010239995\t2015-03-12T00:16:30.740Z\n";
+        assertThat(expected, "select id, x, y, timestamp from tab where id = 'XTPNHTDCEBYWXBB'");
     }
 
     @Test
