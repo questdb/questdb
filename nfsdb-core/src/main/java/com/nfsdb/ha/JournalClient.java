@@ -478,7 +478,8 @@ public class JournalClient {
                 LOGGER.error(e.getMessage());
                 reason = DisconnectReason.INCOMPATIBLE_JOURNAL;
             } catch (JournalNetworkException e) {
-                LOGGER.error("Network error. Server died?", e);
+                LOGGER.error("Network error. Server died?");
+                LOGGER.debug("Network error details:", e);
                 reason = DisconnectReason.BROKEN_CHANNEL;
             } catch (Throwable e) {
                 LOGGER.error("Unhandled exception in client", e);
