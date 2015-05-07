@@ -33,14 +33,14 @@ import com.nfsdb.utils.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class NQLOptimiserTest extends AbstractTest {
-    private final NQLParser parser = new NQLParser();
-    private final NQLOptimiser optimiser;
+public class OptimiserTest extends AbstractTest {
+    private final QueryParser parser = new QueryParser();
+    private final Optimiser optimiser;
     private final StringSink sink = new StringSink();
     private final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
 
-    public NQLOptimiserTest() {
-        this.optimiser = new NQLOptimiser(factory);
+    public OptimiserTest() {
+        this.optimiser = new Optimiser(factory);
     }
 
     @Test

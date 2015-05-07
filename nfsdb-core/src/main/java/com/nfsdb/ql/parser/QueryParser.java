@@ -25,7 +25,7 @@ import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Numbers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class NQLParser {
+public class QueryParser {
 
     private final TokenStream tokenStream = new TokenStream() {{
         defineSymbol(" ");

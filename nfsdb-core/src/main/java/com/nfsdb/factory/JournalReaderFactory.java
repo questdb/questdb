@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,8 +36,6 @@ public interface JournalReaderFactory extends Closeable {
 
     void close();
 
-    JournalExistenceCheck exists(String location);
-
     JournalConfiguration getConfiguration();
 
     <T> Journal<T> reader(JournalKey<T> key) throws JournalException;
@@ -49,9 +47,4 @@ public interface JournalReaderFactory extends Closeable {
     Journal reader(String location) throws JournalException;
 
     <T> Journal<T> reader(Class<T> clazz, String location, int recordHint) throws JournalException;
-
-    enum JournalExistenceCheck {
-        EXISTS, DOES_NOT_EXIST, EXISTS_FOREIGN
-    }
-
 }

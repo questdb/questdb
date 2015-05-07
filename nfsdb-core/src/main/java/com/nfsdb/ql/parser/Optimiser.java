@@ -21,8 +21,8 @@ import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.NoSuchColumnException;
 import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.ql.*;
 import com.nfsdb.ql.impl.*;
 import com.nfsdb.ql.model.*;
@@ -37,14 +37,14 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;
 
-public class NQLOptimiser {
+public class Optimiser {
 
     private final ArrayDeque<VirtualColumn> stack = new ArrayDeque<>();
     private final ArrayDeque<ExprNode> exprStack = new ArrayDeque<>();
     private final IntrinsicExtractor intrinsicExtractor = new IntrinsicExtractor();
     private final JournalFactory factory;
 
-    public NQLOptimiser(JournalFactory factory) {
+    public Optimiser(JournalFactory factory) {
         this.factory = factory;
     }
 
@@ -133,11 +133,13 @@ public class NQLOptimiser {
             throw new ParserException(readerNode.position, "Journal name expected");
         }
 
-        if (factory.exists(readerNode.token) == JournalReaderFactory.JournalExistenceCheck.DOES_NOT_EXIST) {
+        JournalConfiguration configuration = factory.getConfiguration();
+
+        if (configuration.exists(readerNode.token) == JournalConfiguration.JournalExistenceCheck.DOES_NOT_EXIST) {
             throw new ParserException(readerNode.position, "Journal does not exist");
         }
 
-        if (factory.exists(readerNode.token) == JournalReaderFactory.JournalExistenceCheck.EXISTS_FOREIGN) {
+        if (configuration.exists(readerNode.token) == JournalConfiguration.JournalExistenceCheck.EXISTS_FOREIGN) {
             throw new ParserException(readerNode.position, "Journal directory is of unknown format");
         }
 

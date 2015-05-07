@@ -473,7 +473,6 @@ public class JournalServer {
                                 LOGGER.debug("Client died", e);
                             } else {
                                 LOGGER.info("Server node %d: Client died %s: %s", uid, holder.socketAddress, e.getMessage());
-                                e.printStackTrace();
                             }
                         }
                         break;

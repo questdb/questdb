@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,9 +22,12 @@ import com.nfsdb.collections.ObjObjHashMap;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalMetadataException;
 import com.nfsdb.storage.HugeBuffer;
+import com.nfsdb.storage.TxLog;
 
+import javax.annotation.concurrent.Immutable;
 import java.io.File;
 
+@Immutable
 public class JournalConfigurationImpl implements JournalConfiguration {
 
     private final ObjObjHashMap<String, JournalMetadata> journalMetadata;
@@ -104,6 +107,19 @@ public class JournalConfigurationImpl implements JournalConfiguration {
 
             throw new JournalMetadataException(mo, mn);
         }
+    }
+
+    public JournalExistenceCheck exists(String location) {
+        File base = new File(getJournalBase(), location);
+        if (!base.exists()) {
+            return JournalExistenceCheck.DOES_NOT_EXIST;
+        }
+
+        if (new File(base, TxLog.FILE_NAME).exists() && new File(base, JournalConfiguration.FILE_NAME).exists()) {
+            return JournalExistenceCheck.EXISTS;
+        }
+
+        return JournalExistenceCheck.EXISTS_FOREIGN;
     }
 
     @Override

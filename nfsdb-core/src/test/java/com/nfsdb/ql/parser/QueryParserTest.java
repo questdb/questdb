@@ -24,12 +24,12 @@ import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class NQLParserTest extends AbstractTest {
-    private final NQLParser parser = new NQLParser();
+public class QueryParserTest extends AbstractTest {
+    private final QueryParser parser = new QueryParser();
 
     @Test
     public void testMostRecentWhereClause() throws Exception {
-        NQLParser parser = new NQLParser();
+        QueryParser parser = new QueryParser();
         parser.setContent("select a+b*c x, sum(z)+25 ohoh from zyzy latest by x where a in (x,y) and b = 10");
         Statement statement = parser.parse();
         Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
@@ -47,7 +47,7 @@ public class NQLParserTest extends AbstractTest {
 
     @Test
     public void testMultipleExpressions() throws Exception {
-        NQLParser parser = new NQLParser();
+        QueryParser parser = new QueryParser();
         parser.setContent("select a+b*c x, sum(z)+25 ohoh from zyzy");
         Statement statement = parser.parse();
         Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());

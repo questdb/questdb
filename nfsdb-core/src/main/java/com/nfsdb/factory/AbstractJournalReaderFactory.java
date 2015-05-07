@@ -20,7 +20,6 @@ import com.nfsdb.*;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.storage.TxLog;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
@@ -67,18 +66,6 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
         }
     }
 
-    public JournalExistenceCheck exists(String location) {
-        File base = new File(getConfiguration().getJournalBase(), location);
-        if (!base.exists()) {
-            return JournalExistenceCheck.DOES_NOT_EXIST;
-        }
-
-        if (new File(base, TxLog.FILE_NAME).exists() && new File(base, JournalConfiguration.FILE_NAME).exists()) {
-            return JournalExistenceCheck.EXISTS;
-        }
-
-        return JournalExistenceCheck.EXISTS_FOREIGN;
-    }
 
     public JournalConfiguration getConfiguration() {
         return configuration;

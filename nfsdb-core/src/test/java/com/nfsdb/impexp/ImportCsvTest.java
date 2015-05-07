@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 package com.nfsdb.impexp;
 
 import com.nfsdb.Journal;
-import com.nfsdb.factory.JournalReaderFactory;
+import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.io.ExportManager;
 import com.nfsdb.io.ImportManager;
@@ -41,7 +41,7 @@ public class ImportCsvTest extends AbstractTest {
         String location = "test-import.csv";
 
 
-        Assert.assertEquals(JournalReaderFactory.JournalExistenceCheck.EXISTS, factory.exists(location));
+        Assert.assertEquals(JournalConfiguration.JournalExistenceCheck.EXISTS, factory.getConfiguration().exists(location));
 
         try (Journal r = factory.reader(location)) {
             JournalMetadata m = r.getMetadata();
@@ -72,7 +72,7 @@ public class ImportCsvTest extends AbstractTest {
         String location = "test-import.csv";
 
 
-        Assert.assertEquals(JournalReaderFactory.JournalExistenceCheck.EXISTS, factory.exists(location));
+        Assert.assertEquals(JournalConfiguration.JournalExistenceCheck.EXISTS, factory.getConfiguration().exists(location));
 
         Journal r = factory.reader(location);
         JournalMetadata m = r.getMetadata();
@@ -89,7 +89,7 @@ public class ImportCsvTest extends AbstractTest {
         String location = "test-import.csv";
 
 
-        Assert.assertEquals(JournalReaderFactory.JournalExistenceCheck.EXISTS, factory.exists(location));
+        Assert.assertEquals(JournalConfiguration.JournalExistenceCheck.EXISTS, factory.getConfiguration().exists(location));
 
         Journal r = factory.reader(location);
         JournalMetadata m = r.getMetadata();

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,8 +32,6 @@ public interface JournalWriterFactory {
     <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz, String location, int recordHint) throws JournalException;
 
     <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException;
-
-    JournalReaderFactory.JournalExistenceCheck exists(String location);
 
     JournalConfiguration getConfiguration();
 

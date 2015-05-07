@@ -92,7 +92,7 @@ public final class ImportManager {
             File file = new File(fileName);
             String location = file.getName();
 
-            switch (factory.exists(location)) {
+            switch (factory.getConfiguration().exists(location)) {
                 case EXISTS_FOREIGN:
                     throw new JournalRuntimeException("A foreign file/directory already exists: " + (new File(factory.getConfiguration().getJournalBase(), location)));
                 default:

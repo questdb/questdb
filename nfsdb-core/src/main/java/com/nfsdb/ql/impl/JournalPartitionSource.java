@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@ import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.PartitionSource;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-@SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
 public class JournalPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource {
 
     private final Journal journal;

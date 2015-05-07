@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,7 +32,30 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
 
-public class ConcurrencyTest extends AbstractTest {
+public class JournalPoolTest extends AbstractTest {
+
+    @Test
+    public void testMetadataCreate() throws Exception {
+        final JournalPool pool = new JournalPool(factory.getConfiguration(), 16);
+
+        ExecutorService service = Executors.newFixedThreadPool(4);
+
+        for (int i = 0; i < 4; i++) {
+            service.submit(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        for (int k = 0; k < 100; k++) {
+                            pool.getConfiguration().createMetadata(new JournalKey<>(Quote.class));
+                        }
+                    } catch (JournalException e) {
+                        e.printStackTrace();
+                    }
+                }
+            });
+        }
+
+    }
 
     @Test
     public void testNonPartitionedReads() throws Exception {
