@@ -16,7 +16,10 @@
 
 package com.nfsdb.factory;
 
-import com.nfsdb.*;
+import com.nfsdb.JournalBulkWriter;
+import com.nfsdb.JournalKey;
+import com.nfsdb.JournalWriter;
+import com.nfsdb.PartitionType;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 
@@ -24,10 +27,6 @@ public abstract class AbstractJournalWriterFactory extends AbstractJournalReader
 
     public AbstractJournalWriterFactory(JournalConfiguration configuration) {
         super(configuration);
-    }
-
-    public AbstractJournalWriterFactory(JournalConfiguration configuration, TimerCache timerCache) {
-        super(configuration, timerCache);
     }
 
     @Override
@@ -47,7 +46,7 @@ public abstract class AbstractJournalWriterFactory extends AbstractJournalReader
 
     @Override
     public <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException {
-        return new JournalBulkWriter<>(getConfiguration().createMetadata(key), key, getTimerCache());
+        return new JournalBulkWriter<>(getConfiguration().createMetadata(key), key);
     }
 
     @Override

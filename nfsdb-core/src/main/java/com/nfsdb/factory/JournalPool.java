@@ -16,7 +16,6 @@
 
 package com.nfsdb.factory;
 
-import com.nfsdb.TimerCache;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.logging.Logger;
@@ -36,15 +35,13 @@ public class JournalPool implements Closeable {
     private final ArrayBlockingQueue<JournalCachingFactory> pool;
     private final ExecutorService service = Executors.newCachedThreadPool(new NamedDaemonThreadFactory("pool-release-thread", true));
     private final AtomicBoolean running = new AtomicBoolean(true);
-    private final TimerCache timerCache;
     private final JournalConfiguration configuration;
 
     public JournalPool(JournalConfiguration configuration, int capacity) throws InterruptedException {
         this.configuration = configuration;
         this.pool = new ArrayBlockingQueue<>(capacity, true);
-        this.timerCache = new TimerCache().start();
         for (int i = 0; i < capacity; i++) {
-            pool.put(new JournalCachingFactory(configuration, timerCache, this));
+            pool.put(new JournalCachingFactory(configuration, this));
         }
     }
 
@@ -55,7 +52,6 @@ public class JournalPool implements Closeable {
                 factory.clearPool();
                 factory.close();
             }
-            timerCache.halt();
         }
     }
 

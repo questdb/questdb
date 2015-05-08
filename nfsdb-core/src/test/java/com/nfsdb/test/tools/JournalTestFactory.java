@@ -34,10 +34,9 @@ import java.util.List;
 public class JournalTestFactory extends JournalFactory implements TestRule, JournalClosingListener {
 
     private final List<Journal> journals = new ArrayList<>();
-    private TimerCache timerCache;
 
     public JournalTestFactory(JournalConfiguration configuration) throws JournalConfigurationException {
-        super(configuration, null);
+        super(configuration);
     }
 
     @Override
@@ -49,7 +48,6 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
                 try {
                     Files.deleteOrException(getConfiguration().getJournalBase());
                     Files.mkDirsOrException(getConfiguration().getJournalBase());
-                    timerCache = new TimerCache().start();
                     base.evaluate();
                 } catch (Throwable e) {
                     throwable = e;
@@ -60,7 +58,6 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
                             journal.close();
                         }
                     }
-                    timerCache.halt();
                     journals.clear();
                     Files.deleteOrException(getConfiguration().getJournalBase());
                 }
@@ -115,10 +112,5 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
     public boolean closing(Journal journal) {
         journals.remove(journal);
         return true;
-    }
-
-    @Override
-    protected TimerCache getTimerCache() {
-        return timerCache;
     }
 }

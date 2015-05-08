@@ -75,8 +75,8 @@ public class JournalWriter<T> extends Journal<T> {
     private Partition<T> appendPartition;
     private long appendTimestampHi = -1;
 
-    public JournalWriter(JournalMetadata<T> metadata, JournalKey<T> key, TimerCache timerCache) throws JournalException {
-        super(metadata, key, timerCache);
+    public JournalWriter(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
+        super(metadata, key);
         if (metadata.isPartialMapped()) {
             close();
             throw new JournalException("Metadata is unusable for writer. Partially mapped?");
@@ -201,6 +201,12 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
+    @SuppressWarnings("EqualsBetweenInconvertibleTypes")
+    @Override
+    public boolean equals(Object o) {
+        return this == o || !(o == null || getClass() != o.getClass()) && getKey().equals(((Journal) o).getKey());
+    }
+
     @Override
     public JournalMode getMode() {
         return JournalMode.APPEND;
@@ -209,12 +215,6 @@ public class JournalWriter<T> extends Journal<T> {
     @Override
     public int hashCode() {
         return getKey().hashCode();
-    }
-
-    @SuppressWarnings("EqualsBetweenInconvertibleTypes")
-    @Override
-    public boolean equals(Object o) {
-        return this == o || !(o == null || getClass() != o.getClass()) && getKey().equals(((Journal) o).getKey());
     }
 
     @Override

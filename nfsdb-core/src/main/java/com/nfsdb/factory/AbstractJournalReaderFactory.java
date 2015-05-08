@@ -28,20 +28,10 @@ import java.io.File;
 @SuppressFBWarnings({"PATH_TRAVERSAL_IN"})
 public abstract class AbstractJournalReaderFactory implements JournalReaderFactory, Closeable {
 
-    private final TimerCache timerCache;
     private final JournalConfiguration configuration;
-    private final boolean ownTimerCache;
 
     AbstractJournalReaderFactory(JournalConfiguration configuration) {
         this.configuration = configuration;
-        this.timerCache = new TimerCache().start();
-        this.ownTimerCache = true;
-    }
-
-    AbstractJournalReaderFactory(JournalConfiguration configuration, TimerCache timerCache) {
-        this.timerCache = timerCache;
-        this.configuration = configuration;
-        this.ownTimerCache = false;
     }
 
     @Override
@@ -61,9 +51,6 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
 
     @Override
     public void close() {
-        if (ownTimerCache) {
-            timerCache.halt();
-        }
     }
 
 
@@ -95,13 +82,8 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
         JournalMetadata<T> metadata = configuration.createMetadata(key);
         File location = new File(metadata.getLocation());
         if (!location.exists()) {
-            new JournalWriter<>(metadata, key, timerCache).close();
+            new JournalWriter<>(metadata, key).close();
         }
         return metadata;
     }
-
-    protected TimerCache getTimerCache() {
-        return timerCache;
-    }
-
 }

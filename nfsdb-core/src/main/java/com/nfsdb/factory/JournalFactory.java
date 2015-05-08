@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,13 +37,14 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
         super(configuration);
     }
 
-    protected JournalFactory(JournalConfiguration configuration, TimerCache timerCache) {
-        super(configuration, timerCache);
+    @Override
+    public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
+        return new JournalBulkReader<>(getOrCreateMetadata(key), key);
     }
 
     @Override
-    public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
-        return new JournalBulkReader<>(getOrCreateMetadata(key), key, getTimerCache());
+    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
+        return new Journal<>(getOrCreateMetadata(key), key);
     }
 
     @Override
@@ -63,12 +64,7 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
 
     @Override
     public <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException {
-        return new JournalBulkWriter<>(getConfiguration().createMetadata(key), key, getTimerCache());
-    }
-
-    @Override
-    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        return new Journal<>(getOrCreateMetadata(key), key, getTimerCache());
+        return new JournalBulkWriter<>(getConfiguration().createMetadata(key), key);
     }
 
     @Override
@@ -93,13 +89,13 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
 
     @Override
     public <T> JournalWriter<T> writer(JournalKey<T> key) throws JournalException {
-        return new JournalWriter<>(getConfiguration().createMetadata(key), key, getTimerCache());
+        return new JournalWriter<>(getConfiguration().createMetadata(key), key);
     }
 
     @Override
     public <T> JournalWriter<T> writer(MetadataBuilder<T> b) throws JournalException {
         String location = b.getLocation();
         JournalMetadata<T> metadata = getConfiguration().augmentMetadata(b);
-        return new JournalWriter<>(metadata, metadata.deriveKey(location), getTimerCache());
+        return new JournalWriter<>(metadata, metadata.deriveKey(location));
     }
 }

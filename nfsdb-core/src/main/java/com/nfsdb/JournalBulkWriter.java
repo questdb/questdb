@@ -20,8 +20,8 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalMetadata;
 
 public class JournalBulkWriter<T> extends JournalWriter<T> {
-    public JournalBulkWriter(JournalMetadata<T> metadata, JournalKey<T> key, TimerCache timerCache) throws JournalException {
-        super(metadata, key, timerCache);
+    public JournalBulkWriter(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
+        super(metadata, key);
     }
 
     @Override
