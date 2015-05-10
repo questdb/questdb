@@ -51,7 +51,7 @@ public class StringKvIndexRowSource extends AbstractRowSource {
     }
 
     @Override
-    public RowCursor cursor(PartitionSlice slice) {
+    public RowCursor prepareCursor(PartitionSlice slice) {
         try {
             int index = slice.partition.getJournal().getMetadata().getColumnIndex(columnName);
             this.bucketCount = slice.partition.getJournal().getMetadata().getColumn(index).distinctCountHint;
@@ -68,7 +68,7 @@ public class StringKvIndexRowSource extends AbstractRowSource {
     }
 
     @Override
-    public void reset() {
+    public void unprepare() {
         indexCursor = null;
         valueIndex = 0;
     }

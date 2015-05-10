@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,33 +17,42 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.ql.GenericRecordSource;
-import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordMetadata;
-import com.nfsdb.ql.RecordSource;
+import com.nfsdb.ql.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
-public class InnerSkipNullJoinRecordSource extends AbstractImmutableIterator<Record> implements GenericRecordSource {
+public class InnerSkipNullJoinRecordSource extends AbstractImmutableIterator<Record> implements GenericRecordSource, RecordCursor<Record> {
 
-    private final RecordSource<? extends SplitRecord> delegate;
+    private final RecordSource<? extends SplitRecord> recordSource;
+    private RecordCursor<? extends SplitRecord> recordCursor;
     private Record data;
 
-    public InnerSkipNullJoinRecordSource(RecordSource<? extends SplitRecord> delegate) {
-        this.delegate = delegate;
+    public InnerSkipNullJoinRecordSource(RecordSource<? extends SplitRecord> recordSource) {
+        this.recordSource = recordSource;
     }
 
     @Override
     public RecordMetadata getMetadata() {
-        return delegate.getMetadata();
+        return recordSource.getMetadata();
+    }
+
+    @Override
+    public RecordCursor<Record> prepareCursor() {
+        this.recordCursor = recordSource.prepareCursor();
+        return this;
+    }
+
+    @Override
+    public void unprepare() {
+        recordSource.unprepare();
     }
 
     @Override
     public boolean hasNext() {
         SplitRecord data;
 
-        while (delegate.hasNext()) {
-            if ((data = delegate.next()).hasB()) {
+        while (recordCursor.hasNext()) {
+            if ((data = recordCursor.next()).hasB()) {
                 this.data = data;
                 return true;
             }
@@ -55,10 +64,5 @@ public class InnerSkipNullJoinRecordSource extends AbstractImmutableIterator<Rec
     @Override
     public Record next() {
         return data;
-    }
-
-    @Override
-    public void reset() {
-        delegate.reset();
     }
 }

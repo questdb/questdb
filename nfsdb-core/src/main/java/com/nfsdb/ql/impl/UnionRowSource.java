@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,12 +41,19 @@ public class UnionRowSource extends AbstractRowSource {
     }
 
     @Override
-    public RowCursor cursor(PartitionSlice slice) {
+    public RowCursor prepareCursor(PartitionSlice slice) {
         for (int i = 0; i < sources.length; i++) {
-            cursors[i] = sources[i].cursor(slice);
+            cursors[i] = sources[i].prepareCursor(slice);
         }
         cursorIndex = 0;
         return this;
+    }
+
+    @Override
+    public void unprepare() {
+        for (int i = 0; i < sources.length; i++) {
+            sources[i].unprepare();
+        }
     }
 
     @Override
@@ -65,12 +72,5 @@ public class UnionRowSource extends AbstractRowSource {
     @Override
     public long next() {
         return cursors[cursorIndex].next();
-    }
-
-    @Override
-    public void reset() {
-        for (int i = 0; i < sources.length; i++) {
-            sources[i].reset();
-        }
     }
 }

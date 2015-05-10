@@ -63,10 +63,10 @@ public class KvIndexHeadRowSource extends AbstractRowSource implements RecordSou
     }
 
     @Override
-    public RowCursor cursor(PartitionSlice slice) {
+    public RowCursor prepareCursor(PartitionSlice slice) {
         if (keyCount == -1) {
 
-            KeyCursor cursor = keySource.cursor(slice);
+            KeyCursor cursor = keySource.prepareCursor(slice);
 
             int len = keySource.size();
             if (remainingKeys == null || remainingKeys.length < len) {
@@ -98,9 +98,9 @@ public class KvIndexHeadRowSource extends AbstractRowSource implements RecordSou
     }
 
     @Override
-    public void reset() {
+    public void unprepare() {
         keyCount = -1;
-        keySource.reset();
+        keySource.unprepare();
         indexCursor = null;
     }
 

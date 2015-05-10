@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,13 +18,14 @@ package com.nfsdb.collections.mmap;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.utils.Unsafe;
 
 import java.util.List;
 
-public final class MapRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record> {
+public final class MapRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record> {
     private final MapRecord record;
     private final RecordMetadata metadata;
     private final MapValues values;
@@ -47,6 +48,15 @@ public final class MapRecordSource extends AbstractImmutableIterator<Record> imp
     }
 
     @Override
+    public RecordCursor<Record> prepareCursor() {
+        return this;
+    }
+
+    @Override
+    public void unprepare() {
+    }
+
+    @Override
     public boolean hasNext() {
         return count > 0;
     }
@@ -60,10 +70,6 @@ public final class MapRecordSource extends AbstractImmutableIterator<Record> imp
             notifyInterceptors(address);
         }
         return record.init(address);
-    }
-
-    @Override
-    public void reset() {
     }
 
     MapRecordSource init(long address, int count) {

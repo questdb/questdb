@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,20 +30,21 @@ import com.nfsdb.utils.Dates;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
-public class ResampledSource extends AbstractImmutableIterator<Record> implements GenericRecordSource {
+public class ResampledSource extends AbstractImmutableIterator<Record> implements GenericRecordSource, RecordCursor<Record> {
 
     private final MultiMap map;
-    private final RecordSource<? extends Record> rowSource;
+    private final RecordSource<? extends Record> recordSource;
     private final int[] keyIndices;
     private final int tsIndex;
     private final ObjList<AggregatorFunction> aggregators;
     private final SampleBy sampleBy;
+    private RecordCursor<? extends Record> recordCursor;
     private MapRecordSource mapRecordSource;
     private Record nextRecord = null;
 
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public ResampledSource(
-            RecordSource<? extends Record> rowSource,
+            RecordSource<? extends Record> recordSource,
             ObjList<ColumnMetadata> keyColumns,
             ObjList<AggregatorFunction> aggregators,
             ColumnMetadata timestampMetadata,
@@ -55,7 +56,7 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
         this.keyIndices = new int[keyColumnsSize];
         // define key columns
 
-        RecordMetadata rm = rowSource.getMetadata();
+        RecordMetadata rm = recordSource.getMetadata();
         this.tsIndex = rm.getColumnIndex(timestampMetadata.name);
         builder.keyColumn(timestampMetadata);
         for (int i = 0; i < keyColumnsSize; i++) {
@@ -71,7 +72,7 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
         for (int i = 0, sz = aggregators.size(); i < sz; i++) {
             AggregatorFunction func = aggregators.getQuick(i);
 
-            func.prepareSource(rowSource);
+            func.prepareSource(recordSource);
 
             ColumnMetadata[] columns = func.getColumns();
             for (int k = 0, len = columns.length; k < len; k++) {
@@ -85,13 +86,25 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
         }
 
         this.map = builder.build();
-        this.rowSource = rowSource;
+        this.recordSource = recordSource;
         this.sampleBy = sampleBy;
     }
 
     @Override
     public RecordMetadata getMetadata() {
         return map.getMetadata();
+    }
+
+    @Override
+    public RecordCursor<Record> prepareCursor() {
+        this.recordCursor = recordSource.prepareCursor();
+        return this;
+    }
+
+    @Override
+    public void unprepare() {
+        recordSource.unprepare();
+        map.clear();
     }
 
     @Override
@@ -102,12 +115,6 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
     @Override
     public Record next() {
         return mapRecordSource.next();
-    }
-
-    @Override
-    public void reset() {
-        rowSource.reset();
-        map.clear();
     }
 
     private boolean buildMap() {
@@ -123,10 +130,10 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
         if (nextRecord != null) {
             rec = nextRecord;
         } else {
-            if (!rowSource.hasNext()) {
+            if (!recordCursor.hasNext()) {
                 return false;
             }
-            rec = rowSource.next();
+            rec = recordCursor.next();
         }
 
         do {
@@ -162,7 +169,7 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
             MultiMap.KeyWriter keyWriter = map.keyWriter();
             keyWriter.putLong(sample);
             for (int i = 0; i < keyIndices.length; i++) {
-                switch (rowSource.getMetadata().getColumn(i + 1).getType()) {
+                switch (recordSource.getMetadata().getColumn(i + 1).getType()) {
                     case LONG:
                         keyWriter.putLong(rec.getLong(keyIndices[i]));
                         break;
@@ -176,7 +183,7 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
                         keyWriter.putInt(rec.getInt(keyIndices[i]));
                         break;
                     default:
-                        throw new JournalRuntimeException("Unsupported type: " + rowSource.getMetadata().getColumn(i + 1).getType());
+                        throw new JournalRuntimeException("Unsupported type: " + recordSource.getMetadata().getColumn(i + 1).getType());
                 }
             }
             MapValues values = map.getOrCreateValues(keyWriter);
@@ -185,12 +192,12 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
                 aggregators.getQuick(i).calculate(rec, values);
             }
 
-            if (!rowSource.hasNext()) {
+            if (!recordCursor.hasNext()) {
                 nextRecord = null;
                 break;
             }
 
-            rec = rowSource.next();
+            rec = recordCursor.next();
 
         } while (true);
 

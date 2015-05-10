@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ public class AllRowSource extends AbstractRowSource {
 
     @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
     @Override
-    public RowCursor cursor(PartitionSlice slice) {
+    public RowCursor prepareCursor(PartitionSlice slice) {
         try {
             this.lo = slice.lo;
             this.hi = slice.calcHi ? slice.partition.open().size() - 1 : slice.hi;
@@ -43,6 +43,10 @@ public class AllRowSource extends AbstractRowSource {
         }
     }
 
+    @Override
+    public void unprepare() {
+
+    }
 
     @Override
     public boolean hasNext() {
@@ -52,10 +56,5 @@ public class AllRowSource extends AbstractRowSource {
     @Override
     public long next() {
         return lo++;
-    }
-
-    @Override
-    public void reset() {
-
     }
 }

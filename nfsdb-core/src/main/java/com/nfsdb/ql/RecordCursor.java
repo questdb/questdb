@@ -16,13 +16,7 @@
 
 package com.nfsdb.ql;
 
-import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.collections.ImmutableIterator;
 
-public interface RowSource {
-
-    void configure(JournalMetadata metadata);
-
-    RowCursor prepareCursor(PartitionSlice slice);
-
-    void unprepare();
+public interface RecordCursor<T extends Record> extends ImmutableIterator<T> {
 }

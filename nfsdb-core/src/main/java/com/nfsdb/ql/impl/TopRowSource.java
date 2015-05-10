@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,9 +41,16 @@ public class TopRowSource extends AbstractRowSource {
     }
 
     @Override
-    public RowCursor cursor(PartitionSlice partition) {
-        this.cursor = delegate.cursor(partition);
+    public RowCursor prepareCursor(PartitionSlice partition) {
+        this.cursor = delegate.prepareCursor(partition);
         return this;
+    }
+
+    @Override
+    public void unprepare() {
+        delegate.unprepare();
+        this.remaining = count;
+
     }
 
     @Override
@@ -55,12 +62,5 @@ public class TopRowSource extends AbstractRowSource {
     public long next() {
         remaining--;
         return cursor.next();
-    }
-
-    @Override
-    public void reset() {
-        delegate.reset();
-        this.remaining = count;
-
     }
 }

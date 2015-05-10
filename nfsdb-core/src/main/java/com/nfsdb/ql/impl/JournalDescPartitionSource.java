@@ -36,12 +36,7 @@ public class JournalDescPartitionSource extends AbstractImmutableIterator<Partit
     public JournalDescPartitionSource(Journal journal, boolean open) {
         this.journal = journal;
         this.open = open;
-        reset();
-    }
-
-    @Override
-    public PartitionCursor getCursor() {
-        return this;
+        unprepare();
     }
 
     @Override
@@ -50,7 +45,12 @@ public class JournalDescPartitionSource extends AbstractImmutableIterator<Partit
     }
 
     @Override
-    public final void reset() {
+    public PartitionCursor prepareCursor() {
+        return this;
+    }
+
+    @Override
+    public final void unprepare() {
         partitionIndex = journal.getPartitionCount() - 1;
     }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,26 +18,25 @@ package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.ql.DataSource;
+import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 
 public class DataSourceImpl<T> extends AbstractImmutableIterator<T> implements DataSource<T> {
-    private final RecordSource<JournalRecord> journalRowSource;
+    private final RecordSource<JournalRecord> recordSource;
     private final T container;
+    private RecordCursor<JournalRecord> recordCursor;
 
-    public DataSourceImpl(RecordSource<JournalRecord> journalRowSource, T container) {
-        this.journalRowSource = journalRowSource;
+    public DataSourceImpl(RecordSource<JournalRecord> recordSource, T container) {
+        this.recordSource = recordSource;
         this.container = container;
+        this.recordCursor = recordSource.prepareCursor();
+
     }
 
     @Override
     public DataSource<T> $new() {
-        journalRowSource.reset();
+        recordSource.unprepare();
         return this;
-    }
-
-    @Override
-    public boolean hasNext() {
-        return journalRowSource.hasNext();
     }
 
     @Override
@@ -49,10 +48,15 @@ public class DataSourceImpl<T> extends AbstractImmutableIterator<T> implements D
         }
     }
 
+    @Override
+    public boolean hasNext() {
+        return recordCursor.hasNext();
+    }
+
     @SuppressWarnings("unchecked")
     @Override
     public T next() {
-        JournalRecord item = journalRowSource.next();
+        JournalRecord item = recordCursor.next();
         item.partition.read(item.rowid, container);
         return container;
     }

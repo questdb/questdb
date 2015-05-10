@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,23 +21,16 @@ import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.io.ExportManager;
 import com.nfsdb.io.RecordSourcePrinter;
-import com.nfsdb.io.TextFileFormat;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.model.Album;
 import com.nfsdb.model.Band;
 import com.nfsdb.model.Quote;
-import com.nfsdb.ql.impl.AllRowSource;
-import com.nfsdb.ql.impl.HashJoinRecordSource;
-import com.nfsdb.ql.impl.JournalPartitionSource;
-import com.nfsdb.ql.impl.JournalSource;
+import com.nfsdb.ql.impl.*;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Files;
 import org.junit.*;
-
-import java.io.File;
 
 public class HashJoinRecordSourceTest {
     @Rule
@@ -66,40 +59,6 @@ public class HashJoinRecordSourceTest {
     }
 
     @Test
-    public void simpleJoinRowId() throws Exception {
-        bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
-        bw.append(new Band().setName("band2").setType("blues").setUrl("http://band2.com"));
-        bw.append(new Band().setName("band3").setType("jazz").setUrl("http://band3.com"));
-        bw.append(new Band().setName("band1").setType("jazz").setUrl("http://new.band1.com"));
-
-        bw.commit();
-
-        aw.append(new Album().setName("album X").setBand("band1").setGenre("pop"));
-        aw.append(new Album().setName("album Y").setBand("band3").setGenre("metal"));
-        aw.append(new Album().setName("album BZ").setBand("band1").setGenre("rock"));
-
-        aw.commit();
-
-        StringSink sink = new StringSink();
-        RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        HashJoinRecordSource joinResult = HashJoinRecordSource.fromRandomAccessSource(
-                new JournalSource(new JournalPartitionSource(bw, false), new AllRowSource()),
-                new ObjList<String>() {{
-                    add("name");
-                }},
-                new JournalSource(new JournalPartitionSource(aw, false), new AllRowSource()),
-                new ObjList<String>() {{
-                    add("band");
-                }}
-        );
-        p.printColumns(
-                joinResult, joinResult.getMetadata().getColumnIndex("genre")
-        );
-        Assert.assertEquals("rock\tpop\tmetal\trock\tpop", sink.toString());
-    }
-
-
-    @Test
     public void simpleJoin() throws Exception {
         bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
         bw.append(new Band().setName("band2").setType("blues").setUrl("http://band2.com"));
@@ -116,32 +75,71 @@ public class HashJoinRecordSourceTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        HashJoinRecordSource joinResult = HashJoinRecordSource.fromSource(
-                new JournalSource(new JournalPartitionSource(bw, false), new AllRowSource()),
+        RecordSource<? extends Record> joinResult = new SelectedColumnsRecordSource(
+                new HashJoinRecordSource(
+                        new JournalSource(new JournalPartitionSource(bw, false), new AllRowSource()),
+                        new ObjList<String>() {{
+                            add("name");
+                        }},
+                        new JournalSource(new JournalPartitionSource(aw, false), new AllRowSource()),
+                        new ObjList<String>() {{
+                            add("band");
+                        }}
+                ),
                 new ObjList<String>() {{
-                    add("name");
-                }},
-                new JournalSource(new JournalPartitionSource(aw, false), new AllRowSource()),
-                new ObjList<String>() {{
-                    add("band");
+                    add("genre");
                 }}
         );
-        p.printColumns(
-                joinResult, joinResult.getMetadata().getColumnIndex("genre")
+        p.print(joinResult);
+        Assert.assertEquals("rock\npop\nmetal\nrock\npop\n", sink.toString());
+    }
+
+    @Test
+    public void testHashJoinJournalRecordSource() throws Exception {
+        bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
+        bw.append(new Band().setName("band2").setType("blues").setUrl("http://band2.com"));
+        bw.append(new Band().setName("band3").setType("jazz").setUrl("http://band3.com"));
+        bw.append(new Band().setName("band1").setType("jazz").setUrl("http://new.band1.com"));
+
+        bw.commit();
+
+        aw.append(new Album().setName("album X").setBand("band1").setGenre("pop"));
+        aw.append(new Album().setName("album Y").setBand("band3").setGenre("metal"));
+        aw.append(new Album().setName("album BZ").setBand("band1").setGenre("rock"));
+
+        aw.commit();
+
+        StringSink sink = new StringSink();
+        RecordSourcePrinter p = new RecordSourcePrinter(sink);
+        RecordSource<? extends Record> joinResult = new SelectedColumnsRecordSource(
+                new HashJoinJournalRecordSource(
+                        new JournalSource(new JournalPartitionSource(bw, false), new AllRowSource()),
+                        new ObjList<String>() {{
+                            add("name");
+                        }},
+                        new JournalSource(new JournalPartitionSource(aw, false), new AllRowSource()),
+                        new ObjList<String>() {{
+                            add("band");
+                        }}
+                ),
+                new ObjList<String>() {{
+                    add("genre");
+                }}
         );
-        Assert.assertEquals("rock\tpop\tmetal\trock\tpop", sink.toString());
+        p.print(joinResult);
+        Assert.assertEquals("rock\npop\nmetal\nrock\npop\n", sink.toString());
     }
 
     @Test
     @Ignore
     public void testHashJoinPerformance() throws Exception {
         JournalWriter<Quote> w1 = factory.writer(Quote.class, "q1");
-        TestUtils.generateQuoteData(w1, 10000);
+        TestUtils.generateQuoteData(w1, 100000);
 
         JournalWriter<Quote> w2 = factory.writer(Quote.class, "q2");
-        TestUtils.generateQuoteData(w2, 10000);
+        TestUtils.generateQuoteData(w2, 100000);
 
-        HashJoinRecordSource j = HashJoinRecordSource.fromRandomAccessSource(
+        RecordSource<Record> j = new HashJoinJournalRecordSource(
                 new JournalSource(new JournalPartitionSource(w1, false), new AllRowSource()),
                 new ObjList<String>() {{
                     add("sym");
@@ -154,11 +152,12 @@ public class HashJoinRecordSourceTest {
 
         long t = System.currentTimeMillis();
         int count = 0;
-        ExportManager.export(j, new File("c:/temp/join.csv"), TextFileFormat.TAB);
-//        while (j.hasNext()) {
-//            j.next();
-//            count++;
-//        }
+//        ExportManager.export(j, new File("c:/temp/join.csv"), TextFileFormat.TAB);
+        RecordCursor<Record> c = j.prepareCursor();
+        while (c.hasNext()) {
+            c.next();
+            count++;
+        }
         System.out.println(System.currentTimeMillis() - t);
         System.out.println(count);
 

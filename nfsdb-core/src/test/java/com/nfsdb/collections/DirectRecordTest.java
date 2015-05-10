@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -194,7 +194,7 @@ public class DirectRecordTest {
         try (DirectPagedBuffer buffer = new DirectPagedBuffer(pageSize)) {
             DirectRecord dr = new DirectRecord(longJournal.rows().getMetadata(), buffer);
             List<Long> offsets = new ArrayList<>();
-            for (Record rec : rows) {
+            for (Record rec : rows.prepareCursor()) {
                 offsets.add(dr.write(rec));
             }
 

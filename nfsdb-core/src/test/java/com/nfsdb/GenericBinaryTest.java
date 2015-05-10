@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -55,7 +55,7 @@ public class GenericBinaryTest extends AbstractTest {
         writeOutputStream(writer, expected);
 
         List<byte[]> actual = new ArrayList<>();
-        for (JournalRecord e : writer.rows()) {
+        for (JournalRecord e : writer.rows().prepareCursor()) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             InputStream in = e.getBin(0);
 
@@ -90,6 +90,21 @@ public class GenericBinaryTest extends AbstractTest {
         assertEquals(expected, readOutputStream(writer));
     }
 
+    private void assertEquals(List<byte[]> expected, List<byte[]> actual) {
+        for (int i = 0; i < expected.size(); i++) {
+            Assert.assertArrayEquals(expected.get(i), actual.get(i));
+        }
+    }
+
+    private List<byte[]> getBytes() {
+        Rnd r = new Rnd();
+        List<byte[]> bytes = new ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            bytes.add(r.nextBytes((3 - i) * 1024));
+        }
+        return bytes;
+    }
+
     private JournalWriter getGenericWriter() throws JournalException {
         return factory.writer(new JournalStructure("bintest") {{
                                   $bin("image");
@@ -101,13 +116,24 @@ public class GenericBinaryTest extends AbstractTest {
         return factory.writer(BinContainer.class, "bintest");
     }
 
-    private List<byte[]> getBytes() {
-        Rnd r = new Rnd();
-        List<byte[]> bytes = new ArrayList<>();
-        for (int i = 0; i < 3; i++) {
-            bytes.add(r.nextBytes((3 - i) * 1024));
+    private List<byte[]> readObject(Journal<BinContainer> reader) {
+        List<byte[]> actual = new ArrayList<>();
+
+        for (BinContainer c : reader) {
+            actual.add(c.image.array());
         }
-        return bytes;
+
+        return actual;
+    }
+
+    private List<byte[]> readOutputStream(Journal reader) {
+        List<byte[]> result = new ArrayList<>();
+        for (JournalRecord e : reader.rows().prepareCursor()) {
+            ByteArrayOutputStream o = new ByteArrayOutputStream();
+            e.getBin(0, o);
+            result.add(o.toByteArray());
+        }
+        return result;
     }
 
     private void writeInputStream(JournalWriter writer, List<byte[]> bytes) throws JournalException {
@@ -131,32 +157,6 @@ public class GenericBinaryTest extends AbstractTest {
         }
         writer.commit();
 
-    }
-
-    private List<byte[]> readOutputStream(Journal reader) {
-        List<byte[]> result = new ArrayList<>();
-        for (JournalRecord e : reader.rows()) {
-            ByteArrayOutputStream o = new ByteArrayOutputStream();
-            e.getBin(0, o);
-            result.add(o.toByteArray());
-        }
-        return result;
-    }
-
-    private List<byte[]> readObject(Journal<BinContainer> reader) {
-        List<byte[]> actual = new ArrayList<>();
-
-        for (BinContainer c : reader) {
-            actual.add(c.image.array());
-        }
-
-        return actual;
-    }
-
-    private void assertEquals(List<byte[]> expected, List<byte[]> actual) {
-        for (int i = 0; i < expected.size(); i++) {
-            Assert.assertArrayEquals(expected.get(i), actual.get(i));
-        }
     }
 
     public static class BinContainer {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -119,7 +119,7 @@ public class MultiMapTest extends AbstractTest {
                 .setLoadFactor(0.5f)
                 .build();
 
-        for (JournalRecord e : w.rows()) {
+        for (JournalRecord e : w.rows().prepareCursor()) {
             long ts = e.getLong(tsIndex);
 
             MapValues val = map.getOrCreateValues(

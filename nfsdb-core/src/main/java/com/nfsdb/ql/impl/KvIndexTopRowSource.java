@@ -58,12 +58,12 @@ public class KvIndexTopRowSource extends AbstractRowSource implements RecordSour
     }
 
     @Override
-    public RowCursor cursor(PartitionSlice slice) {
+    public RowCursor prepareCursor(PartitionSlice slice) {
         try {
             this.index = slice.partition.getIndexForColumn(column);
             this.lo = slice.lo;
             this.hi = slice.calcHi ? slice.partition.open().size() - 1 : slice.hi;
-            this.keyCursor = keySource.cursor(slice);
+            this.keyCursor = keySource.prepareCursor(slice);
             this.rec.partition = slice.partition;
             return this;
         } catch (JournalException e) {
@@ -72,8 +72,8 @@ public class KvIndexTopRowSource extends AbstractRowSource implements RecordSour
     }
 
     @Override
-    public void reset() {
-        keySource.reset();
+    public void unprepare() {
+        keySource.unprepare();
     }
 
     @Override

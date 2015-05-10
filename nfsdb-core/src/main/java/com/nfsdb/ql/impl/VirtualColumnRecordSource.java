@@ -23,18 +23,19 @@ import com.nfsdb.ql.ops.VirtualColumn;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
-public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record> implements GenericRecordSource, RecordSourceState {
-    private final RecordSource<? extends Record> delegate;
+public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record> implements GenericRecordSource, RecordSourceState, RecordCursor<Record> {
+    private final RecordSource<? extends Record> recordSource;
     private final RecordMetadata metadata;
     private final VirtualRecord current;
+    private RecordCursor<? extends Record> recordCursor;
 
 
-    public VirtualColumnRecordSource(RecordSource<? extends Record> delegate, ObjList<VirtualColumn> virtualColumns) {
-        this.delegate = delegate;
+    public VirtualColumnRecordSource(RecordSource<? extends Record> recordSource, ObjList<VirtualColumn> virtualColumns) {
+        this.recordSource = recordSource;
         for (int i = 0, k = virtualColumns.size(); i < k; i++) {
             virtualColumns.getQuick(i).configureSource(this);
         }
-        RecordMetadata dm = delegate.getMetadata();
+        RecordMetadata dm = recordSource.getMetadata();
         this.metadata = new VirtualRecordMetadata(dm, virtualColumns);
         this.current = new VirtualRecord(this.metadata, dm.getColumnCount(), virtualColumns);
     }
@@ -50,18 +51,24 @@ public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record>
     }
 
     @Override
-    public void reset() {
-        delegate.reset();
+    public RecordCursor<Record> prepareCursor() {
+        this.recordCursor = recordSource.prepareCursor();
+        return this;
+    }
+
+    @Override
+    public void unprepare() {
+        recordSource.unprepare();
     }
 
     @Override
     public boolean hasNext() {
-        return delegate.hasNext();
+        return recordCursor.hasNext();
     }
 
     @Override
     public Record next() {
-        current.setBase(delegate.next());
+        current.setBase(recordCursor.next());
         return current;
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,16 +33,6 @@ public class SymbolKeySource implements KeySource, KeyCursor {
     }
 
     @Override
-    public KeyCursor cursor(PartitionSlice slice) {
-        if (this.symbolTable == null) {
-            this.symbolTable = slice.partition.getJournal().getSymbolTable(symbol);
-            this.keyCount = symbolTable.size();
-        }
-        this.keyIndex = 0;
-        return this;
-    }
-
-    @Override
     public boolean hasNext() {
         return keyIndex < keyCount;
     }
@@ -53,13 +43,23 @@ public class SymbolKeySource implements KeySource, KeyCursor {
     }
 
     @Override
-    public void reset() {
-        symbolTable = null;
-        keyIndex = 0;
+    public KeyCursor prepareCursor(PartitionSlice slice) {
+        if (this.symbolTable == null) {
+            this.symbolTable = slice.partition.getJournal().getSymbolTable(symbol);
+            this.keyCount = symbolTable.size();
+        }
+        this.keyIndex = 0;
+        return this;
     }
 
     @Override
     public int size() {
         return keyCount;
+    }
+
+    @Override
+    public void unprepare() {
+        symbolTable = null;
+        keyIndex = 0;
     }
 }

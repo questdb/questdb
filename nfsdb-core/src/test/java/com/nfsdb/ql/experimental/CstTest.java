@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -113,8 +113,8 @@ public class CstTest {
                 t = System.nanoTime();
                 count = 0;
             }
-            src.reset();
-            for (Record d : src) {
+            src.unprepare();
+            for (Record d : src.prepareCursor()) {
                 d.getDate(0);
                 d.getDouble(2);
                 d.getDouble(3);
@@ -255,7 +255,7 @@ public class CstTest {
                     .build();
 
             long prev = -1;
-            for (JournalRecord e : w.rows()) {
+            for (JournalRecord e : w.rows().prepareCursor()) {
                 long ts = Dates.floorMI(e.getLong(tsIndex));
 
                 if (ts != prev) {

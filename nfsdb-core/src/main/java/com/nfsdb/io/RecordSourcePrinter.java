@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.nfsdb.io;
 
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.utils.Dates;
@@ -51,24 +52,13 @@ public class RecordSourcePrinter {
     }
 
     public void print(RecordSource<? extends Record> src) {
-        while (src.hasNext()) {
-            print(src.next(), src.getMetadata());
-        }
+        print(src.prepareCursor(), src.getMetadata());
+
     }
 
-    public void printColumns(Record r, RecordMetadata m, int... columns) {
-        for (int column : columns) {
-            printRecord(r, m, column);
-        }
-    }
-
-    public void printColumns(RecordSource<? extends Record> src, int... columns) {
-        int i = 0;
+    public void print(RecordCursor<? extends Record> src, RecordMetadata metadata) {
         while (src.hasNext()) {
-            if (i++ > 0) {
-                sink.put(delimiter);
-            }
-            printColumns(src.next(), src.getMetadata(), columns);
+            print(src.next(), metadata);
         }
     }
 

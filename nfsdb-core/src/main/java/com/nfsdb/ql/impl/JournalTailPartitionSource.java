@@ -40,7 +40,7 @@ public class JournalTailPartitionSource extends AbstractImmutableIterator<Partit
         this.journal = journal;
         this.open = open;
         this.rowid = rowid;
-        reset();
+        unprepare();
     }
 
     @Override
@@ -49,12 +49,12 @@ public class JournalTailPartitionSource extends AbstractImmutableIterator<Partit
     }
 
     @Override
-    public PartitionCursor getCursor() {
+    public PartitionCursor prepareCursor() {
         return this;
     }
 
     @Override
-    public final void reset() {
+    public final void unprepare() {
         partitionCount = journal.getPartitionCount();
         partitionIndex = Rows.toPartitionIndex(rowid);
         lo = Rows.toLocalRowID(rowid);

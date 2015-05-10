@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,19 +18,17 @@ package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.collections.ObjList;
-import com.nfsdb.ql.GenericRecordSource;
-import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordMetadata;
-import com.nfsdb.ql.RecordSource;
+import com.nfsdb.ql.*;
 
-public class SelectedColumnsRecordSource extends AbstractImmutableIterator<Record> implements GenericRecordSource {
-    private final RecordSource<? extends Record> delegate;
+public class SelectedColumnsRecordSource extends AbstractImmutableIterator<Record> implements GenericRecordSource, RecordCursor<Record> {
+    private final RecordSource<? extends Record> recordSource;
     private final RecordMetadata metadata;
     private final SelectedColumnsRecord record;
+    private RecordCursor<? extends Record> recordCursor;
 
-    public SelectedColumnsRecordSource(RecordSource<? extends Record> delegate, ObjList<String> names) {
-        this.delegate = delegate;
-        RecordMetadata dm = delegate.getMetadata();
+    public SelectedColumnsRecordSource(RecordSource<? extends Record> recordSource, ObjList<String> names) {
+        this.recordSource = recordSource;
+        RecordMetadata dm = recordSource.getMetadata();
         this.metadata = new SelectedColumnsMetadata(dm, names);
         this.record = new SelectedColumnsRecord(dm, names);
     }
@@ -41,18 +39,24 @@ public class SelectedColumnsRecordSource extends AbstractImmutableIterator<Recor
     }
 
     @Override
+    public RecordCursor<Record> prepareCursor() {
+        this.recordCursor = recordSource.prepareCursor();
+        return this;
+    }
+
+    @Override
+    public void unprepare() {
+        recordSource.unprepare();
+    }
+
+    @Override
     public boolean hasNext() {
-        return delegate.hasNext();
+        return recordCursor.hasNext();
     }
 
     @Override
     public Record next() {
-        record.setBase(delegate.next());
+        record.setBase(recordCursor.next());
         return record;
-    }
-
-    @Override
-    public void reset() {
-        delegate.reset();
     }
 }

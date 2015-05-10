@@ -50,10 +50,10 @@ public class KvIndexRowSource extends AbstractRowSource {
     }
 
     @Override
-    public RowCursor cursor(PartitionSlice slice) {
+    public RowCursor prepareCursor(PartitionSlice slice) {
         try {
             this.index = slice.partition.getIndexForColumn(symbol);
-            this.keyCursor = this.keySource.cursor(slice);
+            this.keyCursor = this.keySource.prepareCursor(slice);
             this.indexCursor = null;
             this.full = slice.lo == 0 && slice.calcHi;
             this.lo = slice.lo;
@@ -65,8 +65,8 @@ public class KvIndexRowSource extends AbstractRowSource {
     }
 
     @Override
-    public void reset() {
-        keySource.reset();
+    public void unprepare() {
+        keySource.unprepare();
     }
 
     @Override

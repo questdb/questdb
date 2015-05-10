@@ -39,7 +39,17 @@ public class PartialSymbolKeySource implements KeySource, KeyCursor {
     }
 
     @Override
-    public KeyCursor cursor(PartitionSlice slice) {
+    public boolean hasNext() {
+        return keyIndex < keyCount;
+    }
+
+    @Override
+    public int next() {
+        return keys[keyIndex++];
+    }
+
+    @Override
+    public KeyCursor prepareCursor(PartitionSlice slice) {
         if (this.symbolTable == null) {
             if (this.keys == null || this.keys.length < values.size()) {
                 this.keys = new int[values.size()];
@@ -59,7 +69,7 @@ public class PartialSymbolKeySource implements KeySource, KeyCursor {
     }
 
     @Override
-    public void reset() {
+    public void unprepare() {
         symbolTable = null;
         keyIndex = 0;
     }
@@ -67,15 +77,5 @@ public class PartialSymbolKeySource implements KeySource, KeyCursor {
     @Override
     public int size() {
         return keyCount;
-    }
-
-    @Override
-    public boolean hasNext() {
-        return keyIndex < keyCount;
-    }
-
-    @Override
-    public int next() {
-        return keys[keyIndex++];
     }
 }

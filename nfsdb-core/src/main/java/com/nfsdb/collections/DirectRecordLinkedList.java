@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,15 +17,15 @@
 package com.nfsdb.collections;
 
 import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.utils.Unsafe;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.util.Iterator;
 
-public class DirectRecordLinkedList implements RecordSource<Record>, Closeable {
+public class DirectRecordLinkedList extends AbstractImmutableIterator<Record> implements RecordSource<Record>, Closeable, RecordCursor<Record> {
     private final RecordMetadata recordMetadata;
     private final DirectPagedBuffer buffer;
     private final DirectRecord bufferRecord;
@@ -45,22 +45,27 @@ public class DirectRecordLinkedList implements RecordSource<Record>, Closeable {
     }
 
     @Override
+    public void close() throws IOException {
+        buffer.close();
+    }
+
+    @Override
     public RecordMetadata getMetadata() {
         return recordMetadata;
     }
 
     @Override
-    public boolean hasNext() {
-        return readOffset >= 0;
-    }
-
-    public void init(long offset) {
-        this.readOffset = offset;
+    public RecordCursor<Record> prepareCursor() {
+        return this;
     }
 
     @Override
-    public Iterator<Record> iterator() {
-        return this;
+    public void unprepare() {
+    }
+
+    @Override
+    public boolean hasNext() {
+        return readOffset >= 0;
     }
 
     @Override
@@ -70,18 +75,7 @@ public class DirectRecordLinkedList implements RecordSource<Record>, Closeable {
         return bufferRecord;
     }
 
-    @Override
-    public void remove() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void reset() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void close() throws IOException {
-        buffer.close();
+    public void init(long offset) {
+        this.readOffset = offset;
     }
 }

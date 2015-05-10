@@ -21,7 +21,7 @@ import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.model.Quote;
-import com.nfsdb.ql.RandomAccessRecordSource;
+import com.nfsdb.ql.JournalRecordSource;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.impl.*;
@@ -105,10 +105,10 @@ public class PerformanceTest extends AbstractTest {
                 if (i == 0) {
                     t = System.nanoTime();
                 }
-                for (Iterator<? extends Record> iterator = rs.iterator(); iterator.hasNext(); ) {
+                for (Iterator<? extends Record> iterator = rs.prepareCursor().iterator(); iterator.hasNext(); ) {
                     iterator.next();
                 }
-                rs.reset();
+                rs.unprepare();
             }
             LOGGER.info("NEW journal.query().all().withKeys(\"LLOY.L\").slice(interval) (query only) latency: " + (System.nanoTime() - t) / count / 1000 + "μs");
         }
@@ -210,9 +210,9 @@ public class PerformanceTest extends AbstractTest {
             if (i == 0) {
                 t = System.nanoTime();
             }
-            RandomAccessRecordSource<JournalRecord> s = w.rows();
+            JournalRecordSource s = w.rows();
             int cnt = 0;
-            for (JournalRecord r : s) {
+            for (JournalRecord r : s.prepareCursor()) {
                 r.getLong(0);
                 r.getSym(1);
                 r.getDouble(2);

@@ -30,7 +30,7 @@ public class NoOpJournalPartitionSource extends AbstractImmutableIterator<Partit
 
     public NoOpJournalPartitionSource(Journal journal) {
         this.journal = journal;
-        reset();
+        unprepare();
     }
 
     @Override
@@ -39,12 +39,12 @@ public class NoOpJournalPartitionSource extends AbstractImmutableIterator<Partit
     }
 
     @Override
-    public PartitionCursor getCursor() {
+    public PartitionCursor prepareCursor() {
         return this;
     }
 
     @Override
-    public final void reset() {
+    public final void unprepare() {
     }
 
     @Override

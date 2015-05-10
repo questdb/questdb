@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,13 +51,20 @@ public class DistinctSymbolRowSource extends AbstractRowSource {
     }
 
     @Override
-    public RowCursor cursor(PartitionSlice slice) {
+    public RowCursor prepareCursor(PartitionSlice slice) {
         if (columnIndex == -1) {
             columnIndex = slice.partition.getJournal().getMetadata().getColumnIndex(symbol);
         }
         column = (FixedColumn) slice.partition.getAbstractColumn(columnIndex);
-        cursor = delegate.cursor(slice);
+        cursor = delegate.prepareCursor(slice);
         return this;
+    }
+
+    @Override
+    public void unprepare() {
+        columnIndex = -1;
+        delegate.unprepare();
+        set.clear();
     }
 
     @Override
@@ -75,12 +82,5 @@ public class DistinctSymbolRowSource extends AbstractRowSource {
     @Override
     public long next() {
         return rowid;
-    }
-
-    @Override
-    public void reset() {
-        columnIndex = -1;
-        delegate.reset();
-        set.clear();
     }
 }

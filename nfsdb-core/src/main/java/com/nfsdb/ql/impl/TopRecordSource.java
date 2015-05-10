@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,42 +17,46 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.ql.GenericRecordSource;
-import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordMetadata;
-import com.nfsdb.ql.RecordSource;
+import com.nfsdb.ql.*;
 
-public class TopRecordSource extends AbstractImmutableIterator<Record> implements GenericRecordSource {
+public class TopRecordSource extends AbstractImmutableIterator<Record> implements GenericRecordSource, RecordCursor<Record> {
 
-    private final RecordSource<? extends Record> delegate;
+    private final RecordSource<? extends Record> recordSource;
     private final int count;
+    private RecordCursor<? extends Record> recordCursor;
     private int remaining;
 
-    public TopRecordSource(int count, RecordSource<? extends Record> delegate) {
-        this.delegate = delegate;
+    public TopRecordSource(int count, RecordSource<? extends Record> recordSource) {
+        this.recordSource = recordSource;
         this.count = count;
         this.remaining = count;
     }
 
     @Override
     public RecordMetadata getMetadata() {
-        return delegate.getMetadata();
+        return recordSource.getMetadata();
+    }
+
+    @Override
+    public RecordCursor<Record> prepareCursor() {
+        this.recordCursor = recordSource.prepareCursor();
+        return this;
+    }
+
+    @Override
+    public void unprepare() {
+        recordSource.unprepare();
+        this.remaining = count;
     }
 
     @Override
     public boolean hasNext() {
-        return remaining > 0 && delegate.hasNext();
+        return remaining > 0 && recordCursor.hasNext();
     }
 
     @Override
     public Record next() {
         remaining--;
-        return delegate.next();
-    }
-
-    @Override
-    public void reset() {
-        delegate.reset();
-        this.remaining = count;
+        return recordCursor.next();
     }
 }

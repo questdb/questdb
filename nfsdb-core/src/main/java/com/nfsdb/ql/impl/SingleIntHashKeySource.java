@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,15 +33,6 @@ public class SingleIntHashKeySource implements KeySource, KeyCursor {
     }
 
     @Override
-    public KeyCursor cursor(PartitionSlice slice) {
-        if (bucketCount == -1) {
-            bucketCount = slice.partition.getJournal().getMetadata().getColumn(column).distinctCountHint;
-        }
-        this.hasNext = true;
-        return this;
-    }
-
-    @Override
     public boolean hasNext() {
         return hasNext;
     }
@@ -53,12 +44,21 @@ public class SingleIntHashKeySource implements KeySource, KeyCursor {
     }
 
     @Override
-    public void reset() {
-        bucketCount = -1;
+    public KeyCursor prepareCursor(PartitionSlice slice) {
+        if (bucketCount == -1) {
+            bucketCount = slice.partition.getJournal().getMetadata().getColumn(column).distinctCountHint;
+        }
+        this.hasNext = true;
+        return this;
     }
 
     @Override
     public int size() {
         return 1;
+    }
+
+    @Override
+    public void unprepare() {
+        bucketCount = -1;
     }
 }

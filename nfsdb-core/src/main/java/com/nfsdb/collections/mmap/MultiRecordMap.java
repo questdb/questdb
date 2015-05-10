@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. NFSdb.
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,8 +20,8 @@ import com.nfsdb.collections.DirectRecordLinkedList;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordMetadata;
-import com.nfsdb.ql.RecordSource;
 import com.nfsdb.storage.ColumnType;
 
 import java.io.Closeable;
@@ -60,16 +60,20 @@ public class MultiRecordMap implements Closeable {
         return map.keyWriter();
     }
 
-    public RecordSource<Record> get(MultiMap.KeyWriter key) {
-        MapValues values = map.getValues(key);
-        records.init(values == null ? -1 : values.getLong(0));
-        return records;
+    public void clear() {
+        map.clear();
     }
 
     @Override
     public void close() throws IOException {
         map.free();
         records.close();
+    }
+
+    public RecordCursor<Record> get(MultiMap.KeyWriter key) {
+        MapValues values = map.getValues(key);
+        records.init(values == null ? -1 : values.getLong(0));
+        return records;
     }
 
     public static class Builder {

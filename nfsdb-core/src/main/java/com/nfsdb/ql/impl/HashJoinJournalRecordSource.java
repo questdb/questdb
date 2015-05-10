@@ -22,10 +22,7 @@ import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.mmap.MultiMap;
 import com.nfsdb.collections.mmap.MultiRecordMap;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordCursor;
-import com.nfsdb.ql.RecordMetadata;
-import com.nfsdb.ql.RecordSource;
+import com.nfsdb.ql.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
@@ -33,24 +30,25 @@ import java.io.IOException;
 
 import static com.nfsdb.ql.impl.KeyWriterHelper.setKey;
 
-public class HashJoinRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, Closeable, RecordCursor<Record> {
+public class HashJoinJournalRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, Closeable, RecordCursor<Record> {
     private final RecordSource<? extends Record> masterSource;
-    private final RecordSource<? extends Record> slaveSource;
+    private final RandomAccessRecordSource<? extends Record> slaveSource;
     private final SplitRecordMetadata metadata;
     private final SplitRecord currentRecord;
     private final ObjList<RecordColumnMetadata> masterColumns = new ObjList<>();
     private final ObjList<RecordColumnMetadata> slaveColumns = new ObjList<>();
     private final IntList masterColIndex = new IntList();
     private final IntList slaveColIndex = new IntList();
-    private RecordCursor<? extends Record> slaveCursor;
+    private final RowIdHolderRecord rowIdRecord = new RowIdHolderRecord();
+    private RandomAccessRecordCursor<? extends Record> slaveCursor;
     private RecordCursor<? extends Record> masterCursor;
     private MultiRecordMap hashTable;
     private RecordCursor<? extends Record> hashTableCursor;
 
-    public HashJoinRecordSource(
+    public HashJoinJournalRecordSource(
             RecordSource<? extends Record> masterSource,
             ObjList<String> masterColumns,
-            RecordSource<? extends Record> slaveSource,
+            RandomAccessRecordSource<? extends Record> slaveSource,
             ObjList<String> slaveColumns) {
         this.masterSource = masterSource;
         this.slaveSource = slaveSource;
@@ -84,12 +82,13 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
     public void unprepare() {
         hashTableCursor = null;
         masterSource.unprepare();
+        hashTable.clear();
     }
 
     @Override
     public boolean hasNext() {
         if (hashTableCursor != null && hashTableCursor.hasNext()) {
-            currentRecord.setB(hashTableCursor.next());
+            currentRecord.setB(slaveCursor.getByRowId(hashTableCursor.next().getLong(0)));
             return true;
         }
         return hasNext0();
@@ -120,7 +119,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
             this.slaveColumns.add(sm.getColumn(index));
             builder.keyColumn(sm.getColumn(index));
         }
-        builder.setRecordMetadata(slaveSource.getMetadata());
+        builder.setRecordMetadata(rowIdRecord.getMetadata());
         return builder.build();
     }
 
@@ -130,7 +129,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
             for (int i = 0, k = slaveColumns.size(); i < k; i++) {
                 setKey(key, r, slaveColumns.getQuick(i).getType(), slaveColIndex.getQuick(i));
             }
-            hashTable.add(key, r);
+            hashTable.add(key, rowIdRecord.init(r.getRowId()));
         }
     }
 
@@ -149,7 +148,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
             hashTableCursor = hashTable.get(key);
 
             if (hashTableCursor.hasNext()) {
-                currentRecord.setB(hashTableCursor.next());
+                currentRecord.setB(slaveCursor.getByRowId(hashTableCursor.next().getLong(0)));
                 return true;
             }
         }

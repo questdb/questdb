@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalMetadataException;
 import com.nfsdb.factory.configuration.JournalMetadataBuilder;
 import com.nfsdb.factory.configuration.JournalStructure;
-import com.nfsdb.ql.JournalRecordSource;
+import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.impl.JournalRecord;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
@@ -73,7 +73,7 @@ public class GenericInteropTest extends AbstractTest {
         writer.commit();
 
         Journal reader = factory.reader("test");
-        JournalRecordSource src = reader.rows();
+        RecordCursor<JournalRecord> src = reader.rows().prepareCursor();
         JournalRecord e;
 
         Assert.assertTrue(src.hasNext());
@@ -307,7 +307,7 @@ public class GenericInteropTest extends AbstractTest {
         writer.commit();
 
         Journal reader = factory.reader("test");
-        JournalRecordSource src = reader.rows();
+        RecordCursor<JournalRecord> src = reader.rows().prepareCursor();
         JournalRecord e;
 
         Assert.assertTrue(src.hasNext());

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,12 +19,13 @@ package com.nfsdb.ql.impl;
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.ql.*;
 
-public class StatefulJournalSourceImpl extends AbstractImmutableIterator<Record> implements GenericRecordSource, RecordSourceState {
-    private final RecordSource<? extends Record> delegate;
+public class StatefulJournalSourceImpl extends AbstractImmutableIterator<Record> implements GenericRecordSource, RecordSourceState, RecordCursor<Record> {
+    private final RecordSource<? extends Record> recordSource;
+    private RecordCursor<? extends Record> recordCursor;
     private Record current;
 
-    public StatefulJournalSourceImpl(RecordSource<? extends Record> delegate) {
-        this.delegate = delegate;
+    public StatefulJournalSourceImpl(RecordSource<? extends Record> recordSource) {
+        this.recordSource = recordSource;
     }
 
     @Override
@@ -34,21 +35,27 @@ public class StatefulJournalSourceImpl extends AbstractImmutableIterator<Record>
 
     @Override
     public RecordMetadata getMetadata() {
-        return delegate.getMetadata();
+        return recordSource.getMetadata();
+    }
+
+    @Override
+    public RecordCursor<Record> prepareCursor() {
+        this.recordCursor = recordSource.prepareCursor();
+        return this;
+    }
+
+    @Override
+    public void unprepare() {
+        recordSource.unprepare();
     }
 
     @Override
     public boolean hasNext() {
-        return delegate.hasNext();
+        return recordCursor.hasNext();
     }
 
     @Override
     public Record next() {
-        return current = delegate.next();
-    }
-
-    @Override
-    public void reset() {
-        delegate.reset();
+        return current = recordCursor.next();
     }
 }

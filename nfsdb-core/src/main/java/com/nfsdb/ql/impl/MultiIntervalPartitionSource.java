@@ -44,18 +44,18 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
     }
 
     @Override
-    public PartitionCursor getCursor() {
-        partitionCursor = partitionSource.getCursor();
-        return this;
-    }
-
-    @Override
     public JournalMetadata getMetadata() {
         return partitionSource.getMetadata();
     }
 
     @Override
-    public void reset() {
+    public PartitionCursor prepareCursor() {
+        partitionCursor = partitionSource.prepareCursor();
+        return this;
+    }
+
+    @Override
+    public void unprepare() {
         intervalSource.reset();
         needInterval = true;
         needPartition = true;

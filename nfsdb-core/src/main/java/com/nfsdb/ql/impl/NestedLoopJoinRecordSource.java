@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,14 +18,17 @@ package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.ql.RecordSource;
 
-public class NestedLoopJoinRecordSource extends AbstractImmutableIterator<SplitRecord> implements RecordSource<SplitRecord> {
+public class NestedLoopJoinRecordSource extends AbstractImmutableIterator<SplitRecord> implements RecordSource<SplitRecord>, RecordCursor<SplitRecord> {
     private final RecordSource<? extends Record> masterSource;
     private final RecordSource<? extends Record> slaveSource;
     private final SplitRecordMetadata metadata;
     private final SplitRecord record;
+    private RecordCursor<? extends Record> masterCursor;
+    private RecordCursor<? extends Record> slaveCursor;
     private boolean nextSlave = false;
 
     public NestedLoopJoinRecordSource(RecordSource<? extends Record> masterSource, RecordSource<? extends Record> slaveSource) {
@@ -43,31 +46,38 @@ public class NestedLoopJoinRecordSource extends AbstractImmutableIterator<SplitR
     }
 
     @Override
+    public RecordCursor<SplitRecord> prepareCursor() {
+        masterCursor = masterSource.prepareCursor();
+        slaveCursor = slaveSource.prepareCursor();
+        return this;
+    }
+
+    @Override
+    public void unprepare() {
+        masterSource.unprepare();
+        slaveSource.unprepare();
+        nextSlave = false;
+    }
+
+    @Override
     public boolean hasNext() {
-        return nextSlave || masterSource.hasNext();
+        return nextSlave || masterCursor.hasNext();
     }
 
     @Override
     public SplitRecord next() {
         if (!nextSlave) {
-            record.setA(masterSource.next());
-            slaveSource.reset();
+            record.setA(masterCursor.next());
+            slaveSource.unprepare();
         }
 
-        if (nextSlave || slaveSource.hasNext()) {
-            record.setB(slaveSource.next());
-            nextSlave = slaveSource.hasNext();
+        if (nextSlave || slaveCursor.hasNext()) {
+            record.setB(slaveCursor.next());
+            nextSlave = slaveCursor.hasNext();
         } else {
             record.setB(null);
             nextSlave = false;
         }
         return record;
-    }
-
-    @Override
-    public void reset() {
-        masterSource.reset();
-        slaveSource.reset();
-        nextSlave = false;
     }
 }

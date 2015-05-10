@@ -16,13 +16,6 @@
 
 package com.nfsdb.ql;
 
-import com.nfsdb.factory.configuration.JournalMetadata;
-
-public interface RowSource {
-
-    void configure(JournalMetadata metadata);
-
-    RowCursor prepareCursor(PartitionSlice slice);
-
-    void unprepare();
+public interface RandomAccessRecordCursor<T extends Record> extends RecordCursor<T> {
+    T getByRowId(long rowId);
 }

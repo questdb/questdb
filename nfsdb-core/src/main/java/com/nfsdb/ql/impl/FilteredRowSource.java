@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,15 +40,20 @@ public class FilteredRowSource extends AbstractRowSource implements RecordSource
     }
 
     @Override
-    public Record currentRecord() {
-        return rec;
+    public RowCursor prepareCursor(PartitionSlice slice) {
+        this.underlying = delegate.prepareCursor(slice);
+        this.rec.partition = slice.partition;
+        return this;
     }
 
     @Override
-    public RowCursor cursor(PartitionSlice slice) {
-        this.underlying = delegate.cursor(slice);
-        this.rec.partition = slice.partition;
-        return this;
+    public void unprepare() {
+        delegate.unprepare();
+    }
+
+    @Override
+    public Record currentRecord() {
+        return rec;
     }
 
     @Override
@@ -65,10 +70,5 @@ public class FilteredRowSource extends AbstractRowSource implements RecordSource
     @Override
     public long next() {
         return rec.rowid;
-    }
-
-    @Override
-    public void reset() {
-        delegate.reset();
     }
 }

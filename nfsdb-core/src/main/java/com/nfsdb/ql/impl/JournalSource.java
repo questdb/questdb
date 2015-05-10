@@ -19,7 +19,7 @@ package com.nfsdb.ql.impl;
 import com.nfsdb.ql.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class JournalSource extends AbstractJournalSource implements JournalRecordSource {
+public class JournalSource extends AbstractJournalSource implements JournalRecordSource, RandomAccessRecordCursor<JournalRecord> {
     private final PartitionSource partitionSource;
     private final RowSource rowSource;
     private final JournalRecord rec = new JournalRecord(this);
@@ -32,7 +32,6 @@ public class JournalSource extends AbstractJournalSource implements JournalRecor
         this.partitionSource = partitionSource;
         rowSource.configure(partitionSource.getMetadata());
         this.rowSource = rowSource;
-        this.partitionCursor = partitionSource.getCursor();
     }
 
     @Override
@@ -47,9 +46,9 @@ public class JournalSource extends AbstractJournalSource implements JournalRecor
     }
 
     @Override
-    public void reset() {
-        partitionSource.reset();
-        rowSource.reset();
+    public void unprepare() {
+        partitionSource.unprepare();
+        rowSource.unprepare();
         cursor = null;
     }
 
@@ -64,11 +63,17 @@ public class JournalSource extends AbstractJournalSource implements JournalRecor
         return rec;
     }
 
+    @Override
+    public RandomAccessRecordCursor<JournalRecord> prepareCursor() {
+        this.partitionCursor = partitionSource.prepareCursor();
+        return this;
+    }
+
     @SuppressWarnings("unchecked")
     private boolean nextSlice() {
         while (partitionCursor.hasNext()) {
             PartitionSlice slice = partitionCursor.next();
-            cursor = rowSource.cursor(slice);
+            cursor = rowSource.prepareCursor(slice);
 
             if (cursor == null) {
                 return false;

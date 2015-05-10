@@ -19,9 +19,9 @@ package com.nfsdb.ql;
 import com.nfsdb.factory.configuration.JournalMetadata;
 
 public interface PartitionSource {
-    PartitionCursor getCursor();
-
     JournalMetadata getMetadata();
 
-    void reset();
+    PartitionCursor prepareCursor();
+
+    void unprepare();
 }
