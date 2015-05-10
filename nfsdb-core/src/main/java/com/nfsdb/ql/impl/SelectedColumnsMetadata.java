@@ -33,8 +33,8 @@ public class SelectedColumnsMetadata implements RecordMetadata {
         this.nameIndex = new ObjIntHashMap<>(k);
         this.reindex = new int[k];
         for (int i = 0; i < k; i++) {
-            reindex[i] = delegate.getColumnIndex(names.get(i));
-            nameIndex.put(names.get(i), i);
+            reindex[i] = delegate.getColumnIndex(names.getQuick(i));
+            nameIndex.put(names.getQuick(i), i);
         }
     }
 

@@ -47,7 +47,7 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
         journalServerStateConsumer.free();
         journalSymbolTableConsumer.free();
         for (int i = 0, k = partitionDeltaConsumers.size(); i < k; i++) {
-            partitionDeltaConsumers.get(i).free();
+            partitionDeltaConsumers.getQuick(i).free();
         }
         if (lagPartitionDeltaConsumer != null) {
             lagPartitionDeltaConsumer.free();
@@ -138,7 +138,7 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
 
     private void reset() throws JournalException {
         for (int i = 0, k = partitionDeltaConsumers.size(); i < k; i++) {
-            PartitionDeltaConsumer c = partitionDeltaConsumers.getAndSet(i, null);
+            PartitionDeltaConsumer c = partitionDeltaConsumers.getAndSetQuick(i, null);
             if (c != null) {
                 c.free();
             }

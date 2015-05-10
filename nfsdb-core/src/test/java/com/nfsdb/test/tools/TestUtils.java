@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -413,7 +413,7 @@ public final class TestUtils {
             default:
                 String result = "";
                 for (int i = 0; i < node.paramCount; i++) {
-                    result = toRpn(node.args.get(i)) + result;
+                    result = toRpn(node.args.getQuick(i)) + result;
                 }
                 return result + node.token;
         }

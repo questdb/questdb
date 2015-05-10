@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -81,6 +81,12 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord>
     }
 
     @Override
+    public void reset() {
+        hashTableSource = null;
+        masterSource.reset();
+    }
+
+    @Override
     public boolean hasNext() {
         if (hashTableSource != null && hashTableSource.hasNext()) {
             currentRecord.setB(hashStrategyContext.getNextSlave(hashTableSource.next()));
@@ -95,16 +101,10 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord>
         return currentRecord;
     }
 
-    @Override
-    public void reset() {
-        hashTableSource = null;
-        masterSource.reset();
-    }
-
     private MultiRecordMap buildHashTable(RecordSource<? extends Record> masterSource, ObjList<String> masterColumns, RecordSource<? extends Record> slaveSource, ObjList<String> slaveColumns) {
         RecordMetadata mm = masterSource.getMetadata();
         for (int i = 0, k = masterColumns.size(); i < k; i++) {
-            int index = mm.getColumnIndex(masterColumns.get(i));
+            int index = mm.getColumnIndex(masterColumns.getQuick(i));
             this.masterColIndex.add(index);
             this.masterColumns.add(mm.getColumn(index));
         }
@@ -112,7 +112,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord>
         MultiRecordMap.Builder builder = new MultiRecordMap.Builder();
         RecordMetadata sm = slaveSource.getMetadata();
         for (int i = 0, k = slaveColumns.size(); i < k; i++) {
-            int index = sm.getColumnIndex(slaveColumns.get(i));
+            int index = sm.getColumnIndex(slaveColumns.getQuick(i));
             this.slaveColIndex.add(index);
             this.slaveColumns.add(sm.getColumn(index));
             builder.keyColumn(sm.getColumn(index));
@@ -125,7 +125,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord>
         for (Record r : slaveSource) {
             MultiMap.KeyWriter key = hashTable.claimKey();
             for (int i = 0, k = slaveColumns.size(); i < k; i++) {
-                setKey(key, r, slaveColumns.get(i).getType(), slaveColIndex.get(i));
+                setKey(key, r, slaveColumns.getQuick(i).getType(), slaveColIndex.get(i));
             }
             hashTable.add(key, hashStrategyContext.getHashTableRecord(r));
         }
@@ -146,7 +146,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord>
             MultiMap.KeyWriter key = hashTable.claimKey();
 
             for (int i = 0, k = masterColumns.size(); i < k; i++) {
-                setKey(key, r, masterColumns.get(i).getType(), masterColIndex.get(i));
+                setKey(key, r, masterColumns.getQuick(i).getType(), masterColIndex.get(i));
             }
 
             hashTableSource = hashTable.get(key);

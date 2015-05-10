@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ public class SelectedColumnsRecord extends AbstractRecord {
         this.reindex = new int[k];
 
         for (int i = 0; i < k; i++) {
-            reindex[i] = metadata.getColumnIndex(names.get(i));
+            reindex[i] = metadata.getColumnIndex(names.getQuick(i));
         }
     }
 

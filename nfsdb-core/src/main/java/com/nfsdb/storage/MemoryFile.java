@@ -106,14 +106,14 @@ public class MemoryFile implements Closeable {
     public void force() {
         int stitchesSize = stitches.size();
         offsetBuffer.force();
-        for (int i = 0, buffersSize = buffers.size(); i < buffersSize; i++) {
-            MappedByteBuffer b = buffers.get(i);
+        for (int i = 0, k = buffers.size(); i < k; i++) {
+            MappedByteBuffer b = buffers.getQuick(i);
             if (b != null) {
                 b.force();
             }
 
             if (i < stitchesSize) {
-                ByteBufferWrapper s = stitches.get(i);
+                ByteBufferWrapper s = stitches.getQuick(i);
                 if (s != null) {
                     s.getByteBuffer().force();
                 }
@@ -203,13 +203,13 @@ public class MemoryFile implements Closeable {
                     cachedBufferLo = cachedBufferHi = -1;
                     int ssz = stitches.size();
                     for (int i = index - 1; i >= 0; i--) {
-                        MappedByteBuffer b = buffers.getAndSet(i, null);
+                        MappedByteBuffer b = buffers.getAndSetQuick(i, null);
                         if (b != null) {
                             ByteBuffers.release(b);
                         }
 
                         if (i < ssz) {
-                            ByteBufferWrapper stitch = stitches.getAndSet(i, null);
+                            ByteBufferWrapper stitch = stitches.getAndSetQuick(i, null);
                             if (stitch != null) {
                                 stitch.release();
                             }
@@ -333,13 +333,13 @@ public class MemoryFile implements Closeable {
 
     private void unmap() {
         for (int i = 0, k = buffers.size(); i < k; i++) {
-            MappedByteBuffer b = buffers.get(i);
+            MappedByteBuffer b = buffers.getQuick(i);
             if (b != null) {
                 ByteBuffers.release(b);
             }
         }
         for (int i = 0, k = stitches.size(); i < k; i++) {
-            ByteBufferWrapper b = stitches.get(i);
+            ByteBufferWrapper b = stitches.getQuick(i);
             if (b != null) {
                 b.release();
             }

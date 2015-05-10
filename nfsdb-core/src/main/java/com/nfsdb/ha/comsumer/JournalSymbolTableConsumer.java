@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -63,7 +63,7 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
     public void free() {
         ByteBuffers.release(buffer);
         for (int i = 0; i < tabCount; i++) {
-            symbolTableConsumers.get(i).free();
+            symbolTableConsumers.getQuick(i).free();
         }
         symbolTableSizes.free();
     }
@@ -71,7 +71,7 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
     @Override
     protected void commit() {
         for (int i = 0, sz = symbolTables.size(); i < sz; i++) {
-            SymbolTable tab = symbolTables.get(i);
+            SymbolTable tab = symbolTables.getQuick(i);
             int oldSize = symbolTableSizes.get(i);
             tab.getDataColumn().commit();
             tab.alignSize();
@@ -84,12 +84,12 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
     protected void doRead(ReadableByteChannel channel) throws JournalNetworkException {
         buffer.position(0);
         ByteBuffers.copy(channel, buffer);
-        for (int i = 0; i < tabCount; i++) {
-            symbolTableSizes.set(i, symbolTables.get(i).size());
+        for (int i = 0, k = tabCount; i < k; i++) {
+            symbolTableSizes.set(i, symbolTables.getQuick(i).size());
             if (Unsafe.getUnsafe().getByte(address + i) == 0) {
                 continue;
             }
-            symbolTableConsumers.get(i).read(channel);
+            symbolTableConsumers.getQuick(i).read(channel);
         }
     }
 }

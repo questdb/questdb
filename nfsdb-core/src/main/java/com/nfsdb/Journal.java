@@ -712,7 +712,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
             configurePartitions();
         } else {
             long txPartitionSize = tx.journalMaxRowID == -1 ? 0 : Rows.toLocalRowID(tx.journalMaxRowID);
-            partitions.get(txPartitionIndex).applyTx(txPartitionSize, tx.indexPointers);
+            partitions.getQuick(txPartitionIndex).applyTx(txPartitionSize, tx.indexPointers);
             configureIrregularPartition();
         }
     }

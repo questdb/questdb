@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,7 +43,7 @@ public class Operator {
     public final String token;
     public static final ObjObjHashMap<CharSequence, Operator> opMap = new ObjObjHashMap<CharSequence, Operator>() {{
         for (int i = 0, k = operators.size(); i < k; i++) {
-            Operator op = operators.get(i);
+            Operator op = operators.getQuick(i);
             put(op.token, op);
         }
     }};

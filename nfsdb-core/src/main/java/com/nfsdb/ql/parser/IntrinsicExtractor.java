@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -156,7 +156,7 @@ public class IntrinsicExtractor {
         }
 
         if (in.paramCount > 3) {
-            throw new ParserException(in.args.get(0).position, "Too many args");
+            throw new ParserException(in.args.getQuick(0).position, "Too many args");
         }
 
 
@@ -164,8 +164,8 @@ public class IntrinsicExtractor {
             throw new ParserException(in.position, "Too few args");
         }
 
-        ExprNode lo = in.args.get(1);
-        ExprNode hi = in.args.get(0);
+        ExprNode lo = in.args.getQuick(1);
+        ExprNode hi = in.args.getQuick(0);
 
         if (lo.type == ExprNode.NodeType.CONSTANT && hi.type == ExprNode.NodeType.CONSTANT) {
             long loMillis;

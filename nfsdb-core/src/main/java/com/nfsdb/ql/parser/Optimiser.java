@@ -58,7 +58,7 @@ public class Optimiser {
 
         // create virtual columns from select list
         for (int i = 0, k = columns.size(); i < k; i++) {
-            QueryColumn qc = columns.get(i);
+            QueryColumn qc = columns.getQuick(i);
             ExprNode node = qc.getAst();
 
             switch (node.type) {

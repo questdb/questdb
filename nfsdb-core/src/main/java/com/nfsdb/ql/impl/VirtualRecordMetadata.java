@@ -34,7 +34,7 @@ public class VirtualRecordMetadata implements RecordMetadata {
         this.virtualColumns = virtualColumns;
 
         for (int i = 0, k = virtualColumns.size(); i < k; i++) {
-            nameToIndexMap.put(virtualColumns.get(i).getName(), i + split);
+            nameToIndexMap.put(virtualColumns.getQuick(i).getName(), i + split);
         }
     }
 

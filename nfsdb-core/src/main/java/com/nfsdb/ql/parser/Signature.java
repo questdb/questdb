@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,6 +30,11 @@ public class Signature {
     }
 
     @Override
+    public int hashCode() {
+        return typesHashCode(31 * name.hashCode() + paramCount);
+    }
+
+    @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (!(o instanceof Signature)) return false;
@@ -38,8 +43,11 @@ public class Signature {
     }
 
     @Override
-    public int hashCode() {
-        return typesHashCode(31 * name.hashCode() + paramCount);
+    public String toString() {
+        return "Signature{" +
+                "name='" + name + "'" +
+                ", paramTypes=" + paramTypes +
+                '}';
     }
 
     public Signature paramType(int pos, ColumnType type) {
@@ -58,14 +66,6 @@ public class Signature {
         return this;
     }
 
-    @Override
-    public String toString() {
-        return "Signature{" +
-                "name='" + name + "'" +
-                ", paramTypes=" + paramTypes +
-                '}';
-    }
-
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     private boolean typesEqual(Signature that) {
         int k;
@@ -74,7 +74,7 @@ public class Signature {
         }
 
         for (int i = 0; i < k; i++) {
-            if (this.paramTypes.get(i) != that.paramTypes.get(i)) {
+            if (this.paramTypes.getQuick(i) != that.paramTypes.getQuick(i)) {
                 return false;
             }
         }
@@ -84,7 +84,7 @@ public class Signature {
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     private int typesHashCode(int h) {
         for (int i = 0, k = paramTypes.size(); i < k; i++) {
-            h = h * 32 + paramTypes.get(i).ordinal();
+            h = h * 32 + paramTypes.getQuick(i).ordinal();
         }
         return h;
     }

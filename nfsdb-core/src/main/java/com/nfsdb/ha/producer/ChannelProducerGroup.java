@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,20 +32,13 @@ public class ChannelProducerGroup<T extends ChannelProducer> implements ChannelP
     @Override
     public void free() {
         for (int i = 0, sz = producers.size(); i < sz; i++) {
-            producers.get(i).free();
+            producers.getQuick(i).free();
         }
     }
 
     @Override
     public boolean hasContent() {
         return hasContent;
-    }
-
-    @Override
-    public String toString() {
-        return "ChannelProducerGroup{" +
-                "size=" + producers.size() +
-                '}';
     }
 
     @Override
@@ -56,6 +49,13 @@ public class ChannelProducerGroup<T extends ChannelProducer> implements ChannelP
             }
             hasContent = false;
         }
+    }
+
+    @Override
+    public String toString() {
+        return "ChannelProducerGroup{" +
+                "size=" + producers.size() +
+                '}';
     }
 
     void addProducer(T producer) {
