@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,14 +23,16 @@ public class JournalSource extends AbstractJournalSource implements JournalRecor
     private final PartitionSource partitionSource;
     private final RowSource rowSource;
     private final JournalRecord rec = new JournalRecord(this);
+    private PartitionCursor partitionCursor;
     private RowCursor cursor;
 
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     public JournalSource(PartitionSource partitionSource, RowSource rowSource) {
-        super(partitionSource.getJournal().getMetadata());
+        super(partitionSource.getMetadata());
         this.partitionSource = partitionSource;
-        rowSource.configure(partitionSource.getJournal().getMetadata());
+        rowSource.configure(partitionSource.getMetadata());
         this.rowSource = rowSource;
+        this.partitionCursor = partitionSource.getCursor();
     }
 
     @Override
@@ -45,6 +47,13 @@ public class JournalSource extends AbstractJournalSource implements JournalRecor
     }
 
     @Override
+    public void reset() {
+        partitionSource.reset();
+        rowSource.reset();
+        cursor = null;
+    }
+
+    @Override
     public boolean hasNext() {
         return (cursor != null && cursor.hasNext()) || nextSlice();
     }
@@ -55,17 +64,10 @@ public class JournalSource extends AbstractJournalSource implements JournalRecor
         return rec;
     }
 
-    @Override
-    public void reset() {
-        partitionSource.reset();
-        rowSource.reset();
-        cursor = null;
-    }
-
     @SuppressWarnings("unchecked")
     private boolean nextSlice() {
-        while (partitionSource.hasNext()) {
-            PartitionSlice slice = partitionSource.next();
+        while (partitionCursor.hasNext()) {
+            PartitionSlice slice = partitionCursor.next();
             cursor = rowSource.cursor(slice);
 
             if (cursor == null) {

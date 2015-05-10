@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,11 +18,13 @@ package com.nfsdb.ql.impl;
 
 import com.nfsdb.Journal;
 import com.nfsdb.collections.AbstractImmutableIterator;
+import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.ql.PartitionCursor;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.PartitionSource;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class NoOpJournalPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource {
+public class NoOpJournalPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource, PartitionCursor {
 
     private final Journal journal;
 
@@ -32,8 +34,17 @@ public class NoOpJournalPartitionSource extends AbstractImmutableIterator<Partit
     }
 
     @Override
-    public Journal getJournal() {
-        return journal;
+    public JournalMetadata getMetadata() {
+        return journal.getMetadata();
+    }
+
+    @Override
+    public PartitionCursor getCursor() {
+        return this;
+    }
+
+    @Override
+    public final void reset() {
     }
 
     @Override
@@ -45,9 +56,5 @@ public class NoOpJournalPartitionSource extends AbstractImmutableIterator<Partit
     @Override
     public PartitionSlice next() {
         return null;
-    }
-
-    @Override
-    public final void reset() {
     }
 }

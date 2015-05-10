@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,9 @@
 
 package com.nfsdb.ql.impl;
 
-import com.nfsdb.Journal;
 import com.nfsdb.collections.AbstractImmutableIterator;
+import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.ql.PartitionCursor;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.PartitionSource;
 import com.nfsdb.storage.BSearchType;
@@ -25,10 +26,11 @@ import com.nfsdb.storage.FixedColumn;
 import com.nfsdb.utils.Interval;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class MultiIntervalPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource {
-    private final PartitionSource delegate;
+public class MultiIntervalPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource, PartitionCursor {
+    private final PartitionSource partitionSource;
     private final PartitionSlice result = new PartitionSlice();
     private final IntervalSource intervalSource;
+    private PartitionCursor partitionCursor;
     private boolean needInterval = true;
     private boolean needPartition = true;
     private Interval interval;
@@ -36,14 +38,27 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
     private FixedColumn timestampColumn = null;
     private long nextRowLo;
 
-    public MultiIntervalPartitionSource(PartitionSource delegate, IntervalSource intervalSource) {
-        this.delegate = delegate;
+    public MultiIntervalPartitionSource(PartitionSource partitionSource, IntervalSource intervalSource) {
+        this.partitionSource = partitionSource;
         this.intervalSource = intervalSource;
     }
 
     @Override
-    public Journal getJournal() {
-        return delegate.getJournal();
+    public PartitionCursor getCursor() {
+        partitionCursor = partitionSource.getCursor();
+        return this;
+    }
+
+    @Override
+    public JournalMetadata getMetadata() {
+        return partitionSource.getMetadata();
+    }
+
+    @Override
+    public void reset() {
+        intervalSource.reset();
+        needInterval = true;
+        needPartition = true;
     }
 
     @Override
@@ -62,8 +77,8 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
             }
 
             if (needPartition) {
-                if (delegate.hasNext()) {
-                    slice = delegate.next();
+                if (partitionCursor.hasNext()) {
+                    slice = partitionCursor.next();
                     sliceRowLo = nextRowLo = slice.lo;
                     sliceRowHi = slice.calcHi ? slice.partition.size() - 1 : slice.hi;
                     if (sliceRowHi < 0) {
@@ -124,13 +139,5 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
     @Override
     public PartitionSlice next() {
         return result;
-    }
-
-    @Override
-    public void reset() {
-        delegate.reset();
-        intervalSource.reset();
-        needInterval = true;
-        needPartition = true;
     }
 }

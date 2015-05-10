@@ -20,11 +20,13 @@ import com.nfsdb.Journal;
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.ql.PartitionCursor;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.PartitionSource;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class JournalPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource {
+public class JournalPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource, PartitionCursor {
 
     private final Journal journal;
     private final boolean open;
@@ -39,8 +41,19 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
     }
 
     @Override
-    public Journal getJournal() {
-        return journal;
+    public PartitionCursor getCursor() {
+        return this;
+    }
+
+    @Override
+    public JournalMetadata getMetadata() {
+        return journal.getMetadata();
+    }
+
+    @Override
+    public final void reset() {
+        partitionCount = journal.getPartitionCount();
+        partitionIndex = 0;
     }
 
     @Override
@@ -59,11 +72,5 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
-    }
-
-    @Override
-    public final void reset() {
-        partitionCount = journal.getPartitionCount();
-        partitionIndex = 0;
     }
 }

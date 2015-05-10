@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,12 +20,14 @@ import com.nfsdb.Journal;
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.ql.PartitionCursor;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.PartitionSource;
 import com.nfsdb.utils.Rows;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class JournalTailPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource {
+public class JournalTailPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource, PartitionCursor {
     private final Journal journal;
     private final boolean open;
     private final long rowid;
@@ -42,8 +44,20 @@ public class JournalTailPartitionSource extends AbstractImmutableIterator<Partit
     }
 
     @Override
-    public Journal getJournal() {
-        return journal;
+    public JournalMetadata getMetadata() {
+        return journal.getMetadata();
+    }
+
+    @Override
+    public PartitionCursor getCursor() {
+        return this;
+    }
+
+    @Override
+    public final void reset() {
+        partitionCount = journal.getPartitionCount();
+        partitionIndex = Rows.toPartitionIndex(rowid);
+        lo = Rows.toLocalRowID(rowid);
     }
 
     @Override
@@ -63,12 +77,5 @@ public class JournalTailPartitionSource extends AbstractImmutableIterator<Partit
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
-    }
-
-    @Override
-    public final void reset() {
-        partitionCount = journal.getPartitionCount();
-        partitionIndex = Rows.toPartitionIndex(rowid);
-        lo = Rows.toLocalRowID(rowid);
     }
 }

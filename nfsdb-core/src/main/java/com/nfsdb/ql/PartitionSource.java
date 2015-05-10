@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,12 @@
 
 package com.nfsdb.ql;
 
-import com.nfsdb.Journal;
+import com.nfsdb.factory.configuration.JournalMetadata;
 
-public interface PartitionSource extends ResettableIterator<PartitionSlice> {
-    Journal getJournal();
+public interface PartitionSource {
+    PartitionCursor getCursor();
+
+    JournalMetadata getMetadata();
+
+    void reset();
 }

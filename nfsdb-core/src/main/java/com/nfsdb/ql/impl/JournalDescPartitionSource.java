@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,11 +20,13 @@ import com.nfsdb.Journal;
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.ql.PartitionCursor;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.PartitionSource;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class JournalDescPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource {
+public class JournalDescPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource, PartitionCursor {
 
     private final Journal journal;
     private final boolean open;
@@ -38,8 +40,18 @@ public class JournalDescPartitionSource extends AbstractImmutableIterator<Partit
     }
 
     @Override
-    public Journal getJournal() {
-        return journal;
+    public PartitionCursor getCursor() {
+        return this;
+    }
+
+    @Override
+    public JournalMetadata getMetadata() {
+        return journal.getMetadata();
+    }
+
+    @Override
+    public final void reset() {
+        partitionIndex = journal.getPartitionCount() - 1;
     }
 
     @Override
@@ -58,10 +70,5 @@ public class JournalDescPartitionSource extends AbstractImmutableIterator<Partit
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
-    }
-
-    @Override
-    public final void reset() {
-        partitionIndex = journal.getPartitionCount() - 1;
     }
 }
