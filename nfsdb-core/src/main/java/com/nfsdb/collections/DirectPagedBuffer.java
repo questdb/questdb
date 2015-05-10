@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,8 +29,8 @@ public class DirectPagedBuffer implements Closeable {
     private final int mask;
     private final int bits;
     private DirectLongList pages;
-    private long cachedPageOffsetHi;
-    private long cachedPageOffset;
+    private long cachePageHi;
+    private long cachePageLo;
 
     public DirectPagedBuffer(int pageCapacity) {
         this.pageCapacity = Numbers.ceilPow2(pageCapacity);
@@ -41,7 +41,7 @@ public class DirectPagedBuffer implements Closeable {
     }
 
     public void append(DirectInputStream value) {
-        long writeOffset = cachedPageOffset;
+        long writeOffset = cachePageLo;
         long size = value.getLength();
         if (size < 0 || writeOffset < 0) {
             throw new IndexOutOfBoundsException();
@@ -66,10 +66,29 @@ public class DirectPagedBuffer implements Closeable {
             long writeSize = Math.min(size, pageCapacity - pageOffset);
             value.copyTo(writeAddress, 0, writeSize);
             size -= writeSize;
-            cachedPageOffset += writeSize;
+            cachePageLo += writeSize;
             writeOffset = 0;
             pageIndex++;
         } while (size > 0);
+    }
+
+    public void clear() {
+        cachePageLo = pages.get(0);
+        cachePageHi = cachePageLo + pageCapacity;
+    }
+
+    @Override
+    public void close() throws IOException {
+        if (pages != null) {
+            for (int i = 0; i < pages.size(); i++) {
+                long address = pages.get(i);
+                if (address != 0) {
+                    Unsafe.getUnsafe().freeMemory(address);
+                }
+            }
+            pages.close();
+            pages = null;
+        }
     }
 
     public long getBlockLen(long offset) {
@@ -77,41 +96,21 @@ public class DirectPagedBuffer implements Closeable {
     }
 
     public long getWriteOffsetQuick(long length) {
-        if (cachedPageOffset + length <= cachedPageOffsetHi) {
-            // Increment currentAddress and return original value
-            return (cachedPageOffset += length) - length;
-        } else {
-            cachedPageOffset = allocateAddress();
-            return (cachedPageOffset += length) - length;
+        if (cachePageLo + length > cachePageHi) {
+            allocateAddress();
         }
+        return (cachePageLo += length) - length;
     }
 
     public long getWriteOffsetWithChecks(long length) {
-        if (cachedPageOffset + length <= cachedPageOffsetHi) {
-            return (cachedPageOffset += length) - length;
-        } else {
-            cachedPageOffset = allocateAddressChecked(length);
-            return (cachedPageOffset += length) - length;
+        if (cachePageLo + length > cachePageHi) {
+            allocateAddressChecked(length);
         }
+        return (cachePageLo += length) - length;
     }
 
     public long toAddress(long offset) {
         return pages.get((int) (offset >> bits)) + (offset & mask);
-    }
-
-    public void write(OutputStream stream, long offset, long len) throws IOException {
-        long position = offset;
-        long copied = 0;
-        while (copied < len) {
-            long address = toAddress(offset);
-            long blockEndOffset = getBlockLen(offset);
-            long copyEndOffset = Math.min(blockEndOffset, len - copied);
-            len += copyEndOffset - position;
-
-            while (position < copyEndOffset) {
-                stream.write(Unsafe.getUnsafe().getByte(address + position++));
-            }
-        }
     }
 
     public long write(long writeTo, long readOffset, long size) {
@@ -145,35 +144,35 @@ public class DirectPagedBuffer implements Closeable {
         return readLen;
     }
 
-    private long allocateAddressChecked(long length) {
+    public void write(OutputStream stream, long offset, long len) throws IOException {
+        long position = offset;
+        long copied = 0;
+        while (copied < len) {
+            long address = toAddress(offset);
+            long blockEndOffset = getBlockLen(offset);
+            long copyEndOffset = Math.min(blockEndOffset, len - copied);
+            len += copyEndOffset - position;
+
+            while (position < copyEndOffset) {
+                stream.write(Unsafe.getUnsafe().getByte(address + position++));
+            }
+        }
+    }
+
+    private void allocateAddress() {
+        cachePageLo = allocatePage();
+        cachePageHi = cachePageLo + pageCapacity;
+    }
+
+    private void allocateAddressChecked(long length) {
         if (length > pageCapacity) {
             throw new JournalRuntimeException("Failed to allocate page of length %d. Maximum page size %d", length, pageCapacity);
         }
-        return allocateAddress();
-    }
-
-    private long allocateAddress() {
-        long cachedPageOffsetLo = allocatePage();
-        cachedPageOffsetHi = cachedPageOffsetLo + pageCapacity;
-        return cachedPageOffsetLo;
+        allocateAddress();
     }
 
     private long allocatePage() {
         pages.add(Unsafe.getUnsafe().allocateMemory(pageCapacity));
-        return (pages.size() - 1) * pageCapacity;
-    }
-
-    @Override
-    public void close() throws IOException {
-        if (pages != null) {
-            for (int i = 0; i < pages.size(); i++) {
-                long address = pages.get(i);
-                if (address != 0) {
-                    Unsafe.getUnsafe().freeMemory(address);
-                }
-            }
-            pages.close();
-            pages = null;
-        }
+        return (pages.size() - 1) << bits;
     }
 }

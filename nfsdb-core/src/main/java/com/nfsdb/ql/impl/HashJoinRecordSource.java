@@ -84,6 +84,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
     public void unprepare() {
         hashTableCursor = null;
         masterSource.unprepare();
+        hashTable.clear();
     }
 
     @Override

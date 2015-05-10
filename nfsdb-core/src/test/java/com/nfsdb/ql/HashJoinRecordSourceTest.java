@@ -59,42 +59,6 @@ public class HashJoinRecordSourceTest {
     }
 
     @Test
-    public void simpleJoin() throws Exception {
-        bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
-        bw.append(new Band().setName("band2").setType("blues").setUrl("http://band2.com"));
-        bw.append(new Band().setName("band3").setType("jazz").setUrl("http://band3.com"));
-        bw.append(new Band().setName("band1").setType("jazz").setUrl("http://new.band1.com"));
-
-        bw.commit();
-
-        aw.append(new Album().setName("album X").setBand("band1").setGenre("pop"));
-        aw.append(new Album().setName("album Y").setBand("band3").setGenre("metal"));
-        aw.append(new Album().setName("album BZ").setBand("band1").setGenre("rock"));
-
-        aw.commit();
-
-        StringSink sink = new StringSink();
-        RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        RecordSource<? extends Record> joinResult = new SelectedColumnsRecordSource(
-                new HashJoinRecordSource(
-                        new JournalSource(new JournalPartitionSource(bw, false), new AllRowSource()),
-                        new ObjList<String>() {{
-                            add("name");
-                        }},
-                        new JournalSource(new JournalPartitionSource(aw, false), new AllRowSource()),
-                        new ObjList<String>() {{
-                            add("band");
-                        }}
-                ),
-                new ObjList<String>() {{
-                    add("genre");
-                }}
-        );
-        p.print(joinResult);
-        Assert.assertEquals("rock\npop\nmetal\nrock\npop\n", sink.toString());
-    }
-
-    @Test
     public void testHashJoinJournalRecordSource() throws Exception {
         bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
         bw.append(new Band().setName("band2").setType("blues").setUrl("http://band2.com"));
@@ -165,5 +129,41 @@ public class HashJoinRecordSourceTest {
 //        ExportManager.export(factory, "q1", new File("d:/q1.csv"), TextFileFormat.TAB);
 //        ExportManager.export(factory, "q2", new File("d:/q2.csv"), TextFileFormat.TAB);
 //        ExportManager.export(j, new File("d:/join.csv"), TextFileFormat.TAB);
+    }
+
+    @Test
+    public void testHashJoinRecordSource() throws Exception {
+        bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
+        bw.append(new Band().setName("band2").setType("blues").setUrl("http://band2.com"));
+        bw.append(new Band().setName("band3").setType("jazz").setUrl("http://band3.com"));
+        bw.append(new Band().setName("band1").setType("jazz").setUrl("http://new.band1.com"));
+
+        bw.commit();
+
+        aw.append(new Album().setName("album X").setBand("band1").setGenre("pop"));
+        aw.append(new Album().setName("album Y").setBand("band3").setGenre("metal"));
+        aw.append(new Album().setName("album BZ").setBand("band1").setGenre("rock"));
+
+        aw.commit();
+
+        StringSink sink = new StringSink();
+        RecordSourcePrinter p = new RecordSourcePrinter(sink);
+        RecordSource<? extends Record> joinResult = new SelectedColumnsRecordSource(
+                new HashJoinRecordSource(
+                        new JournalSource(new JournalPartitionSource(bw, false), new AllRowSource()),
+                        new ObjList<String>() {{
+                            add("name");
+                        }},
+                        new JournalSource(new JournalPartitionSource(aw, false), new AllRowSource()),
+                        new ObjList<String>() {{
+                            add("band");
+                        }}
+                ),
+                new ObjList<String>() {{
+                    add("genre");
+                }}
+        );
+        p.print(joinResult);
+        Assert.assertEquals("rock\npop\nmetal\nrock\npop\n", sink.toString());
     }
 }

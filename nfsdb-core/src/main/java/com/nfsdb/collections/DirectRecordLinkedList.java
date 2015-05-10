@@ -44,6 +44,10 @@ public class DirectRecordLinkedList extends AbstractImmutableIterator<Record> im
         return recordAddressBegin;
     }
 
+    public void clear() {
+        buffer.clear();
+    }
+
     @Override
     public void close() throws IOException {
         buffer.close();
