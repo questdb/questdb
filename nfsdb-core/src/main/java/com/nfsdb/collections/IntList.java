@@ -17,52 +17,54 @@
 package com.nfsdb.collections;
 
 import com.nfsdb.utils.Unsafe;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
-import java.util.Iterator;
 
-public class ObjList<T> {
+public class IntList {
     public static final int DEFAULT_ARRAY_SIZE = 16;
-    private final Iter iterator = new Iter();
-    private T[] buffer;
+    public static final int noEntryValue = -1;
+    private int[] buffer;
     private int pos = 0;
     private StringBuilder toStringBuilder;
 
     @SuppressWarnings("unchecked")
-    public ObjList() {
-        this.buffer = (T[]) new Object[DEFAULT_ARRAY_SIZE];
+    public IntList() {
+        this(DEFAULT_ARRAY_SIZE);
     }
 
     @SuppressWarnings("unchecked")
-    public ObjList(int capacity) {
-        this.buffer = (T[]) new Object[capacity < DEFAULT_ARRAY_SIZE ? DEFAULT_ARRAY_SIZE : capacity];
+    public IntList(int capacity) {
+        this.buffer = new int[capacity < DEFAULT_ARRAY_SIZE ? DEFAULT_ARRAY_SIZE : capacity];
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    public boolean add(T value) {
+    public boolean add(int value) {
         ensureCapacity0(pos + 1);
         Unsafe.arrayPut(buffer, pos++, value);
         return true;
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    public void add(int index, T element) {
+    public void add(IntList that) {
+        int p = pos;
+        int s = that.size();
+        ensureCapacity(p + s);
+        System.arraycopy(that.buffer, 0, this.buffer, p, s);
+    }
+
+    public void add(int index, int element) {
         ensureCapacity0(pos + 1);
         System.arraycopy(buffer, index, buffer, index + 1, pos - index - 1);
         Unsafe.arrayPut(buffer, index, element);
     }
 
-    /**
-     * {@inheritDoc}
-     */
     public void clear() {
         pos = 0;
-        Arrays.fill(buffer, null);
+        Arrays.fill(buffer, noEntryValue);
+    }
+
+    public void clear(int capacity) {
+        ensureCapacity0(capacity);
+        pos = 0;
+        Arrays.fill(buffer, noEntryValue);
     }
 
     public void ensureCapacity(int capacity) {
@@ -70,7 +72,7 @@ public class ObjList<T> {
         pos = capacity;
     }
 
-    public void extendAndSet(int index, T value) {
+    public void extendAndSet(int index, int value) {
         ensureCapacity0(index + 1);
         if (index >= pos) {
             pos = index + 1;
@@ -78,18 +80,15 @@ public class ObjList<T> {
         Unsafe.arrayPut(buffer, index, value);
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    public T get(int index) {
+    public int get(int index) {
         if (index < pos) {
             return Unsafe.arrayGet(buffer, index);
         }
         throw new ArrayIndexOutOfBoundsException(index);
     }
 
-    public T getAndSetQuick(int index, T value) {
-        T v = Unsafe.arrayGet(buffer, index);
+    public int getAndSetQuick(int index, int value) {
+        int v = Unsafe.arrayGet(buffer, index);
         Unsafe.arrayPut(buffer, index, value);
         return v;
     }
@@ -99,11 +98,11 @@ public class ObjList<T> {
      *
      * @return last element of the list
      */
-    public T getLast() {
+    public int getLast() {
         if (pos > 0) {
             return Unsafe.arrayGet(buffer, pos - 1);
         }
-        return null;
+        return noEntryValue;
     }
 
     /**
@@ -115,7 +114,7 @@ public class ObjList<T> {
      * @param index of the element
      * @return element at the specified position.
      */
-    public T getQuick(int index) {
+    public int getQuick(int index) {
         return Unsafe.arrayGet(buffer, index);
     }
 
@@ -127,11 +126,11 @@ public class ObjList<T> {
      * @param index position of element
      * @return element at the specified position.
      */
-    public T getQuiet(int index) {
+    public int getQuiet(int index) {
         if (index < pos) {
             return Unsafe.arrayGet(buffer, index);
         }
-        return null;
+        return noEntryValue;
     }
 
     /**
@@ -141,8 +140,8 @@ public class ObjList<T> {
     public int hashCode() {
         int hashCode = 1;
         for (int i = 0, n = pos; i < n; i++) {
-            T o = getQuick(i);
-            hashCode = 31 * hashCode + (o == null ? 0 : o.hashCode());
+            int v = getQuick(i);
+            hashCode = 31 * hashCode + (v == noEntryValue ? 0 : v);
         }
         return hashCode;
     }
@@ -152,7 +151,7 @@ public class ObjList<T> {
      */
     @Override
     public boolean equals(Object that) {
-        return this == that || that instanceof ObjList && equals((ObjList) that);
+        return this == that || that instanceof IntList && equals((IntList) that);
     }
 
     /**
@@ -176,80 +175,56 @@ public class ObjList<T> {
         return toStringBuilder.toString();
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    public int indexOf(Object o) {
-        if (o == null) {
-            return indexOfNull();
-        } else {
-            for (int i = 0, n = pos; i < n; i++) {
-                if (o.equals(getQuick(i))) {
-                    return i;
-                }
+    public int indexOf(int o) {
+        for (int i = 0, n = pos; i < n; i++) {
+            if (o == getQuick(i)) {
+                return i;
             }
-            return -1;
         }
+        return -1;
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    @NotNull
-    public Iterator<T> iterator() {
-        iterator.n = 0;
-        return iterator;
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    public T remove(int index) {
-        if (pos < 1 || index >= pos) {
-            return null;
-        }
-        T v = Unsafe.arrayGet(buffer, index);
-        int move = pos - index - 1;
-        if (move > 0) {
-            System.arraycopy(buffer, index + 1, buffer, index, move);
-        }
-        Unsafe.arrayPut(buffer, --pos, null);
-        return v;
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    public boolean remove(Object o) {
-        int index = indexOf(o);
+    public boolean remove(int v) {
+        int index = indexOf(v);
         if (index > -1) {
-            remove(index);
+            removeIndex(index);
             return true;
         }
         return false;
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    public T set(int index, T element) {
+    public int removeIndex(int index) {
+        if (pos < 1 || index >= pos) {
+            return noEntryValue;
+        }
+        int v = Unsafe.arrayGet(buffer, index);
+        int move = pos - index - 1;
+        if (move > 0) {
+            System.arraycopy(buffer, index + 1, buffer, index, move);
+        }
+        Unsafe.arrayPut(buffer, --pos, noEntryValue);
+        return v;
+    }
+
+    public int set(int index, int element) {
         if (index < pos) {
-            T obj = Unsafe.arrayGet(buffer, index);
+            int v = Unsafe.arrayGet(buffer, index);
             Unsafe.arrayPut(buffer, index, element);
-            return obj;
+            return v;
         }
         throw new ArrayIndexOutOfBoundsException(index);
     }
 
-    public void setQuick(int index, T value) {
+    public void setQuick(int index, int value) {
         Unsafe.arrayPut(buffer, index, value);
     }
 
-    /**
-     * {@inheritDoc}
-     */
     public int size() {
         return pos;
+    }
+
+    public void zero(int value) {
+        Arrays.fill(buffer, 0, pos, value);
     }
 
     @SuppressWarnings("unchecked")
@@ -257,52 +232,23 @@ public class ObjList<T> {
         int l = buffer.length;
         if (capacity > l) {
             int newCap = Math.max(l << 1, capacity);
-            T[] buf = (T[]) new Object[newCap];
+            int[] buf = new int[newCap];
             System.arraycopy(buffer, 0, buf, 0, l);
             this.buffer = buf;
         }
     }
 
-    private boolean equals(ObjList that) {
+    private boolean equals(IntList that) {
         if (this.pos == that.pos) {
             for (int i = 0, n = pos; i < n; i++) {
-                Object lhs = this.getQuick(i);
-                if (lhs == null) {
-                    return that.getQuick(i) == null;
-                } else if (lhs.equals(that.getQuick(i))) {
+                int lhs = this.getQuick(i);
+                if (lhs == noEntryValue) {
+                    return that.getQuick(i) == noEntryValue;
+                } else if (lhs == that.getQuick(i)) {
                     return true;
                 }
             }
         }
         return false;
     }
-
-    private int indexOfNull() {
-        for (int i = 0, n = pos; i < n; i++) {
-            if (null == getQuick(i)) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    private class Iter implements Iterator<T> {
-        private int n;
-
-        @Override
-        public boolean hasNext() {
-            return n < pos;
-        }
-
-        @Override
-        public T next() {
-            return getQuick(n++);
-        }
-
-        @Override
-        public void remove() {
-
-        }
-    }
-
 }

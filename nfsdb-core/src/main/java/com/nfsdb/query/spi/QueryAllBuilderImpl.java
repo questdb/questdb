@@ -17,22 +17,20 @@
 package com.nfsdb.query.spi;
 
 import com.nfsdb.Journal;
-import com.nfsdb.collections.DirectIntList;
+import com.nfsdb.collections.IntList;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.query.UnorderedResultSet;
 import com.nfsdb.query.api.QueryAllBuilder;
 import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.utils.Interval;
 
-import java.util.ArrayList;
-import java.util.List;
-
 public class QueryAllBuilderImpl<T> implements QueryAllBuilder<T> {
 
     private final Journal<T> journal;
-    private final DirectIntList symbolKeys = new DirectIntList();
-    private final List<String> filterSymbols = new ArrayList<>();
-    private final DirectIntList filterSymbolKeys = new DirectIntList();
+    private final IntList symbolKeys = new IntList();
+    private final ObjList<String> filterSymbols = new ObjList<>();
+    private final IntList filterSymbolKeys = new IntList();
     private String symbol;
     private Interval interval;
 
@@ -57,7 +55,7 @@ public class QueryAllBuilderImpl<T> implements QueryAllBuilder<T> {
     @Override
     public void resetFilter() {
         filterSymbols.clear();
-        filterSymbolKeys.reset();
+        filterSymbolKeys.clear();
     }
 
     @Override
@@ -73,7 +71,7 @@ public class QueryAllBuilderImpl<T> implements QueryAllBuilder<T> {
     public void setSymbol(String symbol, String... values) {
         this.symbol = symbol;
         SymbolTable symbolTable = journal.getSymbolTable(symbol);
-        this.symbolKeys.reset();
+        this.symbolKeys.clear();
         for (int i = 0; i < values.length; i++) {
             int key = symbolTable.getQuick(values[i]);
             if (key != SymbolTable.VALUE_NOT_FOUND) {

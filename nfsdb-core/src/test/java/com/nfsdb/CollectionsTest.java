@@ -50,42 +50,6 @@ public class CollectionsTest {
     }
 
     @Test
-    public void testDirectIntList() throws Exception {
-        DirectIntList list = new DirectIntList();
-        final int N = 1000;
-        for (int i = 0; i < N; i++) {
-            list.add(N - i);
-        }
-
-        Assert.assertEquals(N, list.size());
-
-        for (int i = 0; i < N; i++) {
-            Assert.assertEquals(N - i, list.get(i));
-        }
-
-        // add small list that would not need resizing of target
-        DirectIntList list2 = new DirectIntList();
-        list2.add(1001);
-        list2.add(2001);
-
-        list.add(list2);
-
-
-        Assert.assertEquals(N + 2, list.size());
-        Assert.assertEquals(1001, list.get(N));
-        Assert.assertEquals(2001, list.get(N + 1));
-
-
-        DirectIntList list3 = new DirectIntList();
-        for (int i = 0; i < N; i++) {
-            list3.add(i + 5000);
-        }
-
-        list.add(list3);
-        Assert.assertEquals(2 * N + 2, list.size());
-    }
-
-    @Test
     public void testDirectLongList() throws Exception {
         DirectLongList list = new DirectLongList();
         final int N = 1000;
@@ -132,6 +96,42 @@ public class CollectionsTest {
         for (int i = 0; i < 1000; i++) {
             Assert.assertFalse(set.add(i));
         }
+    }
+
+    @Test
+    public void testIntList() throws Exception {
+        IntList list = new IntList();
+        final int N = 1000;
+        for (int i = 0; i < N; i++) {
+            list.add(N - i);
+        }
+
+        Assert.assertEquals(N, list.size());
+
+        for (int i = 0; i < N; i++) {
+            Assert.assertEquals(N - i, list.get(i));
+        }
+
+        // add small list that would not need resizing of target
+        IntList list2 = new IntList();
+        list2.add(1001);
+        list2.add(2001);
+
+        list.add(list2);
+
+
+        Assert.assertEquals(N + 2, list.size());
+        Assert.assertEquals(1001, list.get(N));
+        Assert.assertEquals(2001, list.get(N + 1));
+
+
+        IntList list3 = new IntList();
+        for (int i = 0; i < N; i++) {
+            list3.add(i + 5000);
+        }
+
+        list.add(list3);
+        Assert.assertEquals(2 * N + 2, list.size());
     }
 
     @Test
@@ -195,7 +195,7 @@ public class CollectionsTest {
     @Test
     public void testMemoryLeak() throws Exception {
         for (int i = 0; i < 10000; i++) {
-            new DirectIntList(1000000);
+            new DirectLongList(1000000);
         }
     }
 

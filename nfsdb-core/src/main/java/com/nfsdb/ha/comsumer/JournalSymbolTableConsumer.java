@@ -17,7 +17,7 @@
 package com.nfsdb.ha.comsumer;
 
 import com.nfsdb.Journal;
-import com.nfsdb.collections.DirectIntList;
+import com.nfsdb.collections.IntList;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.ha.AbstractChannelConsumer;
@@ -36,7 +36,7 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
     private final long address;
     private final ObjList<VariableColumnDeltaConsumer> symbolTableConsumers;
     private final ObjList<SymbolTable> symbolTables;
-    private final DirectIntList symbolTableSizes;
+    private final IntList symbolTableSizes;
     private final int tabCount;
 
     public JournalSymbolTableConsumer(Journal journal) {
@@ -45,7 +45,7 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
         this.address = ((DirectBuffer) buffer).address();
         this.symbolTableConsumers = new ObjList<>(tabCount);
         this.symbolTables = new ObjList<>(tabCount);
-        this.symbolTableSizes = new DirectIntList(tabCount);
+        this.symbolTableSizes = new IntList(tabCount);
 
         while (symbolTableSizes.size() < tabCount) {
             symbolTableSizes.add(-1);
@@ -65,14 +65,13 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
         for (int i = 0; i < tabCount; i++) {
             symbolTableConsumers.getQuick(i).free();
         }
-        symbolTableSizes.free();
     }
 
     @Override
     protected void commit() {
         for (int i = 0, sz = symbolTables.size(); i < sz; i++) {
             SymbolTable tab = symbolTables.getQuick(i);
-            int oldSize = symbolTableSizes.get(i);
+            int oldSize = symbolTableSizes.getQuick(i);
             tab.getDataColumn().commit();
             tab.alignSize();
             tab.updateIndex(oldSize, tab.size());

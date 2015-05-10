@@ -20,8 +20,8 @@ import com.nfsdb.Journal;
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.Partition;
-import com.nfsdb.collections.DirectIntList;
 import com.nfsdb.collections.DirectLongList;
+import com.nfsdb.collections.IntList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
@@ -91,7 +91,7 @@ public final class TestUtils {
         Assert.assertEquals(expected.getPartitionCount(), actual.getPartitionCount());
         // check if SymbolIndexes are the same
 
-        DirectIntList colKeyCount = new DirectIntList();
+        IntList colKeyCount = new IntList();
 
         for (int k = 0; k < expected.getMetadata().getColumnCount(); k++) {
             SymbolTable et = expected.getMetadata().getColumn(k).symbolTable;
@@ -140,7 +140,7 @@ public final class TestUtils {
                     KVIndex ei = ep.getIndexForColumn(k);
                     KVIndex ai = ap.getIndexForColumn(k);
 
-                    int count = colKeyCount.get(k);
+                    int count = colKeyCount.getQuick(k);
 
                     for (int j = 0; j < count; j++) {
                         ev.reset();

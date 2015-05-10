@@ -17,7 +17,7 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.collections.DirectIntList;
+import com.nfsdb.collections.IntList;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.mmap.MultiMap;
 import com.nfsdb.collections.mmap.MultiRecordMap;
@@ -41,8 +41,8 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord>
     private final SplitRecord currentRecord;
     private final ObjList<RecordColumnMetadata> masterColumns = new ObjList<>();
     private final ObjList<RecordColumnMetadata> slaveColumns = new ObjList<>();
-    private final DirectIntList masterColIndex = new DirectIntList();
-    private final DirectIntList slaveColIndex = new DirectIntList();
+    private final IntList masterColIndex = new IntList();
+    private final IntList slaveColIndex = new IntList();
     private MultiRecordMap hashTable;
     private RecordSource<? extends Record> hashTableSource;
     private boolean hashTablePending = true;
@@ -125,7 +125,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord>
         for (Record r : slaveSource) {
             MultiMap.KeyWriter key = hashTable.claimKey();
             for (int i = 0, k = slaveColumns.size(); i < k; i++) {
-                setKey(key, r, slaveColumns.getQuick(i).getType(), slaveColIndex.get(i));
+                setKey(key, r, slaveColumns.getQuick(i).getType(), slaveColIndex.getQuick(i));
             }
             hashTable.add(key, hashStrategyContext.getHashTableRecord(r));
         }
@@ -146,7 +146,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<SplitRecord>
             MultiMap.KeyWriter key = hashTable.claimKey();
 
             for (int i = 0, k = masterColumns.size(); i < k; i++) {
-                setKey(key, r, masterColumns.getQuick(i).getType(), masterColIndex.get(i));
+                setKey(key, r, masterColumns.getQuick(i).getType(), masterColIndex.getQuick(i));
             }
 
             hashTableSource = hashTable.get(key);

@@ -18,8 +18,9 @@ package com.nfsdb.query.spi;
 
 import com.nfsdb.Journal;
 import com.nfsdb.Partition;
-import com.nfsdb.collections.DirectIntList;
 import com.nfsdb.collections.DirectLongList;
+import com.nfsdb.collections.IntList;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.query.UnorderedResultSet;
 import com.nfsdb.query.UnorderedResultSetBuilder;
@@ -31,18 +32,15 @@ import com.nfsdb.utils.Interval;
 import com.nfsdb.utils.Rows;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-import java.util.ArrayList;
-import java.util.List;
-
 @SuppressFBWarnings({"PL_PARALLEL_LISTS"})
 public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
 
     private final Journal<T> journal;
-    private final DirectIntList symbolKeys = new DirectIntList();
-    private final DirectIntList zone1Keys = new DirectIntList();
-    private final DirectIntList zone2Keys = new DirectIntList();
-    private final List<String> filterSymbols = new ArrayList<>();
-    private final DirectIntList filterSymbolKeys = new DirectIntList();
+    private final IntList symbolKeys = new IntList();
+    private final IntList zone1Keys = new IntList();
+    private final IntList zone2Keys = new IntList();
+    private final ObjList<String> filterSymbols = new ObjList<>();
+    private final IntList filterSymbolKeys = new IntList();
     private int symbolColumnIndex;
     private Interval interval;
     private long minRowID = -1L;
@@ -64,8 +62,8 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
             minLocalRowID = Rows.toLocalRowID(minRowID);
         }
 
-        zone1Keys.reset(symbolKeys.size());
-        zone2Keys.reset(symbolKeys.size());
+        zone1Keys.clear(symbolKeys.size());
+        zone2Keys.clear(symbolKeys.size());
         zone1Keys.add(symbolKeys);
 
         //noinspection ConstantConditions
@@ -73,8 +71,8 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
                 new UnorderedResultSetBuilder<T>(interval) {
                     private final KVIndex filterKVIndexes[] = new KVIndex[filterSymbolKeys.size()];
                     private final DirectLongList filterSymbolRows[] = new DirectLongList[filterSymbolKeys.size()];
-                    private DirectIntList keys = zone1Keys;
-                    private DirectIntList remainingKeys = zone2Keys;
+                    private IntList keys = zone1Keys;
+                    private IntList remainingKeys = zone2Keys;
 
                     @Override
                     public Accept accept(Partition<T> partition) throws JournalException {
@@ -89,7 +87,7 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
                         boolean filterOk = true;
                         for (int i = 0; i < filterSymbols.size(); i++) {
                             filterKVIndexes[i] = partition.getIndexForColumn(filterSymbols.get(i));
-                            int filterKey = filterSymbolKeys.get(i);
+                            int filterKey = filterSymbolKeys.getQuick(i);
                             if (filterKVIndexes[i].contains(filterKey)) {
                                 filterSymbolRows[i].setCapacity(filterKVIndexes[i].getValueCount(filterKey));
                                 filterKVIndexes[i].getValues(filterKey, filterSymbolRows[i]);
@@ -102,7 +100,7 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
 
                         if (filterOk) {
                             for (int k = 0; k < keys.size(); k++) {
-                                int key = keys.get(k);
+                                int key = keys.getQuick(k);
                                 boolean found = false;
                                 IndexCursor cursor = index.cursor(key);
 
@@ -141,10 +139,10 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
                                     remainingKeys.add(key);
                                 }
                             }
-                            DirectIntList temp = keys;
+                            IntList temp = keys;
                             keys = remainingKeys;
                             remainingKeys = temp;
-                            remainingKeys.reset();
+                            remainingKeys.clear();
                         }
                     }
 
@@ -183,7 +181,7 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
     @Override
     public void resetFilter() {
         filterSymbols.clear();
-        filterSymbolKeys.reset();
+        filterSymbolKeys.clear();
     }
 
     @Override
@@ -195,7 +193,7 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
     public void setSymbol(String symbol, String... values) {
         this.symbolColumnIndex = journal.getMetadata().getColumnIndex(symbol);
         SymbolTable symbolTable = journal.getSymbolTable(symbol);
-        this.symbolKeys.reset(values == null || values.length == 0 ? symbolTable.size() : values.length);
+        this.symbolKeys.clear(values == null || values.length == 0 ? symbolTable.size() : values.length);
         if (values == null || values.length == 0) {
             int sz = symbolTable.size();
             for (int i = 0; i < sz; i++) {

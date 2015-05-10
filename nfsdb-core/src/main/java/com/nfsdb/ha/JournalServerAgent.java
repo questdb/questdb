@@ -18,8 +18,8 @@ package com.nfsdb.ha;
 
 import com.nfsdb.Journal;
 import com.nfsdb.JournalKey;
-import com.nfsdb.collections.DirectIntList;
 import com.nfsdb.collections.IntIntHashMap;
+import com.nfsdb.collections.IntList;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalDisconnectedChannelException;
 import com.nfsdb.exceptions.JournalException;
@@ -52,7 +52,7 @@ public class JournalServerAgent {
 
     private static final byte JOURNAL_INDEX_NOT_FOUND = -1;
     private final IntIntHashMap writerToReaderMap = new IntIntHashMap();
-    private final DirectIntList readerToWriterMap = new DirectIntList();
+    private final IntList readerToWriterMap = new IntList();
     private final JournalServer server;
     private final CommandConsumer commandConsumer = new CommandConsumer();
     private final CommandProducer commandProducer = new CommandProducer();
@@ -84,7 +84,6 @@ public class JournalServerAgent {
 
     public void close() {
         server.getBridge().removeAgentSequence(eventProcessor.getSequence());
-        readerToWriterMap.free();
         journalClientStateConsumer.free();
         commandConsumer.free();
         setKeyRequestConsumer.free();
@@ -369,7 +368,7 @@ public class JournalServerAgent {
     private void storeDeltaRequest(WritableByteChannel channel, JournalClientState request) throws JournalNetworkException {
         int index = request.getJournalIndex();
 
-        if (readerToWriterMap.get(index) == JOURNAL_INDEX_NOT_FOUND) {
+        if (readerToWriterMap.getQuiet(index) == JOURNAL_INDEX_NOT_FOUND) {
             error(channel, "Journal index does not match key request");
         } else {
             JournalClientState r = clientStates.getQuiet(index);

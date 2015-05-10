@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ package com.nfsdb.ha;
 import com.nfsdb.JournalKey;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.PartitionType;
-import com.nfsdb.collections.DirectIntList;
+import com.nfsdb.collections.IntList;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.IncompatibleJournalException;
 import com.nfsdb.exceptions.JournalException;
@@ -68,7 +68,7 @@ public class JournalClient {
     private final ObjList<TxListener> listeners = new ObjList<>();
     private final ObjList<JournalWriter> writers = new ObjList<>();
     private final ObjList<JournalDeltaConsumer> deltaConsumers = new ObjList<>();
-    private final DirectIntList statusSentList = new DirectIntList();
+    private final IntList statusSentList = new IntList();
     private final JournalWriterFactory factory;
     private final CommandProducer commandProducer = new CommandProducer();
     private final CommandConsumer commandConsumer = new CommandConsumer();
@@ -260,7 +260,6 @@ public class JournalClient {
         commandConsumer.free();
         stringResponseConsumer.free();
         intResponseConsumer.free();
-        statusSentList.free();
     }
 
     private byte[] getToken() throws JournalNetworkException {

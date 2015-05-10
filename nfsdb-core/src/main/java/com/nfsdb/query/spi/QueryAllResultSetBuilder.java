@@ -17,8 +17,9 @@
 package com.nfsdb.query.spi;
 
 import com.nfsdb.Partition;
-import com.nfsdb.collections.DirectIntList;
 import com.nfsdb.collections.DirectLongList;
+import com.nfsdb.collections.IntList;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.query.UnorderedResultSetBuilder;
 import com.nfsdb.storage.IndexCursor;
@@ -26,17 +27,15 @@ import com.nfsdb.storage.KVIndex;
 import com.nfsdb.utils.Interval;
 import com.nfsdb.utils.Rows;
 
-import java.util.List;
-
 public class QueryAllResultSetBuilder<T> extends UnorderedResultSetBuilder<T> {
-    private final DirectIntList symbolKeys;
-    private final List<String> filterSymbols;
-    private final DirectIntList filterSymbolKeys;
+    private final IntList symbolKeys;
+    private final ObjList<String> filterSymbols;
+    private final IntList filterSymbolKeys;
     final private String symbol;
     private KVIndex index;
     private KVIndex[] searchIndices;
 
-    public QueryAllResultSetBuilder(Interval interval, String symbol, DirectIntList symbolKeys, List<String> filterSymbols, DirectIntList filterSymbolKeys) {
+    public QueryAllResultSetBuilder(Interval interval, String symbol, IntList symbolKeys, ObjList<String> filterSymbols, IntList filterSymbolKeys) {
         super(interval);
         this.symbol = symbol;
         this.symbolKeys = symbolKeys;
@@ -52,7 +51,7 @@ public class QueryAllResultSetBuilder<T> extends UnorderedResultSetBuilder<T> {
         // check if partition has at least one symbol value
         if (symbolKeys.size() > 0) {
             for (int i = 0, sz = symbolKeys.size(); i < sz; i++) {
-                if (index.contains(symbolKeys.get(i))) {
+                if (index.contains(symbolKeys.getQuick(i))) {
                     searchIndices = new KVIndex[filterSymbols.size()];
                     for (int k = 0; k < filterSymbols.size(); k++) {
                         searchIndices[k] = partition.getIndexForColumn(filterSymbols.get(k));
@@ -68,12 +67,12 @@ public class QueryAllResultSetBuilder<T> extends UnorderedResultSetBuilder<T> {
     @Override
     public void read(long lo, long hi) {
         for (int i = 0, sz = symbolKeys.size(); i < sz; i++) {
-            int symbolKey = symbolKeys.get(i);
+            int symbolKey = symbolKeys.getQuick(i);
             if (index.contains(symbolKey)) {
                 if (searchIndices.length > 0) {
                     for (int k = 0; k < searchIndices.length; k++) {
-                        if (searchIndices[k].contains(filterSymbolKeys.get(k))) {
-                            DirectLongList searchLocalRowIDs = searchIndices[k].getValues(filterSymbolKeys.get(k));
+                        if (searchIndices[k].contains(filterSymbolKeys.getQuick(k))) {
+                            DirectLongList searchLocalRowIDs = searchIndices[k].getValues(filterSymbolKeys.getQuick(k));
 
                             IndexCursor cursor = index.cursor(symbolKey);
                             while (cursor.hasNext()) {
