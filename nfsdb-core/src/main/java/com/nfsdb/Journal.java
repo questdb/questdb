@@ -418,7 +418,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      * @return true if the specified Journal type compatible with this one
      */
     public boolean isCompatible(Journal<T> that) {
-        return this.getMetadata().getId().equals(that.getMetadata().getId());
+        return this.getMetadata().isCompatible(that.getMetadata(), true);
     }
 
     public boolean isOpen() {

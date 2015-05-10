@@ -16,7 +16,11 @@
 
 package com.nfsdb.utils;
 
+import com.nfsdb.exceptions.JournalRuntimeException;
+
 public final class Chars {
+    private final static ThreadLocal<char[]> builder = new ThreadLocal<>();
+
     private Chars() {
     }
 
@@ -60,6 +64,33 @@ public final class Chars {
         }
 
         return true;
+    }
+
+    public static String getFileName(CharSequence path) {
+        int pos = -1;
+        for (int i = 0, k = path.length(); i < k; i++) {
+            char c = path.charAt(i);
+            if (c == '\\' || c == '/') {
+                pos = i;
+            }
+        }
+
+        int l = path.length() - pos - 1;
+        if (l == 0) {
+            throw new JournalRuntimeException("Invalid path: %s", path);
+        }
+
+        char buf[] = builder.get();
+        if (buf == null || buf.length < l) {
+            builder.set(buf = new char[l]);
+        }
+
+        int p = 0;
+        for (int i = pos + 1, k = path.length(); i < k; i++) {
+            buf[p++] = path.charAt(i);
+        }
+
+        return new String(buf, 0, l);
     }
 
     public static String stripQuotes(String s) {

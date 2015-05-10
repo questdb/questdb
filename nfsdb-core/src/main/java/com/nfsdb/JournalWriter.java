@@ -201,12 +201,6 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
-    @SuppressWarnings("EqualsBetweenInconvertibleTypes")
-    @Override
-    public boolean equals(Object o) {
-        return this == o || !(o == null || getClass() != o.getClass()) && getKey().equals(((Journal) o).getKey());
-    }
-
     @Override
     public JournalMode getMode() {
         return JournalMode.APPEND;
@@ -215,6 +209,12 @@ public class JournalWriter<T> extends Journal<T> {
     @Override
     public int hashCode() {
         return getKey().hashCode();
+    }
+
+    @SuppressWarnings("EqualsBetweenInconvertibleTypes")
+    @Override
+    public boolean equals(Object o) {
+        return this == o || !(o == null || getClass() != o.getClass()) && getKey().equals(((Journal) o).getKey());
     }
 
     @Override
@@ -733,7 +733,7 @@ public class JournalWriter<T> extends Journal<T> {
         }
 
         if (writeDiscard) {
-            LOGGER.info("Journal %s is rolling back to transaction #%d, timestamp %s", metadata.getId(), tx.txn, Dates.toString(tx.timestamp));
+            LOGGER.info("Journal %s is rolling back to transaction #%d, timestamp %s", metadata.getLocation(), tx.txn, Dates.toString(tx.timestamp));
             writeDiscardFile(tx.journalMaxRowID);
         }
 

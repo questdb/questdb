@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,14 +27,14 @@ public class ModelConfiguration {
         $(Quote.class)
                 .partitionBy(PartitionType.MONTH)
                 .lag(24, TimeUnit.HOURS)
-                .key("sym")
+                .keyColumn("sym")
                 .$sym("sym").index().size(4).valueCountHint(15)
                 .$sym("ex").size(2).valueCountHint(1)
                 .$ts()
         ;
 
         $(Price.class)
-                .key("sym")
+                .keyColumn("sym")
                 .partitionBy(PartitionType.MONTH)
                 .$sym("sym").index().size(4).valueCountHint(15)
                 .$ts()

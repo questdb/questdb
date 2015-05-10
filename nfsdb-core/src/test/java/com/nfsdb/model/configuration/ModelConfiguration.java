@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ public class ModelConfiguration {
                 .partitionBy(PartitionType.MONTH)
                 .lag(12, TimeUnit.HOURS)
                 .location("quote")
-                .key("sym")
+                .keyColumn("sym")
                 .$sym("sym").index().valueCountHint(15)
                 .$sym("ex").index().valueCountHint(5)
                 .$sym("mode")
@@ -55,7 +55,7 @@ public class ModelConfiguration {
 
         $(TestEntity.class).recordCountHint(10000)
 //                .partitionBy(PartitionType.MONTH)
-                .key("sym")
+                .keyColumn("sym")
                 .$sym("sym").index().valueCountHint(15)
                 .$ts()
         ;

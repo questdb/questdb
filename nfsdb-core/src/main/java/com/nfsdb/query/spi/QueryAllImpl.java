@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -117,11 +117,6 @@ public class QueryAllImpl<T> implements QueryAll<T> {
     }
 
     @Override
-    public Iterator<T> iterator() {
-        return new JournalIteratorImpl<>(journal, createRanges());
-    }
-
-    @Override
     public long size() {
         try {
             return journal.size();
@@ -132,7 +127,7 @@ public class QueryAllImpl<T> implements QueryAll<T> {
 
     @Override
     public QueryAllBuilder<T> withKeys(String... values) {
-        return withSymValues(journal.getMetadata().getKey(), values);
+        return withSymValues(journal.getMetadata().getKeyColumn(), values);
     }
 
     @Override
@@ -140,6 +135,11 @@ public class QueryAllImpl<T> implements QueryAll<T> {
         QueryAllBuilderImpl<T> result = new QueryAllBuilderImpl<>(journal);
         result.setSymbol(symbol, values);
         return result;
+    }
+
+    @Override
+    public Iterator<T> iterator() {
+        return new JournalIteratorImpl<>(journal, createRanges());
     }
 
     private ObjList<JournalIteratorRange> createRanges() {

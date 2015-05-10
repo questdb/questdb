@@ -29,7 +29,7 @@ public class QueryHeadImpl<T> implements QueryHead<T> {
 
     @Override
     public QueryHeadBuilder<T> withKeys(String... values) {
-        return withSymValues(journal.getMetadata().getKey(), values);
+        return withSymValues(journal.getMetadata().getKeyColumn(), values);
     }
 
     @Override

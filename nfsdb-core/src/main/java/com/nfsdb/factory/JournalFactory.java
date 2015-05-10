@@ -94,8 +94,7 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
 
     @Override
     public <T> JournalWriter<T> writer(MetadataBuilder<T> b) throws JournalException {
-        String location = b.getLocation();
-        JournalMetadata<T> metadata = getConfiguration().augmentMetadata(b);
-        return new JournalWriter<>(metadata, metadata.deriveKey(location));
+        JournalMetadata<T> metadata = getConfiguration().buildWithRootLocation(b);
+        return new JournalWriter<>(metadata, metadata.getKey());
     }
 }

@@ -44,18 +44,19 @@ public class JournalMetadata<T> implements RecordMetadata {
     private final long openFileTTL;
     private final int ioBlockRecordCount;
     private final int ioBlockTxCount;
-    private final String key;
+    private final String keyColumn;
     private final ColumnMetadata[] columnMetadata;
     private final ObjIntHashMap<CharSequence> columnIndexLookup;
     private final int timestampColumnIndex;
     private final int lag;
     private final boolean partialMapping;
+    private final JournalKey<T> key;
 
     public JournalMetadata(
             String id
             , Class<T> modelClass
             , Constructor<T> constructor
-            , String key
+            , String keyColumn
             , String location
             , PartitionType partitionBy
             , ColumnMetadata[] columnMetadata
@@ -79,13 +80,18 @@ public class JournalMetadata<T> implements RecordMetadata {
         this.openFileTTL = openFileTTL;
         this.ioBlockRecordCount = ioBlockRecordCount;
         this.ioBlockTxCount = ioBlockTxCount;
-        this.key = key;
+        this.keyColumn = keyColumn;
         this.columnIndexLookup = new ObjIntHashMap<>(columnCount);
         for (int i = 0; i < columnMetadata.length; i++) {
             columnIndexLookup.put(columnMetadata[i].name, i);
         }
         this.lag = lag;
         this.partialMapping = partialMapping;
+        if (modelClass != null) {
+            this.key = new JournalKey<>(modelClass, location);
+        } else {
+            this.key = new JournalKey<>(id);
+        }
     }
 
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
@@ -112,10 +118,11 @@ public class JournalMetadata<T> implements RecordMetadata {
         openFileTTL = buf.getLong();
         ioBlockRecordCount = buf.getInt();
         ioBlockTxCount = buf.getInt();
-        key = buf.getStr();
+        keyColumn = buf.getStr();
         lag = buf.getInt();
         constructor = null;
         partialMapping = false;
+        this.key = new JournalKey<>(id);
     }
 
     public void copyColumnMetadata(ColumnMetadata[] meta) {
@@ -124,14 +131,6 @@ public class JournalMetadata<T> implements RecordMetadata {
             throw new JournalRuntimeException("Invalid length for column metadata array");
         }
         System.arraycopy(columnMetadata, 0, meta, 0, meta.length);
-    }
-
-    public JournalKey<T> deriveKey(String location) {
-        if (modelClass != null) {
-            return new JournalKey<>(modelClass, location);
-        } else {
-            return new JournalKey<>(location);
-        }
     }
 
     @Override
@@ -166,15 +165,19 @@ public class JournalMetadata<T> implements RecordMetadata {
         return id;
     }
 
-    public String getKey() {
-        if (key == null) {
-            throw new JournalConfigurationException(modelClass.getName() + " does not have a key");
-        }
+    public JournalKey<T> getKey() {
         return key;
     }
 
+    public String getKeyColumn() {
+        if (keyColumn == null) {
+            throw new JournalConfigurationException(modelClass.getName() + " does not have a keyColumn");
+        }
+        return keyColumn;
+    }
+
     public String getKeyQuiet() {
-        return key;
+        return keyColumn;
     }
 
     public int getLag() {
@@ -213,9 +216,9 @@ public class JournalMetadata<T> implements RecordMetadata {
         return ioBlockTxCount;
     }
 
-    public boolean isCompatible(JournalMetadata that) {
+    public boolean isCompatible(JournalMetadata that, boolean ignorePartitionType) {
         if (that == null
-                || this.getPartitionType() != that.getPartitionType()
+                || (this.getPartitionType() != that.getPartitionType() && !ignorePartitionType)
                 || this.getColumnCount() != that.getColumnCount()
                 ) {
             return false;
@@ -294,7 +297,7 @@ public class JournalMetadata<T> implements RecordMetadata {
         buf.put(openFileTTL);
         buf.put(ioBlockRecordCount);
         buf.put(ioBlockTxCount);
-        buf.put(key);
+        buf.put(keyColumn);
         buf.put(lag);
         buf.setAppendOffset(buf.getPos());
     }

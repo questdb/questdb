@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,7 +44,7 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
     private PartitionType partitionBy = PartitionType.NONE;
     private int recordCountHint = 100000;
     private int txCountHint = -1;
-    private String key;
+    private String keyColumn;
     private long openFileTTL = TimeUnit.MINUTES.toMillis(3);
     private int lag = -1;
 
@@ -61,7 +61,7 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
         this.partitionBy = model.getPartitionType();
         this.recordCountHint = model.getRecordHint();
         this.txCountHint = model.getTxCountHint();
-        this.key = model.getKeyQuiet();
+        this.keyColumn = model.getKeyQuiet();
         this.openFileTTL = model.getOpenFileTTL();
         this.lag = model.getLag();
         for (int i = 0; i < model.getColumnCount(); i++) {
@@ -154,7 +154,7 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
                 modelClass.getName()
                 , modelClass
                 , constructor
-                , key
+                , keyColumn
                 , location
                 , partitionBy
                 , metadata
@@ -171,16 +171,6 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
         return location;
     }
 
-    public JournalMetadataBuilder<T> key(String key) {
-        this.key = key;
-        return this;
-    }
-
-    public JournalMetadataBuilder<T> lag(long time, TimeUnit unit) {
-        this.lag = (int) unit.toHours(time);
-        return this;
-    }
-
     public JournalMetadataBuilder<T> location(String location) {
         this.location = location;
         return this;
@@ -188,11 +178,6 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
 
     public JournalMetadataBuilder<T> location(File location) {
         this.location = location.getAbsolutePath();
-        return this;
-    }
-
-    public JournalMetadataBuilder<T> openFileTTL(long time, TimeUnit unit) {
-        this.openFileTTL = unit.toMillis(time);
         return this;
     }
 
@@ -209,6 +194,21 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
         if (count > 0) {
             this.recordCountHint = count;
         }
+        return this;
+    }
+
+    public JournalMetadataBuilder<T> keyColumn(String key) {
+        this.keyColumn = key;
+        return this;
+    }
+
+    public JournalMetadataBuilder<T> lag(long time, TimeUnit unit) {
+        this.lag = (int) unit.toHours(time);
+        return this;
+    }
+
+    public JournalMetadataBuilder<T> openFileTTL(long time, TimeUnit unit) {
+        this.openFileTTL = unit.toMillis(time);
         return this;
     }
 

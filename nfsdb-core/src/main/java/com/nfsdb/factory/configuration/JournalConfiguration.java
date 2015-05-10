@@ -25,7 +25,7 @@ public interface JournalConfiguration {
 
     String FILE_NAME = "_meta2";
 
-    <T> JournalMetadata<T> augmentMetadata(MetadataBuilder<T> builder) throws JournalException;
+    <T> JournalMetadata<T> buildWithRootLocation(MetadataBuilder<T> builder) throws JournalException;
 
     <T> JournalMetadata<T> createMetadata(JournalKey<T> key) throws JournalException;
 

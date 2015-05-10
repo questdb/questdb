@@ -38,14 +38,13 @@ public class JournalConfigurationImpl implements JournalConfiguration {
         this.journalMetadata = journalMetadata;
     }
 
-    public <T> JournalMetadata<T> augmentMetadata(MetadataBuilder<T> builder) throws JournalException {
+    public <T> JournalMetadata<T> buildWithRootLocation(MetadataBuilder<T> builder) throws JournalException {
         File journalLocation = new File(getJournalBase(), builder.getLocation());
 
         JournalMetadata<T> mo = readMetadata(journalLocation);
         JournalMetadata<T> mn = builder.location(journalLocation).build();
 
-//        if (mo == null || Checksum.eq(Checksum.getChecksum(mo), Checksum.getChecksum(mn))) {
-        if (mo == null || mn.isCompatible(mo)) {
+        if (mo == null || mo.isCompatible(mn, false)) {
             return mn;
         }
 
@@ -98,7 +97,7 @@ public class JournalConfigurationImpl implements JournalConfiguration {
 
             // we have both on-disk and in-app meta
             // check if in-app meta matches on-disk meta
-            if (mn.isCompatible(mo)) {
+            if (mn.isCompatible(mo, false)) {
                 if (mn.getModelClass() == null) {
                     return (JournalMetadata<T>) new JournalStructure(mn).recordCountHint(key.getRecordHint()).location(journalLocation).build();
                 }
