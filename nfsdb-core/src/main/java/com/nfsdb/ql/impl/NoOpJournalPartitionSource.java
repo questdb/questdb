@@ -16,8 +16,9 @@
 
 package com.nfsdb.ql.impl;
 
-import com.nfsdb.Journal;
 import com.nfsdb.collections.AbstractImmutableIterator;
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.PartitionCursor;
 import com.nfsdb.ql.PartitionSlice;
@@ -26,21 +27,21 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class NoOpJournalPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource, PartitionCursor {
 
-    private final Journal journal;
+    private final JournalMetadata metadata;
 
-    public NoOpJournalPartitionSource(Journal journal) {
-        this.journal = journal;
+    public NoOpJournalPartitionSource(JournalMetadata metadata) {
+        this.metadata = metadata;
         unprepare();
     }
 
     @Override
     public JournalMetadata getMetadata() {
-        return journal.getMetadata();
+        return metadata;
     }
 
     @Override
-    public PartitionCursor prepareCursor() {
-        return this;
+    public PartitionCursor prepareCursor(JournalReaderFactory readerFactory) throws JournalException {
+        return null;
     }
 
     @Override

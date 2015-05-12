@@ -23,7 +23,9 @@ import com.nfsdb.collections.mmap.MapRecordSource;
 import com.nfsdb.collections.mmap.MapRecordValueInterceptor;
 import com.nfsdb.collections.mmap.MapValues;
 import com.nfsdb.collections.mmap.MultiMap;
+import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.ql.*;
 import com.nfsdb.utils.Dates;
@@ -96,8 +98,8 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
     }
 
     @Override
-    public RecordCursor<Record> prepareCursor() {
-        this.recordCursor = recordSource.prepareCursor();
+    public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
+        this.recordCursor = recordSource.prepareCursor(factory);
         return this;
     }
 

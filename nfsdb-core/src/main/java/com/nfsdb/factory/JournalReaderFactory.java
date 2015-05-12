@@ -21,6 +21,7 @@ import com.nfsdb.JournalBulkReader;
 import com.nfsdb.JournalKey;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
+import com.nfsdb.factory.configuration.JournalMetadata;
 
 import java.io.Closeable;
 
@@ -47,4 +48,6 @@ public interface JournalReaderFactory extends Closeable {
     Journal reader(String location) throws JournalException;
 
     <T> Journal<T> reader(Class<T> clazz, String location, int recordHint) throws JournalException;
+
+    Journal reader(JournalMetadata metadata) throws JournalException;
 }

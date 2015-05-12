@@ -21,6 +21,8 @@ import com.nfsdb.collections.IntList;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.mmap.MultiMap;
 import com.nfsdb.collections.mmap.MultiRecordMap;
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -32,7 +34,7 @@ import static com.nfsdb.ql.impl.KeyWriterHelper.setKey;
 
 public class HashJoinJournalRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, Closeable, RecordCursor<Record> {
     private final RecordSource<? extends Record> masterSource;
-    private final RandomAccessRecordSource<? extends Record> slaveSource;
+    private final JournalRecordSource slaveSource;
     private final SplitRecordMetadata metadata;
     private final SplitRecord currentRecord;
     private final ObjList<RecordColumnMetadata> masterColumns = new ObjList<>();
@@ -48,7 +50,7 @@ public class HashJoinJournalRecordSource extends AbstractImmutableIterator<Recor
     public HashJoinJournalRecordSource(
             RecordSource<? extends Record> masterSource,
             ObjList<String> masterColumns,
-            RandomAccessRecordSource<? extends Record> slaveSource,
+            JournalRecordSource slaveSource,
             ObjList<String> slaveColumns) {
         this.masterSource = masterSource;
         this.slaveSource = slaveSource;
@@ -71,9 +73,9 @@ public class HashJoinJournalRecordSource extends AbstractImmutableIterator<Recor
     }
 
     @Override
-    public RecordCursor<Record> prepareCursor() {
-        this.slaveCursor = slaveSource.prepareCursor();
-        this.masterCursor = masterSource.prepareCursor();
+    public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
+        this.slaveCursor = slaveSource.prepareCursor(factory);
+        this.masterCursor = masterSource.prepareCursor(factory);
         buildHashTable();
         return this;
     }

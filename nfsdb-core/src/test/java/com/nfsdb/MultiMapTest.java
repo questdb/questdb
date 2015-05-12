@@ -119,7 +119,7 @@ public class MultiMapTest extends AbstractTest {
                 .setLoadFactor(0.5f)
                 .build();
 
-        for (JournalRecord e : w.rows().prepareCursor()) {
+        for (JournalRecord e : w.rows().prepareCursor(factory)) {
             long ts = e.getLong(tsIndex);
 
             MapValues val = map.getOrCreateValues(

@@ -16,6 +16,8 @@
 
 package com.nfsdb.collections;
 
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordMetadata;
@@ -59,7 +61,7 @@ public class DirectRecordLinkedList extends AbstractImmutableIterator<Record> im
     }
 
     @Override
-    public RecordCursor<Record> prepareCursor() {
+    public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
         return this;
     }
 
@@ -69,7 +71,7 @@ public class DirectRecordLinkedList extends AbstractImmutableIterator<Record> im
 
     @Override
     public boolean hasNext() {
-        return readOffset >= 0;
+        return readOffset > -1;
     }
 
     @Override

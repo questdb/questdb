@@ -117,7 +117,7 @@ public class HashJoinRecordSourceTest {
         long t = System.currentTimeMillis();
         int count = 0;
 //        ExportManager.export(j, new File("c:/temp/join.csv"), TextFileFormat.TAB);
-        RecordCursor<Record> c = j.prepareCursor();
+        RecordCursor<Record> c = j.prepareCursor(factory);
         while (c.hasNext()) {
             c.next();
             count++;

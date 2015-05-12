@@ -21,17 +21,11 @@ import com.nfsdb.JournalWriter;
 import com.nfsdb.PartitionType;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.ql.impl.*;
-import com.nfsdb.ql.ops.IntEqualsOperator;
-import com.nfsdb.ql.ops.IntParameter;
-import com.nfsdb.ql.ops.RecordSourceColumn;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Files;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
-import org.junit.Test;
 
 public class SearchByKeysTest {
 
@@ -60,6 +54,7 @@ public class SearchByKeysTest {
         inc = period / 1500;
     }
 
+/*
     @Test
     public void testSearchByIntKey() throws Exception {
 
@@ -69,7 +64,9 @@ public class SearchByKeysTest {
         filter.setLhs(new RecordSourceColumn("id", journal.getMetadata()));
         filter.setRhs(param);
 
-        //**QUERY
+        /*/
+
+    /**QUERY
         // from order head by id = 123
         // **selects latest version of record with int id 123
         DataSource<Order> dsInt = new DataSourceImpl<>(
@@ -93,6 +90,7 @@ public class SearchByKeysTest {
             Assert.assertEquals("Mismatch for INT " + i, timestamp + i * inc + (i >= 500 ? 1000 * inc + 3000 : 0), o.timestamp);
         }
     }
+     */
 
     private Journal<Order> prepareTestData() throws JournalException {
         JournalWriter<Order> writer = factory.writer(Order.class);

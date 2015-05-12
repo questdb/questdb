@@ -17,6 +17,8 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordMetadata;
@@ -46,9 +48,9 @@ public class NestedLoopJoinRecordSource extends AbstractImmutableIterator<SplitR
     }
 
     @Override
-    public RecordCursor<SplitRecord> prepareCursor() {
-        masterCursor = masterSource.prepareCursor();
-        slaveCursor = slaveSource.prepareCursor();
+    public RecordCursor<SplitRecord> prepareCursor(JournalReaderFactory factory) throws JournalException {
+        masterCursor = masterSource.prepareCursor(factory);
+        slaveCursor = slaveSource.prepareCursor(factory);
         return this;
     }
 

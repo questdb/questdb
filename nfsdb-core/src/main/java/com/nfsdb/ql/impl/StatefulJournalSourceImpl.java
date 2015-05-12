@@ -17,6 +17,8 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.ql.*;
 
 public class StatefulJournalSourceImpl extends AbstractImmutableIterator<Record> implements GenericRecordSource, RecordSourceState, RecordCursor<Record> {
@@ -39,8 +41,8 @@ public class StatefulJournalSourceImpl extends AbstractImmutableIterator<Record>
     }
 
     @Override
-    public RecordCursor<Record> prepareCursor() {
-        this.recordCursor = recordSource.prepareCursor();
+    public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
+        recordCursor = recordSource.prepareCursor(factory);
         return this;
     }
 

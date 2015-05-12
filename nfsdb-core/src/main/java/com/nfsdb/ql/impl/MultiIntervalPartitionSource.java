@@ -17,6 +17,8 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.PartitionCursor;
 import com.nfsdb.ql.PartitionSlice;
@@ -49,10 +51,11 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
     }
 
     @Override
-    public PartitionCursor prepareCursor() {
-        partitionCursor = partitionSource.prepareCursor();
+    public PartitionCursor prepareCursor(JournalReaderFactory readerFactory) throws JournalException {
+        partitionCursor = partitionSource.prepareCursor(readerFactory);
         return this;
     }
+
 
     @Override
     public void unprepare() {

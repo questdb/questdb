@@ -16,12 +16,14 @@
 
 package com.nfsdb.ql;
 
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.JournalMetadata;
 
 public interface PartitionSource {
     JournalMetadata getMetadata();
 
-    PartitionCursor prepareCursor();
+    PartitionCursor prepareCursor(JournalReaderFactory readerFactory) throws JournalException;
 
     void unprepare();
 }

@@ -73,7 +73,7 @@ public class GenericInteropTest extends AbstractTest {
         writer.commit();
 
         Journal reader = factory.reader("test");
-        RecordCursor<JournalRecord> src = reader.rows().prepareCursor();
+        RecordCursor<JournalRecord> src = reader.rows().prepareCursor(null);
         JournalRecord e;
 
         Assert.assertTrue(src.hasNext());
@@ -307,7 +307,7 @@ public class GenericInteropTest extends AbstractTest {
         writer.commit();
 
         Journal reader = factory.reader("test");
-        RecordCursor<JournalRecord> src = reader.rows().prepareCursor();
+        RecordCursor<JournalRecord> src = reader.rows().prepareCursor(null);
         JournalRecord e;
 
         Assert.assertTrue(src.hasNext());

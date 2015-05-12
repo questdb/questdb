@@ -546,7 +546,7 @@ public class IntrinsicExtractorTest extends AbstractTest {
 
     private IntrinsicModel modelOf(CharSequence seq, String preferredColumn) throws ParserException {
         p.parseExpr(seq, ast);
-        return e.extract(ast.root(), w, preferredColumn);
+        return e.extract(ast.root(), w.getMetadata(), preferredColumn);
     }
 
     private CharSequence toRpn(ExprNode node) {

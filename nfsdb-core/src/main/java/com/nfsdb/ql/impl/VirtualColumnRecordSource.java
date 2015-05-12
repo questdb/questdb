@@ -18,6 +18,8 @@ package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.collections.ObjList;
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.ql.*;
 import com.nfsdb.ql.ops.VirtualColumn;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -51,8 +53,8 @@ public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record>
     }
 
     @Override
-    public RecordCursor<Record> prepareCursor() {
-        this.recordCursor = recordSource.prepareCursor();
+    public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
+        this.recordCursor = recordSource.prepareCursor(factory);
         return this;
     }
 

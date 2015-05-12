@@ -105,7 +105,7 @@ public class PerformanceTest extends AbstractTest {
                 if (i == 0) {
                     t = System.nanoTime();
                 }
-                for (Iterator<? extends Record> iterator = rs.prepareCursor().iterator(); iterator.hasNext(); ) {
+                for (Iterator<? extends Record> iterator = rs.prepareCursor(null).iterator(); iterator.hasNext(); ) {
                     iterator.next();
                 }
                 rs.unprepare();
@@ -212,7 +212,7 @@ public class PerformanceTest extends AbstractTest {
             }
             JournalRecordSource s = w.rows();
             int cnt = 0;
-            for (JournalRecord r : s.prepareCursor()) {
+            for (JournalRecord r : s.prepareCursor(null)) {
                 r.getLong(0);
                 r.getSym(1);
                 r.getDouble(2);

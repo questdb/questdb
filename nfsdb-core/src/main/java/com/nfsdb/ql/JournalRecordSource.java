@@ -16,10 +16,12 @@
 
 package com.nfsdb.ql;
 
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.ql.impl.JournalRecord;
 
 public interface JournalRecordSource extends RecordSource<JournalRecord> {
-    @Override
-    RandomAccessRecordCursor<JournalRecord> prepareCursor();
 
+    @Override
+    RandomAccessRecordCursor<JournalRecord> prepareCursor(JournalReaderFactory factory) throws JournalException;
 }

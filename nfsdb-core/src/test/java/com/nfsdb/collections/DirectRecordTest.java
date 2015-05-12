@@ -194,7 +194,7 @@ public class DirectRecordTest {
         try (DirectPagedBuffer buffer = new DirectPagedBuffer(pageSize)) {
             DirectRecord dr = new DirectRecord(longJournal.rows().getMetadata(), buffer);
             List<Long> offsets = new ArrayList<>();
-            for (Record rec : rows.prepareCursor()) {
+            for (Record rec : rows.prepareCursor(factory)) {
                 offsets.add(dr.write(rec));
             }
 

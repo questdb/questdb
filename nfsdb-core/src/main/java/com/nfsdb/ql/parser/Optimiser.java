@@ -16,13 +16,14 @@
 
 package com.nfsdb.ql.parser;
 
-import com.nfsdb.Journal;
+import com.nfsdb.JournalKey;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.NoSuchColumnException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalConfiguration;
+import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.*;
 import com.nfsdb.ql.impl.*;
 import com.nfsdb.ql.model.*;
@@ -143,9 +144,9 @@ public class Optimiser {
             throw new ParserException(readerNode.position, "Journal directory is of unknown format");
         }
 
-        Journal reader = factory.reader(readerNode.token);
+        JournalMetadata metadata = factory.getOrCreateMetadata(new JournalKey<>(readerNode.token));
 
-        PartitionSource ps = new JournalPartitionSource(reader, true);
+        PartitionSource ps = new JournalPartitionSource(metadata, true);
         RowSource rs = null;
 
         String latestByCol = null;
@@ -156,11 +157,11 @@ public class Optimiser {
                 throw new ParserException(l.position, "Column name expected");
             }
 
-            if (reader.getMetadata().invalidColumn(l.token)) {
+            if (metadata.invalidColumn(l.token)) {
                 throw new InvalidColumnException(l.position);
             }
 
-            ColumnMetadata m = reader.getMetadata().getColumn(l.token);
+            ColumnMetadata m = metadata.getColumn(l.token);
 
             if (m.type != ColumnType.SYMBOL) {
                 throw new ParserException(l.position, "Expected symbol column, found: " + m.type);
@@ -175,10 +176,10 @@ public class Optimiser {
 
         ExprNode where = model.getWhereClause();
         if (where != null) {
-            IntrinsicModel im = intrinsicExtractor.extract(where, reader, latestByCol);
+            IntrinsicModel im = intrinsicExtractor.extract(where, metadata, latestByCol);
 
             if (im.intrinsicValue == IntrinsicValue.FALSE) {
-                ps = new NoOpJournalPartitionSource(reader);
+                ps = new NoOpJournalPartitionSource(metadata);
             } else {
 
                 if (im.intervalHi < Long.MAX_VALUE || im.intervalLo > Long.MIN_VALUE) {
@@ -197,7 +198,7 @@ public class Optimiser {
 
                 if (latestByCol == null) {
                     if (im.keyColumn != null) {
-                        switch (reader.getMetadata().getColumn(im.keyColumn).type) {
+                        switch (metadata.getColumn(im.keyColumn).type) {
                             case SYMBOL:
                                 rs = new KvIndexRowSource(im.keyColumn, new PartialSymbolKeySource(im.keyColumn, im.keyValues));
                                 break;
@@ -208,12 +209,12 @@ public class Optimiser {
                     }
 
                     if (im.filter != null) {
-                        rs = new FilteredRowSource(rs == null ? new AllRowSource() : rs, createVirtualColumn(im.filter, reader.getMetadata()));
+                        rs = new FilteredRowSource(rs == null ? new AllRowSource() : rs, createVirtualColumn(im.filter, metadata));
                     }
                 } else {
 
                     if (im.keyColumn != null && im.filter != null) {
-                        rs = new KvIndexHeadRowSource(latestByCol, new PartialSymbolKeySource(latestByCol, im.keyValues), 1, 0, createVirtualColumn(im.filter, reader.getMetadata()));
+                        rs = new KvIndexHeadRowSource(latestByCol, new PartialSymbolKeySource(latestByCol, im.keyValues), 1, 0, createVirtualColumn(im.filter, metadata));
                     } else if (im.keyColumn != null) {
                         rs = new KvIndexHeadRowSource(latestByCol, new PartialSymbolKeySource(latestByCol, im.keyValues), 1, 0, null);
                     } else {

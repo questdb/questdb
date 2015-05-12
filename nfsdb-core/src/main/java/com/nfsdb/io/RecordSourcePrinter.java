@@ -16,6 +16,8 @@
 
 package com.nfsdb.io;
 
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
@@ -52,8 +54,11 @@ public class RecordSourcePrinter {
     }
 
     public void print(RecordSource<? extends Record> src) {
-        print(src.prepareCursor(), src.getMetadata());
-
+        try {
+            print(src.prepareCursor(null), src.getMetadata());
+        } catch (JournalException e) {
+            throw new JournalRuntimeException(e);
+        }
     }
 
     public void print(RecordCursor<? extends Record> src, RecordMetadata metadata) {

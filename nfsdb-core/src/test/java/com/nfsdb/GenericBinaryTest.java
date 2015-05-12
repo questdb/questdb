@@ -55,7 +55,7 @@ public class GenericBinaryTest extends AbstractTest {
         writeOutputStream(writer, expected);
 
         List<byte[]> actual = new ArrayList<>();
-        for (JournalRecord e : writer.rows().prepareCursor()) {
+        for (JournalRecord e : writer.rows().prepareCursor(null)) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             InputStream in = e.getBin(0);
 
@@ -126,9 +126,9 @@ public class GenericBinaryTest extends AbstractTest {
         return actual;
     }
 
-    private List<byte[]> readOutputStream(Journal reader) {
+    private List<byte[]> readOutputStream(Journal reader) throws JournalException {
         List<byte[]> result = new ArrayList<>();
-        for (JournalRecord e : reader.rows().prepareCursor()) {
+        for (JournalRecord e : reader.rows().prepareCursor(null)) {
             ByteArrayOutputStream o = new ByteArrayOutputStream();
             e.getBin(0, o);
             result.add(o.toByteArray());

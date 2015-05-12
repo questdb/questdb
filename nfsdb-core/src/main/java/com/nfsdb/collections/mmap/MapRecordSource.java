@@ -17,6 +17,8 @@
 package com.nfsdb.collections.mmap;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordMetadata;
@@ -48,7 +50,7 @@ public final class MapRecordSource extends AbstractImmutableIterator<Record> imp
     }
 
     @Override
-    public RecordCursor<Record> prepareCursor() {
+    public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
         return this;
     }
 

@@ -20,6 +20,7 @@ import com.nfsdb.Journal;
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.PartitionCursor;
 import com.nfsdb.ql.PartitionSlice;
@@ -28,24 +29,32 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class JournalDescPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource, PartitionCursor {
 
-    private final Journal journal;
     private final boolean open;
     private final PartitionSlice slice = new PartitionSlice();
+    private Journal journal;
     private int partitionIndex;
+    private JournalMetadata metadata;
+
+    public JournalDescPartitionSource(JournalMetadata metadata, boolean open) {
+        this.metadata = metadata;
+        this.open = open;
+    }
 
     public JournalDescPartitionSource(Journal journal, boolean open) {
         this.journal = journal;
+        this.metadata = journal.getMetadata();
         this.open = open;
-        unprepare();
     }
 
     @Override
     public JournalMetadata getMetadata() {
-        return journal.getMetadata();
+        return metadata;
     }
 
     @Override
-    public PartitionCursor prepareCursor() {
+    public PartitionCursor prepareCursor(JournalReaderFactory readerFactory) throws JournalException {
+        this.journal = readerFactory.reader(metadata);
+        unprepare();
         return this;
     }
 

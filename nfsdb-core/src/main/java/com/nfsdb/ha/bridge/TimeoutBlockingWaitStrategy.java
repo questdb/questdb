@@ -62,7 +62,7 @@ public class TimeoutBlockingWaitStrategy implements WaitStrategy {
         while ((availableSequence = dependentSequence.get()) < sequence) {
             barrier.checkAlert();
             Thread.yield();
-            if (System.nanoTime() >= t + nanos) {
+            if (System.nanoTime() > t + nanos) {
                 throw TimeoutException.INSTANCE;
             }
         }

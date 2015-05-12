@@ -74,7 +74,7 @@ public class JournalMetadata<T> implements RecordMetadata {
         this.columnMetadata = new ColumnMetadata[columnMetadata.length];
         System.arraycopy(columnMetadata, 0, this.columnMetadata, 0, columnMetadata.length);
         this.columnCount = columnMetadata.length;
-        this.timestampMetadata = timestampColumnIndex >= 0 ? columnMetadata[timestampColumnIndex] : null;
+        this.timestampMetadata = timestampColumnIndex > -1 ? columnMetadata[timestampColumnIndex] : null;
         this.timestampColumnIndex = timestampColumnIndex;
         this.constructor = constructor;
         this.openFileTTL = openFileTTL;
@@ -110,7 +110,7 @@ public class JournalMetadata<T> implements RecordMetadata {
             columnIndexLookup.put(columnMetadata[i].name, i);
         }
         timestampColumnIndex = buf.getInt();
-        if (timestampColumnIndex >= 0) {
+        if (timestampColumnIndex > -1) {
             timestampMetadata = columnMetadata[timestampColumnIndex];
         } else {
             timestampMetadata = null;

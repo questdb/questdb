@@ -16,7 +16,6 @@
 
 package com.nfsdb.ql.parser;
 
-import com.nfsdb.Journal;
 import com.nfsdb.collections.FlyweightCharSequence;
 import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.collections.ObjList;
@@ -46,8 +45,7 @@ public class IntrinsicExtractor {
     private ColumnMetadata timestamp;
     private String preferredKeyColumn;
 
-    public IntrinsicModel extract(ExprNode node, Journal journal, String preferredKeyColumn) throws ParserException {
-        JournalMetadata m = journal.getMetadata();
+    public IntrinsicModel extract(ExprNode node, JournalMetadata m, String preferredKeyColumn) throws ParserException {
         this.stack.clear();
         this.model.reset();
         this.keyNodes.clear();

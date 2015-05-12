@@ -151,7 +151,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
             return Rows.toRowID(partitionIndex, localRowID - 1);
         }
 
-        while (--partitionIndex >= 0) {
+        while (--partitionIndex > -1) {
             long sz = getPartition(partitionIndex, true).size();
             if (sz > 0) {
                 return Rows.toRowID(partitionIndex, sz - 1);
@@ -439,7 +439,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
     public <X> X iteratePartitionsDesc(AbstractResultSetBuilder<T, X> builder) throws JournalException {
         builder.setJournal(this);
         int count = getPartitionCount();
-        for (int i = count - 1; i >= 0; i--) {
+        for (int i = count - 1; i > -1; i--) {
             if (builder.next(getPartition(i, false), false)) {
                 break;
             }

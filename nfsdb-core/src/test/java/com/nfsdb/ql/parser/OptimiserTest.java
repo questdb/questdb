@@ -621,7 +621,8 @@ public class OptimiserTest extends AbstractTest {
 
     private void assertThat(String expected, String query) throws JournalException, ParserException {
         sink.clear();
-        printer.print(compile(query));
+        RecordSource<? extends Record> rs = compile(query);
+        printer.print(rs.prepareCursor(factory), rs.getMetadata());
         Assert.assertEquals(expected, sink.toString());
     }
 

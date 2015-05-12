@@ -16,6 +16,8 @@
 
 package com.nfsdb.ql.impl;
 
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.ql.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -64,8 +66,8 @@ public class JournalSource extends AbstractJournalSource implements JournalRecor
     }
 
     @Override
-    public RandomAccessRecordCursor<JournalRecord> prepareCursor() {
-        this.partitionCursor = partitionSource.prepareCursor();
+    public RandomAccessRecordCursor<JournalRecord> prepareCursor(JournalReaderFactory factory) throws JournalException {
+        this.partitionCursor = partitionSource.prepareCursor(factory);
         return this;
     }
 

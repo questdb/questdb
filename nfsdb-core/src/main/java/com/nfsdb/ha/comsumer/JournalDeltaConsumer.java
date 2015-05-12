@@ -116,10 +116,10 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
     }
 
     private void createPartitions(JournalServerState metadata) throws JournalException {
-        int pc = journal.nonLagPartitionCount();
-        for (int i = 0; i < metadata.getNonLagPartitionCount(); i++) {
+        int pc = journal.nonLagPartitionCount() - 1;
+        for (int i = 0, k = metadata.getNonLagPartitionCount(); i < k; i++) {
             JournalServerState.PartitionMetadata partitionMetadata = metadata.getMeta(i);
-            if (partitionMetadata.getPartitionIndex() >= pc) {
+            if (partitionMetadata.getPartitionIndex() > pc) {
                 Interval interval = new Interval(partitionMetadata.getIntervalEnd(), partitionMetadata.getIntervalStart());
                 journal.createPartition(interval, partitionMetadata.getPartitionIndex());
             }

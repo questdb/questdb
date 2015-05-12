@@ -19,10 +19,9 @@ package com.nfsdb.ql.impl;
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.ql.RandomAccessRecordSource;
 import com.nfsdb.ql.RecordMetadata;
 
-public abstract class AbstractJournalSource extends AbstractImmutableIterator<JournalRecord> implements RandomAccessRecordSource<JournalRecord>, RecordMetadata {
+public abstract class AbstractJournalSource extends AbstractImmutableIterator<JournalRecord> implements RecordMetadata {
     private final JournalMetadata metadata;
 
     protected AbstractJournalSource(JournalMetadata metadata) {

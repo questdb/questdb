@@ -21,6 +21,8 @@ import com.nfsdb.collections.IntList;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.mmap.MultiMap;
 import com.nfsdb.collections.mmap.MultiRecordMap;
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
@@ -73,9 +75,9 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
     }
 
     @Override
-    public RecordCursor<Record> prepareCursor() {
-        this.slaveCursor = slaveSource.prepareCursor();
-        this.masterCursor = masterSource.prepareCursor();
+    public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
+        this.slaveCursor = slaveSource.prepareCursor(factory);
+        this.masterCursor = masterSource.prepareCursor(factory);
         buildHashTable();
         return this;
     }

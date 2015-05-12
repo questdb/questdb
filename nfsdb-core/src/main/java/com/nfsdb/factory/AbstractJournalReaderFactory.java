@@ -78,7 +78,13 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
         return reader(new JournalKey<>(clazz, location, PartitionType.DEFAULT, recordHint));
     }
 
-    <T> JournalMetadata<T> getOrCreateMetadata(JournalKey<T> key) throws JournalException {
+    @SuppressWarnings("unchecked")
+    @Override
+    public Journal reader(JournalMetadata metadata) throws JournalException {
+        return new Journal(metadata, metadata.getKey());
+    }
+
+    public <T> JournalMetadata<T> getOrCreateMetadata(JournalKey<T> key) throws JournalException {
         JournalMetadata<T> metadata = configuration.createMetadata(key);
         File location = new File(metadata.getLocation());
         if (!location.exists()) {

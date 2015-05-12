@@ -396,7 +396,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
 
         long sz = 0;
-        for (int i = columns.length - 1; i >= 0; i--) {
+        for (int i = columns.length - 1; i > -1; i--) {
             AbstractColumn c = Unsafe.arrayGet(columns, i);
             if (c != null) {
                 sz = c.size();
@@ -625,7 +625,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
 
         int tsIndex = journal.getMetadata().getTimestampIndex();
-        if (tsIndex >= 0) {
+        if (tsIndex > -1) {
             timestampColumn = getFixedWidthColumn(tsIndex);
         }
     }

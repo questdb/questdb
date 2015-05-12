@@ -16,11 +16,14 @@
 
 package com.nfsdb.ql;
 
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalReaderFactory;
+
 public interface RecordSource<T extends Record> {
 
     RecordMetadata getMetadata();
 
-    RecordCursor<T> prepareCursor();
+    RecordCursor<T> prepareCursor(JournalReaderFactory factory) throws JournalException;
 
     void unprepare();
 }
