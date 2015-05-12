@@ -20,8 +20,8 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class Base64 {
 
-    private static final byte[] decodeMap = initDecodeMap();
     private static final byte PADDING = 127;
+    private static final byte[] decodeMap = initDecodeMap();
 
     /**
      * @param text base64Binary data is likely to be long, and decoding requires
@@ -100,7 +100,7 @@ public class Base64 {
 
         // compute the tail '=' chars
         int j = len - 1;
-        for (; j >= 0; j--) {
+        for (; j > -1; j--) {
             byte code = decodeMap[text.charAt(j)];
             if (code == PADDING) {
                 continue;

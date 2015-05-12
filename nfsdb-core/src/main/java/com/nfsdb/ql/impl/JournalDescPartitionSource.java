@@ -65,7 +65,7 @@ public class JournalDescPartitionSource extends AbstractImmutableIterator<Partit
 
     @Override
     public boolean hasNext() {
-        return partitionIndex >= 0;
+        return partitionIndex > -1;
     }
 
     @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})

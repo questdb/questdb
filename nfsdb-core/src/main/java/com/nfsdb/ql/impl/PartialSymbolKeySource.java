@@ -58,7 +58,7 @@ public class PartialSymbolKeySource implements KeySource, KeyCursor {
             int keyCount = 0;
             for (int i = 0, k = values.size(); i < k; i++) {
                 int key = symbolTable.getQuick(values.get(i));
-                if (key >= 0) {
+                if (key > -1) {
                     keys[keyCount++] = key;
                 }
             }
@@ -69,13 +69,13 @@ public class PartialSymbolKeySource implements KeySource, KeyCursor {
     }
 
     @Override
-    public void unprepare() {
-        symbolTable = null;
-        keyIndex = 0;
+    public int size() {
+        return keyCount;
     }
 
     @Override
-    public int size() {
-        return keyCount;
+    public void unprepare() {
+        symbolTable = null;
+        keyIndex = 0;
     }
 }

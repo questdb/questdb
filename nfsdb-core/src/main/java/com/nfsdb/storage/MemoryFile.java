@@ -202,7 +202,7 @@ public class MemoryFile implements Closeable {
                     cachedBuffer = null;
                     cachedBufferLo = cachedBufferHi = -1;
                     int ssz = stitches.size();
-                    for (int i = index - 1; i >= 0; i--) {
+                    for (int i = index - 1; i > -1; i--) {
                         MappedByteBuffer b = buffers.getAndSetQuick(i, null);
                         if (b != null) {
                             ByteBuffers.release(b);

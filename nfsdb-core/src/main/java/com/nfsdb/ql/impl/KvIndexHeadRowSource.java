@@ -89,7 +89,7 @@ public class KvIndexHeadRowSource extends AbstractRowSource implements RecordSou
             this.rec.partition = slice.partition;
             this.index = slice.partition.getIndexForColumn(column);
             this.lo = slice.lo;
-            this.hi = slice.calcHi ? slice.partition.open().size() - 1 : slice.hi;
+            this.hi = slice.calcHi ? slice.partition.open().size() : slice.hi + 1;
             this.keyIndex = 0;
             return this;
         } catch (JournalException e) {
@@ -115,7 +115,7 @@ public class KvIndexHeadRowSource extends AbstractRowSource implements RecordSou
         int o;
         if (indexCursor != null && (cnt = remainingCounts[keyIndex]) > 0 && indexCursor.hasNext()) {
             rec.rowid = indexCursor.next();
-            if (rec.rowid >= lo && rec.rowid <= hi && (filter == null || filter.getBool())) {
+            if (rec.rowid >= lo && rec.rowid < hi && (filter == null || filter.getBool())) {
                 if ((o = remainingOffsets[keyIndex]) == 0) {
                     remainingCounts[keyIndex] = cnt - 1;
                     return true;
@@ -148,7 +148,7 @@ public class KvIndexHeadRowSource extends AbstractRowSource implements RecordSou
                         break;
                     }
                     // this is a good rowid
-                    if (rec.rowid <= hi && (filter == null || filter.getBool())) {
+                    if (rec.rowid < hi && (filter == null || filter.getBool())) {
                         if (o == 0) {
                             remainingCounts[keyIndex] = cnt - 1;
                             return true;

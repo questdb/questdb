@@ -191,15 +191,15 @@ public class SymbolTable implements Closeable {
             return null;
         }
 
-        if (key >= size) {
-            throw new JournalRuntimeException("Invalid symbol key: " + key);
+        if (key < size) {
+            String value = key < keyCache.size() ? keyCache.getQuick(key) : null;
+            if (value == null) {
+                cache(key, value = data.getStr(key));
+            }
+            return value;
         }
+        throw new JournalRuntimeException("Invalid symbol key: " + key);
 
-        String value = key < keyCache.size() ? keyCache.getQuick(key) : null;
-        if (value == null) {
-            cache(key, value = data.getStr(key));
-        }
-        return value;
     }
 
     public boolean valueExists(CharSequence value) {

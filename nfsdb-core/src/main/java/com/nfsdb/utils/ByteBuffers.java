@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -92,10 +92,7 @@ public final class ByteBuffers {
     }
 
     public static int copy(ReadableByteChannel from, ByteBuffer to, long count) throws JournalNetworkException {
-        if (count >= to.remaining()) {
-            return copy(from, to);
-        }
-        return copy0(from, to, count);
+        return count < to.remaining() ? copy0(from, to, count) : copy(from, to);
     }
 
     public static void copy(ByteBuffer from, ByteBuffer to) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -62,7 +62,7 @@ final public class Dates {
         int m = getMonthOfYear(millis, y, l = isLeapYear(y));
         int _y;
         int _m = m - 1 + months;
-        if (_m >= 0) {
+        if (_m > -1) {
             _y = y + _m / 12;
             _m = (_m % 12) + 1;
         } else {
@@ -260,7 +260,7 @@ final public class Dates {
     }
 
     public static int getHourOfDay(long millis) {
-        if (millis >= 0) {
+        if (millis > -1) {
             return (int) ((millis / HOUR_MILLIS) % DAY_HOURS);
         } else {
             return DAY_HOURS - 1 + (int) (((millis + 1) / HOUR_MILLIS) % DAY_HOURS);
@@ -268,7 +268,7 @@ final public class Dates {
     }
 
     public static int getMillisOfSecond(long millis) {
-        if (millis >= 0) {
+        if (millis > -1) {
             return (int) (millis % 1000);
         } else {
             return 1000 - 1 + (int) ((millis + 1) % 1000);
@@ -276,7 +276,7 @@ final public class Dates {
     }
 
     public static int getMinuteOfHour(long millis) {
-        if (millis >= 0) {
+        if (millis > -1) {
             return (int) ((millis / MINUTE_MILLIS) % HOUR_MINUTES);
         } else {
             return HOUR_MINUTES - 1 + (int) (((millis + 1) / MINUTE_MILLIS) % HOUR_MINUTES);
@@ -311,7 +311,7 @@ final public class Dates {
     }
 
     public static int getSecondOfMinute(long millis) {
-        if (millis >= 0) {
+        if (millis > -1) {
             return (int) ((millis / SECOND_MILLIS) % MINUTE_SECONDS);
         } else {
             return MINUTE_SECONDS - 1 + (int) (((millis + 1) / SECOND_MILLIS) % MINUTE_SECONDS);

@@ -56,8 +56,8 @@ public class KvIndexRowSource extends AbstractRowSource {
             this.keyCursor = this.keySource.prepareCursor(slice);
             this.indexCursor = null;
             this.full = slice.lo == 0 && slice.calcHi;
-            this.lo = slice.lo;
-            this.hi = slice.calcHi ? slice.partition.open().size() - 1 : slice.hi;
+            this.lo = slice.lo - 1;
+            this.hi = slice.calcHi ? slice.partition.open().size() : slice.hi + 1;
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
@@ -80,7 +80,7 @@ public class KvIndexRowSource extends AbstractRowSource {
 
             do {
                 long rowid = indexCursor.next();
-                if (rowid >= lo && rowid <= hi) {
+                if (rowid > lo && rowid < hi) {
                     this.rowid = rowid;
                     return true;
                 }
@@ -107,7 +107,7 @@ public class KvIndexRowSource extends AbstractRowSource {
 
                 do {
                     long rowid = indexCursor.next();
-                    if (rowid >= lo && rowid <= hi) {
+                    if (rowid > lo && rowid < hi) {
                         this.rowid = rowid;
                         return true;
                     }
