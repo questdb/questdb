@@ -48,9 +48,11 @@ public class JournalSource extends AbstractJournalSource implements JournalRecor
     }
 
     @Override
-    public void unprepare() {
-        partitionSource.unprepare();
-        rowSource.unprepare();
+    public void reset() {
+        if (partitionCursor != null) {
+            partitionCursor.reset();
+        }
+        rowSource.reset();
         cursor = null;
     }
 

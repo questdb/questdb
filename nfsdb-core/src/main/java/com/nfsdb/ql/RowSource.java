@@ -24,5 +24,5 @@ public interface RowSource {
 
     RowCursor prepareCursor(PartitionSlice slice);
 
-    void unprepare();
+    void reset();
 }

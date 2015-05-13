@@ -55,9 +55,9 @@ public class NestedLoopJoinRecordSource extends AbstractImmutableIterator<SplitR
     }
 
     @Override
-    public void unprepare() {
-        masterSource.unprepare();
-        slaveSource.unprepare();
+    public void reset() {
+        masterSource.reset();
+        slaveSource.reset();
         nextSlave = false;
     }
 
@@ -70,7 +70,7 @@ public class NestedLoopJoinRecordSource extends AbstractImmutableIterator<SplitR
     public SplitRecord next() {
         if (!nextSlave) {
             record.setA(masterCursor.next());
-            slaveSource.unprepare();
+            slaveSource.reset();
         }
 
         if (nextSlave || slaveCursor.hasNext()) {

@@ -56,14 +56,6 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
         return this;
     }
 
-
-    @Override
-    public void unprepare() {
-        intervalSource.reset();
-        needInterval = true;
-        needPartition = true;
-    }
-
     @Override
     public boolean hasNext() {
         long sliceRowLo;
@@ -142,5 +134,12 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
     @Override
     public PartitionSlice next() {
         return result;
+    }
+
+    @Override
+    public void reset() {
+        intervalSource.reset();
+        needInterval = true;
+        needPartition = true;
     }
 }

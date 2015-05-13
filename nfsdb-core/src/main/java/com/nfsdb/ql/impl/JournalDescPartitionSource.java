@@ -54,13 +54,8 @@ public class JournalDescPartitionSource extends AbstractImmutableIterator<Partit
     @Override
     public PartitionCursor prepareCursor(JournalReaderFactory readerFactory) throws JournalException {
         this.journal = readerFactory.reader(metadata);
-        unprepare();
+        reset();
         return this;
-    }
-
-    @Override
-    public final void unprepare() {
-        partitionIndex = journal.getPartitionCount() - 1;
     }
 
     @Override
@@ -79,5 +74,10 @@ public class JournalDescPartitionSource extends AbstractImmutableIterator<Partit
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
+    }
+
+    @Override
+    public final void reset() {
+        partitionIndex = journal.getPartitionCount() - 1;
     }
 }

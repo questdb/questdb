@@ -57,12 +57,12 @@ public class SymBySymCachingLookupKeySource implements KeySource, KeyCursor {
     }
 
     @Override
-    public int size() {
-        return 1;
+    public void reset() {
+        hasNext = true;
     }
 
     @Override
-    public void unprepare() {
-        hasNext = true;
+    public int size() {
+        return 1;
     }
 }

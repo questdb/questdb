@@ -17,45 +17,25 @@
 package com.nfsdb.collections.mmap;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
-import com.nfsdb.ql.RecordMetadata;
-import com.nfsdb.ql.RecordSource;
 import com.nfsdb.utils.Unsafe;
 
 import java.util.List;
 
-public final class MapRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record> {
+public final class MapRecordSource extends AbstractImmutableIterator<Record> implements RecordCursor<Record> {
     private final MapRecord record;
-    private final RecordMetadata metadata;
     private final MapValues values;
     private final List<MapRecordValueInterceptor> interceptors;
     private final int interceptorsLen;
     private int count;
     private long address;
 
-    MapRecordSource(MapRecord record, RecordMetadata metadata, MapValues values, List<MapRecordValueInterceptor> interceptors) {
+    MapRecordSource(MapRecord record, MapValues values, List<MapRecordValueInterceptor> interceptors) {
         this.record = record;
-        this.metadata = metadata;
         this.values = values;
         this.interceptors = interceptors;
         this.interceptorsLen = interceptors != null ? interceptors.size() : 0;
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
-    }
-
-    @Override
-    public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
-        return this;
-    }
-
-    @Override
-    public void unprepare() {
     }
 
     @Override

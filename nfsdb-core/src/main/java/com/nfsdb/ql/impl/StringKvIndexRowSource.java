@@ -68,7 +68,7 @@ public class StringKvIndexRowSource extends AbstractRowSource {
     }
 
     @Override
-    public void unprepare() {
+    public void reset() {
         indexCursor = null;
         valueIndex = 0;
     }

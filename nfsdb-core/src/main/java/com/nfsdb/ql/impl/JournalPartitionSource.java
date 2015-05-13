@@ -57,14 +57,8 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
         if (journal == null) {
             this.journal = factory.reader(metadata);
         }
-        unprepare();
+        reset();
         return this;
-    }
-
-    @Override
-    public final void unprepare() {
-        partitionCount = journal.getPartitionCount();
-        partitionIndex = 0;
     }
 
     @Override
@@ -83,5 +77,11 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
+    }
+
+    @Override
+    public final void reset() {
+        partitionCount = journal.getPartitionCount();
+        partitionIndex = 0;
     }
 }

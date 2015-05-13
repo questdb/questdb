@@ -46,8 +46,8 @@ public class TopRecordSource extends AbstractImmutableIterator<Record> implement
     }
 
     @Override
-    public void unprepare() {
-        recordSource.unprepare();
+    public void reset() {
+        recordSource.reset();
         this.remaining = count;
     }
 

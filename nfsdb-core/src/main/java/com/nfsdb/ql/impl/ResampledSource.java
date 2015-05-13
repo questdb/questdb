@@ -19,7 +19,6 @@ package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.collections.ObjList;
-import com.nfsdb.collections.mmap.MapRecordSource;
 import com.nfsdb.collections.mmap.MapRecordValueInterceptor;
 import com.nfsdb.collections.mmap.MapValues;
 import com.nfsdb.collections.mmap.MultiMap;
@@ -41,7 +40,7 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
     private final ObjList<AggregatorFunction> aggregators;
     private final SampleBy sampleBy;
     private RecordCursor<? extends Record> recordCursor;
-    private MapRecordSource mapRecordSource;
+    private RecordCursor<Record> mapRecordSource;
     private Record nextRecord = null;
 
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
@@ -104,8 +103,8 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
     }
 
     @Override
-    public void unprepare() {
-        recordSource.unprepare();
+    public void reset() {
+        recordSource.reset();
         map.clear();
     }
 
@@ -203,7 +202,7 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
 
         } while (true);
 
-        return (mapRecordSource = map.getRecordSource()).hasNext();
+        return (mapRecordSource = map.getCursor()).hasNext();
     }
 
 

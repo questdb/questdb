@@ -44,7 +44,7 @@ public class AllRowSource extends AbstractRowSource {
     }
 
     @Override
-    public void unprepare() {
+    public void reset() {
 
     }
 

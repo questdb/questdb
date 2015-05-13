@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,8 @@ import com.nfsdb.collections.DirectLongList;
 import com.nfsdb.collections.DirectMemoryStructure;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.utils.Hash;
 import com.nfsdb.utils.Numbers;
@@ -37,6 +39,7 @@ public class MultiMap extends DirectMemoryStructure {
     private final KeyWriter keyWriter = new KeyWriter();
     private final MapRecordSource recordSource;
     private final MapValues values;
+    private final MapMetadata metadata;
     private int keyBlockOffset;
     private int keyDataOffset;
     private DirectLongList offsets;
@@ -83,11 +86,11 @@ public class MultiMap extends DirectMemoryStructure {
         }
 
         this.values = new MapValues(valueOffsets);
-        MapMetadata metadata = new MapMetadata(valueColumns, keyColumns);
+        this.metadata = new MapMetadata(valueColumns, keyColumns);
         this.keyBlockOffset = offset;
         this.keyDataOffset = this.keyBlockOffset + 4 * keyColumns.size();
         MapRecord record = new MapRecord(metadata, valueOffsets, keyDataOffset, keyBlockOffset);
-        this.recordSource = new MapRecordSource(record, metadata, this.values, interceptors);
+        this.recordSource = new MapRecordSource(record, this.values, interceptors);
     }
 
     public void clear() {
@@ -97,8 +100,12 @@ public class MultiMap extends DirectMemoryStructure {
         offsets.clear((byte) -1);
     }
 
+    public RecordCursor<Record> getCursor() {
+        return recordSource.init(kStart, size);
+    }
+
     public RecordMetadata getMetadata() {
-        return recordSource.getMetadata();
+        return metadata;
     }
 
     public MapValues getOrCreateValues(KeyWriter keyWriter) {
@@ -124,10 +131,6 @@ public class MultiMap extends DirectMemoryStructure {
         }
     }
 
-    public MapRecordSource getRecordSource() {
-        return recordSource.init(kStart, size);
-    }
-
     public MapValues getValues(KeyWriter keyWriter) {
         keyWriter.commit();
         // rollback key right away
@@ -150,11 +153,6 @@ public class MultiMap extends DirectMemoryStructure {
 
     public int size() {
         return size;
-    }
-
-    @Override
-    protected void freeInternal() {
-        offsets.free();
     }
 
     private boolean eq(KeyWriter keyWriter, long offset) {
@@ -186,6 +184,11 @@ public class MultiMap extends DirectMemoryStructure {
             }
         }
         return true;
+    }
+
+    @Override
+    protected void freeInternal() {
+        offsets.free();
     }
 
     private MapValues probe0(KeyWriter keyWriter, int index) {
@@ -361,6 +364,14 @@ public class MultiMap extends DirectMemoryStructure {
             return this;
         }
 
+        public KeyWriter putFloat(float value) {
+            checkSize(4);
+            Unsafe.getUnsafe().putFloat(appendAddr, value);
+            appendAddr += 4;
+            writeOffset();
+            return this;
+        }
+
         public KeyWriter putInt(int value) {
             checkSize(4);
             Unsafe.getUnsafe().putInt(appendAddr, value);
@@ -381,14 +392,6 @@ public class MultiMap extends DirectMemoryStructure {
             checkSize(2);
             Unsafe.getUnsafe().putShort(appendAddr, value);
             appendAddr += 2;
-            writeOffset();
-            return this;
-        }
-
-        public KeyWriter putFloat(float value) {
-            checkSize(4);
-            Unsafe.getUnsafe().putFloat(appendAddr, value);
-            appendAddr += 4;
             writeOffset();
             return this;
         }

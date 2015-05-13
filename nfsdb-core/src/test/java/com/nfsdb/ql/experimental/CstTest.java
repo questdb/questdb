@@ -113,7 +113,7 @@ public class CstTest {
                 t = System.nanoTime();
                 count = 0;
             }
-            src.unprepare();
+            src.reset();
             for (Record d : src.prepareCursor(factory)) {
                 d.getDate(0);
                 d.getDouble(2);

@@ -58,7 +58,7 @@ public class SymbolKeySource implements KeySource, KeyCursor {
     }
 
     @Override
-    public void unprepare() {
+    public void reset() {
         symbolTable = null;
         keyIndex = 0;
     }

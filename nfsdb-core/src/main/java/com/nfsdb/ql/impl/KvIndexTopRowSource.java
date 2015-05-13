@@ -72,8 +72,8 @@ public class KvIndexTopRowSource extends AbstractRowSource implements RecordSour
     }
 
     @Override
-    public void unprepare() {
-        keySource.unprepare();
+    public void reset() {
+        keySource.reset();
     }
 
     @Override

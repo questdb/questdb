@@ -23,6 +23,8 @@ import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.model.Quote;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.impl.JournalRecord;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.test.tools.AbstractTest;
@@ -132,7 +134,8 @@ public class MultiMapTest extends AbstractTest {
         }
 
         RecordSourcePrinter out = new RecordSourcePrinter(sink);
-        out.print(map.getRecordSource());
+        RecordCursor<Record> c = map.getCursor();
+        out.print(c, map.getMetadata());
         map.free();
 
         Assert.assertEquals(expected, sink.toString());

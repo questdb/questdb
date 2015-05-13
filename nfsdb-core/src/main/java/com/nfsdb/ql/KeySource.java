@@ -19,7 +19,7 @@ package com.nfsdb.ql;
 public interface KeySource {
     KeyCursor prepareCursor(PartitionSlice slice);
 
-    int size();
+    void reset();
 
-    void unprepare();
+    int size();
 }

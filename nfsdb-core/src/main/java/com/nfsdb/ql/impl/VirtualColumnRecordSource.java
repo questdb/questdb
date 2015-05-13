@@ -59,8 +59,8 @@ public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record>
     }
 
     @Override
-    public void unprepare() {
-        recordSource.unprepare();
+    public void reset() {
+        recordSource.reset();
     }
 
     @Override

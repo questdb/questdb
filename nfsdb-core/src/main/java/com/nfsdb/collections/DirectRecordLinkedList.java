@@ -16,25 +16,20 @@
 
 package com.nfsdb.collections;
 
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordMetadata;
-import com.nfsdb.ql.RecordSource;
 import com.nfsdb.utils.Unsafe;
 
 import java.io.Closeable;
 import java.io.IOException;
 
-public class DirectRecordLinkedList extends AbstractImmutableIterator<Record> implements RecordSource<Record>, Closeable, RecordCursor<Record> {
-    private final RecordMetadata recordMetadata;
+public class DirectRecordLinkedList extends AbstractImmutableIterator<Record> implements Closeable, RecordCursor<Record> {
     private final DirectPagedBuffer buffer;
     private final DirectRecord bufferRecord;
     private long readOffset = -1;
 
     public DirectRecordLinkedList(RecordMetadata recordMetadata, long recordCount, long avgRecSize) {
-        this.recordMetadata = recordMetadata;
         this.buffer = new DirectPagedBuffer((recordCount * avgRecSize > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) (recordCount * avgRecSize)) / 2);
         bufferRecord = new DirectRecord(recordMetadata, buffer);
     }
@@ -53,20 +48,6 @@ public class DirectRecordLinkedList extends AbstractImmutableIterator<Record> im
     @Override
     public void close() throws IOException {
         buffer.close();
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return recordMetadata;
-    }
-
-    @Override
-    public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
-        return this;
-    }
-
-    @Override
-    public void unprepare() {
     }
 
     @Override

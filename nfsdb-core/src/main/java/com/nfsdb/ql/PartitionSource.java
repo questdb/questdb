@@ -25,5 +25,4 @@ public interface PartitionSource {
 
     PartitionCursor prepareCursor(JournalReaderFactory readerFactory) throws JournalException;
 
-    void unprepare();
 }

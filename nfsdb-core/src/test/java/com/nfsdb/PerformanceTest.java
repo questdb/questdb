@@ -108,7 +108,7 @@ public class PerformanceTest extends AbstractTest {
                 for (Iterator<? extends Record> iterator = rs.prepareCursor(null).iterator(); iterator.hasNext(); ) {
                     iterator.next();
                 }
-                rs.unprepare();
+                rs.reset();
             }
             LOGGER.info("NEW journal.query().all().withKeys(\"LLOY.L\").slice(interval) (query only) latency: " + (System.nanoTime() - t) / count / 1000 + "μs");
         }

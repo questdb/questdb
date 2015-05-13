@@ -25,5 +25,5 @@ public interface RecordSource<T extends Record> {
 
     RecordCursor<T> prepareCursor(JournalReaderFactory factory) throws JournalException;
 
-    void unprepare();
+    void reset();
 }

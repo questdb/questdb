@@ -19,4 +19,5 @@ package com.nfsdb.ql;
 import com.nfsdb.collections.ImmutableIterator;
 
 public interface PartitionCursor extends ImmutableIterator<PartitionSlice> {
+    void reset();
 }

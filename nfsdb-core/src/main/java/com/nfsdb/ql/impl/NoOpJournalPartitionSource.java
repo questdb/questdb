@@ -31,7 +31,7 @@ public class NoOpJournalPartitionSource extends AbstractImmutableIterator<Partit
 
     public NoOpJournalPartitionSource(JournalMetadata metadata) {
         this.metadata = metadata;
-        unprepare();
+        reset();
     }
 
     @Override
@@ -45,10 +45,6 @@ public class NoOpJournalPartitionSource extends AbstractImmutableIterator<Partit
     }
 
     @Override
-    public final void unprepare() {
-    }
-
-    @Override
     public boolean hasNext() {
         return false;
     }
@@ -57,5 +53,9 @@ public class NoOpJournalPartitionSource extends AbstractImmutableIterator<Partit
     @Override
     public PartitionSlice next() {
         return null;
+    }
+
+    @Override
+    public final void reset() {
     }
 }

@@ -53,12 +53,12 @@ public class SingleIntHashKeySource implements KeySource, KeyCursor {
     }
 
     @Override
-    public int size() {
-        return 1;
+    public void reset() {
+        bucketCount = -1;
     }
 
     @Override
-    public void unprepare() {
-        bucketCount = -1;
+    public int size() {
+        return 1;
     }
 }

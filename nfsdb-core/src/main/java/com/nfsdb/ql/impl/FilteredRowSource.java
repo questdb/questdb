@@ -47,8 +47,8 @@ public class FilteredRowSource extends AbstractRowSource implements RecordSource
     }
 
     @Override
-    public void unprepare() {
-        delegate.unprepare();
+    public void reset() {
+        delegate.reset();
     }
 
     @Override

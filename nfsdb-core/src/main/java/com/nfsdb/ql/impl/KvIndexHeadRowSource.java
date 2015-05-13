@@ -98,9 +98,9 @@ public class KvIndexHeadRowSource extends AbstractRowSource implements RecordSou
     }
 
     @Override
-    public void unprepare() {
+    public void reset() {
         keyCount = -1;
-        keySource.unprepare();
+        keySource.reset();
         indexCursor = null;
     }
 

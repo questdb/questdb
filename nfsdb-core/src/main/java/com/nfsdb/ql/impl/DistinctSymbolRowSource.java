@@ -61,9 +61,9 @@ public class DistinctSymbolRowSource extends AbstractRowSource {
     }
 
     @Override
-    public void unprepare() {
+    public void reset() {
         columnIndex = -1;
-        delegate.unprepare();
+        delegate.reset();
         set.clear();
     }
 

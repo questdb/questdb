@@ -47,8 +47,8 @@ public class TopRowSource extends AbstractRowSource {
     }
 
     @Override
-    public void unprepare() {
-        delegate.unprepare();
+    public void reset() {
+        delegate.reset();
         this.remaining = count;
 
     }

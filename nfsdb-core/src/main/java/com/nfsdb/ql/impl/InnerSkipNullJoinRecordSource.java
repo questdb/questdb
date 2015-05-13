@@ -45,8 +45,8 @@ public class InnerSkipNullJoinRecordSource extends AbstractImmutableIterator<Rec
     }
 
     @Override
-    public void unprepare() {
-        recordSource.unprepare();
+    public void reset() {
+        recordSource.reset();
     }
 
     @Override

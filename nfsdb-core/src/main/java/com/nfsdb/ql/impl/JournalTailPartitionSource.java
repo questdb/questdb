@@ -61,15 +61,8 @@ public class JournalTailPartitionSource extends AbstractImmutableIterator<Partit
         if (journal == null) {
             this.journal = readerFactory.reader(metadata);
         }
-        unprepare();
+        reset();
         return this;
-    }
-
-    @Override
-    public final void unprepare() {
-        partitionCount = journal.getPartitionCount();
-        partitionIndex = Rows.toPartitionIndex(rowid);
-        lo = Rows.toLocalRowID(rowid);
     }
 
     @Override
@@ -89,5 +82,12 @@ public class JournalTailPartitionSource extends AbstractImmutableIterator<Partit
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
+    }
+
+    @Override
+    public final void reset() {
+        partitionCount = journal.getPartitionCount();
+        partitionIndex = Rows.toPartitionIndex(rowid);
+        lo = Rows.toLocalRowID(rowid);
     }
 }

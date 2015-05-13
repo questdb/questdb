@@ -50,9 +50,9 @@ public class UnionRowSource extends AbstractRowSource {
     }
 
     @Override
-    public void unprepare() {
+    public void reset() {
         for (int i = 0; i < sources.length; i++) {
-            sources[i].unprepare();
+            sources[i].reset();
         }
     }
 

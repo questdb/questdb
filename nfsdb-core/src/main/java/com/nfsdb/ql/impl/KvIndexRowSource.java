@@ -65,8 +65,8 @@ public class KvIndexRowSource extends AbstractRowSource {
     }
 
     @Override
-    public void unprepare() {
-        keySource.unprepare();
+    public void reset() {
+        keySource.reset();
     }
 
     @Override

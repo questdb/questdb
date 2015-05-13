@@ -74,7 +74,7 @@ public class PartialSymbolKeySource implements KeySource, KeyCursor {
     }
 
     @Override
-    public void unprepare() {
+    public void reset() {
         symbolTable = null;
         keyIndex = 0;
     }
