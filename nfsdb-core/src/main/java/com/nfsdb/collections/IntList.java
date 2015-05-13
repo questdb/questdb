@@ -37,10 +37,9 @@ public class IntList {
         this.buffer = new int[capacity < DEFAULT_ARRAY_SIZE ? DEFAULT_ARRAY_SIZE : capacity];
     }
 
-    public boolean add(int value) {
+    public void add(int value) {
         ensureCapacity0(pos + 1);
         Unsafe.arrayPut(buffer, pos++, value);
-        return true;
     }
 
     public void add(IntList that) {

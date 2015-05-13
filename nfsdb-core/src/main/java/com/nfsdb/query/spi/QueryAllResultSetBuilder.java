@@ -52,8 +52,9 @@ public class QueryAllResultSetBuilder<T> extends UnorderedResultSetBuilder<T> {
         if (symbolKeys.size() > 0) {
             for (int i = 0, sz = symbolKeys.size(); i < sz; i++) {
                 if (index.contains(symbolKeys.getQuick(i))) {
-                    searchIndices = new KVIndex[filterSymbols.size()];
-                    for (int k = 0; k < filterSymbols.size(); k++) {
+                    int n = filterSymbols.size();
+                    searchIndices = new KVIndex[n];
+                    for (int k = 0; k < n; k++) {
                         searchIndices[k] = partition.getIndexForColumn(filterSymbols.get(k));
                     }
                     return Accept.CONTINUE;

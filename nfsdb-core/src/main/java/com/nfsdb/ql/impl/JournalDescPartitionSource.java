@@ -31,9 +31,9 @@ public class JournalDescPartitionSource extends AbstractImmutableIterator<Partit
 
     private final boolean open;
     private final PartitionSlice slice = new PartitionSlice();
+    private final JournalMetadata metadata;
     private Journal journal;
     private int partitionIndex;
-    private JournalMetadata metadata;
 
     public JournalDescPartitionSource(JournalMetadata metadata, boolean open) {
         this.metadata = metadata;

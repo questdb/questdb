@@ -32,7 +32,7 @@ public class JournalTailPartitionSource extends AbstractImmutableIterator<Partit
     private final boolean open;
     private final long rowid;
     private final PartitionSlice slice = new PartitionSlice();
-    private JournalMetadata metadata;
+    private final JournalMetadata metadata;
     private Journal journal;
     private int partitionIndex;
     private long lo;

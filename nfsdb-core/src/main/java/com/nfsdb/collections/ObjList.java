@@ -42,10 +42,9 @@ public class ObjList<T> {
     /**
      * {@inheritDoc}
      */
-    public boolean add(T value) {
+    public void add(T value) {
         ensureCapacity0(pos + 1);
         Unsafe.arrayPut(buffer, pos++, value);
-        return true;
     }
 
     /**

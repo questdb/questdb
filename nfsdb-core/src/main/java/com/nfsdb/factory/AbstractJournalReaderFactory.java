@@ -50,9 +50,7 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
     }
 
     @Override
-    public void close() {
-    }
-
+    public abstract void close();
 
     public JournalConfiguration getConfiguration() {
         return configuration;

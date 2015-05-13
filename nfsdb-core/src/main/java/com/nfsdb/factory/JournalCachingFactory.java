@@ -83,7 +83,6 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
             readers.clear();
             bulkReaders.clear();
         }
-        super.close();
     }
 
     @Override

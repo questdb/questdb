@@ -26,6 +26,7 @@ import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
 import com.nfsdb.storage.VariableColumn;
 import com.nfsdb.utils.Hash;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class StringKvIndexRowSource extends AbstractRowSource {
 
@@ -40,6 +41,7 @@ public class StringKvIndexRowSource extends AbstractRowSource {
     private CharSequence currentValue;
     private VariableColumn column;
     private int bucketCount;
+    private int columnIndex;
 
     public StringKvIndexRowSource(String columnName, ObjHashSet<String> values) {
         this.columnName = columnName;
@@ -48,15 +50,16 @@ public class StringKvIndexRowSource extends AbstractRowSource {
 
     @Override
     public void configure(JournalMetadata metadata) {
+        this.columnIndex = metadata.getColumnIndex(columnName);
+        this.bucketCount = metadata.getColumn(columnIndex).distinctCountHint;
     }
 
+    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
     @Override
     public RowCursor prepareCursor(PartitionSlice slice) {
         try {
-            int index = slice.partition.getJournal().getMetadata().getColumnIndex(columnName);
-            this.bucketCount = slice.partition.getJournal().getMetadata().getColumn(index).distinctCountHint;
-            this.column = (VariableColumn) slice.partition.getAbstractColumn(index);
-            this.index = slice.partition.getIndexForColumn(index);
+            this.column = (VariableColumn) slice.partition.getAbstractColumn(columnIndex);
+            this.index = slice.partition.getIndexForColumn(columnName);
 
             this.indexCursor = null;
             this.lo = slice.lo - 1;

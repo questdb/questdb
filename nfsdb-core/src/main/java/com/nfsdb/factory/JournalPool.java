@@ -35,10 +35,8 @@ public class JournalPool implements Closeable {
     private final ArrayBlockingQueue<JournalCachingFactory> pool;
     private final ExecutorService service = Executors.newCachedThreadPool(new NamedDaemonThreadFactory("pool-release-thread", true));
     private final AtomicBoolean running = new AtomicBoolean(true);
-    private final JournalConfiguration configuration;
 
     public JournalPool(JournalConfiguration configuration, int capacity) throws InterruptedException {
-        this.configuration = configuration;
         this.pool = new ArrayBlockingQueue<>(capacity, true);
         for (int i = 0; i < capacity; i++) {
             pool.put(new JournalCachingFactory(configuration, this));
@@ -63,10 +61,6 @@ public class JournalPool implements Closeable {
         } else {
             throw new InterruptedException("Journal pool has been closed");
         }
-    }
-
-    public JournalConfiguration getConfiguration() {
-        return configuration;
     }
 
     void release(final JournalCachingFactory factory) {

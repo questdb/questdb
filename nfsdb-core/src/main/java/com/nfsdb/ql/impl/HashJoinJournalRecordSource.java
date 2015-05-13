@@ -47,6 +47,7 @@ public class HashJoinJournalRecordSource extends AbstractImmutableIterator<Recor
     private MultiRecordMap hashTable;
     private RecordCursor<? extends Record> hashTableCursor;
 
+    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     public HashJoinJournalRecordSource(
             RecordSource<? extends Record> masterSource,
             ObjList<String> masterColumns,

@@ -97,4 +97,8 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
         JournalMetadata<T> metadata = getConfiguration().buildWithRootLocation(b);
         return new JournalWriter<>(metadata, metadata.getKey());
     }
+
+    @Override
+    public void close() {
+    }
 }

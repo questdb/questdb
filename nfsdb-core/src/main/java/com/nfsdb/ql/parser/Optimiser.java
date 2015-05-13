@@ -127,6 +127,7 @@ public class Optimiser {
         }
     }
 
+    @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT"})
     private RecordSource<? extends Record> createRecordSource(QueryModel model) throws JournalException, ParserException {
 
         ExprNode readerNode = model.getJournalName();

@@ -53,6 +53,7 @@ public class RecordSourcePrinter {
         sink.flush();
     }
 
+    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
     public void print(RecordSource<? extends Record> src) {
         try {
             print(src.prepareCursor(null), src.getMetadata());

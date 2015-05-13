@@ -27,6 +27,7 @@ import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.PartitionSource;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+@SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
 public class JournalPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource, PartitionCursor {
 
     private final boolean open;
