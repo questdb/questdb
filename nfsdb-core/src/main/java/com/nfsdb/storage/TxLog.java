@@ -110,7 +110,7 @@ public class TxLog {
     }
 
     public boolean isEmpty() {
-        return hb.getAppendOffset() <= 9 || readCurrentTxAddress() <= 0;
+        return hb.getAppendOffset() < 10 || readCurrentTxAddress() < 1;
     }
 
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})

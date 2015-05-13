@@ -81,7 +81,7 @@ public final class LockManager {
         Lock storedSharedLock = locks.get(sharedKey);
         if (storedSharedLock == lock) {
             lock.decrementRefCount();
-            if (lock.getRefCount() <= 0) {
+            if (lock.getRefCount() < 1) {
                 lock.release();
                 locks.remove(sharedKey);
                 LOGGER.trace("Shared lock released: %s", lock);
@@ -91,7 +91,7 @@ public final class LockManager {
         Lock storedExclusiveLock = locks.get(exclusiveKey);
         if (storedExclusiveLock == lock) {
             lock.decrementRefCount();
-            if (lock.getRefCount() <= 0) {
+            if (lock.getRefCount() < 1) {
                 lock.release();
                 lock.delete();
                 locks.remove(exclusiveKey);

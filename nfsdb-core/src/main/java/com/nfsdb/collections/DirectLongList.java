@@ -69,7 +69,7 @@ public class DirectLongList extends AbstractDirectList {
 
         while (low <= high) {
 
-            if (high - low <= 64) {
+            if (high - low < 65) {
                 return scanSearch(v);
             }
 

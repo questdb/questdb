@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ import com.nfsdb.ql.impl.AbstractRecord;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+
 import java.io.IOException;
 import java.io.OutputStream;
 
@@ -112,10 +113,6 @@ public class DirectRecord extends AbstractRecord {
         return Unsafe.getUnsafe().getDouble(address + offsets[col]);
     }
 
-    public int getFixedBlockLength() {
-        return fixedBlockLen;
-    }
-
     @Override
     public float getFloat(int col) {
         assert offsets[col] >= 0;
@@ -174,6 +171,10 @@ public class DirectRecord extends AbstractRecord {
     @Override
     public String getSym(int col) {
         return getStr(col).toString();
+    }
+
+    public int getFixedBlockLength() {
+        return fixedBlockLen;
     }
 
     public void init(long offset) {
@@ -243,6 +244,33 @@ public class DirectRecord extends AbstractRecord {
         return recordStartOffset;
     }
 
+    private long findAddress(int index) {
+        return buffer.toAddress(findOffset(index));
+    }
+
+    private long findOffset(int index) {
+        // Not fixed len.
+        assert offsets[index] <= 0;
+        return Unsafe.getUnsafe().getLong(address - headerSize + (-offsets[index]) * 8);
+    }
+
+    private void writeBinary(long headerAddress, DirectInputStream value) {
+        long initialOffset = buffer.getWriteOffsetQuick(8);
+        long len = value.getLength();
+
+        // Write header offset.
+        Unsafe.getUnsafe().putLong(headerAddress, initialOffset);
+
+        // Write length.
+        Unsafe.getUnsafe().putLong(buffer.toAddress(initialOffset), len);
+
+        if (len < 1) {
+            return;
+        }
+
+        buffer.append(value);
+    }
+
     private void writeString(long headerAddress, CharSequence item) {
         if (item != null) {
             // Allocate.
@@ -264,32 +292,5 @@ public class DirectRecord extends AbstractRecord {
             Unsafe.getUnsafe().putLong(headerAddress, offset);
             Unsafe.getUnsafe().putInt(buffer.toAddress(offset), -1);
         }
-    }
-
-    private void writeBinary(long headerAddress, DirectInputStream value) {
-        long initialOffset = buffer.getWriteOffsetQuick(8);
-        long len = value.getLength();
-
-        // Write header offset.
-        Unsafe.getUnsafe().putLong(headerAddress, initialOffset);
-
-        // Write length.
-        Unsafe.getUnsafe().putLong(buffer.toAddress(initialOffset), len);
-
-        if (len <= 0) {
-            return;
-        }
-
-        buffer.append(value);
-    }
-
-    private long findAddress(int index) {
-        return buffer.toAddress(findOffset(index));
-    }
-
-    private long findOffset(int index) {
-        // Not fixed len.
-        assert offsets[index] <= 0;
-        return Unsafe.getUnsafe().getLong(address - headerSize + (-offsets[index]) * 8);
     }
 }

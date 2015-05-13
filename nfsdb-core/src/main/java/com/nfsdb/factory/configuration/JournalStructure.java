@@ -142,7 +142,7 @@ public class JournalStructure implements MetadataBuilder<Object> {
 
         for (int i = 0, sz = metadata.size(); i < sz; i++) {
             ColumnMetadata meta = metadata.get(i);
-            if (meta.indexed && meta.distinctCountHint <= 1) {
+            if (meta.indexed && meta.distinctCountHint < 2) {
                 meta.distinctCountHint = Math.max(2, (int) (recordCountHint * 0.01));
             }
 
@@ -151,7 +151,7 @@ public class JournalStructure implements MetadataBuilder<Object> {
             }
 
             // distinctCount
-            if (meta.distinctCountHint <= 0 && meta.type == ColumnType.SYMBOL) {
+            if (meta.distinctCountHint < 1 && meta.type == ColumnType.SYMBOL) {
                 meta.distinctCountHint = (int) (recordCountHint * 0.2); //20%
             }
 

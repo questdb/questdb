@@ -126,7 +126,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
 
     public TempPartition<T> createTempPartition(String name) throws JournalException {
         int lag = getMetadata().getLag();
-        if (lag <= 0) {
+        if (lag < 1) {
             throw new JournalRuntimeException("Journal doesn't support temp partitions: %s", this);
         }
 
@@ -705,8 +705,8 @@ public class Journal<T> implements Iterable<T>, Closeable {
         assert tx.address > 0;
 
         int txPartitionIndex = tx.journalMaxRowID == -1 ? 0 : Rows.toPartitionIndex(tx.journalMaxRowID);
-        if (partitions.size() != txPartitionIndex + 1 || tx.journalMaxRowID <= 0) {
-            if (tx.journalMaxRowID <= 0 || partitions.size() > txPartitionIndex + 1) {
+        if (partitions.size() != txPartitionIndex + 1 || tx.journalMaxRowID < 1) {
+            if (tx.journalMaxRowID < 1 || partitions.size() > txPartitionIndex + 1) {
                 closePartitions();
             }
             configurePartitions();

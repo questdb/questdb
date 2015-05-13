@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -50,25 +50,6 @@ public class VariableColumn extends AbstractColumn {
         super.close();
     }
 
-    public boolean cmpStr(long localRowID, CharSequence value) {
-        long offset = indexColumn.getLong(localRowID);
-        int len = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
-
-        if (len != value.length()) {
-            return false;
-        }
-
-        long address = mappedFile.getAddress(offset + 4, len * 2);
-        for (int i = 0; i < len; i++) {
-            if (Unsafe.getUnsafe().getChar(address) != value.charAt(i)) {
-                return false;
-            }
-            address += 2;
-        }
-
-        return true;
-    }
-
     @Override
     public void commit() {
         if (binOut.offset != -1) {
@@ -88,6 +69,48 @@ public class VariableColumn extends AbstractColumn {
     public void force() {
         super.force();
         indexColumn.force();
+    }
+
+    @Override
+    public long getOffset(long localRowID) {
+        return indexColumn.getLong(localRowID);
+    }
+
+    @Override
+    public long size() {
+        return indexColumn.size();
+    }
+
+    @Override
+    public void truncate(long size) {
+
+        if (size < 0) {
+            size = 0;
+        }
+
+        if (size < size()) {
+            preCommit(getOffset(size));
+        }
+        indexColumn.truncate(size);
+    }
+
+    public boolean cmpStr(long localRowID, CharSequence value) {
+        long offset = indexColumn.getLong(localRowID);
+        int len = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
+
+        if (len != value.length()) {
+            return false;
+        }
+
+        long address = mappedFile.getAddress(offset + 4, len * 2);
+        for (int i = 0; i < len; i++) {
+            if (Unsafe.getUnsafe().getChar(address) != value.charAt(i)) {
+                return false;
+            }
+            address += 2;
+        }
+
+        return true;
     }
 
     public void getBin(long localRowID, ByteBuffer target) {
@@ -158,11 +181,6 @@ public class VariableColumn extends AbstractColumn {
 
     public FixedColumn getIndexColumn() {
         return indexColumn;
-    }
-
-    @Override
-    public long getOffset(long localRowID) {
-        return indexColumn.getLong(localRowID);
     }
 
     public String getStr(long localRowID) {
@@ -243,7 +261,7 @@ public class VariableColumn extends AbstractColumn {
                         blockRemaining = mappedFile.getAddressSize(off);
                     }
 
-                    if (blockRemaining <= 0) {
+                    if (blockRemaining < 1) {
                         throw new JournalRuntimeException("Internal error. Unable to allocate disk block");
                     }
 
@@ -292,24 +310,6 @@ public class VariableColumn extends AbstractColumn {
         }
     }
 
-    @Override
-    public long size() {
-        return indexColumn.size();
-    }
-
-    @Override
-    public void truncate(long size) {
-
-        if (size < 0) {
-            size = 0;
-        }
-
-        if (size < size()) {
-            preCommit(getOffset(size));
-        }
-        indexColumn.truncate(size);
-    }
-
     long commitAppend(long offset, int size) {
         preCommit(offset + size);
         return indexColumn.putLong(offset);
@@ -337,14 +337,6 @@ public class VariableColumn extends AbstractColumn {
         private int blockRemaining;
 
         @Override
-        public void close() {
-            long a = mappedFile.getAddress(offset, 4);
-            Unsafe.getUnsafe().putInt(a, (int) (workOffset - offset - 4));
-            commitAppend(offset, (int) (workOffset - offset));
-            offset = -1;
-        }
-
-        @Override
         public void write(int b) throws IOException {
             if (blockRemaining == 0) {
                 renew();
@@ -352,6 +344,14 @@ public class VariableColumn extends AbstractColumn {
             Unsafe.getUnsafe().putByte(blockAddress++, (byte) b);
             workOffset++;
             blockRemaining--;
+        }
+
+        @Override
+        public void close() {
+            long a = mappedFile.getAddress(offset, 4);
+            Unsafe.getUnsafe().putInt(a, (int) (workOffset - offset - 4));
+            commitAppend(offset, (int) (workOffset - offset));
+            offset = -1;
         }
 
         private void renew() {
@@ -418,15 +418,15 @@ public class VariableColumn extends AbstractColumn {
             return Unsafe.getUnsafe().getByte(blockAddress++);
         }
 
+        private void renew() {
+            blockAddress = mappedFile.getAddress(workOffset, 1);
+            blockRemaining = mappedFile.getAddressSize(workOffset);
+        }
+
         private void reset(long offset) {
             this.workOffset = offset + 4;
             this.blockRemaining = 0;
             this.remaining = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
-        }
-
-        private void renew() {
-            blockAddress = mappedFile.getAddress(workOffset, 1);
-            blockRemaining = mappedFile.getAddressSize(workOffset);
         }
 
         private void skipOffset(long offset) {

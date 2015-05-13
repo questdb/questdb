@@ -59,7 +59,7 @@ public class KVIndex implements Closeable {
     private long keyBlockAddressOffset;
     private long keyBlockSizeOffset;
     private long maxValue;
-    private boolean inTransaction = false;
+    private boolean startTx = true;
 
     public KVIndex(File baseName, long keyCountHint, long recordCountHint, int txCountHint, JournalMode mode, long txAddress) throws JournalException {
         int keyCount = (int) Math.min(Integer.MAX_VALUE, Math.max(keyCountHint, 1));
@@ -108,7 +108,7 @@ public class KVIndex implements Closeable {
      */
     public void add(int key, long value) {
 
-        if (!inTransaction) {
+        if (startTx) {
             tx();
         }
 
@@ -166,12 +166,12 @@ public class KVIndex implements Closeable {
     }
 
     public void commit() {
-        if (inTransaction) {
+        if (!startTx) {
             putLong(kData, keyBlockSizeOffset, keyBlockSize); // 8
             putLong(kData, keyBlockSizeOffset + 8, maxValue); // 8
             kData.setAppendOffset(firstEntryOffset + keyBlockSize);
             putLong(kData, keyBlockAddressOffset, keyBlockSizeOffset); // 8
-            inTransaction = false;
+            startTx = true;
         }
     }
 
@@ -452,7 +452,7 @@ public class KVIndex implements Closeable {
     }
 
     private void tx() {
-        if (!inTransaction) {
+        if (startTx) {
             this.keyBlockSizeOffset = kData.getAppendOffset();
             this.firstEntryOffset = keyBlockSizeOffset + 16;
 
@@ -476,7 +476,7 @@ public class KVIndex implements Closeable {
             }
             keyBlockSize = dstOffset - firstEntryOffset;
         }
-        inTransaction = true;
+        startTx = false;
     }
 
     private class RevIndexCursor implements IndexCursor {

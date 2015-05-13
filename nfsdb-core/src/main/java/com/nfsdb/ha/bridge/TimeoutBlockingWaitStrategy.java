@@ -50,7 +50,7 @@ public class TimeoutBlockingWaitStrategy implements WaitStrategy {
                 while (cursorSequence.get() < sequence) {
                     barrier.checkAlert();
                     nanos = processorNotifyCondition.awaitNanos(nanos);
-                    if (nanos <= 0) {
+                    if (nanos < 1) {
                         throw TimeoutException.INSTANCE;
                     }
                 }

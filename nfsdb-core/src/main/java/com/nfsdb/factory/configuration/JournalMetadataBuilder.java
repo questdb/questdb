@@ -119,7 +119,7 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
             ColumnMetadata meta = e.value;
 
 
-            if (meta.indexed && meta.distinctCountHint <= 1) {
+            if (meta.indexed && meta.distinctCountHint < 2) {
                 meta.distinctCountHint = Math.max(2, (int) (recordCountHint * 0.01));
             }
 
@@ -128,7 +128,7 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
             }
 
             // distinctCount
-            if (meta.distinctCountHint <= 0 && meta.type == ColumnType.SYMBOL) {
+            if (meta.distinctCountHint < 1 && meta.type == ColumnType.SYMBOL) {
                 meta.distinctCountHint = (int) (recordCountHint * 0.2); //20%
             }
 
