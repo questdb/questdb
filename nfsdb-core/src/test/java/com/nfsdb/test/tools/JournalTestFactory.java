@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalClosingListener;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.JournalConfiguration;
+import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.factory.configuration.MetadataBuilder;
 import com.nfsdb.utils.Files;
 import org.junit.rules.TestRule;
@@ -78,19 +79,34 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
     }
 
     @Override
-    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        Journal<T> result = super.reader(key);
-        journals.add(result);
-        result.setCloseListener(this);
-        return result;
-    }
-
-    @Override
     public <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException {
         JournalBulkWriter<T> writer = super.bulkWriter(key);
         journals.add(writer);
         writer.setCloseListener(this);
         return writer;
+    }
+
+    @Override
+    public boolean closing(Journal journal) {
+        journals.remove(journal);
+        return true;
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public Journal reader(JournalMetadata metadata) throws JournalException {
+        Journal reader = new Journal(metadata, metadata.getKey());
+        journals.add(reader);
+        reader.setCloseListener(this);
+        return reader;
+    }
+
+    @Override
+    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
+        Journal<T> result = super.reader(key);
+        journals.add(result);
+        result.setCloseListener(this);
+        return result;
     }
 
     @Override
@@ -106,11 +122,5 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
         journals.add(writer);
         writer.setCloseListener(this);
         return writer;
-    }
-
-    @Override
-    public boolean closing(Journal journal) {
-        journals.remove(journal);
-        return true;
     }
 }
