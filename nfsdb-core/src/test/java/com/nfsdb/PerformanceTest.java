@@ -17,7 +17,6 @@
 package com.nfsdb;
 
 import com.nfsdb.collections.DirectLongList;
-import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.model.Quote;
@@ -25,6 +24,7 @@ import com.nfsdb.ql.JournalRecordSource;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.impl.*;
+import com.nfsdb.ql.ops.StringConstant;
 import com.nfsdb.query.api.QueryAllBuilder;
 import com.nfsdb.query.api.QueryHeadBuilder;
 import com.nfsdb.storage.KVIndex;
@@ -90,14 +90,7 @@ public class PerformanceTest extends AbstractTest {
                             new JournalPartitionSource(journal, true),
                             new SingleIntervalSource(interval)
 
-                    ),
-                    new KvIndexRowSource(
-                            "sym"
-                            ,
-                            new PartialSymbolKeySource("sym", new ObjHashSet<String>() {{
-                                add("LLOY.L");
-                            }})
-                    )
+                    ), new KvIndexLookupRowSource("sym", new StringConstant("LLOY.L"))
             );
 
 

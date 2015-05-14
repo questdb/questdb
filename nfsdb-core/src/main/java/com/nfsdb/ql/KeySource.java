@@ -20,6 +20,4 @@ public interface KeySource {
     KeyCursor prepareCursor(PartitionSlice slice);
 
     void reset();
-
-    int size();
 }

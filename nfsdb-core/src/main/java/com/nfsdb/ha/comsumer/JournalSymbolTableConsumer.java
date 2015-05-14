@@ -55,7 +55,7 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
             SymbolTable tab = journal.getSymbolTable(i);
             symbolTableConsumers.extendAndSet(i, new VariableColumnDeltaConsumer(tab.getDataColumn()));
             symbolTables.extendAndSet(i, tab);
-            symbolTableSizes.set(i, tab.size());
+            symbolTableSizes.setQuick(i, tab.size());
         }
     }
 
@@ -84,7 +84,7 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
         buffer.position(0);
         ByteBuffers.copy(channel, buffer);
         for (int i = 0, k = tabCount; i < k; i++) {
-            symbolTableSizes.set(i, symbolTables.getQuick(i).size());
+            symbolTableSizes.setQuick(i, symbolTables.getQuick(i).size());
             if (Unsafe.getUnsafe().getByte(address + i) == 0) {
                 continue;
             }

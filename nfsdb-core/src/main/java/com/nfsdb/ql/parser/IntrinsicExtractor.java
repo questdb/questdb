@@ -56,7 +56,7 @@ public class IntrinsicExtractor {
         // pre-order iterative tree traversal
         // see: http://en.wikipedia.org/wiki/Tree_traversal
 
-        if (removeIntrinsics(node, m)) {
+        if (removAndIntrinsics(node, m)) {
             return model;
         }
         ExprNode root = node;
@@ -65,10 +65,10 @@ public class IntrinsicExtractor {
             if (node != null) {
                 switch (node.token) {
                     case "and":
-                        if (!removeIntrinsics(node.rhs, m)) {
+                        if (!removAndIntrinsics(node.rhs, m)) {
                             stack.addFirst(node.rhs);
                         }
-                        node = removeIntrinsics(node.lhs, m) ? null : node.lhs;
+                        node = removAndIntrinsics(node.lhs, m) ? null : node.lhs;
                         break;
                     default:
                         node = stack.pollFirst();
@@ -82,23 +82,82 @@ public class IntrinsicExtractor {
         return model;
     }
 
-    private boolean analyzeEquals(ExprNode node) throws ParserException {
-        return !(node.paramCount > 2 || timestamp == null) && (analyzeEquals0(node, node.lhs, node.rhs) || analyzeEquals0(node, node.rhs, node.lhs));
+    private boolean analyzeEquals(ExprNode node, JournalMetadata m) throws ParserException {
+        return node.paramCount == 2 && (analyzeEquals0(node, node.lhs, node.rhs, m) || analyzeEquals0(node, node.rhs, node.lhs, m));
     }
 
-    private boolean analyzeEquals0(ExprNode node, ExprNode a, ExprNode b) throws ParserException {
+    private boolean analyzeEquals0(ExprNode node, ExprNode a, ExprNode b, JournalMetadata m) throws ParserException {
         if (a == null || b == null) {
             throw new ParserException(node.position, "Argument expected");
         }
-        if (a.type == ExprNode.NodeType.LITERAL && timestamp.name.equals(a.token) && b.type == ExprNode.NodeType.CONSTANT) {
-            boolean reversible = parseInterval(Chars.stripQuotes(b.token), b.position);
-            node.intrinsicValue = IntrinsicValue.TRUE;
-            // exact timestamp matches will be returning FALSE
-            // which means that they are irreversible and won't be added to timestampNodes.
-            if (reversible) {
-                timestampNodes.add(node);
+
+        if (a.type == ExprNode.NodeType.LITERAL && b.type == ExprNode.NodeType.CONSTANT) {
+            if (timestamp != null && timestamp.name.equals(a.token)) {
+                boolean reversible = parseInterval(Chars.stripQuotes(b.token), b.position);
+                node.intrinsicValue = IntrinsicValue.TRUE;
+                // exact timestamp matches will be returning FALSE
+                // which means that they are irreversible and won't be added to timestampNodes.
+                if (reversible) {
+                    timestampNodes.add(node);
+                }
+                return true;
+            } else {
+                if (m.invalidColumn(a.token)) {
+                    throw new InvalidColumnException(a.position);
+                }
+                ColumnMetadata meta = m.getColumn(a.token);
+
+                switch (meta.type) {
+                    case SYMBOL:
+                    case STRING:
+                        if (meta.indexed) {
+
+                            // check if we are limited by preferred column
+                            if (preferredKeyColumn != null && !preferredKeyColumn.equals(a.token)) {
+                                return false;
+                            }
+
+                            boolean newColumn = true;
+                            // check if we already have indexed column and it is of worse selectivity
+                            if (model.keyColumn != null
+                                    && (newColumn = !model.keyColumn.equals(a.token))
+                                    && meta.distinctCountHint <= m.getColumn(model.keyColumn).distinctCountHint) {
+                                return false;
+                            }
+
+                            String value = Chars.stripQuotes(b.token);
+                            if (newColumn) {
+                                model.keyColumn = a.token;
+                                model.keyValues.clear();
+                                model.keyValues.add(value);
+                                for (int n = 0, k = keyNodes.size(); n < k; n++) {
+                                    keyNodes.getQuick(n).intrinsicValue = IntrinsicValue.UNDEFINED;
+                                }
+                                keyNodes.clear();
+                            } else {
+                                // compute overlap of values
+                                // if values do overlap, keep only our value
+                                // otherwise invalidate entire model
+                                if (model.keyValues.contains(value)) {
+                                    model.keyValues.clear();
+                                    model.keyValues.add(value);
+                                } else {
+                                    model.intrinsicValue = IntrinsicValue.FALSE;
+                                    return false;
+                                }
+                            }
+
+                            keyNodes.add(node);
+                            node.intrinsicValue = IntrinsicValue.TRUE;
+                            return true;
+                        }
+                        //fall through
+                    default:
+                        return false;
+                }
+
             }
-            return true;
+
         }
         return false;
     }
@@ -257,16 +316,21 @@ public class IntrinsicExtractor {
             // and reset intrinsic values on nodes associated with old column
             if (newColumn) {
                 model.keyValues.clear();
+                model.keyValues.addAll(keys);
                 for (int n = 0, k = keyNodes.size(); n < k; n++) {
                     keyNodes.getQuick(n).intrinsicValue = IntrinsicValue.UNDEFINED;
                 }
                 keyNodes.clear();
                 model.keyColumn = col;
+            } else {
+                // calculate overlap of values
+                if (!model.keyValues.replaceAllWithOverlap(keys)) {
+                    model.intrinsicValue = IntrinsicValue.FALSE;
+                }
             }
 
             keyNodes.add(node);
             node.intrinsicValue = IntrinsicValue.TRUE;
-            model.keyValues.addAll(keys);
             return true;
         }
         return false;
@@ -396,7 +460,7 @@ public class IntrinsicExtractor {
         return new Interval(loMillis, hiMillis);
     }
 
-    private boolean removeIntrinsics(ExprNode node, JournalMetadata m) throws ParserException {
+    private boolean removAndIntrinsics(ExprNode node, JournalMetadata m) throws ParserException {
         if (node == null) {
             return true;
         }
@@ -413,10 +477,9 @@ public class IntrinsicExtractor {
             case "<=":
                 return analyzeLess(node, 0);
             case "=":
-                return analyzeEquals(node);
+                return analyzeEquals(node, m);
             default:
                 return false;
         }
     }
-
 }

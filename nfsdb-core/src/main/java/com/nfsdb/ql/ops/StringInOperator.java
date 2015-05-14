@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,8 +23,8 @@ import com.nfsdb.storage.ColumnType;
 
 public class StringInOperator extends AbstractVirtualColumn implements Function {
 
+    private final ObjHashSet<CharSequence> set = new ObjHashSet<>();
     private VirtualColumn lhs;
-    private ObjHashSet<CharSequence> set = new ObjHashSet<>();
     private int keyIndex;
 
     public StringInOperator() {
@@ -40,6 +40,11 @@ public class StringInOperator extends AbstractVirtualColumn implements Function 
     @Override
     public boolean getBool() {
         return set.contains(lhs.getFlyweightStr());
+    }
+
+    @Override
+    public boolean isConstant() {
+        return lhs.isConstant();
     }
 
     @Override

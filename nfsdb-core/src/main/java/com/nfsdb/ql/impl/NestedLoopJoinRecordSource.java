@@ -56,6 +56,7 @@ public class NestedLoopJoinRecordSource extends AbstractImmutableIterator<SplitR
 
     @Override
     public void reset() {
+        // cursor reset
         masterSource.reset();
         slaveSource.reset();
         nextSlave = false;

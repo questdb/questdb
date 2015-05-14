@@ -22,6 +22,8 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.RecordMetadata;
 
+import java.util.Arrays;
+
 public class SelectedColumnsMetadata implements RecordMetadata {
     private final RecordMetadata delegate;
     private final int reindex[];
@@ -65,5 +67,13 @@ public class SelectedColumnsMetadata implements RecordMetadata {
     @Override
     public boolean invalidColumn(CharSequence name) {
         return nameIndex.get(name) == -1;
+    }
+
+    @Override
+    public String toString() {
+        return "SelectedColumnsMetadata{" +
+                "delegate=" + delegate +
+                ", reindex=" + Arrays.toString(reindex) +
+                '}';
     }
 }

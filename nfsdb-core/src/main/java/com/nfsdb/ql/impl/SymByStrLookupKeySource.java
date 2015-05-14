@@ -50,11 +50,6 @@ public class SymByStrLookupKeySource implements KeySource, KeyCursor {
     }
 
     @Override
-    public int size() {
-        return 1;
-    }
-
-    @Override
     public void reset() {
         hasNext = true;
     }

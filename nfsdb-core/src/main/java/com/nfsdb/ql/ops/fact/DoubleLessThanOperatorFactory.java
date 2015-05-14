@@ -14,31 +14,14 @@
  * limitations under the License.
  */
 
-package com.nfsdb.collections;
+package com.nfsdb.ql.ops.fact;
 
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.ql.ops.DoubleLessThanOperator;
+import com.nfsdb.ql.ops.Function;
 
-import java.io.Closeable;
-
-public class DirectMemoryStructure implements Closeable {
-
-    protected long address;
-
+public class DoubleLessThanOperatorFactory implements FunctionFactory {
     @Override
-    public final void close() {
-        free();
-    }
-
-    public final void free() {
-        if (address != 0) {
-            Unsafe.getUnsafe().freeMemory(address);
-            address = 0;
-        }
-    }
-
-    @Override
-    protected void finalize() throws Throwable {
-        free();
-        super.finalize();
+    public Function newInstance() {
+        return new DoubleLessThanOperator();
     }
 }

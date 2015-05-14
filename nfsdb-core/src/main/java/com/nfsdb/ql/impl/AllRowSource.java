@@ -57,4 +57,9 @@ public class AllRowSource extends AbstractRowSource {
     public long next() {
         return lo++;
     }
+
+    @Override
+    public String toString() {
+        return "AllRowSource{}";
+    }
 }

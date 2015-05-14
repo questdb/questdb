@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -126,7 +126,7 @@ public class Optimiser {
                 for (int i = 0; i < n; i++) {
                     f.setArg(i, args.getQuick(i));
                 }
-                stack.addFirst(f);
+                stack.addFirst(f.isConstant() ? processConstantExpression(f) : f);
         }
     }
 
@@ -182,6 +182,23 @@ public class Optimiser {
         if (where != null) {
             IntrinsicModel im = intrinsicExtractor.extract(where, metadata, latestByCol);
 
+            VirtualColumn filter = im.filter != null ? createVirtualColumn(im.filter, metadata) : null;
+
+            if (filter != null) {
+                if (filter.getType() != ColumnType.BOOLEAN) {
+                    throw new ParserException(im.filter.position, "Boolean expression expected");
+                }
+
+                if (filter.isConstant()) {
+                    if (filter.getBool()) {
+                        // constant TRUE, no filtering needed
+                        filter = null;
+                    } else {
+                        im.intrinsicValue = IntrinsicValue.FALSE;
+                    }
+                }
+            }
+
             if (im.intrinsicValue == IntrinsicValue.FALSE) {
                 ps = new NoOpJournalPartitionSource(metadata);
             } else {
@@ -204,7 +221,7 @@ public class Optimiser {
                     if (im.keyColumn != null) {
                         switch (metadata.getColumn(im.keyColumn).type) {
                             case SYMBOL:
-                                rs = new KvIndexRowSource(im.keyColumn, new PartialSymbolKeySource(im.keyColumn, im.keyValues));
+                                rs = createRecordSourceForListOfValues(im);
                                 break;
                             case STRING:
                                 rs = new StringKvIndexRowSource(im.keyColumn, im.keyValues);
@@ -212,25 +229,38 @@ public class Optimiser {
                         }
                     }
 
-                    if (im.filter != null) {
-                        rs = new FilteredRowSource(rs == null ? new AllRowSource() : rs, createVirtualColumn(im.filter, metadata));
+                    if (filter != null) {
+                        rs = new FilteredRowSource(rs == null ? new AllRowSource() : rs, filter);
                     }
                 } else {
-
-                    if (im.keyColumn != null && im.filter != null) {
-                        rs = new KvIndexHeadRowSource(latestByCol, new PartialSymbolKeySource(latestByCol, im.keyValues), 1, 0, createVirtualColumn(im.filter, metadata));
-                    } else if (im.keyColumn != null) {
-                        rs = new KvIndexHeadRowSource(latestByCol, new PartialSymbolKeySource(latestByCol, im.keyValues), 1, 0, null);
+                    if (im.keyColumn != null) {
+                        rs = new KvIndexSymListHeadRowSource(latestByCol, im.keyValues, filter);
                     } else {
-                        rs = new KvIndexHeadRowSource(latestByCol, new SymbolKeySource(latestByCol), 1, 0, null);
+                        rs = new KvIndexAllSymHeadRowSource(latestByCol, filter);
                     }
                 }
             }
         } else if (latestByCol != null) {
-            rs = new KvIndexHeadRowSource(latestByCol, new SymbolKeySource(latestByCol), 1, 0, null);
+            rs = new KvIndexAllSymHeadRowSource(latestByCol, null);
         }
 
         return new JournalSource(ps, rs == null ? new AllRowSource() : rs);
+    }
+
+    private RowSource createRecordSourceForListOfValues(IntrinsicModel im) {
+        if (im.keyValues.size() == 1) {
+            return new KvIndexLookupRowSource(im.keyColumn, new StringConstant(im.keyValues.getLast()));
+        } else {
+            RowSource src = null;
+            for (int i = 0, k = im.keyValues.size(); i < k; i++) {
+                if (src == null) {
+                    src = new KvIndexLookupRowSource(im.keyColumn, new StringConstant(im.keyValues.get(i)), true);
+                } else {
+                    src = new MergingRowSource(src, new KvIndexLookupRowSource(im.keyColumn, new StringConstant(im.keyValues.get(i)), true));
+                }
+            }
+            return src;
+        }
     }
 
     private VirtualColumn createVirtualColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
@@ -279,6 +309,19 @@ public class Optimiser {
         }
 
         throw new ParserException(node.position, "Unknown value type: " + node.token);
+    }
+
+    private VirtualColumn processConstantExpression(Function f) {
+        switch (f.getType()) {
+            case INT:
+                return new IntConstant(f.getInt());
+            case DOUBLE:
+                return new DoubleConstant(f.getDouble());
+            case BOOLEAN:
+                return new BooleanConstant(f.getBool());
+            default:
+                return f;
+        }
     }
 
     private class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {

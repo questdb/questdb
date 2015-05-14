@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,13 +48,36 @@ public class OptimiserTest extends AbstractTest {
     }
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         f = new JournalCachingFactory(factory.getConfiguration());
     }
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         f.close();
+    }
+
+    @Test
+    public void testConstantCondition1() throws Exception {
+        createTab();
+        String plan = compile("select id, x, y from tab where x > 0 and 1 > 1").toString();
+        Assert.assertTrue(plan.contains("NoOpJournalPartitionSource"));
+
+    }
+
+    @Test
+    public void testConstantCondition2() throws Exception {
+        createTab();
+        String plan = compile("select id, x, y from tab where x > 0 or 1 = 1").toString();
+        Assert.assertTrue(plan.contains("AllRowSource"));
+        Assert.assertFalse(plan.contains("NoOpJournalPartitionSource"));
+    }
+
+    @Test
+    public void testConstantCondition3() throws Exception {
+        createTab();
+        String plan = compile("select id, x, y from tab where 1 > 1 or 2 > 2").toString();
+        Assert.assertTrue(plan.contains("NoOpJournalPartitionSource"));
     }
 
     @Test
@@ -63,25 +86,25 @@ public class OptimiserTest extends AbstractTest {
         TestUtils.generateQuoteData(w, 3600 * 24 * 10, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
         w.commit();
 
-        final String expected = "BP.L\t564.425537109375\t0.000000003711\t2015-02-12T10:00:40.000Z\n" +
+        final String expected = "ADM.L\t837.343750000000\t0.061431560665\t2015-02-12T10:00:04.000Z\n" +
+                "BP.L\t564.425537109375\t0.000000003711\t2015-02-12T10:00:40.000Z\n" +
                 "BP.L\t768.000000000000\t0.000000011709\t2015-02-12T10:01:18.000Z\n" +
                 "BP.L\t512.000000000000\t74.948242187500\t2015-02-12T10:01:31.000Z\n" +
                 "BP.L\t980.000000000000\t133.570312500000\t2015-02-12T10:02:14.000Z\n" +
+                "ADM.L\t768.000000000000\t296.109375000000\t2015-02-12T10:02:35.000Z\n" +
                 "BP.L\t807.750000000000\t705.548904418945\t2015-02-12T10:02:49.000Z\n" +
                 "BP.L\t949.156250000000\t63.068359375000\t2015-02-12T10:02:53.000Z\n" +
+                "ADM.L\t768.000000000000\t0.000047940810\t2015-02-12T10:03:19.000Z\n" +
                 "BP.L\t968.953491210938\t0.029868379235\t2015-02-12T10:03:21.000Z\n" +
+                "ADM.L\t512.000000000000\t0.000000000000\t2015-02-12T10:03:31.000Z\n" +
                 "BP.L\t512.000000000000\t0.000000318310\t2015-02-12T10:03:56.000Z\n" +
                 "BP.L\t788.000000000000\t55.569427490234\t2015-02-12T10:04:02.000Z\n" +
                 "BP.L\t768.000000000000\t924.000000000000\t2015-02-12T10:04:04.000Z\n" +
-                "BP.L\t992.000000000000\t0.750000000000\t2015-02-12T10:04:27.000Z\n" +
-                "BP.L\t518.117187500000\t765.889160156250\t2015-02-12T10:04:33.000Z\n" +
-                "ADM.L\t837.343750000000\t0.061431560665\t2015-02-12T10:00:04.000Z\n" +
-                "ADM.L\t768.000000000000\t296.109375000000\t2015-02-12T10:02:35.000Z\n" +
-                "ADM.L\t768.000000000000\t0.000047940810\t2015-02-12T10:03:19.000Z\n" +
-                "ADM.L\t512.000000000000\t0.000000000000\t2015-02-12T10:03:31.000Z\n" +
                 "ADM.L\t718.848632812500\t907.609375000000\t2015-02-12T10:04:13.000Z\n" +
                 "ADM.L\t965.062500000000\t0.000000591804\t2015-02-12T10:04:22.000Z\n" +
-                "ADM.L\t696.000000000000\t9.672361135483\t2015-02-12T10:04:25.000Z\n";
+                "ADM.L\t696.000000000000\t9.672361135483\t2015-02-12T10:04:25.000Z\n" +
+                "BP.L\t992.000000000000\t0.750000000000\t2015-02-12T10:04:27.000Z\n" +
+                "BP.L\t518.117187500000\t765.889160156250\t2015-02-12T10:04:33.000Z\n";
         assertThat(expected, "select sym, bid, ask, timestamp from q where timestamp = '2015-02-12T10:00:00;5m' and sym in ('BP.L','ADM.L') and bid > 500");
     }
 
@@ -183,8 +206,29 @@ public class OptimiserTest extends AbstractTest {
         TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
         w.commit();
 
-        final String expected = "GKN.L\t688.000000000000\t256.000000000000\t2015-02-13T02:59:50.000Z\n";
-        assertThat(expected, "select sym, bid, ask, timestamp from q latest by sym where sym in ('GKN.L') and ask > 100");
+        final String expected = "TLW.L\t0.000000000000\t0.000000048727\t2015-02-13T02:58:41.000Z\n" +
+                "ADM.L\t0.000000106175\t0.102090202272\t2015-02-13T02:58:59.000Z\n" +
+                "ABF.L\t0.000701488039\t382.432617187500\t2015-02-13T02:59:25.000Z\n" +
+                "RRS.L\t161.155059814453\t809.607971191406\t2015-02-13T02:59:26.000Z\n" +
+                "BP.L\t0.000003149229\t0.000005004517\t2015-02-13T02:59:40.000Z\n" +
+                "GKN.L\t0.101824980229\t1024.000000000000\t2015-02-13T02:59:48.000Z\n" +
+                "AGK.L\t0.905496925116\t72.000000000000\t2015-02-13T02:59:53.000Z\n" +
+                "WTB.L\t0.006673692260\t348.000000000000\t2015-02-13T02:59:57.000Z\n" +
+                "BT-A.L\t0.000000500809\t0.000879329862\t2015-02-13T02:59:58.000Z\n" +
+                "LLOY.L\t0.000000328173\t288.000000000000\t2015-02-13T02:59:59.000Z\n";
+
+        assertThat(expected, "select sym, bid, ask, timestamp from q latest by sym where bid < ask");
+    }
+
+    @Test
+    public void testLatestBySymList() throws Exception {
+        JournalWriter<Quote> w = factory.writer(Quote.class, "q");
+        TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
+        w.commit();
+
+        final String expected = "BP.L\t0.000000253226\t1022.955993652344\t2015-02-13T02:59:34.000Z\n" +
+                "GKN.L\t688.000000000000\t256.000000000000\t2015-02-13T02:59:50.000Z\n";
+        assertThat(expected, "select sym, bid, ask, timestamp from q latest by sym where sym in ('GKN.L', 'BP.L') and ask > 100");
     }
 
     @Test
@@ -486,33 +530,7 @@ public class OptimiserTest extends AbstractTest {
     @Test
     public void testSearchByStringIdUnindexed() throws Exception {
 
-        JournalWriter w = factory.writer(
-                new JournalStructure("tab").
-                        $str("id").
-                        $double("x").
-                        $double("y").
-                        $ts()
-
-        );
-
-        Rnd rnd = new Rnd();
-        ObjHashSet<String> names = new ObjHashSet<>();
-        for (int i = 0; i < 1024; i++) {
-            names.add(rnd.nextString(15));
-        }
-
-        int mask = 1023;
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
-
-        for (int i = 0; i < 100000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putStr(0, names.get(rnd.nextInt() & mask));
-            ew.putDouble(1, rnd.nextDouble());
-            ew.putDouble(2, rnd.nextDouble());
-            ew.putDate(3, t += 10);
-            ew.append();
-        }
-        w.commit();
+        createTab();
 
         final String expected = "XTPNHTDCEBYWXBB\t-292.000000000000\t0.000000006354\t2015-03-12T00:00:02.290Z\n" +
                 "XTPNHTDCEBYWXBB\t7.197236061096\t2.818476676941\t2015-03-12T00:00:27.340Z\n" +
@@ -735,6 +753,36 @@ public class OptimiserTest extends AbstractTest {
     private RecordSource<? extends Record> compile(CharSequence query) throws ParserException, JournalException {
         parser.setContent(query);
         return optimiser.compile(parser.parse().getQueryModel());
+    }
+
+    private void createTab() throws JournalException {
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $str("id").
+                        $double("x").
+                        $double("y").
+                        $ts()
+
+        );
+
+        Rnd rnd = new Rnd();
+        ObjHashSet<String> names = new ObjHashSet<>();
+        for (int i = 0; i < 1024; i++) {
+            names.add(rnd.nextString(15));
+        }
+
+        int mask = 1023;
+        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+        for (int i = 0; i < 100000; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            ew.putStr(0, names.get(rnd.nextInt() & mask));
+            ew.putDouble(1, rnd.nextDouble());
+            ew.putDouble(2, rnd.nextDouble());
+            ew.putDate(3, t += 10);
+            ew.append();
+        }
+        w.commit();
     }
 
 }

@@ -61,4 +61,12 @@ public class SelectedColumnsRecordSource extends AbstractImmutableIterator<Recor
         record.setBase(recordCursor.next());
         return record;
     }
+
+    @Override
+    public String toString() {
+        return "SelectedColumnsRecordSource{" +
+                "recordSource=" + recordSource +
+                ", metadata=" + metadata +
+                '}';
+    }
 }

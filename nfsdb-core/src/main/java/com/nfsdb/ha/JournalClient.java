@@ -359,7 +359,7 @@ public class JournalClient {
                 commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
                 journalClientStateProducer.write(channel, new IndexedJournal(i, writers.getQuick(i)));
                 checkAck();
-                statusSentList.set(i, 1);
+                statusSentList.setQuick(i, 1);
             }
         }
         sendReady();

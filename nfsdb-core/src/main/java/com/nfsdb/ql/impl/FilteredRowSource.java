@@ -71,4 +71,9 @@ public class FilteredRowSource extends AbstractRowSource implements RecordSource
     public long next() {
         return rec.rowid;
     }
+
+    @Override
+    public String toString() {
+        return "FilteredRowSource{}";
+    }
 }

@@ -138,16 +138,7 @@ public class KVIndex implements Closeable {
 
         int cellIndex = (int) (rowCount & mask);
         if (rowBlockOffset == 0 || cellIndex == 0) {
-            long prevBlockOffset = rowBlockOffset;
-            rowBlockOffset = rData.getAppendOffset() + rowBlockSize;
-            rData.setAppendOffset(rowBlockOffset);
-            Unsafe.getUnsafe().putLong(rData.getAddress(rowBlockOffset - 8, 8), prevBlockOffset);
-            Unsafe.getUnsafe().putLong(address, rowBlockOffset);
-            if (prevBlockOffset == 0) {
-                Unsafe.getUnsafe().putLong(address + 16, rowBlockOffset);
-            } else {
-                Unsafe.getUnsafe().putLong(rData.getAddress(prevBlockOffset - 16, 8), rowBlockOffset);
-            }
+            rowBlockOffset = allocateRowBlock(address, rowBlockOffset);
         }
         Unsafe.getUnsafe().putLong(rData.getAddress(rowBlockOffset - rowBlockSize + 8 * cellIndex, 8), value);
         Unsafe.getUnsafe().putLong(address + 8, rowCount + 1);
@@ -363,6 +354,12 @@ public class KVIndex implements Closeable {
         return getLong(rData, rowBlockOffset - rowBlockSize + 8 * cellIndex);
     }
 
+    public FwdIndexCursor newFwdCursor(int key) {
+        FwdIndexCursor cursor = new FwdIndexCursor();
+        cursor.setKey(key);
+        return cursor;
+    }
+
     /**
      * Size of index is in fact maximum of all row IDs. This is useful to keep it in same units of measure as
      * size of columns.
@@ -421,6 +418,20 @@ public class KVIndex implements Closeable {
 
         maxValue = sz;
         commit();
+    }
+
+    private long allocateRowBlock(long address, long rowBlockOffset) {
+        long prevBlockOffset = rowBlockOffset;
+        rowBlockOffset = rData.getAppendOffset() + rowBlockSize;
+        rData.setAppendOffset(rowBlockOffset);
+        Unsafe.getUnsafe().putLong(rData.getAddress(rowBlockOffset - 8, 8), prevBlockOffset);
+        Unsafe.getUnsafe().putLong(address, rowBlockOffset);
+        if (prevBlockOffset == 0) {
+            Unsafe.getUnsafe().putLong(address + 16, rowBlockOffset);
+        } else {
+            Unsafe.getUnsafe().putLong(rData.getAddress(prevBlockOffset - 16, 8), rowBlockOffset);
+        }
+        return rowBlockOffset;
     }
 
     long getKeyOffset(long key) {

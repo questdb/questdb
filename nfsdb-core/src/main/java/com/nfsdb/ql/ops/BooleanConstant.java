@@ -14,31 +14,25 @@
  * limitations under the License.
  */
 
-package com.nfsdb.collections;
+package com.nfsdb.ql.ops;
 
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.storage.ColumnType;
 
-import java.io.Closeable;
+public class BooleanConstant extends AbstractVirtualColumn {
+    private final boolean value;
 
-public class DirectMemoryStructure implements Closeable {
-
-    protected long address;
-
-    @Override
-    public final void close() {
-        free();
-    }
-
-    public final void free() {
-        if (address != 0) {
-            Unsafe.getUnsafe().freeMemory(address);
-            address = 0;
-        }
+    public BooleanConstant(boolean value) {
+        super(ColumnType.BOOLEAN);
+        this.value = value;
     }
 
     @Override
-    protected void finalize() throws Throwable {
-        free();
-        super.finalize();
+    public boolean getBool() {
+        return value;
+    }
+
+    @Override
+    public boolean isConstant() {
+        return true;
     }
 }

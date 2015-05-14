@@ -49,6 +49,7 @@ public class JournalSource extends AbstractJournalSource implements JournalRecor
 
     @Override
     public void reset() {
+        // cursor type reset
         if (partitionCursor != null) {
             partitionCursor.reset();
         }
@@ -71,6 +72,14 @@ public class JournalSource extends AbstractJournalSource implements JournalRecor
     public RandomAccessRecordCursor<JournalRecord> prepareCursor(JournalReaderFactory factory) throws JournalException {
         this.partitionCursor = partitionSource.prepareCursor(factory);
         return this;
+    }
+
+    @Override
+    public String toString() {
+        return "JournalSource{" +
+                "partitionSource=" + partitionSource +
+                ", rowSource=" + rowSource +
+                '}';
     }
 
     @SuppressWarnings("unchecked")

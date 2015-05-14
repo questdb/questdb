@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,6 +43,7 @@ public final class FunctionFactories {
         factories.put(new Signature().setName("+").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.DOUBLE), new AddDoubleOperatorFactory());
         factories.put(new Signature().setName("+").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.INT), new AddDoubleOperatorFactory());
         factories.put(new Signature().setName("+").setParamCount(2).paramType(0, ColumnType.INT).paramType(1, ColumnType.DOUBLE), new AddDoubleOperatorFactory());
+        factories.put(new Signature().setName("+").setParamCount(2).paramType(0, ColumnType.INT).paramType(1, ColumnType.INT), new AddIntOperatorFactory());
 
         factories.put(new Signature().setName("/").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.DOUBLE), new DivDoubleOperatorFactory());
         factories.put(new Signature().setName("/").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.INT), new DivDoubleOperatorFactory());
@@ -58,8 +59,16 @@ public final class FunctionFactories {
 
         factories.put(new Signature().setName(">").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.DOUBLE), new DoubleGreaterThanOperatorFactory());
         factories.put(new Signature().setName(">").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.INT), new DoubleGreaterThanOperatorFactory());
+        factories.put(new Signature().setName(">").setParamCount(2).paramType(0, ColumnType.INT).paramType(1, ColumnType.DOUBLE), new DoubleGreaterThanOperatorFactory());
+        factories.put(new Signature().setName(">").setParamCount(2).paramType(0, ColumnType.INT).paramType(1, ColumnType.INT), new IntGreaterThanOperatorFactory());
+
+        factories.put(new Signature().setName("<").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.DOUBLE), new DoubleLessThanOperatorFactory());
+        factories.put(new Signature().setName("<").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.INT), new DoubleLessThanOperatorFactory());
 
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.INT).paramType(1, ColumnType.INT), new IntEqualsOperatorFactory());
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.STRING).paramType(1, ColumnType.STRING), new StringEqualsOperatorFactory());
+
+        factories.put(new Signature().setName("and").setParamCount(2).paramType(0, ColumnType.BOOLEAN).paramType(1, ColumnType.BOOLEAN), new AndOperatorFactory());
+        factories.put(new Signature().setName("or").setParamCount(2).paramType(0, ColumnType.BOOLEAN).paramType(1, ColumnType.BOOLEAN), new OrOperatorFactory());
     }
 }

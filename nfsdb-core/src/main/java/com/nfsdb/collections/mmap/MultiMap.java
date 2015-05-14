@@ -18,8 +18,8 @@ package com.nfsdb.collections.mmap;
 
 import com.nfsdb.collections.AbstractDirectList;
 import com.nfsdb.collections.DirectInputStream;
-import com.nfsdb.collections.DirectLongList;
 import com.nfsdb.collections.DirectMemoryStructure;
+import com.nfsdb.collections.LongList;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.Record;
@@ -42,7 +42,7 @@ public class MultiMap extends DirectMemoryStructure {
     private final MapMetadata metadata;
     private int keyBlockOffset;
     private int keyDataOffset;
-    private DirectLongList offsets;
+    private LongList offsets;
     private long kStart;
     private long kLimit;
     private long kPos;
@@ -61,9 +61,9 @@ public class MultiMap extends DirectMemoryStructure {
         this.keyCapacity = this.keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(this.keyCapacity);
         this.mask = keyCapacity - 1;
         this.free = (int) (keyCapacity * loadFactor);
-        this.offsets = new DirectLongList(keyCapacity);
-        this.offsets.zero((byte) -1);
+        this.offsets = new LongList(keyCapacity);
         this.offsets.setPos(keyCapacity);
+        this.offsets.zero((byte) -1);
         int columnSplit = valueColumns.size();
         int[] valueOffsets = new int[columnSplit];
 
@@ -113,10 +113,10 @@ public class MultiMap extends DirectMemoryStructure {
         // calculate hash remembering "key" structure
         // [ len | value block | key offset block | key data block ]
         int index = Hash.hashMem(keyWriter.startAddr + keyBlockOffset, keyWriter.len - keyBlockOffset) & mask;
-        long offset = offsets.get(index);
+        long offset = offsets.getQuick(index);
 
         if (offset == -1) {
-            offsets.set(index, keyWriter.startAddr - kStart);
+            offsets.setQuick(index, keyWriter.startAddr - kStart);
             if (--free == 0) {
                 rehash();
             }
@@ -186,11 +186,6 @@ public class MultiMap extends DirectMemoryStructure {
         return true;
     }
 
-    @Override
-    protected void freeInternal() {
-        offsets.free();
-    }
-
     private MapValues probe0(KeyWriter keyWriter, int index) {
         long offset;
         while ((offset = offsets.get(index = (++index & mask))) != -1) {
@@ -199,7 +194,7 @@ public class MultiMap extends DirectMemoryStructure {
                 return values.init(kStart + offset, false);
             }
         }
-        offsets.set(index, keyWriter.startAddr - kStart);
+        offsets.setQuick(index, keyWriter.startAddr - kStart);
         free--;
         if (free == 0) {
             rehash();
@@ -222,7 +217,7 @@ public class MultiMap extends DirectMemoryStructure {
     private void rehash() {
         int capacity = keyCapacity << 1;
         mask = capacity - 1;
-        DirectLongList pointers = new DirectLongList(capacity);
+        LongList pointers = new LongList(capacity);
         pointers.zero((byte) -1);
         pointers.setPos(capacity);
 
@@ -231,13 +226,12 @@ public class MultiMap extends DirectMemoryStructure {
             if (offset == -1) {
                 continue;
             }
-            long index = Hash.hashMem(kStart + offset + keyBlockOffset, Unsafe.getUnsafe().getInt(kStart + offset) - keyBlockOffset) & mask;
+            int index = Hash.hashMem(kStart + offset + keyBlockOffset, Unsafe.getUnsafe().getInt(kStart + offset) - keyBlockOffset) & mask;
             while (pointers.get(index) != -1) {
                 index = (index + 1) & mask;
             }
-            pointers.set(index, offset);
+            pointers.setQuick(index, offset);
         }
-        this.offsets.free();
         this.offsets = pointers;
         this.free += (capacity - keyCapacity) * loadFactor;
         this.keyCapacity = capacity;

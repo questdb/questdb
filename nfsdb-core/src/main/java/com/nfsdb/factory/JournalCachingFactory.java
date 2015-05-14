@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -59,6 +59,19 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
     }
 
     @Override
+    @SuppressWarnings("unchecked")
+    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
+        Journal<T> result = readers.get(key);
+        if (result == null) {
+            result = new Journal<>(getOrCreateMetadata(key), key);
+            result.setCloseListener(this);
+            readers.put(key, result);
+            journalList.add(result);
+        }
+        return result;
+    }
+
+    @Override
     public void close() {
         if (pool != null) {
             pool.release(this);
@@ -73,17 +86,13 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
         }
     }
 
-    @Override
-    public boolean closing(Journal journal) {
-        return false;
-    }
-
-    @Override
     @SuppressWarnings("unchecked")
-    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        Journal<T> result = readers.get(key);
+    @Override
+    public Journal reader(JournalMetadata metadata) throws JournalException {
+        JournalKey key = metadata.getKey();
+        Journal result = readers.get(key);
         if (result == null) {
-            result = new Journal<>(getOrCreateMetadata(key), key);
+            result = new Journal<>(metadata, key);
             result.setCloseListener(this);
             readers.put(key, result);
             journalList.add(result);
@@ -91,17 +100,9 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
         return result;
     }
 
-    @SuppressWarnings("unchecked")
     @Override
-    public Journal reader(JournalMetadata metadata) throws JournalException {
-        Journal result = readers.get(metadata.getKey());
-        if (result == null) {
-            result = new Journal<>(metadata, metadata.getKey());
-            result.setCloseListener(this);
-            readers.put(metadata.getKey(), result);
-            journalList.add(result);
-        }
-        return result;
+    public boolean closing(Journal journal) {
+        return false;
     }
 
     public void refresh() throws JournalException {

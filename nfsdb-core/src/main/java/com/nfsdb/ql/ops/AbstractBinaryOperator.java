@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.nfsdb.ql.ops;
 import com.nfsdb.ql.RecordSourceState;
 import com.nfsdb.ql.parser.ParserException;
 import com.nfsdb.storage.ColumnType;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public abstract class AbstractBinaryOperator extends AbstractVirtualColumn implements Function {
     protected VirtualColumn lhs;
@@ -36,6 +37,11 @@ public abstract class AbstractBinaryOperator extends AbstractVirtualColumn imple
     }
 
     @Override
+    public boolean isConstant() {
+        return lhs.isConstant() && rhs.isConstant();
+    }
+
+    @Override
     public void setArg(int pos, VirtualColumn arg) throws ParserException {
         switch (pos) {
             case 0:
@@ -49,6 +55,7 @@ public abstract class AbstractBinaryOperator extends AbstractVirtualColumn imple
         }
     }
 
+    @SuppressFBWarnings({"ACEM_ABSTRACT_CLASS_EMPTY_METHODS"})
     @Override
     public void setArgCount(int count) {
     }

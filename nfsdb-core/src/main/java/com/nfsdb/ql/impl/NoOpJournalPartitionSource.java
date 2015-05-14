@@ -41,7 +41,7 @@ public class NoOpJournalPartitionSource extends AbstractImmutableIterator<Partit
 
     @Override
     public PartitionCursor prepareCursor(JournalReaderFactory readerFactory) throws JournalException {
-        return null;
+        return this;
     }
 
     @Override
@@ -57,5 +57,12 @@ public class NoOpJournalPartitionSource extends AbstractImmutableIterator<Partit
 
     @Override
     public final void reset() {
+    }
+
+    @Override
+    public String toString() {
+        return "NoOpJournalPartitionSource{" +
+                "metadata=\n" + metadata +
+                '}';
     }
 }

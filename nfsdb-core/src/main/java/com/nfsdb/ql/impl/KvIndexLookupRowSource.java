@@ -19,49 +19,51 @@ package com.nfsdb.ql.impl;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.ql.KeyCursor;
-import com.nfsdb.ql.KeySource;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.RowCursor;
+import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
-public class KvIndexRowSource extends AbstractRowSource {
+public class KvIndexLookupRowSource extends AbstractRowSource {
 
     private final String symbol;
-    private final KeySource keySource;
+    private final VirtualColumn valueFunction;
     private final boolean newCursor;
-    private KVIndex index;
+    private int columnIndex;
+    private int symbolKey = -2;
     private IndexCursor indexCursor;
-    private KeyCursor keyCursor;
     private long lo;
     private long hi;
     private boolean full;
     private long rowid;
     private boolean hasNext = false;
 
-    public KvIndexRowSource(String symbol, KeySource keySource) {
-        this(symbol, keySource, false);
+    public KvIndexLookupRowSource(String symbol, VirtualColumn valueFunction) {
+        this(symbol, valueFunction, false);
     }
 
-    public KvIndexRowSource(String symbol, KeySource keySource, boolean newCursor) {
+    public KvIndexLookupRowSource(String symbol, VirtualColumn valueFunction, boolean newCursor) {
         this.symbol = symbol;
-        this.keySource = keySource;
+        this.valueFunction = valueFunction;
         this.newCursor = newCursor;
     }
 
     @Override
     public void configure(JournalMetadata metadata) {
+        this.columnIndex = metadata.getColumnIndex(symbol);
     }
 
     @Override
     public RowCursor prepareCursor(PartitionSlice slice) {
         try {
-            this.index = slice.partition.getIndexForColumn(symbol);
-            this.keyCursor = this.keySource.prepareCursor(slice);
-            this.indexCursor = null;
+            KVIndex index = slice.partition.getIndexForColumn(columnIndex);
+            if (symbolKey == -2) {
+                symbolKey = slice.partition.getJournal().getSymbolTable(symbol).getQuick(valueFunction.getFlyweightStr());
+            }
+            this.indexCursor = newCursor ? index.newFwdCursor(symbolKey) : index.fwdCursor(symbolKey);
             this.full = slice.lo == 0 && slice.calcHi;
             this.lo = slice.lo - 1;
             this.hi = slice.calcHi ? slice.partition.open().size() : slice.hi + 1;
@@ -73,7 +75,7 @@ public class KvIndexRowSource extends AbstractRowSource {
 
     @Override
     public void reset() {
-        keySource.reset();
+        symbolKey = -2;
     }
 
     @Override
@@ -98,35 +100,12 @@ public class KvIndexRowSource extends AbstractRowSource {
             } while (indexCursor.hasNext());
         }
 
-        return hasNext = hasNext0();
+        return false;
     }
 
     @Override
     public long next() {
         hasNext = false;
         return rowid;
-    }
-
-    private boolean hasNext0() {
-        while (keyCursor.hasNext()) {
-            indexCursor = newCursor ? index.newFwdCursor(keyCursor.next()) : index.fwdCursor(keyCursor.next());
-
-            if (indexCursor.hasNext()) {
-                if (full) {
-                    this.rowid = indexCursor.next();
-                    return true;
-                }
-
-                do {
-                    long rowid = indexCursor.next();
-                    if (rowid > lo && rowid < hi) {
-                        this.rowid = rowid;
-                        return true;
-                    }
-                } while (indexCursor.hasNext());
-            }
-        }
-
-        return false;
     }
 }

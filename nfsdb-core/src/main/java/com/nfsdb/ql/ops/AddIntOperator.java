@@ -14,31 +14,28 @@
  * limitations under the License.
  */
 
-package com.nfsdb.collections;
+package com.nfsdb.ql.ops;
 
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.storage.ColumnType;
 
-import java.io.Closeable;
+public class AddIntOperator extends AbstractBinaryOperator {
 
-public class DirectMemoryStructure implements Closeable {
-
-    protected long address;
-
-    @Override
-    public final void close() {
-        free();
-    }
-
-    public final void free() {
-        if (address != 0) {
-            Unsafe.getUnsafe().freeMemory(address);
-            address = 0;
-        }
+    public AddIntOperator() {
+        super(ColumnType.INT);
     }
 
     @Override
-    protected void finalize() throws Throwable {
-        free();
-        super.finalize();
+    public double getDouble() {
+        return lhs.getInt() + rhs.getInt();
+    }
+
+    @Override
+    public float getFloat() {
+        return (float) (lhs.getInt() + rhs.getInt());
+    }
+
+    @Override
+    public int getInt() {
+        return lhs.getInt() + rhs.getInt();
     }
 }

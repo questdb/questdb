@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -99,6 +99,66 @@ public class IntrinsicExtractorTest extends AbstractTest {
     public void testComplexInterval4() throws Exception {
         IntrinsicModel m = modelOf("timestamp = '2015-02-23T10:00:55.000Z;30m'");
         Assert.assertEquals("IntrinsicModel{keyValues=[], keyColumn='null', intervalLo=2015-02-23T10:00:55.000Z, intervalHi=2015-02-23T10:30:55.000Z, filter=null, millis=-9223372036854775808}", m.toString());
+    }
+
+    @Test
+    public void testEqualsChoiceOfColumns() throws Exception {
+        IntrinsicModel m = modelOf("sym = 'X' and ex = 'Y'");
+        assertFilter(m, "ex'Y'=");
+        Assert.assertEquals("sym", m.keyColumn);
+        Assert.assertEquals("[X]", m.keyValues.toString());
+    }
+
+    @Test
+    public void testEqualsChoiceOfColumns2() throws Exception {
+        IntrinsicModel m = modelOf("ex = 'Y' and sym = 'X'");
+        assertFilter(m, "ex'Y'=");
+        Assert.assertEquals("sym", m.keyColumn);
+        Assert.assertEquals("[X]", m.keyValues.toString());
+    }
+
+    @Test
+    public void testEqualsIndexedSearach() throws Exception {
+        IntrinsicModel m = modelOf("sym ='X' and bid > 100.05");
+        assertFilter(m, "bid100.05>");
+        Assert.assertEquals("sym", m.keyColumn);
+        Assert.assertEquals("[X]", m.keyValues.toString());
+    }
+
+    @Test
+    public void testEqualsInvalidColumn() throws Exception {
+        try {
+            modelOf("sym = 'X' and x = 'Y'");
+            Assert.fail("Exception expected");
+        } catch (ParserException e1) {
+            Assert.assertEquals(14, e1.getPosition());
+        }
+    }
+
+    @Test
+    public void testEqualsOverlapWithIn() throws Exception {
+        IntrinsicModel m = modelOf("sym in ('x','y') and sym = 'y'");
+        Assert.assertNull(m.filter);
+        Assert.assertEquals("[y]", m.keyValues.toString());
+    }
+
+    @Test
+    public void testEqualsOverlapWithIn2() throws Exception {
+        IntrinsicModel m = modelOf("sym = 'y' and sym in ('x','y')");
+        Assert.assertNull(m.filter);
+        Assert.assertEquals("[y]", m.keyValues.toString());
+    }
+
+    @Test
+    public void testEqualsZeroOverlapWithIn() throws Exception {
+        IntrinsicModel m = modelOf("sym in ('x','y') and sym = 'z'");
+        Assert.assertEquals(IntrinsicValue.FALSE, m.intrinsicValue);
+    }
+
+    @Test
+    public void testEqualsZeroOverlapWithIn2() throws Exception {
+        IntrinsicModel m = modelOf("sym = 'z' and sym in ('x','y')");
+        Assert.assertEquals(IntrinsicValue.FALSE, m.intrinsicValue);
     }
 
     @Test
@@ -377,6 +437,28 @@ public class IntrinsicExtractorTest extends AbstractTest {
     }
 
     @Test
+    public void testListOfValuesNegativeOverlap() throws Exception {
+        IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and sym in ('a', 'z') and sym in ('c')");
+        Assert.assertEquals(IntrinsicValue.FALSE, m.intrinsicValue);
+    }
+
+    @Test
+    public void testListOfValuesPositiveOverlap() throws Exception {
+        IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and sym in ('a', 'z') and sym in ('z')");
+        Assert.assertNull(m.filter);
+        Assert.assertEquals(IntrinsicValue.UNDEFINED, m.intrinsicValue);
+        Assert.assertEquals("[z]", m.keyValues.toString());
+    }
+
+    @Test
+    public void testListOfValuesPositiveOverlapQuoteIndifference() throws Exception {
+        IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and sym in ('a', \"z\") and sym in ('z')");
+        Assert.assertNull(m.filter);
+        Assert.assertEquals(IntrinsicValue.UNDEFINED, m.intrinsicValue);
+        Assert.assertEquals("[z]", m.keyValues.toString());
+    }
+
+    @Test
     public void testLiteralInInterval() throws Exception {
         IntrinsicModel m = modelOf("timestamp in (\"2014-01-01T12:30:00.000Z\", c)");
         Assert.assertEquals(Long.MIN_VALUE, m.intervalLo);
@@ -391,6 +473,16 @@ public class IntrinsicExtractorTest extends AbstractTest {
         Assert.assertTrue(m.intervalHi < Long.MAX_VALUE);
         Assert.assertNull(m.keyColumn);
         assertFilter(m, "z\"a\"symin");
+    }
+
+    @Test
+    public void testLiteralInListOfValuesInvalidColumn() throws Exception {
+        try {
+            modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and x in ('a', z)");
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(74, e.getPosition());
+        }
     }
 
     @Test
@@ -409,8 +501,8 @@ public class IntrinsicExtractorTest extends AbstractTest {
 
     @Test
     public void testMultipleAnds() throws Exception {
-        IntrinsicModel m = modelOf("a > 10 and b > 20 and (c > 100 and d < 20 and e = 30)");
-        assertFilter(m, "a10>b20>andc100>d20<ande30=andand");
+        IntrinsicModel m = modelOf("a > 10 and b > 20 and (c > 100 and d < 20 and bid = 30)");
+        assertFilter(m, "a10>b20>andc100>d20<andbid30=andand");
     }
 
     @Test
@@ -438,6 +530,12 @@ public class IntrinsicExtractorTest extends AbstractTest {
         } catch (ParserException e) {
             Assert.assertTrue(e.getMessage().contains("Column name expected"));
         }
+    }
+
+    @Test
+    public void testOr() throws Exception {
+        modelOf("(sym = 'X' or sym = 'Y') and bid > 10");
+
     }
 
     @Test
@@ -494,6 +592,17 @@ public class IntrinsicExtractorTest extends AbstractTest {
     public void testThreeIntrinsics() throws Exception {
         IntrinsicModel m;
         m = modelOf("sym in ('a', 'b') and ex in ('c') and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and bid > 100 and ask < 110");
+        assertFilter(m, "ex'c'inbid100>andask110<and");
+        Assert.assertEquals("sym", m.keyColumn);
+        Assert.assertEquals("[a,b]", m.keyValues.toString());
+        Assert.assertEquals("2014-01-01T12:30:00.000Z", Dates.toString(m.intervalLo));
+        Assert.assertEquals("2014-01-02T12:30:00.000Z", Dates.toString(m.intervalHi));
+    }
+
+    @Test
+    public void testThreeIntrinsics2() throws Exception {
+        IntrinsicModel m;
+        m = modelOf("ex in ('c') and sym in ('a', 'b') and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and bid > 100 and ask < 110");
         assertFilter(m, "ex'c'inbid100>andask110<and");
         Assert.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[a,b]", m.keyValues.toString());
