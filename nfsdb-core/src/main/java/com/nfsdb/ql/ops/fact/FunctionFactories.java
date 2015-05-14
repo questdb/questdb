@@ -19,12 +19,24 @@ package com.nfsdb.ql.ops.fact;
 import com.nfsdb.collections.ObjObjHashMap;
 import com.nfsdb.ql.parser.Signature;
 import com.nfsdb.storage.ColumnType;
+import com.nfsdb.utils.Chars;
 
 public final class FunctionFactories {
     private static final ObjObjHashMap<Signature, FunctionFactory> factories = new ObjObjHashMap<>();
+    // intrinsic factories
+    private static final StringInOperatorFactory STRING_IN_OPERATOR_FACTORY = new StringInOperatorFactory();
 
     public static FunctionFactory find(Signature sig) {
-        return factories.get(sig);
+        FunctionFactory factory = factories.get(sig);
+        if (factory != null) {
+            return factory;
+        } else {
+            // special cases/intrinsic factories
+            if (Chars.equals("in", sig.name) && sig.paramTypes.getLast() == ColumnType.STRING) {
+                return STRING_IN_OPERATOR_FACTORY;
+            }
+        }
+        return null;
     }
 
     static {

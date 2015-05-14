@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,9 +41,10 @@ import java.util.ArrayDeque;
 public class Optimiser {
 
     private final ArrayDeque<VirtualColumn> stack = new ArrayDeque<>();
-    private final ArrayDeque<ExprNode> exprStack = new ArrayDeque<>();
     private final IntrinsicExtractor intrinsicExtractor = new IntrinsicExtractor();
     private final JournalFactory factory;
+    private final VirtualColumnBuilder virtualColumnBuilderVisitor = new VirtualColumnBuilder();
+    private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
 
     public Optimiser(JournalFactory factory) {
         this.factory = factory;
@@ -120,7 +121,9 @@ public class Optimiser {
                     args.setQuick(n, c);
                 }
                 f = lookupFunction(node, sig);
-                for (int i = 0; i < node.paramCount; i++) {
+                int n = node.paramCount;
+                f.setArgCount(n);
+                for (int i = 0; i < n; i++) {
                     f.setArg(i, args.getQuick(i));
                 }
                 stack.addFirst(f);
@@ -231,26 +234,8 @@ public class Optimiser {
     }
 
     private VirtualColumn createVirtualColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
-        // post-order iterative tree traversal
-        // see http://en.wikipedia.org/wiki/Tree_traversal
-
-        ExprNode lastVisited = null;
-
-        while (!exprStack.isEmpty() || node != null) {
-            if (node != null) {
-                exprStack.addFirst(node);
-                node = node.lhs;
-            } else {
-                ExprNode peek = exprStack.peekFirst();
-
-                if (peek.rhs != null && lastVisited != peek.rhs) {
-                    node = peek.rhs;
-                } else {
-                    createColumn(peek, metadata);
-                    lastVisited = exprStack.pollFirst();
-                }
-            }
-        }
+        virtualColumnBuilderVisitor.metadata = metadata;
+        traversalAlgo.traverse(node, virtualColumnBuilderVisitor);
         return stack.pollFirst();
     }
 
@@ -268,7 +253,7 @@ public class Optimiser {
         if (f == null) {
             throw new ParserException(node.position, "No such function: " + sig);
         }
-        return FunctionFactories.find(sig).newInstance();
+        return f.newInstance();
     }
 
     private VirtualColumn parseConstant(ExprNode node) throws ParserException {
@@ -294,6 +279,15 @@ public class Optimiser {
         }
 
         throw new ParserException(node.position, "Unknown value type: " + node.token);
+    }
+
+    private class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
+        private RecordMetadata metadata;
+
+        @Override
+        public void visit(ExprNode node) throws ParserException {
+            createColumn(node, metadata);
+        }
     }
 
 }

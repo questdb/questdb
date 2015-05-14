@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalCachingFactory;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
@@ -30,7 +31,9 @@ import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Rnd;
+import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 public class OptimiserTest extends AbstractTest {
@@ -38,9 +41,20 @@ public class OptimiserTest extends AbstractTest {
     private final Optimiser optimiser;
     private final StringSink sink = new StringSink();
     private final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
+    private JournalCachingFactory f;
 
     public OptimiserTest() {
         this.optimiser = new Optimiser(factory);
+    }
+
+    @Before
+    public void setUp() throws Exception {
+        f = new JournalCachingFactory(factory.getConfiguration());
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        f.close();
     }
 
     @Test
@@ -164,7 +178,7 @@ public class OptimiserTest extends AbstractTest {
     }
 
     @Test
-    public void testLatestBy() throws Exception {
+    public void testLatestBySym() throws Exception {
         JournalWriter<Quote> w = factory.writer(Quote.class, "q");
         TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
         w.commit();
@@ -252,6 +266,93 @@ public class OptimiserTest extends AbstractTest {
                 "1148688404\t0.000000309420\t448.000000000000\t2015-03-12T00:15:38.730Z\n" +
                 "1148688404\t29.022820472717\t-123.758422851563\t2015-03-12T00:16:30.770Z\n";
         assertThat(expected, "select id, x, y, timestamp from tab where id = 1148688404");
+    }
+
+    @Test
+    public void testSearchByStringIdInUnindexed() throws Exception {
+
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $str("id").
+                        $double("x").
+                        $double("y").
+                        $ts()
+
+        );
+
+        Rnd rnd = new Rnd();
+        ObjHashSet<String> names = new ObjHashSet<>();
+        int n = 4 * 1024;
+        for (int i = 0; i < n; i++) {
+            names.add(rnd.nextString(15));
+        }
+
+        int mask = n - 1;
+        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+        for (int i = 0; i < 100000; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            ew.putStr(0, names.get(rnd.nextInt() & mask));
+            ew.putDouble(1, rnd.nextDouble());
+            ew.putDouble(2, rnd.nextDouble());
+            ew.putDate(3, t += 10);
+            ew.append();
+        }
+        w.commit();
+
+        final String expected = "VEGPIGSVMYWRTXV\t0.000015968965\t675.997558593750\n" +
+                "VEGPIGSVMYWRTXV\t86.369699478149\t0.000017492367\n" +
+                "JKEQQKQWPJVCFKV\t-141.875000000000\t2.248494863510\n" +
+                "JKEQQKQWPJVCFKV\t-311.641113281250\t-398.023437500000\n" +
+                "VEGPIGSVMYWRTXV\t3.659749031067\t0.000001526956\n" +
+                "VEGPIGSVMYWRTXV\t-87.500000000000\t-778.964843750000\n" +
+                "JKEQQKQWPJVCFKV\t0.000000000841\t0.000000048359\n" +
+                "JKEQQKQWPJVCFKV\t4.028919816017\t576.000000000000\n" +
+                "VEGPIGSVMYWRTXV\t896.000000000000\t0.000000293617\n" +
+                "VEGPIGSVMYWRTXV\t-1024.000000000000\t0.000001939648\n" +
+                "VEGPIGSVMYWRTXV\t0.000019246366\t-1024.000000000000\n" +
+                "VEGPIGSVMYWRTXV\t410.933593750000\t0.000000039558\n" +
+                "JKEQQKQWPJVCFKV\t0.057562204078\t0.052935207263\n" +
+                "VEGPIGSVMYWRTXV\t0.000000001681\t0.000000007821\n" +
+                "VEGPIGSVMYWRTXV\t-1024.000000000000\t-921.363525390625\n" +
+                "JKEQQKQWPJVCFKV\t0.000003027280\t43.346537590027\n" +
+                "VEGPIGSVMYWRTXV\t0.000000009230\t99.335662841797\n" +
+                "JKEQQKQWPJVCFKV\t266.000000000000\t0.000033699243\n" +
+                "VEGPIGSVMYWRTXV\t5.966133117676\t0.000019340443\n" +
+                "VEGPIGSVMYWRTXV\t0.000001273319\t0.000020025251\n" +
+                "JKEQQKQWPJVCFKV\t0.007589547429\t0.016206960194\n" +
+                "JKEQQKQWPJVCFKV\t-256.000000000000\t213.664222717285\n" +
+                "VEGPIGSVMYWRTXV\t5.901823043823\t0.226934209466\n" +
+                "VEGPIGSVMYWRTXV\t0.000033694661\t0.036246776581\n" +
+                "JKEQQKQWPJVCFKV\t22.610988616943\t0.000000000000\n" +
+                "VEGPIGSVMYWRTXV\t0.000000600285\t896.000000000000\n" +
+                "JKEQQKQWPJVCFKV\t0.000030440875\t0.000000002590\n" +
+                "VEGPIGSVMYWRTXV\t-612.819580078125\t-768.000000000000\n" +
+                "VEGPIGSVMYWRTXV\t652.960937500000\t-163.895019531250\n" +
+                "JKEQQKQWPJVCFKV\t0.000001019223\t0.000861373846\n" +
+                "VEGPIGSVMYWRTXV\t0.000000237054\t855.149673461914\n" +
+                "JKEQQKQWPJVCFKV\t384.625000000000\t-762.664184570313\n" +
+                "VEGPIGSVMYWRTXV\t0.000000003865\t269.064453125000\n" +
+                "VEGPIGSVMYWRTXV\t1.651362478733\t640.000000000000\n" +
+                "JKEQQKQWPJVCFKV\t0.772825062275\t701.435363769531\n" +
+                "JKEQQKQWPJVCFKV\t191.932769775391\t0.000013081920\n" +
+                "JKEQQKQWPJVCFKV\t416.812500000000\t0.000000003177\n" +
+                "JKEQQKQWPJVCFKV\t0.000003838093\t810.968750000000\n" +
+                "VEGPIGSVMYWRTXV\t0.042331939563\t368.000000000000\n" +
+                "VEGPIGSVMYWRTXV\t0.038675817661\t-69.960937500000\n" +
+                "VEGPIGSVMYWRTXV\t0.154417395592\t0.000000005908\n" +
+                "JKEQQKQWPJVCFKV\t0.041989765130\t728.000000000000\n" +
+                "JKEQQKQWPJVCFKV\t0.000000000000\t-89.843750000000\n" +
+                "VEGPIGSVMYWRTXV\t-224.000000000000\t247.625000000000\n";
+
+        assertThat(expected, "select id, x,y from tab where id in ('JKEQQKQWPJVCFKV', 'VEGPIGSVMYWRTXV')");
+/*
+
+        RecordSource<? extends Record> rs = compile("select id, x,y from tab where id in ('JKEQQKQWPJVCFKV', 'VEGPIGSVMYWRTXV')");
+
+        RecordSourcePrinter p = new RecordSourcePrinter(new StdoutSink());
+        p.print(rs.prepareCursor(f), rs.getMetadata());
+*/
     }
 
     @Test
@@ -402,7 +503,6 @@ public class OptimiserTest extends AbstractTest {
 
         int mask = 1023;
         long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
-
 
         for (int i = 0; i < 100000; i++) {
             JournalEntryWriter ew = w.entryWriter();
@@ -620,9 +720,15 @@ public class OptimiserTest extends AbstractTest {
     }
 
     private void assertThat(String expected, String query) throws JournalException, ParserException {
-        sink.clear();
         RecordSource<? extends Record> rs = compile(query);
-        printer.print(rs.prepareCursor(factory), rs.getMetadata());
+
+        sink.clear();
+        printer.print(rs.prepareCursor(f), rs.getMetadata());
+        Assert.assertEquals(expected, sink.toString());
+
+        rs.reset();
+        sink.clear();
+        printer.print(rs.prepareCursor(f), rs.getMetadata());
         Assert.assertEquals(expected, sink.toString());
     }
 

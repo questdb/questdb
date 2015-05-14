@@ -16,48 +16,43 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.ql.RecordSourceState;
 import com.nfsdb.ql.parser.ParserException;
 import com.nfsdb.storage.ColumnType;
 
-public abstract class AbstractBinaryOperator extends AbstractVirtualColumn implements Function {
-    protected VirtualColumn lhs;
-    protected VirtualColumn rhs;
+public class StringInOperator extends AbstractVirtualColumn implements Function {
 
-    public AbstractBinaryOperator(ColumnType type) {
-        super(type);
+    private VirtualColumn lhs;
+    private ObjHashSet<CharSequence> set = new ObjHashSet<>();
+    private int keyIndex;
+
+    public StringInOperator() {
+        super(ColumnType.BOOLEAN);
     }
 
     @Override
     public void configureSource(RecordSourceState state) {
         super.configureSource(state);
         lhs.configureSource(state);
-        rhs.configureSource(state);
+    }
+
+    @Override
+    public boolean getBool() {
+        return set.contains(lhs.getFlyweightStr());
     }
 
     @Override
     public void setArg(int pos, VirtualColumn arg) throws ParserException {
-        switch (pos) {
-            case 0:
-                lhs = arg;
-                break;
-            case 1:
-                rhs = arg;
-                break;
-            default:
-                throw new ParserException(0, "Too many arguments");
+        if (pos == keyIndex) {
+            lhs = arg;
+        } else {
+            set.add(arg.getStr().toString());
         }
     }
 
     @Override
     public void setArgCount(int count) {
-    }
-
-    public void setLhs(VirtualColumn lhs) {
-        this.lhs = lhs;
-    }
-
-    public void setRhs(VirtualColumn rhs) {
-        this.rhs = rhs;
+        this.keyIndex = count - 1;
     }
 }

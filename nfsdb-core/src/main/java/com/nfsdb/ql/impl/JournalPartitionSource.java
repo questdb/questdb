@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,15 +54,6 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
     }
 
     @Override
-    public PartitionCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
-        if (journal == null) {
-            this.journal = factory.reader(metadata);
-        }
-        reset();
-        return this;
-    }
-
-    @Override
     public boolean hasNext() {
         return partitionIndex < partitionCount;
     }
@@ -78,6 +69,16 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
+    }
+
+    @Override
+    public PartitionCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
+        if (journal == null) {
+            this.journal = factory.reader(metadata);
+        }
+        partitionCount = journal.getPartitionCount();
+        partitionIndex = 0;
+        return this;
     }
 
     @Override

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 package com.nfsdb.ql.parser;
 
 import com.nfsdb.JournalWriter;
-import com.nfsdb.collections.IntStack;
 import com.nfsdb.model.Quote;
 import com.nfsdb.ql.model.ExprNode;
 import com.nfsdb.ql.model.IntrinsicModel;
@@ -30,16 +29,19 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.util.ArrayDeque;
-
 public class IntrinsicExtractorTest extends AbstractTest {
 
     private final RpnBuilder rpn = new RpnBuilder();
     private final ExprParser p = new ExprParser();
     private final AstBuilder ast = new AstBuilder();
-    private final ArrayDeque<ExprNode> stack = new ArrayDeque<>();
-    private final IntStack indexStack = new IntStack();
     private final IntrinsicExtractor e = new IntrinsicExtractor();
+    private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
+    private final PostOrderTreeTraversalAlgo.Visitor rpnBuilderVisitor = new PostOrderTreeTraversalAlgo.Visitor() {
+        @Override
+        public void visit(ExprNode node) {
+            rpn.onNode(node);
+        }
+    };
     private JournalWriter<Quote> w;
 
     @Before
@@ -535,7 +537,7 @@ public class IntrinsicExtractorTest extends AbstractTest {
         Assert.assertEquals("2014-01-02T12:30:00.000Z", Dates.toString(m.intervalHi));
     }
 
-    private void assertFilter(IntrinsicModel m, CharSequence expected) {
+    private void assertFilter(IntrinsicModel m, CharSequence expected) throws ParserException {
         Assert.assertNotNull(m.filter);
         TestUtils.assertEquals(expected, toRpn(m.filter));
     }
@@ -549,40 +551,9 @@ public class IntrinsicExtractorTest extends AbstractTest {
         return e.extract(ast.root(), w.getMetadata(), preferredColumn);
     }
 
-    private CharSequence toRpn(ExprNode node) {
+    private CharSequence toRpn(ExprNode node) throws ParserException {
         rpn.reset();
-        stack.clear();
-        indexStack.clear();
-        ExprNode lastVisited = null;
-
-        while (!stack.isEmpty() || node != null) {
-            if (node != null) {
-                stack.addFirst(node);
-                indexStack.push(0);
-                node = node.lhs;
-            } else {
-                ExprNode peek = stack.peek();
-                if (peek.paramCount < 3) {
-                    if (peek.rhs != null && lastVisited != peek.rhs) {
-                        node = peek.rhs;
-                    } else {
-                        rpn.onNode(peek);
-                        lastVisited = stack.pollFirst();
-                        indexStack.pop();
-                    }
-                } else {
-                    int index = indexStack.peek();
-                    if (index < peek.paramCount) {
-                        node = peek.args.get(index);
-                        indexStack.update(index + 1);
-                    } else {
-                        rpn.onNode(peek);
-                        lastVisited = stack.pollFirst();
-                        indexStack.pop();
-                    }
-                }
-            }
-        }
+        traversalAlgo.traverse(node, rpnBuilderVisitor);
         return rpn.rpn();
     }
 }

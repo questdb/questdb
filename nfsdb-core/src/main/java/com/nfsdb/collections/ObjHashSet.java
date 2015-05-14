@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -83,6 +83,11 @@ public class ObjHashSet<T> {
         list.clear();
     }
 
+    public boolean contains(T key) {
+        int index = key.hashCode() & mask;
+        return Unsafe.arrayGet(keys, index) != noEntryValue && (key == Unsafe.arrayGet(keys, index) || key.equals(Unsafe.arrayGet(keys, index)) || probeContains(key, index));
+    }
+
     public T get(int index) {
         return list.getQuick(index);
     }
@@ -112,6 +117,23 @@ public class ObjHashSet<T> {
         return list.toString();
     }
 
+    @SuppressWarnings({"unchecked"})
+    protected void rehash() {
+        int newCapacity = keys.length << 1;
+        mask = newCapacity - 1;
+        free = capacity = (int) (newCapacity * loadFactor);
+
+        T[] oldKeys = keys;
+        this.keys = (T[]) new Object[newCapacity];
+        Arrays.fill(keys, noEntryValue);
+
+        for (int i = oldKeys.length; i-- > 0; ) {
+            if (Unsafe.arrayGet(oldKeys, i) != noEntryValue) {
+                insertKey(Unsafe.arrayGet(oldKeys, i));
+            }
+        }
+    }
+
     private boolean insertKey(T key) {
         int index = key.hashCode() & mask;
         if (Unsafe.arrayGet(keys, index) == noEntryValue) {
@@ -137,6 +159,19 @@ public class ObjHashSet<T> {
         } while (true);
     }
 
+    private boolean probeContains(T key, int index) {
+        do {
+            index = (index + 1) & mask;
+            if (Unsafe.arrayGet(keys, index) == noEntryValue) {
+                return false;
+            }
+
+            if (key.equals(Unsafe.arrayGet(keys, index))) {
+                return true;
+            }
+        } while (true);
+    }
+
     private void probeRemove(T key, int index) {
         do {
             index = (index + 1) & mask;
@@ -146,22 +181,5 @@ public class ObjHashSet<T> {
                 break;
             }
         } while (true);
-    }
-
-    @SuppressWarnings({"unchecked"})
-    protected void rehash() {
-        int newCapacity = keys.length << 1;
-        mask = newCapacity - 1;
-        free = capacity = (int) (newCapacity * loadFactor);
-
-        T[] oldKeys = keys;
-        this.keys = (T[]) new Object[newCapacity];
-        Arrays.fill(keys, noEntryValue);
-
-        for (int i = oldKeys.length; i-- > 0; ) {
-            if (Unsafe.arrayGet(oldKeys, i) != noEntryValue) {
-                insertKey(Unsafe.arrayGet(oldKeys, i));
-            }
-        }
     }
 }

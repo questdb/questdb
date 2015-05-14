@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ql.ops;
+package com.nfsdb.ql.ops.fact;
 
-import com.nfsdb.ql.parser.ParserException;
+import com.nfsdb.ql.ops.Function;
+import com.nfsdb.ql.ops.StringInOperator;
 
-public interface Function extends VirtualColumn {
-    void setArg(int pos, VirtualColumn arg) throws ParserException;
-
-    void setArgCount(int count);
+public class StringInOperatorFactory implements FunctionFactory {
+    @Override
+    public Function newInstance() {
+        return new StringInOperator();
+    }
 }

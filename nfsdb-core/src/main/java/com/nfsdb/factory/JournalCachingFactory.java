@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014. Vlad Ilyushchenko
+ * Copyright (c) 2014-2015. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import com.nfsdb.JournalKey;
 import com.nfsdb.collections.ObjObjHashMap;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
+import com.nfsdb.factory.configuration.JournalMetadata;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayList;
@@ -58,19 +59,6 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
     }
 
     @Override
-    @SuppressWarnings("unchecked")
-    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        Journal<T> result = readers.get(key);
-        if (result == null) {
-            result = new Journal<>(getOrCreateMetadata(key), key);
-            result.setCloseListener(this);
-            readers.put(key, result);
-            journalList.add(result);
-        }
-        return result;
-    }
-
-    @Override
     public void close() {
         if (pool != null) {
             pool.release(this);
@@ -88,6 +76,32 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
     @Override
     public boolean closing(Journal journal) {
         return false;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
+        Journal<T> result = readers.get(key);
+        if (result == null) {
+            result = new Journal<>(getOrCreateMetadata(key), key);
+            result.setCloseListener(this);
+            readers.put(key, result);
+            journalList.add(result);
+        }
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public Journal reader(JournalMetadata metadata) throws JournalException {
+        Journal result = readers.get(metadata.getKey());
+        if (result == null) {
+            result = new Journal<>(metadata, metadata.getKey());
+            result.setCloseListener(this);
+            readers.put(metadata.getKey(), result);
+            journalList.add(result);
+        }
+        return result;
     }
 
     public void refresh() throws JournalException {
