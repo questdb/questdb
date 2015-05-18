@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@ package com.nfsdb.ql.ops;
 
 import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.io.sink.CharSink;
-import com.nfsdb.ql.RecordSourceState;
+import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
 import sun.reflect.generics.reflectiveObjects.NotImplementedException;
@@ -27,7 +27,6 @@ import java.io.OutputStream;
 
 public abstract class AbstractVirtualColumn implements VirtualColumn {
     private final ColumnType type;
-    protected RecordSourceState state;
     private String name;
 
     public AbstractVirtualColumn(ColumnType type) {
@@ -35,57 +34,82 @@ public abstract class AbstractVirtualColumn implements VirtualColumn {
     }
 
     @Override
-    public void configureSource(RecordSourceState state) {
-        this.state = state;
-    }
-
-    @Override
-    public byte get() {
+    public byte get(Record rec) {
         throw new NotImplementedException();
     }
 
     @Override
-    public void getBin(OutputStream s) {
+    public void getBin(Record rec, OutputStream s) {
         throw new NotImplementedException();
     }
 
     @Override
-    public DirectInputStream getBin() {
+    public DirectInputStream getBin(Record rec) {
         throw new NotImplementedException();
     }
 
     @Override
-    public boolean getBool() {
+    public boolean getBool(Record rec) {
         throw new NotImplementedException();
     }
 
     @Override
-    public long getDate() {
+    public long getDate(Record rec) {
         throw new NotImplementedException();
     }
 
     @Override
-    public double getDouble() {
+    public double getDouble(Record rec) {
         throw new NotImplementedException();
     }
 
     @Override
-    public float getFloat() {
+    public float getFloat(Record rec) {
         throw new NotImplementedException();
     }
 
     @Override
-    public CharSequence getFlyweightStr() {
+    public CharSequence getFlyweightStr(Record rec) {
         throw new NotImplementedException();
     }
 
     @Override
-    public int getInt() {
+    public int getInt(Record rec) {
         throw new NotImplementedException();
     }
 
     @Override
-    public long getLong() {
+    public long getLong(Record rec) {
+        throw new NotImplementedException();
+    }
+
+    @Override
+    public short getShort(Record rec) {
+        throw new NotImplementedException();
+    }
+
+    @Override
+    public CharSequence getStr(Record rec) {
+        throw new NotImplementedException();
+    }
+
+    @Override
+    public void getStr(Record rec, CharSink sink) {
+        throw new NotImplementedException();
+    }
+
+    @Override
+    public String getSym(Record rec) {
+        throw new NotImplementedException();
+    }
+
+    @Override
+    public ColumnType getType() {
+        return type;
+    }
+
+    @Override
+    public SymbolTable getSymbolTable() {
         throw new NotImplementedException();
     }
 
@@ -97,35 +121,5 @@ public abstract class AbstractVirtualColumn implements VirtualColumn {
     @Override
     public void setName(String name) {
         this.name = name;
-    }
-
-    @Override
-    public short getShort() {
-        throw new NotImplementedException();
-    }
-
-    @Override
-    public CharSequence getStr() {
-        throw new NotImplementedException();
-    }
-
-    @Override
-    public void getStr(CharSink sink) {
-        throw new NotImplementedException();
-    }
-
-    @Override
-    public String getSym() {
-        throw new NotImplementedException();
-    }
-
-    @Override
-    public SymbolTable getSymbolTable() {
-        throw new NotImplementedException();
-    }
-
-    @Override
-    public ColumnType getType() {
-        return type;
     }
 }

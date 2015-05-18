@@ -20,6 +20,7 @@ import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.RowCursor;
 import com.nfsdb.ql.RowSource;
+import com.nfsdb.ql.SymFacade;
 
 public class TopRowSource extends AbstractRowSource {
 
@@ -62,5 +63,10 @@ public class TopRowSource extends AbstractRowSource {
     public long next() {
         remaining--;
         return cursor.next();
+    }
+
+    @Override
+    public void prepare(SymFacade facade) {
+        delegate.prepare(facade);
     }
 }

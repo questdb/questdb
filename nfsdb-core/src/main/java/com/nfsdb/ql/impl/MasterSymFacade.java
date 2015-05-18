@@ -14,19 +14,27 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ql.ops;
+package com.nfsdb.ql.impl;
 
-import com.nfsdb.ql.Record;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.Journal;
+import com.nfsdb.ql.SymFacade;
+import com.nfsdb.storage.SymbolTable;
 
-public class DoubleGreaterThanOperator extends AbstractBinaryOperator {
+public class MasterSymFacade implements SymFacade {
+    private Journal journal;
 
-    public DoubleGreaterThanOperator() {
-        super(ColumnType.BOOLEAN);
+    @Override
+    public SymbolTable getSymbolTable(int index) {
+        // do not call journal.getSymbolTable() because it uses different indexing system
+        return journal.getMetadata().getColumn(index).getSymbolTable();
     }
 
     @Override
-    public boolean getBool(Record rec) {
-        return lhs.getDouble(rec) > rhs.getDouble(rec);
+    public SymbolTable getSymbolTable(String name) {
+        return journal.getSymbolTable(name);
+    }
+
+    public void setJournal(Journal journal) {
+        this.journal = journal;
     }
 }

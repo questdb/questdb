@@ -18,6 +18,12 @@ package com.nfsdb.ql.impl;
 
 import com.nfsdb.ql.RowCursor;
 import com.nfsdb.ql.RowSource;
+import com.nfsdb.ql.SymFacade;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public abstract class AbstractRowSource implements RowSource, RowCursor {
+    @SuppressFBWarnings({"ACEM_ABSTRACT_CLASS_EMPTY_METHODS"})
+    @Override
+    public void prepare(SymFacade symFacade) {
+    }
 }

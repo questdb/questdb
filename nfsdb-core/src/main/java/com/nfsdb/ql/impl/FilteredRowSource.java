@@ -17,10 +17,13 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.ql.*;
+import com.nfsdb.ql.PartitionSlice;
+import com.nfsdb.ql.RowCursor;
+import com.nfsdb.ql.RowSource;
+import com.nfsdb.ql.SymFacade;
 import com.nfsdb.ql.ops.VirtualColumn;
 
-public class FilteredRowSource extends AbstractRowSource implements RecordSourceState {
+public class FilteredRowSource extends AbstractRowSource {
 
     private final RowSource delegate;
     private final VirtualColumn filter;
@@ -35,7 +38,6 @@ public class FilteredRowSource extends AbstractRowSource implements RecordSource
     @Override
     public void configure(JournalMetadata metadata) {
         this.delegate.configure(metadata);
-        this.filter.configureSource(this);
         this.rec = new JournalRecord(metadata);
     }
 
@@ -52,15 +54,10 @@ public class FilteredRowSource extends AbstractRowSource implements RecordSource
     }
 
     @Override
-    public Record currentRecord() {
-        return rec;
-    }
-
-    @Override
     public boolean hasNext() {
         while (underlying.hasNext()) {
             rec.rowid = underlying.next();
-            if (filter.getBool()) {
+            if (filter.getBool(rec)) {
                 return true;
             }
         }
@@ -70,6 +67,11 @@ public class FilteredRowSource extends AbstractRowSource implements RecordSource
     @Override
     public long next() {
         return rec.rowid;
+    }
+
+    @Override
+    public void prepare(SymFacade facade) {
+        delegate.prepare(facade);
     }
 
     @Override

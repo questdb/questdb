@@ -18,104 +18,111 @@ package com.nfsdb.ql.ops;
 
 import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.io.sink.CharSink;
-import com.nfsdb.ql.RecordMetadata;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.SymFacade;
+import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.OutputStream;
 
 public class RecordSourceColumn extends AbstractVirtualColumn {
     private final int index;
+    private SymbolTable symbolTable;
 
-    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
-    public RecordSourceColumn(String name, RecordMetadata metadata) {
-        super(metadata.getColumn(name).getType());
-        this.index = metadata.getColumnIndex(name);
-        setName(name);
+    public RecordSourceColumn(int index, ColumnType type) {
+        super(type);
+        this.index = index;
     }
 
     @Override
-    public byte get() {
-        return state.currentRecord().get(index);
+    public byte get(Record rec) {
+        return rec.get(index);
     }
 
     @Override
-    public void getBin(OutputStream s) {
-        state.currentRecord().getBin(index, s);
+    public void getBin(Record rec, OutputStream s) {
+        rec.getBin(index, s);
     }
 
     @Override
-    public DirectInputStream getBin() {
-        return state.currentRecord().getBin(index);
+    public DirectInputStream getBin(Record rec) {
+        return rec.getBin(index);
     }
 
     @Override
-    public boolean getBool() {
-        return state.currentRecord().getBool(index);
+    public boolean getBool(Record rec) {
+        return rec.getBool(index);
     }
 
     @Override
-    public long getDate() {
-        return state.currentRecord().getDate(index);
+    public long getDate(Record rec) {
+        return rec.getDate(index);
     }
 
     @Override
-    public double getDouble() {
-        return state.currentRecord().getDouble(index);
+    public double getDouble(Record rec) {
+        return rec.getDouble(index);
     }
 
     @Override
-    public float getFloat() {
-        return state.currentRecord().getFloat(index);
+    public float getFloat(Record rec) {
+        return rec.getFloat(index);
     }
 
     @Override
-    public CharSequence getFlyweightStr() {
+    public CharSequence getFlyweightStr(Record rec) {
         switch (getType()) {
             case SYMBOL:
-                return state.currentRecord().getSym(index);
+                return rec.getSym(index);
             default:
-                return state.currentRecord().getFlyweightStr(index);
+                return rec.getFlyweightStr(index);
         }
     }
 
     @Override
-    public int getInt() {
-        return state.currentRecord().getInt(index);
+    public int getInt(Record rec) {
+        return rec.getInt(index);
     }
 
     @Override
-    public long getLong() {
-        return state.currentRecord().getLong(index);
+    public long getLong(Record rec) {
+        return rec.getLong(index);
     }
 
     @Override
-    public short getShort() {
-        return state.currentRecord().getShort(index);
+    public short getShort(Record rec) {
+        return rec.getShort(index);
     }
 
     @Override
-    public CharSequence getStr() {
-        return state.currentRecord().getStr(index);
+    public CharSequence getStr(Record rec) {
+        return rec.getStr(index);
     }
 
     @Override
-    public void getStr(CharSink sink) {
-        state.currentRecord().getStr(index, sink);
+    public void getStr(Record rec, CharSink sink) {
+        rec.getStr(index, sink);
     }
 
     @Override
-    public String getSym() {
-        return state.currentRecord().getSym(index);
+    public String getSym(Record rec) {
+        return rec.getSym(index);
     }
 
     @Override
     public SymbolTable getSymbolTable() {
-        return null;
+        return symbolTable;
     }
 
     @Override
     public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public void prepare(SymFacade facade) {
+        if (getType() == ColumnType.SYMBOL) {
+            this.symbolTable = facade.getSymbolTable(index);
+        }
     }
 }

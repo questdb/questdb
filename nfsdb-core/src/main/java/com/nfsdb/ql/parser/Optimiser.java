@@ -87,7 +87,6 @@ public class Optimiser {
     }
 
     private void createColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
-        Function f;
         Signature sig = new Signature();
         ObjList<VirtualColumn> args = new ObjList<>();
 
@@ -106,7 +105,7 @@ public class Optimiser {
                         break;
                     default:
                         // lookup zero arg function from symbol table
-                        stack.addFirst(lookupFunction(node, sig.setName(node.token).setParamCount(0)));
+                        stack.addFirst(lookupFunction(node, sig.setName(node.token).setParamCount(0), null));
                 }
                 break;
             default:
@@ -120,13 +119,7 @@ public class Optimiser {
                     sig.paramType(n, c.getType());
                     args.setQuick(n, c);
                 }
-                f = lookupFunction(node, sig);
-                int n = node.paramCount;
-                f.setArgCount(n);
-                for (int i = 0; i < n; i++) {
-                    f.setArg(i, args.getQuick(i));
-                }
-                stack.addFirst(f.isConstant() ? processConstantExpression(f) : f);
+                stack.addFirst(lookupFunction(node, sig, args));
         }
     }
 
@@ -154,28 +147,30 @@ public class Optimiser {
         RowSource rs = null;
 
         String latestByCol = null;
+        ColumnMetadata latestByMetadata = null;
+        ExprNode latestByNode = null;
 
         if (model.getLatestBy() != null) {
-            ExprNode l = model.getLatestBy();
-            if (l.type != ExprNode.NodeType.LITERAL) {
-                throw new ParserException(l.position, "Column name expected");
+            latestByNode = model.getLatestBy();
+            if (latestByNode.type != ExprNode.NodeType.LITERAL) {
+                throw new ParserException(latestByNode.position, "Column name expected");
             }
 
-            if (metadata.invalidColumn(l.token)) {
-                throw new InvalidColumnException(l.position);
+            if (metadata.invalidColumn(latestByNode.token)) {
+                throw new InvalidColumnException(latestByNode.position);
             }
 
-            ColumnMetadata m = metadata.getColumn(l.token);
+            latestByMetadata = metadata.getColumn(latestByNode.token);
 
-            if (m.type != ColumnType.SYMBOL) {
-                throw new ParserException(l.position, "Expected symbol column, found: " + m.type);
+            if (latestByMetadata.type != ColumnType.SYMBOL && latestByMetadata.type != ColumnType.STRING) {
+                throw new ParserException(latestByNode.position, "Expected symbol or string column, found: " + latestByMetadata.type);
             }
 
-            if (!m.indexed) {
-                throw new ParserException(l.position, "Column is not indexed");
+            if (!latestByMetadata.indexed) {
+                throw new ParserException(latestByNode.position, "Column is not indexed");
             }
 
-            latestByCol = l.token;
+            latestByCol = latestByNode.token;
         }
 
         ExprNode where = model.getWhereClause();
@@ -190,7 +185,7 @@ public class Optimiser {
                 }
 
                 if (filter.isConstant()) {
-                    if (filter.getBool()) {
+                    if (filter.getBool(null)) {
                         // constant TRUE, no filtering needed
                         filter = null;
                     } else {
@@ -221,10 +216,10 @@ public class Optimiser {
                     if (im.keyColumn != null) {
                         switch (metadata.getColumn(im.keyColumn).type) {
                             case SYMBOL:
-                                rs = createRecordSourceForListOfValues(im);
+                                rs = createRecordSourceForSym(im);
                                 break;
                             case STRING:
-                                rs = new StringKvIndexRowSource(im.keyColumn, im.keyValues);
+                                rs = createRecordSourceForStr(im);
                                 break;
                         }
                     }
@@ -233,30 +228,63 @@ public class Optimiser {
                         rs = new FilteredRowSource(rs == null ? new AllRowSource() : rs, filter);
                     }
                 } else {
-                    if (im.keyColumn != null) {
-                        rs = new KvIndexSymListHeadRowSource(latestByCol, im.keyValues, filter);
-                    } else {
-                        rs = new KvIndexAllSymHeadRowSource(latestByCol, filter);
+                    switch (latestByMetadata.type) {
+                        case SYMBOL:
+                            if (im.keyColumn != null) {
+                                rs = new KvIndexSymListHeadRowSource(latestByCol, im.keyValues, filter);
+                            } else {
+                                rs = new KvIndexAllSymHeadRowSource(latestByCol, filter);
+                            }
+                            break;
+                        case STRING:
+                            if (im.keyColumn != null) {
+                                rs = new KvIndexStrListHeadRowSource(latestByCol, im.keyValues, filter);
+                            } else {
+                                throw new ParserException(latestByNode.position, "Filter on string column expected");
+                            }
+                            break;
                     }
                 }
             }
         } else if (latestByCol != null) {
-            rs = new KvIndexAllSymHeadRowSource(latestByCol, null);
+            switch (latestByMetadata.type) {
+                case SYMBOL:
+                    rs = new KvIndexAllSymHeadRowSource(latestByCol, null);
+                    break;
+                case STRING:
+                    throw new ParserException(latestByNode.position, "Filter on string column expected");
+            }
         }
 
         return new JournalSource(ps, rs == null ? new AllRowSource() : rs);
     }
 
-    private RowSource createRecordSourceForListOfValues(IntrinsicModel im) {
+    private RowSource createRecordSourceForStr(IntrinsicModel im) {
         if (im.keyValues.size() == 1) {
-            return new KvIndexLookupRowSource(im.keyColumn, new StringConstant(im.keyValues.getLast()));
+            return new KvIndexStrLookupRowSource(im.keyColumn, new StringConstant(im.keyValues.getLast()));
         } else {
             RowSource src = null;
             for (int i = 0, k = im.keyValues.size(); i < k; i++) {
                 if (src == null) {
-                    src = new KvIndexLookupRowSource(im.keyColumn, new StringConstant(im.keyValues.get(i)), true);
+                    src = new KvIndexStrLookupRowSource(im.keyColumn, new StringConstant(im.keyValues.get(i)), true);
                 } else {
-                    src = new MergingRowSource(src, new KvIndexLookupRowSource(im.keyColumn, new StringConstant(im.keyValues.get(i)), true));
+                    src = new MergingRowSource(src, new KvIndexStrLookupRowSource(im.keyColumn, new StringConstant(im.keyValues.get(i)), true));
+                }
+            }
+            return src;
+        }
+    }
+
+    private RowSource createRecordSourceForSym(IntrinsicModel im) {
+        if (im.keyValues.size() == 1) {
+            return new KvIndexSymLookupRowSource(im.keyColumn, new StringConstant(im.keyValues.getLast()));
+        } else {
+            RowSource src = null;
+            for (int i = 0, k = im.keyValues.size(); i < k; i++) {
+                if (src == null) {
+                    src = new KvIndexSymLookupRowSource(im.keyColumn, new StringConstant(im.keyValues.get(i)), true);
+                } else {
+                    src = new MergingRowSource(src, new KvIndexSymLookupRowSource(im.keyColumn, new StringConstant(im.keyValues.get(i)), true));
                 }
             }
             return src;
@@ -272,18 +300,28 @@ public class Optimiser {
     @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE"})
     private VirtualColumn lookupColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
         try {
-            return new RecordSourceColumn(node.token, metadata);
+            int index = metadata.getColumnIndex(node.token);
+            return new RecordSourceColumn(index, metadata.getColumn(index).getType());
         } catch (NoSuchColumnException e) {
             throw new InvalidColumnException(node.position);
         }
     }
 
-    private Function lookupFunction(ExprNode node, Signature sig) throws ParserException {
-        FunctionFactory f = FunctionFactories.find(sig);
-        if (f == null) {
+    private VirtualColumn lookupFunction(ExprNode node, Signature sig, ObjList<VirtualColumn> args) throws ParserException {
+        FunctionFactory factory = FunctionFactories.find(sig, args);
+        if (factory == null) {
             throw new ParserException(node.position, "No such function: " + sig);
         }
-        return f.newInstance();
+
+        Function f = factory.newInstance();
+        if (args != null) {
+            int n = node.paramCount;
+            f.setArgCount(n);
+            for (int i = 0; i < n; i++) {
+                f.setArg(i, args.getQuick(i));
+            }
+        }
+        return f.isConstant() ? processConstantExpression(f) : f;
     }
 
     private VirtualColumn parseConstant(ExprNode node) throws ParserException {
@@ -314,11 +352,11 @@ public class Optimiser {
     private VirtualColumn processConstantExpression(Function f) {
         switch (f.getType()) {
             case INT:
-                return new IntConstant(f.getInt());
+                return new IntConstant(f.getInt(null));
             case DOUBLE:
-                return new DoubleConstant(f.getDouble());
+                return new DoubleConstant(f.getDouble(null));
             case BOOLEAN:
-                return new BooleanConstant(f.getBool());
+                return new BooleanConstant(f.getBool(null));
             default:
                 return f;
         }

@@ -17,11 +17,11 @@
 package com.nfsdb.ql.ops.fact;
 
 import com.nfsdb.ql.ops.Function;
-import com.nfsdb.ql.ops.StringEqualsOperator;
+import com.nfsdb.ql.ops.SymEqualsOperator;
 
-public class StringEqualsOperatorFactory implements FunctionFactory {
+public class SymEqualsOperatorFactory implements FunctionFactory {
     @Override
     public Function newInstance() {
-        return new StringEqualsOperator();
+        return new SymEqualsOperator();
     }
 }

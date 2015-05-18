@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,19 +14,13 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ql.ops;
+package com.nfsdb.ql;
 
-import com.nfsdb.storage.ColumnType;
-import com.nfsdb.utils.Chars;
+import com.nfsdb.storage.SymbolTable;
 
-public class StringEqualsOperator extends AbstractBinaryOperator {
+public interface SymFacade {
 
-    public StringEqualsOperator() {
-        super(ColumnType.BOOLEAN);
-    }
+    SymbolTable getSymbolTable(int index);
 
-    @Override
-    public boolean getBool() {
-        return Chars.equals(lhs.getFlyweightStr(), rhs.getFlyweightStr());
-    }
+    SymbolTable getSymbolTable(String name);
 }

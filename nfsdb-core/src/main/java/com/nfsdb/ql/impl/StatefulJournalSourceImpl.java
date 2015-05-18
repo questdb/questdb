@@ -21,18 +21,13 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.ql.*;
 
-public class StatefulJournalSourceImpl extends AbstractImmutableIterator<Record> implements GenericRecordSource, RecordSourceState, RecordCursor<Record> {
+public class StatefulJournalSourceImpl extends AbstractImmutableIterator<Record> implements GenericRecordSource, RecordCursor<Record> {
     private final RecordSource<? extends Record> recordSource;
     private RecordCursor<? extends Record> recordCursor;
-    private Record current;
+    private Record record;
 
     public StatefulJournalSourceImpl(RecordSource<? extends Record> recordSource) {
         this.recordSource = recordSource;
-    }
-
-    @Override
-    public Record currentRecord() {
-        return current;
     }
 
     @Override
@@ -58,6 +53,10 @@ public class StatefulJournalSourceImpl extends AbstractImmutableIterator<Record>
 
     @Override
     public Record next() {
-        return current = recordCursor.next();
+        return record = recordCursor.next();
+    }
+
+    public Record last() {
+        return record;
     }
 }

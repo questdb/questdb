@@ -23,6 +23,7 @@ import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.PartitionCursor;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.PartitionSource;
+import com.nfsdb.ql.SymFacade;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class NoOpJournalPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource, PartitionCursor {
@@ -45,6 +46,15 @@ public class NoOpJournalPartitionSource extends AbstractImmutableIterator<Partit
     }
 
     @Override
+    public SymFacade getSymFacade() {
+        return null;
+    }
+
+    @Override
+    public final void reset() {
+    }
+
+    @Override
     public boolean hasNext() {
         return false;
     }
@@ -53,10 +63,6 @@ public class NoOpJournalPartitionSource extends AbstractImmutableIterator<Partit
     @Override
     public PartitionSlice next() {
         return null;
-    }
-
-    @Override
-    public final void reset() {
     }
 
     @Override

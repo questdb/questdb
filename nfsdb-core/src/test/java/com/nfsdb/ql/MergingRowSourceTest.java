@@ -21,7 +21,7 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.model.Quote;
 import com.nfsdb.ql.impl.JournalPartitionSource;
 import com.nfsdb.ql.impl.JournalSource;
-import com.nfsdb.ql.impl.KvIndexLookupRowSource;
+import com.nfsdb.ql.impl.KvIndexSymLookupRowSource;
 import com.nfsdb.ql.impl.MergingRowSource;
 import com.nfsdb.ql.ops.StringConstant;
 import com.nfsdb.test.tools.AbstractTest;
@@ -36,8 +36,8 @@ public class MergingRowSourceTest extends AbstractTest {
         JournalWriter<Quote> w = factory.writer(Quote.class);
         TestUtils.generateQuoteData(w, 100000, Dates.parseDateTime("2014-02-11T00:00:00.000Z"), 10);
 
-        RowSource srcA = new KvIndexLookupRowSource("sym", new StringConstant("BP.L"), true);
-        RowSource srcB = new KvIndexLookupRowSource("sym", new StringConstant("WTB.L"), true);
+        RowSource srcA = new KvIndexSymLookupRowSource("sym", new StringConstant("BP.L"), true);
+        RowSource srcB = new KvIndexSymLookupRowSource("sym", new StringConstant("WTB.L"), true);
 
         RecordSource<? extends Record> rs = new JournalSource(new JournalPartitionSource(w, true), new MergingRowSource(srcA, srcB));
 

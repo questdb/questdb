@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 
 public class IntEqualsOperator extends AbstractBinaryOperator {
@@ -25,7 +26,7 @@ public class IntEqualsOperator extends AbstractBinaryOperator {
     }
 
     @Override
-    public boolean getBool() {
-        return lhs.getInt() == rhs.getInt();
+    public boolean getBool(Record rec) {
+        return lhs.getInt(rec) == rhs.getInt(rec);
     }
 }

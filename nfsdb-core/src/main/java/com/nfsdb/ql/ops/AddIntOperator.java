@@ -16,6 +16,7 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 
 public class AddIntOperator extends AbstractBinaryOperator {
@@ -25,17 +26,17 @@ public class AddIntOperator extends AbstractBinaryOperator {
     }
 
     @Override
-    public double getDouble() {
-        return lhs.getInt() + rhs.getInt();
+    public double getDouble(Record rec) {
+        return lhs.getInt(rec) + rhs.getInt(rec);
     }
 
     @Override
-    public float getFloat() {
-        return (float) (lhs.getInt() + rhs.getInt());
+    public float getFloat(Record rec) {
+        return (float) (lhs.getInt(rec) + rhs.getInt(rec));
     }
 
     @Override
-    public int getInt() {
-        return lhs.getInt() + rhs.getInt();
+    public int getInt(Record rec) {
+        return lhs.getInt(rec) + rhs.getInt(rec);
     }
 }

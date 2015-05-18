@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,8 +26,9 @@ import com.nfsdb.model.Album;
 import com.nfsdb.model.Band;
 import com.nfsdb.ql.impl.*;
 import com.nfsdb.ql.ops.RecordSourceColumn;
+import com.nfsdb.ql.ops.StrEqualsOperator;
+import com.nfsdb.ql.ops.StrGlue;
 import com.nfsdb.ql.ops.StringConstant;
-import com.nfsdb.ql.ops.StringEqualsOperator;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.utils.Files;
 import org.junit.Assert;
@@ -97,9 +98,7 @@ public class JoinStringToSymbolTest {
                 )
         );
 
-        RecordSourceColumn band = new RecordSourceColumn("band", master.getMetadata());
-        band.configureSource(master);
-
+        StrGlue glue = new StrGlue(master, new RecordSourceColumn(master.getMetadata().getColumnIndex("band"), master.getMetadata().getColumn("band").getType()));
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
         p.print(
@@ -109,7 +108,7 @@ public class JoinStringToSymbolTest {
                                 new JournalPartitionSource(bw, false),
                                 new KvIndexTopRowSource(
                                         "name"
-                                        , new SymByStrLookupKeySource(bw.getSymbolTable("name"), band)
+                                        , new SymByStrLookupKeySource(bw.getSymbolTable("name"), glue)
                                         , null
                                 ))
                 )
@@ -145,11 +144,10 @@ public class JoinStringToSymbolTest {
                 )
         );
 
-        RecordSourceColumn band = new RecordSourceColumn("band", master.getMetadata());
-        band.configureSource(master);
+        StrGlue glue = new StrGlue(master, new RecordSourceColumn(master.getMetadata().getColumnIndex("band"), master.getMetadata().getColumn("band").getType()));
 
-        StringEqualsOperator filter = new StringEqualsOperator();
-        filter.setLhs(new RecordSourceColumn("type", bw.getMetadata()));
+        StrEqualsOperator filter = new StrEqualsOperator();
+        filter.setLhs(new RecordSourceColumn(bw.getMetadata().getColumnIndex("type"), bw.getMetadata().getColumn("type").getType()));
         filter.setRhs(new StringConstant("rock"));
 
         StringSink sink = new StringSink();
@@ -161,7 +159,7 @@ public class JoinStringToSymbolTest {
                                 new JournalPartitionSource(bw, false),
                                 new KvIndexTopRowSource(
                                         "name"
-                                        , new SymByStrLookupKeySource(bw.getSymbolTable("name"), band)
+                                        , new SymByStrLookupKeySource(bw.getSymbolTable("name"), glue)
                                         , filter
                                 ))
                 )

@@ -14,12 +14,28 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ql;
+package com.nfsdb.ql.ops;
 
-import com.nfsdb.collections.ImmutableIterator;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.SymFacade;
+import com.nfsdb.storage.ColumnType;
 
-public interface PartitionCursor extends ImmutableIterator<PartitionSlice> {
-    SymFacade getSymFacade();
+public class SymEqualsOperator extends AbstractBinaryOperator {
 
-    void reset();
+    private int key;
+
+    public SymEqualsOperator() {
+        super(ColumnType.BOOLEAN);
+    }
+
+    @Override
+    public boolean getBool(Record rec) {
+        return key > -1 && lhs.getInt(rec) == key;
+    }
+
+    @Override
+    public void prepare(SymFacade facade) {
+        super.prepare(facade);
+        this.key = lhs.getSymbolTable().getQuick(rhs.getFlyweightStr(null));
+    }
 }

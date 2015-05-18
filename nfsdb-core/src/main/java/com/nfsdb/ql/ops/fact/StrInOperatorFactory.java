@@ -14,38 +14,14 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ql.ops;
+package com.nfsdb.ql.ops.fact;
 
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.ql.ops.Function;
+import com.nfsdb.ql.ops.StrInOperator;
 
-public class IntParameter extends AbstractVirtualColumn {
-    private int value;
-
-    public IntParameter() {
-        super(ColumnType.INT);
-    }
-
+public class StrInOperatorFactory implements FunctionFactory {
     @Override
-    public double getDouble() {
-        return value;
-    }
-
-    @Override
-    public float getFloat() {
-        return value;
-    }
-
-    @Override
-    public int getInt() {
-        return value;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return true;
-    }
-
-    public void setValue(int value) {
-        this.value = value;
+    public Function newInstance() {
+        return new StrInOperator();
     }
 }

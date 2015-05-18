@@ -128,7 +128,7 @@ public class OptimiserTest extends AbstractTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(49, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("symbol column"));
+            Assert.assertTrue(e.getMessage().contains("symbol or string column"));
         }
     }
 
@@ -201,6 +201,83 @@ public class OptimiserTest extends AbstractTest {
     }
 
     @Test
+    public void testLatestByStr() throws Exception {
+
+        createIndexedTab();
+
+        final String expected = "BVUDTGKDFEPWZYM\t0.000039040189\t-1024.000000000000\t2015-03-12T00:01:04.890Z\n" +
+                "COPMLLOUWWZXQEL\t0.000000431389\t0.046957752667\t2015-03-12T00:01:10.010Z\n";
+
+        assertThat(expected, "select id, x, y, timestamp from tab latest by id where id in ('COPMLLOUWWZXQEL', 'BVUDTGKDFEPWZYM')");
+    }
+
+    @Test
+    public void testLatestByStrFilterOnSym() throws Exception {
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $str("id").index().buckets(16).
+                        $sym("sym").
+                        $double("x").
+                        $double("y").
+                        $ts()
+
+        );
+
+        Rnd rnd = new Rnd();
+        ObjHashSet<String> names = new ObjHashSet<>();
+        for (int i = 0; i < 1024; i++) {
+            names.add(rnd.nextString(15));
+        }
+
+        ObjHashSet<String> syms = new ObjHashSet<>();
+        for (int i = 0; i < 64; i++) {
+            syms.add(rnd.nextString(10));
+        }
+
+        int mask = 1023;
+        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+        for (int i = 0; i < 10000; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            ew.putStr(0, names.get(rnd.nextInt() & mask));
+            ew.putDouble(2, rnd.nextDouble());
+            ew.putDouble(3, rnd.nextDouble());
+            ew.putDate(4, t += 10);
+            ew.putSym(1, syms.get(rnd.nextInt() & 63));
+            ew.append();
+        }
+        w.commit();
+
+        final String expected = "TEHIOFKMQPUNEUD\tMRFPKLNWQL\t0.020352731459\t0.165701057762\t2015-03-12T00:01:22.640Z\n";
+        assertThat(expected, "select id, sym, x, y, timestamp from tab latest by id where id = 'TEHIOFKMQPUNEUD' and sym in ('MRFPKLNWQL')");
+        assertThat(expected, "select id, sym, x, y, timestamp from tab latest by id where id = 'TEHIOFKMQPUNEUD' and sym = ('MRFPKLNWQL')");
+    }
+
+    @Test
+    public void testLatestByStrIrrelevantFilter() throws Exception {
+        createIndexedTab();
+        try {
+            compile("select id, x, y, timestamp from tab latest by id where x > y");
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(46, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("column expected"));
+        }
+    }
+
+    @Test
+    public void testLatestByStrNoFilter() throws Exception {
+        createIndexedTab();
+        try {
+            compile("select id, x, y, timestamp from tab latest by id");
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(46, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("column expected"));
+        }
+    }
+
+    @Test
     public void testLatestBySym() throws Exception {
         JournalWriter<Quote> w = factory.writer(Quote.class, "q");
         TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
@@ -240,6 +317,75 @@ public class OptimiserTest extends AbstractTest {
         } catch (ParserException e) {
             Assert.assertEquals(43, e.getPosition());
         }
+    }
+
+    @Test
+    public void testMultipleStrIdSearch() throws Exception {
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $str("id").index().buckets(32).
+                        $double("x").
+                        $double("y").
+                        $ts()
+
+        );
+
+        Rnd rnd = new Rnd();
+        ObjHashSet<String> names = new ObjHashSet<>();
+        for (int i = 0; i < 1024; i++) {
+            names.add(rnd.nextString(15));
+        }
+
+        int mask = 1023;
+        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+
+        for (int i = 0; i < 10000; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            ew.putStr(0, names.get(rnd.nextInt() & mask));
+            ew.putDouble(1, rnd.nextDouble());
+            ew.putDouble(2, rnd.nextDouble());
+            ew.putDate(3, t += 10);
+            ew.append();
+        }
+        w.commit();
+
+        final String expected = "UHUTMTRRNGCIPFZ\t0.000006506322\t-261.000000000000\t2015-03-12T00:00:00.220Z\n" +
+                "FZICFOQEVPXJYQR\t0.000000166602\t367.625000000000\t2015-03-12T00:00:00.260Z\n" +
+                "FZICFOQEVPXJYQR\t57.308933258057\t28.255742073059\t2015-03-12T00:00:09.750Z\n" +
+                "UHUTMTRRNGCIPFZ\t0.000005319798\t-727.000000000000\t2015-03-12T00:00:10.060Z\n" +
+                "FZICFOQEVPXJYQR\t-432.500000000000\t0.013725134078\t2015-03-12T00:00:13.470Z\n" +
+                "FZICFOQEVPXJYQR\t-247.761962890625\t768.000000000000\t2015-03-12T00:00:15.170Z\n" +
+                "UHUTMTRRNGCIPFZ\t438.929687500000\t0.000031495110\t2015-03-12T00:00:18.300Z\n" +
+                "FZICFOQEVPXJYQR\t264.789741516113\t0.033011944033\t2015-03-12T00:00:19.630Z\n" +
+                "FZICFOQEVPXJYQR\t6.671853065491\t1.936547994614\t2015-03-12T00:00:20.620Z\n" +
+                "UHUTMTRRNGCIPFZ\t864.000000000000\t-1024.000000000000\t2015-03-12T00:00:25.970Z\n" +
+                "UHUTMTRRNGCIPFZ\t0.002082723950\t0.000000001586\t2015-03-12T00:00:26.760Z\n" +
+                "UHUTMTRRNGCIPFZ\t-976.561523437500\t0.446909941733\t2015-03-12T00:00:29.530Z\n" +
+                "UHUTMTRRNGCIPFZ\t0.001273257891\t1.239676237106\t2015-03-12T00:00:31.270Z\n" +
+                "UHUTMTRRNGCIPFZ\t-287.234375000000\t236.000000000000\t2015-03-12T00:00:33.720Z\n" +
+                "FZICFOQEVPXJYQR\t1.589631736279\t128.217994689941\t2015-03-12T00:00:34.580Z\n" +
+                "UHUTMTRRNGCIPFZ\t32.605212211609\t0.000000182797\t2015-03-12T00:00:35.120Z\n" +
+                "UHUTMTRRNGCIPFZ\t0.000029479873\t11.629675865173\t2015-03-12T00:00:35.710Z\n" +
+                "UHUTMTRRNGCIPFZ\t269.668342590332\t0.000553555525\t2015-03-12T00:00:35.990Z\n" +
+                "UHUTMTRRNGCIPFZ\t0.000461809614\t64.250000000000\t2015-03-12T00:00:37.140Z\n" +
+                "FZICFOQEVPXJYQR\t-572.296875000000\t0.000020149632\t2015-03-12T00:00:37.190Z\n" +
+                "UHUTMTRRNGCIPFZ\t512.000000000000\t49.569551467896\t2015-03-12T00:00:40.250Z\n" +
+                "FZICFOQEVPXJYQR\t0.000005206652\t0.272554814816\t2015-03-12T00:00:49.770Z\n" +
+                "FZICFOQEVPXJYQR\t0.001125814480\t0.105613868684\t2015-03-12T00:01:06.100Z\n" +
+                "UHUTMTRRNGCIPFZ\t704.000000000000\t44.546960830688\t2015-03-12T00:01:06.420Z\n" +
+                "UHUTMTRRNGCIPFZ\t258.500000000000\t0.263136833906\t2015-03-12T00:01:07.450Z\n" +
+                "FZICFOQEVPXJYQR\t192.000000000000\t-380.804687500000\t2015-03-12T00:01:08.610Z\n" +
+                "FZICFOQEVPXJYQR\t56.567952156067\t0.086345635355\t2015-03-12T00:01:13.980Z\n" +
+                "UHUTMTRRNGCIPFZ\t0.000097790253\t0.000000006182\t2015-03-12T00:01:17.060Z\n" +
+                "FZICFOQEVPXJYQR\t128.000000000000\t469.091918945313\t2015-03-12T00:01:19.730Z\n" +
+                "FZICFOQEVPXJYQR\t-592.000000000000\t0.000000797945\t2015-03-12T00:01:20.410Z\n" +
+                "FZICFOQEVPXJYQR\t519.500000000000\t0.049629654735\t2015-03-12T00:01:22.360Z\n" +
+                "FZICFOQEVPXJYQR\t24.736416816711\t92.901168823242\t2015-03-12T00:01:22.830Z\n" +
+                "FZICFOQEVPXJYQR\t336.000000000000\t0.000000089523\t2015-03-12T00:01:26.920Z\n" +
+                "FZICFOQEVPXJYQR\t0.044912695885\t64.000000000000\t2015-03-12T00:01:37.820Z\n";
+
+        assertThat(expected, "select id, x, y, timestamp from tab where id in ('FZICFOQEVPXJYQR', 'UHUTMTRRNGCIPFZ')");
     }
 
     @Test
@@ -397,6 +543,61 @@ public class OptimiserTest extends AbstractTest {
         RecordSourcePrinter p = new RecordSourcePrinter(new StdoutSink());
         p.print(rs.prepareCursor(f), rs.getMetadata());
 */
+    }
+
+    @Test
+    public void testSearchByStringIdInUnindexed2() throws Exception {
+
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $str("id").
+                        $double("x").
+                        $double("y").
+                        $ts()
+
+        );
+
+        Rnd rnd = new Rnd();
+        ObjHashSet<String> names = new ObjHashSet<>();
+        int n = 4 * 1024;
+        for (int i = 0; i < n; i++) {
+            names.add(rnd.nextString(15));
+        }
+
+        int mask = n - 1;
+        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+        for (int i = 0; i < 100000; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            ew.putStr(0, names.get(rnd.nextInt() & mask));
+            ew.putDouble(1, rnd.nextDouble());
+            ew.putDouble(2, rnd.nextDouble());
+            ew.putDate(3, t += 10);
+            ew.append();
+        }
+        w.commit();
+
+        final String expected = "JKEQQKQWPJVCFKV\t-141.875000000000\t2.248494863510\n" +
+                "JKEQQKQWPJVCFKV\t-311.641113281250\t-398.023437500000\n" +
+                "JKEQQKQWPJVCFKV\t0.000000000841\t0.000000048359\n" +
+                "JKEQQKQWPJVCFKV\t4.028919816017\t576.000000000000\n" +
+                "JKEQQKQWPJVCFKV\t0.057562204078\t0.052935207263\n" +
+                "JKEQQKQWPJVCFKV\t0.000003027280\t43.346537590027\n" +
+                "JKEQQKQWPJVCFKV\t266.000000000000\t0.000033699243\n" +
+                "JKEQQKQWPJVCFKV\t0.007589547429\t0.016206960194\n" +
+                "JKEQQKQWPJVCFKV\t-256.000000000000\t213.664222717285\n" +
+                "JKEQQKQWPJVCFKV\t22.610988616943\t0.000000000000\n" +
+                "JKEQQKQWPJVCFKV\t0.000030440875\t0.000000002590\n" +
+                "JKEQQKQWPJVCFKV\t0.000001019223\t0.000861373846\n" +
+                "JKEQQKQWPJVCFKV\t384.625000000000\t-762.664184570313\n" +
+                "JKEQQKQWPJVCFKV\t0.772825062275\t701.435363769531\n" +
+                "JKEQQKQWPJVCFKV\t191.932769775391\t0.000013081920\n" +
+                "JKEQQKQWPJVCFKV\t416.812500000000\t0.000000003177\n" +
+                "JKEQQKQWPJVCFKV\t0.000003838093\t810.968750000000\n" +
+                "JKEQQKQWPJVCFKV\t0.041989765130\t728.000000000000\n" +
+                "JKEQQKQWPJVCFKV\t0.000000000000\t-89.843750000000\n";
+
+        assertThat(expected, "select id, x,y from tab where id in ('JKEQQKQWPJVCFKV')");
     }
 
     @Test
@@ -755,6 +956,36 @@ public class OptimiserTest extends AbstractTest {
         return optimiser.compile(parser.parse().getQueryModel());
     }
 
+    private void createIndexedTab() throws JournalException {
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $str("id").index().buckets(16).
+                        $double("x").
+                        $double("y").
+                        $ts()
+
+        );
+
+        Rnd rnd = new Rnd();
+        ObjHashSet<String> names = new ObjHashSet<>();
+        for (int i = 0; i < 1024; i++) {
+            names.add(rnd.nextString(15));
+        }
+
+        int mask = 1023;
+        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+        for (int i = 0; i < 10000; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            ew.putStr(0, names.get(rnd.nextInt() & mask));
+            ew.putDouble(1, rnd.nextDouble());
+            ew.putDouble(2, rnd.nextDouble());
+            ew.putDate(3, t += 10);
+            ew.append();
+        }
+        w.commit();
+    }
+
     private void createTab() throws JournalException {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").
@@ -784,5 +1015,4 @@ public class OptimiserTest extends AbstractTest {
         }
         w.commit();
     }
-
 }

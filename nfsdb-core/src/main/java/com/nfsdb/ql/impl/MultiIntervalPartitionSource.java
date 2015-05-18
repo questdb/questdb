@@ -23,6 +23,7 @@ import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.PartitionCursor;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.PartitionSource;
+import com.nfsdb.ql.SymFacade;
 import com.nfsdb.storage.BSearchType;
 import com.nfsdb.storage.FixedColumn;
 import com.nfsdb.utils.Interval;
@@ -54,6 +55,18 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
     public PartitionCursor prepareCursor(JournalReaderFactory readerFactory) throws JournalException {
         partitionCursor = partitionSource.prepareCursor(readerFactory);
         return this;
+    }
+
+    @Override
+    public SymFacade getSymFacade() {
+        return partitionCursor.getSymFacade();
+    }
+
+    @Override
+    public void reset() {
+        intervalSource.reset();
+        needInterval = true;
+        needPartition = true;
     }
 
     @Override
@@ -134,12 +147,5 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
     @Override
     public PartitionSlice next() {
         return result;
-    }
-
-    @Override
-    public void reset() {
-        intervalSource.reset();
-        needInterval = true;
-        needPartition = true;
     }
 }

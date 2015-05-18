@@ -16,30 +16,28 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.IntHashSet;
 import com.nfsdb.collections.ObjHashSet;
-import com.nfsdb.ql.RecordSourceState;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.SymFacade;
 import com.nfsdb.ql.parser.ParserException;
 import com.nfsdb.storage.ColumnType;
+import com.nfsdb.storage.SymbolTable;
 
-public class StringInOperator extends AbstractVirtualColumn implements Function {
+public class SymInOperator extends AbstractVirtualColumn implements Function {
 
-    private final ObjHashSet<CharSequence> set = new ObjHashSet<>();
+    private final IntHashSet set = new IntHashSet();
+    private final ObjHashSet<CharSequence> values = new ObjHashSet<>();
     private VirtualColumn lhs;
     private int keyIndex;
 
-    public StringInOperator() {
+    public SymInOperator() {
         super(ColumnType.BOOLEAN);
     }
 
     @Override
-    public void configureSource(RecordSourceState state) {
-        super.configureSource(state);
-        lhs.configureSource(state);
-    }
-
-    @Override
-    public boolean getBool() {
-        return set.contains(lhs.getFlyweightStr());
+    public boolean getBool(Record rec) {
+        return set.contains(lhs.getInt(rec));
     }
 
     @Override
@@ -48,16 +46,32 @@ public class StringInOperator extends AbstractVirtualColumn implements Function 
     }
 
     @Override
+    public void prepare(SymFacade facade) {
+        lhs.prepare(facade);
+        SymbolTable tab = lhs.getSymbolTable();
+        for (int i = 0, n = values.size(); i < n; i++) {
+            int k = tab.getQuick(values.get(i));
+            if (k > -1) {
+                set.add(k);
+            }
+        }
+    }
+
+    @Override
     public void setArg(int pos, VirtualColumn arg) throws ParserException {
         if (pos == keyIndex) {
             lhs = arg;
         } else {
-            set.add(arg.getStr().toString());
+            values.add(arg.getStr(null).toString());
         }
     }
 
     @Override
     public void setArgCount(int count) {
-        this.keyIndex = count - 1;
+        if (count < 3) {
+            this.keyIndex = 0;
+        } else {
+            this.keyIndex = count - 1;
+        }
     }
 }

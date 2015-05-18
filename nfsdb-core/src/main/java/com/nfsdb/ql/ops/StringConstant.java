@@ -17,6 +17,8 @@
 package com.nfsdb.ql.ops;
 
 import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.SymFacade;
 import com.nfsdb.storage.ColumnType;
 
 public class StringConstant extends AbstractVirtualColumn {
@@ -28,22 +30,26 @@ public class StringConstant extends AbstractVirtualColumn {
     }
 
     @Override
-    public CharSequence getFlyweightStr() {
+    public CharSequence getFlyweightStr(Record rec) {
         return value;
     }
 
     @Override
-    public CharSequence getStr() {
+    public CharSequence getStr(Record rec) {
         return value;
     }
 
     @Override
-    public void getStr(CharSink sink) {
+    public void getStr(Record rec, CharSink sink) {
         sink.put(value);
     }
 
     @Override
     public boolean isConstant() {
         return true;
+    }
+
+    @Override
+    public void prepare(SymFacade facade) {
     }
 }

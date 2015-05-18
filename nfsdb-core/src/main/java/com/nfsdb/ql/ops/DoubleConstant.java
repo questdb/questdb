@@ -16,6 +16,8 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.SymFacade;
 import com.nfsdb.storage.ColumnType;
 
 public class DoubleConstant extends AbstractVirtualColumn {
@@ -27,22 +29,27 @@ public class DoubleConstant extends AbstractVirtualColumn {
     }
 
     @Override
-    public double getDouble() {
+    public double getDouble(Record rec) {
         return value;
     }
 
     @Override
-    public float getFloat() {
+    public float getFloat(Record rec) {
         return (float) value;
     }
 
     @Override
-    public int getInt() {
+    public int getInt(Record rec) {
         return (int) value;
     }
 
     @Override
     public boolean isConstant() {
         return true;
+    }
+
+    @Override
+    public void prepare(SymFacade facade) {
+
     }
 }

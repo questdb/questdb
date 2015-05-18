@@ -16,6 +16,7 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 
 public class DoubleLessThanOperator extends AbstractBinaryOperator {
@@ -25,7 +26,7 @@ public class DoubleLessThanOperator extends AbstractBinaryOperator {
     }
 
     @Override
-    public boolean getBool() {
-        return lhs.getDouble() < rhs.getDouble();
+    public boolean getBool(Record rec) {
+        return lhs.getDouble(rec) < rhs.getDouble(rec);
     }
 }

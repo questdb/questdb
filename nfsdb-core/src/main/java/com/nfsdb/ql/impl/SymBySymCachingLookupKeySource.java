@@ -20,18 +20,18 @@ import com.nfsdb.collections.IntIntHashMap;
 import com.nfsdb.ql.KeyCursor;
 import com.nfsdb.ql.KeySource;
 import com.nfsdb.ql.PartitionSlice;
-import com.nfsdb.ql.ops.VirtualColumn;
+import com.nfsdb.ql.ops.SymGlue;
 import com.nfsdb.storage.SymbolTable;
 
 public class SymBySymCachingLookupKeySource implements KeySource, KeyCursor {
 
-    private final VirtualColumn masterKey;
+    private final SymGlue glue;
     private final SymbolTable slave;
     private final IntIntHashMap map = new IntIntHashMap();
     private boolean hasNext = true;
 
-    public SymBySymCachingLookupKeySource(SymbolTable slave, VirtualColumn masterKey) {
-        this.masterKey = masterKey;
+    public SymBySymCachingLookupKeySource(SymbolTable slave, SymGlue glue) {
+        this.glue = glue;
         this.slave = slave;
     }
 
@@ -44,9 +44,9 @@ public class SymBySymCachingLookupKeySource implements KeySource, KeyCursor {
     public int next() {
         hasNext = false;
         int m;
-        int key = map.get(m = masterKey.getInt());
+        int key = map.get(m = glue.getInt());
         if (key == -1) {
-            map.put(m, key = slave.getQuick(masterKey.getSym()));
+            map.put(m, key = slave.getQuick(glue.getSym()));
         }
         return key;
     }

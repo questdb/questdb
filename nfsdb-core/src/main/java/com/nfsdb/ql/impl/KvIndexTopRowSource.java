@@ -19,7 +19,10 @@ package com.nfsdb.ql.impl;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.ql.*;
+import com.nfsdb.ql.KeyCursor;
+import com.nfsdb.ql.KeySource;
+import com.nfsdb.ql.PartitionSlice;
+import com.nfsdb.ql.RowCursor;
 import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
@@ -31,7 +34,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
  * This is used in nested-loop join where "slave" source is scanned for one key at a time.
  */
 @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
-public class KvIndexTopRowSource extends AbstractRowSource implements RecordSourceState {
+public class KvIndexTopRowSource extends AbstractRowSource {
 
     private final String column;
     private final VirtualColumn filter;
@@ -46,9 +49,6 @@ public class KvIndexTopRowSource extends AbstractRowSource implements RecordSour
     public KvIndexTopRowSource(String column, KeySource keySource, VirtualColumn filter) {
         this.column = column;
         this.keySource = keySource;
-        if (filter != null) {
-            filter.configureSource(this);
-        }
         this.filter = filter;
     }
 
@@ -77,11 +77,6 @@ public class KvIndexTopRowSource extends AbstractRowSource implements RecordSour
     }
 
     @Override
-    public Record currentRecord() {
-        return rec;
-    }
-
-    @Override
     public boolean hasNext() {
 
         if (!keyCursor.hasNext()) {
@@ -91,7 +86,7 @@ public class KvIndexTopRowSource extends AbstractRowSource implements RecordSour
         IndexCursor indexCursor = index.cursor(keyCursor.next());
         while (indexCursor.hasNext()) {
             rec.rowid = indexCursor.next();
-            if (rec.rowid > lo && rec.rowid < hi && (filter == null || filter.getBool())) {
+            if (rec.rowid > lo && rec.rowid < hi && (filter == null || filter.getBool(rec))) {
                 return true;
             }
 

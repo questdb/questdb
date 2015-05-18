@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ql;
+package com.nfsdb.ql.ops.fact;
 
-import com.nfsdb.collections.ImmutableIterator;
+import com.nfsdb.ql.ops.Function;
+import com.nfsdb.ql.ops.SymInOperator;
 
-public interface PartitionCursor extends ImmutableIterator<PartitionSlice> {
-    SymFacade getSymFacade();
-
-    void reset();
+public class SymInOperatorFactory implements FunctionFactory {
+    @Override
+    public Function newInstance() {
+        return new SymInOperator();
+    }
 }

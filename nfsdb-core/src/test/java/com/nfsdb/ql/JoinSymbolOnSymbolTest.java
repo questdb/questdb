@@ -27,6 +27,7 @@ import com.nfsdb.model.Album;
 import com.nfsdb.model.Band;
 import com.nfsdb.ql.impl.*;
 import com.nfsdb.ql.ops.RecordSourceColumn;
+import com.nfsdb.ql.ops.SymGlue;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.utils.Files;
 import org.junit.Assert;
@@ -101,8 +102,7 @@ public class JoinSymbolOnSymbolTest {
                 new JournalSource(new JournalPartitionSource(bw, false), new AllRowSource())
         );
 
-        RecordSourceColumn name = new RecordSourceColumn("name", master.getMetadata());
-        name.configureSource(master);
+        SymGlue glue = new SymGlue(master, new RecordSourceColumn(master.getMetadata().getColumnIndex("name"), master.getMetadata().getColumn("name").getType()));
 
         out.print(
                 new InnerSkipNullJoinRecordSource(
@@ -112,7 +112,7 @@ public class JoinSymbolOnSymbolTest {
                                         new DistinctSymbolRowSource(
                                                 new KvIndexRowSource(
                                                         "band"
-                                                        , new SymBySymLookupKeySource(aw.getSymbolTable("band"), name)
+                                                        , new SymBySymLookupKeySource(aw.getSymbolTable("band"), glue)
                                                 )
                                                 , "name"
                                         )
@@ -149,8 +149,7 @@ public class JoinSymbolOnSymbolTest {
                 new JournalSource(new JournalPartitionSource(bw, false), new AllRowSource())
         );
 
-        RecordSourceColumn name = new RecordSourceColumn("name", master.getMetadata());
-        name.configureSource(master);
+        SymGlue glue = new SymGlue(master, new RecordSourceColumn(master.getMetadata().getColumnIndex("name"), master.getMetadata().getColumn("name").getType()));
 
         out.print(
                 new InnerSkipNullJoinRecordSource(
@@ -159,7 +158,7 @@ public class JoinSymbolOnSymbolTest {
                                 new JournalSource(new JournalPartitionSource(aw, false),
                                         new KvIndexRowSource(
                                                 "band"
-                                                , new SymBySymLookupKeySource(aw.getSymbolTable("band"), name)
+                                                , new SymBySymLookupKeySource(aw.getSymbolTable("band"), glue)
                                         ))
                         )
                 )
@@ -231,8 +230,7 @@ public class JoinSymbolOnSymbolTest {
                 )
         );
 
-        RecordSourceColumn name = new RecordSourceColumn("name", master.getMetadata());
-        name.configureSource(master);
+        SymGlue glue = new SymGlue(master, new RecordSourceColumn(master.getMetadata().getColumnIndex("name"), master.getMetadata().getColumn("name").getType()));
 
         out.print(
                 new NestedLoopJoinRecordSource(
@@ -242,7 +240,7 @@ public class JoinSymbolOnSymbolTest {
                                 new DistinctSymbolRowSource(
                                         new KvIndexRowSource(
                                                 "band",
-                                                new SymBySymLookupKeySource(aw.getSymbolTable("band"), name)
+                                                new SymBySymLookupKeySource(aw.getSymbolTable("band"), glue)
                                         )
                                         , "name"
                                 ))
@@ -300,16 +298,14 @@ public class JoinSymbolOnSymbolTest {
                 new JournalSource(new JournalPartitionSource(aw, false), new AllRowSource())
         );
 
-        RecordSourceColumn band = new RecordSourceColumn("band", master.getMetadata());
-        band.configureSource(master);
-
+        SymGlue glue = new SymGlue(master, new RecordSourceColumn(master.getMetadata().getColumnIndex("band"), master.getMetadata().getColumn("band").getType()));
         out.print(new NestedLoopJoinRecordSource(
                 master,
                 new JournalSource(
                         new JournalPartitionSource(bw, false),
                         new KvIndexTopRowSource(
                                 "name"
-                                , new SymBySymLookupKeySource(bw.getSymbolTable("name"), band)
+                                , new SymBySymLookupKeySource(bw.getSymbolTable("name"), glue)
                                 , null
                         )
                 )
@@ -325,15 +321,13 @@ public class JoinSymbolOnSymbolTest {
                         new AllRowSource())
         );
 
-        RecordSourceColumn name = new RecordSourceColumn("name", master.getMetadata());
-        name.configureSource(master);
-
+        SymGlue glue = new SymGlue(master, new RecordSourceColumn(master.getMetadata().getColumnIndex("name"), master.getMetadata().getColumn("name").getType()));
         return new NestedLoopJoinRecordSource(
                 master,
                 new JournalSource(
                         new JournalPartitionSource(aw, false),
                         new KvIndexRowSource("band"
-                                , new SymBySymLookupKeySource(aw.getSymbolTable("band"), name)
+                                , new SymBySymLookupKeySource(aw.getSymbolTable("band"), glue)
                         )
                 )
         );

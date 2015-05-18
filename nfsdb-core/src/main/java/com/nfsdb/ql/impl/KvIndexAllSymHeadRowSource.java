@@ -22,23 +22,22 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.PartitionSlice;
-import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordSourceState;
 import com.nfsdb.ql.RowCursor;
+import com.nfsdb.ql.SymFacade;
 import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class KvIndexAllSymHeadRowSource extends AbstractRowSource implements RecordSourceState {
+public class KvIndexAllSymHeadRowSource extends AbstractRowSource {
 
     private final String column;
     private final VirtualColumn filter;
     private final LongList rows = new LongList();
     private JournalRecord rec;
     private int keyIndex;
-    private boolean needKeys = true;
     private int valueCount;
+    private int columnIndex;
 
     public KvIndexAllSymHeadRowSource(String column, VirtualColumn filter) {
         this.column = column;
@@ -48,21 +47,15 @@ public class KvIndexAllSymHeadRowSource extends AbstractRowSource implements Rec
     @Override
     public void configure(JournalMetadata metadata) {
         this.rec = new JournalRecord(metadata);
-        if (filter != null) {
-            this.filter.configureSource(this);
-        }
+        this.columnIndex = metadata.getColumnIndex(column);
     }
 
     @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
     @Override
     public RowCursor prepareCursor(PartitionSlice slice) {
-        if (needKeys) {
-            valueCount = slice.partition.getJournal().getSymbolTable(column).size();
-        }
-
         try {
             Partition partition = rec.partition = slice.partition.open();
-            KVIndex index = partition.getIndexForColumn(column);
+            KVIndex index = partition.getIndexForColumn(columnIndex);
             long lo = slice.lo - 1;
             long hi = slice.calcHi ? partition.size() : slice.hi + 1;
             rows.clear();
@@ -73,7 +66,7 @@ public class KvIndexAllSymHeadRowSource extends AbstractRowSource implements Rec
                 boolean found = false;
                 while (c.hasNext()) {
                     r = rec.rowid = c.next();
-                    if (r > lo && r < hi && (filter == null || filter.getBool())) {
+                    if (r > lo && r < hi && (filter == null || filter.getBool(rec))) {
                         found = true;
                         break;
                     }
@@ -92,12 +85,6 @@ public class KvIndexAllSymHeadRowSource extends AbstractRowSource implements Rec
 
     @Override
     public void reset() {
-        needKeys = true;
-    }
-
-    @Override
-    public Record currentRecord() {
-        return rec;
     }
 
     @Override
@@ -108,5 +95,10 @@ public class KvIndexAllSymHeadRowSource extends AbstractRowSource implements Rec
     @Override
     public long next() {
         return rec.rowid = rows.get(keyIndex++);
+    }
+
+    @Override
+    public void prepare(SymFacade symFacade) {
+        valueCount = symFacade.getSymbolTable(column).size();
     }
 }

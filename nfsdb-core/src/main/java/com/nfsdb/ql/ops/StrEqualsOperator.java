@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,14 +14,20 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ql.ops.fact;
+package com.nfsdb.ql.ops;
 
-import com.nfsdb.ql.ops.Function;
-import com.nfsdb.ql.ops.StringInOperator;
+import com.nfsdb.ql.Record;
+import com.nfsdb.storage.ColumnType;
+import com.nfsdb.utils.Chars;
 
-public class StringInOperatorFactory implements FunctionFactory {
+public class StrEqualsOperator extends AbstractBinaryOperator {
+
+    public StrEqualsOperator() {
+        super(ColumnType.BOOLEAN);
+    }
+
     @Override
-    public Function newInstance() {
-        return new StringInOperator();
+    public boolean getBool(Record rec) {
+        return Chars.equals(lhs.getFlyweightStr(rec), rhs.getFlyweightStr(rec));
     }
 }

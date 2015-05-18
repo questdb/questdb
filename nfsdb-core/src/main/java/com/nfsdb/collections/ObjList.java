@@ -220,6 +220,9 @@ public class ObjList<T> {
      * {@inheritDoc}
      */
     public boolean remove(Object o) {
+        if (pos == 0) {
+            return false;
+        }
         int index = indexOf(o);
         if (index > -1) {
             remove(index);

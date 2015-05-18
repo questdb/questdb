@@ -22,6 +22,8 @@ public interface RowSource {
 
     void configure(JournalMetadata metadata);
 
+    void prepare(SymFacade symFacade);
+
     RowCursor prepareCursor(PartitionSlice slice);
 
     void reset();

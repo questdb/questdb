@@ -19,17 +19,17 @@ package com.nfsdb.ql.impl;
 import com.nfsdb.ql.KeyCursor;
 import com.nfsdb.ql.KeySource;
 import com.nfsdb.ql.PartitionSlice;
-import com.nfsdb.ql.ops.VirtualColumn;
+import com.nfsdb.ql.ops.SymGlue;
 import com.nfsdb.storage.SymbolTable;
 
 public class SymBySymLookupKeySource implements KeySource, KeyCursor {
 
-    private final VirtualColumn masterKey;
+    private final SymGlue glue;
     private final SymbolTable slave;
     private boolean hasNext = true;
 
-    public SymBySymLookupKeySource(SymbolTable slave, VirtualColumn masterKey) {
-        this.masterKey = masterKey;
+    public SymBySymLookupKeySource(SymbolTable slave, SymGlue glue) {
+        this.glue = glue;
         this.slave = slave;
     }
 
@@ -41,7 +41,7 @@ public class SymBySymLookupKeySource implements KeySource, KeyCursor {
     @Override
     public int next() {
         hasNext = false;
-        return slave.getQuick(masterKey.getSym());
+        return slave.getQuick(glue.getSym());
     }
 
     @Override

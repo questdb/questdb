@@ -16,54 +16,52 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.ObjHashSet;
+import com.nfsdb.ql.Record;
 import com.nfsdb.ql.SymFacade;
 import com.nfsdb.ql.parser.ParserException;
 import com.nfsdb.storage.ColumnType;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public abstract class AbstractBinaryOperator extends AbstractVirtualColumn implements Function {
-    protected VirtualColumn lhs;
-    protected VirtualColumn rhs;
+public class StrInOperator extends AbstractVirtualColumn implements Function {
 
-    public AbstractBinaryOperator(ColumnType type) {
-        super(type);
+    private final ObjHashSet<CharSequence> set = new ObjHashSet<>();
+    private VirtualColumn lhs;
+    private int keyIndex;
+
+    public StrInOperator() {
+        super(ColumnType.BOOLEAN);
+    }
+
+    @Override
+    public boolean getBool(Record rec) {
+        return set.contains(lhs.getFlyweightStr(rec));
     }
 
     @Override
     public boolean isConstant() {
-        return lhs.isConstant() && rhs.isConstant();
+        return lhs.isConstant();
     }
 
     @Override
     public void prepare(SymFacade facade) {
         lhs.prepare(facade);
-        rhs.prepare(facade);
     }
 
     @Override
     public void setArg(int pos, VirtualColumn arg) throws ParserException {
-        switch (pos) {
-            case 0:
-                lhs = arg;
-                break;
-            case 1:
-                rhs = arg;
-                break;
-            default:
-                throw new ParserException(0, "Too many arguments");
+        if (pos == keyIndex) {
+            lhs = arg;
+        } else {
+            set.add(arg.getStr(null).toString());
         }
     }
 
-    @SuppressFBWarnings({"ACEM_ABSTRACT_CLASS_EMPTY_METHODS"})
     @Override
     public void setArgCount(int count) {
-    }
-
-    public void setLhs(VirtualColumn lhs) {
-        this.lhs = lhs;
-    }
-
-    public void setRhs(VirtualColumn rhs) {
-        this.rhs = rhs;
+        if (count < 3) {
+            this.keyIndex = 0;
+        } else {
+            this.keyIndex = count - 1;
+        }
     }
 }

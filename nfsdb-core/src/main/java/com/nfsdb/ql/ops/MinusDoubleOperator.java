@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 
 public class MinusDoubleOperator extends AbstractBinaryOperator {
@@ -25,17 +26,17 @@ public class MinusDoubleOperator extends AbstractBinaryOperator {
     }
 
     @Override
-    public double getDouble() {
-        return lhs.getDouble() - rhs.getDouble();
+    public double getDouble(Record rec) {
+        return lhs.getDouble(rec) - rhs.getDouble(rec);
     }
 
     @Override
-    public float getFloat() {
-        return (float) (lhs.getDouble() - rhs.getDouble());
+    public float getFloat(Record rec) {
+        return (float) (lhs.getDouble(rec) - rhs.getDouble(rec));
     }
 
     @Override
-    public int getInt() {
-        return (int) (lhs.getDouble() - rhs.getDouble());
+    public int getInt(Record rec) {
+        return (int) (lhs.getDouble(rec) - rhs.getDouble(rec));
     }
 }

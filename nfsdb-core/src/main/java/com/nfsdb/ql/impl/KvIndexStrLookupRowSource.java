@@ -24,49 +24,52 @@ import com.nfsdb.ql.RowCursor;
 import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
+import com.nfsdb.storage.VariableColumn;
+import com.nfsdb.utils.Hash;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
-public class KvIndexLookupRowSource extends AbstractRowSource {
+public class KvIndexStrLookupRowSource extends AbstractRowSource {
 
-    private final String symbol;
+    private final String columnName;
     private final VirtualColumn valueFunction;
     private final boolean newCursor;
-    private int columnIndex;
-    private int symbolKey = -2;
     private IndexCursor indexCursor;
     private long lo;
     private long hi;
-    private boolean full;
     private long rowid;
+    private CharSequence currentValue;
+    private VariableColumn column;
+    private int buckets;
+    private int columnIndex;
     private boolean hasNext = false;
 
-    public KvIndexLookupRowSource(String symbol, VirtualColumn valueFunction) {
-        this(symbol, valueFunction, false);
+    public KvIndexStrLookupRowSource(String columnName, VirtualColumn valueFunction) {
+        this(columnName, valueFunction, false);
     }
 
-    public KvIndexLookupRowSource(String symbol, VirtualColumn valueFunction, boolean newCursor) {
-        this.symbol = symbol;
+    public KvIndexStrLookupRowSource(String columnName, VirtualColumn valueFunction, boolean newCursor) {
+        this.columnName = columnName;
         this.valueFunction = valueFunction;
         this.newCursor = newCursor;
     }
 
     @Override
     public void configure(JournalMetadata metadata) {
-        this.columnIndex = metadata.getColumnIndex(symbol);
+        this.columnIndex = metadata.getColumnIndex(columnName);
+        this.buckets = metadata.getColumn(columnIndex).distinctCountHint;
     }
 
+    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
     @Override
     public RowCursor prepareCursor(PartitionSlice slice) {
         try {
+            this.column = (VariableColumn) slice.partition.getAbstractColumn(columnIndex);
             KVIndex index = slice.partition.getIndexForColumn(columnIndex);
-            if (symbolKey == -2) {
-                symbolKey = slice.partition.getJournal().getSymbolTable(symbol).getQuick(valueFunction.getFlyweightStr());
-            }
-            this.indexCursor = newCursor ? index.newFwdCursor(symbolKey) : index.fwdCursor(symbolKey);
-            this.full = slice.lo == 0 && slice.calcHi;
+            this.currentValue = valueFunction.getFlyweightStr(null).toString();
+            this.indexCursor = newCursor ? index.newFwdCursor(Hash.boundedHash(currentValue, buckets)) : index.fwdCursor(Hash.boundedHash(currentValue, buckets));
             this.lo = slice.lo - 1;
             this.hi = slice.calcHi ? slice.partition.open().size() : slice.hi + 1;
+            this.hasNext = false;
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
@@ -75,7 +78,8 @@ public class KvIndexLookupRowSource extends AbstractRowSource {
 
     @Override
     public void reset() {
-        symbolKey = -2;
+        indexCursor = null;
+        hasNext = false;
     }
 
     @Override
@@ -85,19 +89,14 @@ public class KvIndexLookupRowSource extends AbstractRowSource {
             return true;
         }
 
-        if (indexCursor != null && indexCursor.hasNext()) {
-            if (full) {
-                this.rowid = indexCursor.next();
-                return hasNext = true;
-            }
-
-            do {
-                long rowid = indexCursor.next();
-                if (rowid > lo && rowid < hi) {
-                    this.rowid = rowid;
+        if (indexCursor != null) {
+            while (indexCursor.hasNext()) {
+                long r = indexCursor.next();
+                if (r > lo && r < hi && column.cmpStr(r, currentValue)) {
+                    this.rowid = r;
                     return hasNext = true;
                 }
-            } while (indexCursor.hasNext());
+            }
         }
 
         return false;

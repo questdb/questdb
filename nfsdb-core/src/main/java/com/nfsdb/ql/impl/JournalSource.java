@@ -71,6 +71,7 @@ public class JournalSource extends AbstractJournalSource implements JournalRecor
     @Override
     public RandomAccessRecordCursor<JournalRecord> prepareCursor(JournalReaderFactory factory) throws JournalException {
         this.partitionCursor = partitionSource.prepareCursor(factory);
+        this.rowSource.prepare(partitionCursor.getSymFacade());
         return this;
     }
 

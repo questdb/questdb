@@ -16,6 +16,7 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 
 public class AndOperator extends AbstractBinaryOperator {
@@ -25,16 +26,16 @@ public class AndOperator extends AbstractBinaryOperator {
     }
 
     @Override
-    public boolean getBool() {
-        return lhs.getBool() && rhs.getBool();
+    public boolean getBool(Record rec) {
+        return lhs.getBool(rec) && rhs.getBool(rec);
     }
 
     @Override
     public boolean isConstant() {
-        if (rhs.isConstant() && !rhs.getBool()) {
+        if (rhs.isConstant() && !rhs.getBool(null)) {
             lhs = new BooleanConstant(false);
             return true;
         }
-        return (lhs.isConstant() && !lhs.getBool()) || (lhs.isConstant() && rhs.isConstant());
+        return (lhs.isConstant() && !lhs.getBool(null)) || (lhs.isConstant() && rhs.isConstant());
     }
 }

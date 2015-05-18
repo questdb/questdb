@@ -30,6 +30,7 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.impl.*;
 import com.nfsdb.ql.ops.RecordSourceColumn;
+import com.nfsdb.ql.ops.SymGlue;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.test.tools.TestData;
@@ -88,16 +89,14 @@ public class CstTest {
                 )
         );
 
-        RecordSourceColumn sym = new RecordSourceColumn("sym", m.getMetadata());
-        sym.configureSource(m);
-
+        SymGlue glue = new SymGlue(m, new RecordSourceColumn(m.getMetadata().getColumnIndex("sym"), ColumnType.SYMBOL));
         RecordSource<? extends Record> src = new NestedLoopJoinRecordSource(
                 m,
                 new JournalSource(
                         new JournalPartitionSource(slave, false),
                         new KvIndexTopRowSource(
                                 "sym",
-                                new SymBySymCachingLookupKeySource(slave.getSymbolTable("sym"), sym),
+                                new SymBySymCachingLookupKeySource(slave.getSymbolTable("sym"), glue),
 //                                new SingleKeySource(
 //                                        new SymbolXTabVariableSource(m.getMetadata(), "sym", "sym", m)
 //                                ),

@@ -14,12 +14,20 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ql;
+package com.nfsdb.ql.ops;
 
-import com.nfsdb.collections.ImmutableIterator;
+import com.nfsdb.ql.impl.StatefulJournalSourceImpl;
 
-public interface PartitionCursor extends ImmutableIterator<PartitionSlice> {
-    SymFacade getSymFacade();
+public class StrGlue {
+    private final StatefulJournalSourceImpl js;
+    private final VirtualColumn column;
 
-    void reset();
+    public StrGlue(StatefulJournalSourceImpl js, VirtualColumn column) {
+        this.js = js;
+        this.column = column;
+    }
+
+    public CharSequence getStr() {
+        return column.getFlyweightStr(js.last());
+    }
 }

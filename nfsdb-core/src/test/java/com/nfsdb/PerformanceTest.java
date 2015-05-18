@@ -90,7 +90,7 @@ public class PerformanceTest extends AbstractTest {
                             new JournalPartitionSource(journal, true),
                             new SingleIntervalSource(interval)
 
-                    ), new KvIndexLookupRowSource("sym", new StringConstant("LLOY.L"))
+                    ), new KvIndexSymLookupRowSource("sym", new StringConstant("LLOY.L"))
             );
 
 

@@ -19,43 +19,44 @@ package com.nfsdb.ql.ops;
 import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.io.sink.CharSink;
-import com.nfsdb.ql.RecordSourceState;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.SymFacade;
 
 import java.io.OutputStream;
 
 public interface VirtualColumn extends RecordColumnMetadata {
 
-    void configureSource(RecordSourceState state);
+    byte get(Record rec);
 
-    byte get();
+    void getBin(Record rec, OutputStream s);
 
-    void getBin(OutputStream s);
+    DirectInputStream getBin(Record rec);
 
-    DirectInputStream getBin();
+    boolean getBool(Record rec);
 
-    boolean getBool();
+    long getDate(Record rec);
 
-    long getDate();
+    double getDouble(Record rec);
 
-    double getDouble();
+    float getFloat(Record rec);
 
-    float getFloat();
+    CharSequence getFlyweightStr(Record rec);
 
-    CharSequence getFlyweightStr();
+    int getInt(Record rec);
 
-    int getInt();
+    long getLong(Record rec);
 
-    long getLong();
+    short getShort(Record rec);
 
-    short getShort();
+    CharSequence getStr(Record rec);
 
-    CharSequence getStr();
+    void getStr(Record rec, CharSink sink);
 
-    void getStr(CharSink sink);
-
-    String getSym();
+    String getSym(Record rec);
 
     boolean isConstant();
+
+    void prepare(SymFacade facade);
 
     void setName(String name);
 }

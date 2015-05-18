@@ -20,6 +20,7 @@ import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.RowCursor;
 import com.nfsdb.ql.RowSource;
+import com.nfsdb.ql.SymFacade;
 
 public class MergingRowSource implements RowSource, RowCursor {
     private final RowSource lhs;
@@ -38,6 +39,12 @@ public class MergingRowSource implements RowSource, RowCursor {
     public void configure(JournalMetadata metadata) {
         this.lhs.configure(metadata);
         this.rhs.configure(metadata);
+    }
+
+    @Override
+    public void prepare(SymFacade facade) {
+        lhs.prepare(facade);
+        rhs.prepare(facade);
     }
 
     @Override

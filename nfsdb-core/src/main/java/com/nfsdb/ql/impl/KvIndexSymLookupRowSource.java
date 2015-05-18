@@ -16,52 +16,53 @@
 
 package com.nfsdb.ql.impl;
 
-import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.RowCursor;
+import com.nfsdb.ql.SymFacade;
+import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
-import com.nfsdb.storage.VariableColumn;
-import com.nfsdb.utils.Hash;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class StringKvIndexRowSource extends AbstractRowSource {
+@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
+public class KvIndexSymLookupRowSource extends AbstractRowSource {
 
-    private final String columnName;
-    private final ObjHashSet<String> values;
-    private KVIndex index;
+    private final String symbol;
+    private final VirtualColumn valueFunction;
+    private final boolean newCursor;
+    private int columnIndex;
+    private int symbolKey = -2;
     private IndexCursor indexCursor;
     private long lo;
     private long hi;
+    private boolean full;
     private long rowid;
-    private int valueIndex = 0;
-    private CharSequence currentValue;
-    private VariableColumn column;
-    private int bucketCount;
-    private int columnIndex;
+    private boolean hasNext = false;
 
-    public StringKvIndexRowSource(String columnName, ObjHashSet<String> values) {
-        this.columnName = columnName;
-        this.values = values;
+    public KvIndexSymLookupRowSource(String symbol, VirtualColumn valueFunction) {
+        this(symbol, valueFunction, false);
+    }
+
+    public KvIndexSymLookupRowSource(String symbol, VirtualColumn valueFunction, boolean newCursor) {
+        this.symbol = symbol;
+        this.valueFunction = valueFunction;
+        this.newCursor = newCursor;
     }
 
     @Override
     public void configure(JournalMetadata metadata) {
-        this.columnIndex = metadata.getColumnIndex(columnName);
-        this.bucketCount = metadata.getColumn(columnIndex).distinctCountHint;
+        this.columnIndex = metadata.getColumnIndex(symbol);
     }
 
-    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
     @Override
     public RowCursor prepareCursor(PartitionSlice slice) {
         try {
-            this.column = (VariableColumn) slice.partition.getAbstractColumn(columnIndex);
-            this.index = slice.partition.getIndexForColumn(columnName);
-
-            this.indexCursor = null;
+            KVIndex index = slice.partition.getIndexForColumn(columnIndex);
+            this.indexCursor = newCursor ? index.newFwdCursor(symbolKey) : index.fwdCursor(symbolKey);
+            this.full = slice.lo == 0 && slice.calcHi;
             this.lo = slice.lo - 1;
             this.hi = slice.calcHi ? slice.partition.open().size() : slice.hi + 1;
         } catch (JournalException e) {
@@ -72,47 +73,41 @@ public class StringKvIndexRowSource extends AbstractRowSource {
 
     @Override
     public void reset() {
-        indexCursor = null;
-        valueIndex = 0;
     }
 
     @Override
     public boolean hasNext() {
 
+        if (hasNext) {
+            return true;
+        }
+
         if (indexCursor != null && indexCursor.hasNext()) {
+            if (full) {
+                this.rowid = indexCursor.next();
+                return hasNext = true;
+            }
+
             do {
-                long r = indexCursor.next();
-                if (r > lo && r < hi && column.cmpStr(r, currentValue)) {
-                    this.rowid = r;
-                    return true;
+                long rowid = indexCursor.next();
+                if (rowid > lo && rowid < hi) {
+                    this.rowid = rowid;
+                    return hasNext = true;
                 }
             } while (indexCursor.hasNext());
         }
 
-        return hasNext0();
+        return false;
     }
 
     @Override
     public long next() {
+        hasNext = false;
         return rowid;
     }
 
-    private boolean hasNext0() {
-        while (valueIndex < values.size()) {
-            CharSequence str = values.get(valueIndex++);
-            indexCursor = index.fwdCursor(Hash.boundedHash(str, bucketCount));
-
-            while (indexCursor.hasNext()) {
-                long r = indexCursor.next();
-
-                if (r > lo && r < hi && column.cmpStr(r, str)) {
-                    this.rowid = r;
-                    this.currentValue = str;
-                    return true;
-                }
-            }
-        }
-
-        return false;
+    @Override
+    public void prepare(SymFacade facade) {
+        symbolKey = facade.getSymbolTable(symbol).getQuick(valueFunction.getFlyweightStr(null));
     }
 }

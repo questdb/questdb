@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -60,7 +60,7 @@ public class VirtualColumnTest extends AbstractTest {
         VirtualColumnRecordSource src = new VirtualColumnRecordSource(w.rows(), new ObjList<VirtualColumn>() {{
             add(new AddDoubleOperator() {{
                 setName("plus");
-                setLhs(new RecordSourceColumn("bid", w.getMetadata()));
+                setLhs(new RecordSourceColumn(w.getMetadata().getColumnIndex("bid"), w.getMetadata().getColumn("bid").type));
                 setRhs(new DoubleConstant(12.5));
             }});
         }});
@@ -199,7 +199,7 @@ public class VirtualColumnTest extends AbstractTest {
                         new ObjList<VirtualColumn>() {{
                             add(new AddDoubleOperator() {{
                                 setName("plus");
-                                setLhs(new RecordSourceColumn("bid", w.getMetadata()));
+                                setLhs(new RecordSourceColumn(w.getMetadata().getColumnIndex("bid"), w.getMetadata().getColumn("bid").type));
                                 setRhs(new DoubleConstant(12.5));
                             }});
                         }}

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@ public class VirtualRecord extends AbstractRecord {
 
     @Override
     public byte get(int col) {
-        return col < split ? base.get(col) : virtualColumns.get(col - split).get();
+        return col < split ? base.get(col) : virtualColumns.get(col - split).get(base);
     }
 
     @Override
@@ -46,48 +46,48 @@ public class VirtualRecord extends AbstractRecord {
         if (col < split) {
             base.getBin(col, s);
         } else {
-            virtualColumns.get(col - split).getBin(s);
+            virtualColumns.get(col - split).getBin(base, s);
         }
     }
 
     @Override
     public DirectInputStream getBin(int col) {
-        return col < split ? base.getBin(col) : virtualColumns.get(col - split).getBin();
+        return col < split ? base.getBin(col) : virtualColumns.get(col - split).getBin(base);
     }
 
     @Override
     public boolean getBool(int col) {
-        return col < split ? base.getBool(col) : virtualColumns.get(col - split).getBool();
+        return col < split ? base.getBool(col) : virtualColumns.get(col - split).getBool(base);
     }
 
     @Override
     public long getDate(int col) {
-        return col < split ? base.getDate(col) : virtualColumns.get(col - split).getDate();
+        return col < split ? base.getDate(col) : virtualColumns.get(col - split).getDate(base);
     }
 
     @Override
     public double getDouble(int col) {
-        return col < split ? base.getDouble(col) : virtualColumns.get(col - split).getDouble();
+        return col < split ? base.getDouble(col) : virtualColumns.get(col - split).getDouble(base);
     }
 
     @Override
     public float getFloat(int col) {
-        return col < split ? base.getFloat(col) : virtualColumns.get(col - split).getFloat();
+        return col < split ? base.getFloat(col) : virtualColumns.get(col - split).getFloat(base);
     }
 
     @Override
     public CharSequence getFlyweightStr(int col) {
-        return col < split ? base.getFlyweightStr(col) : virtualColumns.get(col - split).getFlyweightStr();
+        return col < split ? base.getFlyweightStr(col) : virtualColumns.get(col - split).getFlyweightStr(base);
     }
 
     @Override
     public int getInt(int col) {
-        return col < split ? base.getInt(col) : virtualColumns.get(col - split).getInt();
+        return col < split ? base.getInt(col) : virtualColumns.get(col - split).getInt(base);
     }
 
     @Override
     public long getLong(int col) {
-        return col < split ? base.getLong(col) : virtualColumns.get(col - split).getLong();
+        return col < split ? base.getLong(col) : virtualColumns.get(col - split).getLong(base);
     }
 
     @Override
@@ -97,12 +97,12 @@ public class VirtualRecord extends AbstractRecord {
 
     @Override
     public short getShort(int col) {
-        return col < split ? base.getShort(col) : virtualColumns.get(col - split).getShort();
+        return col < split ? base.getShort(col) : virtualColumns.get(col - split).getShort(base);
     }
 
     @Override
     public CharSequence getStr(int col) {
-        return col < split ? base.getStr(col) : virtualColumns.get(col - split).getStr();
+        return col < split ? base.getStr(col) : virtualColumns.get(col - split).getStr(base);
     }
 
     @Override
@@ -110,13 +110,13 @@ public class VirtualRecord extends AbstractRecord {
         if (col < split) {
             base.getStr(col, sink);
         } else {
-            virtualColumns.get(col - split).getStr(sink);
+            virtualColumns.get(col - split).getStr(base, sink);
         }
     }
 
     @Override
     public String getSym(int col) {
-        return col < split ? base.getSym(col) : virtualColumns.get(col - split).getSym();
+        return col < split ? base.getSym(col) : virtualColumns.get(col - split).getSym(base);
     }
 
     public void setBase(Record base) {

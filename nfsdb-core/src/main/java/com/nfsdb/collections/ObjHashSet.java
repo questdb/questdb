@@ -79,6 +79,7 @@ public class ObjHashSet<T> {
     }
 
     public final void clear() {
+        free = capacity;
         Arrays.fill(keys, noEntryValue);
         list.clear();
     }

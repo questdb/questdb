@@ -25,6 +25,7 @@ import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.PartitionCursor;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.PartitionSource;
+import com.nfsdb.ql.SymFacade;
 import com.nfsdb.utils.Rows;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -33,6 +34,8 @@ public class JournalTailPartitionSource extends AbstractImmutableIterator<Partit
     private final long rowid;
     private final PartitionSlice slice = new PartitionSlice();
     private final JournalMetadata metadata;
+    private final boolean dynamicJournal;
+    private final MasterSymFacade symFacade = new MasterSymFacade();
     private Journal journal;
     private int partitionIndex;
     private long lo;
@@ -43,12 +46,15 @@ public class JournalTailPartitionSource extends AbstractImmutableIterator<Partit
         this.metadata = journal.getMetadata();
         this.open = open;
         this.rowid = rowid;
+        this.dynamicJournal = false;
+        this.symFacade.setJournal(journal);
     }
 
     public JournalTailPartitionSource(JournalMetadata metadata, boolean open, long rowid) {
         this.open = open;
         this.rowid = rowid;
         this.metadata = metadata;
+        this.dynamicJournal = true;
     }
 
     @Override
@@ -58,11 +64,24 @@ public class JournalTailPartitionSource extends AbstractImmutableIterator<Partit
 
     @Override
     public PartitionCursor prepareCursor(JournalReaderFactory readerFactory) throws JournalException {
-        if (journal == null) {
+        if (dynamicJournal) {
             this.journal = readerFactory.reader(metadata);
+            this.symFacade.setJournal(journal);
         }
         reset();
         return this;
+    }
+
+    @Override
+    public SymFacade getSymFacade() {
+        return symFacade;
+    }
+
+    @Override
+    public final void reset() {
+        partitionCount = journal.getPartitionCount();
+        partitionIndex = Rows.toPartitionIndex(rowid);
+        lo = Rows.toLocalRowID(rowid);
     }
 
     @Override
@@ -82,12 +101,5 @@ public class JournalTailPartitionSource extends AbstractImmutableIterator<Partit
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
-    }
-
-    @Override
-    public final void reset() {
-        partitionCount = journal.getPartitionCount();
-        partitionIndex = Rows.toPartitionIndex(rowid);
-        lo = Rows.toLocalRowID(rowid);
     }
 }

@@ -25,7 +25,7 @@ import com.nfsdb.ql.ops.VirtualColumn;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
-public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record> implements GenericRecordSource, RecordSourceState, RecordCursor<Record> {
+public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record> implements GenericRecordSource, RecordCursor<Record> {
     private final RecordSource<? extends Record> recordSource;
     private final RecordMetadata metadata;
     private final VirtualRecord current;
@@ -34,17 +34,9 @@ public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record>
 
     public VirtualColumnRecordSource(RecordSource<? extends Record> recordSource, ObjList<VirtualColumn> virtualColumns) {
         this.recordSource = recordSource;
-        for (int i = 0, k = virtualColumns.size(); i < k; i++) {
-            virtualColumns.getQuick(i).configureSource(this);
-        }
         RecordMetadata dm = recordSource.getMetadata();
         this.metadata = new VirtualRecordMetadata(dm, virtualColumns);
         this.current = new VirtualRecord(this.metadata, dm.getColumnCount(), virtualColumns);
-    }
-
-    @Override
-    public Record currentRecord() {
-        return current;
     }
 
     @Override

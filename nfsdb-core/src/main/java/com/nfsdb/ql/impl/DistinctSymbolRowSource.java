@@ -21,6 +21,7 @@ import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.RowCursor;
 import com.nfsdb.ql.RowSource;
+import com.nfsdb.ql.SymFacade;
 import com.nfsdb.storage.FixedColumn;
 
 /**
@@ -48,13 +49,11 @@ public class DistinctSymbolRowSource extends AbstractRowSource {
     @Override
     public void configure(JournalMetadata metadata) {
         delegate.configure(metadata);
+        columnIndex = metadata.getColumnIndex(symbol);
     }
 
     @Override
     public RowCursor prepareCursor(PartitionSlice slice) {
-        if (columnIndex == -1) {
-            columnIndex = slice.partition.getJournal().getMetadata().getColumnIndex(symbol);
-        }
         column = (FixedColumn) slice.partition.getAbstractColumn(columnIndex);
         cursor = delegate.prepareCursor(slice);
         return this;
@@ -62,9 +61,7 @@ public class DistinctSymbolRowSource extends AbstractRowSource {
 
     @Override
     public void reset() {
-        columnIndex = -1;
         delegate.reset();
-        set.clear();
     }
 
     @Override
@@ -82,5 +79,11 @@ public class DistinctSymbolRowSource extends AbstractRowSource {
     @Override
     public long next() {
         return rowid;
+    }
+
+    @Override
+    public void prepare(SymFacade symFacade) {
+        delegate.prepare(symFacade);
+        set.clear();
     }
 }

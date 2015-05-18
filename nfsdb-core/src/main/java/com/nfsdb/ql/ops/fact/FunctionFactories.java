@@ -16,7 +16,9 @@
 
 package com.nfsdb.ql.ops.fact;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.ObjObjHashMap;
+import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.ql.parser.Signature;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Chars;
@@ -24,16 +26,40 @@ import com.nfsdb.utils.Chars;
 public final class FunctionFactories {
     private static final ObjObjHashMap<Signature, FunctionFactory> factories = new ObjObjHashMap<>();
     // intrinsic factories
-    private static final StringInOperatorFactory STRING_IN_OPERATOR_FACTORY = new StringInOperatorFactory();
+    private static final StrInOperatorFactory STRING_IN_OPERATOR_FACTORY = new StrInOperatorFactory();
+    private static final SymInOperatorFactory SYMBOL_IN_OPERATOR_FACTORY = new SymInOperatorFactory();
+    private static final SymEqualsOperatorFactory SYMBOL_EQ_OPERATOR_FACTORY = new SymEqualsOperatorFactory();
 
-    public static FunctionFactory find(Signature sig) {
+    public static FunctionFactory find(Signature sig, ObjList<VirtualColumn> args) {
+
+        // pre-lookup special case, symbol = value operator requires special consideration
+        if (Chars.equals("=", sig.name)
+                && args.size() == 2
+                && args.get(0).getType() == ColumnType.SYMBOL
+                && args.get(1).getType() == ColumnType.STRING
+                && args.get(1).isConstant()) {
+            return SYMBOL_EQ_OPERATOR_FACTORY;
+        }
+
         FunctionFactory factory = factories.get(sig);
         if (factory != null) {
             return factory;
         } else {
             // special cases/intrinsic factories
-            if (Chars.equals("in", sig.name) && sig.paramTypes.getLast() == ColumnType.STRING) {
-                return STRING_IN_OPERATOR_FACTORY;
+            if (sig.paramCount < 3 && Chars.equals("in", sig.name)) {
+                switch (sig.paramTypes.get(0)) {
+                    case STRING:
+                        return STRING_IN_OPERATOR_FACTORY;
+                    case SYMBOL:
+                        return SYMBOL_IN_OPERATOR_FACTORY;
+                }
+            } else if (sig.paramCount > 2 && Chars.equals("in", sig.name)) {
+                switch (sig.paramTypes.getLast()) {
+                    case STRING:
+                        return STRING_IN_OPERATOR_FACTORY;
+                    case SYMBOL:
+                        return SYMBOL_IN_OPERATOR_FACTORY;
+                }
             }
         }
         return null;
@@ -66,7 +92,8 @@ public final class FunctionFactories {
         factories.put(new Signature().setName("<").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.INT), new DoubleLessThanOperatorFactory());
 
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.INT).paramType(1, ColumnType.INT), new IntEqualsOperatorFactory());
-        factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.STRING).paramType(1, ColumnType.STRING), new StringEqualsOperatorFactory());
+        factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.STRING).paramType(1, ColumnType.STRING), new StrEqualsOperatorFactory());
+        factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL).paramType(1, ColumnType.STRING), new StrEqualsOperatorFactory());
 
         factories.put(new Signature().setName("and").setParamCount(2).paramType(0, ColumnType.BOOLEAN).paramType(1, ColumnType.BOOLEAN), new AndOperatorFactory());
         factories.put(new Signature().setName("or").setParamCount(2).paramType(0, ColumnType.BOOLEAN).paramType(1, ColumnType.BOOLEAN), new OrOperatorFactory());

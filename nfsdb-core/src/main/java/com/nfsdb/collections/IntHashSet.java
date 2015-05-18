@@ -65,6 +65,11 @@ public class IntHashSet {
         Arrays.fill(keys, noEntryValue);
     }
 
+    public boolean contains(int key) {
+        int index = key & mask;
+        return Unsafe.arrayGet(keys, index) != noEntryValue && (key == Unsafe.arrayGet(keys, index) || key == Unsafe.arrayGet(keys, index)) || probeContains(key, index);
+    }
+
     public int size() {
         return capacity - free;
     }
@@ -77,6 +82,19 @@ public class IntHashSet {
             return true;
         }
         return Unsafe.arrayGet(keys, index) != key && probeInsert(key, index);
+    }
+
+    private boolean probeContains(int key, int index) {
+        do {
+            index = (index + 1) & mask;
+            if (Unsafe.arrayGet(keys, index) == noEntryValue) {
+                return false;
+            }
+
+            if (key == Unsafe.arrayGet(keys, index)) {
+                return true;
+            }
+        } while (true);
     }
 
     private boolean probeInsert(int key, int index) {
