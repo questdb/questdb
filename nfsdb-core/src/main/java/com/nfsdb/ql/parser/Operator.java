@@ -34,6 +34,7 @@ public class Operator {
         add(new Operator(">", 6, true, OperatorType.BINARY));
         add(new Operator(">=", 6, true, OperatorType.BINARY));
         add(new Operator("=", 7, true, OperatorType.BINARY));
+        add(new Operator("~", 7, true, OperatorType.BINARY));
         add(new Operator("!=", 7, true, OperatorType.BINARY));
         add(new Operator("in", 7, true, OperatorType.SET, false));
         add(new Operator("and", 11, true, OperatorType.BINARY, false));

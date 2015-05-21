@@ -16,56 +16,55 @@
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.collections.IntHashSet;
-import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.SymFacade;
 import com.nfsdb.ql.parser.ParserException;
 import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.SymbolTable;
 
-public class SymInOperator extends AbstractVirtualColumn implements Function {
+public class DoubleScaledEqualsOperator extends AbstractVirtualColumn implements Function {
 
-    private final IntHashSet set = new IntHashSet();
-    private final ObjHashSet<CharSequence> values = new ObjHashSet<>();
     private VirtualColumn lhs;
+    private VirtualColumn rhs;
+    private VirtualColumn scale;
 
-    public SymInOperator() {
+    public DoubleScaledEqualsOperator() {
         super(ColumnType.BOOLEAN);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        return set.contains(lhs.getInt(rec));
+        double d = lhs.getDouble(rec) - rhs.getDouble(rec);
+        return d > 0 ? d < this.scale.getDouble(rec) : d > -this.scale.getDouble(rec);
     }
 
     @Override
     public boolean isConstant() {
-        return lhs.isConstant();
+        return lhs.isConstant() && rhs.isConstant() && scale.isConstant();
     }
 
     @Override
     public void prepare(SymFacade facade) {
         lhs.prepare(facade);
-        SymbolTable tab = lhs.getSymbolTable();
-        for (int i = 0, n = values.size(); i < n; i++) {
-            int k = tab.getQuick(values.get(i));
-            if (k > -1) {
-                set.add(k);
-            }
-        }
+        rhs.prepare(facade);
+        scale.prepare(facade);
     }
 
     @Override
     public void setArg(int pos, VirtualColumn arg) throws ParserException {
-        if (pos == 0) {
-            lhs = arg;
-        } else {
-            values.add(arg.getStr(null).toString());
+        switch (pos) {
+            case 0:
+                lhs = arg;
+                break;
+            case 1:
+                rhs = arg;
+                break;
+            default:
+                scale = arg;
         }
     }
 
     @Override
     public void setArgCount(int count) {
+
     }
 }

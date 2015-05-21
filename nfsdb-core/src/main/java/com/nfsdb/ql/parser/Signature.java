@@ -16,12 +16,14 @@
 
 package com.nfsdb.ql.parser;
 
+import com.nfsdb.collections.IntList;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.storage.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class Signature {
     public final ObjList<ColumnType> paramTypes = new ObjList<>();
+    public IntList constParams = new IntList();
     public CharSequence name;
     public int paramCount;
 
@@ -44,14 +46,28 @@ public class Signature {
 
     @Override
     public String toString() {
-        return "Signature{" +
-                "name='" + name + "'" +
-                ", paramTypes=" + paramTypes +
-                '}';
+        StringBuilder b = new StringBuilder();
+        b.append('\'');
+        b.append(name);
+        b.append('\'');
+        b.append('(');
+        for (int i = 0, n = paramCount; i < n; i++) {
+            if (i > 0) {
+                b.append(", ");
+            }
+            if (constParams.getQuick(i) == 1) {
+                b.append("const ");
+            }
+            b.append(paramTypes.getQuick(i));
+
+        }
+        b.append(')');
+        return b.toString();
     }
 
-    public Signature paramType(int pos, ColumnType type) {
+    public Signature paramType(int pos, ColumnType type, boolean constant) {
         paramTypes.setQuick(pos, type);
+        constParams.setQuick(pos, constant ? 1 : 0);
         return this;
     }
 
@@ -63,6 +79,7 @@ public class Signature {
     public Signature setParamCount(int paramCount) {
         this.paramCount = paramCount;
         this.paramTypes.ensureCapacity(paramCount);
+        this.constParams.ensureCapacity(paramCount);
         return this;
     }
 
@@ -74,7 +91,7 @@ public class Signature {
         }
 
         for (int i = 0; i < k; i++) {
-            if (this.paramTypes.getQuick(i) != that.paramTypes.getQuick(i)) {
+            if (this.paramTypes.getQuick(i) != that.paramTypes.getQuick(i) || this.constParams.getQuick(i) != that.constParams.getQuick(i)) {
                 return false;
             }
         }
@@ -85,6 +102,7 @@ public class Signature {
     private int typesHashCode(int h) {
         for (int i = 0, k = paramTypes.size(); i < k; i++) {
             h = h * 32 + paramTypes.getQuick(i).ordinal();
+            h = h * 32 + constParams.getQuick(i);
         }
         return h;
     }

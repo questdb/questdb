@@ -224,7 +224,9 @@ public final class TestUtils {
         }
         Assert.assertEquals(expected.length(), actual.length());
         for (int i = 0; i < expected.length(); i++) {
-            Assert.assertEquals(expected.charAt(i), actual.charAt(i));
+            if (expected.charAt(i) != actual.charAt(i)) {
+                Assert.fail("Expected: " + expected + ", actual: " + actual);
+            }
         }
     }
 
@@ -257,8 +259,8 @@ public final class TestUtils {
             SymbolTable m = a.getMetadata().getColumn(i).symbolTable;
             if (m != null) {
                 SymbolTable s = b.getMetadata().getColumn(i).symbolTable;
-                for (String value : m.values()) {
-                    Assert.assertEquals(m.getQuick(value), s.getQuick(value));
+                for (SymbolTable.Entry e : m.values()) {
+                    Assert.assertEquals(m.getQuick(e.value), s.getQuick(e.value));
                 }
             }
         }

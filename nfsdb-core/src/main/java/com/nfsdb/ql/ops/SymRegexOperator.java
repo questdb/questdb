@@ -17,20 +17,20 @@
 package com.nfsdb.ql.ops;
 
 import com.nfsdb.collections.IntHashSet;
-import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.SymFacade;
-import com.nfsdb.ql.parser.ParserException;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
 
-public class SymInOperator extends AbstractVirtualColumn implements Function {
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+public class SymRegexOperator extends AbstractBinaryOperator {
 
     private final IntHashSet set = new IntHashSet();
-    private final ObjHashSet<CharSequence> values = new ObjHashSet<>();
-    private VirtualColumn lhs;
+    private Matcher matcher;
 
-    public SymInOperator() {
+    public SymRegexOperator() {
         super(ColumnType.BOOLEAN);
     }
 
@@ -40,32 +40,20 @@ public class SymInOperator extends AbstractVirtualColumn implements Function {
     }
 
     @Override
-    public boolean isConstant() {
-        return lhs.isConstant();
-    }
-
-    @Override
     public void prepare(SymFacade facade) {
-        lhs.prepare(facade);
+        super.prepare(facade);
+        set.clear();
         SymbolTable tab = lhs.getSymbolTable();
-        for (int i = 0, n = values.size(); i < n; i++) {
-            int k = tab.getQuick(values.get(i));
-            if (k > -1) {
-                set.add(k);
+        for (SymbolTable.Entry e : tab.values()) {
+            if (matcher.reset(e.value).find()) {
+                set.add(e.key);
             }
         }
     }
 
     @Override
-    public void setArg(int pos, VirtualColumn arg) throws ParserException {
-        if (pos == 0) {
-            lhs = arg;
-        } else {
-            values.add(arg.getStr(null).toString());
-        }
-    }
-
-    @Override
-    public void setArgCount(int count) {
+    public void setRhs(VirtualColumn rhs) {
+        super.setRhs(rhs);
+        matcher = Pattern.compile(rhs.getStr(null).toString()).matcher("");
     }
 }

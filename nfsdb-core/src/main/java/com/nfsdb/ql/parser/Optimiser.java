@@ -111,12 +111,12 @@ public class Optimiser {
             default:
                 args.ensureCapacity(argCount);
                 sig.setName(node.token).setParamCount(argCount);
-                for (int n = argCount - 1; n > -1; n--) {
+                for (int n = 0; n < argCount; n++) {
                     VirtualColumn c = stack.pollFirst();
                     if (c == null) {
                         throw new ParserException(node.position, "Too few arguments");
                     }
-                    sig.paramType(n, c.getType());
+                    sig.paramType(n, c.getType(), c.isConstant());
                     args.setQuick(n, c);
                 }
                 stack.addFirst(lookupFunction(node, sig, args));
@@ -308,7 +308,7 @@ public class Optimiser {
     }
 
     private VirtualColumn lookupFunction(ExprNode node, Signature sig, ObjList<VirtualColumn> args) throws ParserException {
-        FunctionFactory factory = FunctionFactories.find(sig, args);
+        FunctionFactory factory = FunctionFactories.find(sig);
         if (factory == null) {
             throw new ParserException(node.position, "No such function: " + sig);
         }

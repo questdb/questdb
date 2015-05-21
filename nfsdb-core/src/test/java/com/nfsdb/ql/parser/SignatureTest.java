@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,17 +28,18 @@ public class SignatureTest {
     public void testMapBehaviour() throws Exception {
         ObjObjHashMap<Signature, String> sigs = new ObjObjHashMap<Signature, String>() {{
 
-            put(new Signature().setName("-").setParamCount(1).paramType(0, ColumnType.INT), "sig1");
+            put(new Signature().setName("-").setParamCount(1).paramType(0, ColumnType.INT, false), "sig1");
             // overload
-            put(new Signature().setName("-").setParamCount(1).paramType(0, ColumnType.DOUBLE), "sig2");
+            put(new Signature().setName("-").setParamCount(1).paramType(0, ColumnType.DOUBLE, false), "sig2");
             // overload 2
-            put(new Signature().setName("-").setParamCount(2).paramType(0, ColumnType.INT).paramType(1, ColumnType.INT), "sig3");
+            put(new Signature().setName("-").setParamCount(2).paramType(0, ColumnType.INT, false).paramType(1, ColumnType.INT, false), "sig3");
             // dupe
-            put(new Signature().setName("-").setParamCount(1).paramType(0, ColumnType.INT), "sig4");
+            put(new Signature().setName("-").setParamCount(1).paramType(0, ColumnType.INT, false), "sig4");
+            put(new Signature().setName("-").setParamCount(1).paramType(0, ColumnType.INT, true), "sig5");
         }};
 
-        Assert.assertEquals(3, sigs.size());
-        String[] expected = new String[]{"sig2", "sig3", "sig4"};
+        Assert.assertEquals(4, sigs.size());
+        String[] expected = new String[]{"sig2", "sig3", "sig4", "sig5"};
         String[] actual = new String[sigs.size()];
 
         int k = 0;

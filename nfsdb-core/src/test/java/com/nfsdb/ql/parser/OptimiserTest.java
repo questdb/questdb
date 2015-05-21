@@ -81,6 +81,96 @@ public class OptimiserTest extends AbstractTest {
     }
 
     @Test
+    public void testIntComparison() throws Exception {
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $sym("id").index().valueCountHint(128).
+                        $double("x").
+                        $double("y").
+                        $int("i1").
+                        $int("i2").
+                        $ts()
+
+        );
+
+        Rnd rnd = new Rnd();
+        ObjHashSet<String> names = new ObjHashSet<>();
+        for (int i = 0; i < 128; i++) {
+            names.add(rnd.nextString(15));
+        }
+
+        int mask = 127;
+        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+        for (int i = 0; i < 10000; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            ew.putSym(0, names.get(rnd.nextInt() & mask));
+            ew.putDouble(1, rnd.nextDouble());
+            ew.putDouble(2, rnd.nextDouble());
+            ew.putInt(3, rnd.nextInt() & 63);
+            ew.putInt(4, rnd.nextInt() & 63);
+            ew.putDate(5, t += 10);
+            ew.append();
+        }
+        w.commit();
+
+        final String expected1 = "XSPEPTTKIBWFCKD\t0.000001672067\t-513.550415039063\t23\t14\n" +
+                "XSPEPTTKIBWFCKD\t0.001000571705\t-118.208679199219\t34\t32\n" +
+                "XSPEPTTKIBWFCKD\t0.255589209497\t-1024.000000000000\t52\t36\n" +
+                "XSPEPTTKIBWFCKD\t0.000105848711\t-960.000000000000\t63\t29\n" +
+                "XSPEPTTKIBWFCKD\t0.045759759843\t0.000000560194\t47\t33\n" +
+                "XSPEPTTKIBWFCKD\t290.742401123047\t0.000001862155\t2\t1\n" +
+                "XSPEPTTKIBWFCKD\t0.000186813500\t-827.140625000000\t36\t11\n" +
+                "XSPEPTTKIBWFCKD\t294.856933593750\t-539.875854492188\t55\t42\n" +
+                "XSPEPTTKIBWFCKD\t422.000000000000\t0.000001386965\t58\t54\n";
+
+        assertThat(expected1, "select id,x,y,i1,i2 from tab where i1 >= i2 and x>=y  and x>=i1 and id = 'XSPEPTTKIBWFCKD'");
+
+        final String expected2 = "XSPEPTTKIBWFCKD\t0.007556580706\t-444.759765625000\t14\t20\n" +
+                "XSPEPTTKIBWFCKD\t0.002191273379\t-587.421875000000\t1\t33\n" +
+                "XSPEPTTKIBWFCKD\t0.000000050401\t-873.569183349609\t34\t41\n" +
+                "XSPEPTTKIBWFCKD\t0.000000002468\t-1009.435546875000\t7\t35\n" +
+                "XSPEPTTKIBWFCKD\t102.474868774414\t-704.000000000000\t61\t63\n" +
+                "XSPEPTTKIBWFCKD\t0.000166006441\t-400.250000000000\t23\t49\n" +
+                "XSPEPTTKIBWFCKD\t256.000000000000\t-648.000000000000\t12\t46\n" +
+                "XSPEPTTKIBWFCKD\t0.000000883287\t-844.890625000000\t4\t24\n";
+
+        assertThat(expected2, "select id,x,y,i1,i2 from tab where i1 < i2 and x>=y  and y<i1 and id = 'XSPEPTTKIBWFCKD'");
+    }
+
+    @Test
+    public void testIntMultiplication() throws Exception {
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $int("x").
+                        $int("y").
+                        $str("z").
+                        $ts()
+
+        );
+
+        Rnd rnd = new Rnd();
+
+        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+        for (int i = 0; i < 1000; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            ew.putInt(0, rnd.nextInt() & 255);
+            ew.putInt(1, rnd.nextInt() & 255);
+            ew.putStr(2, rnd.nextString(4));
+            ew.putDate(3, t += 10);
+            ew.append();
+        }
+        w.commit();
+
+        final String expected1 = "29512\t-129\t119\t248\tCBJF\t2015-03-12T00:00:01.370Z\n" +
+                "30906\t49\t202\t153\tCJZJ\t2015-03-12T00:00:07.470Z\n" +
+                "2508\t113\t132\t19\tCGCJ\t2015-03-12T00:00:09.070Z\n";
+
+        assertThat(expected1, "select x * y, x - y, x, y, z, timestamp from tab where z ~ '^C.*J+'");
+    }
+
+    @Test
     public void testIntervalAndIndexSearch() throws Exception {
         JournalWriter<Quote> w = factory.writer(Quote.class, "q");
         TestUtils.generateQuoteData(w, 3600 * 24 * 10, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
@@ -251,6 +341,7 @@ public class OptimiserTest extends AbstractTest {
         final String expected = "TEHIOFKMQPUNEUD\tMRFPKLNWQL\t0.020352731459\t0.165701057762\t2015-03-12T00:01:22.640Z\n";
         assertThat(expected, "select id, sym, x, y, timestamp from tab latest by id where id = 'TEHIOFKMQPUNEUD' and sym in ('MRFPKLNWQL')");
         assertThat(expected, "select id, sym, x, y, timestamp from tab latest by id where id = 'TEHIOFKMQPUNEUD' and sym = ('MRFPKLNWQL')");
+        assertThat(expected, "select id, sym, x, y, timestamp from tab latest by id where id = 'TEHIOFKMQPUNEUD' and 'MRFPKLNWQL' = sym");
     }
 
     @Test
@@ -386,6 +477,80 @@ public class OptimiserTest extends AbstractTest {
                 "FZICFOQEVPXJYQR\t0.044912695885\t64.000000000000\t2015-03-12T00:01:37.820Z\n";
 
         assertThat(expected, "select id, x, y, timestamp from tab where id in ('FZICFOQEVPXJYQR', 'UHUTMTRRNGCIPFZ')");
+    }
+
+    @Test
+    public void testScaledDoubleComparison() throws Exception {
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $sym("id").index().valueCountHint(128).
+                        $double("x").
+                        $double("y").
+                        $int("i1").
+                        $int("i2").
+                        $ts()
+
+        );
+
+        Rnd rnd = new Rnd();
+        ObjHashSet<String> names = new ObjHashSet<>();
+        for (int i = 0; i < 128; i++) {
+            names.add(rnd.nextString(15));
+        }
+
+        int mask = 127;
+        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+        for (int i = 0; i < 10000; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            ew.putSym(0, names.get(rnd.nextInt() & mask));
+            ew.putDouble(1, rnd.nextDouble());
+            ew.putDouble(2, rnd.nextDouble());
+            ew.putInt(3, rnd.nextInt() & 63);
+            ew.putInt(4, rnd.nextInt() & 63);
+            ew.putDate(5, t += 10);
+            ew.append();
+        }
+        w.commit();
+
+        final String expected = "YYVSYYEQBORDTQH\t0.000000012344\t0.000000017585\n" +
+                "OXPKRGIIHYHBOQM\t0.000000042571\t0.000000046094\n" +
+                "FUUTOMFUIOXLQLU\t0.000000009395\t0.000000017129\n" +
+                "SCJOUOUIGENFELW\t0.000000000000\t0.000000003106\n" +
+                "KIWIHBROKZKUTIQ\t0.000000001343\t0.000000006899\n" +
+                "KBBQFNPOYNNCTFS\t0.000000001643\t0.000000010727\n" +
+                "CIWXCYXGDHUWEPV\t0.000000000000\t0.000000007289\n" +
+                "KFIJZZYNPPBXBHV\t0.000000007000\t0.000000009292\n" +
+                "HBXOWVYUVVRDPCH\t0.000000000000\t0.000000005734\n" +
+                "XWCKYLSUWDSWUGS\t0.000000010381\t0.000000020362\n" +
+                "KJSMSSUQSRLTKVV\t0.000000003479\t0.000000006929\n" +
+                "CNGZTOYTOXRSFPV\t0.000000000000\t0.000000000000\n" +
+                "NMUREIJUHCLQCMZ\t0.000000001398\t0.000000004552\n" +
+                "KJSMSSUQSRLTKVV\t0.000000004057\t0.000000009300\n" +
+                "YSSMPGLUOHNZHZS\t0.000000003461\t0.000000005232\n" +
+                "TRDLVSYLMSRHGKR\t0.000000001688\t0.000000005004\n" +
+                "EOCVFFKMEKPFOYM\t0.000000002913\t0.000000000653\n" +
+                "JUEBWVLOMPBETTT\t0.000000000000\t0.000000001650\n" +
+                "VQEBNDCQCEHNOMV\t0.000000017353\t0.000000020155\n" +
+                "JUEBWVLOMPBETTT\t0.000000120419\t0.000000111959\n" +
+                "EIWFOQKYHQQUWQO\t0.000000080895\t0.000000081903\n" +
+                "EVMLKCJBEVLUHLI\t0.000000005365\t0.000000003773\n" +
+                "NZVDJIGSYLXGYTE\t0.000000022596\t0.000000017758\n" +
+                "EOCVFFKMEKPFOYM\t0.000000011711\t0.000000006505\n" +
+                "STYSWHLSWPFHXDB\t512.000000000000\t512.000000000000\n" +
+                "IWEODDBHEVGXYHJ\t0.000000000773\t0.000000009342\n" +
+                "KIWIHBROKZKUTIQ\t128.000000000000\t128.000000000000\n" +
+                "VQEBNDCQCEHNOMV\t0.000000003251\t0.000000000000\n" +
+                "BSQCNSFFLTRYZUZ\t-1024.000000000000\t-1024.000000000000\n" +
+                "OPJEUKWMDNZZBBU\t-1024.000000000000\t-1024.000000000000\n" +
+                "DOTSEDYYCTGQOLY\t0.000000004748\t0.000000004680\n" +
+                "CMONRCXNUZFNWHF\t0.000000000000\t0.000000003728\n" +
+                "HYBTVZNCLNXFSUW\t-1024.000000000000\t-1024.000000000000\n" +
+                "EGMITINLKFNUHNR\t0.000000017782\t0.000000023362\n" +
+                "UXBWYWRLHUHJECI\t0.000000009297\t0.000000009220\n" +
+                "HBXOWVYUVVRDPCH\t-512.000000000000\t-512.000000000000\n";
+
+        assertThat(expected, "select id, x, y from tab where eq(x, y, 0.00000001)");
     }
 
     @Test
@@ -827,6 +992,193 @@ public class OptimiserTest extends AbstractTest {
                 "XTPNHTDCEBYWXBB\t81.210937500000\t0.000056687957\t2015-03-12T00:15:43.330Z\n" +
                 "XTPNHTDCEBYWXBB\t648.112548828125\t0.000010239995\t2015-03-12T00:16:30.740Z\n";
         assertThat(expected, "select id, x, y, timestamp from tab where id = 'XTPNHTDCEBYWXBB'");
+    }
+
+    @Test
+    public void testStrConcat() throws Exception {
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $str("x").
+                        $str("y").
+                        $int("z").
+                        $ts()
+
+        );
+
+        Rnd rnd = new Rnd();
+
+        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+        for (int i = 0; i < 1000; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            ew.putStr(0, rnd.nextString(4));
+            ew.putStr(1, rnd.nextString(2));
+            ew.putInt(2, rnd.nextInt());
+            ew.putDate(3, t += 10);
+            ew.append();
+        }
+        w.commit();
+
+        final String expected = "CJOU-OU\n" +
+                "CQJS-HG\n" +
+                "CEJF-PB\n" +
+                "CSJK-PY\n" +
+                "CJHU-JY\n";
+
+        assertThat(expected, "select x + '-' + y from tab where x ~ '^C.*J+'");
+    }
+
+    @Test
+    public void testStrRegex() throws Exception {
+        createTab();
+        final String expecte = "KEQMMKDFIPNZVZR\t0.000000001530\t2015-03-12T00:00:03.470Z\n" +
+                "KEQMMKDFIPNZVZR\t-832.000000000000\t2015-03-12T00:00:04.650Z\n" +
+                "KEQMMKDFIPNZVZR\t446.187500000000\t2015-03-12T00:00:05.460Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000000005636\t2015-03-12T00:00:24.210Z\n" +
+                "KEQMMKDFIPNZVZR\t0.129930097610\t2015-03-12T00:00:52.220Z\n" +
+                "KEQMMKDFIPNZVZR\t-677.094238281250\t2015-03-12T00:00:54.020Z\n" +
+                "KEQMMKDFIPNZVZR\t-167.187500000000\t2015-03-12T00:00:58.090Z\n" +
+                "KEQMMKDFIPNZVZR\t-512.000000000000\t2015-03-12T00:01:11.790Z\n" +
+                "KEQMMKDFIPNZVZR\t0.055018983781\t2015-03-12T00:01:19.340Z\n" +
+                "KEQMMKDFIPNZVZR\t-862.500000000000\t2015-03-12T00:01:24.430Z\n" +
+                "KEQMMKDFIPNZVZR\t883.730468750000\t2015-03-12T00:01:28.870Z\n" +
+                "KEQMMKDFIPNZVZR\t193.875000000000\t2015-03-12T00:01:39.320Z\n" +
+                "KEQMMKDFIPNZVZR\t-608.000000000000\t2015-03-12T00:01:42.440Z\n" +
+                "KEQMMKDFIPNZVZR\t-193.003417968750\t2015-03-12T00:01:47.820Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000002046971\t2015-03-12T00:01:55.420Z\n" +
+                "KEQMMKDFIPNZVZR\t0.037930097431\t2015-03-12T00:01:55.790Z\n" +
+                "KEQMMKDFIPNZVZR\t0.160599559546\t2015-03-12T00:02:08.830Z\n" +
+                "KEQMMKDFIPNZVZR\t91.000000000000\t2015-03-12T00:02:19.120Z\n" +
+                "KEQMMKDFIPNZVZR\t-1000.000000000000\t2015-03-12T00:02:22.680Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000015199104\t2015-03-12T00:02:23.520Z\n" +
+                "KEQMMKDFIPNZVZR\t-480.000000000000\t2015-03-12T00:02:29.060Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000000224731\t2015-03-12T00:02:31.260Z\n" +
+                "KEQMMKDFIPNZVZR\t0.043443457223\t2015-03-12T00:02:40.400Z\n" +
+                "KEQMMKDFIPNZVZR\t-554.125000000000\t2015-03-12T00:02:45.230Z\n" +
+                "KEQMMKDFIPNZVZR\t0.418899938464\t2015-03-12T00:02:52.550Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000002813213\t2015-03-12T00:03:34.680Z\n" +
+                "KEQMMKDFIPNZVZR\t-750.970703125000\t2015-03-12T00:03:43.830Z\n" +
+                "KEQMMKDFIPNZVZR\t202.477161407471\t2015-03-12T00:03:59.950Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000296119222\t2015-03-12T00:04:06.200Z\n" +
+                "KEQMMKDFIPNZVZR\t-1001.109375000000\t2015-03-12T00:04:12.750Z\n" +
+                "KEQMMKDFIPNZVZR\t-350.539062500000\t2015-03-12T00:04:17.920Z\n" +
+                "KEQMMKDFIPNZVZR\t0.270242959261\t2015-03-12T00:04:30.780Z\n" +
+                "KEQMMKDFIPNZVZR\t640.000000000000\t2015-03-12T00:04:36.000Z\n" +
+                "KEQMMKDFIPNZVZR\t242.000000000000\t2015-03-12T00:04:37.360Z\n" +
+                "KEQMMKDFIPNZVZR\t354.109191894531\t2015-03-12T00:04:43.560Z\n" +
+                "KEQMMKDFIPNZVZR\t608.000000000000\t2015-03-12T00:05:03.070Z\n" +
+                "KEQMMKDFIPNZVZR\t-209.281250000000\t2015-03-12T00:05:18.460Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000000009506\t2015-03-12T00:05:39.720Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000000018168\t2015-03-12T00:05:40.690Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000000002177\t2015-03-12T00:05:41.820Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000375485601\t2015-03-12T00:05:49.480Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000000039768\t2015-03-12T00:05:55.150Z\n" +
+                "KEQMMKDFIPNZVZR\t0.269348338246\t2015-03-12T00:06:09.200Z\n" +
+                "KEQMMKDFIPNZVZR\t-671.500000000000\t2015-03-12T00:06:26.130Z\n" +
+                "KEQMMKDFIPNZVZR\t0.001258826785\t2015-03-12T00:06:28.910Z\n" +
+                "KEQMMKDFIPNZVZR\t0.978091150522\t2015-03-12T00:06:33.330Z\n" +
+                "KEQMMKDFIPNZVZR\t44.780708312988\t2015-03-12T00:06:43.700Z\n" +
+                "KEQMMKDFIPNZVZR\t-767.601562500000\t2015-03-12T00:06:44.600Z\n" +
+                "KEQMMKDFIPNZVZR\t-890.500000000000\t2015-03-12T00:06:59.620Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000173775785\t2015-03-12T00:07:01.460Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000192599509\t2015-03-12T00:07:04.160Z\n" +
+                "KEQMMKDFIPNZVZR\t18.733582496643\t2015-03-12T00:07:23.720Z\n" +
+                "KEQMMKDFIPNZVZR\t31.429724693298\t2015-03-12T00:07:38.140Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000390803711\t2015-03-12T00:07:39.260Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000000044603\t2015-03-12T00:07:49.970Z\n" +
+                "KEQMMKDFIPNZVZR\t-881.380859375000\t2015-03-12T00:07:55.910Z\n" +
+                "KEQMMKDFIPNZVZR\t-128.000000000000\t2015-03-12T00:08:00.360Z\n" +
+                "KEQMMKDFIPNZVZR\t891.539062500000\t2015-03-12T00:08:14.330Z\n" +
+                "KEQMMKDFIPNZVZR\t508.000000000000\t2015-03-12T00:08:21.190Z\n" +
+                "KEQMMKDFIPNZVZR\t0.002558049746\t2015-03-12T00:08:31.860Z\n" +
+                "KEQMMKDFIPNZVZR\t-736.000000000000\t2015-03-12T00:08:57.430Z\n" +
+                "KEQMMKDFIPNZVZR\t-968.859375000000\t2015-03-12T00:09:27.030Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000000008169\t2015-03-12T00:09:27.200Z\n" +
+                "KEQMMKDFIPNZVZR\t399.000000000000\t2015-03-12T00:09:45.580Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000239236899\t2015-03-12T00:09:53.250Z\n" +
+                "KEQMMKDFIPNZVZR\t-104.871093750000\t2015-03-12T00:10:01.070Z\n" +
+                "KEQMMKDFIPNZVZR\t15.412450790405\t2015-03-12T00:10:04.140Z\n" +
+                "KEQMMKDFIPNZVZR\t0.185059137642\t2015-03-12T00:10:15.850Z\n" +
+                "KEQMMKDFIPNZVZR\t5.659068346024\t2015-03-12T00:10:26.050Z\n" +
+                "KEQMMKDFIPNZVZR\t3.807189881802\t2015-03-12T00:10:59.590Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000000677441\t2015-03-12T00:11:01.530Z\n" +
+                "KEQMMKDFIPNZVZR\t61.405685424805\t2015-03-12T00:11:03.130Z\n" +
+                "KEQMMKDFIPNZVZR\t-1024.000000000000\t2015-03-12T00:11:18.220Z\n" +
+                "KEQMMKDFIPNZVZR\t641.500000000000\t2015-03-12T00:11:25.040Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000001824081\t2015-03-12T00:11:34.740Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000056925237\t2015-03-12T00:11:39.260Z\n" +
+                "KEQMMKDFIPNZVZR\t128.000000000000\t2015-03-12T00:11:40.030Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000168198319\t2015-03-12T00:11:42.890Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000002674703\t2015-03-12T00:11:54.620Z\n" +
+                "KEQMMKDFIPNZVZR\t0.001482222520\t2015-03-12T00:12:40.320Z\n" +
+                "KEQMMKDFIPNZVZR\t56.829874038696\t2015-03-12T00:12:42.760Z\n" +
+                "KEQMMKDFIPNZVZR\t41.603179931641\t2015-03-12T00:13:16.840Z\n" +
+                "KEQMMKDFIPNZVZR\t164.312500000000\t2015-03-12T00:13:35.470Z\n" +
+                "KEQMMKDFIPNZVZR\t-457.061523437500\t2015-03-12T00:13:45.640Z\n" +
+                "KEQMMKDFIPNZVZR\t-512.000000000000\t2015-03-12T00:13:46.040Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000027407084\t2015-03-12T00:13:51.600Z\n" +
+                "KEQMMKDFIPNZVZR\t-473.760742187500\t2015-03-12T00:13:57.560Z\n" +
+                "KEQMMKDFIPNZVZR\t-512.000000000000\t2015-03-12T00:13:58.830Z\n" +
+                "KEQMMKDFIPNZVZR\t74.750000000000\t2015-03-12T00:14:32.610Z\n" +
+                "KEQMMKDFIPNZVZR\t982.715270996094\t2015-03-12T00:14:33.480Z\n" +
+                "KEQMMKDFIPNZVZR\t0.235923126340\t2015-03-12T00:14:36.540Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000000003422\t2015-03-12T00:14:48.360Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000304762289\t2015-03-12T00:15:01.280Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000188905338\t2015-03-12T00:15:08.640Z\n" +
+                "KEQMMKDFIPNZVZR\t256.000000000000\t2015-03-12T00:15:09.740Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000000017417\t2015-03-12T00:15:17.910Z\n" +
+                "KEQMMKDFIPNZVZR\t75.859375000000\t2015-03-12T00:15:32.280Z\n" +
+                "KEQMMKDFIPNZVZR\t0.091820014641\t2015-03-12T00:15:34.560Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000044015695\t2015-03-12T00:15:45.650Z\n" +
+                "KEQMMKDFIPNZVZR\t0.000000003026\t2015-03-12T00:15:48.030Z\n" +
+                "KEQMMKDFIPNZVZR\t-963.317260742188\t2015-03-12T00:15:49.270Z\n" +
+                "KEQMMKDFIPNZVZR\t0.001303359750\t2015-03-12T00:16:08.870Z\n" +
+                "KEQMMKDFIPNZVZR\t0.005202150205\t2015-03-12T00:16:14.750Z\n";
+
+        assertThat(expecte, "select id, x, timestamp from tab where id ~ '^KE.*'");
+    }
+
+    @Test
+    public void testSymRegex() throws Exception {
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $sym("id").index().valueCountHint(128).
+                        $double("x").
+                        $double("y").
+                        $ts()
+
+        );
+
+        Rnd rnd = new Rnd();
+        ObjHashSet<String> names = new ObjHashSet<>();
+        for (int i = 0; i < 128; i++) {
+            names.add(rnd.nextString(15));
+        }
+
+        int mask = 127;
+        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+        for (int i = 0; i < 10000; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            ew.putSym(0, names.get(rnd.nextInt() & mask));
+            ew.putDouble(1, rnd.nextDouble());
+            ew.putDouble(2, rnd.nextDouble());
+            ew.putDate(3, t += 10);
+            ew.append();
+        }
+        w.commit();
+
+        final String expected = "EENNEBQQEMXDKXE\t0.005532926181\t2015-03-12T00:01:38.290Z\n" +
+                "EDNKRCGKSQDCMUM\t201.500000000000\t2015-03-12T00:01:38.780Z\n" +
+                "EVMLKCJBEVLUHLI\t-224.000000000000\t2015-03-12T00:01:39.040Z\n" +
+                "EEHRUGPBMBTKVSB\t640.000000000000\t2015-03-12T00:01:39.140Z\n" +
+                "EOCVFFKMEKPFOYM\t0.001286557002\t2015-03-12T00:01:39.260Z\n" +
+                "ETJRSZSRYRFBVTM\t0.146399393678\t2015-03-12T00:01:39.460Z\n" +
+                "ELLKKHTWNWIFFLR\t236.634628295898\t2015-03-12T00:01:39.600Z\n" +
+                "EGMITINLKFNUHNR\t53.349147796631\t2015-03-12T00:01:39.850Z\n" +
+                "EIWFOQKYHQQUWQO\t-617.734375000000\t2015-03-12T00:01:40.000Z\n";
+
+        assertThat(expected, "select id, y, timestamp from tab latest by id where id ~ '^E.*'");
     }
 
     @Test

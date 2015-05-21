@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalInvalidSymbolValueException;
 import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.test.tools.AbstractTest;
+import com.nfsdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
@@ -162,9 +163,8 @@ public class SymbolTableTest extends AbstractTest {
         createTestTable(data);
 
         try (SymbolTable tab = getReader()) {
-            int key = 0;
-            for (String s : tab.values()) {
-                Assert.assertEquals(data[key++], s);
+            for (SymbolTable.Entry e : tab.values()) {
+                TestUtils.assertEquals(data[e.key], e.value);
             }
         }
     }

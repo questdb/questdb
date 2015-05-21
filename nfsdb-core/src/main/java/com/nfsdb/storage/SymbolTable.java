@@ -42,6 +42,7 @@ public class SymbolTable implements Closeable {
     private final ObjIntHashMap<CharSequence> valueCache;
     private final ObjList<String> keyCache;
     private final boolean noCache;
+    private final Iter iter = new Iter();
     private VariableColumn data;
     private KVIndex index;
     private int size;
@@ -206,23 +207,10 @@ public class SymbolTable implements Closeable {
         return getQuick(value) != VALUE_NOT_FOUND;
     }
 
-    public Iterable<String> values() {
-
-        return new AbstractImmutableIterator<String>() {
-
-            private final long size = SymbolTable.this.size();
-            private long current = 0;
-
-            @Override
-            public boolean hasNext() {
-                return current < size;
-            }
-
-            @Override
-            public String next() {
-                return data.getStr(current++);
-            }
-        };
+    public Iterable<Entry> values() {
+        iter.pos = 0;
+        iter.size = size();
+        return iter;
     }
 
     private void cache(int key, String value) {
@@ -260,5 +248,28 @@ public class SymbolTable implements Closeable {
 
     private int hashKey(CharSequence value) {
         return Hash.boundedHash(value, hashKeyCount);
+    }
+
+    public class Entry {
+        public int key;
+        public CharSequence value;
+    }
+
+    private class Iter extends AbstractImmutableIterator<Entry> {
+        private int pos;
+        private int size;
+        private Entry e = new Entry();
+
+        @Override
+        public boolean hasNext() {
+            return pos < size;
+        }
+
+        @Override
+        public Entry next() {
+            e.key = pos;
+            e.value = data.getFlyweightStr(pos++);
+            return e;
+        }
     }
 }

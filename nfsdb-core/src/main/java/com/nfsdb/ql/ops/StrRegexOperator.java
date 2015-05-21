@@ -16,46 +16,30 @@
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.ql.Record;
-import com.nfsdb.ql.SymFacade;
-import com.nfsdb.ql.parser.ParserException;
 import com.nfsdb.storage.ColumnType;
 
-public class StrInOperator extends AbstractVirtualColumn implements Function {
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-    private final ObjHashSet<CharSequence> set = new ObjHashSet<>();
-    private VirtualColumn lhs;
+public class StrRegexOperator extends AbstractBinaryOperator {
 
-    public StrInOperator() {
+    private Pattern pattern;
+    private Matcher matcher;
+
+    public StrRegexOperator() {
         super(ColumnType.BOOLEAN);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        return set.contains(lhs.getFlyweightStr(rec));
+        return matcher.reset(lhs.getFlyweightStr(rec)).find();
     }
 
     @Override
-    public boolean isConstant() {
-        return lhs.isConstant();
-    }
-
-    @Override
-    public void prepare(SymFacade facade) {
-        lhs.prepare(facade);
-    }
-
-    @Override
-    public void setArg(int pos, VirtualColumn arg) throws ParserException {
-        if (pos == 0) {
-            lhs = arg;
-        } else {
-            set.add(arg.getStr(null).toString());
-        }
-    }
-
-    @Override
-    public void setArgCount(int count) {
+    public void setRhs(VirtualColumn rhs) {
+        super.setRhs(rhs);
+        pattern = Pattern.compile(rhs.getStr(null).toString());
+        matcher = pattern.matcher("");
     }
 }

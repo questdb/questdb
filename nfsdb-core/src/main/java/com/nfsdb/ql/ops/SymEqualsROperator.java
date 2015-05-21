@@ -16,46 +16,26 @@
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.SymFacade;
-import com.nfsdb.ql.parser.ParserException;
 import com.nfsdb.storage.ColumnType;
 
-public class StrInOperator extends AbstractVirtualColumn implements Function {
+public class SymEqualsROperator extends AbstractBinaryOperator {
 
-    private final ObjHashSet<CharSequence> set = new ObjHashSet<>();
-    private VirtualColumn lhs;
+    private int key;
 
-    public StrInOperator() {
+    public SymEqualsROperator() {
         super(ColumnType.BOOLEAN);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        return set.contains(lhs.getFlyweightStr(rec));
-    }
-
-    @Override
-    public boolean isConstant() {
-        return lhs.isConstant();
+        return key > -1 && rhs.getInt(rec) == key;
     }
 
     @Override
     public void prepare(SymFacade facade) {
-        lhs.prepare(facade);
-    }
-
-    @Override
-    public void setArg(int pos, VirtualColumn arg) throws ParserException {
-        if (pos == 0) {
-            lhs = arg;
-        } else {
-            set.add(arg.getStr(null).toString());
-        }
-    }
-
-    @Override
-    public void setArgCount(int count) {
+        super.prepare(facade);
+        this.key = rhs.getSymbolTable().getQuick(lhs.getFlyweightStr(null));
     }
 }

@@ -98,7 +98,10 @@ public class KvIndexAllSymHeadRowSource extends AbstractRowSource {
     }
 
     @Override
-    public void prepare(SymFacade symFacade) {
-        valueCount = symFacade.getSymbolTable(column).size();
+    public void prepare(SymFacade facade) {
+        if (filter != null) {
+            filter.prepare(facade);
+        }
+        valueCount = facade.getSymbolTable(column).size();
     }
 }

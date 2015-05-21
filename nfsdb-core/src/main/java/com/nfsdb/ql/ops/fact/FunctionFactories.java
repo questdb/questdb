@@ -16,9 +16,7 @@
 
 package com.nfsdb.ql.ops.fact;
 
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.ObjObjHashMap;
-import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.ql.parser.Signature;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Chars;
@@ -28,19 +26,8 @@ public final class FunctionFactories {
     // intrinsic factories
     private static final StrInOperatorFactory STRING_IN_OPERATOR_FACTORY = new StrInOperatorFactory();
     private static final SymInOperatorFactory SYMBOL_IN_OPERATOR_FACTORY = new SymInOperatorFactory();
-    private static final SymEqualsOperatorFactory SYMBOL_EQ_OPERATOR_FACTORY = new SymEqualsOperatorFactory();
 
-    public static FunctionFactory find(Signature sig, ObjList<VirtualColumn> args) {
-
-        // pre-lookup special case, symbol = value operator requires special consideration
-        if (Chars.equals("=", sig.name)
-                && args.size() == 2
-                && args.get(0).getType() == ColumnType.SYMBOL
-                && args.get(1).getType() == ColumnType.STRING
-                && args.get(1).isConstant()) {
-            return SYMBOL_EQ_OPERATOR_FACTORY;
-        }
-
+    public static FunctionFactory find(Signature sig) {
         FunctionFactory factory = factories.get(sig);
         if (factory != null) {
             return factory;
@@ -65,37 +52,76 @@ public final class FunctionFactories {
         return null;
     }
 
+    private static void binSig(String name, ColumnType lhst, ColumnType rhst, FunctionFactory f) {
+        factories.put(new Signature().setName(name).setParamCount(2).paramType(0, lhst, false).paramType(1, rhst, false), f);
+        factories.put(new Signature().setName(name).setParamCount(2).paramType(0, lhst, true).paramType(1, rhst, false), f);
+        factories.put(new Signature().setName(name).setParamCount(2).paramType(0, lhst, false).paramType(1, rhst, true), f);
+        factories.put(new Signature().setName(name).setParamCount(2).paramType(0, lhst, true).paramType(1, rhst, true), f);
+    }
+
+    private static void triSig(String name, ColumnType lhst, ColumnType rhst, ColumnType scale, FunctionFactory f) {
+        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, false).paramType(1, rhst, false).paramType(2, scale, false), f);
+        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, false).paramType(1, rhst, false).paramType(2, scale, true), f);
+        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, false).paramType(1, rhst, true).paramType(2, scale, false), f);
+        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, false).paramType(1, rhst, true).paramType(2, scale, true), f);
+
+        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, true).paramType(1, rhst, false).paramType(2, scale, false), f);
+        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, true).paramType(1, rhst, false).paramType(2, scale, true), f);
+        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, true).paramType(1, rhst, true).paramType(2, scale, false), f);
+        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, true).paramType(1, rhst, true).paramType(2, scale, true), f);
+    }
+
     static {
-        factories.put(new Signature().setName("+").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.DOUBLE), new AddDoubleOperatorFactory());
-        factories.put(new Signature().setName("+").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.INT), new AddDoubleOperatorFactory());
-        factories.put(new Signature().setName("+").setParamCount(2).paramType(0, ColumnType.INT).paramType(1, ColumnType.DOUBLE), new AddDoubleOperatorFactory());
-        factories.put(new Signature().setName("+").setParamCount(2).paramType(0, ColumnType.INT).paramType(1, ColumnType.INT), new AddIntOperatorFactory());
+        binSig("+", ColumnType.DOUBLE, ColumnType.DOUBLE, new AddDoubleOperatorFactory());
+        binSig("+", ColumnType.DOUBLE, ColumnType.INT, new AddDoubleOperatorFactory());
+        binSig("+", ColumnType.INT, ColumnType.DOUBLE, new AddDoubleOperatorFactory());
+        binSig("+", ColumnType.INT, ColumnType.INT, new AddIntOperatorFactory());
+        binSig("+", ColumnType.STRING, ColumnType.STRING, new StrConcatOperatorFactory());
+        //todo: itoa functions
+        binSig("/", ColumnType.DOUBLE, ColumnType.DOUBLE, new DivDoubleOperatorFactory());
+        binSig("/", ColumnType.DOUBLE, ColumnType.INT, new DivDoubleOperatorFactory());
+        binSig("/", ColumnType.INT, ColumnType.DOUBLE, new DivDoubleOperatorFactory());
+        binSig("/", ColumnType.INT, ColumnType.INT, new DivDoubleOperatorFactory());
+        binSig("*", ColumnType.DOUBLE, ColumnType.DOUBLE, new MultDoubleOperatorFactory());
+        binSig("*", ColumnType.INT, ColumnType.DOUBLE, new MultDoubleOperatorFactory());
+        binSig("*", ColumnType.DOUBLE, ColumnType.INT, new MultDoubleOperatorFactory());
+        binSig("*", ColumnType.INT, ColumnType.INT, new MultIntOperatorFactory());
+        binSig("-", ColumnType.DOUBLE, ColumnType.DOUBLE, new MinusDoubleOperatorFactory());
+        binSig("-", ColumnType.INT, ColumnType.DOUBLE, new MinusDoubleOperatorFactory());
+        binSig("-", ColumnType.DOUBLE, ColumnType.INT, new MinusDoubleOperatorFactory());
+        binSig("-", ColumnType.INT, ColumnType.INT, new MinusIntOperatorFactory());
+        binSig(">", ColumnType.DOUBLE, ColumnType.DOUBLE, new DoubleGreaterThanOperatorFactory());
+        binSig(">", ColumnType.INT, ColumnType.DOUBLE, new DoubleGreaterThanOperatorFactory());
+        binSig(">", ColumnType.DOUBLE, ColumnType.INT, new DoubleGreaterThanOperatorFactory());
+        binSig(">", ColumnType.INT, ColumnType.INT, new IntGreaterThanOperatorFactory());
+        binSig(">=", ColumnType.DOUBLE, ColumnType.DOUBLE, new DoubleGreaterOrEqualOperatorFactory());
+        binSig(">=", ColumnType.INT, ColumnType.DOUBLE, new DoubleGreaterOrEqualOperatorFactory());
+        binSig(">=", ColumnType.DOUBLE, ColumnType.INT, new DoubleGreaterOrEqualOperatorFactory());
+        binSig(">=", ColumnType.INT, ColumnType.INT, new IntGreaterOrEqualOperatorFactory());
+        binSig("<", ColumnType.DOUBLE, ColumnType.DOUBLE, new DoubleLessThanOperatorFactory());
+        binSig("<", ColumnType.INT, ColumnType.DOUBLE, new DoubleLessThanOperatorFactory());
+        binSig("<", ColumnType.DOUBLE, ColumnType.INT, new DoubleLessThanOperatorFactory());
+        binSig("<", ColumnType.INT, ColumnType.INT, new IntLessThanOperatorFactory());
+        binSig("<=", ColumnType.DOUBLE, ColumnType.DOUBLE, new DoubleLessOrEqualOperatorFactory());
+        binSig("<=", ColumnType.INT, ColumnType.DOUBLE, new DoubleLessOrEqualOperatorFactory());
+        binSig("<=", ColumnType.DOUBLE, ColumnType.INT, new DoubleLessOrEqualOperatorFactory());
+        binSig("<=", ColumnType.INT, ColumnType.INT, new IntLessOrEqualOperatorFactory());
+        binSig("=", ColumnType.INT, ColumnType.INT, new IntEqualsOperatorFactory());
+        binSig("=", ColumnType.STRING, ColumnType.STRING, new StrEqualsOperatorFactory());
+        binSig("=", ColumnType.DOUBLE, ColumnType.DOUBLE, new DoubleEqualsOperatorFactory());
+        binSig("=", ColumnType.INT, ColumnType.DOUBLE, new DoubleEqualsOperatorFactory());
+        binSig("=", ColumnType.DOUBLE, ColumnType.INT, new DoubleEqualsOperatorFactory());
+        triSig("eq", ColumnType.DOUBLE, ColumnType.DOUBLE, ColumnType.DOUBLE, new DoubleScaledEqualsOperatorFactory());
+        triSig("eq", ColumnType.DOUBLE, ColumnType.INT, ColumnType.DOUBLE, new DoubleScaledEqualsOperatorFactory());
+        triSig("eq", ColumnType.INT, ColumnType.DOUBLE, ColumnType.DOUBLE, new DoubleScaledEqualsOperatorFactory());
 
-        factories.put(new Signature().setName("/").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.DOUBLE), new DivDoubleOperatorFactory());
-        factories.put(new Signature().setName("/").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.INT), new DivDoubleOperatorFactory());
-        factories.put(new Signature().setName("/").setParamCount(2).paramType(0, ColumnType.INT).paramType(1, ColumnType.DOUBLE), new DivDoubleOperatorFactory());
-
-        factories.put(new Signature().setName("*").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.DOUBLE), new MultDoubleOperatorFactory());
-        factories.put(new Signature().setName("*").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.INT), new MultDoubleOperatorFactory());
-        factories.put(new Signature().setName("*").setParamCount(2).paramType(0, ColumnType.INT).paramType(1, ColumnType.DOUBLE), new MultDoubleOperatorFactory());
-
-        factories.put(new Signature().setName("-").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.DOUBLE), new MinusDoubleOperatorFactory());
-        factories.put(new Signature().setName("-").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.INT), new MinusDoubleOperatorFactory());
-        factories.put(new Signature().setName("-").setParamCount(2).paramType(0, ColumnType.INT).paramType(1, ColumnType.DOUBLE), new MinusDoubleOperatorFactory());
-
-        factories.put(new Signature().setName(">").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.DOUBLE), new DoubleGreaterThanOperatorFactory());
-        factories.put(new Signature().setName(">").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.INT), new DoubleGreaterThanOperatorFactory());
-        factories.put(new Signature().setName(">").setParamCount(2).paramType(0, ColumnType.INT).paramType(1, ColumnType.DOUBLE), new DoubleGreaterThanOperatorFactory());
-        factories.put(new Signature().setName(">").setParamCount(2).paramType(0, ColumnType.INT).paramType(1, ColumnType.INT), new IntGreaterThanOperatorFactory());
-
-        factories.put(new Signature().setName("<").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.DOUBLE), new DoubleLessThanOperatorFactory());
-        factories.put(new Signature().setName("<").setParamCount(2).paramType(0, ColumnType.DOUBLE).paramType(1, ColumnType.INT), new DoubleLessThanOperatorFactory());
-
-        factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.INT).paramType(1, ColumnType.INT), new IntEqualsOperatorFactory());
-        factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.STRING).paramType(1, ColumnType.STRING), new StrEqualsOperatorFactory());
-        factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL).paramType(1, ColumnType.STRING), new StrEqualsOperatorFactory());
-
-        factories.put(new Signature().setName("and").setParamCount(2).paramType(0, ColumnType.BOOLEAN).paramType(1, ColumnType.BOOLEAN), new AndOperatorFactory());
-        factories.put(new Signature().setName("or").setParamCount(2).paramType(0, ColumnType.BOOLEAN).paramType(1, ColumnType.BOOLEAN), new OrOperatorFactory());
+        //todo: double comparison function
+        factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, false), new StrEqualsOperatorFactory());
+        factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, true), new SymEqualsOperatorFactory());
+        factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.SYMBOL, false), new SymEqualsROperatorFactory());
+        factories.put(new Signature().setName("~").setParamCount(2).paramType(0, ColumnType.STRING, false).paramType(1, ColumnType.STRING, true), new StrRegexOperatorFactory());
+        factories.put(new Signature().setName("~").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, true), new SymRegexOperatorFactory());
+        binSig("and", ColumnType.BOOLEAN, ColumnType.BOOLEAN, new AndOperatorFactory());
+        binSig("or", ColumnType.BOOLEAN, ColumnType.BOOLEAN, new OrOperatorFactory());
     }
 }

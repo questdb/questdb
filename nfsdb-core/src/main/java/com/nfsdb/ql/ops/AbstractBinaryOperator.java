@@ -44,10 +44,10 @@ public abstract class AbstractBinaryOperator extends AbstractVirtualColumn imple
     public void setArg(int pos, VirtualColumn arg) throws ParserException {
         switch (pos) {
             case 0:
-                lhs = arg;
+                setLhs(arg);
                 break;
             case 1:
-                rhs = arg;
+                setRhs(arg);
                 break;
             default:
                 throw new ParserException(0, "Too many arguments");

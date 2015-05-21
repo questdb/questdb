@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,12 +39,12 @@ public class PostOrderTreeTraversalAlgo {
             if (node != null) {
                 stack.addFirst(node);
                 indexStack.push(0);
-                node = node.lhs;
+                node = node.rhs;
             } else {
                 ExprNode peek = stack.peek();
                 if (peek.paramCount < 3) {
-                    if (peek.rhs != null && lastVisited != peek.rhs) {
-                        node = peek.rhs;
+                    if (peek.lhs != null && lastVisited != peek.lhs) {
+                        node = peek.lhs;
                     } else {
                         visitor.visit(peek);
                         lastVisited = stack.pollFirst();
