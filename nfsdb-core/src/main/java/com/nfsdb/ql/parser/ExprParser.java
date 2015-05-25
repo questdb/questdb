@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.nfsdb.ql.parser;
 
 import com.nfsdb.collections.IntStack;
 import com.nfsdb.ql.model.ExprNode;
+import com.nfsdb.utils.Chars;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;
@@ -152,10 +153,14 @@ public class ExprParser {
                 case '9':
                 case '"':
                 case '\'':
-                    thisBranch = Branch.CONSTANT;
-                    // If the token is a number, then add it to the output queue.
-                    listener.onNode(new ExprNode(ExprNode.NodeType.CONSTANT, tok.toString(), 0, toks.position()));
-                    break;
+                case 'N':
+                case 'n':
+                    if ((thisChar != 'N' && thisChar != 'n') || Chars.equals("NaN", tok) || Chars.equals("null", tok)) {
+                        thisBranch = Branch.CONSTANT;
+                        // If the token is a number, then add it to the output queue.
+                        listener.onNode(new ExprNode(ExprNode.NodeType.CONSTANT, tok.toString(), 0, toks.position()));
+                        break;
+                    }
                 default:
                     Operator op;
                     if ((op = Operator.opMap.get(tok)) != null) {

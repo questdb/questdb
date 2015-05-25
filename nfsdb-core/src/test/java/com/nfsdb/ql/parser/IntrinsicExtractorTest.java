@@ -136,6 +136,13 @@ public class IntrinsicExtractorTest extends AbstractTest {
     }
 
     @Test
+    public void testEqualsNull() throws Exception {
+        IntrinsicModel m = modelOf("sym = null");
+        Assert.assertEquals("sym", m.keyColumn);
+        Assert.assertEquals("[null]", m.keyValues.toString());
+    }
+
+    @Test
     public void testEqualsOverlapWithIn() throws Exception {
         IntrinsicModel m = modelOf("sym in ('x','y') and sym = 'y'");
         Assert.assertNull(m.filter);
@@ -214,6 +221,13 @@ public class IntrinsicExtractorTest extends AbstractTest {
         Assert.assertTrue(m.intervalLo == Long.MIN_VALUE);
         Assert.assertTrue(m.intervalHi == Long.MAX_VALUE);
         assertFilter(m, "\"2014-01-02T12:30:00.000Z\"\"2014-01-01T12:30:00.000Z\"timestampin100bid>or");
+    }
+
+    @Test
+    public void testInNull() throws Exception {
+        IntrinsicModel m = modelOf("sym in ('X', null, 'Y')");
+        Assert.assertEquals("sym", m.keyColumn);
+        Assert.assertEquals("[X,null,Y]", m.keyValues.toString());
     }
 
     @Test

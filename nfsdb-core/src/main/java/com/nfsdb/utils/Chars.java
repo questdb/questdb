@@ -25,7 +25,6 @@ public final class Chars {
     }
 
     public static boolean equals(CharSequence l, CharSequence r) {
-
         int ll;
         if ((ll = l.length()) != r.length()) {
             return false;

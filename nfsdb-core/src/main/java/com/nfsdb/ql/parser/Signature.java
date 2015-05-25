@@ -23,7 +23,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class Signature {
     public final ObjList<ColumnType> paramTypes = new ObjList<>();
-    public IntList constParams = new IntList();
+    public final IntList constParams = new IntList();
     public CharSequence name;
     public int paramCount;
 

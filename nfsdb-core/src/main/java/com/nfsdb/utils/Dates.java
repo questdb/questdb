@@ -121,6 +121,9 @@ final public class Dates {
 
     // YYYY-MM-DDThh:mm:ss.mmmmZ
     public static void appendDateTime(CharSink sink, long millis) {
+        if (millis == Long.MIN_VALUE) {
+            return;
+        }
         int y = getYear(millis);
         boolean l = isLeapYear(y);
         int m = getMonthOfYear(millis, y, l);
@@ -494,6 +497,14 @@ final public class Dates {
         }
     }
 
+    public static long parseDateTimeFmt1Quiet(CharSequence seq) {
+        try {
+            return parseDateTimeFmt1(seq, 0, seq.length());
+        } catch (Exception e) {
+            return Long.MIN_VALUE;
+        }
+    }
+
     public static long parseDateTimeFmt2(CharSequence seq) {
         return parseDateTimeFmt2(seq, 0, seq.length());
     }
@@ -527,6 +538,23 @@ final public class Dates {
                     + (day - 1) * DAY_MILLIS;
         } catch (StringIndexOutOfBoundsException e) {
             throw new NumberFormatException("Invalid date: " + seq.toString());
+        }
+    }
+
+    public static long parseDateTimeFmt2Quiet(CharSequence seq) {
+        try {
+            return parseDateTimeFmt2(seq, 0, seq.length());
+        } catch (NumberFormatException e) {
+            return Long.MIN_VALUE;
+        }
+    }
+
+    // YYYY-MM-DDThh:mm:ss.mmm
+    public static long parseDateTimeQuiet(CharSequence seq) {
+        try {
+            return parseDateTime(seq, 0, seq.length());
+        } catch (NumberFormatException e) {
+            return Long.MIN_VALUE;
         }
     }
 

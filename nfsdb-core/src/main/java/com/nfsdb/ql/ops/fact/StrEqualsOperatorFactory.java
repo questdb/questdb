@@ -16,12 +16,19 @@
 
 package com.nfsdb.ql.ops.fact;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.ql.ops.StrEqualsNullOperator;
 import com.nfsdb.ql.ops.StrEqualsOperator;
+import com.nfsdb.ql.ops.VirtualColumn;
 
 public class StrEqualsOperatorFactory implements FunctionFactory {
     @Override
-    public Function newInstance() {
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        VirtualColumn vc = args.getQuick(1);
+        if (vc.isConstant() && vc.getFlyweightStr(null) == null) {
+            return new StrEqualsNullOperator();
+        }
         return new StrEqualsOperator();
     }
 }

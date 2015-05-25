@@ -94,10 +94,7 @@ public class OptimiserTest extends AbstractTest {
         );
 
         Rnd rnd = new Rnd();
-        ObjHashSet<String> names = new ObjHashSet<>();
-        for (int i = 0; i < 128; i++) {
-            names.add(rnd.nextString(15));
-        }
+        ObjHashSet<String> names = getNames(rnd, 128);
 
         int mask = 127;
         long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
@@ -314,10 +311,7 @@ public class OptimiserTest extends AbstractTest {
         );
 
         Rnd rnd = new Rnd();
-        ObjHashSet<String> names = new ObjHashSet<>();
-        for (int i = 0; i < 1024; i++) {
-            names.add(rnd.nextString(15));
-        }
+        ObjHashSet<String> names = getNames(rnd, 1024);
 
         ObjHashSet<String> syms = new ObjHashSet<>();
         for (int i = 0; i < 64; i++) {
@@ -422,10 +416,7 @@ public class OptimiserTest extends AbstractTest {
         );
 
         Rnd rnd = new Rnd();
-        ObjHashSet<String> names = new ObjHashSet<>();
-        for (int i = 0; i < 1024; i++) {
-            names.add(rnd.nextString(15));
-        }
+        ObjHashSet<String> names = getNames(rnd, 1024);
 
         int mask = 1023;
         long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
@@ -493,10 +484,7 @@ public class OptimiserTest extends AbstractTest {
         );
 
         Rnd rnd = new Rnd();
-        ObjHashSet<String> names = new ObjHashSet<>();
-        for (int i = 0; i < 128; i++) {
-            names.add(rnd.nextString(15));
-        }
+        ObjHashSet<String> names = getNames(rnd, 128);
 
         int mask = 127;
         long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
@@ -636,11 +624,8 @@ public class OptimiserTest extends AbstractTest {
         );
 
         Rnd rnd = new Rnd();
-        ObjHashSet<String> names = new ObjHashSet<>();
         int n = 4 * 1024;
-        for (int i = 0; i < n; i++) {
-            names.add(rnd.nextString(15));
-        }
+        ObjHashSet<String> names = getNames(rnd, n);
 
         int mask = n - 1;
         long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
@@ -723,11 +708,8 @@ public class OptimiserTest extends AbstractTest {
         );
 
         Rnd rnd = new Rnd();
-        ObjHashSet<String> names = new ObjHashSet<>();
         int n = 4 * 1024;
-        for (int i = 0; i < n; i++) {
-            names.add(rnd.nextString(15));
-        }
+        ObjHashSet<String> names = getNames(rnd, n);
 
         int mask = n - 1;
         long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
@@ -778,10 +760,7 @@ public class OptimiserTest extends AbstractTest {
         );
 
         Rnd rnd = new Rnd();
-        ObjHashSet<String> names = new ObjHashSet<>();
-        for (int i = 0; i < 1024; i++) {
-            names.add(rnd.nextString(15));
-        }
+        ObjHashSet<String> names = getNames(rnd, 1024);
 
         int mask = 1023;
         long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
@@ -995,6 +974,148 @@ public class OptimiserTest extends AbstractTest {
     }
 
     @Test
+    public void testSearchIndexedStrNull() throws Exception {
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $str("id").index().buckets(128).
+                        $double("x").
+                        $double("y").
+                        $ts()
+
+        );
+
+        Rnd rnd = new Rnd();
+        ObjHashSet<String> names = new ObjHashSet<>();
+        for (int i = 0; i < 128; i++) {
+            names.add(rnd.nextString(15));
+        }
+
+        int mask = 127;
+        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+        for (int i = 0; i < 10000; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            if ((rnd.nextPositiveInt() % 10) == 0) {
+                ew.putNull(0);
+            } else {
+                ew.putStr(0, names.get(rnd.nextInt() & mask));
+            }
+            ew.putDouble(1, rnd.nextDouble());
+            ew.putDouble(2, rnd.nextDouble());
+            ew.putDate(3, t += 10);
+            ew.append();
+        }
+        w.commit();
+
+        assertNullSearch();
+    }
+
+    @Test
+    public void testSearchIndexedSymNull() throws Exception {
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $sym("id").index().valueCountHint(128).
+                        $double("x").
+                        $double("y").
+                        $ts()
+
+        );
+
+        Rnd rnd = new Rnd();
+        ObjHashSet<String> names = getNames(rnd, 128);
+
+        int mask = 127;
+        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+        for (int i = 0; i < 10000; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            if ((rnd.nextPositiveInt() % 10) == 0) {
+                ew.putNull(0);
+            } else {
+                ew.putSym(0, names.get(rnd.nextInt() & mask));
+            }
+            ew.putDouble(1, rnd.nextDouble());
+            ew.putDouble(2, rnd.nextDouble());
+            ew.putDate(3, t += 10);
+            ew.append();
+        }
+        w.commit();
+
+        assertNullSearch();
+    }
+
+    @Test
+    public void testSearchUnindexedStrNull() throws Exception {
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $str("id").
+                        $double("x").
+                        $double("y").
+                        $ts()
+
+        );
+
+        Rnd rnd = new Rnd();
+        ObjHashSet<String> names = new ObjHashSet<>();
+        for (int i = 0; i < 128; i++) {
+            names.add(rnd.nextString(15));
+        }
+
+        int mask = 127;
+        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+        for (int i = 0; i < 10000; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            if ((rnd.nextPositiveInt() % 10) == 0) {
+                ew.putNull(0);
+            } else {
+                ew.putStr(0, names.get(rnd.nextInt() & mask));
+            }
+            ew.putDouble(1, rnd.nextDouble());
+            ew.putDouble(2, rnd.nextDouble());
+            ew.putDate(3, t += 10);
+            ew.append();
+        }
+        w.commit();
+
+        assertNullSearch();
+    }
+
+    @Test
+    public void testSearchUnindexedSymNull() throws Exception {
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $sym("id").
+                        $double("x").
+                        $double("y").
+                        $ts()
+
+        );
+
+        Rnd rnd = new Rnd();
+        ObjHashSet<String> names = getNames(rnd, 128);
+
+        int mask = 127;
+        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+        for (int i = 0; i < 10000; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            if ((rnd.nextPositiveInt() % 10) == 0) {
+                ew.putNull(0);
+            } else {
+                ew.putSym(0, names.get(rnd.nextInt() & mask));
+            }
+            ew.putDouble(1, rnd.nextDouble());
+            ew.putDouble(2, rnd.nextDouble());
+            ew.putDate(3, t += 10);
+            ew.append();
+        }
+        w.commit();
+
+        assertNullSearch();
+    }
+
+    @Test
     public void testStrConcat() throws Exception {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").
@@ -1150,10 +1271,7 @@ public class OptimiserTest extends AbstractTest {
         );
 
         Rnd rnd = new Rnd();
-        ObjHashSet<String> names = new ObjHashSet<>();
-        for (int i = 0; i < 128; i++) {
-            names.add(rnd.nextString(15));
-        }
+        ObjHashSet<String> names = getNames(rnd, 128);
 
         int mask = 127;
         long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
@@ -1179,6 +1297,61 @@ public class OptimiserTest extends AbstractTest {
                 "EIWFOQKYHQQUWQO\t-617.734375000000\t2015-03-12T00:01:40.000Z\n";
 
         assertThat(expected, "select id, y, timestamp from tab latest by id where id ~ '^E.*'");
+    }
+
+    @Test
+    public void testUnindexedIntNaN() throws Exception {
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $int("id").
+                        $double("x").
+                        $double("y").
+                        $ts()
+
+        );
+
+        Rnd rnd = new Rnd();
+        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+        for (int i = 0; i < 10000; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            if (rnd.nextPositiveInt() % 10 == 0) {
+                ew.putNull(0);
+            } else {
+                ew.putInt(0, rnd.nextInt());
+            }
+            ew.putDouble(1, rnd.nextDouble());
+            ew.putDouble(2, rnd.nextDouble());
+            ew.putDate(3, t += 10);
+            ew.append();
+        }
+        w.commit();
+
+        final String expected = "NaN\t768.000000000000\t-408.000000000000\n" +
+                "NaN\t256.000000000000\t-455.750000000000\n" +
+                "NaN\t525.287368774414\t-470.171875000000\n" +
+                "NaN\t512.000000000000\t-425.962463378906\n" +
+                "NaN\t553.796875000000\t-620.062500000000\n" +
+                "NaN\t512.000000000000\t-958.144531250000\n" +
+                "NaN\t304.062500000000\t-1024.000000000000\n" +
+                "NaN\t600.000000000000\t-934.000000000000\n" +
+                "NaN\t475.619140625000\t-431.078125000000\n" +
+                "NaN\t864.000000000000\t-480.723571777344\n" +
+                "NaN\t512.000000000000\t-585.500000000000\n" +
+                "NaN\t183.876594543457\t-512.000000000000\n" +
+                "NaN\t204.021038055420\t-453.903320312500\n" +
+                "NaN\t272.363739013672\t-1024.000000000000\n" +
+                "NaN\t973.989135742188\t-444.000000000000\n" +
+                "NaN\t768.000000000000\t-1024.000000000000\n" +
+                "NaN\t290.253906250000\t-960.000000000000\n" +
+                "NaN\t263.580390930176\t-960.000000000000\n" +
+                "NaN\t756.500000000000\t-1024.000000000000\n" +
+                "NaN\t461.884765625000\t-921.996948242188\n" +
+                "NaN\t512.000000000000\t-536.000000000000\n" +
+                "NaN\t213.152450561523\t-811.783691406250\n" +
+                "NaN\t121.591918945313\t-874.921630859375\n" +
+                "NaN\t920.625000000000\t-512.000000000000\n";
+
+        assertThat(expected, "select id, x, y from tab where id = NaN and x > 120 and y < -400");
     }
 
     @Test
@@ -1290,6 +1463,36 @@ public class OptimiserTest extends AbstractTest {
         assertThat(expected, "select sym, 1-(bid+ask)/2 mid, bid, ask from q");
     }
 
+    private void assertNullSearch() throws JournalException, ParserException {
+        final String expected = "null\t256.000000000000\t-455.750000000000\n" +
+                "null\t525.287368774414\t-470.171875000000\n" +
+                "null\t512.000000000000\t-425.962463378906\n" +
+                "null\t553.796875000000\t-620.062500000000\n" +
+                "null\t512.000000000000\t-958.144531250000\n" +
+                "null\t304.062500000000\t-1024.000000000000\n" +
+                "null\t600.000000000000\t-934.000000000000\n" +
+                "null\t475.619140625000\t-431.078125000000\n" +
+                "null\t864.000000000000\t-480.723571777344\n" +
+                "null\t512.000000000000\t-585.500000000000\n" +
+                "null\t183.876594543457\t-512.000000000000\n" +
+                "null\t204.021038055420\t-453.903320312500\n" +
+                "null\t272.363739013672\t-1024.000000000000\n" +
+                "null\t973.989135742188\t-444.000000000000\n" +
+                "null\t768.000000000000\t-1024.000000000000\n" +
+                "null\t290.253906250000\t-960.000000000000\n" +
+                "null\t263.580390930176\t-960.000000000000\n" +
+                "null\t756.500000000000\t-1024.000000000000\n" +
+                "null\t461.884765625000\t-921.996948242188\n" +
+                "null\t512.000000000000\t-536.000000000000\n" +
+                "null\t213.152450561523\t-811.783691406250\n" +
+                "null\t121.591918945313\t-874.921630859375\n" +
+                "null\t920.625000000000\t-512.000000000000\n" +
+                "null\t256.000000000000\t-488.625000000000\n" +
+                "null\t361.391540527344\t-1024.000000000000\n";
+
+        assertThat(expected, "select id, x, y from tab where id = null and x > 120 and y < -400");
+    }
+
     private void assertThat(String expected, String query) throws JournalException, ParserException {
         RecordSource<? extends Record> rs = compile(query);
 
@@ -1319,10 +1522,7 @@ public class OptimiserTest extends AbstractTest {
         );
 
         Rnd rnd = new Rnd();
-        ObjHashSet<String> names = new ObjHashSet<>();
-        for (int i = 0; i < 1024; i++) {
-            names.add(rnd.nextString(15));
-        }
+        ObjHashSet<String> names = getNames(rnd, 1024);
 
         int mask = 1023;
         long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
@@ -1349,10 +1549,7 @@ public class OptimiserTest extends AbstractTest {
         );
 
         Rnd rnd = new Rnd();
-        ObjHashSet<String> names = new ObjHashSet<>();
-        for (int i = 0; i < 1024; i++) {
-            names.add(rnd.nextString(15));
-        }
+        ObjHashSet<String> names = getNames(rnd, 1024);
 
         int mask = 1023;
         long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
@@ -1366,5 +1563,13 @@ public class OptimiserTest extends AbstractTest {
             ew.append();
         }
         w.commit();
+    }
+
+    private ObjHashSet<String> getNames(Rnd r, int n) {
+        ObjHashSet<String> names = new ObjHashSet<>();
+        for (int i = 0; i < n; i++) {
+            names.add(r.nextString(15));
+        }
+        return names;
     }
 }

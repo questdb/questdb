@@ -62,9 +62,4 @@ public class DoubleScaledEqualsOperator extends AbstractVirtualColumn implements
                 scale = arg;
         }
     }
-
-    @Override
-    public void setArgCount(int count) {
-
-    }
 }

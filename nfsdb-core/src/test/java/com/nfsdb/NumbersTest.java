@@ -167,7 +167,7 @@ public class NumbersTest {
         sink.clear();
 
         Numbers.append(sink, Integer.MIN_VALUE);
-        Assert.assertEquals(Integer.MIN_VALUE, Numbers.parseInt(sink));
+        Assert.assertEquals(Integer.MIN_VALUE, Numbers.parseIntQuiet(sink));
     }
 
     @Test
@@ -195,7 +195,7 @@ public class NumbersTest {
         sink.clear();
 
         Numbers.append(sink, Long.MIN_VALUE);
-        Assert.assertEquals(Long.MIN_VALUE, Numbers.parseLong(sink));
+        Assert.assertEquals(Long.MIN_VALUE, Numbers.parseLongQuiet(sink));
     }
 
     @Test

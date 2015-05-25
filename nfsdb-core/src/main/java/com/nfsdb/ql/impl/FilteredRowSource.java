@@ -72,6 +72,7 @@ public class FilteredRowSource extends AbstractRowSource {
     @Override
     public void prepare(SymFacade facade) {
         delegate.prepare(facade);
+        filter.prepare(facade);
     }
 
     @Override

@@ -249,6 +249,9 @@ public class JournalMetadata<T> implements RecordMetadata {
 
     @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
     public Object newObject() {
+        if (constructor == null) {
+            throw new JournalRuntimeException("There is no object class associated with this journal. Please use generic access methods");
+        }
         try {
             return constructor.newInstance();
         } catch (Exception e) {

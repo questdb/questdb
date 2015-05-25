@@ -28,7 +28,7 @@ public final class Hash {
      * @return positive integer between 0 and max-1
      */
     public static int boundedHash(CharSequence s, int max) {
-        return s == null ? 0 : (s.hashCode() & 0xFFFFFFF) % max;
+        return s == null ? -1 : (s.hashCode() & 0xFFFFFFF) % max;
     }
 
     /**

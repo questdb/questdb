@@ -14,16 +14,19 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ql.ops.fact;
+package com.nfsdb.ql.ops;
 
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.ql.ops.DoubleLessOrEqualOperator;
-import com.nfsdb.ql.ops.Function;
-import com.nfsdb.ql.ops.VirtualColumn;
+import com.nfsdb.ql.Record;
+import com.nfsdb.storage.ColumnType;
 
-public class DoubleLessOrEqualOperatorFactory implements FunctionFactory {
+public class StrEqualsNullOperator extends AbstractBinaryOperator {
+
+    public StrEqualsNullOperator() {
+        super(ColumnType.BOOLEAN);
+    }
+
     @Override
-    public Function newInstance(ObjList<VirtualColumn> args) {
-        return new DoubleLessOrEqualOperator();
+    public boolean getBool(Record rec) {
+        return lhs.getFlyweightStr(rec) == null;
     }
 }

@@ -16,18 +16,38 @@
 
 package com.nfsdb.ql.ops.fact;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.ObjObjHashMap;
+import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.ql.parser.Signature;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Chars;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public final class FunctionFactories {
     private static final ObjObjHashMap<Signature, FunctionFactory> factories = new ObjObjHashMap<>();
     // intrinsic factories
     private static final StrInOperatorFactory STRING_IN_OPERATOR_FACTORY = new StrInOperatorFactory();
     private static final SymInOperatorFactory SYMBOL_IN_OPERATOR_FACTORY = new SymInOperatorFactory();
+    private static final DoubleEqualsNaNOperatorFactory DOUBLE_NAN_FACTORY = new DoubleEqualsNaNOperatorFactory();
+    private static final IntEqualsNaNOperatorFactory INT_NAN_FACTORY = new IntEqualsNaNOperatorFactory();
 
-    public static FunctionFactory find(Signature sig) {
+    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
+    public static FunctionFactory find(Signature sig, ObjList<VirtualColumn> args) {
+        if (Chars.equals("=", sig.name) && sig.paramCount == 2 && sig.paramTypes.getQuick(1) == ColumnType.DOUBLE && args.getQuick(1).isConstant()) {
+            double d = args.getQuick(1).getDouble(null);
+
+            // NaN
+            if (d != d) {
+                switch (sig.paramTypes.getQuick(0)) {
+                    case INT:
+                        return INT_NAN_FACTORY;
+                    case DOUBLE:
+                        return DOUBLE_NAN_FACTORY;
+                }
+            }
+        }
+
         FunctionFactory factory = factories.get(sig);
         if (factory != null) {
             return factory;
@@ -114,6 +134,8 @@ public final class FunctionFactories {
         triSig("eq", ColumnType.DOUBLE, ColumnType.DOUBLE, ColumnType.DOUBLE, new DoubleScaledEqualsOperatorFactory());
         triSig("eq", ColumnType.DOUBLE, ColumnType.INT, ColumnType.DOUBLE, new DoubleScaledEqualsOperatorFactory());
         triSig("eq", ColumnType.INT, ColumnType.DOUBLE, ColumnType.DOUBLE, new DoubleScaledEqualsOperatorFactory());
+        factories.put(new Signature().setName("-").setParamCount(1).paramType(0, ColumnType.INT, true), new IntNegativeOperatorFactory());
+        factories.put(new Signature().setName("-").setParamCount(1).paramType(0, ColumnType.INT, false), new IntNegativeOperatorFactory());
 
         //todo: double comparison function
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, false), new StrEqualsOperatorFactory());

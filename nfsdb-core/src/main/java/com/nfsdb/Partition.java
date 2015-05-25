@@ -523,10 +523,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
     }
 
     private void checkColumnIndex(int i) {
-        if (columns == null) {
-            throw new JournalRuntimeException("Partition is closed: %s", this);
-        }
-
         if (i > -1 && i < columnCount) {
             return;
         }

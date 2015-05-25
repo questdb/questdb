@@ -139,7 +139,16 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
                 putSymbol0(index, null);
                 break;
             case INT:
-                putInt0(index, 0);
+                putInt0(index, Integer.MIN_VALUE);
+                break;
+            case FLOAT:
+                putFloat(index, Float.NaN);
+                break;
+            case DOUBLE:
+                putDouble(index, Double.NaN);
+                break;
+            case LONG:
+                putLong(index, Long.MIN_VALUE);
                 break;
             case BINARY:
                 putBin0(index, null);
@@ -182,7 +191,8 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
 
     private void putInt0(int index, int value) {
         if (meta[index].indexed) {
-            koTuple[index * 2] = value % meta[index].distinctCountHint;
+            int h = value % meta[index].distinctCountHint;
+            koTuple[index * 2] = h < 0 ? -h : h;
             koTuple[index * 2 + 1] = ((FixedColumn) columns[index]).putInt(value);
         } else {
             ((FixedColumn) columns[index]).putInt(value);

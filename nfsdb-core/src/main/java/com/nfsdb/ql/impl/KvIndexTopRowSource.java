@@ -63,7 +63,7 @@ public class KvIndexTopRowSource extends AbstractRowSource {
             this.index = slice.partition.getIndexForColumn(column);
             this.lo = slice.lo - 1;
             this.hi = slice.calcHi ? slice.partition.open().size() : slice.hi + 1;
-            this.keyCursor = keySource.prepareCursor(slice);
+            this.keyCursor = keySource.prepareCursor();
             this.rec.partition = slice.partition;
             return this;
         } catch (JournalException e) {

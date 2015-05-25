@@ -125,7 +125,7 @@ public class IntrinsicExtractor {
                                 return false;
                             }
 
-                            String value = Chars.stripQuotes(b.token);
+                            String value = Chars.equals("null", b.token) ? null : Chars.stripQuotes(b.token);
                             if (newColumn) {
                                 model.keyColumn = a.token;
                                 model.keyValues.clear();

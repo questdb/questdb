@@ -17,21 +17,36 @@
 package com.nfsdb.impexp;
 
 import com.nfsdb.Journal;
+import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.io.ExportManager;
-import com.nfsdb.io.ImportManager;
-import com.nfsdb.io.ImportSchema;
-import com.nfsdb.io.TextFileFormat;
+import com.nfsdb.io.*;
+import com.nfsdb.io.sink.StringSink;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordSource;
+import com.nfsdb.ql.parser.Optimiser;
+import com.nfsdb.ql.parser.ParserException;
+import com.nfsdb.ql.parser.QueryParser;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
+import java.io.IOException;
 
 public class ImportCsvTest extends AbstractTest {
+
+    private QueryParser parser;
+    private Optimiser optimiser;
+
+    @Before
+    public void setUp() throws Exception {
+        parser = new QueryParser();
+        optimiser = new Optimiser(factory);
+    }
 
     @Test
     public void testImport() throws Exception {
@@ -66,6 +81,15 @@ public class ImportCsvTest extends AbstractTest {
     }
 
     @Test
+    public void testImportNan() throws Exception {
+        imp("/csv/test-import-nan.csv");
+        final String expected = "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\n" +
+                "CMP2\t8\t5256\tNaN\t2015-05-05T19:15:09.000Z\n" +
+                "CMP2\t2\t6675\tNaN\t2015-05-07T19:15:09.000Z\n";
+        assertThat(expected, "select StrSym, IntSym, IntCol, DoubleCol, IsoDate from 'test-import-nan.csv' where DoubleCol = NaN");
+    }
+
+    @Test
     public void testImportSchema() throws Exception {
         String file = this.getClass().getResource("/csv/test-import.csv").getFile();
         ImportManager.importFile(factory, file, TextFileFormat.CSV, new ImportSchema("1,INT,\n6,STRING,"));
@@ -95,5 +119,20 @@ public class ImportCsvTest extends AbstractTest {
         JournalMetadata m = r.getMetadata();
         Assert.assertEquals(ColumnType.INT, m.getColumn(1).type);
         Assert.assertEquals(ColumnType.STRING, m.getColumn(6).type);
+    }
+
+    private void assertThat(String expected, String query) throws ParserException, JournalException {
+        parser.setContent(query);
+        RecordSource<? extends Record> rs = optimiser.compile(parser.parse().getQueryModel());
+        StringSink sink = new StringSink();
+        RecordSourcePrinter p = new RecordSourcePrinter(sink);
+        p.print(rs, factory);
+        Assert.assertEquals(expected, sink.toString());
+
+    }
+
+    private void imp(String resource) throws IOException {
+        String file = this.getClass().getResource(resource).getFile();
+        ImportManager.importFile(factory, file, TextFileFormat.CSV, null, 20);
     }
 }

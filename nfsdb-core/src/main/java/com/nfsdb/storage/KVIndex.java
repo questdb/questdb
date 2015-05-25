@@ -557,7 +557,7 @@ public class KVIndex implements Closeable {
             this.rowCount = 0;
             this.size = 0;
 
-            if (key < 0) {
+            if (key < -1) {
                 return this;
             }
 

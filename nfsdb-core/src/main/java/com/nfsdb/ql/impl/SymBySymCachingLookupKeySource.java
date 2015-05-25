@@ -19,7 +19,6 @@ package com.nfsdb.ql.impl;
 import com.nfsdb.collections.IntIntHashMap;
 import com.nfsdb.ql.KeyCursor;
 import com.nfsdb.ql.KeySource;
-import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.ops.SymGlue;
 import com.nfsdb.storage.SymbolTable;
 
@@ -52,7 +51,7 @@ public class SymBySymCachingLookupKeySource implements KeySource, KeyCursor {
     }
 
     @Override
-    public KeyCursor prepareCursor(PartitionSlice slice) {
+    public KeyCursor prepareCursor() {
         return this;
     }
 

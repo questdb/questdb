@@ -65,7 +65,8 @@ public class KvIndexStrLookupRowSource extends AbstractRowSource {
         try {
             this.column = (VariableColumn) slice.partition.getAbstractColumn(columnIndex);
             KVIndex index = slice.partition.getIndexForColumn(columnIndex);
-            this.currentValue = valueFunction.getFlyweightStr(null).toString();
+            CharSequence cs = valueFunction.getFlyweightStr(null);
+            this.currentValue = cs == null ? null : cs.toString();
             this.indexCursor = newCursor ? index.newFwdCursor(Hash.boundedHash(currentValue, buckets)) : index.fwdCursor(Hash.boundedHash(currentValue, buckets));
             this.lo = slice.lo - 1;
             this.hi = slice.calcHi ? slice.partition.open().size() : slice.hi + 1;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,12 +16,14 @@
 
 package com.nfsdb.ql.ops.fact;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.ops.Function;
 import com.nfsdb.ql.ops.MultDoubleOperator;
+import com.nfsdb.ql.ops.VirtualColumn;
 
 public class MultDoubleOperatorFactory implements FunctionFactory {
     @Override
-    public Function newInstance() {
+    public Function newInstance(ObjList<VirtualColumn> args) {
         return new MultDoubleOperator();
     }
 }

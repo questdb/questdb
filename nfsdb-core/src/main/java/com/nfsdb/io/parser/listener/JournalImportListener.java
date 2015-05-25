@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -75,28 +75,28 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
                             w.putStr(i, values[i]);
                             break;
                         case DOUBLE:
-                            w.putDouble(i, Numbers.parseDouble(values[i]));
+                            w.putDouble(i, Numbers.parseDoubleQuiet(values[i]));
                             break;
                         case INT:
-                            w.putInt(i, Numbers.parseInt(values[i]));
+                            w.putInt(i, Numbers.parseIntQuiet(values[i]));
                             break;
                         case FLOAT:
-                            w.putFloat(i, Numbers.parseFloat(values[i]));
+                            w.putFloat(i, Numbers.parseFloatQuiet(values[i]));
                             break;
                         case DATE_ISO:
-                            w.putDate(i, Dates.parseDateTime(values[i]));
+                            w.putDate(i, Dates.parseDateTimeQuiet(values[i]));
                             break;
                         case DATE_1:
-                            w.putDate(i, Dates.parseDateTimeFmt1(values[i]));
+                            w.putDate(i, Dates.parseDateTimeFmt1Quiet(values[i]));
                             break;
                         case DATE_2:
-                            w.putDate(i, Dates.parseDateTimeFmt2(values[i]));
+                            w.putDate(i, Dates.parseDateTimeFmt2Quiet(values[i]));
                             break;
                         case SYMBOL:
                             w.putSym(i, values[i]);
                             break;
                         case LONG:
-                            w.putLong(i, Numbers.parseLong(values[i]));
+                            w.putLong(i, Numbers.parseLongQuiet(values[i]));
                             break;
                         case BOOLEAN:
                             w.putBool(i, Chars.equalsIgnoreCase(values[i], "true"));

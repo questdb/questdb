@@ -19,7 +19,6 @@ package com.nfsdb.ql.ops;
 import com.nfsdb.ql.SymFacade;
 import com.nfsdb.ql.parser.ParserException;
 import com.nfsdb.storage.ColumnType;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public abstract class AbstractBinaryOperator extends AbstractVirtualColumn implements Function {
     protected VirtualColumn lhs;
@@ -52,11 +51,6 @@ public abstract class AbstractBinaryOperator extends AbstractVirtualColumn imple
             default:
                 throw new ParserException(0, "Too many arguments");
         }
-    }
-
-    @SuppressFBWarnings({"ACEM_ABSTRACT_CLASS_EMPTY_METHODS"})
-    @Override
-    public void setArgCount(int count) {
     }
 
     public void setLhs(VirtualColumn lhs) {

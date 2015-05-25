@@ -95,6 +95,11 @@ public class VariableColumn extends AbstractColumn {
     }
 
     public boolean cmpStr(long localRowID, CharSequence value) {
+
+        if (value == null) {
+            return isNull(localRowID);
+        }
+
         long offset = indexColumn.getLong(localRowID);
         int len = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
 
@@ -198,6 +203,7 @@ public class VariableColumn extends AbstractColumn {
         int len = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
 
         if (len == -1) {
+            sink.put("null");
             return;
         }
 
@@ -206,6 +212,10 @@ public class VariableColumn extends AbstractColumn {
             sink.put(Unsafe.getUnsafe().getChar(address));
             address += 2;
         }
+    }
+
+    public boolean isNull(long localRowID) {
+        return Unsafe.getUnsafe().getInt(mappedFile.getAddress(indexColumn.getLong(localRowID), 4)) == -1;
     }
 
     public void putBin(ByteBuffer value) {

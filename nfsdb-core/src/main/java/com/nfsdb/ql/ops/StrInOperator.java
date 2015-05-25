@@ -54,8 +54,4 @@ public class StrInOperator extends AbstractVirtualColumn implements Function {
             set.add(arg.getStr(null).toString());
         }
     }
-
-    @Override
-    public void setArgCount(int count) {
-    }
 }

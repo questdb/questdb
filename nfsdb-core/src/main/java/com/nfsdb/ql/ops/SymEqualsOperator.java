@@ -22,7 +22,7 @@ import com.nfsdb.storage.ColumnType;
 
 public class SymEqualsOperator extends AbstractBinaryOperator {
 
-    private int key;
+    private int key = -2;
 
     public SymEqualsOperator() {
         super(ColumnType.BOOLEAN);
@@ -30,7 +30,7 @@ public class SymEqualsOperator extends AbstractBinaryOperator {
 
     @Override
     public boolean getBool(Record rec) {
-        return key > -1 && lhs.getInt(rec) == key;
+        return key > -2 && lhs.getInt(rec) == key;
     }
 
     @Override

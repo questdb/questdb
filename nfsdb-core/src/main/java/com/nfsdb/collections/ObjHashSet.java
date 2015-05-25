@@ -85,7 +85,7 @@ public class ObjHashSet<T> {
     }
 
     public boolean contains(T key) {
-        int index = key.hashCode() & mask;
+        int index = idx(key);
         return Unsafe.arrayGet(keys, index) != noEntryValue && (key == Unsafe.arrayGet(keys, index) || key.equals(Unsafe.arrayGet(keys, index)) || probeContains(key, index));
     }
 
@@ -99,7 +99,7 @@ public class ObjHashSet<T> {
 
     public boolean remove(T key) {
         if (list.remove(key)) {
-            int index = key.hashCode() & mask;
+            int index = idx(key);
 
             if (key == Unsafe.arrayGet(keys, index) || key.equals(Unsafe.arrayGet(keys, index))) {
                 Unsafe.arrayPut(keys, index, noEntryValue);
@@ -141,8 +141,12 @@ public class ObjHashSet<T> {
         return list.toString();
     }
 
+    private int idx(T key) {
+        return key == null ? 0 : (key.hashCode() & mask);
+    }
+
     private boolean insertKey(T key) {
-        int index = key.hashCode() & mask;
+        int index = idx(key);
         if (Unsafe.arrayGet(keys, index) == noEntryValue) {
             Unsafe.arrayPut(keys, index, key);
             free--;

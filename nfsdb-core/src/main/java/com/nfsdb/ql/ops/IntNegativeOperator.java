@@ -16,52 +16,36 @@
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.collections.IntHashSet;
-import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.SymFacade;
 import com.nfsdb.ql.parser.ParserException;
 import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.SymbolTable;
 
-public class SymInOperator extends AbstractVirtualColumn implements Function {
+public class IntNegativeOperator extends AbstractVirtualColumn implements Function {
 
-    private final IntHashSet set = new IntHashSet();
-    private final ObjHashSet<CharSequence> values = new ObjHashSet<>();
-    private VirtualColumn lhs;
+    private VirtualColumn value;
 
-    public SymInOperator() {
-        super(ColumnType.BOOLEAN);
+    public IntNegativeOperator() {
+        super(ColumnType.INT);
     }
 
     @Override
-    public boolean getBool(Record rec) {
-        return set.contains(lhs.getInt(rec));
+    public int getInt(Record rec) {
+        return -value.getInt(rec);
     }
 
     @Override
     public boolean isConstant() {
-        return lhs.isConstant();
+        return value.isConstant();
     }
 
     @Override
     public void prepare(SymFacade facade) {
-        lhs.prepare(facade);
-        SymbolTable tab = lhs.getSymbolTable();
-        for (int i = 0, n = values.size(); i < n; i++) {
-            int k = tab.getQuick(values.get(i));
-            if (k > -1) {
-                set.add(k);
-            }
-        }
+
     }
 
     @Override
     public void setArg(int pos, VirtualColumn arg) throws ParserException {
-        if (pos == 0) {
-            lhs = arg;
-        } else {
-            values.add(arg.getStr(null).toString());
-        }
+        value = arg;
     }
 }

@@ -16,12 +16,14 @@
 
 package com.nfsdb.ql.ops.fact;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.ops.Function;
 import com.nfsdb.ql.ops.IntGreaterThanOperator;
+import com.nfsdb.ql.ops.VirtualColumn;
 
 public class IntGreaterThanOperatorFactory implements FunctionFactory {
     @Override
-    public Function newInstance() {
+    public Function newInstance(ObjList<VirtualColumn> args) {
         return new IntGreaterThanOperator();
     }
 }

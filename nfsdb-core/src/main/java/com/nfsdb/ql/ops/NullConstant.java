@@ -16,28 +16,38 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
+import com.nfsdb.ql.SymFacade;
 import com.nfsdb.storage.ColumnType;
 
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+public class NullConstant extends AbstractVirtualColumn {
 
-public class StrRegexOperator extends AbstractBinaryOperator {
-
-    private Matcher matcher;
-
-    public StrRegexOperator() {
-        super(ColumnType.BOOLEAN);
+    public NullConstant() {
+        super(ColumnType.STRING);
     }
 
     @Override
-    public boolean getBool(Record rec) {
-        return matcher.reset(lhs.getFlyweightStr(rec)).find();
+    public CharSequence getFlyweightStr(Record rec) {
+        return null;
     }
 
     @Override
-    public void setRhs(VirtualColumn rhs) {
-        super.setRhs(rhs);
-        matcher = Pattern.compile(rhs.getStr(null).toString()).matcher("");
+    public CharSequence getStr(Record rec) {
+        return null;
+    }
+
+    @Override
+    public void getStr(Record rec, CharSink sink) {
+        sink.put("null");
+    }
+
+    @Override
+    public boolean isConstant() {
+        return true;
+    }
+
+    @Override
+    public void prepare(SymFacade facade) {
     }
 }

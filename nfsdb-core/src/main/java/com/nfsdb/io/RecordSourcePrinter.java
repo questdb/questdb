@@ -18,6 +18,7 @@ package com.nfsdb.io;
 
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
@@ -62,6 +63,17 @@ public class RecordSourcePrinter {
         }
     }
 
+
+    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
+    public void print(RecordSource<? extends Record> src, JournalReaderFactory factory) {
+        try {
+            print(src.prepareCursor(factory), src.getMetadata());
+        } catch (JournalException e) {
+            throw new JournalRuntimeException(e);
+        }
+    }
+
+
     public void print(RecordCursor<? extends Record> src, RecordMetadata metadata) {
         while (src.hasNext()) {
             print(src.next(), metadata);
@@ -75,6 +87,9 @@ public class RecordSourcePrinter {
                 break;
             case DOUBLE:
                 Numbers.append(sink, r.getDouble(i), 12);
+                break;
+            case FLOAT:
+                Numbers.append(sink, r.getFloat(i), 4);
                 break;
             case INT:
                 Numbers.append(sink, r.getInt(i));

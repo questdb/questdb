@@ -123,25 +123,26 @@ public class Optimiser {
         }
     }
 
-    @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT"})
+    @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT", "CC_CYCLOMATIC_COMPLEXITY"})
     private RecordSource<? extends Record> createRecordSource(QueryModel model) throws JournalException, ParserException {
 
         ExprNode readerNode = model.getJournalName();
-        if (readerNode.type != ExprNode.NodeType.LITERAL) {
-            throw new ParserException(readerNode.position, "Journal name expected");
+        if (readerNode.type != ExprNode.NodeType.LITERAL && readerNode.type != ExprNode.NodeType.CONSTANT) {
+            throw new ParserException(readerNode.position, "Journal name must be either literal or string constant");
         }
 
         JournalConfiguration configuration = factory.getConfiguration();
 
-        if (configuration.exists(readerNode.token) == JournalConfiguration.JournalExistenceCheck.DOES_NOT_EXIST) {
+        String reader = Chars.stripQuotes(readerNode.token);
+        if (configuration.exists(reader) == JournalConfiguration.JournalExistenceCheck.DOES_NOT_EXIST) {
             throw new ParserException(readerNode.position, "Journal does not exist");
         }
 
-        if (configuration.exists(readerNode.token) == JournalConfiguration.JournalExistenceCheck.EXISTS_FOREIGN) {
+        if (configuration.exists(reader) == JournalConfiguration.JournalExistenceCheck.EXISTS_FOREIGN) {
             throw new ParserException(readerNode.position, "Journal directory is of unknown format");
         }
 
-        JournalMetadata metadata = factory.getOrCreateMetadata(new JournalKey<>(readerNode.token));
+        JournalMetadata metadata = factory.getOrCreateMetadata(new JournalKey<>(reader));
 
         PartitionSource ps = new JournalPartitionSource(metadata, true);
         RowSource rs = null;
@@ -308,15 +309,14 @@ public class Optimiser {
     }
 
     private VirtualColumn lookupFunction(ExprNode node, Signature sig, ObjList<VirtualColumn> args) throws ParserException {
-        FunctionFactory factory = FunctionFactories.find(sig);
+        FunctionFactory factory = FunctionFactories.find(sig, args);
         if (factory == null) {
             throw new ParserException(node.position, "No such function: " + sig);
         }
 
-        Function f = factory.newInstance();
+        Function f = factory.newInstance(args);
         if (args != null) {
             int n = node.paramCount;
-            f.setArgCount(n);
             for (int i = 0; i < n; i++) {
                 f.setArg(i, args.getQuick(i));
             }
@@ -325,6 +325,10 @@ public class Optimiser {
     }
 
     private VirtualColumn parseConstant(ExprNode node) throws ParserException {
+
+        if ("null".equals(node.token)) {
+            return new NullConstant();
+        }
 
         String s = Chars.stripQuotes(node.token);
 

@@ -250,15 +250,15 @@ public class SymbolTable implements Closeable {
         return Hash.boundedHash(value, hashKeyCount);
     }
 
-    public class Entry {
+    public static class Entry {
         public int key;
         public CharSequence value;
     }
 
     private class Iter extends AbstractImmutableIterator<Entry> {
+        private final Entry e = new Entry();
         private int pos;
         private int size;
-        private Entry e = new Entry();
 
         @Override
         public boolean hasNext() {

@@ -60,7 +60,7 @@ public class KvIndexRowSource extends AbstractRowSource {
     public RowCursor prepareCursor(PartitionSlice slice) {
         try {
             this.index = slice.partition.getIndexForColumn(symbol);
-            this.keyCursor = this.keySource.prepareCursor(slice);
+            this.keyCursor = this.keySource.prepareCursor();
             this.indexCursor = null;
             this.full = slice.lo == 0 && slice.calcHi;
             this.lo = slice.lo - 1;

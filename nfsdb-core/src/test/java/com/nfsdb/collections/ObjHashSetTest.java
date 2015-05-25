@@ -14,16 +14,24 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ql.ops.fact;
+package com.nfsdb.collections;
 
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.ql.ops.DoubleLessOrEqualOperator;
-import com.nfsdb.ql.ops.Function;
-import com.nfsdb.ql.ops.VirtualColumn;
+import org.junit.Assert;
+import org.junit.Test;
 
-public class DoubleLessOrEqualOperatorFactory implements FunctionFactory {
-    @Override
-    public Function newInstance(ObjList<VirtualColumn> args) {
-        return new DoubleLessOrEqualOperator();
+public class ObjHashSetTest {
+    @Test
+    public void testNull() throws Exception {
+        ObjHashSet<String> set = new ObjHashSet<>();
+        set.add("X");
+        set.add(null);
+        set.add("Y");
+        Assert.assertEquals(3, set.size());
+
+        Assert.assertEquals("X", set.get(0));
+        Assert.assertNull(set.get(1));
+        Assert.assertEquals("Y", set.get(2));
+
+        Assert.assertTrue(set.contains(null));
     }
 }

@@ -17,13 +17,13 @@
 package com.nfsdb.ql.ops.fact;
 
 import com.nfsdb.collections.ObjList;
-import com.nfsdb.ql.ops.DoubleLessOrEqualOperator;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.ql.ops.IntNegativeOperator;
 import com.nfsdb.ql.ops.VirtualColumn;
 
-public class DoubleLessOrEqualOperatorFactory implements FunctionFactory {
+public class IntNegativeOperatorFactory implements FunctionFactory {
     @Override
     public Function newInstance(ObjList<VirtualColumn> args) {
-        return new DoubleLessOrEqualOperator();
+        return new IntNegativeOperator();
     }
 }
