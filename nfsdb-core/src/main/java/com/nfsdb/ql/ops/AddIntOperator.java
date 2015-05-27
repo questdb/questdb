@@ -27,16 +27,29 @@ public class AddIntOperator extends AbstractBinaryOperator {
 
     @Override
     public double getDouble(Record rec) {
-        return lhs.getInt(rec) + rhs.getInt(rec);
+        int l = lhs.getInt(rec);
+        int r = rhs.getInt(rec);
+        return l != Integer.MIN_VALUE && r != Integer.MIN_VALUE ? l + r : Double.NaN;
     }
 
     @Override
     public float getFloat(Record rec) {
-        return (float) (lhs.getInt(rec) + rhs.getInt(rec));
+        int l = lhs.getInt(rec);
+        int r = rhs.getInt(rec);
+        return l != Integer.MIN_VALUE && r != Integer.MIN_VALUE ? l + r : Float.NaN;
     }
 
     @Override
     public int getInt(Record rec) {
-        return lhs.getInt(rec) + rhs.getInt(rec);
+        int l = lhs.getInt(rec);
+        int r = rhs.getInt(rec);
+        return l != Integer.MIN_VALUE && r != Integer.MIN_VALUE ? l + r : Integer.MIN_VALUE;
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        int l = lhs.getInt(rec);
+        int r = rhs.getInt(rec);
+        return l != Integer.MIN_VALUE && r != Integer.MIN_VALUE ? l + r : Long.MIN_VALUE;
     }
 }

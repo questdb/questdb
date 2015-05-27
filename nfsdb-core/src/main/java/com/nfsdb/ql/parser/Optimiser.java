@@ -20,7 +20,7 @@ import com.nfsdb.JournalKey;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.NoSuchColumnException;
-import com.nfsdb.factory.JournalFactory;
+import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
@@ -42,11 +42,11 @@ public class Optimiser {
 
     private final ArrayDeque<VirtualColumn> stack = new ArrayDeque<>();
     private final IntrinsicExtractor intrinsicExtractor = new IntrinsicExtractor();
-    private final JournalFactory factory;
+    private final JournalReaderFactory factory;
     private final VirtualColumnBuilder virtualColumnBuilderVisitor = new VirtualColumnBuilder();
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
 
-    public Optimiser(JournalFactory factory) {
+    public Optimiser(JournalReaderFactory factory) {
         this.factory = factory;
     }
 
@@ -262,14 +262,14 @@ public class Optimiser {
 
     private RowSource createRecordSourceForStr(IntrinsicModel im) {
         if (im.keyValues.size() == 1) {
-            return new KvIndexStrLookupRowSource(im.keyColumn, new StringConstant(im.keyValues.getLast()));
+            return new KvIndexStrLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.getLast()));
         } else {
             RowSource src = null;
             for (int i = 0, k = im.keyValues.size(); i < k; i++) {
                 if (src == null) {
-                    src = new KvIndexStrLookupRowSource(im.keyColumn, new StringConstant(im.keyValues.get(i)), true);
+                    src = new KvIndexStrLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(i)), true);
                 } else {
-                    src = new MergingRowSource(src, new KvIndexStrLookupRowSource(im.keyColumn, new StringConstant(im.keyValues.get(i)), true));
+                    src = new MergingRowSource(src, new KvIndexStrLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(i)), true));
                 }
             }
             return src;
@@ -278,14 +278,14 @@ public class Optimiser {
 
     private RowSource createRecordSourceForSym(IntrinsicModel im) {
         if (im.keyValues.size() == 1) {
-            return new KvIndexSymLookupRowSource(im.keyColumn, new StringConstant(im.keyValues.getLast()));
+            return new KvIndexSymLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.getLast()));
         } else {
             RowSource src = null;
             for (int i = 0, k = im.keyValues.size(); i < k; i++) {
                 if (src == null) {
-                    src = new KvIndexSymLookupRowSource(im.keyColumn, new StringConstant(im.keyValues.get(i)), true);
+                    src = new KvIndexSymLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(i)), true);
                 } else {
-                    src = new MergingRowSource(src, new KvIndexSymLookupRowSource(im.keyColumn, new StringConstant(im.keyValues.get(i)), true));
+                    src = new MergingRowSource(src, new KvIndexSymLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(i)), true));
                 }
             }
             return src;
@@ -302,7 +302,20 @@ public class Optimiser {
     private VirtualColumn lookupColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
         try {
             int index = metadata.getColumnIndex(node.token);
-            return new RecordSourceColumn(index, metadata.getColumn(index).getType());
+            switch (metadata.getColumn(index).getType()) {
+                case DOUBLE:
+                    return new DoubleRecordSourceColumn(index);
+                case INT:
+                    return new IntRecordSourceColumn(index);
+                case LONG:
+                    return new LongRecordSourceColumn(index);
+                case STRING:
+                    return new StrRecordSourceColumn(index);
+                case SYMBOL:
+                    return new SymRecordSourceColumn(index);
+                default:
+                    throw new ParserException(node.position, "Not yet supported type");
+            }
         } catch (NoSuchColumnException e) {
             throw new InvalidColumnException(node.position);
         }
@@ -335,11 +348,17 @@ public class Optimiser {
         // by ref comparison
         //noinspection StringEquality
         if (s != node.token) {
-            return new StringConstant(s);
+            return new StrConstant(s);
         }
 
         try {
             return new IntConstant(Numbers.parseInt(node.token));
+        } catch (NumberFormatException ignore) {
+
+        }
+
+        try {
+            return new LongConstant(Numbers.parseLong(node.token));
         } catch (NumberFormatException ignore) {
 
         }

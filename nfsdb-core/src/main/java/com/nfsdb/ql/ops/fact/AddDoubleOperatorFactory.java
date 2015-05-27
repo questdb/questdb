@@ -22,6 +22,8 @@ import com.nfsdb.ql.ops.Function;
 import com.nfsdb.ql.ops.VirtualColumn;
 
 public class AddDoubleOperatorFactory implements FunctionFactory {
+    public static final AddDoubleOperatorFactory INSTANCE = new AddDoubleOperatorFactory();
+
     @Override
     public Function newInstance(ObjList<VirtualColumn> args) {
         return new AddDoubleOperator();

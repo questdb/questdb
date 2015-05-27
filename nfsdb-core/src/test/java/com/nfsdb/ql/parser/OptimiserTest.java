@@ -20,49 +20,21 @@ import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.factory.JournalCachingFactory;
 import com.nfsdb.factory.configuration.JournalStructure;
-import com.nfsdb.io.RecordSourcePrinter;
-import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.model.Quote;
-import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordSource;
-import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Rnd;
-import org.junit.After;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
-public class OptimiserTest extends AbstractTest {
-    private final QueryParser parser = new QueryParser();
-    private final Optimiser optimiser;
-    private final StringSink sink = new StringSink();
-    private final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-    private JournalCachingFactory f;
-
-    public OptimiserTest() {
-        this.optimiser = new Optimiser(factory);
-    }
-
-    @Before
-    public void setUp() {
-        f = new JournalCachingFactory(factory.getConfiguration());
-    }
-
-    @After
-    public void tearDown() {
-        f.close();
-    }
+public class OptimiserTest extends AbstractOptimiserTest {
 
     @Test
     public void testConstantCondition1() throws Exception {
         createTab();
         String plan = compile("select id, x, y from tab where x > 0 and 1 > 1").toString();
         Assert.assertTrue(plan.contains("NoOpJournalPartitionSource"));
-
     }
 
     @Test
@@ -111,13 +83,7 @@ public class OptimiserTest extends AbstractTest {
         }
         w.commit();
 
-        final String expected1 = "XSPEPTTKIBWFCKD\t0.000001672067\t-513.550415039063\t23\t14\n" +
-                "XSPEPTTKIBWFCKD\t0.001000571705\t-118.208679199219\t34\t32\n" +
-                "XSPEPTTKIBWFCKD\t0.255589209497\t-1024.000000000000\t52\t36\n" +
-                "XSPEPTTKIBWFCKD\t0.000105848711\t-960.000000000000\t63\t29\n" +
-                "XSPEPTTKIBWFCKD\t0.045759759843\t0.000000560194\t47\t33\n" +
-                "XSPEPTTKIBWFCKD\t290.742401123047\t0.000001862155\t2\t1\n" +
-                "XSPEPTTKIBWFCKD\t0.000186813500\t-827.140625000000\t36\t11\n" +
+        final String expected1 = "XSPEPTTKIBWFCKD\t290.742401123047\t0.000001862155\t2\t1\n" +
                 "XSPEPTTKIBWFCKD\t294.856933593750\t-539.875854492188\t55\t42\n" +
                 "XSPEPTTKIBWFCKD\t422.000000000000\t0.000001386965\t58\t54\n";
 
@@ -127,10 +93,20 @@ public class OptimiserTest extends AbstractTest {
                 "XSPEPTTKIBWFCKD\t0.002191273379\t-587.421875000000\t1\t33\n" +
                 "XSPEPTTKIBWFCKD\t0.000000050401\t-873.569183349609\t34\t41\n" +
                 "XSPEPTTKIBWFCKD\t0.000000002468\t-1009.435546875000\t7\t35\n" +
+                "XSPEPTTKIBWFCKD\t0.000000134022\t0.000000010189\t38\t44\n" +
+                "XSPEPTTKIBWFCKD\t0.053807163611\t0.000000005584\t18\t40\n" +
+                "XSPEPTTKIBWFCKD\t307.605468750000\t0.000000032526\t5\t49\n" +
+                "XSPEPTTKIBWFCKD\t588.000000000000\t0.000029410815\t42\t62\n" +
                 "XSPEPTTKIBWFCKD\t102.474868774414\t-704.000000000000\t61\t63\n" +
                 "XSPEPTTKIBWFCKD\t0.000166006441\t-400.250000000000\t23\t49\n" +
+                "XSPEPTTKIBWFCKD\t0.006018321496\t0.000000163838\t21\t55\n" +
+                "XSPEPTTKIBWFCKD\t82.432384490967\t0.000043923766\t36\t45\n" +
                 "XSPEPTTKIBWFCKD\t256.000000000000\t-648.000000000000\t12\t46\n" +
-                "XSPEPTTKIBWFCKD\t0.000000883287\t-844.890625000000\t4\t24\n";
+                "XSPEPTTKIBWFCKD\t384.875000000000\t0.000049836333\t23\t46\n" +
+                "XSPEPTTKIBWFCKD\t0.000000883287\t-844.890625000000\t4\t24\n" +
+                "XSPEPTTKIBWFCKD\t0.103299163282\t0.000076360289\t16\t54\n" +
+                "XSPEPTTKIBWFCKD\t0.003647925099\t0.000000019679\t15\t38\n" +
+                "XSPEPTTKIBWFCKD\t0.000589750460\t0.000000023659\t4\t39\n";
 
         assertThat(expected2, "select id,x,y,i1,i2 from tab where i1 < i2 and x>=y  and y<i1 and id = 'XSPEPTTKIBWFCKD'");
     }
@@ -686,13 +662,6 @@ public class OptimiserTest extends AbstractTest {
                 "VEGPIGSVMYWRTXV\t-224.000000000000\t247.625000000000\n";
 
         assertThat(expected, "select id, x,y from tab where id in ('JKEQQKQWPJVCFKV', 'VEGPIGSVMYWRTXV')");
-/*
-
-        RecordSource<? extends Record> rs = compile("select id, x,y from tab where id in ('JKEQQKQWPJVCFKV', 'VEGPIGSVMYWRTXV')");
-
-        RecordSourcePrinter p = new RecordSourcePrinter(new StdoutSink());
-        p.print(rs.prepareCursor(f), rs.getMetadata());
-*/
     }
 
     @Test
@@ -1493,24 +1462,6 @@ public class OptimiserTest extends AbstractTest {
         assertThat(expected, "select id, x, y from tab where id = null and x > 120 and y < -400");
     }
 
-    private void assertThat(String expected, String query) throws JournalException, ParserException {
-        RecordSource<? extends Record> rs = compile(query);
-
-        sink.clear();
-        printer.print(rs.prepareCursor(f), rs.getMetadata());
-        Assert.assertEquals(expected, sink.toString());
-
-        rs.reset();
-        sink.clear();
-        printer.print(rs.prepareCursor(f), rs.getMetadata());
-        Assert.assertEquals(expected, sink.toString());
-    }
-
-    private RecordSource<? extends Record> compile(CharSequence query) throws ParserException, JournalException {
-        parser.setContent(query);
-        return optimiser.compile(parser.parse().getQueryModel());
-    }
-
     private void createIndexedTab() throws JournalException {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").
@@ -1563,13 +1514,5 @@ public class OptimiserTest extends AbstractTest {
             ew.append();
         }
         w.commit();
-    }
-
-    private ObjHashSet<String> getNames(Rnd r, int n) {
-        ObjHashSet<String> names = new ObjHashSet<>();
-        for (int i = 0; i < n; i++) {
-            names.add(r.nextString(15));
-        }
-        return names;
     }
 }

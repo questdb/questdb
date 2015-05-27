@@ -47,6 +47,7 @@ public class JournalEventBridge {
     private final BatchEventProcessor<JournalEvent> batchEventProcessor;
     private final RingBuffer<JournalEvent> outRingBuffer;
     private final SequenceBarrier outBarrier;
+
     @SuppressWarnings("CanBeFinal")
 
 

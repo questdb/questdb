@@ -440,7 +440,7 @@ public class VariableColumn extends AbstractColumn {
         }
 
         private void skipOffset(long offset) {
-            if (offset > remaining ) {
+            if (offset > remaining) {
                 throw new IndexOutOfBoundsException(String.format("Offset %d is greater than remaining length %d", offset, remaining));
             }
             remaining -= offset;

@@ -34,16 +34,6 @@ public class DoubleConstant extends AbstractVirtualColumn {
     }
 
     @Override
-    public float getFloat(Record rec) {
-        return (float) value;
-    }
-
-    @Override
-    public int getInt(Record rec) {
-        return (int) value;
-    }
-
-    @Override
     public boolean isConstant() {
         return true;
     }

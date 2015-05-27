@@ -199,6 +199,7 @@ public final class Numbers {
         if (i > Integer.MAX_VALUE || i < Integer.MIN_VALUE) {
             if (i < 0) {
                 if (i == Long.MIN_VALUE) {
+                    sink.put("NaN");
                     return;
                 }
                 sink.put('-');

@@ -30,8 +30,21 @@ public class IntNegativeOperator extends AbstractVirtualColumn implements Functi
     }
 
     @Override
+    public double getDouble(Record rec) {
+        int v = value.getInt(rec);
+        return v == Integer.MIN_VALUE ? Double.NaN : -v;
+    }
+
+    @Override
     public int getInt(Record rec) {
-        return -value.getInt(rec);
+        int v = value.getInt(rec);
+        return v == Integer.MIN_VALUE ? Integer.MIN_VALUE : -v;
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        int v = value.getInt(rec);
+        return v == Integer.MIN_VALUE ? Long.MIN_VALUE : -v;
     }
 
     @Override

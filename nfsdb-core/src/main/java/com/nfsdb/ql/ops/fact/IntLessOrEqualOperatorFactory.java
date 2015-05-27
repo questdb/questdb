@@ -22,6 +22,8 @@ import com.nfsdb.ql.ops.IntLessOrEqualOperator;
 import com.nfsdb.ql.ops.VirtualColumn;
 
 public class IntLessOrEqualOperatorFactory implements FunctionFactory {
+    public static final IntLessOrEqualOperatorFactory INSTANCE = new IntLessOrEqualOperatorFactory();
+
     @Override
     public Function newInstance(ObjList<VirtualColumn> args) {
         return new IntLessOrEqualOperator();

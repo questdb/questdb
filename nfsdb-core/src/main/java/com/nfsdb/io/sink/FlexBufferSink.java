@@ -80,9 +80,7 @@ public class FlexBufferSink extends AbstractCharSink implements Closeable {
     }
 
     public void free() {
-        if (buffer != null) {
-            ByteBuffers.release(buffer);
-        }
+        buffer = ByteBuffers.release(buffer);
     }
 
     private void resize() {

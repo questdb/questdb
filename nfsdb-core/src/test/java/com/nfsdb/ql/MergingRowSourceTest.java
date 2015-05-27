@@ -23,7 +23,7 @@ import com.nfsdb.ql.impl.JournalPartitionSource;
 import com.nfsdb.ql.impl.JournalSource;
 import com.nfsdb.ql.impl.KvIndexSymLookupRowSource;
 import com.nfsdb.ql.impl.MergingRowSource;
-import com.nfsdb.ql.ops.StringConstant;
+import com.nfsdb.ql.ops.StrConstant;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Dates;
@@ -36,8 +36,8 @@ public class MergingRowSourceTest extends AbstractTest {
         JournalWriter<Quote> w = factory.writer(Quote.class);
         TestUtils.generateQuoteData(w, 100000, Dates.parseDateTime("2014-02-11T00:00:00.000Z"), 10);
 
-        RowSource srcA = new KvIndexSymLookupRowSource("sym", new StringConstant("BP.L"), true);
-        RowSource srcB = new KvIndexSymLookupRowSource("sym", new StringConstant("WTB.L"), true);
+        RowSource srcA = new KvIndexSymLookupRowSource("sym", new StrConstant("BP.L"), true);
+        RowSource srcB = new KvIndexSymLookupRowSource("sym", new StrConstant("WTB.L"), true);
 
         RecordSource<? extends Record> rs = new JournalSource(new JournalPartitionSource(w, true), new MergingRowSource(srcA, srcB));
 

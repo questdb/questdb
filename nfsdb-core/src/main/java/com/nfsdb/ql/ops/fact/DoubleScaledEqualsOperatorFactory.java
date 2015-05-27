@@ -22,6 +22,8 @@ import com.nfsdb.ql.ops.Function;
 import com.nfsdb.ql.ops.VirtualColumn;
 
 public class DoubleScaledEqualsOperatorFactory implements FunctionFactory {
+    public static final DoubleScaledEqualsOperatorFactory INSTANCE = new DoubleScaledEqualsOperatorFactory();
+
     @Override
     public Function newInstance(ObjList<VirtualColumn> args) {
         return new DoubleScaledEqualsOperator();

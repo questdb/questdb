@@ -22,6 +22,8 @@ import com.nfsdb.ql.ops.StrInOperator;
 import com.nfsdb.ql.ops.VirtualColumn;
 
 public class StrInOperatorFactory implements FunctionFactory {
+    public static final StrInOperatorFactory INSTANCE = new StrInOperatorFactory();
+
     @Override
     public Function newInstance(ObjList<VirtualColumn> args) {
         return new StrInOperator();

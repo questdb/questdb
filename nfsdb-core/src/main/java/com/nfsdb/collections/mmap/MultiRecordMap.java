@@ -35,7 +35,7 @@ public class MultiRecordMap implements Closeable {
 
     private MultiRecordMap(int capacity, long dataSize, float loadFactor, int avgRecSize, List<RecordColumnMetadata> keyColumns, RecordMetadata valueMetadata) {
         MultiMap.Builder builder = new MultiMap.Builder();
-        for(RecordColumnMetadata key : keyColumns) {
+        for (RecordColumnMetadata key : keyColumns) {
             builder.keyColumn(key);
         }
         builder.valueColumn(new ColumnMetadata() {{

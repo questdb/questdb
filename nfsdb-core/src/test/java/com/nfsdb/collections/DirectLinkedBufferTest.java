@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -76,8 +76,8 @@ public class DirectLinkedBufferTest {
             for (int j = 0; j < (long) pageCapacity / bufferLen + 1; j++) {
                 buffer.write(readBuffer, j * bufferLen, bufferLen);
 
-                for(int i = 0; i < bufferLen; i++){
-                    Assert.assertEquals((byte)(i%255), Unsafe.getUnsafe().getByte(readBuffer + i), j);
+                for (int i = 0; i < bufferLen; i++) {
+                    Assert.assertEquals((byte) (i % 255), Unsafe.getUnsafe().getByte(readBuffer + i), j);
                 }
             }
         }

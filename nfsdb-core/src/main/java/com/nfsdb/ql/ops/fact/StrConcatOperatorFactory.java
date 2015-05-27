@@ -22,6 +22,8 @@ import com.nfsdb.ql.ops.StrConcatOperator;
 import com.nfsdb.ql.ops.VirtualColumn;
 
 public class StrConcatOperatorFactory implements FunctionFactory {
+    public static final StrConcatOperatorFactory INSTANCE = new StrConcatOperatorFactory();
+
     @Override
     public Function newInstance(ObjList<VirtualColumn> args) {
         return new StrConcatOperator();

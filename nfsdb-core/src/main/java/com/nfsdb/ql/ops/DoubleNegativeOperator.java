@@ -16,40 +16,36 @@
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.SymFacade;
+import com.nfsdb.ql.parser.ParserException;
 import com.nfsdb.storage.ColumnType;
 
-public class StringConstant extends AbstractVirtualColumn {
-    private final String value;
+public class DoubleNegativeOperator extends AbstractVirtualColumn implements Function {
 
-    public StringConstant(String value) {
-        super(ColumnType.STRING);
-        this.value = value;
+    private VirtualColumn value;
+
+    public DoubleNegativeOperator() {
+        super(ColumnType.DOUBLE);
     }
 
     @Override
-    public CharSequence getFlyweightStr(Record rec) {
-        return value;
-    }
-
-    @Override
-    public CharSequence getStr(Record rec) {
-        return value;
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink) {
-        sink.put(value);
+    public double getDouble(Record rec) {
+        return -value.getDouble(rec);
     }
 
     @Override
     public boolean isConstant() {
-        return true;
+        return value.isConstant();
     }
 
     @Override
     public void prepare(SymFacade facade) {
+
+    }
+
+    @Override
+    public void setArg(int pos, VirtualColumn arg) throws ParserException {
+        value = arg;
     }
 }

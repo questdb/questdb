@@ -22,6 +22,8 @@ import com.nfsdb.ql.ops.Function;
 import com.nfsdb.ql.ops.VirtualColumn;
 
 public class DoubleLessThanOperatorFactory implements FunctionFactory {
+    public static final DoubleLessThanOperatorFactory INSTANCE = new DoubleLessThanOperatorFactory();
+
     @Override
     public Function newInstance(ObjList<VirtualColumn> args) {
         return new DoubleLessThanOperator();

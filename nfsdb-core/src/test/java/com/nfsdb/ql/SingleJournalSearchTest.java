@@ -26,7 +26,7 @@ import com.nfsdb.model.Quote;
 import com.nfsdb.ql.impl.*;
 import com.nfsdb.ql.ops.IntConstant;
 import com.nfsdb.ql.ops.IntEqualsOperator;
-import com.nfsdb.ql.ops.RecordSourceColumn;
+import com.nfsdb.ql.ops.SymRecordSourceColumn;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.test.tools.TestData;
 import com.nfsdb.utils.Files;
@@ -110,7 +110,7 @@ public class SingleJournalSearchTest {
                 "2013-03-14T23:43:20.000Z\tABF.L\t0.353620839777\t0.303265005916\t1628633600\t812948041\tFast trading\tSK\n";
 
         IntEqualsOperator filter = new IntEqualsOperator();
-        filter.setLhs(new RecordSourceColumn(journal.getMetadata().getColumnIndex("ex"), journal.getMetadata().getColumn("ex").type));
+        filter.setLhs(new SymRecordSourceColumn(journal.getMetadata().getColumnIndex("ex")));
         filter.setRhs(new IntConstant(journal.getSymbolTable("ex").getQuick("SK")));
 
         assertEquals(expected,

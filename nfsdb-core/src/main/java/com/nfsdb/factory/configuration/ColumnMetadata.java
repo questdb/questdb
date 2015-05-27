@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,6 +48,31 @@ public class ColumnMetadata implements RecordColumnMetadata {
         this.distinctCountHint = from.distinctCountHint;
         this.sameAs = from.sameAs;
         this.noCache = from.noCache;
+        return this;
+    }
+
+    @Override
+    public ColumnType getType() {
+        return type;
+    }
+
+    public ColumnMetadata setType(ColumnType type) {
+        this.type = type;
+        return this;
+    }
+
+    @Override
+    public SymbolTable getSymbolTable() {
+        return symbolTable;
+    }
+
+    @Override
+    public String getName() {
+        return name;
+    }
+
+    public ColumnMetadata setName(String name) {
+        this.name = name;
         return this;
     }
 
@@ -115,16 +140,6 @@ public class ColumnMetadata implements RecordColumnMetadata {
         noCache = buf.getBool();
     }
 
-    public ColumnMetadata setName(String name) {
-        this.name = name;
-        return this;
-    }
-
-    public ColumnMetadata setType(ColumnType type) {
-        this.type = type;
-        return this;
-    }
-
     public void write(HugeBuffer buf) {
         buf.put(name);
         buf.put(type.name());
@@ -136,19 +151,5 @@ public class ColumnMetadata implements RecordColumnMetadata {
         buf.put(distinctCountHint);
         buf.put(sameAs);
         buf.put(noCache);
-    }
-    @Override
-    public ColumnType getType() {
-        return type;
-    }
-
-    @Override
-    public SymbolTable getSymbolTable() {
-        return symbolTable;
-    }
-
-    @Override
-    public String getName() {
-        return name;
     }
 }

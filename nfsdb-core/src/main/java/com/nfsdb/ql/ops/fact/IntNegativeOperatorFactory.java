@@ -22,6 +22,8 @@ import com.nfsdb.ql.ops.IntNegativeOperator;
 import com.nfsdb.ql.ops.VirtualColumn;
 
 public class IntNegativeOperatorFactory implements FunctionFactory {
+    public static final IntNegativeOperatorFactory INSTANCE = new IntNegativeOperatorFactory();
+
     @Override
     public Function newInstance(ObjList<VirtualColumn> args) {
         return new IntNegativeOperator();

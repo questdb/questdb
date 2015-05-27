@@ -16,67 +16,24 @@
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.SymFacade;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
 
-import java.io.OutputStream;
-
-public class RecordSourceColumn extends AbstractVirtualColumn {
+public class SymRecordSourceColumn extends AbstractVirtualColumn {
     private final int index;
     private SymbolTable symbolTable;
 
-    public RecordSourceColumn(int index, ColumnType type) {
-        super(type);
+    public SymRecordSourceColumn(int index) {
+        super(ColumnType.SYMBOL);
         this.index = index;
     }
 
     @Override
-    public byte get(Record rec) {
-        return rec.get(index);
-    }
-
-    @Override
-    public void getBin(Record rec, OutputStream s) {
-        rec.getBin(index, s);
-    }
-
-    @Override
-    public DirectInputStream getBin(Record rec) {
-        return rec.getBin(index);
-    }
-
-    @Override
-    public boolean getBool(Record rec) {
-        return rec.getBool(index);
-    }
-
-    @Override
-    public long getDate(Record rec) {
-        return rec.getDate(index);
-    }
-
-    @Override
-    public double getDouble(Record rec) {
-        return rec.getDouble(index);
-    }
-
-    @Override
-    public float getFloat(Record rec) {
-        return rec.getFloat(index);
-    }
-
-    @Override
     public CharSequence getFlyweightStr(Record rec) {
-        switch (getType()) {
-            case SYMBOL:
-                return rec.getSym(index);
-            default:
-                return rec.getFlyweightStr(index);
-        }
+        return rec.getSym(index);
     }
 
     @Override
@@ -85,23 +42,13 @@ public class RecordSourceColumn extends AbstractVirtualColumn {
     }
 
     @Override
-    public long getLong(Record rec) {
-        return rec.getLong(index);
-    }
-
-    @Override
-    public short getShort(Record rec) {
-        return rec.getShort(index);
-    }
-
-    @Override
     public CharSequence getStr(Record rec) {
-        return rec.getStr(index);
+        return rec.getSym(index);
     }
 
     @Override
     public void getStr(Record rec, CharSink sink) {
-        rec.getStr(index, sink);
+        sink.put(rec.getSym(index));
     }
 
     @Override
@@ -121,8 +68,6 @@ public class RecordSourceColumn extends AbstractVirtualColumn {
 
     @Override
     public void prepare(SymFacade facade) {
-        if (getType() == ColumnType.SYMBOL) {
-            this.symbolTable = facade.getSymbolTable(index);
-        }
+        this.symbolTable = facade.getSymbolTable(index);
     }
 }

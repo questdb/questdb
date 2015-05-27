@@ -25,10 +25,7 @@ import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.model.Album;
 import com.nfsdb.model.Band;
 import com.nfsdb.ql.impl.*;
-import com.nfsdb.ql.ops.RecordSourceColumn;
-import com.nfsdb.ql.ops.StrEqualsOperator;
-import com.nfsdb.ql.ops.StrGlue;
-import com.nfsdb.ql.ops.StringConstant;
+import com.nfsdb.ql.ops.*;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.utils.Files;
 import org.junit.Assert;
@@ -98,7 +95,7 @@ public class JoinStringToSymbolTest {
                 )
         );
 
-        StrGlue glue = new StrGlue(master, new RecordSourceColumn(master.getMetadata().getColumnIndex("band"), master.getMetadata().getColumn("band").getType()));
+        StrGlue glue = new StrGlue(master, new StrRecordSourceColumn(master.getMetadata().getColumnIndex("band")));
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
         p.print(
@@ -144,11 +141,11 @@ public class JoinStringToSymbolTest {
                 )
         );
 
-        StrGlue glue = new StrGlue(master, new RecordSourceColumn(master.getMetadata().getColumnIndex("band"), master.getMetadata().getColumn("band").getType()));
+        StrGlue glue = new StrGlue(master, new StrRecordSourceColumn(master.getMetadata().getColumnIndex("band")));
 
         StrEqualsOperator filter = new StrEqualsOperator();
-        filter.setLhs(new RecordSourceColumn(bw.getMetadata().getColumnIndex("type"), bw.getMetadata().getColumn("type").getType()));
-        filter.setRhs(new StringConstant("rock"));
+        filter.setLhs(new SymRecordSourceColumn(bw.getMetadata().getColumnIndex("type")));
+        filter.setRhs(new StrConstant("rock"));
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);

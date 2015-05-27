@@ -66,30 +66,31 @@ public class SearchByKeysTest {
 
         /*/
 
-    /**QUERY
-        // from order head by id = 123
-        // **selects latest version of record with int id 123
-        DataSource<Order> dsInt = new DataSourceImpl<>(
-                new JournalSource(
-                        new JournalDescPartitionSource(journal, false),
-                        new KvIndexHeadRowSource("id",
-                                new SingleIntHashKeySource("id", param),
-                                1,
-                                0,
-                                filter
-                        )
-                ),
-                new Order()
-        );
-
-        // assert
-        for (int i = 0; i < 1000; i++) {
-            param.setValue(i);
-            Order o = dsInt.$new().head();
-            Assert.assertEquals(i, o.id);
-            Assert.assertEquals("Mismatch for INT " + i, timestamp + i * inc + (i >= 500 ? 1000 * inc + 3000 : 0), o.timestamp);
-        }
-    }
+    /**
+     * QUERY
+     * // from order head by id = 123
+     * // **selects latest version of record with int id 123
+     * DataSource<Order> dsInt = new DataSourceImpl<>(
+     * new JournalSource(
+     * new JournalDescPartitionSource(journal, false),
+     * new KvIndexHeadRowSource("id",
+     * new SingleIntHashKeySource("id", param),
+     * 1,
+     * 0,
+     * filter
+     * )
+     * ),
+     * new Order()
+     * );
+     * <p/>
+     * // assert
+     * for (int i = 0; i < 1000; i++) {
+     * param.setValue(i);
+     * Order o = dsInt.$new().head();
+     * Assert.assertEquals(i, o.id);
+     * Assert.assertEquals("Mismatch for INT " + i, timestamp + i * inc + (i >= 500 ? 1000 * inc + 3000 : 0), o.timestamp);
+     * }
+     * }
      */
 
     private Journal<Order> prepareTestData() throws JournalException {

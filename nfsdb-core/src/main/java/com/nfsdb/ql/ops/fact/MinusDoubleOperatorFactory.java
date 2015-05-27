@@ -22,6 +22,8 @@ import com.nfsdb.ql.ops.MinusDoubleOperator;
 import com.nfsdb.ql.ops.VirtualColumn;
 
 public class MinusDoubleOperatorFactory implements FunctionFactory {
+    public static final MinusDoubleOperatorFactory INSTANCE = new MinusDoubleOperatorFactory();
+
     @Override
     public Function newInstance(ObjList<VirtualColumn> args) {
         return new MinusDoubleOperator();

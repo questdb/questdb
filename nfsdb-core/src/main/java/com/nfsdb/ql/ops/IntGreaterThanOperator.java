@@ -27,6 +27,7 @@ public class IntGreaterThanOperator extends AbstractBinaryOperator {
 
     @Override
     public boolean getBool(Record rec) {
-        return lhs.getInt(rec) > rhs.getInt(rec);
+        int r = rhs.getInt(rec);
+        return lhs.getInt(rec) > r && r > Integer.MIN_VALUE;
     }
 }

@@ -44,6 +44,11 @@ public class IntConstant extends AbstractVirtualColumn {
     }
 
     @Override
+    public long getLong(Record rec) {
+        return value;
+    }
+
+    @Override
     public boolean isConstant() {
         return true;
     }

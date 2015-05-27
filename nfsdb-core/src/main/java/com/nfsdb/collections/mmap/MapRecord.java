@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -60,7 +60,7 @@ public final class MapRecord extends AbstractRecord {
         throw new JournalRuntimeException("Not implemented");
     }
 
-     @Override
+    @Override
     public boolean getBool(int index) {
         return Unsafe.getUnsafe().getByte(address0(index)) == 1;
     }
@@ -131,13 +131,6 @@ public final class MapRecord extends AbstractRecord {
         return metadata.getColumn(index).getSymbolTable().value(getInt(index));
     }
 
-    MapRecord init(long address) {
-        this.address0 = address;
-        this.address1 = address + keyDataOffset;
-        this.address2 = address + keyBlockOffset;
-        return this;
-    }
-
     private long address0(int index) {
 
         if (index < split) {
@@ -149,5 +142,12 @@ public final class MapRecord extends AbstractRecord {
         }
 
         return Unsafe.getUnsafe().getInt(address2 + (index - split - 1) * 4) + address0;
+    }
+
+    MapRecord init(long address) {
+        this.address0 = address;
+        this.address1 = address + keyDataOffset;
+        this.address2 = address + keyBlockOffset;
+        return this;
     }
 }

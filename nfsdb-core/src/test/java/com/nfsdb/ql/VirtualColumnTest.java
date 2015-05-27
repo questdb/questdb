@@ -26,7 +26,7 @@ import com.nfsdb.ql.impl.SelectedColumnsRecordSource;
 import com.nfsdb.ql.impl.VirtualColumnRecordSource;
 import com.nfsdb.ql.ops.AddDoubleOperator;
 import com.nfsdb.ql.ops.DoubleConstant;
-import com.nfsdb.ql.ops.RecordSourceColumn;
+import com.nfsdb.ql.ops.DoubleRecordSourceColumn;
 import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.utils.Rnd;
@@ -60,7 +60,7 @@ public class VirtualColumnTest extends AbstractTest {
         VirtualColumnRecordSource src = new VirtualColumnRecordSource(w.rows(), new ObjList<VirtualColumn>() {{
             add(new AddDoubleOperator() {{
                 setName("plus");
-                setLhs(new RecordSourceColumn(w.getMetadata().getColumnIndex("bid"), w.getMetadata().getColumn("bid").type));
+                setLhs(new DoubleRecordSourceColumn(w.getMetadata().getColumnIndex("bid")));
                 setRhs(new DoubleConstant(12.5));
             }});
         }});
@@ -199,7 +199,7 @@ public class VirtualColumnTest extends AbstractTest {
                         new ObjList<VirtualColumn>() {{
                             add(new AddDoubleOperator() {{
                                 setName("plus");
-                                setLhs(new RecordSourceColumn(w.getMetadata().getColumnIndex("bid"), w.getMetadata().getColumn("bid").type));
+                                setLhs(new DoubleRecordSourceColumn(w.getMetadata().getColumnIndex("bid")));
                                 setRhs(new DoubleConstant(12.5));
                             }});
                         }}

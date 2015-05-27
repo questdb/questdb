@@ -22,6 +22,8 @@ import com.nfsdb.ql.ops.MultIntOperator;
 import com.nfsdb.ql.ops.VirtualColumn;
 
 public class MultIntOperatorFactory implements FunctionFactory {
+    public static final MultIntOperatorFactory INSTANCE = new MultIntOperatorFactory();
+
     @Override
     public Function newInstance(ObjList<VirtualColumn> args) {
         return new MultIntOperator();

@@ -43,7 +43,7 @@ public class DirectRecordTest {
     public DirectRecordTest() {
         try {
             this.factory = new JournalTestFactory(
-                    new JournalConfigurationBuilder(){{
+                    new JournalConfigurationBuilder() {{
                     }}.build(Files.makeTempDir())
             );
         } catch (JournalConfigurationException e) {
@@ -106,7 +106,7 @@ public class DirectRecordTest {
     public void testSaveBinOverPageEdge() throws JournalException, IOException {
         final int pageLen = 100;
         writeAndReadRecords(factory.writer(Binary.class), 1, pageLen,
-                new RecordGenerator<Binary>(){
+                new RecordGenerator<Binary>() {
 
                     @Override
                     public void assertRecord(Record value, int i) throws IOException {
@@ -123,8 +123,8 @@ public class DirectRecordTest {
                     public Binary generate(int i) {
                         Binary af = new Binary();
                         byte[] bin = new byte[pageLen];
-                        for(int j = 0; j < bin.length; j++) {
-                            bin[j] = (byte)(j % 255);
+                        for (int j = 0; j < bin.length; j++) {
+                            bin[j] = (byte) (j % 255);
                         }
                         af.aBinary = ByteBuffer.wrap(bin);
                         return af;

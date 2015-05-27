@@ -56,7 +56,7 @@ public class IntrinsicExtractor {
         // pre-order iterative tree traversal
         // see: http://en.wikipedia.org/wiki/Tree_traversal
 
-        if (removAndIntrinsics(node, m)) {
+        if (removeAndIntrinsics(node, m)) {
             return model;
         }
         ExprNode root = node;
@@ -65,10 +65,10 @@ public class IntrinsicExtractor {
             if (node != null) {
                 switch (node.token) {
                     case "and":
-                        if (!removAndIntrinsics(node.rhs, m)) {
+                        if (!removeAndIntrinsics(node.rhs, m)) {
                             stack.addFirst(node.rhs);
                         }
-                        node = removAndIntrinsics(node.lhs, m) ? null : node.lhs;
+                        node = removeAndIntrinsics(node.lhs, m) ? null : node.lhs;
                         break;
                     default:
                         node = stack.pollFirst();
@@ -460,7 +460,7 @@ public class IntrinsicExtractor {
         return new Interval(loMillis, hiMillis);
     }
 
-    private boolean removAndIntrinsics(ExprNode node, JournalMetadata m) throws ParserException {
+    private boolean removeAndIntrinsics(ExprNode node, JournalMetadata m) throws ParserException {
         if (node == null) {
             return true;
         }

@@ -22,6 +22,8 @@ import com.nfsdb.ql.ops.SymInOperator;
 import com.nfsdb.ql.ops.VirtualColumn;
 
 public class SymInOperatorFactory implements FunctionFactory {
+    public static final SymInOperatorFactory INSTANCE = new SymInOperatorFactory();
+
     @Override
     public Function newInstance(ObjList<VirtualColumn> args) {
         return new SymInOperator();
