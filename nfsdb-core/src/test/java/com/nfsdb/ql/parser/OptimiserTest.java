@@ -53,6 +53,18 @@ public class OptimiserTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testInAsColumn() throws Exception {
+        JournalWriter<Quote> w = factory.writer(Quote.class, "q");
+        TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
+        w.commit();
+
+        final String expected = "BP.L\t0.000000253226\t1022.955993652344\t2015-02-13T02:59:34.000Z\ttrue\n" +
+                "GKN.L\t688.000000000000\t256.000000000000\t2015-02-13T02:59:50.000Z\tfalse\n";
+
+        assertThat(expected, "select sym, bid, ask, timestamp, sym in ('BP.L', 'TLW.L', 'ABF.L') from q latest by sym where sym in ('GKN.L', 'BP.L') and ask > 100");
+    }
+
+    @Test
     public void testIntComparison() throws Exception {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").
@@ -367,6 +379,26 @@ public class OptimiserTest extends AbstractOptimiserTest {
         final String expected = "BP.L\t0.000000253226\t1022.955993652344\t2015-02-13T02:59:34.000Z\n" +
                 "GKN.L\t688.000000000000\t256.000000000000\t2015-02-13T02:59:50.000Z\n";
         assertThat(expected, "select sym, bid, ask, timestamp from q latest by sym where sym in ('GKN.L', 'BP.L') and ask > 100");
+    }
+
+    @Test
+    public void testLatestBySymNoFilter() throws Exception {
+        JournalWriter<Quote> w = factory.writer(Quote.class, "q");
+        TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
+        w.commit();
+
+        final String expected = "RRS.L\t946.798400878906\t0.012493257411\t2015-02-13T02:59:43.000Z\n" +
+                "ABF.L\t800.000000000000\t0.000625604152\t2015-02-13T02:59:46.000Z\n" +
+                "GKN.L\t688.000000000000\t256.000000000000\t2015-02-13T02:59:50.000Z\n" +
+                "AGK.L\t0.905496925116\t72.000000000000\t2015-02-13T02:59:53.000Z\n" +
+                "ADM.L\t62.812500000000\t1.050346195698\t2015-02-13T02:59:54.000Z\n" +
+                "TLW.L\t584.000000000000\t0.004887015559\t2015-02-13T02:59:55.000Z\n" +
+                "BP.L\t512.000000000000\t0.000000007648\t2015-02-13T02:59:56.000Z\n" +
+                "WTB.L\t0.006673692260\t348.000000000000\t2015-02-13T02:59:57.000Z\n" +
+                "BT-A.L\t0.000000500809\t0.000879329862\t2015-02-13T02:59:58.000Z\n" +
+                "LLOY.L\t0.000000328173\t288.000000000000\t2015-02-13T02:59:59.000Z\n";
+
+        assertThat(expected, "select sym, bid, ask, timestamp from q latest by sym");
     }
 
     @Test

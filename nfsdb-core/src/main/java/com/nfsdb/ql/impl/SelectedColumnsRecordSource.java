@@ -52,6 +52,11 @@ public class SelectedColumnsRecordSource extends AbstractImmutableIterator<Recor
     }
 
     @Override
+    public SymFacade getSymFacade() {
+        return recordCursor.getSymFacade();
+    }
+
+    @Override
     public boolean hasNext() {
         return recordCursor.hasNext();
     }

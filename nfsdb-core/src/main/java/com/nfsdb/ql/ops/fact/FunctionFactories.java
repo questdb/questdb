@@ -25,7 +25,11 @@ import com.nfsdb.utils.Chars;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public final class FunctionFactories {
+
     private static final ObjObjHashMap<Signature, FunctionFactory> factories = new ObjObjHashMap<>();
+
+    private FunctionFactories() {
+    }
 
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     public static FunctionFactory find(Signature sig, ObjList<VirtualColumn> args) {
@@ -53,15 +57,8 @@ public final class FunctionFactories {
             return factory;
         } else {
             // special cases/intrinsic factories
-            if (sig.paramCount < 3 && Chars.equals("in", sig.name)) {
-                switch (sig.paramTypes.get(0)) {
-                    case STRING:
-                        return StrInOperatorFactory.INSTANCE;
-                    case SYMBOL:
-                        return SymInOperatorFactory.INSTANCE;
-                }
-            } else if (sig.paramCount > 2 && Chars.equals("in", sig.name)) {
-                switch (sig.paramTypes.getLast()) {
+            if (Chars.equals("in", sig.name)) {
+                switch (sig.paramTypes.getQuick(0)) {
                     case STRING:
                         return StrInOperatorFactory.INSTANCE;
                     case SYMBOL:

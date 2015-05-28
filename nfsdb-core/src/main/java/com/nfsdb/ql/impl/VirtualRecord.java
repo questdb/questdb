@@ -21,6 +21,7 @@ import com.nfsdb.collections.ObjList;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordMetadata;
+import com.nfsdb.ql.SymFacade;
 import com.nfsdb.ql.ops.VirtualColumn;
 
 import java.io.OutputStream;
@@ -117,6 +118,12 @@ public class VirtualRecord extends AbstractRecord {
     @Override
     public String getSym(int col) {
         return col < split ? base.getSym(col) : virtualColumns.get(col - split).getSym(base);
+    }
+
+    public void prepare(SymFacade facade) {
+        for (int i = 0, n = virtualColumns.size(); i < n; i++) {
+            virtualColumns.getQuick(i).prepare(facade);
+        }
     }
 
     public void setBase(Record base) {

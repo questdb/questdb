@@ -109,6 +109,11 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
     }
 
     @Override
+    public SymFacade getSymFacade() {
+        return recordCursor.getSymFacade();
+    }
+
+    @Override
     public boolean hasNext() {
         return mapRecordSource != null && mapRecordSource.hasNext() || buildMap();
     }

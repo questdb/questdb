@@ -52,6 +52,11 @@ public class TopRecordSource extends AbstractImmutableIterator<Record> implement
     }
 
     @Override
+    public SymFacade getSymFacade() {
+        return recordCursor.getSymFacade();
+    }
+
+    @Override
     public boolean hasNext() {
         return remaining > 0 && recordCursor.hasNext();
     }

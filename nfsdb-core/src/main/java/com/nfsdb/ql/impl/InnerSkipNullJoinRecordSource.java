@@ -50,6 +50,11 @@ public class InnerSkipNullJoinRecordSource extends AbstractImmutableIterator<Rec
     }
 
     @Override
+    public SymFacade getSymFacade() {
+        return recordCursor.getSymFacade();
+    }
+
+    @Override
     public boolean hasNext() {
         SplitRecord data;
 

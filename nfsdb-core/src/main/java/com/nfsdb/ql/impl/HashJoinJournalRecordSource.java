@@ -89,6 +89,11 @@ public class HashJoinJournalRecordSource extends AbstractImmutableIterator<Recor
     }
 
     @Override
+    public SymFacade getSymFacade() {
+        return null;
+    }
+
+    @Override
     public boolean hasNext() {
         if (hashTableCursor != null && hashTableCursor.hasNext()) {
             currentRecord.setB(slaveCursor.getByRowId(hashTableCursor.next().getLong(0)));

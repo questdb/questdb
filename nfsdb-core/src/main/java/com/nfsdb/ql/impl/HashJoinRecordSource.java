@@ -24,10 +24,7 @@ import com.nfsdb.collections.mmap.MultiRecordMap;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordCursor;
-import com.nfsdb.ql.RecordMetadata;
-import com.nfsdb.ql.RecordSource;
+import com.nfsdb.ql.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
@@ -88,6 +85,11 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
         hashTableCursor = null;
         masterSource.reset();
         hashTable.clear();
+    }
+
+    @Override
+    public SymFacade getSymFacade() {
+        return null;
     }
 
     @Override

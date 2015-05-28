@@ -22,16 +22,14 @@ import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.io.*;
 import com.nfsdb.io.sink.StringSink;
+import com.nfsdb.ql.Compiler;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordSource;
-import com.nfsdb.ql.parser.Optimiser;
 import com.nfsdb.ql.parser.ParserException;
-import com.nfsdb.ql.parser.QueryParser;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
@@ -39,14 +37,7 @@ import java.io.IOException;
 
 public class ImportCsvTest extends AbstractTest {
 
-    private QueryParser parser;
-    private Optimiser optimiser;
-
-    @Before
-    public void setUp() throws Exception {
-        parser = new QueryParser();
-        optimiser = new Optimiser(factory);
-    }
+    private final Compiler compiler = new Compiler();
 
     @Test
     public void testImport() throws Exception {
@@ -122,8 +113,7 @@ public class ImportCsvTest extends AbstractTest {
     }
 
     private void assertThat(String expected, String query) throws ParserException, JournalException {
-        parser.setContent(query);
-        RecordSource<? extends Record> rs = optimiser.compile(parser.parse().getQueryModel());
+        RecordSource<? extends Record> rs = compiler.compile(query, factory);
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
         p.print(rs, factory);

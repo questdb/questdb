@@ -21,6 +21,7 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalCachingFactory;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
+import com.nfsdb.ql.Compiler;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.test.tools.AbstractTest;
@@ -30,15 +31,10 @@ import org.junit.Assert;
 import org.junit.Before;
 
 public abstract class AbstractOptimiserTest extends AbstractTest {
-    private final QueryParser parser = new QueryParser();
-    private final Optimiser optimiser;
+    private final Compiler compiler = new Compiler();
     private final StringSink sink = new StringSink();
     private final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
     private JournalCachingFactory f;
-
-    public AbstractOptimiserTest() {
-        this.optimiser = new Optimiser(factory);
-    }
 
     @Before
     public void setUp() throws Exception {
@@ -64,8 +60,7 @@ public abstract class AbstractOptimiserTest extends AbstractTest {
     }
 
     protected RecordSource<? extends Record> compile(CharSequence query) throws ParserException, JournalException {
-        parser.setContent(query);
-        return optimiser.compile(parser.parse().getQueryModel());
+        return compiler.compile(query, f);
     }
 
     protected ObjHashSet<String> getNames(Rnd r, int n) {

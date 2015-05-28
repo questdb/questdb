@@ -47,6 +47,11 @@ public class StatefulJournalSourceImpl extends AbstractImmutableIterator<Record>
     }
 
     @Override
+    public SymFacade getSymFacade() {
+        return recordCursor.getSymFacade();
+    }
+
+    @Override
     public boolean hasNext() {
         return recordCursor.hasNext();
     }

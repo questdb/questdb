@@ -19,10 +19,7 @@ package com.nfsdb.ql.impl;
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
-import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordCursor;
-import com.nfsdb.ql.RecordMetadata;
-import com.nfsdb.ql.RecordSource;
+import com.nfsdb.ql.*;
 
 public class NestedLoopJoinRecordSource extends AbstractImmutableIterator<SplitRecord> implements RecordSource<SplitRecord>, RecordCursor<SplitRecord> {
     private final RecordSource<? extends Record> masterSource;
@@ -60,6 +57,11 @@ public class NestedLoopJoinRecordSource extends AbstractImmutableIterator<SplitR
         masterSource.reset();
         slaveSource.reset();
         nextSlave = false;
+    }
+
+    @Override
+    public SymFacade getSymFacade() {
+        return null;
     }
 
     @Override

@@ -42,16 +42,12 @@ public class Optimiser {
 
     private final ArrayDeque<VirtualColumn> stack = new ArrayDeque<>();
     private final IntrinsicExtractor intrinsicExtractor = new IntrinsicExtractor();
-    private final JournalReaderFactory factory;
     private final VirtualColumnBuilder virtualColumnBuilderVisitor = new VirtualColumnBuilder();
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
+    private final Signature mutableSig = new Signature();
 
-    public Optimiser(JournalReaderFactory factory) {
-        this.factory = factory;
-    }
-
-    public RecordSource<? extends Record> compile(QueryModel model) throws ParserException, JournalException {
-        RecordSource<? extends Record> rs = createRecordSource(model);
+    public RecordSource<? extends Record> compile(QueryModel model, JournalReaderFactory factory) throws ParserException, JournalException {
+        RecordSource<? extends Record> rs = createRecordSource(model, factory);
         RecordMetadata meta = rs.getMetadata();
         ObjList<QueryColumn> columns = model.getColumns();
         ObjList<VirtualColumn> virtualColumns = new ObjList<>();
@@ -87,11 +83,10 @@ public class Optimiser {
     }
 
     private void createColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
-        Signature sig = new Signature();
         ObjList<VirtualColumn> args = new ObjList<>();
 
         int argCount = node.paramCount;
-        sig.clear();
+        mutableSig.clear();
 
         switch (argCount) {
             case 0:
@@ -105,26 +100,26 @@ public class Optimiser {
                         break;
                     default:
                         // lookup zero arg function from symbol table
-                        stack.addFirst(lookupFunction(node, sig.setName(node.token).setParamCount(0), null));
+                        stack.addFirst(lookupFunction(node, mutableSig.setName(node.token).setParamCount(0), null));
                 }
                 break;
             default:
                 args.ensureCapacity(argCount);
-                sig.setName(node.token).setParamCount(argCount);
+                mutableSig.setName(node.token).setParamCount(argCount);
                 for (int n = 0; n < argCount; n++) {
                     VirtualColumn c = stack.pollFirst();
                     if (c == null) {
                         throw new ParserException(node.position, "Too few arguments");
                     }
-                    sig.paramType(n, c.getType(), c.isConstant());
+                    mutableSig.paramType(n, c.getType(), c.isConstant());
                     args.setQuick(n, c);
                 }
-                stack.addFirst(lookupFunction(node, sig, args));
+                stack.addFirst(lookupFunction(node, mutableSig, args));
         }
     }
 
     @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT", "CC_CYCLOMATIC_COMPLEXITY"})
-    private RecordSource<? extends Record> createRecordSource(QueryModel model) throws JournalException, ParserException {
+    private RecordSource<? extends Record> createRecordSource(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
 
         ExprNode readerNode = model.getJournalName();
         if (readerNode.type != ExprNode.NodeType.LITERAL && readerNode.type != ExprNode.NodeType.CONSTANT) {
@@ -324,7 +319,7 @@ public class Optimiser {
     private VirtualColumn lookupFunction(ExprNode node, Signature sig, ObjList<VirtualColumn> args) throws ParserException {
         FunctionFactory factory = FunctionFactories.find(sig, args);
         if (factory == null) {
-            throw new ParserException(node.position, "No such function: " + sig);
+            throw new ParserException(node.position, "No such function: " + sig.userReadable());
         }
 
         Function f = factory.newInstance(args);

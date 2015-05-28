@@ -58,6 +58,11 @@ public class JournalSource extends AbstractJournalSource implements JournalRecor
     }
 
     @Override
+    public SymFacade getSymFacade() {
+        return partitionCursor.getSymFacade();
+    }
+
+    @Override
     public boolean hasNext() {
         return (cursor != null && cursor.hasNext()) || nextSlice();
     }

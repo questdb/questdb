@@ -19,6 +19,7 @@ package com.nfsdb.collections;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordMetadata;
+import com.nfsdb.ql.SymFacade;
 import com.nfsdb.utils.Unsafe;
 
 import java.io.Closeable;
@@ -48,6 +49,11 @@ public class DirectRecordLinkedList extends AbstractImmutableIterator<Record> im
     @Override
     public void close() throws IOException {
         buffer.close();
+    }
+
+    @Override
+    public SymFacade getSymFacade() {
+        return null;
     }
 
     @Override

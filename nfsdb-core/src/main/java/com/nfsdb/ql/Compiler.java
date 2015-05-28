@@ -16,8 +16,19 @@
 
 package com.nfsdb.ql;
 
-import com.nfsdb.collections.ImmutableIterator;
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalReaderFactory;
+import com.nfsdb.ql.parser.Optimiser;
+import com.nfsdb.ql.parser.ParserException;
+import com.nfsdb.ql.parser.QueryParser;
 
-public interface RecordCursor<T extends Record> extends ImmutableIterator<T> {
-    SymFacade getSymFacade();
+public class Compiler {
+
+    private final QueryParser parser = new QueryParser();
+    private final Optimiser optimiser = new Optimiser();
+
+    public RecordSource<? extends Record> compile(CharSequence query, JournalReaderFactory factory) throws ParserException, JournalException {
+        parser.setContent(query);
+        return optimiser.compile(parser.parse().getQueryModel(), factory);
+    }
 }

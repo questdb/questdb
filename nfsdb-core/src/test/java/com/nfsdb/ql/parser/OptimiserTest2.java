@@ -23,6 +23,7 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Rnd;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class OptimiserTest2 extends AbstractOptimiserTest {
@@ -274,6 +275,18 @@ public class OptimiserTest2 extends AbstractOptimiserTest {
                 "BROMNXKUIZULIGY\t43.634443283081\t-23\t56.634443283081\n";
 
         assertThat(expected2, "select id, (z + 10) + x, z, x from tab where id ~ 'ULIGY'");
+    }
+
+    @Test
+    public void testDoubleEquals() throws Exception {
+        createTabWithNaNs2();
+        final String expected = "512.000000000000\t512.000000000000\n" +
+                "-512.000000000000\t-512.000000000000\n" +
+                "-512.000000000000\t-512.000000000000\n" +
+                "0.000000000000\t0.000000000000\n";
+
+        assertThat(expected, "select x,y from tab where x=y");
+
     }
 
     @Test
@@ -1184,6 +1197,18 @@ public class OptimiserTest2 extends AbstractOptimiserTest {
                 "FYXPVKNCBWLNLRH\t-308\t161.783554077148\t95\t469.783554077148\t403\n";
 
         assertThat(expected, "select id,w,x,z,x + -w, z+-w from tab where and id = 'FYXPVKNCBWLNLRH'");
+    }
+
+    @Test
+    public void testSigLookupError() throws Exception {
+        createTabWithNaNs2();
+        try {
+            compile("select x,y from tab where x~0");
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(26, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("No such function"));
+        }
     }
 
     @Test

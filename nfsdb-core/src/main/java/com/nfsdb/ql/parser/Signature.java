@@ -21,9 +21,10 @@ import com.nfsdb.collections.ObjList;
 import com.nfsdb.storage.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class Signature {
+public final class Signature {
     public final ObjList<ColumnType> paramTypes = new ObjList<>();
     public final IntList constParams = new IntList();
+    private final StringBuilder b = new StringBuilder();
     public CharSequence name;
     public int paramCount;
 
@@ -44,27 +45,6 @@ public class Signature {
         return paramCount == that.paramCount && name.equals(that.name) && typesEqual(that);
     }
 
-    @Override
-    public String toString() {
-        StringBuilder b = new StringBuilder();
-        b.append('\'');
-        b.append(name);
-        b.append('\'');
-        b.append('(');
-        for (int i = 0, n = paramCount; i < n; i++) {
-            if (i > 0) {
-                b.append(", ");
-            }
-            if (constParams.getQuick(i) == 1) {
-                b.append("const ");
-            }
-            b.append(paramTypes.getQuick(i));
-
-        }
-        b.append(')');
-        return b.toString();
-    }
-
     public Signature paramType(int pos, ColumnType type, boolean constant) {
         paramTypes.setQuick(pos, type);
         constParams.setQuick(pos, constant ? 1 : 0);
@@ -81,6 +61,26 @@ public class Signature {
         this.paramTypes.ensureCapacity(paramCount);
         this.constParams.ensureCapacity(paramCount);
         return this;
+    }
+
+    public CharSequence userReadable() {
+        b.setLength(0);
+        b.append('\'');
+        b.append(name);
+        b.append('\'');
+        b.append('(');
+        for (int i = 0, n = paramCount; i < n; i++) {
+            if (i > 0) {
+                b.append(", ");
+            }
+            if (constParams.getQuick(i) == 1) {
+                b.append("const ");
+            }
+            b.append(paramTypes.getQuick(i));
+
+        }
+        b.append(')');
+        return b;
     }
 
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
