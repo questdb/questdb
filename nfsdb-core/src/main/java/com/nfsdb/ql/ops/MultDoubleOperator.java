@@ -29,14 +29,4 @@ public class MultDoubleOperator extends AbstractBinaryOperator {
     public double getDouble(Record rec) {
         return lhs.getDouble(rec) * rhs.getDouble(rec);
     }
-
-    @Override
-    public float getFloat(Record rec) {
-        return (float) (lhs.getDouble(rec) * rhs.getDouble(rec));
-    }
-
-    @Override
-    public int getInt(Record rec) {
-        return (int) (lhs.getDouble(rec) * rhs.getDouble(rec));
-    }
 }

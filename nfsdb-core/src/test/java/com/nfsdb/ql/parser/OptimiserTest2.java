@@ -563,6 +563,136 @@ public class OptimiserTest2 extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testLongConstant() throws Exception {
+        createTabWithNaNs2();
+        final String expected = "YPHRIPZIMNZZRMF\t-99547.129409790032\t452.870590209961\n" +
+                "YPHRIPZIMNZZRMF\t-99208.047485351568\t791.952514648438\n" +
+                "YPHRIPZIMNZZRMF\t-99562.298080444336\t437.701919555664\n" +
+                "YPHRIPZIMNZZRMF\t-99115.172851562496\t884.827148437500\n" +
+                "YPHRIPZIMNZZRMF\t-99069.638671875008\t930.361328125000\n" +
+                "YPHRIPZIMNZZRMF\t-99116.000000000000\t884.000000000000\n" +
+                "YPHRIPZIMNZZRMF\t-99488.000000000000\t512.000000000000\n" +
+                "YPHRIPZIMNZZRMF\t-99575.083465576176\t424.916534423828\n" +
+                "YPHRIPZIMNZZRMF\t-99455.000000000000\t545.000000000000\n" +
+                "YPHRIPZIMNZZRMF\t-99385.928710937504\t614.071289062500\n" +
+                "YPHRIPZIMNZZRMF\t-99200.000000000000\t800.000000000000\n" +
+                "YPHRIPZIMNZZRMF\t-99463.482421875008\t536.517578125000\n" +
+                "YPHRIPZIMNZZRMF\t-99590.147300720208\t409.852699279785\n" +
+                "YPHRIPZIMNZZRMF\t-99592.000000000000\t408.000000000000\n" +
+                "YPHRIPZIMNZZRMF\t-99104.000000000000\t896.000000000000\n";
+
+        assertThat(expected, "select id, x - (100000000000/1000000),x from tab where x > 400 and id~'MNZ'");
+
+        final String expected2 = "YPHRIPZIMNZZRMF\tNaN\t0.000065929848\n" +
+                "YPHRIPZIMNZZRMF\tNaN\t0.000014064731\n" +
+                "YPHRIPZIMNZZRMF\tNaN\t0.826377153397\n" +
+                "YPHRIPZIMNZZRMF\tNaN\t0.000185413708\n" +
+                "YPHRIPZIMNZZRMF\tNaN\t884.827148437500\n" +
+                "YPHRIPZIMNZZRMF\tNaN\t930.361328125000\n" +
+                "YPHRIPZIMNZZRMF\tNaN\t884.000000000000\n" +
+                "YPHRIPZIMNZZRMF\tNaN\t0.205070361495\n" +
+                "YPHRIPZIMNZZRMF\tNaN\t0.003745394410\n" +
+                "YPHRIPZIMNZZRMF\tNaN\t0.000000001150\n" +
+                "YPHRIPZIMNZZRMF\tNaN\t614.071289062500\n" +
+                "YPHRIPZIMNZZRMF\tNaN\t-355.753906250000\n" +
+                "YPHRIPZIMNZZRMF\tNaN\t0.000002353352\n" +
+                "YPHRIPZIMNZZRMF\tNaN\t-290.875000000000\n" +
+                "YPHRIPZIMNZZRMF\tNaN\t256.000000000000\n";
+
+        assertThat(expected2, "select id, y - (100000000000/1000000),x from tab where y = NaN and id~'MNZ'");
+
+
+        final String expected3 = "YPHRIPZIMNZZRMF\t100000000307\t307\n" +
+                "YPHRIPZIMNZZRMF\tNaN\tNaN\n" +
+                "YPHRIPZIMNZZRMF\t100000000135\t135\n" +
+                "YPHRIPZIMNZZRMF\t100000000334\t334\n" +
+                "YPHRIPZIMNZZRMF\t99999999962\t-38\n" +
+                "YPHRIPZIMNZZRMF\t99999999636\t-364\n" +
+                "YPHRIPZIMNZZRMF\t100000000459\t459\n" +
+                "YPHRIPZIMNZZRMF\t99999999925\t-75\n" +
+                "YPHRIPZIMNZZRMF\t99999999780\t-220\n" +
+                "YPHRIPZIMNZZRMF\t100000000428\t428\n" +
+                "YPHRIPZIMNZZRMF\t99999999793\t-207\n" +
+                "YPHRIPZIMNZZRMF\t99999999640\t-360\n" +
+                "YPHRIPZIMNZZRMF\t99999999782\t-218\n" +
+                "YPHRIPZIMNZZRMF\t100000000358\t358\n" +
+                "YPHRIPZIMNZZRMF\t99999999878\t-122\n" +
+                "YPHRIPZIMNZZRMF\t99999999703\t-297\n" +
+                "YPHRIPZIMNZZRMF\t100000000418\t418\n" +
+                "YPHRIPZIMNZZRMF\t100000000099\t99\n" +
+                "YPHRIPZIMNZZRMF\t100000000246\t246\n" +
+                "YPHRIPZIMNZZRMF\t100000000453\t453\n" +
+                "YPHRIPZIMNZZRMF\t99999999769\t-231\n" +
+                "YPHRIPZIMNZZRMF\t99999999815\t-185\n" +
+                "YPHRIPZIMNZZRMF\t100000000180\t180\n" +
+                "YPHRIPZIMNZZRMF\t100000000427\t427\n" +
+                "YPHRIPZIMNZZRMF\t99999999905\t-95\n" +
+                "YPHRIPZIMNZZRMF\t100000000078\t78\n" +
+                "YPHRIPZIMNZZRMF\t99999999909\t-91\n" +
+                "YPHRIPZIMNZZRMF\t100000000379\t379\n" +
+                "YPHRIPZIMNZZRMF\t99999999975\t-25\n" +
+                "YPHRIPZIMNZZRMF\t99999999626\t-374\n" +
+                "YPHRIPZIMNZZRMF\t100000000117\t117\n" +
+                "YPHRIPZIMNZZRMF\t100000000447\t447\n" +
+                "YPHRIPZIMNZZRMF\tNaN\tNaN\n" +
+                "YPHRIPZIMNZZRMF\t100000000255\t255\n" +
+                "YPHRIPZIMNZZRMF\tNaN\tNaN\n" +
+                "YPHRIPZIMNZZRMF\t100000000022\t22\n" +
+                "YPHRIPZIMNZZRMF\t99999999640\t-360\n" +
+                "YPHRIPZIMNZZRMF\t100000000025\t25\n" +
+                "YPHRIPZIMNZZRMF\t100000000252\t252\n" +
+                "YPHRIPZIMNZZRMF\t100000000105\t105\n" +
+                "YPHRIPZIMNZZRMF\t100000000290\t290\n" +
+                "YPHRIPZIMNZZRMF\t100000000346\t346\n" +
+                "YPHRIPZIMNZZRMF\t100000000203\t203\n" +
+                "YPHRIPZIMNZZRMF\t100000000446\t446\n" +
+                "YPHRIPZIMNZZRMF\tNaN\tNaN\n" +
+                "YPHRIPZIMNZZRMF\t100000000236\t236\n" +
+                "YPHRIPZIMNZZRMF\t99999999805\t-195\n" +
+                "YPHRIPZIMNZZRMF\t99999999552\t-448\n" +
+                "YPHRIPZIMNZZRMF\t100000000397\t397\n" +
+                "YPHRIPZIMNZZRMF\t100000000399\t399\n" +
+                "YPHRIPZIMNZZRMF\t99999999566\t-434\n" +
+                "YPHRIPZIMNZZRMF\tNaN\tNaN\n" +
+                "YPHRIPZIMNZZRMF\t100000000270\t270\n" +
+                "YPHRIPZIMNZZRMF\t100000000137\t137\n" +
+                "YPHRIPZIMNZZRMF\t100000000119\t119\n" +
+                "YPHRIPZIMNZZRMF\tNaN\tNaN\n" +
+                "YPHRIPZIMNZZRMF\t100000000246\t246\n" +
+                "YPHRIPZIMNZZRMF\t99999999969\t-31\n" +
+                "YPHRIPZIMNZZRMF\t99999999966\t-34\n" +
+                "YPHRIPZIMNZZRMF\t99999999656\t-344\n" +
+                "YPHRIPZIMNZZRMF\t99999999654\t-346\n" +
+                "YPHRIPZIMNZZRMF\t100000000055\t55\n" +
+                "YPHRIPZIMNZZRMF\t100000000487\t487\n" +
+                "YPHRIPZIMNZZRMF\t100000000217\t217\n" +
+                "YPHRIPZIMNZZRMF\t100000000242\t242\n" +
+                "YPHRIPZIMNZZRMF\t100000000468\t468\n" +
+                "YPHRIPZIMNZZRMF\t99999999656\t-344\n" +
+                "YPHRIPZIMNZZRMF\t100000000242\t242\n" +
+                "YPHRIPZIMNZZRMF\t99999999829\t-171\n" +
+                "YPHRIPZIMNZZRMF\t100000000407\t407\n" +
+                "YPHRIPZIMNZZRMF\t100000000262\t262\n" +
+                "YPHRIPZIMNZZRMF\t99999999836\t-164\n" +
+                "YPHRIPZIMNZZRMF\t100000000179\t179\n" +
+                "YPHRIPZIMNZZRMF\t100000000306\t306\n" +
+                "YPHRIPZIMNZZRMF\t99999999831\t-169\n" +
+                "YPHRIPZIMNZZRMF\t99999999884\t-116\n" +
+                "YPHRIPZIMNZZRMF\t100000000379\t379\n" +
+                "YPHRIPZIMNZZRMF\t99999999613\t-387\n" +
+                "YPHRIPZIMNZZRMF\t99999999822\t-178\n" +
+                "YPHRIPZIMNZZRMF\t99999999928\t-72\n" +
+                "YPHRIPZIMNZZRMF\t100000000428\t428\n" +
+                "YPHRIPZIMNZZRMF\t99999999713\t-287\n" +
+                "YPHRIPZIMNZZRMF\t99999999725\t-275\n" +
+                "YPHRIPZIMNZZRMF\tNaN\tNaN\n" +
+                "YPHRIPZIMNZZRMF\t100000000161\t161\n" +
+                "YPHRIPZIMNZZRMF\t100000000233\t233\n";
+
+        assertThat(expected3, "select id, z + 100000000000, z from tab where id~'MNZ'");
+    }
+
+    @Test
     public void testLongEqualsInt() throws Exception {
         createTabWithNaNs();
         final String expected2 = "XWCKYLSUWDSWUGS\t-392\t-392\n" +
@@ -630,6 +760,114 @@ public class OptimiserTest2 extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testLongLessOrEqual() throws Exception {
+        createTabWithNaNs2();
+        final String expected = "FYXPVKNCBWLNLRH\ttrue\t-417\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-285\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t425\n" +
+                "FYXPVKNCBWLNLRH\tfalse\tNaN\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-130\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t36\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t242\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-201\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t58\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-181\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t282\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t180\n" +
+                "FYXPVKNCBWLNLRH\tfalse\tNaN\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t129\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-106\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t214\n" +
+                "FYXPVKNCBWLNLRH\tfalse\tNaN\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-432\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-82\n" +
+                "FYXPVKNCBWLNLRH\tfalse\tNaN\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t156\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t188\n" +
+                "FYXPVKNCBWLNLRH\tfalse\tNaN\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-297\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t152\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-408\n" +
+                "FYXPVKNCBWLNLRH\tfalse\tNaN\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-427\n" +
+                "FYXPVKNCBWLNLRH\tfalse\tNaN\n" +
+                "FYXPVKNCBWLNLRH\tfalse\tNaN\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-319\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-139\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-198\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t456\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-371\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-385\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t452\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t433\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t75\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-57\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-71\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-56\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t381\n" +
+                "FYXPVKNCBWLNLRH\tfalse\tNaN\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t270\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-143\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-78\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-352\n" +
+                "FYXPVKNCBWLNLRH\tfalse\tNaN\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-494\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t308\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-287\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t79\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-47\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t234\n" +
+                "FYXPVKNCBWLNLRH\tfalse\tNaN\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-207\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-431\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-415\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-279\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t129\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-470\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-36\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t113\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-351\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t258\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t250\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-457\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-332\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t278\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-32\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t328\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t173\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t266\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-419\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t79\n" +
+                "FYXPVKNCBWLNLRH\tfalse\tNaN\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-416\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t71\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t269\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t489\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t91\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-387\n" +
+                "FYXPVKNCBWLNLRH\tfalse\t249\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t1\n" +
+                "FYXPVKNCBWLNLRH\tfalse\tNaN\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t61\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-265\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t52\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-125\n" +
+                "FYXPVKNCBWLNLRH\tfalse\tNaN\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-29\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-178\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-349\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t74\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-319\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-166\n" +
+                "FYXPVKNCBWLNLRH\tfalse\tNaN\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-187\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t-163\n" +
+                "FYXPVKNCBWLNLRH\ttrue\t95\n";
+
+        assertThat(expected, "select id, z <= 100, z from tab where id = 'FYXPVKNCBWLNLRH'");
+    }
+
+    @Test
     public void testLongLessThanInt() throws Exception {
         createTabWithNaNs();
         final String expected3 = "OWBVDEGHLXGZMDJ\t391\t454\n" +
@@ -669,6 +907,174 @@ public class OptimiserTest2 extends AbstractOptimiserTest {
                 "OWBVDEGHLXGZMDJ\t-194\t386\n";
 
         assertThat(expected3, "select id, z, w from tab where z < w and id = 'OWBVDEGHLXGZMDJ'");
+    }
+
+    @Test
+    public void testLongNegative() throws Exception {
+        createTabWithNaNs2();
+
+        final String expected = "KKUSIMYDXUUSKCX\tNaN\tNaN\t-338.665039062500\tNaN\n" +
+                "KKUSIMYDXUUSKCX\t-11\t11\t-481.765014648438\t-470.765014648438\n" +
+                "KKUSIMYDXUUSKCX\tNaN\tNaN\t0.000183005621\tNaN\n" +
+                "KKUSIMYDXUUSKCX\t-79\t79\t5.404115438461\t84.404115438461\n" +
+                "KKUSIMYDXUUSKCX\t-27\t27\t-436.000000000000\t-409.000000000000\n" +
+                "KKUSIMYDXUUSKCX\tNaN\tNaN\t-807.692016601563\tNaN\n" +
+                "KKUSIMYDXUUSKCX\t-57\t57\t0.000013659448\t57.000013659448\n" +
+                "KKUSIMYDXUUSKCX\tNaN\tNaN\t384.000000000000\tNaN\n" +
+                "KKUSIMYDXUUSKCX\t2\t-2\t0.003575030481\t-1.996424969519\n" +
+                "KKUSIMYDXUUSKCX\t39\t-39\t35.019264221191\t-3.980735778809\n" +
+                "KKUSIMYDXUUSKCX\t-51\t51\t-512.000000000000\t-461.000000000000\n" +
+                "KKUSIMYDXUUSKCX\t57\t-57\t-256.000000000000\t-313.000000000000\n" +
+                "KKUSIMYDXUUSKCX\tNaN\tNaN\t240.000000000000\tNaN\n" +
+                "KKUSIMYDXUUSKCX\t72\t-72\t-612.000000000000\t-684.000000000000\n" +
+                "KKUSIMYDXUUSKCX\t12\t-12\t0.000000343896\t-11.999999656104\n" +
+                "KKUSIMYDXUUSKCX\tNaN\tNaN\t0.059096898884\tNaN\n" +
+                "KKUSIMYDXUUSKCX\tNaN\tNaN\t0.036795516498\tNaN\n" +
+                "KKUSIMYDXUUSKCX\t-73\t73\t0.000000136839\t73.000000136839\n" +
+                "KKUSIMYDXUUSKCX\t53\t-53\t0.000001200607\t-52.999998799393\n" +
+                "KKUSIMYDXUUSKCX\t-14\t14\t5.540870904922\t19.540870904922\n";
+
+        assertThat(expected, "select id, z, -z, x, x+-z from tab where id~'KKUSI' and ((z > -100 and z < 100) or z = NaN)");
+    }
+
+    @Test
+    public void testMinusInt() throws Exception {
+        createTabWithNaNs2();
+
+        final String expected = "KKUSIMYDXUUSKCX\t2\t-338.665039062500\tNaN\t-320.665039062500\tNaN\n" +
+                "KKUSIMYDXUUSKCX\t-485\t-481.765014648438\t-11\t23.234985351563\t-526\n" +
+                "KKUSIMYDXUUSKCX\t17\t0.000183005621\tNaN\t3.000183005621\tNaN\n" +
+                "KKUSIMYDXUUSKCX\t-229\t5.404115438461\t-79\t254.404115438461\t-338\n" +
+                "KKUSIMYDXUUSKCX\t237\t-436.000000000000\t-27\t-653.000000000000\t180\n" +
+                "KKUSIMYDXUUSKCX\t-71\t-807.692016601563\tNaN\t-716.692016601563\tNaN\n" +
+                "KKUSIMYDXUUSKCX\t-189\t0.000013659448\t-57\t209.000013659448\t-276\n" +
+                "KKUSIMYDXUUSKCX\t-397\t384.000000000000\tNaN\t801.000000000000\tNaN\n" +
+                "KKUSIMYDXUUSKCX\tNaN\t0.003575030481\t2\tNaN\tNaN\n" +
+                "KKUSIMYDXUUSKCX\t-276\t35.019264221191\t39\t331.019264221191\t-267\n" +
+                "KKUSIMYDXUUSKCX\t262\t-512.000000000000\t-51\t-754.000000000000\t181\n" +
+                "KKUSIMYDXUUSKCX\t258\t-256.000000000000\t57\t-494.000000000000\t285\n" +
+                "KKUSIMYDXUUSKCX\t-379\t240.000000000000\tNaN\t639.000000000000\tNaN\n" +
+                "KKUSIMYDXUUSKCX\tNaN\t-612.000000000000\t72\tNaN\tNaN\n" +
+                "KKUSIMYDXUUSKCX\t-111\t0.000000343896\t12\t131.000000343896\t-129\n" +
+                "KKUSIMYDXUUSKCX\t-16\t0.059096898884\tNaN\t36.059096898884\tNaN\n" +
+                "KKUSIMYDXUUSKCX\t-313\t0.036795516498\tNaN\t333.036795516498\tNaN\n" +
+                "KKUSIMYDXUUSKCX\t141\t0.000000136839\t-73\t-120.999999863161\t38\n" +
+                "KKUSIMYDXUUSKCX\t149\t0.000001200607\t53\t-128.999998799393\t172\n" +
+                "KKUSIMYDXUUSKCX\t-126\t5.540870904922\t-14\t151.540870904923\t-170\n";
+
+        assertThat(expected, "select id, w, x, z, x - (w-20), z + (w-30) from tab where id~'KKUSI' and ((z > -100 and z < 100) or z = NaN)");
+    }
+
+    @Test
+    public void testMinusLong() throws Exception {
+        createTabWithNaNs2();
+        final String expected = "KKUSIMYDXUUSKCX\t-338.665039062500\tNaN\tNaN\tNaN\n" +
+                "KKUSIMYDXUUSKCX\t-481.765014648438\t-11\t-111\t-512.765014648438\n" +
+                "KKUSIMYDXUUSKCX\t0.000183005621\tNaN\tNaN\tNaN\n" +
+                "KKUSIMYDXUUSKCX\t5.404115438461\t-79\t-179\t-93.595884561539\n" +
+                "KKUSIMYDXUUSKCX\t-436.000000000000\t-27\t-127\t-483.000000000000\n" +
+                "KKUSIMYDXUUSKCX\t-807.692016601563\tNaN\tNaN\tNaN\n" +
+                "KKUSIMYDXUUSKCX\t0.000013659448\t-57\t-157\t-76.999986340552\n" +
+                "KKUSIMYDXUUSKCX\t384.000000000000\tNaN\tNaN\tNaN\n" +
+                "KKUSIMYDXUUSKCX\t0.003575030481\t2\t-98\t-17.996424969519\n" +
+                "KKUSIMYDXUUSKCX\t35.019264221191\t39\t-61\t54.019264221191\n" +
+                "KKUSIMYDXUUSKCX\t-512.000000000000\t-51\t-151\t-583.000000000000\n" +
+                "KKUSIMYDXUUSKCX\t-256.000000000000\t57\t-43\t-219.000000000000\n" +
+                "KKUSIMYDXUUSKCX\t240.000000000000\tNaN\tNaN\tNaN\n" +
+                "KKUSIMYDXUUSKCX\t-612.000000000000\t72\t-28\t-560.000000000000\n" +
+                "KKUSIMYDXUUSKCX\t0.000000343896\t12\t-88\t-7.999999656104\n" +
+                "KKUSIMYDXUUSKCX\t0.059096898884\tNaN\tNaN\tNaN\n" +
+                "KKUSIMYDXUUSKCX\t0.036795516498\tNaN\tNaN\tNaN\n" +
+                "KKUSIMYDXUUSKCX\t0.000000136839\t-73\t-173\t-92.999999863161\n" +
+                "KKUSIMYDXUUSKCX\t0.000001200607\t53\t-47\t33.000001200607\n" +
+                "KKUSIMYDXUUSKCX\t5.540870904922\t-14\t-114\t-28.459129095078\n";
+
+        assertThat(expected, "select id, x, z, z-100, x + (z-20) from tab where id~'KKUSI' and ((z > -100 and z < 100) or z = NaN)");
+    }
+
+    @Test
+    public void testMultDouble() throws Exception {
+        createTabWithNaNs2();
+
+        final String expected = "-338.665039062500\t9.986581325531\t-3382.105954711791\n" +
+                "-481.765014648438\t0.000194547960\t-0.093726400720\n" +
+                "0.000183005621\t0.216939434409\t0.000039701136\n" +
+                "5.404115438461\t8.854092121124\t47.848535925326\n" +
+                "-436.000000000000\t-811.000000000000\t353596.000000000000\n" +
+                "-807.692016601563\t1.505146384239\t-1215.694718366707\n" +
+                "0.000013659448\t0.000006695827\t0.000000000091\n" +
+                "384.000000000000\t638.000000000000\t244992.000000000000\n" +
+                "0.003575030481\t0.000002332791\t0.000000008340\n" +
+                "35.019264221191\t89.257812500000\t3125.742919743061\n" +
+                "-512.000000000000\t-278.166625976563\t142421.312500000000\n" +
+                "-256.000000000000\t0.000000168164\t-0.000043050055\n" +
+                "240.000000000000\t0.000415830291\t0.099799269810\n" +
+                "-612.000000000000\t0.000000004888\t-0.000002991690\n" +
+                "0.000000343896\tNaN\tNaN\n" +
+                "0.059096898884\t0.000015207836\t0.000000898736\n" +
+                "0.036795516498\tNaN\tNaN\n" +
+                "0.000000136839\t-560.000000000000\t-0.000076629905\n" +
+                "0.000001200607\tNaN\tNaN\n" +
+                "5.540870904922\t0.000076783974\t0.000425450086\n";
+
+        assertThat(expected, "select x, y, x*y from tab where id~'KKUSI' and ((z > -100 and z < 100) or z = NaN)");
+    }
+
+    @Test
+    public void testMultInt() throws Exception {
+        createTabWithNaNs2();
+
+        final String expected = "-338.665039062500\t2\tNaN\t-330.665039062500\tNaN\n" +
+                "-481.765014648438\t-485\t-11\t-2421.765014648438\t959\n" +
+                "0.000183005621\t17\tNaN\t68.000183005621\tNaN\n" +
+                "5.404115438461\t-229\t-79\t-910.595884561539\t379\n" +
+                "-436.000000000000\t237\t-27\t512.000000000000\t-501\n" +
+                "-807.692016601563\t-71\tNaN\t-1091.692016601563\tNaN\n" +
+                "0.000013659448\t-189\t-57\t-755.999986340552\t321\n" +
+                "384.000000000000\t-397\tNaN\t-1204.000000000000\tNaN\n" +
+                "0.003575030481\tNaN\t2\tNaN\tNaN\n" +
+                "35.019264221191\t-276\t39\t-1068.980735778809\t591\n" +
+                "-512.000000000000\t262\t-51\t536.000000000000\t-575\n" +
+                "-256.000000000000\t258\t57\t776.000000000000\t-459\n" +
+                "240.000000000000\t-379\tNaN\t-1276.000000000000\tNaN\n" +
+                "-612.000000000000\tNaN\t72\tNaN\tNaN\n" +
+                "0.000000343896\t-111\t12\t-443.999999656104\t234\n" +
+                "0.059096898884\t-16\tNaN\t-63.940903101116\tNaN\n" +
+                "0.036795516498\t-313\tNaN\t-1251.963204483502\tNaN\n" +
+                "0.000000136839\t141\t-73\t564.000000136839\t-355\n" +
+                "0.000001200607\t149\t53\t596.000001200607\t-245\n" +
+                "5.540870904922\t-126\t-14\t-498.459129095078\t238\n";
+
+        assertThat(expected, "select x,w,z, x + (w * 4), z - (w*2) from tab where id~'KKUSI' and ((z > -100 and z < 100) or z = NaN)");
+
+    }
+
+    @Test
+    public void testMultLong() throws Exception {
+        createTabWithNaNs2();
+
+        final String expected = "-338.665039062500\tNaN\tNaN\tNaN\n" +
+                "-481.765014648438\t-11\t-591.765014648438\t-55\n" +
+                "0.000183005621\tNaN\tNaN\tNaN\n" +
+                "5.404115438461\t-79\t-784.595884561539\t-395\n" +
+                "-436.000000000000\t-27\t-706.000000000000\t-135\n" +
+                "-807.692016601563\tNaN\tNaN\tNaN\n" +
+                "0.000013659448\t-57\t-569.999986340552\t-285\n" +
+                "384.000000000000\tNaN\tNaN\tNaN\n" +
+                "0.003575030481\t2\t20.003575030481\t10\n" +
+                "35.019264221191\t39\t425.019264221191\t195\n" +
+                "-512.000000000000\t-51\t-1022.000000000000\t-255\n" +
+                "-256.000000000000\t57\t314.000000000000\t285\n" +
+                "240.000000000000\tNaN\tNaN\tNaN\n" +
+                "-612.000000000000\t72\t108.000000000000\t360\n" +
+                "0.000000343896\t12\t120.000000343896\t60\n" +
+                "0.059096898884\tNaN\tNaN\tNaN\n" +
+                "0.036795516498\tNaN\tNaN\tNaN\n" +
+                "0.000000136839\t-73\t-729.999999863161\t-365\n" +
+                "0.000001200607\t53\t530.000001200607\t265\n" +
+                "5.540870904922\t-14\t-134.459129095078\t-70\n";
+
+        assertThat(expected, "select x,z,x+(z*10),z*5 from tab where id~'KKUSI' and ((z > -100 and z < 100) or z = NaN)");
     }
 
     @Test
@@ -778,6 +1184,34 @@ public class OptimiserTest2 extends AbstractOptimiserTest {
                 "FYXPVKNCBWLNLRH\t-308\t161.783554077148\t95\t469.783554077148\t403\n";
 
         assertThat(expected, "select id,w,x,z,x + -w, z+-w from tab where and id = 'FYXPVKNCBWLNLRH'");
+    }
+
+    @Test
+    public void testStrConcat2() throws Exception {
+        createTabWithNaNs2();
+
+        final String expected = "KKUSIMYDXUUSKCX\t-338.665039062500\n" +
+                "KKUSIMYDXUUSKCX\t-481.765014648438\n" +
+                "KKUSIMYDXUUSKCX\t0.000183005621\n" +
+                "KKUSIMYDXUUSKCX\t5.404115438461\n" +
+                "KKUSIMYDXUUSKCX\t-436.000000000000\n" +
+                "KKUSIMYDXUUSKCX\t-807.692016601563\n" +
+                "KKUSIMYDXUUSKCX\t0.000013659448\n" +
+                "KKUSIMYDXUUSKCX\t384.000000000000\n" +
+                "KKUSIMYDXUUSKCX\t0.003575030481\n" +
+                "KKUSIMYDXUUSKCX\t35.019264221191\n" +
+                "KKUSIMYDXUUSKCX\t-512.000000000000\n" +
+                "KKUSIMYDXUUSKCX\t-256.000000000000\n" +
+                "KKUSIMYDXUUSKCX\t240.000000000000\n" +
+                "KKUSIMYDXUUSKCX\t-612.000000000000\n" +
+                "KKUSIMYDXUUSKCX\t0.000000343896\n" +
+                "KKUSIMYDXUUSKCX\t0.059096898884\n" +
+                "KKUSIMYDXUUSKCX\t0.036795516498\n" +
+                "KKUSIMYDXUUSKCX\t0.000000136839\n" +
+                "KKUSIMYDXUUSKCX\t0.000001200607\n" +
+                "KKUSIMYDXUUSKCX\t5.540870904922\n";
+
+        assertThat(expected, "select id, x from tab where id+'-BLAH'='KKUSIMYDXUUSKCX-BLAH' and ((z > -100 and z < 100) or z = NaN)");
     }
 
     private void createTabNoNaNs() throws JournalException {

@@ -37,7 +37,7 @@ public class SplitCharSequence implements CharSequence {
         if (index < split) {
             return lhs.charAt(index);
         } else {
-            return rhs.charAt(index + split);
+            return rhs.charAt(index - split);
         }
     }
 
