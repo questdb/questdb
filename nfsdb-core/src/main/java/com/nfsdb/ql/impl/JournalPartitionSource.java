@@ -62,7 +62,7 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
     @Override
     public PartitionCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
         if (dynamicJournal) {
-            this.journal = factory.reader(metadata);
+            this.journal = factory.reader(metadata).select();
             symFacade.setJournal(journal);
         }
         partitionCount = journal.getPartitionCount();

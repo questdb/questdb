@@ -21,7 +21,7 @@ import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.ql.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class JournalSource extends AbstractJournalSource implements JournalRecordSource, RandomAccessRecordCursor<JournalRecord> {
+public class JournalSource extends AbstractJournalSource<JournalRecord> implements JournalRecordSource<JournalRecord>, RandomAccessRecordCursor<JournalRecord> {
     private final PartitionSource partitionSource;
     private final RowSource rowSource;
     private final JournalRecord rec = new JournalRecord(this);
@@ -72,6 +72,7 @@ public class JournalSource extends AbstractJournalSource implements JournalRecor
         rec.rowid = cursor.next();
         return rec;
     }
+
 
     @Override
     public RandomAccessRecordCursor<JournalRecord> prepareCursor(JournalReaderFactory factory) throws JournalException {

@@ -254,7 +254,7 @@ public class CstTest {
                     .build();
 
             long prev = -1;
-            for (JournalRecord e : w.rows().prepareCursor(factory)) {
+            for (Record e : w.rows().prepareCursor(factory)) {
                 long ts = Dates.floorMI(e.getLong(tsIndex));
 
                 if (ts != prev) {

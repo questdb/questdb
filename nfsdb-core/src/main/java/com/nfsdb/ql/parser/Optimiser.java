@@ -46,8 +46,8 @@ public class Optimiser {
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
     private final Signature mutableSig = new Signature();
 
-    public RecordSource<? extends Record> compile(QueryModel model, JournalReaderFactory factory) throws ParserException, JournalException {
-        RecordSource<? extends Record> rs = createRecordSource(model, factory);
+    public JournalRecordSource<? extends Record> compile(QueryModel model, JournalReaderFactory factory) throws ParserException, JournalException {
+        JournalRecordSource<? extends Record> rs = createRecordSource(model, factory);
         RecordMetadata meta = rs.getMetadata();
         ObjList<QueryColumn> columns = model.getColumns();
         ObjList<VirtualColumn> virtualColumns = new ObjList<>();
@@ -77,9 +77,9 @@ public class Optimiser {
 
 
         if (virtualColumns.size() > 0) {
-            rs = new VirtualColumnRecordSource(rs, virtualColumns);
+            rs = new VirtualColumnJournalRecordSource(rs, virtualColumns);
         }
-        return new SelectedColumnsRecordSource(rs, selectedColumns);
+        return new SelectedColumnsJournalRecordSource(rs, selectedColumns);
     }
 
     private void createColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
@@ -119,7 +119,7 @@ public class Optimiser {
     }
 
     @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT", "CC_CYCLOMATIC_COMPLEXITY"})
-    private RecordSource<? extends Record> createRecordSource(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private JournalRecordSource<? extends Record> createRecordSource(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
 
         ExprNode readerNode = model.getJournalName();
         if (readerNode.type != ExprNode.NodeType.LITERAL && readerNode.type != ExprNode.NodeType.CONSTANT) {

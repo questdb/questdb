@@ -24,5 +24,4 @@ public interface PartitionSource {
     JournalMetadata getMetadata();
 
     PartitionCursor prepareCursor(JournalReaderFactory readerFactory) throws JournalException;
-
 }

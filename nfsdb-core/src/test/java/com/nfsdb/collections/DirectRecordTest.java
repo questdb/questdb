@@ -21,8 +21,9 @@ import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.ql.JournalRecordSource;
 import com.nfsdb.ql.Record;
+import com.nfsdb.ql.impl.JournalRecord;
+import com.nfsdb.ql.impl.JournalSource;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.utils.Files;
 import org.junit.Rule;
@@ -190,11 +191,11 @@ public class DirectRecordTest {
             longJournal.append(generator.generate(i));
         }
 
-        JournalRecordSource rows = longJournal.rows();
+        JournalSource rows = longJournal.rows();
         try (DirectPagedBuffer buffer = new DirectPagedBuffer(pageSize)) {
             DirectRecord dr = new DirectRecord(longJournal.rows().getMetadata(), buffer);
             List<Long> offsets = new ArrayList<>();
-            for (Record rec : rows.prepareCursor(factory)) {
+            for (JournalRecord rec : rows.prepareCursor(factory)) {
                 offsets.add(dr.write(rec));
             }
 

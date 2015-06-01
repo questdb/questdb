@@ -25,7 +25,6 @@ import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.model.Quote;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
-import com.nfsdb.ql.impl.JournalRecord;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
@@ -121,7 +120,7 @@ public class MultiMapTest extends AbstractTest {
                 .setLoadFactor(0.5f)
                 .build();
 
-        for (JournalRecord e : w.rows().prepareCursor(factory)) {
+        for (Record e : w.rows().prepareCursor(factory)) {
             long ts = e.getLong(tsIndex);
 
             MapValues val = map.getOrCreateValues(
