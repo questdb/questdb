@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -127,13 +127,8 @@ public class ExprParserTest {
     }
 
     @Test
-    public void testUnbalancedRightBrace() throws Exception {
-        try {
-            x("", "a+b(5,c(x,y)))");
-            Assert.fail("Expected exception");
-        } catch (ParserException e) {
-            Assert.assertEquals(e.getPosition(), 13);
-        }
+    public void testUnbalancedRightBraceExit() throws Exception {
+        x("a5xycb+", "a+b(5,c(x,y)))");
     }
 
     private void x(CharSequence expectedRpn, String content) throws ParserException {

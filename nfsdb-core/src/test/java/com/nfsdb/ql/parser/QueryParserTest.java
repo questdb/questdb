@@ -28,6 +28,16 @@ public class QueryParserTest extends AbstractTest {
     private final QueryParser parser = new QueryParser();
 
     @Test
+    public void testJoin1() throws Exception {
+        Statement statement = parse("select x, y from (select x from tab t2 latest by x where x > 100) t1 " +
+                "join tab2 xx2 on tab2.x = t1.x " +
+                "join tab3 on xx2.x > tab3.b " +
+                "join (select x,y from tab4 latest by z where a > b) x4 on x4.x = t1.y " +
+                "where y > 0");
+        System.out.println(statement);
+    }
+
+    @Test
     public void testMostRecentWhereClause() throws Exception {
         QueryParser parser = new QueryParser();
         parser.setContent("select a+b*c x, sum(z)+25 ohoh from zyzy latest by x where a in (x,y) and b = 10");
@@ -80,6 +90,13 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getName());
         Assert.assertEquals("+", statement.getQueryModel().getColumns().get(0).getAst().token);
         Assert.assertEquals("t", statement.getQueryModel().getJournalName().token);
+    }
+
+    @Test
+    public void testSubQuery() throws Exception {
+        Statement statement = parse("select x, y from (select x from tab t2 latest by x where x > 100) t1 " +
+                "where y > 0");
+        System.out.println(statement);
     }
 
     @Test

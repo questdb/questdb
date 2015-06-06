@@ -16,24 +16,11 @@
 
 package com.nfsdb.ql.model;
 
-import com.nfsdb.collections.ObjList;
-
-public class QueryModel {
-    private final ObjList<QueryColumn> columns = new ObjList<>();
-    private ExprNode whereClause;
+public class JoinModel {
     private QueryModel nestedQuery;
     private ExprNode journalName;
     private String alias;
-    private ExprNode latestBy;
-    private ObjList<JoinModel> joinModels = new ObjList<>();
-
-    public void addColumn(QueryColumn column) {
-        columns.add(column);
-    }
-
-    public void addJoinModel(JoinModel model) {
-        joinModels.add(model);
-    }
+    private ExprNode joinCriteria;
 
     public String getAlias() {
         return alias;
@@ -43,8 +30,12 @@ public class QueryModel {
         this.alias = alias;
     }
 
-    public ObjList<QueryColumn> getColumns() {
-        return columns;
+    public ExprNode getJoinCriteria() {
+        return joinCriteria;
+    }
+
+    public void setJoinCriteria(ExprNode joinCriteria) {
+        this.joinCriteria = joinCriteria;
     }
 
     public ExprNode getJournalName() {
@@ -55,27 +46,11 @@ public class QueryModel {
         this.journalName = journalName;
     }
 
-    public ExprNode getLatestBy() {
-        return latestBy;
-    }
-
-    public void setLatestBy(ExprNode latestBy) {
-        this.latestBy = latestBy;
-    }
-
     public QueryModel getNestedQuery() {
         return nestedQuery;
     }
 
     public void setNestedQuery(QueryModel nestedQuery) {
         this.nestedQuery = nestedQuery;
-    }
-
-    public ExprNode getWhereClause() {
-        return whereClause;
-    }
-
-    public void setWhereClause(ExprNode whereClause) {
-        this.whereClause = whereClause;
     }
 }

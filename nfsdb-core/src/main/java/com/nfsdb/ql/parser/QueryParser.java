@@ -17,6 +17,7 @@
 package com.nfsdb.ql.parser;
 
 import com.nfsdb.PartitionType;
+import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.factory.configuration.GenericIntBuilder;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.ql.model.*;
@@ -27,15 +28,15 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class QueryParser {
 
-    private final TokenStream tokenStream = new TokenStream() {{
+    private static final ObjHashSet<CharSequence> stopSet = new ObjHashSet<>();
+    private final TokenStream toks = new TokenStream() {{
         defineSymbol(" ");
         defineSymbol("(");
         defineSymbol(")");
         defineSymbol(",");
         defineSymbol("+");
     }};
-
-    private final ExprParser exprParser = new ExprParser(tokenStream);
+    private final ExprParser exprParser = new ExprParser(toks);
     private final AstBuilder astBuilder = new AstBuilder();
 
     public Statement parse() throws ParserException {
@@ -45,18 +46,19 @@ public class QueryParser {
         }
 
         if (Chars.equals(tok, "select")) {
-            return parseQuery();
+            toks.unparse();
+            return new Statement(StatementType.QUERY_JOURNAL, parseQuery(false));
         }
 
         throw err("create | select expected");
     }
 
     public void setContent(CharSequence cs) {
-        tokenStream.setContent(cs);
+        toks.setContent(cs);
     }
 
     private ParserException err(String msg) {
-        return new ParserException(tokenStream.position(), msg);
+        return new ParserException(toks.position(), msg);
     }
 
     private void expectTok(CharSequence tok, CharSequence expected) throws ParserException {
@@ -85,8 +87,8 @@ public class QueryParser {
     }
 
     private CharSequence optionTok() {
-        while (tokenStream.hasNext()) {
-            CharSequence cs = tokenStream.next();
+        while (toks.hasNext()) {
+            CharSequence cs = toks.next();
             if (!Chars.equals(cs, ' ')) {
                 return cs;
             }
@@ -141,6 +143,32 @@ public class QueryParser {
         return null;
     }
 
+    private JoinModel parseJoin() throws ParserException {
+        JoinModel joinModel = new JoinModel();
+
+        CharSequence tok = tok();
+        if (Chars.equals(tok, "(")) {
+            joinModel.setNestedQuery(parseQuery(true));
+            expectTok(tok(), ")");
+        } else {
+            toks.unparse();
+            joinModel.setJournalName(expr());
+        }
+
+        tok = tok();
+
+        if (!Chars.equals(tok, "on")) {
+            joinModel.setAlias(tok.toString());
+            tok = tok();
+        }
+
+        expectTok(tok, "on");
+
+        joinModel.setJoinCriteria(expr());
+
+        return joinModel;
+    }
+
     private void parseJournalFields(JournalStructure struct) throws ParserException {
         if (!Chars.equals(tok(), '(')) {
             throw err("( expected");
@@ -181,7 +209,7 @@ public class QueryParser {
                     struct.$date(name);
                     break;
                 default:
-                    throw new ParserException(tokenStream.position(), "Unsupported type");
+                    throw new ParserException(toks.position(), "Unsupported type");
             }
 
             if (tok == null) {
@@ -203,22 +231,62 @@ public class QueryParser {
         model.setLatestBy(expr());
     }
 
-    private Statement parseQuery() throws ParserException {
+    private QueryModel parseQuery(boolean subQuery) throws ParserException {
 
+        CharSequence tok;
         QueryModel model = new QueryModel();
+
+        // expect "select"
+        expectTok(tok(), "select");
 
         parseSelectColumns(model);
 
-        // expect (journal name)
+        tok = tok();
 
-        model.setJournalName(expr());
+        // expect "(" in case of sub-query
 
-        // expect [latest by]
+        if (Chars.equals(tok, "(")) {
+            model.setNestedQuery(parseQuery(true));
 
-        CharSequence tok = optionTok();
+            // expect closing bracket
+            expectTok(tok(), ")");
 
-        if (tok != null && Chars.equals(tok, "latest")) {
-            parseLatestBy(model);
+            tok = optionTok();
+
+            // check if tok is not "where" - should be alias
+
+            if (tok != null && !stopSet.contains(tok)) {
+                model.setAlias(tok.toString());
+                tok = optionTok();
+            }
+
+        } else {
+
+            toks.unparse();
+
+            // expect (journal name)
+
+            model.setJournalName(expr());
+
+            // expect [latest by]
+
+            tok = optionTok();
+
+            if (tok != null && !stopSet.contains(tok)) {
+                model.setAlias(tok.toString());
+                tok = optionTok();
+            }
+
+            if (tok != null && Chars.equals(tok, "latest")) {
+                parseLatestBy(model);
+                tok = optionTok();
+            }
+        }
+
+        // expect [join]
+
+        while (tok != null && Chars.equals(tok, "join")) {
+            model.addJoinModel(parseJoin());
             tok = optionTok();
         }
 
@@ -229,11 +297,12 @@ public class QueryParser {
             tok = optionTok();
         }
 
-        if (tok != null) {
-            throw new ParserException(tokenStream.position(), "Unexpected token: " + tok);
+        if (subQuery) {
+            toks.unparse();
+        } else if (tok != null) {
+            throw new ParserException(toks.position(), "Unexpected token: " + tok);
         }
-        return new Statement(StatementType.QUERY_JOURNAL, model);
-
+        return model;
     }
 
     private void parseSelectColumns(QueryModel model) throws ParserException {
@@ -271,10 +340,16 @@ public class QueryParser {
     }
 
     private CharSequence tok() throws ParserException {
-        CharSequence tok = tokenStream.optionTok();
+        CharSequence tok = toks.optionTok();
         if (tok == null) {
             throw err("Unexpected end of input");
         }
         return tok;
+    }
+
+    static {
+        stopSet.add("where");
+        stopSet.add("latest");
+        stopSet.add("join");
     }
 }

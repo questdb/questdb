@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -85,7 +85,7 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
 
     @Override
     public boolean hasNext() {
-        return next != null || (content != null && _pos < _len);
+        return next != null || unparsed != null || (content != null && _pos < _len);
     }
 
     @Override
@@ -199,16 +199,6 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
 
     public class FloatingSequence implements CharSequence {
         @Override
-        public char charAt(int index) {
-            return content.charAt(_lo + index);
-        }
-
-        @Override
-        public boolean equals(Object that) {
-            return that instanceof CharSequence && Chars.equals(this, (CharSequence) that);
-        }
-
-        @Override
         public int hashCode() {
             if (_lo == _hi) {
                 return 0;
@@ -222,13 +212,8 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
         }
 
         @Override
-        public int length() {
-            return _hi - _lo;
-        }
-
-        @Override
-        public CharSequence subSequence(int start, int end) {
-            throw new NotImplementedException();
+        public boolean equals(Object that) {
+            return that instanceof CharSequence && Chars.equals(this, (CharSequence) that);
         }
 
         @SuppressFBWarnings({"RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE"})
@@ -241,6 +226,21 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
                 data[i] = this.charAt(i);
             }
             return new String(data);
+        }
+
+        @Override
+        public int length() {
+            return _hi - _lo;
+        }
+
+        @Override
+        public char charAt(int index) {
+            return content.charAt(_lo + index);
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            throw new NotImplementedException();
         }
     }
 }

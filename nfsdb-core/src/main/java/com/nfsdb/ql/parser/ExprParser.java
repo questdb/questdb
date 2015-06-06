@@ -116,7 +116,9 @@ public class ExprParser {
                         throw new ParserException(toks.position(), "Missing argument");
                     }
                     if (braceCount == 0) {
-                        throw new ParserException(toks.position(), "Unbalanced )");
+                        toks.unparse();
+                        break OUT;
+//                        throw new ParserException(toks.position(), "Unbalanced )");
                     }
 
                     thisBranch = Branch.RIGHT_BRACE;

@@ -34,7 +34,7 @@ import static com.nfsdb.ql.impl.KeyWriterHelper.setKey;
 
 public class HashJoinJournalRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, Closeable, RecordCursor<Record> {
     private final RecordSource<? extends Record> masterSource;
-    private final JournalRecordSource slaveSource;
+    private final JournalRecordSource<? extends Record> slaveSource;
     private final SplitRecordMetadata metadata;
     private final SplitRecord currentRecord;
     private final ObjList<RecordColumnMetadata> masterColumns = new ObjList<>();
@@ -51,7 +51,7 @@ public class HashJoinJournalRecordSource extends AbstractImmutableIterator<Recor
     public HashJoinJournalRecordSource(
             RecordSource<? extends Record> masterSource,
             ObjList<String> masterColumns,
-            JournalRecordSource slaveSource,
+            JournalRecordSource<? extends Record> slaveSource,
             ObjList<String> slaveColumns) {
         this.masterSource = masterSource;
         this.slaveSource = slaveSource;
