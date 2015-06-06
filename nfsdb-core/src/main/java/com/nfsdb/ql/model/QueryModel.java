@@ -26,13 +26,23 @@ public class QueryModel {
     private String alias;
     private ExprNode latestBy;
     private ObjList<JoinModel> joinModels = new ObjList<>();
+    private ObjList<String> groupBy = new ObjList<>();
+    private ObjList<ExprNode> orderBy = new ObjList<>();
 
     public void addColumn(QueryColumn column) {
         columns.add(column);
     }
 
+    public void addGroupBy(String name) {
+        groupBy.add(name);
+    }
+
     public void addJoinModel(JoinModel model) {
         joinModels.add(model);
+    }
+
+    public void addOrderBy(ExprNode node) {
+        orderBy.add(node);
     }
 
     public String getAlias() {
@@ -45,6 +55,14 @@ public class QueryModel {
 
     public ObjList<QueryColumn> getColumns() {
         return columns;
+    }
+
+    public ObjList<String> getGroupBy() {
+        return groupBy;
+    }
+
+    public ObjList<JoinModel> getJoinModels() {
+        return joinModels;
     }
 
     public ExprNode getJournalName() {
@@ -69,6 +87,10 @@ public class QueryModel {
 
     public void setNestedQuery(QueryModel nestedQuery) {
         this.nestedQuery = nestedQuery;
+    }
+
+    public ObjList<ExprNode> getOrderBy() {
+        return orderBy;
     }
 
     public ExprNode getWhereClause() {

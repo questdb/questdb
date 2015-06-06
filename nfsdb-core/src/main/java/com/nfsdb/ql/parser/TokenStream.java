@@ -97,6 +97,8 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
             return last = result;
         }
 
+        this._lo = this._hi = _pos;
+
         if (next != null) {
             CharSequence result = next;
             next = null;
@@ -104,8 +106,6 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
         }
 
         char term = 0;
-
-        this._lo = this._hi = _pos;
 
         while (hasNext()) {
             char c = content.charAt(_pos++);

@@ -1206,7 +1206,7 @@ public class OptimiserTest2 extends AbstractOptimiserTest {
             compile("select x,y from tab where x~0");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertEquals(26, e.getPosition());
+                Assert.assertEquals(28, e.getPosition());
             Assert.assertTrue(e.getMessage().contains("No such function"));
         }
     }

@@ -28,7 +28,9 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class QueryParser {
 
-    private static final ObjHashSet<CharSequence> stopSet = new ObjHashSet<>();
+    private static final ObjHashSet<CharSequence> aliasStopSet = new ObjHashSet<>();
+    private static final ObjHashSet<CharSequence> groupByStopSet = new ObjHashSet<>();
+
     private final TokenStream toks = new TokenStream() {{
         defineSymbol(" ");
         defineSymbol("(");
@@ -45,12 +47,8 @@ public class QueryParser {
             return parseCreateStatement();
         }
 
-        if (Chars.equals(tok, "select")) {
-            toks.unparse();
-            return new Statement(StatementType.QUERY_JOURNAL, parseQuery(false));
-        }
-
-        throw err("create | select expected");
+        toks.unparse();
+        return new Statement(StatementType.QUERY_JOURNAL, parseQuery(false));
     }
 
     public void setContent(CharSequence cs) {
@@ -209,7 +207,7 @@ public class QueryParser {
                     struct.$date(name);
                     break;
                 default:
-                    throw new ParserException(toks.position(), "Unsupported type");
+                    throw err("Unsupported type");
             }
 
             if (tok == null) {
@@ -236,12 +234,13 @@ public class QueryParser {
         CharSequence tok;
         QueryModel model = new QueryModel();
 
-        // expect "select"
-        expectTok(tok(), "select");
-
-        parseSelectColumns(model);
-
         tok = tok();
+
+        // [select]
+        if (tok != null && Chars.equals(tok, "select")) {
+            parseSelectColumns(model);
+            tok = tok();
+        }
 
         // expect "(" in case of sub-query
 
@@ -255,7 +254,7 @@ public class QueryParser {
 
             // check if tok is not "where" - should be alias
 
-            if (tok != null && !stopSet.contains(tok)) {
+            if (tok != null && !aliasStopSet.contains(tok)) {
                 model.setAlias(tok.toString());
                 tok = optionTok();
             }
@@ -268,14 +267,14 @@ public class QueryParser {
 
             model.setJournalName(expr());
 
-            // expect [latest by]
-
             tok = optionTok();
 
-            if (tok != null && !stopSet.contains(tok)) {
+            if (tok != null && !aliasStopSet.contains(tok)) {
                 model.setAlias(tok.toString());
                 tok = optionTok();
             }
+
+            // expect [latest by]
 
             if (tok != null && Chars.equals(tok, "latest")) {
                 parseLatestBy(model);
@@ -283,7 +282,7 @@ public class QueryParser {
             }
         }
 
-        // expect [join]
+        // expect multiple [join]
 
         while (tok != null && Chars.equals(tok, "join")) {
             model.addJoinModel(parseJoin());
@@ -297,10 +296,43 @@ public class QueryParser {
             tok = optionTok();
         }
 
+        // expect [group by]
+
+        if (tok != null && Chars.equals(tok, "group")) {
+            expectTok(tok(), "by");
+            do {
+                tok = tok();
+
+                if (groupByStopSet.contains(tok)) {
+                    throw err("Column name expected");
+                }
+
+                model.addGroupBy(tok.toString());
+                tok = optionTok();
+            } while (tok != null && Chars.equals(tok, ","));
+        }
+
+        // expect [order by]
+
+        if (tok != null && Chars.equals(tok, "order")) {
+            expectTok(tok(), "by");
+            do {
+                tok = tok();
+
+                if (Chars.equals(tok, ")")) {
+                    throw err("Expression expected");
+                }
+
+                toks.unparse();
+                model.addOrderBy(expr());
+                tok = optionTok();
+            } while (tok != null && Chars.equals(tok, ","));
+        }
+
         if (subQuery) {
             toks.unparse();
         } else if (tok != null) {
-            throw new ParserException(toks.position(), "Unexpected token: " + tok);
+            throw err("Unexpected token: " + tok);
         }
         return model;
     }
@@ -348,8 +380,14 @@ public class QueryParser {
     }
 
     static {
-        stopSet.add("where");
-        stopSet.add("latest");
-        stopSet.add("join");
+        aliasStopSet.add("where");
+        aliasStopSet.add("latest");
+        aliasStopSet.add("join");
+        aliasStopSet.add("group");
+        aliasStopSet.add("order");
+        //
+        groupByStopSet.add("order");
+        groupByStopSet.add(")");
+        groupByStopSet.add(",");
     }
 }
