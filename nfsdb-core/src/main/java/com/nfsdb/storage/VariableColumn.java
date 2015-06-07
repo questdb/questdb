@@ -214,10 +214,6 @@ public class VariableColumn extends AbstractColumn {
         }
     }
 
-    public boolean isNull(long localRowID) {
-        return Unsafe.getUnsafe().getInt(mappedFile.getAddress(indexColumn.getLong(localRowID), 4)) == -1;
-    }
-
     public void putBin(ByteBuffer value) {
         final long rowOffset = getOffset();
         final long targetOffset = rowOffset + value.remaining() + 4;
@@ -320,7 +316,7 @@ public class VariableColumn extends AbstractColumn {
         }
     }
 
-    long commitAppend(long offset, int size) {
+    private long commitAppend(long offset, int size) {
         preCommit(offset + size);
         return indexColumn.putLong(offset);
     }
@@ -337,6 +333,10 @@ public class VariableColumn extends AbstractColumn {
         if (streamBuf == null) {
             streamBuf = new byte[1024 * 1024];
         }
+    }
+
+    private boolean isNull(long localRowID) {
+        return Unsafe.getUnsafe().getInt(mappedFile.getAddress(indexColumn.getLong(localRowID), 4)) == -1;
     }
 
     private class BinaryOutputStream extends OutputStream {

@@ -34,7 +34,7 @@ import java.util.List;
 
 public class MultiMap extends DirectMemoryStructure {
 
-    public static final int MIN_INITIAL_CAPACITY = 128;
+    private static final int MIN_INITIAL_CAPACITY = 128;
     private final float loadFactor;
     private final KeyWriter keyWriter = new KeyWriter();
     private final MapRecordSource recordSource;

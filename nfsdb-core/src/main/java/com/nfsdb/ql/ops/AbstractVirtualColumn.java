@@ -25,11 +25,11 @@ import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 
 import java.io.OutputStream;
 
-public abstract class AbstractVirtualColumn implements VirtualColumn {
+abstract class AbstractVirtualColumn implements VirtualColumn {
     private final ColumnType type;
     private String name;
 
-    public AbstractVirtualColumn(ColumnType type) {
+    AbstractVirtualColumn(ColumnType type) {
         this.type = type;
     }
 

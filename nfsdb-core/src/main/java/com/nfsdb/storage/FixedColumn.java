@@ -19,7 +19,7 @@ package com.nfsdb.storage;
 import com.nfsdb.utils.Unsafe;
 
 public class FixedColumn extends AbstractColumn {
-    final int width;
+    private final int width;
 
     public FixedColumn(MemoryFile mappedFile, int width) {
         super(mappedFile);
@@ -163,7 +163,7 @@ public class FixedColumn extends AbstractColumn {
         Unsafe.getUnsafe().putShort(getAddress(), value);
     }
 
-    long getAddress() {
+    private long getAddress() {
         long appendOffset = mappedFile.getAppendOffset();
         preCommit(appendOffset + width);
         return mappedFile.getAddress(appendOffset, width);

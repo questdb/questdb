@@ -23,7 +23,7 @@ import com.nfsdb.utils.Unsafe;
 import java.util.Arrays;
 
 public class IntStack {
-    public static final int noEntryValue = -1;
+    private static final int noEntryValue = -1;
     private static final int MIN_INITIAL_CAPACITY = 8;
     private int[] elements;
     private int head;

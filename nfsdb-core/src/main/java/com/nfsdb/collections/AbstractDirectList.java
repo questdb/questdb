@@ -87,10 +87,6 @@ public class AbstractDirectList extends DirectMemoryStructure {
         return (int) ((pos - start) >> pow2);
     }
 
-    public void zero(byte v) {
-        Unsafe.getUnsafe().setMemory(start, limit - start + onePow2, v);
-    }
-
     void ensureCapacity() {
         if (this.pos > limit) {
             extend((int) ((limit - start + onePow2) >> (pow2 - 1)));
@@ -108,5 +104,9 @@ public class AbstractDirectList extends DirectMemoryStructure {
         this.limit = start + ((capacity - 1) << pow2);
         this.address = address;
         this.start = start;
+    }
+
+    private void zero(byte v) {
+        Unsafe.getUnsafe().setMemory(start, limit - start + onePow2, v);
     }
 }

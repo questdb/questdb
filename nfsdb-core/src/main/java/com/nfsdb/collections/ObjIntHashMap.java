@@ -25,7 +25,7 @@ import java.util.Iterator;
 
 
 public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>> {
-    public static final int MIN_INITIAL_CAPACITY = 16;
+    private static final int MIN_INITIAL_CAPACITY = 16;
     private static final Object noEntryValue = new Object();
     private final int noKeyValue;
     private final double loadFactor;
@@ -186,7 +186,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>> {
     }
 
     @SuppressWarnings({"unchecked"})
-    protected void rehash() {
+    private void rehash() {
 
         int newCapacity = values.length << 1;
         mask = newCapacity - 1;

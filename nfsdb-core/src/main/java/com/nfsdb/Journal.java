@@ -699,7 +699,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      * Replaces current Lag partition, which is cached in this instance of Partition Manager with Lag partition,
      * which was written to _lag file by another process.
      */
-    void refreshInternal() throws JournalException {
+    private void refreshInternal() throws JournalException {
 
         assert tx.address > 0;
 

@@ -24,7 +24,7 @@ import java.util.Arrays;
 
 
 public class IntObjHashMap<V> {
-    public static final int MIN_INITIAL_CAPACITY = 16;
+    private static final int MIN_INITIAL_CAPACITY = 16;
     private static final Object noEntryValue = new Object();
     private final ValuesIterator valuesIterator = new ValuesIterator();
     private final double loadFactor;
@@ -140,7 +140,7 @@ public class IntObjHashMap<V> {
     }
 
     @SuppressWarnings({"unchecked"})
-    protected void rehash() {
+    private void rehash() {
 
         int newCapacity = values.length << 1;
         mask = newCapacity - 1;

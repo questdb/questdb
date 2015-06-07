@@ -30,7 +30,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class MultiRecordMap implements Closeable {
-    public final MultiMap map;
+    private final MultiMap map;
     private final DirectRecordLinkedList records;
 
     private MultiRecordMap(int capacity, long dataSize, float loadFactor, int avgRecSize, List<RecordColumnMetadata> keyColumns, RecordMetadata valueMetadata) {

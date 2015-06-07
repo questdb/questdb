@@ -249,7 +249,7 @@ public class MemoryFile implements Closeable {
         return buffer;
     }
 
-    String getFullFileName() {
+    private String getFullFileName() {
         return this.file.getAbsolutePath();
     }
 
@@ -283,7 +283,7 @@ public class MemoryFile implements Closeable {
         }
     }
 
-    final void open() throws JournalException {
+    private void open() throws JournalException {
         String m;
         switch (mode) {
             case READ:

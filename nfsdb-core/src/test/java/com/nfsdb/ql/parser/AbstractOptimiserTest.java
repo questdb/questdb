@@ -37,12 +37,12 @@ public abstract class AbstractOptimiserTest extends AbstractTest {
     private JournalCachingFactory f;
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         this.f = new JournalCachingFactory(factory.getConfiguration());
     }
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         this.f.close();
     }
 

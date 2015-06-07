@@ -21,8 +21,8 @@ import com.nfsdb.utils.Unsafe;
 import java.util.Arrays;
 
 public class IntList {
-    public static final int DEFAULT_ARRAY_SIZE = 16;
-    public static final int noEntryValue = -1;
+    private static final int DEFAULT_ARRAY_SIZE = 16;
+    private static final int noEntryValue = -1;
     private int[] buffer;
     private int pos = 0;
     private StringBuilder toStringBuilder;

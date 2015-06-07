@@ -14,21 +14,12 @@
  * limitations under the License.
  */
 
-package com.nfsdb.utils;
+package com.nfsdb.net;
 
-import com.sun.management.OperatingSystemMXBean;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.SocketChannel;
 
-import java.lang.management.ManagementFactory;
-
-@SuppressFBWarnings({"IICU_INCORRECT_INTERNAL_CLASS_USE"})
-final class Os {
-    private static final OperatingSystemMXBean bean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
-
-    private Os() {
-    }
-
-    public static long getSystemMemory() {
-        return bean.getTotalPhysicalMemorySize();
-    }
+public interface ContextHandler {
+    void handle(Request request, Session session, SocketChannel channel, ByteBuffer buffer) throws IOException;
 }

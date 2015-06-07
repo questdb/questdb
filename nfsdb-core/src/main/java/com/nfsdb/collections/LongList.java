@@ -22,8 +22,8 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Arrays;
 
 public class LongList {
-    public static final int DEFAULT_ARRAY_SIZE = 16;
-    public static final long noEntryValue = -1;
+    private static final int DEFAULT_ARRAY_SIZE = 16;
+    private static final long noEntryValue = -1;
     /**
      * The maximum number of runs in merge sort.
      */

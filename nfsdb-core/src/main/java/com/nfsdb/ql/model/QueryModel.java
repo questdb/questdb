@@ -20,14 +20,14 @@ import com.nfsdb.collections.ObjList;
 
 public class QueryModel {
     private final ObjList<QueryColumn> columns = new ObjList<>();
+    private final ObjList<JoinModel> joinModels = new ObjList<>();
+    private final ObjList<String> groupBy = new ObjList<>();
+    private final ObjList<ExprNode> orderBy = new ObjList<>();
     private ExprNode whereClause;
     private QueryModel nestedQuery;
     private ExprNode journalName;
     private String alias;
     private ExprNode latestBy;
-    private ObjList<JoinModel> joinModels = new ObjList<>();
-    private ObjList<String> groupBy = new ObjList<>();
-    private ObjList<ExprNode> orderBy = new ObjList<>();
 
     public void addColumn(QueryColumn column) {
         columns.add(column);

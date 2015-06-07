@@ -18,13 +18,17 @@ package com.nfsdb.collections;
 
 import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Unsafe;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import org.jetbrains.annotations.NotNull;
 
+import java.util.AbstractSet;
 import java.util.Arrays;
+import java.util.Iterator;
 
 
-public class ObjHashSet<T> {
+public class ObjHashSet<T> extends AbstractSet<T> {
 
-    public static final int MIN_INITIAL_CAPACITY = 16;
+    private static final int MIN_INITIAL_CAPACITY = 16;
     private static final Object noEntryValue = new Object();
     private final double loadFactor;
     private final ObjList<T> list;
@@ -38,7 +42,7 @@ public class ObjHashSet<T> {
     }
 
     public ObjHashSet(int initialCapacity) {
-        this(initialCapacity, 0.5, 0.3);
+        this(initialCapacity, 0.4f, 0.3f);
     }
 
     @SuppressWarnings("unchecked")
@@ -57,8 +61,33 @@ public class ObjHashSet<T> {
         keys = (T[]) new Object[capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity)];
         mask = keys.length - 1;
         free = this.capacity = initialCapacity;
-        list = new ObjList<>(free);
+        this.list = new ObjList<>(free);
         clear();
+    }
+
+    public void addAll(ObjHashSet<T> that) {
+        for (int i = 0, k = that.size(); i < k; i++) {
+            add(that.get(i));
+        }
+    }
+
+    public T get(int index) {
+        return list.getQuick(index);
+    }
+
+    public T getLast() {
+        return list.getLast();
+    }
+
+    @SuppressFBWarnings({"RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE"})
+    @Override
+    @NotNull
+    public Iterator<T> iterator() {
+        return list.iterator();
+    }
+
+    public int size() {
+        return capacity - free;
     }
 
     public boolean add(T key) {
@@ -72,10 +101,19 @@ public class ObjHashSet<T> {
         return r;
     }
 
-    public void addAll(ObjHashSet<T> that) {
-        for (int i = 0, k = that.size(); i < k; i++) {
-            add(that.get(i));
+    @Override
+    @SuppressWarnings("unchecked")
+    public boolean remove(Object key) {
+        if (list.remove(key)) {
+            int index = idx((T) key);
+            if (key.equals(Unsafe.arrayGet(keys, index))) {
+                Unsafe.arrayPut(keys, index, noEntryValue);
+                free++;
+                return true;
+            }
+            return probeRemove(key, index);
         }
+        return false;
     }
 
     public final void clear() {
@@ -84,33 +122,9 @@ public class ObjHashSet<T> {
         list.clear();
     }
 
-    public boolean contains(T key) {
-        int index = idx(key);
-        return Unsafe.arrayGet(keys, index) != noEntryValue && (key == Unsafe.arrayGet(keys, index) || key.equals(Unsafe.arrayGet(keys, index)) || probeContains(key, index));
-    }
-
-    public T get(int index) {
-        return list.getQuick(index);
-    }
-
-    public T getLast() {
-        return list.getLast();
-    }
-
-    public boolean remove(T key) {
-        if (list.remove(key)) {
-            int index = idx(key);
-
-            if (key == Unsafe.arrayGet(keys, index) || key.equals(Unsafe.arrayGet(keys, index))) {
-                Unsafe.arrayPut(keys, index, noEntryValue);
-                free++;
-                return true;
-            }
-
-            probeRemove(key, index);
-            return true;
-        }
-        return false;
+    @Override
+    public String toString() {
+        return list.toString();
     }
 
     public boolean replaceAllWithOverlap(ObjHashSet<T> that) {
@@ -132,15 +146,6 @@ public class ObjHashSet<T> {
         return false;
     }
 
-    public int size() {
-        return capacity - free;
-    }
-
-    @Override
-    public String toString() {
-        return list.toString();
-    }
-
     private int idx(T key) {
         return key == null ? 0 : (key.hashCode() & mask);
     }
@@ -151,21 +156,9 @@ public class ObjHashSet<T> {
             Unsafe.arrayPut(keys, index, key);
             free--;
             return true;
+        } else {
+            return !(key == Unsafe.arrayGet(keys, index) || key.equals(Unsafe.arrayGet(keys, index))) && probeInsert(key, index);
         }
-        return !(key == Unsafe.arrayGet(keys, index) || key.equals(Unsafe.arrayGet(keys, index))) && probeInsert(key, index);
-    }
-
-    private boolean probeContains(T key, int index) {
-        do {
-            index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-                return false;
-            }
-
-            if (key.equals(Unsafe.arrayGet(keys, index))) {
-                return true;
-            }
-        } while (true);
     }
 
     private boolean probeInsert(T key, int index) {
@@ -177,25 +170,27 @@ public class ObjHashSet<T> {
                 return true;
             }
 
-            if (key.equals(Unsafe.arrayGet(keys, index))) {
+            if (key == Unsafe.arrayGet(keys, index) || key.equals(Unsafe.arrayGet(keys, index))) {
                 return false;
             }
         } while (true);
     }
 
-    private void probeRemove(T key, int index) {
+    private boolean probeRemove(Object key, int index) {
+        int i = index;
         do {
             index = (index + 1) & mask;
-            if (key == Unsafe.arrayGet(keys, index) || key.equals(Unsafe.arrayGet(keys, index))) {
+            if (key.equals(Unsafe.arrayGet(keys, index))) {
                 Unsafe.arrayPut(keys, index, noEntryValue);
                 free++;
-                break;
+                return true;
             }
-        } while (true);
+        } while (i != index);
+        return false;
     }
 
     @SuppressWarnings({"unchecked"})
-    protected void rehash() {
+    private void rehash() {
         int newCapacity = keys.length << 1;
         mask = newCapacity - 1;
         free = capacity = (int) (newCapacity * loadFactor);

@@ -53,7 +53,7 @@ public class Operator {
     public final OperatorType type;
     public final boolean symbol;
 
-    public Operator(String token, int precedence, boolean leftAssociative, OperatorType type, boolean symbol) {
+    private Operator(String token, int precedence, boolean leftAssociative, OperatorType type, boolean symbol) {
         this.token = token;
         this.precedence = precedence;
         this.leftAssociative = leftAssociative;
@@ -61,7 +61,7 @@ public class Operator {
         this.symbol = symbol;
     }
 
-    public Operator(String token, int precedence, boolean leftAssociative, OperatorType type) {
+    private Operator(String token, int precedence, boolean leftAssociative, OperatorType type) {
         this.token = token;
         this.precedence = precedence;
         this.leftAssociative = leftAssociative;

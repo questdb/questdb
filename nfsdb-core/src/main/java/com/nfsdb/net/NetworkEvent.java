@@ -14,21 +14,19 @@
  * limitations under the License.
  */
 
-package com.nfsdb.utils;
+package com.nfsdb.net;
 
-import com.sun.management.OperatingSystemMXBean;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import com.lmax.disruptor.EventFactory;
 
-import java.lang.management.ManagementFactory;
+import java.nio.channels.SocketChannel;
 
-@SuppressFBWarnings({"IICU_INCORRECT_INTERNAL_CLASS_USE"})
-final class Os {
-    private static final OperatingSystemMXBean bean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
-
-    private Os() {
-    }
-
-    public static long getSystemMemory() {
-        return bean.getTotalPhysicalMemorySize();
-    }
+public class NetworkEvent {
+    public static final EventFactory<NetworkEvent> EVENT_FACTORY = new EventFactory<NetworkEvent>() {
+        @Override
+        public NetworkEvent newInstance() {
+            return new NetworkEvent();
+        }
+    };
+    public SocketChannel channel;
+    public Session context;
 }

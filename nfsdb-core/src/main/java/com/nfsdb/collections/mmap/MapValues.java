@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,35 +22,39 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 @SuppressFBWarnings({"EI_EXPOSE_REP2"})
 public final class MapValues {
     private final int valueOffsets[];
-    public long address;
+    private long address;
     private boolean _new;
 
     public MapValues(int[] valueOffsets) {
         this.valueOffsets = valueOffsets;
     }
 
-    public void putDouble(int index, double value) {
-        Unsafe.getUnsafe().putDouble(address0(index), value);
-    }
-
     public double getDouble(int index) {
         return Unsafe.getUnsafe().getDouble(address0(index));
     }
 
-    public void putLong(int index, long value) {
-        Unsafe.getUnsafe().putLong(address0(index), value);
+    public int getInt(int index) {
+        return Unsafe.getUnsafe().getInt(address0(index));
     }
 
     public long getLong(int index) {
         return Unsafe.getUnsafe().getLong(address0(index));
     }
 
+    public boolean isNew() {
+        return _new;
+    }
+
+    public void putDouble(int index, double value) {
+        Unsafe.getUnsafe().putDouble(address0(index), value);
+    }
+
     public void putInt(int index, int value) {
         Unsafe.getUnsafe().putInt(address0(index), value);
     }
 
-    public int getInt(int index) {
-        return Unsafe.getUnsafe().getInt(address0(index));
+    public void putLong(int index, long value) {
+        Unsafe.getUnsafe().putLong(address0(index), value);
     }
 
     private long address0(int index) {
@@ -61,9 +65,5 @@ public final class MapValues {
         this.address = address;
         this._new = _new;
         return this;
-    }
-
-    public boolean isNew() {
-        return _new;
     }
 }

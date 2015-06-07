@@ -24,7 +24,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.io.OutputStream;
 
-public class DirectPagedBuffer implements Closeable {
+class DirectPagedBuffer implements Closeable {
     private final int pageCapacity;
     private final int mask;
     private final int bits;

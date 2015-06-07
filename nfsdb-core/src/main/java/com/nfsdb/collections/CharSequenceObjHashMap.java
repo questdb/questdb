@@ -16,39 +16,37 @@
 
 package com.nfsdb.collections;
 
+import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Unsafe;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.Arrays;
-import java.util.Iterator;
 
 
-public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>> {
+public class CharSequenceObjHashMap<V> {
     private static final int MIN_INITIAL_CAPACITY = 16;
-    private static final Object noEntryValue = new Object();
+    private static final CharSequence noEntryValue = new NullCharSequence();
     private final double loadFactor;
-    private final EntryIterator iterator = new EntryIterator();
-    private K[] keys;
+    private CharSequence[] keys;
     private V[] values;
     private int free;
     private int capacity;
     private int mask;
 
-    public ObjObjHashMap() {
+    public CharSequenceObjHashMap() {
         this(8);
     }
 
-    public ObjObjHashMap(int initialCapacity) {
+    public CharSequenceObjHashMap(int initialCapacity) {
         this(initialCapacity, 0.5);
     }
 
     @SuppressWarnings("unchecked")
-    public ObjObjHashMap(int initialCapacity, double loadFactor) {
+    public CharSequenceObjHashMap(int initialCapacity, double loadFactor) {
         int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
         capacity = capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);
         this.loadFactor = loadFactor;
-        keys = (K[]) new Object[capacity];
+        keys = new CharSequence[capacity];
         values = (V[]) new Object[capacity];
         free = this.capacity = initialCapacity;
         mask = capacity - 1;
@@ -59,54 +57,29 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>> 
         Arrays.fill(keys, noEntryValue);
     }
 
-    public V get(K key) {
+    public V get(CharSequence key) {
         int index = key.hashCode() & mask;
 
         if (Unsafe.arrayGet(keys, index) == noEntryValue) {
             return null;
         }
 
-        if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
+        if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
             return Unsafe.arrayGet(values, index);
         }
 
         return probe(key, index);
     }
 
-    public Iterable<Entry<K, V>> immutableIterator() {
-        return new EntryIterator();
-    }
-
-    @Override
-    public Iterator<Entry<K, V>> iterator() {
-        iterator.index = 0;
-        return iterator;
-    }
-
-    public V put(K key, V value) {
+    public V put(CharSequence key, V value) {
         return insertKey(key, value);
-    }
-
-    public boolean putIfAbsent(K key, V value) {
-        int index = key.hashCode() & mask;
-        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-            Unsafe.arrayPut(keys, index, key);
-            Unsafe.arrayPut(values, index, value);
-            free--;
-            if (free == 0) {
-                rehash();
-            }
-            return true;
-        }
-
-        return Unsafe.arrayGet(keys, index) != key && !key.equals(Unsafe.arrayGet(keys, index)) && probeInsertIfAbsent(key, index, value);
     }
 
     public int size() {
         return capacity - free;
     }
 
-    private V insertKey(K key, V value) {
+    private V insertKey(CharSequence key, V value) {
         int index = key.hashCode() & mask;
         if (Unsafe.arrayGet(keys, index) == noEntryValue) {
             Unsafe.arrayPut(keys, index, key);
@@ -118,7 +91,7 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>> 
             return null;
         }
 
-        if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
+        if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
             V old = Unsafe.arrayGet(values, index);
             Unsafe.arrayPut(values, index, value);
             return old;
@@ -127,19 +100,19 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>> 
         return probeInsert(key, index, value);
     }
 
-    private V probe(K key, int index) {
+    private V probe(CharSequence key, int index) {
         do {
             index = (index + 1) & mask;
             if (Unsafe.arrayGet(keys, index) == noEntryValue) {
                 return null;
             }
-            if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
+            if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
                 return Unsafe.arrayGet(values, index);
             }
         } while (true);
     }
 
-    private V probeInsert(K key, int index, V value) {
+    private V probeInsert(CharSequence key, int index, V value) {
         do {
             index = (index + 1) & mask;
             if (Unsafe.arrayGet(keys, index) == noEntryValue) {
@@ -152,29 +125,10 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>> 
                 return null;
             }
 
-            if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
+            if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
                 V old = Unsafe.arrayGet(values, index);
                 Unsafe.arrayPut(values, index, value);
                 return old;
-            }
-        } while (true);
-    }
-
-    private boolean probeInsertIfAbsent(K key, int index, V value) {
-        do {
-            index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-                Unsafe.arrayPut(keys, index, key);
-                Unsafe.arrayPut(values, index, value);
-                free--;
-                if (free == 0) {
-                    rehash();
-                }
-                return true;
-            }
-
-            if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
-                return false;
             }
         } while (true);
     }
@@ -186,8 +140,8 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>> 
         mask = newCapacity - 1;
         free = capacity = (int) (newCapacity * loadFactor);
         V[] oldValues = values;
-        K[] oldKeys = keys;
-        this.keys = (K[]) new Object[newCapacity];
+        CharSequence[] oldKeys = keys;
+        this.keys = new CharSequence[newCapacity];
         this.values = (V[]) new Object[newCapacity];
         Arrays.fill(keys, noEntryValue);
 
@@ -198,34 +152,20 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>> 
         }
     }
 
-    public static class Entry<K, V> {
-        public K key;
-        public V value;
-    }
-
-    public class EntryIterator extends AbstractImmutableIterator<Entry<K, V>> {
-
-        private final Entry<K, V> entry = new Entry<>();
-        private int index = 0;
-
+    private static class NullCharSequence implements CharSequence {
         @Override
-        public boolean hasNext() {
-            return index < values.length && (Unsafe.arrayGet(keys, index) != noEntryValue || scan());
+        public int length() {
+            return 0;
         }
 
-        @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
         @Override
-        public Entry<K, V> next() {
-            entry.key = keys[index];
-            entry.value = values[index++];
-            return entry;
+        public char charAt(int index) {
+            return 0;
         }
 
-        private boolean scan() {
-            do {
-                index++;
-            } while (index < values.length && Unsafe.arrayGet(keys, index) == noEntryValue);
-            return index < values.length;
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            return null;
         }
     }
 }

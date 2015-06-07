@@ -23,7 +23,7 @@ import java.util.Arrays;
 import java.util.Iterator;
 
 public class ObjList<T> {
-    public static final int DEFAULT_ARRAY_SIZE = 16;
+    private static final int DEFAULT_ARRAY_SIZE = 16;
     private final Iter iterator = new Iter();
     private T[] buffer;
     private int pos = 0;

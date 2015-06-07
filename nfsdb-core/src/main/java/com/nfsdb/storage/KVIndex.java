@@ -434,7 +434,7 @@ public class KVIndex implements Closeable {
         return rowBlockOffset;
     }
 
-    long getKeyOffset(long key) {
+    private long getKeyOffset(long key) {
         return firstEntryOffset + (key + 1) * ENTRY_SIZE;
     }
 
@@ -454,7 +454,7 @@ public class KVIndex implements Closeable {
         Unsafe.getUnsafe().putLong(storage.getAddress(offset, 8), value);
     }
 
-    void refresh() {
+    private void refresh() {
         commit();
         this.keyBlockSizeOffset = getLong(kData, keyBlockAddressOffset);
         this.keyBlockSize = getLong(kData, keyBlockSizeOffset);
