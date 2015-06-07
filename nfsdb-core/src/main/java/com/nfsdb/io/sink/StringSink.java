@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+ * Copyright (c) 2014. Vlad Ilyushchenko
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,22 +23,16 @@ import org.jetbrains.annotations.NotNull;
 public class StringSink extends AbstractCharSink implements CharSequence {
     private final StringBuilder builder = new StringBuilder();
 
-    @Override
-    public char charAt(int index) {
-        return builder.charAt(index);
-    }
-
     public void clear() {
         builder.setLength(0);
     }
 
-    @Override
-    public void flush() {
+    public void clear(int pos) {
+        builder.setLength(pos);
     }
 
     @Override
-    public int length() {
-        return builder.length();
+    public void flush() {
     }
 
     @Override
@@ -51,6 +45,16 @@ public class StringSink extends AbstractCharSink implements CharSequence {
     public CharSink put(char c) {
         builder.append(c);
         return this;
+    }
+
+    @Override
+    public int length() {
+        return builder.length();
+    }
+
+    @Override
+    public char charAt(int index) {
+        return builder.charAt(index);
     }
 
     @Override

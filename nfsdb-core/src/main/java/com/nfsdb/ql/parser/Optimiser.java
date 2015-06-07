@@ -24,6 +24,7 @@ import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.ql.*;
 import com.nfsdb.ql.impl.*;
 import com.nfsdb.ql.model.*;
@@ -45,14 +46,24 @@ public class Optimiser {
     private final VirtualColumnBuilder virtualColumnBuilderVisitor = new VirtualColumnBuilder();
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
     private final Signature mutableSig = new Signature();
+    private final StringSink concatenator = new StringSink();
+
+    public Optimiser() {
+        concatenator.put("col");
+    }
 
     public JournalRecordSource<? extends Record> compile(QueryModel model, JournalReaderFactory factory) throws ParserException, JournalException {
         JournalRecordSource<? extends Record> rs = createRecordSource(model, factory);
-        RecordMetadata meta = rs.getMetadata();
         ObjList<QueryColumn> columns = model.getColumns();
-        ObjList<VirtualColumn> virtualColumns = new ObjList<>();
+
+        if (columns.size() == 0) {
+            return rs;
+        }
+
+        ObjList<VirtualColumn> virtualColumns = null;
         ObjList<String> selectedColumns = new ObjList<>();
         int columnSequence = 0;
+        final RecordMetadata meta = rs.getMetadata();
 
         // create virtual columns from select list
         for (int i = 0, k = columns.size(); i < k; i++) {
@@ -67,16 +78,25 @@ public class Optimiser {
                     selectedColumns.add(node.token);
                     break;
                 default:
-                    String colName = qc.getName() == null ? "col" + columnSequence++ : qc.getName();
+
+                    String colName = qc.getName();
+                    if (colName == null) {
+                        concatenator.clear(3);
+                        Numbers.append(concatenator, columnSequence++);
+                        colName = concatenator.toString();
+                    }
                     VirtualColumn c = createVirtualColumn(qc.getAst(), rs.getMetadata());
                     c.setName(colName);
                     selectedColumns.add(colName);
+                    if (virtualColumns == null) {
+                        virtualColumns = new ObjList<>();
+                    }
                     virtualColumns.add(c);
             }
         }
 
 
-        if (virtualColumns.size() > 0) {
+        if (virtualColumns != null) {
             rs = new VirtualColumnJournalRecordSource(rs, virtualColumns);
         }
         return new SelectedColumnsJournalRecordSource(rs, selectedColumns);
