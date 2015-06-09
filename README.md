@@ -3,6 +3,9 @@
 [![Gitter](https://badges.gitter.im/Join Chat.svg)](https://gitter.im/NFSdb/nfsdb?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
 ## News
+__9 June 2015__   Release roadmap
+
+I realise that it has been a while since last release, but I would like to reassure the reader that this project is very much alive. The [roadmap for next](roadmap.md) release is quite large but we are chipping away from this list quite steadily. So stay with us!
 
 __22 Jan 2015__.  3.0.0-SNAPSHOT is available for testing.
 
