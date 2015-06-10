@@ -33,5 +33,7 @@ public interface RecordMetadata {
      */
     int getColumnIndex(CharSequence name);
 
+    RecordColumnMetadata getTimestampMetadata();
+
     boolean invalidColumn(CharSequence name);
 }

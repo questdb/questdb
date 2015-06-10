@@ -50,6 +50,11 @@ abstract class AbstractJournalSource<T extends Record> extends AbstractImmutable
     }
 
     @Override
+    public RecordColumnMetadata getTimestampMetadata() {
+        return metadata.getTimestampMetadata();
+    }
+
+    @Override
     public boolean invalidColumn(CharSequence name) {
         return metadata.invalidColumn(name);
     }

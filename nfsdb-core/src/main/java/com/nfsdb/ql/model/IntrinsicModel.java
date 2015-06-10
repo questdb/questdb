@@ -36,12 +36,16 @@ public class IntrinsicModel {
     }
 
     public void overlapInterval(long lo, long hi) {
-        if (lo > intervalLo) {
-            intervalLo = lo;
-        }
+        if (hi < intervalLo || lo > intervalHi) {
+            intrinsicValue = IntrinsicValue.FALSE;
+        } else {
+            if (lo > intervalLo) {
+                intervalLo = lo;
+            }
 
-        if (hi < intervalHi) {
-            intervalHi = hi;
+            if (hi < intervalHi) {
+                intervalHi = hi;
+            }
         }
     }
 

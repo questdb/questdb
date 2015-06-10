@@ -14,19 +14,18 @@
  * limitations under the License.
  */
 
-package com.nfsdb.factory.configuration;
+package com.nfsdb.ql.ops.fact;
 
-import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.collections.ObjList;
+import com.nfsdb.ql.ops.Function;
+import com.nfsdb.ql.ops.NotOperator;
+import com.nfsdb.ql.ops.VirtualColumn;
 
-public interface RecordColumnMetadata {
-    int getBucketCount();
+public class NotOperatorFactory implements FunctionFactory {
+    public static final NotOperatorFactory INSTANCE = new NotOperatorFactory();
 
-    String getName();
-
-    SymbolTable getSymbolTable();
-
-    ColumnType getType();
-
-    boolean isIndexed();
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new NotOperator();
+    }
 }

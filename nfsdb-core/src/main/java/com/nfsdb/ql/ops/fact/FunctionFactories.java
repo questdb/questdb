@@ -197,6 +197,8 @@ public final class FunctionFactories {
         unSig("-", ColumnType.DOUBLE, DoubleNegativeOperatorFactory.INSTANCE);
         unSig("-", ColumnType.LONG, LongNegativeOperatorFactory.INSTANCE);
 
+        unSig("!", ColumnType.BOOLEAN, NotOperatorFactory.INSTANCE);
+
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, false), new StrEqualsOperatorFactory());
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, true), new SymEqualsOperatorFactory());
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.SYMBOL, false), new SymEqualsROperatorFactory());

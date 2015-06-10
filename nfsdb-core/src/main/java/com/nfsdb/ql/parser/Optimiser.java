@@ -49,57 +49,44 @@ public class Optimiser {
     private final StringSink concatenator = new StringSink();
 
     public Optimiser() {
+        // seed concatenator with default column prefix, which we will reuse
         concatenator.put("col");
     }
 
-    public JournalRecordSource<? extends Record> compile(QueryModel model, JournalReaderFactory factory) throws ParserException, JournalException {
-        JournalRecordSource<? extends Record> rs = createRecordSource(model, factory);
-        ObjList<QueryColumn> columns = model.getColumns();
+    public JournalRecordSource<? extends Record> compile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+        if (model.getJournalName() != null) {
+            return selectColumns(createRecordSource(model, factory), model.getColumns());
+        } else {
+            JournalRecordSource<? extends Record> rs = compile(model.getNestedQuery(), factory);
+            if (model.getWhereClause() == null) {
+                return selectColumns(rs, model.getColumns());
+            }
 
-        if (columns.size() == 0) {
-            return rs;
-        }
+            RecordMetadata m = rs.getMetadata();
+            IntrinsicModel im = intrinsicExtractor.extract(model.getWhereClause(), m, null);
 
-        ObjList<VirtualColumn> virtualColumns = null;
-        ObjList<String> selectedColumns = new ObjList<>();
-        int columnSequence = 0;
-        final RecordMetadata meta = rs.getMetadata();
-
-        // create virtual columns from select list
-        for (int i = 0, k = columns.size(); i < k; i++) {
-            QueryColumn qc = columns.getQuick(i);
-            ExprNode node = qc.getAst();
-
-            switch (node.type) {
-                case LITERAL:
-                    if (meta.invalidColumn(node.token)) {
-                        throw new InvalidColumnException(node.position);
-                    }
-                    selectedColumns.add(node.token);
-                    break;
+            switch (im.intrinsicValue) {
+                case FALSE:
+                    return selectColumns(new NoOpJournalRecordSource(rs), model.getColumns());
                 default:
-
-                    String colName = qc.getName();
-                    if (colName == null) {
-                        concatenator.clear(3);
-                        Numbers.append(concatenator, columnSequence++);
-                        colName = concatenator.toString();
+                    if (im.intervalSource != null) {
+                        rs = new IntervalJournalRecordSource(rs, im.intervalSource);
                     }
-                    VirtualColumn c = createVirtualColumn(qc.getAst(), rs.getMetadata());
-                    c.setName(colName);
-                    selectedColumns.add(colName);
-                    if (virtualColumns == null) {
-                        virtualColumns = new ObjList<>();
+                    if (im.filter != null) {
+                        VirtualColumn vc = createVirtualColumn(im.filter, m);
+                        if (vc.isConstant()) {
+                            if (vc.getBool(null)) {
+                                return selectColumns(rs, model.getColumns());
+                            } else {
+                                return selectColumns(new NoOpJournalRecordSource(rs), model.getColumns());
+                            }
+                        }
+                        return selectColumns(new FilteredJournalRecordSource(rs, vc), model.getColumns());
+                    } else {
+                        return selectColumns(rs, model.getColumns());
                     }
-                    virtualColumns.add(c);
             }
         }
-
-
-        if (virtualColumns != null) {
-            rs = new VirtualColumnJournalRecordSource(rs, virtualColumns);
-        }
-        return new SelectedColumnsJournalRecordSource(rs, selectedColumns);
     }
 
     private void createColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
@@ -398,6 +385,52 @@ public class Optimiser {
             default:
                 return f;
         }
+    }
+
+    private JournalRecordSource<? extends Record> selectColumns(JournalRecordSource<? extends Record> rs, ObjList<QueryColumn> columns) throws ParserException {
+        if (columns.size() == 0) {
+            return rs;
+        }
+
+        ObjList<VirtualColumn> virtualColumns = null;
+        ObjList<String> selectedColumns = new ObjList<>();
+        int columnSequence = 0;
+        final RecordMetadata meta = rs.getMetadata();
+
+        // create virtual columns from select list
+        for (int i = 0, k = columns.size(); i < k; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            ExprNode node = qc.getAst();
+
+            switch (node.type) {
+                case LITERAL:
+                    if (meta.invalidColumn(node.token)) {
+                        throw new InvalidColumnException(node.position);
+                    }
+                    selectedColumns.add(node.token);
+                    break;
+                default:
+
+                    String colName = qc.getName();
+                    if (colName == null) {
+                        concatenator.clear(3);
+                        Numbers.append(concatenator, columnSequence++);
+                        colName = concatenator.toString();
+                    }
+                    VirtualColumn c = createVirtualColumn(qc.getAst(), rs.getMetadata());
+                    c.setName(colName);
+                    selectedColumns.add(colName);
+                    if (virtualColumns == null) {
+                        virtualColumns = new ObjList<>();
+                    }
+                    virtualColumns.add(c);
+            }
+        }
+
+        if (virtualColumns != null) {
+            rs = new VirtualColumnJournalRecordSource(rs, virtualColumns);
+        }
+        return new SelectedColumnsJournalRecordSource(rs, selectedColumns);
     }
 
     private class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {

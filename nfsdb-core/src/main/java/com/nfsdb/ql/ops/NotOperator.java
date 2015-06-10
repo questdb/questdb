@@ -14,19 +14,19 @@
  * limitations under the License.
  */
 
-package com.nfsdb.factory.configuration;
+package com.nfsdb.ql.ops;
 
+import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.SymbolTable;
 
-public interface RecordColumnMetadata {
-    int getBucketCount();
+public class NotOperator extends AbstractUnaryOperator {
 
-    String getName();
+    public NotOperator() {
+        super(ColumnType.BOOLEAN);
+    }
 
-    SymbolTable getSymbolTable();
-
-    ColumnType getType();
-
-    boolean isIndexed();
+    @Override
+    public boolean getBool(Record rec) {
+        return !value.getBool(rec);
+    }
 }

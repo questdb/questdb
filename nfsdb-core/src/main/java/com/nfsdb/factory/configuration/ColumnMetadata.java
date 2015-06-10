@@ -52,6 +52,21 @@ public class ColumnMetadata implements RecordColumnMetadata {
     }
 
     @Override
+    public int getBucketCount() {
+        return distinctCountHint;
+    }
+
+    @Override
+    public String getName() {
+        return name;
+    }
+
+    @Override
+    public SymbolTable getSymbolTable() {
+        return symbolTable;
+    }
+
+    @Override
     public ColumnType getType() {
         return type;
     }
@@ -62,13 +77,8 @@ public class ColumnMetadata implements RecordColumnMetadata {
     }
 
     @Override
-    public SymbolTable getSymbolTable() {
-        return symbolTable;
-    }
-
-    @Override
-    public String getName() {
-        return name;
+    public boolean isIndexed() {
+        return indexed;
     }
 
     public ColumnMetadata setName(String name) {

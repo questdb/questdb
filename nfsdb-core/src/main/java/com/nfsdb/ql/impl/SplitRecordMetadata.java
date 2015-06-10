@@ -25,9 +25,12 @@ public class SplitRecordMetadata implements RecordMetadata {
     private final int columnCount;
     private final ObjIntHashMap<CharSequence> columnIndices;
     private final RecordColumnMetadata[] columns;
+    private final RecordColumnMetadata timestampMetadata;
+
 
     public SplitRecordMetadata(RecordMetadata a, RecordMetadata b) {
         int split = a.getColumnCount();
+        this.timestampMetadata = a.getTimestampMetadata();
         this.columnCount = split + b.getColumnCount();
         this.columnIndices = new ObjIntHashMap<>(columnCount);
         this.columns = new RecordColumnMetadata[columnCount];
@@ -66,6 +69,11 @@ public class SplitRecordMetadata implements RecordMetadata {
             throw new JournalRuntimeException("Invalid column: %s", name);
         }
         return index;
+    }
+
+    @Override
+    public RecordColumnMetadata getTimestampMetadata() {
+        return timestampMetadata;
     }
 
     @Override

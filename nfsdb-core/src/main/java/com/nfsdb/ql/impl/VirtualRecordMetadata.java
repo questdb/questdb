@@ -60,6 +60,11 @@ public class VirtualRecordMetadata implements RecordMetadata {
     }
 
     @Override
+    public RecordColumnMetadata getTimestampMetadata() {
+        return base.getTimestampMetadata();
+    }
+
+    @Override
     public boolean invalidColumn(CharSequence name) {
         return nameToIndexMap.get(name) == -1 && base.invalidColumn(name);
     }

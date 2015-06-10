@@ -38,8 +38,13 @@ public class RowIdHolderRecord extends AbstractRecord {
 
             private final RecordColumnMetadata columnMetadata = new RecordColumnMetadata() {
                 @Override
-                public ColumnType getType() {
-                    return ColumnType.LONG;
+                public int getBucketCount() {
+                    return 0;
+                }
+
+                @Override
+                public String getName() {
+                    return name;
                 }
 
                 @Override
@@ -48,8 +53,13 @@ public class RowIdHolderRecord extends AbstractRecord {
                 }
 
                 @Override
-                public String getName() {
-                    return name;
+                public ColumnType getType() {
+                    return ColumnType.LONG;
+                }
+
+                @Override
+                public boolean isIndexed() {
+                    return false;
                 }
             };
 
@@ -77,6 +87,11 @@ public class RowIdHolderRecord extends AbstractRecord {
                     return 0;
                 }
                 throw new JournalRuntimeException("Invalid column name: %s", name);
+            }
+
+            @Override
+            public RecordColumnMetadata getTimestampMetadata() {
+                return null;
             }
 
             @Override

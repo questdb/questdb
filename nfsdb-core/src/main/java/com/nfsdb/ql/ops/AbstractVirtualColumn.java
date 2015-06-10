@@ -104,8 +104,13 @@ abstract class AbstractVirtualColumn implements VirtualColumn {
     }
 
     @Override
-    public ColumnType getType() {
-        return type;
+    public int getBucketCount() {
+        return 0;
+    }
+
+    @Override
+    public String getName() {
+        return name;
     }
 
     @Override
@@ -114,8 +119,13 @@ abstract class AbstractVirtualColumn implements VirtualColumn {
     }
 
     @Override
-    public String getName() {
-        return name;
+    public ColumnType getType() {
+        return type;
+    }
+
+    @Override
+    public boolean isIndexed() {
+        return false;
     }
 
     @Override

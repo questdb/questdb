@@ -71,6 +71,11 @@ public final class MapMetadata implements RecordMetadata {
     }
 
     @Override
+    public RecordColumnMetadata getTimestampMetadata() {
+        return null;
+    }
+
+    @Override
     public boolean invalidColumn(CharSequence name) {
         return nameCache.get(name) == -1;
     }

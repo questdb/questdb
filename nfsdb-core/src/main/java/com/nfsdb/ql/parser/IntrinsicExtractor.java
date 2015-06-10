@@ -19,8 +19,8 @@ package com.nfsdb.ql.parser;
 import com.nfsdb.collections.FlyweightCharSequence;
 import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.collections.ObjList;
-import com.nfsdb.factory.configuration.ColumnMetadata;
-import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
+import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.ql.impl.MillisIntervalSource;
 import com.nfsdb.ql.impl.MonthsIntervalSource;
 import com.nfsdb.ql.impl.YearIntervalSource;
@@ -42,10 +42,10 @@ public class IntrinsicExtractor {
     private final ObjList<ExprNode> keyNodes = new ObjList<>();
     private final ObjList<ExprNode> timestampNodes = new ObjList<>();
     private final IntrinsicModel model = new IntrinsicModel();
-    private ColumnMetadata timestamp;
+    private RecordColumnMetadata timestamp;
     private String preferredKeyColumn;
 
-    public IntrinsicModel extract(ExprNode node, JournalMetadata m, String preferredKeyColumn) throws ParserException {
+    public IntrinsicModel extract(ExprNode node, RecordMetadata m, String preferredKeyColumn) throws ParserException {
         this.stack.clear();
         this.model.reset();
         this.keyNodes.clear();
@@ -82,17 +82,17 @@ public class IntrinsicExtractor {
         return model;
     }
 
-    private boolean analyzeEquals(ExprNode node, JournalMetadata m) throws ParserException {
+    private boolean analyzeEquals(ExprNode node, RecordMetadata m) throws ParserException {
         return node.paramCount == 2 && (analyzeEquals0(node, node.lhs, node.rhs, m) || analyzeEquals0(node, node.rhs, node.lhs, m));
     }
 
-    private boolean analyzeEquals0(ExprNode node, ExprNode a, ExprNode b, JournalMetadata m) throws ParserException {
+    private boolean analyzeEquals0(ExprNode node, ExprNode a, ExprNode b, RecordMetadata m) throws ParserException {
         if (a == null || b == null) {
             throw new ParserException(node.position, "Argument expected");
         }
 
         if (a.type == ExprNode.NodeType.LITERAL && b.type == ExprNode.NodeType.CONSTANT) {
-            if (timestamp != null && timestamp.name.equals(a.token)) {
+            if (timestamp != null && timestamp.getName().equals(a.token)) {
                 boolean reversible = parseInterval(Chars.stripQuotes(b.token), b.position);
                 node.intrinsicValue = IntrinsicValue.TRUE;
                 // exact timestamp matches will be returning FALSE
@@ -105,12 +105,12 @@ public class IntrinsicExtractor {
                 if (m.invalidColumn(a.token)) {
                     throw new InvalidColumnException(a.position);
                 }
-                ColumnMetadata meta = m.getColumn(a.token);
+                RecordColumnMetadata meta = m.getColumn(a.token);
 
-                switch (meta.type) {
+                switch (meta.getType()) {
                     case SYMBOL:
                     case STRING:
-                        if (meta.indexed) {
+                        if (meta.isIndexed()) {
 
                             // check if we are limited by preferred column
                             if (preferredKeyColumn != null && !preferredKeyColumn.equals(a.token)) {
@@ -121,7 +121,7 @@ public class IntrinsicExtractor {
                             // check if we already have indexed column and it is of worse selectivity
                             if (model.keyColumn != null
                                     && (newColumn = !model.keyColumn.equals(a.token))
-                                    && meta.distinctCountHint <= m.getColumn(model.keyColumn).distinctCountHint) {
+                                    && meta.getBucketCount() <= m.getColumn(model.keyColumn).getBucketCount()) {
                                 return false;
                             }
 
@@ -188,7 +188,7 @@ public class IntrinsicExtractor {
         return false;
     }
 
-    private boolean analyzeIn(ExprNode node, JournalMetadata metadata) throws ParserException {
+    private boolean analyzeIn(ExprNode node, RecordMetadata metadata) throws ParserException {
 
         if (node.paramCount < 2) {
             throw new ParserException(node.position, "Too few arguments for 'in'");
@@ -208,7 +208,7 @@ public class IntrinsicExtractor {
 
     @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE", "LEST_LOST_EXCEPTION_STACK_TRACE"})
     private boolean analyzeInInterval(ExprNode col, ExprNode in) throws ParserException {
-        if (timestamp == null || !Chars.equals(timestamp.name, col.token)) {
+        if (timestamp == null || !Chars.equals(timestamp.getName(), col.token)) {
             return false;
         }
 
@@ -275,9 +275,9 @@ public class IntrinsicExtractor {
         return false;
     }
 
-    private boolean analyzeListOfValues(String col, JournalMetadata meta, ExprNode node) {
-        ColumnMetadata colMeta = meta.getColumn(col);
-        if (colMeta.indexed) {
+    private boolean analyzeListOfValues(String col, RecordMetadata meta, ExprNode node) {
+        RecordColumnMetadata colMeta = meta.getColumn(col);
+        if (colMeta.isIndexed()) {
             boolean newColumn = true;
 
             if (preferredKeyColumn != null && !col.equals(preferredKeyColumn)) {
@@ -287,7 +287,7 @@ public class IntrinsicExtractor {
             // check if we already have indexed column and it is of worse selectivity
             if (model.keyColumn != null
                     && (newColumn = !model.keyColumn.equals(col))
-                    && colMeta.distinctCountHint <= meta.getColumn(model.keyColumn).distinctCountHint) {
+                    && colMeta.getBucketCount() <= meta.getColumn(model.keyColumn).getBucketCount()) {
                 return false;
             }
 
@@ -460,7 +460,7 @@ public class IntrinsicExtractor {
         return new Interval(loMillis, hiMillis);
     }
 
-    private boolean removeAndIntrinsics(ExprNode node, JournalMetadata m) throws ParserException {
+    private boolean removeAndIntrinsics(ExprNode node, RecordMetadata m) throws ParserException {
         if (node == null) {
             return true;
         }

@@ -366,7 +366,7 @@ public class QueryParser {
             }
 
             if (!Chars.equals(tok, ',')) {
-                throw err(", expected");
+                throw err(",|from expected");
             }
         }
     }

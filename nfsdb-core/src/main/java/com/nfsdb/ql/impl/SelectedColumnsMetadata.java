@@ -65,6 +65,11 @@ public class SelectedColumnsMetadata implements RecordMetadata {
     }
 
     @Override
+    public RecordColumnMetadata getTimestampMetadata() {
+        return delegate.getTimestampMetadata();
+    }
+
+    @Override
     public boolean invalidColumn(CharSequence name) {
         return nameIndex.get(name) == -1;
     }

@@ -17,13 +17,9 @@
 package com.nfsdb.ql.ops;
 
 import com.nfsdb.ql.Record;
-import com.nfsdb.ql.SymFacade;
-import com.nfsdb.ql.parser.ParserException;
 import com.nfsdb.storage.ColumnType;
 
-public class IntNegativeOperator extends AbstractVirtualColumn implements Function {
-
-    private VirtualColumn value;
+public class IntNegativeOperator extends AbstractUnaryOperator {
 
     public IntNegativeOperator() {
         super(ColumnType.INT);
@@ -47,18 +43,4 @@ public class IntNegativeOperator extends AbstractVirtualColumn implements Functi
         return v == Integer.MIN_VALUE ? Long.MIN_VALUE : -v;
     }
 
-    @Override
-    public boolean isConstant() {
-        return value.isConstant();
-    }
-
-    @Override
-    public void prepare(SymFacade facade) {
-
-    }
-
-    @Override
-    public void setArg(int pos, VirtualColumn arg) throws ParserException {
-        value = arg;
-    }
 }

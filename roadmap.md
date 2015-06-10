@@ -1,6 +1,6 @@
 __lang__
 
-- subqueries
+- ~~subqueries~~
 - simple aggregation (sum, count, avg etc)
 - simple resampling (where aggregation function produces single row of values)
 - multi-row aggregation
