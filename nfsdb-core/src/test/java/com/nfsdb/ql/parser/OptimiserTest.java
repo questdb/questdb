@@ -189,6 +189,14 @@ public class OptimiserTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testIntervalIntrinsicFalse() throws Exception {
+        JournalWriter<Quote> w = factory.writer(Quote.class, "q");
+        TestUtils.generateQuoteData(w, 3600 * 24 * 10, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
+        w.commit();
+        assertThat("", "select sym, bid, ask, timestamp from q where timestamp = '2015-02-12T10:00:00' and timestamp = '2015-02-12T12:00:00'");
+    }
+
+    @Test
     public void testInvalidLatestByColumn1() throws Exception {
         factory.writer(Quote.class, "q");
         try {

@@ -28,7 +28,7 @@ public class QueryModel {
     private final ObjList<String> groupBy = new ObjList<>();
     private final ObjList<ExprNode> orderBy = new ObjList<>();
     private ExprNode whereClause;
-    private QueryModel nestedQuery;
+    private QueryModel nestedModel;
     private ExprNode journalName;
     private String alias;
     private ExprNode latestBy;
@@ -85,12 +85,12 @@ public class QueryModel {
         this.latestBy = latestBy;
     }
 
-    public QueryModel getNestedQuery() {
-        return nestedQuery;
+    public QueryModel getNestedModel() {
+        return nestedModel;
     }
 
-    public void setNestedQuery(QueryModel nestedQuery) {
-        this.nestedQuery = nestedQuery;
+    public void setNestedModel(QueryModel nestedModel) {
+        this.nestedModel = nestedModel;
     }
 
     public ObjList<ExprNode> getOrderBy() {

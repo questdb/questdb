@@ -139,12 +139,12 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
         Assert.assertEquals("t1", statement.getQueryModel().getAlias());
         Assert.assertEquals(3, statement.getQueryModel().getJoinModels().size());
-        Assert.assertNotNull(statement.getQueryModel().getNestedQuery());
+        Assert.assertNotNull(statement.getQueryModel().getNestedModel());
         Assert.assertNull(statement.getQueryModel().getJournalName());
         Assert.assertEquals("y0>", TestUtils.toRpn(statement.getQueryModel().getWhereClause()));
-        Assert.assertEquals("tab", TestUtils.toRpn(statement.getQueryModel().getNestedQuery().getJournalName()));
-        Assert.assertEquals("t2", statement.getQueryModel().getNestedQuery().getAlias());
-        Assert.assertEquals(0, statement.getQueryModel().getNestedQuery().getJoinModels().size());
+        Assert.assertEquals("tab", TestUtils.toRpn(statement.getQueryModel().getNestedModel().getJournalName()));
+        Assert.assertEquals("t2", statement.getQueryModel().getNestedModel().getAlias());
+        Assert.assertEquals(0, statement.getQueryModel().getNestedModel().getJoinModels().size());
 
         Assert.assertEquals("xx2", statement.getQueryModel().getJoinModels().getQuick(0).getAlias());
         Assert.assertNull(statement.getQueryModel().getJoinModels().getQuick(1).getAlias());
@@ -168,16 +168,16 @@ public class QueryParserTest extends AbstractTest {
         Statement statement = parse("select x from ((tab join tab2 on tab.x=tab2.x) join tab3 on tab3.x = tab2.x)");
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals(0, statement.getQueryModel().getJoinModels().size());
-        Assert.assertNotNull(statement.getQueryModel().getNestedQuery());
-        Assert.assertEquals(1, statement.getQueryModel().getNestedQuery().getJoinModels().size());
-        Assert.assertEquals("tab3", TestUtils.toRpn(statement.getQueryModel().getNestedQuery().getJoinModels().getQuick(0).getJournalName()));
-        Assert.assertEquals("tab3.xtab2.x=", TestUtils.toRpn(statement.getQueryModel().getNestedQuery().getJoinModels().getQuick(0).getJoinCriteria()));
-        Assert.assertEquals(0, statement.getQueryModel().getNestedQuery().getColumns().size());
-        Assert.assertNotNull(statement.getQueryModel().getNestedQuery().getNestedQuery());
-        Assert.assertEquals("tab", TestUtils.toRpn(statement.getQueryModel().getNestedQuery().getNestedQuery().getJournalName()));
-        Assert.assertEquals(1, statement.getQueryModel().getNestedQuery().getNestedQuery().getJoinModels().size());
-        Assert.assertEquals("tab2", TestUtils.toRpn(statement.getQueryModel().getNestedQuery().getNestedQuery().getJoinModels().getQuick(0).getJournalName()));
-        Assert.assertEquals("tab.xtab2.x=", TestUtils.toRpn(statement.getQueryModel().getNestedQuery().getNestedQuery().getJoinModels().getQuick(0).getJoinCriteria()));
+        Assert.assertNotNull(statement.getQueryModel().getNestedModel());
+        Assert.assertEquals(1, statement.getQueryModel().getNestedModel().getJoinModels().size());
+        Assert.assertEquals("tab3", TestUtils.toRpn(statement.getQueryModel().getNestedModel().getJoinModels().getQuick(0).getJournalName()));
+        Assert.assertEquals("tab3.xtab2.x=", TestUtils.toRpn(statement.getQueryModel().getNestedModel().getJoinModels().getQuick(0).getJoinCriteria()));
+        Assert.assertEquals(0, statement.getQueryModel().getNestedModel().getColumns().size());
+        Assert.assertNotNull(statement.getQueryModel().getNestedModel().getNestedModel());
+        Assert.assertEquals("tab", TestUtils.toRpn(statement.getQueryModel().getNestedModel().getNestedModel().getJournalName()));
+        Assert.assertEquals(1, statement.getQueryModel().getNestedModel().getNestedModel().getJoinModels().size());
+        Assert.assertEquals("tab2", TestUtils.toRpn(statement.getQueryModel().getNestedModel().getNestedModel().getJoinModels().getQuick(0).getJournalName()));
+        Assert.assertEquals("tab.xtab2.x=", TestUtils.toRpn(statement.getQueryModel().getNestedModel().getNestedModel().getJoinModels().getQuick(0).getJoinCriteria()));
     }
 
     @Test
@@ -261,14 +261,14 @@ public class QueryParserTest extends AbstractTest {
         Statement statement = parse("select x, y from (select x from tab t2 latest by x where x > 100) t1 " +
                 "where y > 0");
         Assert.assertNotNull(statement.getQueryModel());
-        Assert.assertNotNull(statement.getQueryModel().getNestedQuery());
+        Assert.assertNotNull(statement.getQueryModel().getNestedModel());
         Assert.assertNull(statement.getQueryModel().getJournalName());
         Assert.assertEquals("t1", statement.getQueryModel().getAlias());
 
-        Assert.assertEquals("tab", TestUtils.toRpn(statement.getQueryModel().getNestedQuery().getJournalName()));
-        Assert.assertEquals("t2", statement.getQueryModel().getNestedQuery().getAlias());
-        Assert.assertEquals("x100>", TestUtils.toRpn(statement.getQueryModel().getNestedQuery().getWhereClause()));
-        Assert.assertEquals("x", TestUtils.toRpn(statement.getQueryModel().getNestedQuery().getLatestBy()));
+        Assert.assertEquals("tab", TestUtils.toRpn(statement.getQueryModel().getNestedModel().getJournalName()));
+        Assert.assertEquals("t2", statement.getQueryModel().getNestedModel().getAlias());
+        Assert.assertEquals("x100>", TestUtils.toRpn(statement.getQueryModel().getNestedModel().getWhereClause()));
+        Assert.assertEquals("x", TestUtils.toRpn(statement.getQueryModel().getNestedModel().getLatestBy()));
     }
 
     @Test

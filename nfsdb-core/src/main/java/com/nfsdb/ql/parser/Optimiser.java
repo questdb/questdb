@@ -61,7 +61,7 @@ public class Optimiser {
         if (model.getJournalName() != null) {
             return selectColumns(createRecordSource(model, factory), model.getColumns());
         } else {
-            JournalRecordSource<? extends Record> rs = compile(model.getNestedQuery(), factory);
+            JournalRecordSource<? extends Record> rs = compile(model.getNestedModel(), factory);
             if (model.getWhereClause() == null) {
                 return selectColumns(rs, model.getColumns());
             }

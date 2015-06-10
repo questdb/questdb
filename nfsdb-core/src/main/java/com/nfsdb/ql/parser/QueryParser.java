@@ -249,7 +249,7 @@ public class QueryParser {
         // expect "(" in case of sub-query
 
         if (Chars.equals(tok, "(")) {
-            model.setNestedQuery(parseQuery(true));
+            model.setNestedModel(parseQuery(true));
 
             // expect closing bracket
             expectTok(tok(), ")");
