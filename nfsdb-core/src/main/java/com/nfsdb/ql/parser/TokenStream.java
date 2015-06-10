@@ -1,18 +1,23 @@
-/*
- * Copyright (c) 2014. Vlad Ilyushchenko
+/*******************************************************************************
+ *   _  _ ___ ___     _ _
+ *  | \| | __/ __| __| | |__
+ *  | .` | _|\__ \/ _` | '_ \
+ *  |_|\_|_| |___/\__,_|_.__/
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
@@ -21,7 +26,6 @@ import com.nfsdb.collections.IntObjHashMap;
 import com.nfsdb.utils.Chars;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
-import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -199,6 +203,16 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
 
     public class FloatingSequence implements CharSequence {
         @Override
+        public char charAt(int index) {
+            return content.charAt(_lo + index);
+        }
+
+        @Override
+        public boolean equals(Object that) {
+            return that instanceof CharSequence && Chars.equals(this, (CharSequence) that);
+        }
+
+        @Override
         public int hashCode() {
             if (_lo == _hi) {
                 return 0;
@@ -212,8 +226,13 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
         }
 
         @Override
-        public boolean equals(Object that) {
-            return that instanceof CharSequence && Chars.equals(this, (CharSequence) that);
+        public int length() {
+            return _hi - _lo;
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            throw new UnsupportedOperationException();
         }
 
         @SuppressFBWarnings({"RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE"})
@@ -226,21 +245,6 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
                 data[i] = this.charAt(i);
             }
             return new String(data);
-        }
-
-        @Override
-        public int length() {
-            return _hi - _lo;
-        }
-
-        @Override
-        public char charAt(int index) {
-            return content.charAt(_lo + index);
-        }
-
-        @Override
-        public CharSequence subSequence(int start, int end) {
-            throw new NotImplementedException();
         }
     }
 }

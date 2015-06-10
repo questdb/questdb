@@ -1,18 +1,23 @@
-/*
- * Copyright (c) 2014. Vlad Ilyushchenko
+/*******************************************************************************
+ *   _  _ ___ ___     _ _
+ *  | \| | __/ __| __| | |__
+ *  | .` | _|\__ \/ _` | '_ \
+ *  |_|\_|_| |___/\__,_|_.__/
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ ******************************************************************************/
 
 package com.nfsdb.storage;
 
@@ -26,7 +31,6 @@ import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Files;
 import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import sun.nio.ch.DirectBuffer;
 
 import java.io.*;
 import java.nio.ByteOrder;
@@ -159,7 +163,7 @@ public class MemoryFile implements Closeable {
             cachedBuffer = getBufferInternal(offset, size);
             cachedBufferLo = offset - cachedBuffer.position() - 1;
             cachedBufferHi = cachedBufferLo + cachedBuffer.limit() + 2;
-            cachedAddress = ((DirectBuffer) cachedBuffer).address();
+            cachedAddress = ByteBuffers.getAddress(cachedBuffer);
         }
         return cachedBuffer;
     }
@@ -173,7 +177,7 @@ public class MemoryFile implements Closeable {
         cachedBuffer = getBufferInternal(offset, size);
         cachedBufferLo = offset - cachedBuffer.position() - 1;
         cachedBufferHi = cachedBufferLo + cachedBuffer.limit() + 2;
-        cachedAddress = ((DirectBuffer) cachedBuffer).address();
+        cachedAddress = ByteBuffers.getAddress(cachedBuffer);
         return cachedAddress + cachedBuffer.position();
     }
 
@@ -315,7 +319,7 @@ public class MemoryFile implements Closeable {
                 this.offsetBuffer = channel.map(FileChannel.MapMode.READ_WRITE, 0, 8);
             }
             offsetBuffer.order(ByteOrder.LITTLE_ENDIAN);
-            offsetDirectAddr = ((DirectBuffer) offsetBuffer).address();
+            offsetDirectAddr = ByteBuffers.getAddress(offsetBuffer);
         } catch (FileNotFoundException e) {
             throw new JournalNoSuchFileException(e);
         } catch (IOException e) {

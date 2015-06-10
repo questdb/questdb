@@ -1,19 +1,23 @@
-/*
- * Copyright (c) 2014. Vlad Ilyushchenko
+/*******************************************************************************
+ *   _  _ ___ ___     _ _
+ *  | \| | __/ __| __| | |__
+ *  | .` | _|\__ \/ _` | '_ \
+ *  |_|\_|_| |___/\__,_|_.__/
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ ******************************************************************************/
 package com.nfsdb;
 
 import com.nfsdb.exceptions.JournalException;
@@ -85,6 +89,10 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
     public OutputStream putBin(int index) {
         skipped[index] = false;
         return ((VariableColumn) columns[index]).putBin();
+    }
+
+    public void putBin0(int index, InputStream value) {
+        ((VariableColumn) columns[index]).putBin(value);
     }
 
     @Override
@@ -179,8 +187,21 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
         skipped[index] = false;
     }
 
-    public void putBin0(int index, InputStream value) {
-        ((VariableColumn) columns[index]).putBin(value);
+    void setPartition(Partition partition, long timestamp) {
+        if (this.partition != partition) {
+            this.columns = partition.columns;
+            this.partition = partition;
+            this.indexProxies = partition.sparseIndexProxies;
+        }
+        this.timestamp = timestamp;
+
+        for (int i = 0, l = skipped.length; i < l; i++) {
+            skipped[i] = true;
+        }
+
+        if (timestampIndex != -1) {
+            putDate(timestampIndex, timestamp);
+        }
     }
 
     private void assertType(int index, ColumnType t) {
@@ -229,23 +250,6 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
             koTuple[index * 2 + 1] = ((FixedColumn) columns[index]).putInt(key);
         } else {
             ((FixedColumn) columns[index]).putInt(key);
-        }
-    }
-
-    void setPartition(Partition partition, long timestamp) {
-        if (this.partition != partition) {
-            this.columns = partition.columns;
-            this.partition = partition;
-            this.indexProxies = partition.sparseIndexProxies;
-        }
-        this.timestamp = timestamp;
-
-        for (int i = 0, l = skipped.length; i < l; i++) {
-            skipped[i] = true;
-        }
-
-        if (timestampIndex != -1) {
-            putDate(timestampIndex, timestamp);
         }
     }
 }

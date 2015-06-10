@@ -1,19 +1,23 @@
-/*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+/*******************************************************************************
+ *   _  _ ___ ___     _ _
+ *  | \| | __/ __| __| | |__
+ *  | .` | _|\__ \/ _` | '_ \
+ *  |_|\_|_| |___/\__,_|_.__/
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ ******************************************************************************/
 package com.nfsdb;
 
 import com.nfsdb.exceptions.JournalException;
@@ -37,57 +41,6 @@ public class LagTest extends AbstractTest {
     @Before
     public void setUp() throws Exception {
         rw = factory.writer(Quote.class);
-    }
-
-    @Test
-    public void testOpenWithLag() throws JournalException {
-
-        Partition<Quote> partition = rw.openOrCreateLagPartition();
-        Quote v1 = new Quote().setSym("1").setTimestamp(Dates.parseDateTime("2012-06-11T00:00:00Z"));
-        Quote v2 = new Quote().setSym("2").setTimestamp(Dates.parseDateTime("2012-06-11T10:00:00Z"));
-        Quote v3 = new Quote().setSym("2").setTimestamp(Dates.parseDateTime("2012-06-11T06:00:00Z"));
-
-        rw.append(v1);
-        partition.append(v2);
-        partition.append(v3);
-        Assert.assertEquals(2, partition.size());
-
-        Assert.assertEquals(2, rw.getPartitionCount());
-        Assert.assertEquals(partition, rw.getPartition(1, true));
-    }
-
-    @Test
-    public void testLagWorkflow() throws JournalException {
-
-        Quote v1 = new Quote().setSym("1").setTimestamp(Dates.parseDateTime("2012-06-10T00:00:00Z"));
-        Quote v2 = new Quote().setSym("2").setTimestamp(Dates.parseDateTime("2012-06-10T10:00:00Z"));
-        Quote v3 = new Quote().setSym("2").setTimestamp(Dates.parseDateTime("2012-06-10T16:00:00Z"));
-        Quote v4 = new Quote().setSym("3").setTimestamp(Dates.parseDateTime("2012-06-10T19:00:00Z"));
-        Quote v5 = new Quote().setSym("4").setTimestamp(Dates.parseDateTime("2012-06-10T22:00:00Z"));
-
-        rw.append(v1);
-
-        Partition<Quote> p = rw.openOrCreateLagPartition();
-        p.append(v2);
-        p.append(v3);
-        p.append(v4);
-        p.append(v5);
-
-        Quote v6 = new Quote().setSym("5").setTimestamp(Dates.parseDateTime("2012-06-11T08:00:00Z"));
-        List<Quote> data = new ArrayList<>();
-        data.add(v6);
-        rw.mergeAppend(data);
-        rw.commit();
-
-        Assert.assertEquals(6, rw.size());
-        Assert.assertEquals(5, rw.openOrCreateLagPartition().size());
-
-        rw.close();
-
-        rw = factory.writer(Quote.class);
-        Assert.assertEquals(6, rw.size());
-        Assert.assertEquals(5, rw.openOrCreateLagPartition().size());
-        rw.purgeTempPartitions();
     }
 
     @Test
@@ -216,5 +169,56 @@ public class LagTest extends AbstractTest {
             Assert.assertEquals(300, r.size());
             Assert.assertEquals(lagName, r.getIrregularPartition().getName());
         }
+    }
+
+    @Test
+    public void testLagWorkflow() throws JournalException {
+
+        Quote v1 = new Quote().setSym("1").setTimestamp(Dates.parseDateTime("2012-06-10T00:00:00Z"));
+        Quote v2 = new Quote().setSym("2").setTimestamp(Dates.parseDateTime("2012-06-10T10:00:00Z"));
+        Quote v3 = new Quote().setSym("2").setTimestamp(Dates.parseDateTime("2012-06-10T16:00:00Z"));
+        Quote v4 = new Quote().setSym("3").setTimestamp(Dates.parseDateTime("2012-06-10T19:00:00Z"));
+        Quote v5 = new Quote().setSym("4").setTimestamp(Dates.parseDateTime("2012-06-10T22:00:00Z"));
+
+        rw.append(v1);
+
+        Partition<Quote> p = rw.openOrCreateLagPartition();
+        p.append(v2);
+        p.append(v3);
+        p.append(v4);
+        p.append(v5);
+
+        Quote v6 = new Quote().setSym("5").setTimestamp(Dates.parseDateTime("2012-06-11T08:00:00Z"));
+        List<Quote> data = new ArrayList<>();
+        data.add(v6);
+        rw.mergeAppend(data);
+        rw.commit();
+
+        Assert.assertEquals(6, rw.size());
+        Assert.assertEquals(5, rw.openOrCreateLagPartition().size());
+
+        rw.close();
+
+        rw = factory.writer(Quote.class);
+        Assert.assertEquals(6, rw.size());
+        Assert.assertEquals(5, rw.openOrCreateLagPartition().size());
+        rw.purgeTempPartitions();
+    }
+
+    @Test
+    public void testOpenWithLag() throws JournalException {
+
+        Partition<Quote> partition = rw.openOrCreateLagPartition();
+        Quote v1 = new Quote().setSym("1").setTimestamp(Dates.parseDateTime("2012-06-11T00:00:00Z"));
+        Quote v2 = new Quote().setSym("2").setTimestamp(Dates.parseDateTime("2012-06-11T10:00:00Z"));
+        Quote v3 = new Quote().setSym("2").setTimestamp(Dates.parseDateTime("2012-06-11T06:00:00Z"));
+
+        rw.append(v1);
+        partition.append(v2);
+        partition.append(v3);
+        Assert.assertEquals(2, partition.size());
+
+        Assert.assertEquals(2, rw.getPartitionCount());
+        Assert.assertEquals(partition, rw.getPartition(1, true));
     }
 }

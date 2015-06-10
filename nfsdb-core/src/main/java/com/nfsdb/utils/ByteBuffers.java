@@ -1,19 +1,23 @@
-/*
- * Copyright (c) 2014. Vlad Ilyushchenko
+/*******************************************************************************
+ *   _  _ ___ ___     _ _
+ *  | \| | __/ __| __| | |__
+ *  | .` | _|\__ \/ _` | '_ \
+ *  |_|\_|_| |___/\__,_|_.__/
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ ******************************************************************************/
 package com.nfsdb.utils;
 
 import com.nfsdb.exceptions.JournalDisconnectedChannelException;
@@ -100,12 +104,16 @@ public final class ByteBuffers {
         int y = to.remaining();
         int d = x < y ? x : y;
         if ((from instanceof DirectBuffer) && (to instanceof DirectBuffer)) {
-            Unsafe.getUnsafe().copyMemory(((DirectBuffer) from).address() + from.position(), ((DirectBuffer) to).address() + to.position(), d);
+            Unsafe.getUnsafe().copyMemory(getAddress(from) + from.position(), getAddress(to) + to.position(), d);
             from.position(from.position() + d);
             to.position(to.position() + d);
         } else {
             to.put(from);
         }
+    }
+
+    public static long getAddress(ByteBuffer buffer) {
+        return ((DirectBuffer) buffer).address();
     }
 
     public static int getBitHint(int recSize, int recCount) {

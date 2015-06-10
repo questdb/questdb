@@ -1,19 +1,23 @@
-/*
- * Copyright (c) 2014. Vlad Ilyushchenko
+/*******************************************************************************
+ *   _  _ ___ ___     _ _
+ *  | \| | __/ __| __| | |__
+ *  | .` | _|\__ \/ _` | '_ \
+ *  |_|\_|_| |___/\__,_|_.__/
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ ******************************************************************************/
 package com.nfsdb.factory.configuration;
 
 import com.nfsdb.storage.ColumnType;
@@ -52,55 +56,6 @@ public class ColumnMetadata implements RecordColumnMetadata {
     }
 
     @Override
-    public int getBucketCount() {
-        return distinctCountHint;
-    }
-
-    @Override
-    public String getName() {
-        return name;
-    }
-
-    @Override
-    public SymbolTable getSymbolTable() {
-        return symbolTable;
-    }
-
-    @Override
-    public ColumnType getType() {
-        return type;
-    }
-
-    public ColumnMetadata setType(ColumnType type) {
-        this.type = type;
-        return this;
-    }
-
-    @Override
-    public boolean isIndexed() {
-        return indexed;
-    }
-
-    public ColumnMetadata setName(String name) {
-        this.name = name;
-        return this;
-    }
-
-    @Override
-    public int hashCode() {
-        int result = name.hashCode();
-        result = 31 * result + type.hashCode();
-        result = 31 * result + size;
-        result = 31 * result + avgSize;
-        result = 31 * result + (indexed ? 1 : 0);
-        result = 31 * result + bitHint;
-        result = 31 * result + indexBitHint;
-        result = 31 * result + distinctCountHint;
-        result = 31 * result + (sameAs != null ? sameAs.hashCode() : 0);
-        return 31 * result + (noCache ? 1 : 0);
-    }
-
-    @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
@@ -121,6 +76,68 @@ public class ColumnMetadata implements RecordColumnMetadata {
     }
 
     @Override
+    public int getBucketCount() {
+        return distinctCountHint;
+    }
+
+    @Override
+    public String getName() {
+        return name;
+    }
+
+    public ColumnMetadata setName(String name) {
+        this.name = name;
+        return this;
+    }
+
+    @Override
+    public SymbolTable getSymbolTable() {
+        return symbolTable;
+    }
+
+    @Override
+    public ColumnType getType() {
+        return type;
+    }
+
+    public ColumnMetadata setType(ColumnType type) {
+        this.type = type;
+        return this;
+    }
+
+    @Override
+    public int hashCode() {
+        int result = name.hashCode();
+        result = 31 * result + type.hashCode();
+        result = 31 * result + size;
+        result = 31 * result + avgSize;
+        result = 31 * result + (indexed ? 1 : 0);
+        result = 31 * result + bitHint;
+        result = 31 * result + indexBitHint;
+        result = 31 * result + distinctCountHint;
+        result = 31 * result + (sameAs != null ? sameAs.hashCode() : 0);
+        return 31 * result + (noCache ? 1 : 0);
+    }
+
+    @Override
+    public boolean isIndexed() {
+        return indexed;
+    }
+
+    public void read(HugeBuffer buf) {
+        name = buf.getStr();
+        type = ColumnType.valueOf(buf.getStr());
+        size = buf.getInt();
+        avgSize = buf.getInt();
+        indexed = buf.getBool();
+        bitHint = buf.getInt();
+        indexBitHint = buf.getInt();
+        distinctCountHint = buf.getInt();
+        sameAs = buf.getStr();
+        noCache = buf.getBool();
+    }
+
+    @Override
     public String toString() {
         return "ColumnMetadata{" +
                 "name*='" + name + '\'' +
@@ -135,19 +152,6 @@ public class ColumnMetadata implements RecordColumnMetadata {
                 ", sameAs='" + sameAs + '\'' +
                 ", noCache=" + noCache +
                 '}';
-    }
-
-    public void read(HugeBuffer buf) {
-        name = buf.getStr();
-        type = ColumnType.valueOf(buf.getStr());
-        size = buf.getInt();
-        avgSize = buf.getInt();
-        indexed = buf.getBool();
-        bitHint = buf.getInt();
-        indexBitHint = buf.getInt();
-        distinctCountHint = buf.getInt();
-        sameAs = buf.getStr();
-        noCache = buf.getBool();
     }
 
     public void write(HugeBuffer buf) {

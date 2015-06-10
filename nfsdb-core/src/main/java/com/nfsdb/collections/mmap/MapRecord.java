@@ -1,19 +1,23 @@
-/*
- * Copyright (c) 2014. Vlad Ilyushchenko
+/*******************************************************************************
+ *   _  _ ___ ___     _ _
+ *  | \| | __/ __| __| | |__
+ *  | .` | _|\__ \/ _` | '_ \
+ *  |_|\_|_| |___/\__,_|_.__/
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ ******************************************************************************/
 package com.nfsdb.collections.mmap;
 
 import com.nfsdb.collections.DirectCharSequence;
@@ -112,7 +116,7 @@ public final class MapRecord extends AbstractRecord {
         if (strBuf == null || strBuf.length < len) {
             strBuf = new char[len];
         }
-        Unsafe.getUnsafe().copyMemory(null, address, strBuf, sun.misc.Unsafe.ARRAY_CHAR_BASE_OFFSET, ((long) len) << 1);
+        Unsafe.getUnsafe().copyMemory(null, address, strBuf, Unsafe.CHAR_OFFSET, ((long) len) << 1);
         return new String(strBuf, 0, len);
     }
 
@@ -131,6 +135,13 @@ public final class MapRecord extends AbstractRecord {
         return metadata.getColumn(index).getSymbolTable().value(getInt(index));
     }
 
+    MapRecord init(long address) {
+        this.address0 = address;
+        this.address1 = address + keyDataOffset;
+        this.address2 = address + keyBlockOffset;
+        return this;
+    }
+
     private long address0(int index) {
 
         if (index < split) {
@@ -142,12 +153,5 @@ public final class MapRecord extends AbstractRecord {
         }
 
         return Unsafe.getUnsafe().getInt(address2 + (index - split - 1) * 4) + address0;
-    }
-
-    MapRecord init(long address) {
-        this.address0 = address;
-        this.address1 = address + keyDataOffset;
-        this.address2 = address + keyBlockOffset;
-        return this;
     }
 }

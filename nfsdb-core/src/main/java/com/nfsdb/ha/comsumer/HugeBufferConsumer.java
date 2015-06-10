@@ -1,19 +1,23 @@
-/*
- * Copyright (c) 2014-2015. Vlad Ilyushchenko
+/*******************************************************************************
+ *   _  _ ___ ___     _ _
+ *  | \| | __/ __| __| | |__
+ *  | .` | _|\__ \/ _` | '_ \
+ *  |_|\_|_| |___/\__,_|_.__/
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ ******************************************************************************/
 package com.nfsdb.ha.comsumer;
 
 import com.nfsdb.JournalMode;
@@ -24,7 +28,6 @@ import com.nfsdb.ha.ChannelConsumer;
 import com.nfsdb.storage.HugeBuffer;
 import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Unsafe;
-import sun.nio.ch.DirectBuffer;
 
 import java.io.Closeable;
 import java.io.File;
@@ -35,7 +38,7 @@ import java.nio.channels.ReadableByteChannel;
 
 public class HugeBufferConsumer implements ChannelConsumer, Closeable {
     private final ByteBuffer header = ByteBuffer.allocateDirect(8).order(ByteOrder.LITTLE_ENDIAN);
-    private final long headerAddr = ((DirectBuffer) header).address();
+    private final long headerAddress = ByteBuffers.getAddress(header);
     private final HugeBuffer hb;
 
     public HugeBufferConsumer(File file) throws JournalException {
@@ -60,7 +63,7 @@ public class HugeBufferConsumer implements ChannelConsumer, Closeable {
         try {
             header.position(0);
             channel.read(header);
-            long target = Unsafe.getUnsafe().getLong(headerAddr);
+            long target = Unsafe.getUnsafe().getLong(headerAddress);
 
             long pos = 0;
             while (pos < target) {

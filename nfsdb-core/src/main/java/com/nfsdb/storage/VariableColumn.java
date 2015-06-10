@@ -1,19 +1,23 @@
-/*
- * Copyright (c) 2014. Vlad Ilyushchenko
+/*******************************************************************************
+ *   _  _ ___ ___     _ _
+ *  | \| | __/ __| __| | |__
+ *  | .` | _|\__ \/ _` | '_ \
+ *  |_|\_|_| |___/\__,_|_.__/
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ ******************************************************************************/
 package com.nfsdb.storage;
 
 import com.nfsdb.collections.DirectCharSequence;
@@ -50,50 +54,6 @@ public class VariableColumn extends AbstractColumn {
         super.close();
     }
 
-    @Override
-    public void commit() {
-        if (binOut.offset != -1) {
-            binOut.close();
-        }
-        super.commit();
-        indexColumn.commit();
-    }
-
-    @Override
-    public void compact() throws JournalException {
-        super.compact();
-        this.indexColumn.compact();
-    }
-
-    @Override
-    public void force() {
-        super.force();
-        indexColumn.force();
-    }
-
-    @Override
-    public long getOffset(long localRowID) {
-        return indexColumn.getLong(localRowID);
-    }
-
-    @Override
-    public long size() {
-        return indexColumn.size();
-    }
-
-    @Override
-    public void truncate(long size) {
-
-        if (size < 0) {
-            size = 0;
-        }
-
-        if (size < size()) {
-            preCommit(getOffset(size));
-        }
-        indexColumn.truncate(size);
-    }
-
     public boolean cmpStr(long localRowID, CharSequence value) {
 
         if (value == null) {
@@ -116,6 +76,27 @@ public class VariableColumn extends AbstractColumn {
         }
 
         return true;
+    }
+
+    @Override
+    public void commit() {
+        if (binOut.offset != -1) {
+            binOut.close();
+        }
+        super.commit();
+        indexColumn.commit();
+    }
+
+    @Override
+    public void compact() throws JournalException {
+        super.compact();
+        this.indexColumn.compact();
+    }
+
+    @Override
+    public void force() {
+        super.force();
+        indexColumn.force();
     }
 
     public void getBin(long localRowID, ByteBuffer target) {
@@ -153,7 +134,7 @@ public class VariableColumn extends AbstractColumn {
                 }
 
                 int l = len > blockRemaining ? blockRemaining : len;
-                Unsafe.getUnsafe().copyMemory(null, blockAddress, streamBuf, sun.misc.Unsafe.ARRAY_BYTE_BASE_OFFSET, l);
+                Unsafe.getUnsafe().copyMemory(null, blockAddress, streamBuf, Unsafe.BYTE_OFFSET, l);
                 offset += l;
                 blockRemaining -= l;
                 len -= l;
@@ -186,6 +167,11 @@ public class VariableColumn extends AbstractColumn {
 
     public FixedColumn getIndexColumn() {
         return indexColumn;
+    }
+
+    @Override
+    public long getOffset(long localRowID) {
+        return indexColumn.getLong(localRowID);
     }
 
     public String getStr(long localRowID) {
@@ -272,7 +258,7 @@ public class VariableColumn extends AbstractColumn {
                     }
 
                     int len = bufRemaining > blockRemaining ? blockRemaining : bufRemaining;
-                    Unsafe.getUnsafe().copyMemory(streamBuf, sun.misc.Unsafe.ARRAY_BYTE_BASE_OFFSET, null, blockAddress, len);
+                    Unsafe.getUnsafe().copyMemory(streamBuf, Unsafe.BYTE_OFFSET, null, blockAddress, len);
                     bufRemaining -= len;
                     off += len;
                     blockRemaining -= len;
@@ -316,6 +302,24 @@ public class VariableColumn extends AbstractColumn {
         }
     }
 
+    @Override
+    public long size() {
+        return indexColumn.size();
+    }
+
+    @Override
+    public void truncate(long size) {
+
+        if (size < 0) {
+            size = 0;
+        }
+
+        if (size < size()) {
+            preCommit(getOffset(size));
+        }
+        indexColumn.truncate(size);
+    }
+
     private long commitAppend(long offset, int size) {
         preCommit(offset + size);
         return indexColumn.putLong(offset);
@@ -325,7 +329,7 @@ public class VariableColumn extends AbstractColumn {
         if (buffer.length < len) {
             buffer = new char[len];
         }
-        Unsafe.getUnsafe().copyMemory(null, address, buffer, sun.misc.Unsafe.ARRAY_CHAR_BASE_OFFSET, ((long) len) * 2);
+        Unsafe.getUnsafe().copyMemory(null, address, buffer, Unsafe.CHAR_OFFSET, ((long) len) * 2);
         return new String(buffer, 0, len);
     }
 
@@ -347,6 +351,14 @@ public class VariableColumn extends AbstractColumn {
         private int blockRemaining;
 
         @Override
+        public void close() {
+            long a = mappedFile.getAddress(offset, 4);
+            Unsafe.getUnsafe().putInt(a, (int) (workOffset - offset - 4));
+            commitAppend(offset, (int) (workOffset - offset));
+            offset = -1;
+        }
+
+        @Override
         public void write(int b) throws IOException {
             if (blockRemaining == 0) {
                 renew();
@@ -354,14 +366,6 @@ public class VariableColumn extends AbstractColumn {
             Unsafe.getUnsafe().putByte(blockAddress++, (byte) b);
             workOffset++;
             blockRemaining--;
-        }
-
-        @Override
-        public void close() {
-            long a = mappedFile.getAddress(offset, 4);
-            Unsafe.getUnsafe().putInt(a, (int) (workOffset - offset - 4));
-            commitAppend(offset, (int) (workOffset - offset));
-            offset = -1;
         }
 
         private void renew() {

@@ -1,18 +1,23 @@
-/*
- * Copyright (c) 2014. Vlad Ilyushchenko
+/*******************************************************************************
+ *   _  _ ___ ___     _ _
+ *  | \| | __/ __| __| | |__
+ *  | .` | _|\__ \/ _` | '_ \
+ *  |_|\_|_| |___/\__,_|_.__/
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ ******************************************************************************/
 
 package com.nfsdb.storage;
 
@@ -500,6 +505,17 @@ public class KVIndex implements Closeable {
             return this.remainingRowCount > 0 || this.remainingBlockCount > 0;
         }
 
+        public long next() {
+            if (remainingRowCount > 0) {
+                return Unsafe.getUnsafe().getLong(address + ((--this.remainingRowCount) << 3));
+            } else {
+                remainingBlockCount--;
+                this.address = rData.getAddress(Unsafe.getUnsafe().getLong(address + (rowBlockLen << 3) + 8) - rowBlockSize, rowBlockSize);
+                this.remainingRowCount = mask;
+                return Unsafe.getUnsafe().getLong(address + (this.remainingRowCount << 3));
+            }
+        }
+
         public RevIndexCursor setKey(int key) {
             this.remainingBlockCount = 0;
             this.remainingRowCount = 0;
@@ -531,18 +547,6 @@ public class KVIndex implements Closeable {
             return this;
         }
 
-        public long next() {
-            if (remainingRowCount > 0) {
-                return Unsafe.getUnsafe().getLong(address + ((--this.remainingRowCount) << 3));
-            } else {
-                remainingBlockCount--;
-                this.address = rData.getAddress(Unsafe.getUnsafe().getLong(address + (rowBlockLen << 3) + 8) - rowBlockSize, rowBlockSize);
-                this.remainingRowCount = mask;
-                return Unsafe.getUnsafe().getLong(address + (this.remainingRowCount << 3));
-            }
-        }
-
-
         public long size() {
             return size;
         }
@@ -552,6 +556,19 @@ public class KVIndex implements Closeable {
         private long rowCount;
         private long size;
         private long address;
+
+        public boolean hasNext() {
+            return this.rowCount < size;
+        }
+
+        public long next() {
+            int r = (int) (rowCount++ & mask);
+            long v = Unsafe.getUnsafe().getLong(address + (r << 3));
+            if (r == mask) {
+                this.address = rData.getAddress(Unsafe.getUnsafe().getLong(address + (rowBlockLen << 3)) - rowBlockSize, rowBlockSize);
+            }
+            return v;
+        }
 
         public FwdIndexCursor setKey(int key) {
             this.rowCount = 0;
@@ -577,20 +594,6 @@ public class KVIndex implements Closeable {
             this.address = rData.getAddress(Unsafe.getUnsafe().getLong(addr + 16) - rowBlockSize, rowBlockSize);
             return this;
         }
-
-        public boolean hasNext() {
-            return this.rowCount < size;
-        }
-
-        public long next() {
-            int r = (int) (rowCount++ & mask);
-            long v = Unsafe.getUnsafe().getLong(address + (r << 3));
-            if (r == mask) {
-                this.address = rData.getAddress(Unsafe.getUnsafe().getLong(address + (rowBlockLen << 3)) - rowBlockSize, rowBlockSize);
-            }
-            return v;
-        }
-
 
         public long size() {
             return size;

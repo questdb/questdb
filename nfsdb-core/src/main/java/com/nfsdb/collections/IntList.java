@@ -1,19 +1,23 @@
-/*
- * Copyright (c) 2014. Vlad Ilyushchenko
+/*******************************************************************************
+ *   _  _ ___ ___     _ _
+ *  | \| | __/ __| __| | |__
+ *  | .` | _|\__ \/ _` | '_ \
+ *  |_|\_|_| |___/\__,_|_.__/
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ ******************************************************************************/
 package com.nfsdb.collections;
 
 import com.nfsdb.utils.Unsafe;
@@ -69,6 +73,14 @@ public class IntList {
     public void ensureCapacity(int capacity) {
         ensureCapacity0(capacity);
         pos = capacity;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public boolean equals(Object that) {
+        return this == that || that instanceof IntList && equals((IntList) that);
     }
 
     public void extendAndSet(int index, int value) {
@@ -145,35 +157,6 @@ public class IntList {
         return hashCode;
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public boolean equals(Object that) {
-        return this == that || that instanceof IntList && equals((IntList) that);
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public String toString() {
-        if (toStringBuilder == null) {
-            toStringBuilder = new StringBuilder();
-        }
-
-        toStringBuilder.setLength(0);
-        toStringBuilder.append('[');
-        for (int i = 0, k = size(); i < k; i++) {
-            if (i > 0) {
-                toStringBuilder.append(',');
-            }
-            toStringBuilder.append(get(i));
-        }
-        toStringBuilder.append(']');
-        return toStringBuilder.toString();
-    }
-
     public int indexOf(int o) {
         for (int i = 0, n = pos; i < n; i++) {
             if (o == getQuick(i)) {
@@ -220,6 +203,27 @@ public class IntList {
 
     public int size() {
         return pos;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public String toString() {
+        if (toStringBuilder == null) {
+            toStringBuilder = new StringBuilder();
+        }
+
+        toStringBuilder.setLength(0);
+        toStringBuilder.append('[');
+        for (int i = 0, k = size(); i < k; i++) {
+            if (i > 0) {
+                toStringBuilder.append(',');
+            }
+            toStringBuilder.append(get(i));
+        }
+        toStringBuilder.append(']');
+        return toStringBuilder.toString();
     }
 
     public void zero(int value) {

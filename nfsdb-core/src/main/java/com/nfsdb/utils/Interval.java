@@ -1,19 +1,23 @@
-/*
- * Copyright (c) 2014. Vlad Ilyushchenko
+/*******************************************************************************
+ *   _  _ ___ ___     _ _
+ *  | \| | __/ __| __| | |__
+ *  | .` | _|\__ \/ _` | '_ \
+ *  |_|\_|_| |___/\__,_|_.__/
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ ******************************************************************************/
 package com.nfsdb.utils;
 
 import com.nfsdb.PartitionType;
@@ -89,6 +93,14 @@ public class Interval {
         return (x >= lo && x < hi);
     }
 
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Interval interval = (Interval) o;
+        return hi == interval.hi && lo == interval.lo;
+    }
+
     public String getDirName(PartitionType t) {
         StringSink sink = new StringSink();
         switch (t) {
@@ -121,12 +133,12 @@ public class Interval {
         return 31 * result + (int) (hi ^ (hi >>> 32));
     }
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        Interval interval = (Interval) o;
-        return hi == interval.hi && lo == interval.lo;
+    public boolean isAfter(long x) {
+        return (lo > x);
+    }
+
+    public boolean isBefore(long x) {
+        return hi <= x;
     }
 
     @Override
@@ -135,14 +147,6 @@ public class Interval {
                 "lo=" + Dates.toString(lo) +
                 ", hi=" + Dates.toString(hi) +
                 '}';
-    }
-
-    public boolean isAfter(long x) {
-        return (lo > x);
-    }
-
-    public boolean isBefore(long x) {
-        return hi <= x;
     }
 
     public void update(long lo, long hi) {

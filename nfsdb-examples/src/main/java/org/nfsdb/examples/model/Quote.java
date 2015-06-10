@@ -1,18 +1,23 @@
-/*
- * Copyright (c) 2014. Vlad Ilyushchenko
+/*******************************************************************************
+ *   _  _ ___ ___     _ _
+ *  | \| | __/ __| __| | |__
+ *  | .` | _|\__ \/ _` | '_ \
+ *  |_|\_|_| |___/\__,_|_.__/
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ ******************************************************************************/
 
 package org.nfsdb.examples.model;
 
@@ -36,6 +41,24 @@ public class Quote {
         this.askSize = 0;
         this.mode = null;
         this.ex = null;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof Quote)) return false;
+
+        Quote q = (Quote) o;
+
+        return Double.compare(q.ask, ask) == 0
+                && askSize == q.askSize
+                && Double.compare(q.bid, bid) == 0
+                && bidSize == q.bidSize
+                && timestamp == q.timestamp
+                && !(ex != null ? !ex.equals(q.ex) : q.ex != null)
+                && !(mode != null ? !mode.equals(q.mode) : q.mode != null)
+                && !(sym != null ? !sym.equals(q.sym) : q.sym != null);
+
     }
 
     public double getAsk() {
@@ -116,24 +139,6 @@ public class Quote {
         result = 31 * result + askSize;
         result = 31 * result + (mode != null ? mode.hashCode() : 0);
         return 31 * result + (ex != null ? ex.hashCode() : 0);
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (!(o instanceof Quote)) return false;
-
-        Quote q = (Quote) o;
-
-        return Double.compare(q.ask, ask) == 0
-                && askSize == q.askSize
-                && Double.compare(q.bid, bid) == 0
-                && bidSize == q.bidSize
-                && timestamp == q.timestamp
-                && !(ex != null ? !ex.equals(q.ex) : q.ex != null)
-                && !(mode != null ? !mode.equals(q.mode) : q.mode != null)
-                && !(sym != null ? !sym.equals(q.sym) : q.sym != null);
-
     }
 
     @Override

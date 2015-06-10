@@ -1,19 +1,23 @@
-/*
- * Copyright (c) 2014. Vlad Ilyushchenko
+/*******************************************************************************
+ *   _  _ ___ ___     _ _
+ *  | \| | __/ __| __| | |__
+ *  | .` | _|\__ \/ _` | '_ \
+ *  |_|\_|_| |___/\__,_|_.__/
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ ******************************************************************************/
 package com.nfsdb.ha.krb;
 
 import com.nfsdb.utils.Base64;
@@ -44,6 +48,21 @@ public class SSOServiceTokenEncoder implements Closeable {
         clean = true;
         copy(NFSKRB_EXE, temp);
         copy("/Microsoft.IdentityModel.dll", temp);
+    }
+
+    @SuppressFBWarnings({"PATH_TRAVERSAL_IN"})
+    private static void copy(String resource, File dir) throws IOException {
+        URL url = SSOServiceTokenEncoder.class.getResource(resource);
+        if (url == null) {
+            throw new IOException("Broken package? Resource not found: " + resource);
+        }
+
+        File file = new File(url.getPath());
+        try (FileChannel in = new FileInputStream(file).getChannel()) {
+            try (FileChannel out = new FileOutputStream(new File(dir, file.getName())).getChannel()) {
+                out.transferFrom(in, 0, in.size());
+            }
+        }
     }
 
     @Override
@@ -79,20 +98,5 @@ public class SSOServiceTokenEncoder implements Closeable {
 
     public boolean isAvailable() {
         return osName != null && osName.startsWith("Windows") && "amd64".equals(osArch);
-    }
-
-    @SuppressFBWarnings({"PATH_TRAVERSAL_IN"})
-    private static void copy(String resource, File dir) throws IOException {
-        URL url = SSOServiceTokenEncoder.class.getResource(resource);
-        if (url == null) {
-            throw new IOException("Broken package? Resource not found: " + resource);
-        }
-
-        File file = new File(url.getPath());
-        try (FileChannel in = new FileInputStream(file).getChannel()) {
-            try (FileChannel out = new FileOutputStream(new File(dir, file.getName())).getChannel()) {
-                out.transferFrom(in, 0, in.size());
-            }
-        }
     }
 }
