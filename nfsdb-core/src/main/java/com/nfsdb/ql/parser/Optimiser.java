@@ -1,33 +1,34 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 package com.nfsdb.ql.parser;
 
 import com.nfsdb.JournalKey;
 import com.nfsdb.collections.ObjList;
+import com.nfsdb.collections.ObjObjHashMap;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.NoSuchColumnException;
 import com.nfsdb.factory.JournalReaderFactory;
-import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.ql.*;
 import com.nfsdb.ql.impl.*;
@@ -50,20 +51,93 @@ public class Optimiser {
     private final VirtualColumnBuilder virtualColumnBuilderVisitor = new VirtualColumnBuilder();
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
     private final Signature mutableSig = new Signature();
-    private final StringSink concatenator = new StringSink();
+    private final StringSink columnNameAssembly = new StringSink();
+    private final int columnNamePrefixLen;
+    private final ObjObjHashMap<String, RecordMetadata> namedJoinMetadata = new ObjObjHashMap<>();
+    private final ObjList<RecordMetadata> allJoinMetadata = new ObjList<>();
+    private final ArrayDeque<ObjList<String>> dependencyChains = new ArrayDeque<>();
 
     public Optimiser() {
-        // seed concatenator with default column prefix, which we will reuse
-        concatenator.put("col");
+        // seed column name assembly with default column prefix, which we will reuse
+        columnNameAssembly.put("col");
+        columnNamePrefixLen = 3;
     }
 
     public JournalRecordSource<? extends Record> compile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+        return selectColumns(compile0(model, factory), model.getColumns());
+    }
+
+    public void compileJoins(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+        // prepare for new iteration
+        namedJoinMetadata.clear();
+        allJoinMetadata.clear();
+        dependencyChains.clear();
+
+        // create metadata for all journals and sub-queries involved in this query
+        collectJoinSource(model, factory);
+        // create dependency chains
+        if (model.getWhereClause() != null) {
+            traversePreOrderRecursive(model.getWhereClause(), null);
+        }
+
+        ObjList<JoinModel> joinModels = model.getJoinModels();
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            JoinModel m = joinModels.getQuick(i);
+            collectJoinSource(m, factory);
+            if (m.getJoinCriteria() != null) {
+                traversePreOrderRecursive(m.getJoinCriteria(), null);
+            }
+        }
+        System.out.println(dependencyChains);
+    }
+
+    private void collectJoinSource(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+        RecordMetadata metadata;
         if (model.getJournalName() != null) {
-            return selectColumns(createRecordSource(model, factory), model.getColumns());
+            collectJournalMetadata(model, factory);
+            metadata = model.getMetadata();
+        } else {
+            JournalRecordSource<? extends Record> rs = compile(model, factory);
+            metadata = rs.getMetadata();
+            model.setRecordSource(rs);
+        }
+
+        allJoinMetadata.add(metadata);
+
+        if (model.getAlias() != null) {
+            namedJoinMetadata.put(model.getAlias(), metadata);
+        } else if (model.getJournalName() != null) {
+            namedJoinMetadata.put(model.getJournalName().token, metadata);
+        }
+    }
+
+    private void collectJournalMetadata(QueryModel model, JournalReaderFactory factory) throws ParserException, JournalException {
+        ExprNode readerNode = model.getJournalName();
+        if (readerNode.type != ExprNode.NodeType.LITERAL && readerNode.type != ExprNode.NodeType.CONSTANT) {
+            throw new ParserException(readerNode.position, "Journal name must be either literal or string constant");
+        }
+
+        JournalConfiguration configuration = factory.getConfiguration();
+
+        String reader = Chars.stripQuotes(readerNode.token);
+        if (configuration.exists(reader) == JournalConfiguration.JournalExistenceCheck.DOES_NOT_EXIST) {
+            throw new ParserException(readerNode.position, "Journal does not exist");
+        }
+
+        if (configuration.exists(reader) == JournalConfiguration.JournalExistenceCheck.EXISTS_FOREIGN) {
+            throw new ParserException(readerNode.position, "Journal directory is of unknown format");
+        }
+
+        model.setMetadata(factory.getOrCreateMetadata(new JournalKey<>(reader)));
+    }
+
+    private JournalRecordSource<? extends Record> compile0(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+        if (model.getJournalName() != null) {
+            return createRecordSource(model, factory);
         } else {
             JournalRecordSource<? extends Record> rs = compile(model.getNestedModel(), factory);
             if (model.getWhereClause() == null) {
-                return selectColumns(rs, model.getColumns());
+                return rs;
             }
 
             RecordMetadata m = rs.getMetadata();
@@ -71,7 +145,7 @@ public class Optimiser {
 
             switch (im.intrinsicValue) {
                 case FALSE:
-                    return selectColumns(new NoOpJournalRecordSource(rs), model.getColumns());
+                    return new NoOpJournalRecordSource(rs);
                 default:
                     if (im.intervalSource != null) {
                         rs = new IntervalJournalRecordSource(rs, im.intervalSource);
@@ -80,14 +154,14 @@ public class Optimiser {
                         VirtualColumn vc = createVirtualColumn(im.filter, m);
                         if (vc.isConstant()) {
                             if (vc.getBool(null)) {
-                                return selectColumns(rs, model.getColumns());
+                                return rs;
                             } else {
-                                return selectColumns(new NoOpJournalRecordSource(rs), model.getColumns());
+                                return new NoOpJournalRecordSource(rs);
                             }
                         }
-                        return selectColumns(new FilteredJournalRecordSource(rs, vc), model.getColumns());
+                        return new FilteredJournalRecordSource(rs, vc);
                     } else {
-                        return selectColumns(rs, model.getColumns());
+                        return rs;
                     }
             }
         }
@@ -131,30 +205,17 @@ public class Optimiser {
 
     @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT", "CC_CYCLOMATIC_COMPLEXITY"})
     private JournalRecordSource<? extends Record> createRecordSource(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+        JournalMetadata metadata = model.getMetadata();
 
-        ExprNode readerNode = model.getJournalName();
-        if (readerNode.type != ExprNode.NodeType.LITERAL && readerNode.type != ExprNode.NodeType.CONSTANT) {
-            throw new ParserException(readerNode.position, "Journal name must be either literal or string constant");
+        if (metadata == null) {
+            collectJournalMetadata(model, factory);
+            metadata = model.getMetadata();
         }
-
-        JournalConfiguration configuration = factory.getConfiguration();
-
-        String reader = Chars.stripQuotes(readerNode.token);
-        if (configuration.exists(reader) == JournalConfiguration.JournalExistenceCheck.DOES_NOT_EXIST) {
-            throw new ParserException(readerNode.position, "Journal does not exist");
-        }
-
-        if (configuration.exists(reader) == JournalConfiguration.JournalExistenceCheck.EXISTS_FOREIGN) {
-            throw new ParserException(readerNode.position, "Journal directory is of unknown format");
-        }
-
-        JournalMetadata metadata = factory.getOrCreateMetadata(new JournalKey<>(reader));
-
         PartitionSource ps = new JournalPartitionSource(metadata, true);
         RowSource rs = null;
 
         String latestByCol = null;
-        ColumnMetadata latestByMetadata = null;
+        RecordColumnMetadata latestByMetadata = null;
         ExprNode latestByNode = null;
 
         if (model.getLatestBy() != null) {
@@ -169,11 +230,12 @@ public class Optimiser {
 
             latestByMetadata = metadata.getColumn(latestByNode.token);
 
-            if (latestByMetadata.type != ColumnType.SYMBOL && latestByMetadata.type != ColumnType.STRING) {
-                throw new ParserException(latestByNode.position, "Expected symbol or string column, found: " + latestByMetadata.type);
+            ColumnType type = latestByMetadata.getType();
+            if (type != ColumnType.SYMBOL && type != ColumnType.STRING) {
+                throw new ParserException(latestByNode.position, "Expected symbol or string column, found: " + type);
             }
 
-            if (!latestByMetadata.indexed) {
+            if (!latestByMetadata.isIndexed()) {
                 throw new ParserException(latestByNode.position, "Column is not indexed");
             }
 
@@ -235,7 +297,7 @@ public class Optimiser {
                         rs = new FilteredRowSource(rs == null ? new AllRowSource() : rs, filter);
                     }
                 } else {
-                    switch (latestByMetadata.type) {
+                    switch (latestByMetadata.getType()) {
                         case SYMBOL:
                             if (im.keyColumn != null) {
                                 rs = new KvIndexSymListHeadRowSource(latestByCol, im.keyValues, filter);
@@ -254,7 +316,7 @@ public class Optimiser {
                 }
             }
         } else if (latestByCol != null) {
-            switch (latestByMetadata.type) {
+            switch (latestByMetadata.getType()) {
                 case SYMBOL:
                     rs = new KvIndexAllSymHeadRowSource(latestByCol, null);
                     break;
@@ -417,9 +479,9 @@ public class Optimiser {
 
                     String colName = qc.getName();
                     if (colName == null) {
-                        concatenator.clear(3);
-                        Numbers.append(concatenator, columnSequence++);
-                        colName = concatenator.toString();
+                        columnNameAssembly.clear(columnNamePrefixLen);
+                        Numbers.append(columnNameAssembly, columnSequence++);
+                        colName = columnNameAssembly.toString();
                     }
                     VirtualColumn c = createVirtualColumn(qc.getAst(), rs.getMetadata());
                     c.setName(colName);
@@ -437,7 +499,53 @@ public class Optimiser {
         return new SelectedColumnsJournalRecordSource(rs, selectedColumns);
     }
 
-    private class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
+    private void traversePreOrderRecursive(ExprNode node, ObjList<String> c) {
+        if (node == null) {
+            return;
+        }
+
+        ObjList<String> chain = null;
+
+        switch (node.type) {
+            case LITERAL:
+                if (c == null) {
+                    // todo: borrow from pool
+                    chain = c = new ObjList<>();
+                }
+                c.add(node.token);
+                break;
+            case FUNCTION:
+            case OPERATION:
+                switch (node.token) {
+                    case "and":
+                    case "or":
+                        break;
+                    default:
+                        if (c == null) {
+                            chain = c = new ObjList<>();
+                        }
+                        break;
+                }
+                break;
+            default:
+                break;
+        }
+
+        if (node.paramCount < 3) {
+            traversePreOrderRecursive(node.lhs, c);
+            traversePreOrderRecursive(node.rhs, c);
+        } else {
+            for (int i = 0; i < node.paramCount; i++) {
+                traversePreOrderRecursive(node.args.getQuick(i), c);
+            }
+        }
+
+        if (chain != null) {
+            dependencyChains.addFirst(chain);
+        }
+    }
+
+    private class VirtualColumnBuilder implements Visitor {
         private RecordMetadata metadata;
 
         @Override

@@ -18,16 +18,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  ******************************************************************************/
-package com.nfsdb.ql.model;
 
-public class JoinModel extends QueryModel {
-    private ExprNode joinCriteria;
+package com.nfsdb.ql.parser;
 
-    public ExprNode getJoinCriteria() {
-        return joinCriteria;
-    }
+import com.nfsdb.ql.model.ExprNode;
 
-    public void setJoinCriteria(ExprNode joinCriteria) {
-        this.joinCriteria = joinCriteria;
-    }
+public interface Visitor {
+    void visit(ExprNode node) throws ParserException;
 }

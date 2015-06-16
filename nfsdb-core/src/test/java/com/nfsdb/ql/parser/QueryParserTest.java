@@ -1,22 +1,22 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 package com.nfsdb.ql.parser;
 
@@ -149,7 +149,7 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertEquals("xx2", statement.getQueryModel().getJoinModels().getQuick(0).getAlias());
         Assert.assertNull(statement.getQueryModel().getJoinModels().getQuick(1).getAlias());
         Assert.assertEquals("x4", statement.getQueryModel().getJoinModels().getQuick(2).getAlias());
-        Assert.assertNotNull(statement.getQueryModel().getJoinModels().getQuick(2).getNestedQuery());
+        Assert.assertNotNull(statement.getQueryModel().getJoinModels().getQuick(2).getNestedModel());
 
         Assert.assertEquals("tab2", TestUtils.toRpn(statement.getQueryModel().getJoinModels().getQuick(0).getJournalName()));
         Assert.assertEquals("tab3", TestUtils.toRpn(statement.getQueryModel().getJoinModels().getQuick(1).getJournalName()));
@@ -159,8 +159,8 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertEquals("xx2.xtab3.b>", TestUtils.toRpn(statement.getQueryModel().getJoinModels().getQuick(1).getJoinCriteria()));
         Assert.assertEquals("x4.xt1.y=", TestUtils.toRpn(statement.getQueryModel().getJoinModels().getQuick(2).getJoinCriteria()));
 
-        Assert.assertEquals("ab>", TestUtils.toRpn(statement.getQueryModel().getJoinModels().getQuick(2).getNestedQuery().getWhereClause()));
-        Assert.assertEquals("z", TestUtils.toRpn(statement.getQueryModel().getJoinModels().getQuick(2).getNestedQuery().getLatestBy()));
+        Assert.assertEquals("ab>", TestUtils.toRpn(statement.getQueryModel().getJoinModels().getQuick(2).getNestedModel().getWhereClause()));
+        Assert.assertEquals("z", TestUtils.toRpn(statement.getQueryModel().getJoinModels().getQuick(2).getNestedModel().getLatestBy()));
     }
 
     @Test

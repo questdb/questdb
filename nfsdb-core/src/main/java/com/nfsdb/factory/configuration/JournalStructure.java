@@ -1,22 +1,22 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 package com.nfsdb.factory.configuration;
 
@@ -83,6 +83,10 @@ public class JournalStructure implements MetadataBuilder<Object> {
             metadata.add(to.copy(model.getColumn(i)));
             nameToIndexMap.put(to.name, i);
         }
+    }
+
+    public JournalStructure $() {
+        return this;
     }
 
     public GenericBinaryBuilder $bin(String name) {
@@ -198,16 +202,6 @@ public class JournalStructure implements MetadataBuilder<Object> {
         return location;
     }
 
-    public JournalStructure key(String key) {
-        this.key = key;
-        return this;
-    }
-
-    public JournalStructure lag(long time, TimeUnit unit) {
-        this.lag = (int) unit.toHours(time);
-        return this;
-    }
-
     @Override
     public JournalStructure location(String location) {
         this.location = location;
@@ -217,6 +211,30 @@ public class JournalStructure implements MetadataBuilder<Object> {
     @Override
     public JournalStructure location(File path) {
         this.location = path.getAbsolutePath();
+        return this;
+    }
+
+    public JournalStructure partitionBy(PartitionType type) {
+        if (type != PartitionType.DEFAULT) {
+            this.partitionBy = type;
+        }
+        return this;
+    }
+
+    public JournalStructure recordCountHint(int count) {
+        if (count > 0) {
+            this.recordCountHint = count;
+        }
+        return this;
+    }
+
+    public JournalStructure key(String key) {
+        this.key = key;
+        return this;
+    }
+
+    public JournalStructure lag(long time, TimeUnit unit) {
+        this.lag = (int) unit.toHours(time);
         return this;
     }
 
@@ -260,20 +278,6 @@ public class JournalStructure implements MetadataBuilder<Object> {
 
     public JournalStructure openFileTTL(long time, TimeUnit unit) {
         this.openFileTTL = unit.toMillis(time);
-        return this;
-    }
-
-    public JournalStructure partitionBy(PartitionType type) {
-        if (type != PartitionType.DEFAULT) {
-            this.partitionBy = type;
-        }
-        return this;
-    }
-
-    public JournalStructure recordCountHint(int count) {
-        if (count > 0) {
-            this.recordCountHint = count;
-        }
         return this;
     }
 

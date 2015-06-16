@@ -1,26 +1,29 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 package com.nfsdb.ql.model;
 
 import com.nfsdb.collections.ObjList;
+import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.ql.JournalRecordSource;
+import com.nfsdb.ql.Record;
 
 public class QueryModel {
     private final ObjList<QueryColumn> columns = new ObjList<>();
@@ -32,6 +35,8 @@ public class QueryModel {
     private ExprNode journalName;
     private String alias;
     private ExprNode latestBy;
+    private JournalRecordSource<? extends Record> recordSource;
+    private JournalMetadata metadata;
 
     public void addColumn(QueryColumn column) {
         columns.add(column);
@@ -85,6 +90,14 @@ public class QueryModel {
         this.latestBy = latestBy;
     }
 
+    public JournalMetadata getMetadata() {
+        return metadata;
+    }
+
+    public void setMetadata(JournalMetadata metadata) {
+        this.metadata = metadata;
+    }
+
     public QueryModel getNestedModel() {
         return nestedModel;
     }
@@ -95,6 +108,14 @@ public class QueryModel {
 
     public ObjList<ExprNode> getOrderBy() {
         return orderBy;
+    }
+
+    public JournalRecordSource<? extends Record> getRecordSource() {
+        return recordSource;
+    }
+
+    public void setRecordSource(JournalRecordSource<? extends Record> recordSource) {
+        this.recordSource = recordSource;
     }
 
     public ExprNode getWhereClause() {
