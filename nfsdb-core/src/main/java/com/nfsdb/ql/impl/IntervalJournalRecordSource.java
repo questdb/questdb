@@ -25,6 +25,7 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.ql.*;
 import com.nfsdb.utils.Interval;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class IntervalJournalRecordSource extends AbstractImmutableIterator<Record> implements JournalRecordSource<Record>, RandomAccessRecordCursor<Record> {
 
@@ -40,7 +41,8 @@ public class IntervalJournalRecordSource extends AbstractImmutableIterator<Recor
     public IntervalJournalRecordSource(JournalRecordSource<? extends Record> delegate, IntervalSource intervalSource) {
         this.delegate = delegate;
         this.intervalSource = intervalSource;
-        this.timestampIndex = delegate.getMetadata().getColumnIndex(delegate.getMetadata().getTimestampMetadata().getName());
+        final RecordMetadata metadata = delegate.getMetadata();
+        this.timestampIndex = metadata.getColumnIndex(metadata.getTimestampMetadata().getName());
     }
 
     @Override
@@ -100,6 +102,7 @@ public class IntervalJournalRecordSource extends AbstractImmutableIterator<Recor
         }
     }
 
+    @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
     @Override
     public Record next() {
         return record;

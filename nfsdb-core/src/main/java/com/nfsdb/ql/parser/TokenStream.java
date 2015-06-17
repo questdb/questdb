@@ -1,22 +1,22 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
- * | \| | __/ __| __| | |__
- * | .` | _|\__ \/ _` | '_ \
- * |_|\_|_| |___/\__,_|_.__/
+ *   _  _ ___ ___     _ _
+ *  | \| | __/ __| __| | |__
+ *  | .` | _|\__ \/ _` | '_ \
+ *  |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  ******************************************************************************/
 
 package com.nfsdb.ql.parser;
@@ -197,6 +197,7 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
         }
     }
 
+    @SuppressFBWarnings({"SE_COMPARATOR_SHOULD_BE_SERIALIZABLE"})
     private static class LenComparator implements Comparator<CharSequence> {
         @Override
         public int compare(CharSequence o1, CharSequence o2) {
@@ -205,6 +206,16 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
     }
 
     public class FloatingSequence implements CharSequence {
+        @Override
+        public char charAt(int index) {
+            return content.charAt(_lo + index);
+        }
+
+        @Override
+        public boolean equals(Object that) {
+            return that instanceof CharSequence && Chars.equals(this, (CharSequence) that);
+        }
+
         @Override
         public int hashCode() {
             if (_lo == _hi) {
@@ -219,8 +230,13 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
         }
 
         @Override
-        public boolean equals(Object that) {
-            return that instanceof CharSequence && Chars.equals(this, (CharSequence) that);
+        public int length() {
+            return _hi - _lo;
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            throw new UnsupportedOperationException();
         }
 
         @SuppressFBWarnings({"RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE"})
@@ -233,21 +249,6 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
                 data[i] = this.charAt(i);
             }
             return new String(data);
-        }
-
-        @Override
-        public int length() {
-            return _hi - _lo;
-        }
-
-        @Override
-        public char charAt(int index) {
-            return content.charAt(_lo + index);
-        }
-
-        @Override
-        public CharSequence subSequence(int start, int end) {
-            throw new UnsupportedOperationException();
         }
     }
 }

@@ -24,6 +24,7 @@ import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.ql.*;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class NoOpJournalRecordSource extends AbstractImmutableIterator<Record> implements JournalRecordSource<Record>, RandomAccessRecordCursor<Record> {
 
@@ -54,6 +55,7 @@ public class NoOpJournalRecordSource extends AbstractImmutableIterator<Record> i
         return false;
     }
 
+    @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
     @Override
     public Record next() {
         return null;

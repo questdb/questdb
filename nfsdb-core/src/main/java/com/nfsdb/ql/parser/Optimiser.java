@@ -1,22 +1,22 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
- * | \| | __/ __| __| | |__
- * | .` | _|\__ \/ _` | '_ \
- * |_|\_|_| |___/\__,_|_.__/
+ *   _  _ ___ ___     _ _
+ *  | \| | __/ __| __| | |__
+ *  | .` | _|\__ \/ _` | '_ \
+ *  |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  ******************************************************************************/
 package com.nfsdb.ql.parser;
 
@@ -46,6 +46,9 @@ import java.util.ArrayDeque;
 public class Optimiser {
 
     private final static NullConstant nullConstant = new NullConstant();
+    private final static TopologicalNodeFactory topologicalNodeFactory = new TopologicalNodeFactory();
+    private final static IntListFactory intListFactory = new IntListFactory();
+
     private final ArrayDeque<VirtualColumn> stack = new ArrayDeque<>();
     private final IntrinsicExtractor intrinsicExtractor = new IntrinsicExtractor();
     private final VirtualColumnBuilder virtualColumnBuilderVisitor = new VirtualColumnBuilder();
@@ -61,7 +64,9 @@ public class Optimiser {
     private final FlyweightCharSequence aliasExtractor = new FlyweightCharSequence();
     private final ObjList<TopologicalNode> unorderedTopologicalNodes = new ObjList<>();
     private final ObjList<TopologicalNode> orderedTopologicalNodes = new ObjList<>();
-    private final ArrayDeque<TopologicalNode> topolocalStack = new ArrayDeque<>();
+    private final ArrayDeque<TopologicalNode> topologicalStack = new ArrayDeque<>();
+    private final ObjectPool<TopologicalNode> topologicalNodePool = new ObjectPool<>(topologicalNodeFactory, 16);
+    private final ObjectPool<IntList> intListPool = new ObjectPool<>(intListFactory, 16);
 
     public Optimiser() {
         // seed column name assembly with default column prefix, which we will reuse
@@ -88,6 +93,9 @@ public class Optimiser {
         }
 
         // create dependency chains
+        // chains consist of IntLists, so reset the pool to prepare for borrowing.
+
+        intListPool.reset();
         traversePreOrderRecursive(model.getWhereClause(), null);
         for (int i = 0, n = joinModels.size(); i < n; i++) {
             traversePreOrderRecursive(joinModels.getQuick(i).getJoinCriteria(), null);
@@ -150,6 +158,8 @@ public class Optimiser {
     }
 
     private void collectTopologicalNodes(IntList indices) {
+
+        topologicalNodePool.reset();
 
         int n = indices.size();
         if (n == 0) {
@@ -407,11 +417,11 @@ public class Optimiser {
         if (index < n) {
             node = unorderedTopologicalNodes.getQuick(index);
             if (node == null) {
-                unorderedTopologicalNodes.setQuick(index, node = new TopologicalNode());
+                unorderedTopologicalNodes.setQuick(index, node = topologicalNodePool.next());
                 node.index = index;
             }
         } else {
-            unorderedTopologicalNodes.extendAndSet(index, node = new TopologicalNode());
+            unorderedTopologicalNodes.extendAndSet(index, node = topologicalNodePool.next());
             node.index = index;
         }
         return node;
@@ -592,10 +602,10 @@ public class Optimiser {
 
     private void sortTopologicalNodes() throws ParserException {
         orderedTopologicalNodes.clear();
-        topolocalStack.clear();
+        topologicalStack.clear();
 
         //stack <- Set of all nodes with no incoming edges
-        ArrayDeque<TopologicalNode> stack = topolocalStack;
+        ArrayDeque<TopologicalNode> stack = topologicalStack;
 
         for (int i = 0, n = unorderedTopologicalNodes.size(); i < n; i++) {
             TopologicalNode node = unorderedTopologicalNodes.getQuick(i);
@@ -639,8 +649,7 @@ public class Optimiser {
         switch (node.type) {
             case LITERAL:
                 if (c == null) {
-                    // todo: borrow from pool
-                    chain = c = new IntList();
+                    chain = c = intListPool.next();
                 }
                 c.add(lookupJournalIndex(node));
                 break;
@@ -652,7 +661,7 @@ public class Optimiser {
                         break;
                     default:
                         if (c == null) {
-                            chain = c = new IntList();
+                            chain = c = intListPool.next();
                         }
                         break;
                 }
@@ -675,19 +684,44 @@ public class Optimiser {
         }
     }
 
-    private static final class TopologicalNode {
-        int index;
-        int in = 0;
-        ObjHashSet<TopologicalNode> out = new ObjHashSet<>();
+    private static final class TopologicalNodeFactory implements ObjectPoolFactory<TopologicalNode> {
+        @Override
+        public void clear(TopologicalNode o) {
+            o.in = 0;
+            o.out.clear();
+        }
 
         @Override
-        public int hashCode() {
-            return index;
+        public TopologicalNode newInstance() {
+            return new TopologicalNode();
         }
+    }
+
+    private static final class IntListFactory implements ObjectPoolFactory<IntList> {
+        @Override
+        public void clear(IntList o) {
+            o.clear();
+        }
+
+        @Override
+        public IntList newInstance() {
+            return new IntList();
+        }
+    }
+
+    private static final class TopologicalNode {
+        final ObjHashSet<TopologicalNode> out = new ObjHashSet<>();
+        int index;
+        int in = 0;
 
         @Override
         public boolean equals(Object o) {
             return this == o || o instanceof TopologicalNode && ((TopologicalNode) o).in == this.index;
+        }
+
+        @Override
+        public int hashCode() {
+            return index;
         }
 
         @Override
@@ -704,5 +738,4 @@ public class Optimiser {
             createColumn(node, metadata);
         }
     }
-
 }

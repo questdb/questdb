@@ -78,12 +78,11 @@ public class IntObjHashMap<V> {
         return probe(key, index);
     }
 
-    public V put(int key, V value) {
-        V old = insertKey(key, value);
+    public void put(int key, V value) {
+        insertKey(key, value);
         if (free == 0) {
             rehash();
         }
-        return old;
     }
 
     public int size() {
@@ -95,22 +94,21 @@ public class IntObjHashMap<V> {
         return valuesIterator;
     }
 
-    private V insertKey(int key, V value) {
+    private void insertKey(int key, V value) {
         int index = key & mask;
         if (Unsafe.arrayGet(values, index) == noEntryValue) {
             Unsafe.arrayPut(keys, index, key);
             Unsafe.arrayPut(values, index, value);
             free--;
-            return null;
+            return;
         }
 
         if (Unsafe.arrayGet(keys, index) == key) {
-            V r = Unsafe.arrayGet(values, index);
             Unsafe.arrayPut(values, index, value);
-            return r;
+            return;
         }
 
-        return probeInsert(key, index, value);
+        probeInsert(key, index, value);
     }
 
     private V probe(int key, int index) {
@@ -125,20 +123,19 @@ public class IntObjHashMap<V> {
         } while (true);
     }
 
-    private V probeInsert(int key, int index, V value) {
+    private void probeInsert(int key, int index, V value) {
         do {
             index = (index + 1) & mask;
             if (Unsafe.arrayGet(values, index) == noEntryValue) {
                 Unsafe.arrayPut(keys, index, key);
                 Unsafe.arrayPut(values, index, value);
                 free--;
-                return null;
+                return;
             }
 
             if (key == Unsafe.arrayGet(keys, index)) {
-                V r = Unsafe.arrayGet(values, index);
                 Unsafe.arrayPut(values, index, value);
-                return r;
+                return;
             }
         } while (true);
     }

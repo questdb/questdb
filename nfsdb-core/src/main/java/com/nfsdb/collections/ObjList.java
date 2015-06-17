@@ -186,17 +186,15 @@ public class ObjList<T> {
     /**
      * {@inheritDoc}
      */
-    public T remove(int index) {
+    public void remove(int index) {
         if (pos < 1 || index >= pos) {
-            return null;
+            return;
         }
-        T v = Unsafe.arrayGet(buffer, index);
         int move = pos - index - 1;
         if (move > 0) {
             System.arraycopy(buffer, index + 1, buffer, index, move);
         }
         Unsafe.arrayPut(buffer, --pos, null);
-        return v;
     }
 
     /**

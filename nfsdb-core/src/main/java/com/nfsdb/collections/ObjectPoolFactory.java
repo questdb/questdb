@@ -18,37 +18,11 @@
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  ******************************************************************************/
-package com.nfsdb.ql.model;
 
-import com.nfsdb.collections.ObjectPoolFactory;
+package com.nfsdb.collections;
 
-public class JoinModel extends QueryModel {
-    public static final JoinModelFactory FACTORY = new JoinModelFactory();
-    private ExprNode joinCriteria;
+public interface ObjectPoolFactory<T> {
+    void clear(T o);
 
-    public ExprNode getJoinCriteria() {
-        return joinCriteria;
-    }
-
-    public void setJoinCriteria(ExprNode joinCriteria) {
-        this.joinCriteria = joinCriteria;
-    }
-
-    @Override
-    protected void clear() {
-        super.clear();
-        joinCriteria = null;
-    }
-
-    public static final class JoinModelFactory implements ObjectPoolFactory<JoinModel> {
-        @Override
-        public void clear(JoinModel o) {
-            o.clear();
-        }
-
-        @Override
-        public JoinModel newInstance() {
-            return new JoinModel();
-        }
-    }
+    T newInstance();
 }

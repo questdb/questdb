@@ -87,11 +87,7 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>> 
         return iterator;
     }
 
-    public V put(K key, V value) {
-        return insertKey(key, value);
-    }
-
-    public boolean putIfAbsent(K key, V value) {
+    public void put(K key, V value) {
         int index = key.hashCode() & mask;
         if (Unsafe.arrayGet(keys, index) == noEntryValue) {
             Unsafe.arrayPut(keys, index, key);
@@ -100,35 +96,19 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>> 
             if (free == 0) {
                 rehash();
             }
-            return true;
+            return;
         }
 
-        return Unsafe.arrayGet(keys, index) != key && !key.equals(Unsafe.arrayGet(keys, index)) && probeInsertIfAbsent(key, index, value);
+        if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
+            Unsafe.arrayPut(values, index, value);
+            return;
+        }
+
+        probeInsert(key, index, value);
     }
 
     public int size() {
         return capacity - free;
-    }
-
-    private V insertKey(K key, V value) {
-        int index = key.hashCode() & mask;
-        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-            Unsafe.arrayPut(keys, index, key);
-            Unsafe.arrayPut(values, index, value);
-            free--;
-            if (free == 0) {
-                rehash();
-            }
-            return null;
-        }
-
-        if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
-            V old = Unsafe.arrayGet(values, index);
-            Unsafe.arrayPut(values, index, value);
-            return old;
-        }
-
-        return probeInsert(key, index, value);
     }
 
     private V probe(K key, int index) {
@@ -143,7 +123,7 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>> 
         } while (true);
     }
 
-    private V probeInsert(K key, int index, V value) {
+    private void probeInsert(K key, int index, V value) {
         do {
             index = (index + 1) & mask;
             if (Unsafe.arrayGet(keys, index) == noEntryValue) {
@@ -153,32 +133,12 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>> 
                 if (free == 0) {
                     rehash();
                 }
-                return null;
+                return;
             }
 
             if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
-                V old = Unsafe.arrayGet(values, index);
                 Unsafe.arrayPut(values, index, value);
-                return old;
-            }
-        } while (true);
-    }
-
-    private boolean probeInsertIfAbsent(K key, int index, V value) {
-        do {
-            index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-                Unsafe.arrayPut(keys, index, key);
-                Unsafe.arrayPut(values, index, value);
-                free--;
-                if (free == 0) {
-                    rehash();
-                }
-                return true;
-            }
-
-            if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
-                return false;
+                return;
             }
         } while (true);
     }
@@ -197,7 +157,7 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>> 
 
         for (int i = oldKeys.length; i-- > 0; ) {
             if (Unsafe.arrayGet(oldKeys, i) != noEntryValue) {
-                insertKey(Unsafe.arrayGet(oldKeys, i), Unsafe.arrayGet(oldValues, i));
+                put(Unsafe.arrayGet(oldKeys, i), Unsafe.arrayGet(oldValues, i));
             }
         }
     }

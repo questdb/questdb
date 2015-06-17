@@ -1,22 +1,22 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
- * | \| | __/ __| __| | |__
- * | .` | _|\__ \/ _` | '_ \
- * |_|\_|_| |___/\__,_|_.__/
+ *   _  _ ___ ___     _ _
+ *  | \| | __/ __| __| | |__
+ *  | .` | _|\__ \/ _` | '_ \
+ *  |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  ******************************************************************************/
 package com.nfsdb.collections;
 
@@ -75,7 +75,7 @@ public class CharSequenceObjHashMap<V> {
         return probe(key, index);
     }
 
-    public V put(CharSequence key, V value) {
+    public void put(CharSequence key, V value) {
         int index = key.hashCode() & mask;
         if (Unsafe.arrayGet(keys, index) == noEntryValue) {
             Unsafe.arrayPut(keys, index, key);
@@ -84,16 +84,15 @@ public class CharSequenceObjHashMap<V> {
             if (free == 0) {
                 rehash();
             }
-            return null;
+            return;
         }
 
         if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-            V old = Unsafe.arrayGet(values, index);
             Unsafe.arrayPut(values, index, value);
-            return old;
+            return;
         }
 
-        return probeInsert(key, index, value);
+        probeInsert(key, index, value);
     }
 
     public int size() {
@@ -112,7 +111,7 @@ public class CharSequenceObjHashMap<V> {
         } while (true);
     }
 
-    private V probeInsert(CharSequence key, int index, V value) {
+    private void probeInsert(CharSequence key, int index, V value) {
         do {
             index = (index + 1) & mask;
             if (Unsafe.arrayGet(keys, index) == noEntryValue) {
@@ -122,13 +121,12 @@ public class CharSequenceObjHashMap<V> {
                 if (free == 0) {
                     rehash();
                 }
-                return null;
+                return;
             }
 
             if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-                V old = Unsafe.arrayGet(values, index);
                 Unsafe.arrayPut(values, index, value);
-                return old;
+                return;
             }
         } while (true);
     }
@@ -154,12 +152,12 @@ public class CharSequenceObjHashMap<V> {
 
     private static class NullCharSequence implements CharSequence {
         @Override
-        public int length() {
+        public char charAt(int index) {
             return 0;
         }
 
         @Override
-        public char charAt(int index) {
+        public int length() {
             return 0;
         }
 

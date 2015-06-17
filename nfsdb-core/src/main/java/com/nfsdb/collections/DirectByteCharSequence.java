@@ -71,10 +71,9 @@ public class DirectByteCharSequence implements CharSequence {
         return h;
     }
 
-    public DirectByteCharSequence init(long lo, long hi) {
+    public void init(long lo, long hi) {
         this.lo = lo;
         this.hi = hi;
-        return this;
     }
 
     @Override

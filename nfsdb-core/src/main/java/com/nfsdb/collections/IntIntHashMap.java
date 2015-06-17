@@ -71,12 +71,11 @@ public class IntIntHashMap {
         return probe(key, index);
     }
 
-    public int put(int key, int value) {
-        int old = insertKey(key, value);
+    public void put(int key, int value) {
+        insertKey(key, value);
         if (free == 0) {
             rehash();
         }
-        return old;
     }
 
     @SuppressWarnings({"unchecked"})
@@ -100,22 +99,21 @@ public class IntIntHashMap {
         }
     }
 
-    private int insertKey(int key, int value) {
+    private void insertKey(int key, int value) {
         int index = key & mask;
         if (Unsafe.arrayGet(values, index) == noEntryValue) {
             Unsafe.arrayPut(keys, index, key);
             Unsafe.arrayPut(values, index, value);
             free--;
-            return noEntryValue;
+            return;
         }
 
         if (Unsafe.arrayGet(keys, index) == key) {
-            int r = Unsafe.arrayGet(values, index);
             Unsafe.arrayPut(values, index, value);
-            return r;
+            return;
         }
 
-        return probeInsert(key, index, value);
+        probeInsert(key, index, value);
     }
 
     private int probe(int key, int index) {
@@ -127,20 +125,19 @@ public class IntIntHashMap {
         } while (true);
     }
 
-    private int probeInsert(int key, int index, int value) {
+    private void probeInsert(int key, int index, int value) {
         do {
             index = (index + 1) & mask;
             if (Unsafe.arrayGet(values, index) == noEntryValue) {
                 Unsafe.arrayPut(keys, index, key);
                 Unsafe.arrayPut(values, index, value);
                 free--;
-                return noEntryValue;
+                return;
             }
 
             if (key == Unsafe.arrayGet(keys, index)) {
-                int r = Unsafe.arrayGet(values, index);
                 Unsafe.arrayPut(values, index, value);
-                return r;
+                return;
             }
         } while (true);
     }

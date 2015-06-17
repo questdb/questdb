@@ -195,19 +195,6 @@ public class LongList {
         return false;
     }
 
-    public long removeIndex(int index) {
-        if (pos < 1 || index >= pos) {
-            return noEntryValue;
-        }
-        long v = Unsafe.arrayGet(buffer, index);
-        int move = pos - index - 1;
-        if (move > 0) {
-            System.arraycopy(buffer, index + 1, buffer, index, move);
-        }
-        Unsafe.arrayPut(buffer, --pos, noEntryValue);
-        return v;
-    }
-
     public long set(int index, long element) {
         if (index < pos) {
             long v = Unsafe.arrayGet(buffer, index);
@@ -366,6 +353,17 @@ public class LongList {
 
     public void zero(int value) {
         Arrays.fill(buffer, 0, pos, value);
+    }
+
+    private void removeIndex(int index) {
+        if (pos < 1 || index >= pos) {
+            return;
+        }
+        int move = pos - index - 1;
+        if (move > 0) {
+            System.arraycopy(buffer, index + 1, buffer, index, move);
+        }
+        Unsafe.arrayPut(buffer, --pos, noEntryValue);
     }
 
     @SuppressWarnings("unchecked")

@@ -46,7 +46,6 @@ public class SearchByKeysTest {
     );
 
     private long timestamp;
-    private long inc;
 
     @Before
     public void setUp() {
@@ -54,8 +53,6 @@ public class SearchByKeysTest {
         // total 1500 rows to append
         // over 3 days
         // millis
-        long period = 3 * 24 * 60 * 60 * 1000L;
-        inc = period / 1500;
     }
 
 /*

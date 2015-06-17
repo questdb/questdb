@@ -1,22 +1,22 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
- * | \| | __/ __| __| | |__
- * | .` | _|\__ \/ _` | '_ \
- * |_|\_|_| |___/\__,_|_.__/
+ *   _  _ ___ ___     _ _
+ *  | \| | __/ __| __| | |__
+ *  | .` | _|\__ \/ _` | '_ \
+ *  |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  ******************************************************************************/
 package com.nfsdb.collections;
 
@@ -95,6 +95,14 @@ public class IntList {
         pos = capacity;
     }
 
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public boolean equals(Object that) {
+        return this == that || that instanceof IntList && equals((IntList) that);
+    }
+
     public void extendAndSet(int index, int value) {
         ensureCapacity0(index + 1);
         if (index >= pos) {
@@ -108,12 +116,6 @@ public class IntList {
             return Unsafe.arrayGet(buffer, index);
         }
         throw new ArrayIndexOutOfBoundsException(index);
-    }
-
-    public int getAndSetQuick(int index, int value) {
-        int v = Unsafe.arrayGet(buffer, index);
-        Unsafe.arrayPut(buffer, index, value);
-        return v;
     }
 
     /**
@@ -169,35 +171,6 @@ public class IntList {
         return hashCode;
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public boolean equals(Object that) {
-        return this == that || that instanceof IntList && equals((IntList) that);
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public String toString() {
-        if (toStringBuilder == null) {
-            toStringBuilder = new StringBuilder();
-        }
-
-        toStringBuilder.setLength(0);
-        toStringBuilder.append('[');
-        for (int i = 0, k = size(); i < k; i++) {
-            if (i > 0) {
-                toStringBuilder.append(',');
-            }
-            toStringBuilder.append(get(i));
-        }
-        toStringBuilder.append(']');
-        return toStringBuilder.toString();
-    }
-
     public int indexOf(int o) {
         for (int i = 0, n = pos; i < n; i++) {
             if (o == getQuick(i)) {
@@ -216,24 +189,21 @@ public class IntList {
         return false;
     }
 
-    public int removeIndex(int index) {
+    public void removeIndex(int index) {
         if (pos < 1 || index >= pos) {
-            return noEntryValue;
+            return;
         }
-        int v = Unsafe.arrayGet(buffer, index);
         int move = pos - index - 1;
         if (move > 0) {
             System.arraycopy(buffer, index + 1, buffer, index, move);
         }
         Unsafe.arrayPut(buffer, --pos, noEntryValue);
-        return v;
     }
 
-    public int set(int index, int element) {
+    public void set(int index, int element) {
         if (index < pos) {
-            int v = Unsafe.arrayGet(buffer, index);
             Unsafe.arrayPut(buffer, index, element);
-            return v;
+            return;
         }
         throw new ArrayIndexOutOfBoundsException(index);
     }
@@ -355,6 +325,27 @@ public class IntList {
             a = b;
             b = t;
         }
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public String toString() {
+        if (toStringBuilder == null) {
+            toStringBuilder = new StringBuilder();
+        }
+
+        toStringBuilder.setLength(0);
+        toStringBuilder.append('[');
+        for (int i = 0, k = size(); i < k; i++) {
+            if (i > 0) {
+                toStringBuilder.append(',');
+            }
+            toStringBuilder.append(get(i));
+        }
+        toStringBuilder.append(']');
+        return toStringBuilder.toString();
     }
 
     public void zero(int value) {
