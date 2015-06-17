@@ -1,22 +1,22 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 package com.nfsdb.query.spi;
 
@@ -90,7 +90,7 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
 
                         boolean filterOk = true;
                         for (int i = 0; i < filterSymbols.size(); i++) {
-                            filterKVIndexes[i] = partition.getIndexForColumn(filterSymbols.get(i));
+                            filterKVIndexes[i] = partition.getIndexForColumn(filterSymbols.getQuick(i));
                             int filterKey = filterSymbolKeys.getQuick(i);
                             if (filterKVIndexes[i].contains(filterKey)) {
                                 filterSymbolRows[i].setCapacity(filterKVIndexes[i].getValueCount(filterKey));
@@ -188,6 +188,12 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
         filterSymbolKeys.clear();
     }
 
+    @Override
+    public QueryHeadBuilder<T> strict(boolean strict) {
+        this.strict = strict;
+        return this;
+    }
+
     public void setSymbol(String symbol, String... values) {
         this.symbolColumnIndex = journal.getMetadata().getColumnIndex(symbol);
         SymbolTable symbolTable = journal.getSymbolTable(symbol);
@@ -205,11 +211,5 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
                 }
             }
         }
-    }
-
-    @Override
-    public QueryHeadBuilder<T> strict(boolean strict) {
-        this.strict = strict;
-        return this;
     }
 }

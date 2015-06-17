@@ -18,6 +18,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  ******************************************************************************/
+
 package com.nfsdb.ql.parser;
 
 import com.nfsdb.collections.IntStack;
@@ -57,7 +58,7 @@ public class PostOrderTreeTraversalAlgo {
                 } else {
                     int index = indexStack.peek();
                     if (index < peek.paramCount) {
-                        node = peek.args.get(index);
+                        node = peek.args.getQuick(index);
                         indexStack.update(index + 1);
                     } else {
                         visitor.visit(peek);

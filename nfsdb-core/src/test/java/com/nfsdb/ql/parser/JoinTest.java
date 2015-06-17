@@ -1,22 +1,22 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 
 package com.nfsdb.ql.parser;
@@ -47,6 +47,75 @@ public class JoinTest {
     @BeforeClass
     public static void setUp() throws Exception {
         generateJoinData();
+    }
+
+    @Test
+    public void testAmbiguousColumn() throws Exception {
+        try {
+            parser.setContent("orders join customers on customerId = customerId");
+            Statement statement = parser.parse();
+            optimiser.compileJoins(statement.getQueryModel(), factory);
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(25, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("Ambiguous"));
+        }
+    }
+
+    @Test
+    public void testInvalidAlias() throws Exception {
+        try {
+            parser.setContent("orders join customers on orders.customerId = c.customerId");
+            Statement statement = parser.parse();
+            optimiser.compileJoins(statement.getQueryModel(), factory);
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(45, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("alias"));
+        }
+    }
+
+    @Test
+    public void testInvalidColumn() throws Exception {
+        try {
+            parser.setContent("orders join customers on customerIdx = customerId");
+            Statement statement = parser.parse();
+            optimiser.compileJoins(statement.getQueryModel(), factory);
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(25, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("Invalid column"));
+        }
+    }
+
+    @Test
+    public void testInvalidTableName() throws Exception {
+        try {
+            parser.setContent("orders join customer on customerId = customerId");
+            Statement statement = parser.parse();
+            optimiser.compileJoins(statement.getQueryModel(), factory);
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(12, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("Journal does not exist"));
+        }
+    }
+
+    @Test
+    public void testJoinCycle() throws Exception {
+        try {
+            parser.setContent("orders" +
+                    " join customers on orders.customerId = customers.customerId" +
+                    " join orderDetails d on d.orderId = orders.orderId and orders.orderId = products.productId" +
+                    " join products on d.productId = products.productId and orders.orderId = products.productId" +
+                    " join suppliers on products.supplier = suppliers.supplier" +
+                    " where orders.orderId = suppliers.supplier > 0");
+            Statement statement = parser.parse();
+            optimiser.compileJoins(statement.getQueryModel(), factory);
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertTrue(e.getMessage().contains("cycle"));
+        }
     }
 
     private static void generateJoinData() throws JournalException {
@@ -246,74 +315,5 @@ public class JoinTest {
         }
         orders.commit();
         orderDetails.commit();
-    }
-
-    @Test
-    public void testAmbiguousColumn() throws Exception {
-        try {
-            parser.setContent("orders join customers on customerId = customerId");
-            Statement statement = parser.parse();
-            optimiser.compileJoins(statement.getQueryModel(), factory);
-            Assert.fail("Exception expected");
-        } catch (ParserException e) {
-            Assert.assertEquals(25, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("Ambiguous"));
-        }
-    }
-
-    @Test
-    public void testInvalidAlias() throws Exception {
-        try {
-            parser.setContent("orders join customers on orders.customerId = c.customerId");
-            Statement statement = parser.parse();
-            optimiser.compileJoins(statement.getQueryModel(), factory);
-            Assert.fail("Exception expected");
-        } catch (ParserException e) {
-            Assert.assertEquals(45, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("alias"));
-        }
-    }
-
-    @Test
-    public void testInvalidColumn() throws Exception {
-        try {
-            parser.setContent("orders join customers on customerIdx = customerId");
-            Statement statement = parser.parse();
-            optimiser.compileJoins(statement.getQueryModel(), factory);
-            Assert.fail("Exception expected");
-        } catch (ParserException e) {
-            Assert.assertEquals(25, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("Invalid column"));
-        }
-    }
-
-    @Test
-    public void testJoinCycle() throws Exception {
-        try {
-            parser.setContent("orders" +
-                    " join customers on orders.customerId = customers.customerId" +
-                    " join orderDetails d on d.orderId = orders.orderId and orders.orderId = products.productId" +
-                    " join products on d.productId = products.productId and orders.orderId = products.productId" +
-                    " join suppliers on products.supplier = suppliers.supplier" +
-                    " where orders.orderId = suppliers.supplier > 0");
-            Statement statement = parser.parse();
-            optimiser.compileJoins(statement.getQueryModel(), factory);
-            Assert.fail("Exception expected");
-        } catch (ParserException e) {
-            Assert.assertTrue(e.getMessage().contains("cycle"));
-        }
-    }
-
-    @Test
-    public void testTableName() throws Exception {
-        try {
-            parser.setContent("orders join customer on customerId = customerId");
-            Statement statement = parser.parse();
-            optimiser.compileJoins(statement.getQueryModel(), factory);
-            Assert.fail("Exception expected");
-        } catch (ParserException e) {
-            Assert.assertEquals(12, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("Journal does not exist"));
-        }
     }
 }

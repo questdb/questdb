@@ -1,22 +1,22 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 package com.nfsdb.collections;
 
@@ -71,14 +71,6 @@ public class ObjList<T> {
     public void ensureCapacity(int capacity) {
         ensureCapacity0(capacity);
         pos = capacity;
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public boolean equals(Object that) {
-        return this == that || that instanceof ObjList && equals((ObjList) that);
     }
 
     public void extendAndSet(int index, T value) {
@@ -161,6 +153,35 @@ public class ObjList<T> {
     /**
      * {@inheritDoc}
      */
+    @Override
+    public boolean equals(Object that) {
+        return this == that || that instanceof ObjList && equals((ObjList) that);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public String toString() {
+        if (toStringBuilder == null) {
+            toStringBuilder = new StringBuilder();
+        }
+
+        toStringBuilder.setLength(0);
+        toStringBuilder.append('[');
+        for (int i = 0, k = size(); i < k; i++) {
+            if (i > 0) {
+                toStringBuilder.append(',');
+            }
+            toStringBuilder.append(getQuick(i));
+        }
+        toStringBuilder.append(']');
+        return toStringBuilder.toString();
+    }
+
+    /**
+     * {@inheritDoc}
+     */
     public int indexOf(Object o) {
         if (o == null) {
             return indexOfNull();
@@ -233,27 +254,6 @@ public class ObjList<T> {
      */
     public int size() {
         return pos;
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public String toString() {
-        if (toStringBuilder == null) {
-            toStringBuilder = new StringBuilder();
-        }
-
-        toStringBuilder.setLength(0);
-        toStringBuilder.append('[');
-        for (int i = 0, k = size(); i < k; i++) {
-            if (i > 0) {
-                toStringBuilder.append(',');
-            }
-            toStringBuilder.append(get(i));
-        }
-        toStringBuilder.append(']');
-        return toStringBuilder.toString();
     }
 
     @SuppressWarnings("unchecked")
