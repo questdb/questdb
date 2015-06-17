@@ -27,31 +27,32 @@ import com.nfsdb.utils.Unsafe;
 import java.util.Arrays;
 
 
-public class CharSequenceObjHashMap<V> {
+public class CharSequenceIntHashMap {
     private static final int MIN_INITIAL_CAPACITY = 16;
+    private static final int NO_ENTRY_VALUE = -1;
     private static final CharSequence noEntryValue = new NullCharSequence();
     private final double loadFactor;
     private CharSequence[] keys;
-    private V[] values;
+    private int[] values;
     private int free;
     private int capacity;
     private int mask;
 
-    public CharSequenceObjHashMap() {
+    public CharSequenceIntHashMap() {
         this(8);
     }
 
-    public CharSequenceObjHashMap(int initialCapacity) {
+    public CharSequenceIntHashMap(int initialCapacity) {
         this(initialCapacity, 0.5);
     }
 
     @SuppressWarnings("unchecked")
-    public CharSequenceObjHashMap(int initialCapacity, double loadFactor) {
+    public CharSequenceIntHashMap(int initialCapacity, double loadFactor) {
         int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
         capacity = capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);
         this.loadFactor = loadFactor;
         keys = new CharSequence[capacity];
-        values = (V[]) new Object[capacity];
+        values = new int[capacity];
         free = this.capacity = initialCapacity;
         mask = capacity - 1;
         clear();
@@ -61,11 +62,11 @@ public class CharSequenceObjHashMap<V> {
         Arrays.fill(keys, noEntryValue);
     }
 
-    public V get(CharSequence key) {
+    public int get(CharSequence key) {
         int index = key.hashCode() & mask;
 
         if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-            return null;
+            return NO_ENTRY_VALUE;
         }
 
         if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
@@ -75,7 +76,7 @@ public class CharSequenceObjHashMap<V> {
         return probe(key, index);
     }
 
-    public V put(CharSequence key, V value) {
+    public int put(CharSequence key, int value) {
         int index = key.hashCode() & mask;
         if (Unsafe.arrayGet(keys, index) == noEntryValue) {
             Unsafe.arrayPut(keys, index, key);
@@ -84,11 +85,11 @@ public class CharSequenceObjHashMap<V> {
             if (free == 0) {
                 rehash();
             }
-            return null;
+            return NO_ENTRY_VALUE;
         }
 
         if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-            V old = Unsafe.arrayGet(values, index);
+            int old = Unsafe.arrayGet(values, index);
             Unsafe.arrayPut(values, index, value);
             return old;
         }
@@ -100,11 +101,11 @@ public class CharSequenceObjHashMap<V> {
         return capacity - free;
     }
 
-    private V probe(CharSequence key, int index) {
+    private int probe(CharSequence key, int index) {
         do {
             index = (index + 1) & mask;
             if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-                return null;
+                return NO_ENTRY_VALUE;
             }
             if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
                 return Unsafe.arrayGet(values, index);
@@ -112,7 +113,7 @@ public class CharSequenceObjHashMap<V> {
         } while (true);
     }
 
-    private V probeInsert(CharSequence key, int index, V value) {
+    private int probeInsert(CharSequence key, int index, int value) {
         do {
             index = (index + 1) & mask;
             if (Unsafe.arrayGet(keys, index) == noEntryValue) {
@@ -122,27 +123,26 @@ public class CharSequenceObjHashMap<V> {
                 if (free == 0) {
                     rehash();
                 }
-                return null;
+                return NO_ENTRY_VALUE;
             }
 
             if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-                V old = Unsafe.arrayGet(values, index);
+                int old = Unsafe.arrayGet(values, index);
                 Unsafe.arrayPut(values, index, value);
                 return old;
             }
         } while (true);
     }
 
-    @SuppressWarnings({"unchecked"})
     private void rehash() {
 
         int newCapacity = values.length << 1;
         mask = newCapacity - 1;
         free = capacity = (int) (newCapacity * loadFactor);
-        V[] oldValues = values;
+        int[] oldValues = values;
         CharSequence[] oldKeys = keys;
         this.keys = new CharSequence[newCapacity];
-        this.values = (V[]) new Object[newCapacity];
+        this.values = new int[newCapacity];
         Arrays.fill(keys, noEntryValue);
 
         for (int i = oldKeys.length; i-- > 0; ) {

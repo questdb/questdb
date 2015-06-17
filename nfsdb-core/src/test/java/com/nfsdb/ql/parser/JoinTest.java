@@ -33,6 +33,7 @@ import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.utils.Files;
 import com.nfsdb.utils.Rnd;
+import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Test;
@@ -50,13 +51,72 @@ public class JoinTest {
     }
 
     @Test
-    public void testJoin() throws Exception {
-        parser.setContent("orders join customers on orders.customerId = customers.customerId" +
-                " join orderDetails d on orders.orderId = d.orderId" +
-                " where order.orderDate > 0");
-        Statement statement = parser.parse();
-        optimiser.compileJoins(statement.getQueryModel(), factory);
-        System.out.println("ok");
+    public void testAmbiguousColumn() throws Exception {
+        try {
+            parser.setContent("orders join customers on customerId = customerId");
+            Statement statement = parser.parse();
+            optimiser.compileJoins(statement.getQueryModel(), factory);
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(25, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("Ambiguous"));
+        }
+    }
+
+    @Test
+    public void testInvalidAlias() throws Exception {
+        try {
+            parser.setContent("orders join customers on orders.customerId = c.customerId");
+            Statement statement = parser.parse();
+            optimiser.compileJoins(statement.getQueryModel(), factory);
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(45, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("alias"));
+        }
+    }
+
+    @Test
+    public void testInvalidColumn() throws Exception {
+        try {
+            parser.setContent("orders join customers on customerIdx = customerId");
+            Statement statement = parser.parse();
+            optimiser.compileJoins(statement.getQueryModel(), factory);
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(25, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("Invalid column"));
+        }
+    }
+
+    @Test
+    public void testJoinCycle() throws Exception {
+        try {
+            parser.setContent("orders" +
+                    " join customers on orders.customerId = customers.customerId" +
+                    " join orderDetails d on d.orderId = orders.orderId and orders.orderId = products.productId" +
+                    " join products on d.productId = products.productId and orders.orderId = products.productId" +
+                    " join suppliers on products.supplier = suppliers.supplier" +
+                    " where orders.orderId = suppliers.supplier > 0");
+            Statement statement = parser.parse();
+            optimiser.compileJoins(statement.getQueryModel(), factory);
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertTrue(e.getMessage().contains("cycle"));
+        }
+    }
+
+    @Test
+    public void testTableName() throws Exception {
+        try {
+            parser.setContent("orders join customer on customerId = customerId");
+            Statement statement = parser.parse();
+            optimiser.compileJoins(statement.getQueryModel(), factory);
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(12, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("Journal does not exist"));
+        }
     }
 
     private static void generateJoinData() throws JournalException {

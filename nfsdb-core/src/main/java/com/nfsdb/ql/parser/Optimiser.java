@@ -21,8 +21,7 @@
 package com.nfsdb.ql.parser;
 
 import com.nfsdb.JournalKey;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.collections.ObjObjHashMap;
+import com.nfsdb.collections.*;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.NoSuchColumnException;
 import com.nfsdb.factory.JournalReaderFactory;
@@ -57,7 +56,12 @@ public class Optimiser {
     private final int columnNamePrefixLen;
     private final ObjObjHashMap<String, RecordMetadata> namedJoinMetadata = new ObjObjHashMap<>();
     private final ObjList<RecordMetadata> allJoinMetadata = new ObjList<>();
-    private final ArrayDeque<ObjList<String>> dependencyChains = new ArrayDeque<>();
+    private final CharSequenceIntHashMap joinMetadataIndexLookup = new CharSequenceIntHashMap();
+    private final ObjList<IntList> dependencyChains = new ObjList<>();
+    private final FlyweightCharSequence aliasExtractor = new FlyweightCharSequence();
+    private final ObjList<TopologicalNode> unorderedTopologicalNodes = new ObjList<>();
+    private final ObjList<TopologicalNode> orderedTopologicalNodes = new ObjList<>();
+    private final ArrayDeque<TopologicalNode> topolocalStack = new ArrayDeque<>();
 
     public Optimiser() {
         // seed column name assembly with default column prefix, which we will reuse
@@ -75,22 +79,30 @@ public class Optimiser {
         allJoinMetadata.clear();
         dependencyChains.clear();
 
+        final ObjList<JoinModel> joinModels = model.getJoinModels();
+
         // create metadata for all journals and sub-queries involved in this query
         collectJoinSource(model, factory);
-        // create dependency chains
-        if (model.getWhereClause() != null) {
-            traversePreOrderRecursive(model.getWhereClause(), null);
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            collectJoinSource(joinModels.getQuick(i), factory);
         }
 
-        ObjList<JoinModel> joinModels = model.getJoinModels();
+        // create dependency chains
+        traversePreOrderRecursive(model.getWhereClause(), null);
         for (int i = 0, n = joinModels.size(); i < n; i++) {
-            JoinModel m = joinModels.getQuick(i);
-            collectJoinSource(m, factory);
-            if (m.getJoinCriteria() != null) {
-                traversePreOrderRecursive(m.getJoinCriteria(), null);
-            }
+            traversePreOrderRecursive(joinModels.getQuick(i).getJoinCriteria(), null);
         }
-        System.out.println(dependencyChains);
+
+        // create tree structure to order joins according to their dependencies
+        // (topological sort)
+        for (int i = 0, n = dependencyChains.size(); i < n; i++) {
+            IntList l = dependencyChains.getQuick(i);
+            l.sort();
+            collectTopologicalNodes(l);
+        }
+
+        sortTopologicalNodes();
+        System.out.println(orderedTopologicalNodes);
     }
 
     private void collectJoinSource(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
@@ -104,12 +116,16 @@ public class Optimiser {
             model.setRecordSource(rs);
         }
 
+        int pos = allJoinMetadata.size();
+
         allJoinMetadata.add(metadata);
 
         if (model.getAlias() != null) {
             namedJoinMetadata.put(model.getAlias(), metadata);
+            joinMetadataIndexLookup.put(model.getAlias(), pos);
         } else if (model.getJournalName() != null) {
             namedJoinMetadata.put(model.getJournalName().token, metadata);
+            joinMetadataIndexLookup.put(model.getJournalName().token, pos);
         }
     }
 
@@ -131,6 +147,23 @@ public class Optimiser {
         }
 
         model.setMetadata(factory.getOrCreateMetadata(new JournalKey<>(reader)));
+    }
+
+    private void collectTopologicalNodes(IntList indices) {
+
+        int n = indices.size();
+        if (n == 0) {
+            return;
+        }
+
+        TopologicalNode root = getTopologicalNode(indices.getQuick(0));
+        if (n > 1) {
+            for (int i = 1; i < n; i++) {
+                TopologicalNode node = getTopologicalNode(indices.getQuick(i));
+                root.out.add(node);
+                node.in++;
+            }
+        }
     }
 
     private JournalRecordSource<? extends Record> compile0(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
@@ -212,6 +245,7 @@ public class Optimiser {
             collectJournalMetadata(model, factory);
             metadata = model.getMetadata();
         }
+
         PartitionSource ps = new JournalPartitionSource(metadata, true);
         RowSource rs = null;
 
@@ -367,6 +401,22 @@ public class Optimiser {
         return stack.pollFirst();
     }
 
+    private TopologicalNode getTopologicalNode(int index) {
+        TopologicalNode node;
+        int n = unorderedTopologicalNodes.size();
+        if (index < n) {
+            node = unorderedTopologicalNodes.getQuick(index);
+            if (node == null) {
+                unorderedTopologicalNodes.setQuick(index, node = new TopologicalNode());
+                node.index = index;
+            }
+        } else {
+            unorderedTopologicalNodes.extendAndSet(index, node = new TopologicalNode());
+            node.index = index;
+        }
+        return node;
+    }
+
     @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE"})
     private VirtualColumn lookupColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
         try {
@@ -404,6 +454,46 @@ public class Optimiser {
             }
         }
         return f.isConstant() ? processConstantExpression(f) : f;
+    }
+
+    private int lookupJournalIndex(ExprNode node) throws ParserException {
+        int dot = node.token.indexOf('.');
+        int index = -1;
+        if (dot == -1) {
+            for (int i = 0, n = allJoinMetadata.size(); i < n; i++) {
+                RecordMetadata m = allJoinMetadata.getQuick(i);
+                if (m.invalidColumn(node.token)) {
+                    continue;
+                }
+
+                if (index > -1) {
+                    throw new ParserException(node.position, "Ambiguous column name");
+                }
+
+                index = i;
+            }
+
+            if (index == -1) {
+                throw new InvalidColumnException(node.position);
+            }
+
+            return index;
+        } else {
+            aliasExtractor.of(node.token, 0, dot);
+            index = joinMetadataIndexLookup.get(aliasExtractor);
+
+            if (index == -1) {
+                throw new ParserException(node.position, "Invalid journal name/alias");
+            }
+            RecordMetadata m = allJoinMetadata.getQuick(index);
+
+            aliasExtractor.of(node.token, dot + 1, node.token.length() - dot - 1);
+            if (m.invalidColumn(aliasExtractor)) {
+                throw new InvalidColumnException(node.position);
+            }
+
+            return index;
+        }
     }
 
     private VirtualColumn parseConstant(ExprNode node) throws ParserException {
@@ -500,20 +590,59 @@ public class Optimiser {
         return new SelectedColumnsJournalRecordSource(rs, selectedColumns);
     }
 
-    private void traversePreOrderRecursive(ExprNode node, ObjList<String> c) {
+    private void sortTopologicalNodes() throws ParserException {
+        orderedTopologicalNodes.clear();
+        topolocalStack.clear();
+
+        //stack <- Set of all nodes with no incoming edges
+        ArrayDeque<TopologicalNode> stack = topolocalStack;
+
+        for (int i = 0, n = unorderedTopologicalNodes.size(); i < n; i++) {
+            TopologicalNode node = unorderedTopologicalNodes.getQuick(i);
+            if (node.in == 0) {
+                stack.addFirst(node);
+            }
+        }
+
+        while (!stack.isEmpty()) {
+            //remove a node n from stack
+            TopologicalNode n = stack.pollFirst();
+
+            //insert n into ordered
+            orderedTopologicalNodes.add(n);
+
+            //for each node m with an edge e from n to m do
+            for (int i = 0, k = n.out.size(); i < k; i++) {
+                TopologicalNode m = n.out.get(i);
+                if ((--m.in) == 0) {
+                    stack.addFirst(m);
+                }
+            }
+            n.out.clear();
+        }
+        //Check to see if all edges are removed
+        for (int i = 0, n = unorderedTopologicalNodes.size(); i < n; i++) {
+            TopologicalNode node = unorderedTopologicalNodes.getQuick(i);
+            if (node.in > 0) {
+                throw new ParserException(0, "There is a cycle in join dependencies");
+            }
+        }
+    }
+
+    private void traversePreOrderRecursive(ExprNode node, IntList c) throws ParserException {
         if (node == null) {
             return;
         }
 
-        ObjList<String> chain = null;
+        IntList chain = null;
 
         switch (node.type) {
             case LITERAL:
                 if (c == null) {
                     // todo: borrow from pool
-                    chain = c = new ObjList<>();
+                    chain = c = new IntList();
                 }
-                c.add(node.token);
+                c.add(lookupJournalIndex(node));
                 break;
             case FUNCTION:
             case OPERATION:
@@ -523,7 +652,7 @@ public class Optimiser {
                         break;
                     default:
                         if (c == null) {
-                            chain = c = new ObjList<>();
+                            chain = c = new IntList();
                         }
                         break;
                 }
@@ -542,7 +671,28 @@ public class Optimiser {
         }
 
         if (chain != null) {
-            dependencyChains.addFirst(chain);
+            dependencyChains.add(chain);
+        }
+    }
+
+    private static final class TopologicalNode {
+        int index;
+        int in = 0;
+        ObjHashSet<TopologicalNode> out = new ObjHashSet<>();
+
+        @Override
+        public int hashCode() {
+            return index;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            return this == o || o instanceof TopologicalNode && ((TopologicalNode) o).in == this.index;
+        }
+
+        @Override
+        public String toString() {
+            return Integer.toString(index);
         }
     }
 

@@ -1,28 +1,28 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 package com.nfsdb.factory.configuration;
 
 import com.nfsdb.JournalKey;
 import com.nfsdb.PartitionType;
-import com.nfsdb.collections.ObjIntHashMap;
+import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.exceptions.NoSuchColumnException;
@@ -50,7 +50,7 @@ public class JournalMetadata<T> implements RecordMetadata {
     private final int ioBlockTxCount;
     private final String keyColumn;
     private final ColumnMetadata[] columnMetadata;
-    private final ObjIntHashMap<CharSequence> columnIndexLookup;
+    private final CharSequenceIntHashMap columnIndexLookup;
     private final int timestampColumnIndex;
     private final int lag;
     private final boolean partialMapping;
@@ -85,7 +85,7 @@ public class JournalMetadata<T> implements RecordMetadata {
         this.ioBlockRecordCount = ioBlockRecordCount;
         this.ioBlockTxCount = ioBlockTxCount;
         this.keyColumn = keyColumn;
-        this.columnIndexLookup = new ObjIntHashMap<>(columnCount);
+        this.columnIndexLookup = new CharSequenceIntHashMap(columnCount);
         for (int i = 0; i < columnMetadata.length; i++) {
             columnIndexLookup.put(columnMetadata[i].name, i);
         }
@@ -107,7 +107,7 @@ public class JournalMetadata<T> implements RecordMetadata {
         partitionBy = PartitionType.valueOf(buf.getStr());
         columnCount = buf.getInt();
         columnMetadata = new ColumnMetadata[columnCount];
-        columnIndexLookup = new ObjIntHashMap<>();
+        columnIndexLookup = new CharSequenceIntHashMap();
         for (int i = 0; i < columnCount; i++) {
             columnMetadata[i] = new ColumnMetadata();
             columnMetadata[i].read(buf);
@@ -160,6 +160,15 @@ public class JournalMetadata<T> implements RecordMetadata {
         return result;
     }
 
+    public ColumnMetadata getTimestampMetadata() {
+        return timestampMetadata;
+    }
+
+    @Override
+    public boolean invalidColumn(CharSequence name) {
+        return columnIndexLookup.get(name) == -1;
+    }
+
     public String getId() {
         return id;
     }
@@ -207,17 +216,8 @@ public class JournalMetadata<T> implements RecordMetadata {
         return timestampColumnIndex;
     }
 
-    public ColumnMetadata getTimestampMetadata() {
-        return timestampMetadata;
-    }
-
     public int getTxCountHint() {
         return ioBlockTxCount;
-    }
-
-    @Override
-    public boolean invalidColumn(CharSequence name) {
-        return columnIndexLookup.get(name) == -1;
     }
 
     public boolean isCompatible(JournalMetadata that, boolean ignorePartitionType) {
