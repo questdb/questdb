@@ -46,11 +46,13 @@ import java.util.ArrayDeque;
 
 public class Optimiser {
 
+    private final static NullConstant nullConstant = new NullConstant();
     private final ArrayDeque<VirtualColumn> stack = new ArrayDeque<>();
     private final IntrinsicExtractor intrinsicExtractor = new IntrinsicExtractor();
     private final VirtualColumnBuilder virtualColumnBuilderVisitor = new VirtualColumnBuilder();
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
     private final Signature mutableSig = new Signature();
+    private final ObjList<VirtualColumn> mutableArgs = new ObjList<>();
     private final StringSink columnNameAssembly = new StringSink();
     private final int columnNamePrefixLen;
     private final ObjObjHashMap<String, RecordMetadata> namedJoinMetadata = new ObjObjHashMap<>();
@@ -168,11 +170,10 @@ public class Optimiser {
     }
 
     private void createColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
-        ObjList<VirtualColumn> args = new ObjList<>();
-
-        int argCount = node.paramCount;
+        mutableArgs.clear();
         mutableSig.clear();
 
+        int argCount = node.paramCount;
         switch (argCount) {
             case 0:
                 switch (node.type) {
@@ -189,7 +190,7 @@ public class Optimiser {
                 }
                 break;
             default:
-                args.ensureCapacity(argCount);
+                mutableArgs.ensureCapacity(argCount);
                 mutableSig.setName(node.token).setParamCount(argCount);
                 for (int n = 0; n < argCount; n++) {
                     VirtualColumn c = stack.pollFirst();
@@ -197,9 +198,9 @@ public class Optimiser {
                         throw new ParserException(node.position, "Too few arguments");
                     }
                     mutableSig.paramType(n, c.getType(), c.isConstant());
-                    args.setQuick(n, c);
+                    mutableArgs.setQuick(n, c);
                 }
-                stack.addFirst(lookupFunction(node, mutableSig, args));
+                stack.addFirst(lookupFunction(node, mutableSig, mutableArgs));
         }
     }
 
@@ -408,7 +409,7 @@ public class Optimiser {
     private VirtualColumn parseConstant(ExprNode node) throws ParserException {
 
         if ("null".equals(node.token)) {
-            return new NullConstant();
+            return nullConstant;
         }
 
         String s = Chars.stripQuotes(node.token);

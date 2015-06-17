@@ -18,6 +18,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  ******************************************************************************/
+
 package com.nfsdb.ql.parser;
 
 import com.nfsdb.PartitionType;
@@ -36,10 +37,6 @@ public class QueryParser {
     private static final ObjHashSet<CharSequence> groupByStopSet = new ObjHashSet<>();
 
     private final TokenStream toks = new TokenStream() {{
-        defineSymbol(" ");
-        defineSymbol("(");
-        defineSymbol(")");
-        defineSymbol(",");
         defineSymbol("+");
     }};
     private final ExprParser exprParser = new ExprParser(toks);

@@ -46,6 +46,7 @@ public class IntrinsicExtractor {
     private final ObjList<ExprNode> keyNodes = new ObjList<>();
     private final ObjList<ExprNode> timestampNodes = new ObjList<>();
     private final IntrinsicModel model = new IntrinsicModel();
+    private final ObjHashSet<String> tempKeys = new ObjHashSet<>();
     private RecordColumnMetadata timestamp;
     private String preferredKeyColumn;
 
@@ -297,7 +298,7 @@ public class IntrinsicExtractor {
 
 
             int i = node.paramCount - 1;
-            ObjHashSet<String> keys = new ObjHashSet<>(i);
+            tempKeys.clear();
 
             // collect and analyze values of indexed field
             // if any of values is not an indexed constant - bail out
@@ -305,14 +306,14 @@ public class IntrinsicExtractor {
                 if (node.rhs == null || node.rhs.type != ExprNode.NodeType.CONSTANT) {
                     return false;
                 }
-                keys.add(Chars.stripQuotes(node.rhs.token));
+                tempKeys.add(Chars.stripQuotes(node.rhs.token));
             } else {
                 for (i--; i > -1; i--) {
                     ExprNode c = node.args.getQuick(i);
                     if (c.type != ExprNode.NodeType.CONSTANT) {
                         return false;
                     }
-                    keys.add(Chars.stripQuotes(c.token));
+                    tempKeys.add(Chars.stripQuotes(c.token));
                 }
             }
 
@@ -320,7 +321,7 @@ public class IntrinsicExtractor {
             // and reset intrinsic values on nodes associated with old column
             if (newColumn) {
                 model.keyValues.clear();
-                model.keyValues.addAll(keys);
+                model.keyValues.addAll(tempKeys);
                 for (int n = 0, k = keyNodes.size(); n < k; n++) {
                     keyNodes.getQuick(n).intrinsicValue = IntrinsicValue.UNDEFINED;
                 }
@@ -328,7 +329,7 @@ public class IntrinsicExtractor {
                 model.keyColumn = col;
             } else {
                 // calculate overlap of values
-                if (!model.keyValues.replaceAllWithOverlap(keys)) {
+                if (!model.keyValues.replaceAllWithOverlap(tempKeys)) {
                     model.intrinsicValue = IntrinsicValue.FALSE;
                 }
             }
