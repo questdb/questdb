@@ -18,6 +18,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  ******************************************************************************/
+
 package com.nfsdb.collections;
 
 import com.nfsdb.utils.Numbers;
@@ -26,7 +27,7 @@ import com.nfsdb.utils.Unsafe;
 import java.util.Arrays;
 
 
-public class IntObjHashMap<V> {
+public class IntObjHashMap<V> implements Mutable {
     private static final int MIN_INITIAL_CAPACITY = 16;
     private static final Object noEntryValue = new Object();
     private final double loadFactor;

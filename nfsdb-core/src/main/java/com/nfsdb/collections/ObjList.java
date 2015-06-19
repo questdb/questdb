@@ -18,6 +18,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  ******************************************************************************/
+
 package com.nfsdb.collections;
 
 import com.nfsdb.utils.Unsafe;
@@ -26,7 +27,7 @@ import org.jetbrains.annotations.NotNull;
 import java.util.Arrays;
 import java.util.Iterator;
 
-public class ObjList<T> {
+public class ObjList<T> implements Mutable {
     private static final int DEFAULT_ARRAY_SIZE = 16;
     private final Iter iterator = new Iter();
     private T[] buffer;

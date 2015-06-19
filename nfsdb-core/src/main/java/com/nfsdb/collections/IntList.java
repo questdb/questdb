@@ -18,6 +18,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  ******************************************************************************/
+
 package com.nfsdb.collections;
 
 import com.nfsdb.utils.Unsafe;
@@ -25,7 +26,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.Arrays;
 
-public class IntList {
+public class IntList implements Mutable {
     /**
      * The maximum number of runs in merge sort.
      */

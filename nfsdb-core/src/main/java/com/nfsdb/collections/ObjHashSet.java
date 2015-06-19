@@ -1,22 +1,22 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 
 package com.nfsdb.collections;
@@ -31,7 +31,7 @@ import java.util.Arrays;
 import java.util.Iterator;
 
 
-public class ObjHashSet<T> extends AbstractSet<T> {
+public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
     private static final Object noEntryValue = new Object();
@@ -70,27 +70,10 @@ public class ObjHashSet<T> extends AbstractSet<T> {
         clear();
     }
 
-    public boolean add(T key) {
-        boolean r = insertKey(key);
-        if (r) {
-            list.add(key);
-            if (free == 0) {
-                rehash();
-            }
-        }
-        return r;
-    }
-
     public void addAll(ObjHashSet<T> that) {
         for (int i = 0, k = that.size(); i < k; i++) {
             add(that.get(i));
         }
-    }
-
-    public final void clear() {
-        free = capacity;
-        Arrays.fill(keys, noEntryValue);
-        list.clear();
     }
 
     public T get(int index) {
@@ -108,6 +91,21 @@ public class ObjHashSet<T> extends AbstractSet<T> {
         return list.iterator();
     }
 
+    public int size() {
+        return capacity - free;
+    }
+
+    public boolean add(T key) {
+        boolean r = insertKey(key);
+        if (r) {
+            list.add(key);
+            if (free == 0) {
+                rehash();
+            }
+        }
+        return r;
+    }
+
     @Override
     @SuppressWarnings("unchecked")
     public boolean remove(Object key) {
@@ -121,6 +119,17 @@ public class ObjHashSet<T> extends AbstractSet<T> {
             return probeRemove(key, index);
         }
         return false;
+    }
+
+    public final void clear() {
+        free = capacity;
+        Arrays.fill(keys, noEntryValue);
+        list.clear();
+    }
+
+    @Override
+    public String toString() {
+        return list.toString();
     }
 
     public boolean replaceAllWithOverlap(ObjHashSet<T> that) {
@@ -140,15 +149,6 @@ public class ObjHashSet<T> extends AbstractSet<T> {
             return true;
         }
         return false;
-    }
-
-    public int size() {
-        return capacity - free;
-    }
-
-    @Override
-    public String toString() {
-        return list.toString();
     }
 
     private int idx(T key) {

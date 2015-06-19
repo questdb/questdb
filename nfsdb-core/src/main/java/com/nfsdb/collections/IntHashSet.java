@@ -1,22 +1,22 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 package com.nfsdb.collections;
 
@@ -26,7 +26,7 @@ import com.nfsdb.utils.Unsafe;
 import java.util.Arrays;
 
 
-public class IntHashSet {
+public class IntHashSet implements Mutable {
 
     public static final int MIN_INITIAL_CAPACITY = 16;
     private static final int noEntryValue = -1;
@@ -78,23 +78,6 @@ public class IntHashSet {
         return capacity - free;
     }
 
-    @SuppressWarnings({"unchecked"})
-    protected void rehash() {
-        int newCapacity = keys.length << 1;
-        mask = newCapacity - 1;
-        free = capacity = (int) (newCapacity * loadFactor);
-
-        int[] oldKeys = keys;
-        this.keys = new int[newCapacity];
-        Arrays.fill(keys, noEntryValue);
-
-        for (int i = oldKeys.length; i-- > 0; ) {
-            if (Unsafe.arrayGet(oldKeys, i) != noEntryValue) {
-                insertKey(Unsafe.arrayGet(oldKeys, i));
-            }
-        }
-    }
-
     private boolean insertKey(int key) {
         int index = key & mask;
         if (Unsafe.arrayGet(keys, index) == noEntryValue) {
@@ -131,5 +114,22 @@ public class IntHashSet {
                 return false;
             }
         } while (true);
+    }
+
+    @SuppressWarnings({"unchecked"})
+    protected void rehash() {
+        int newCapacity = keys.length << 1;
+        mask = newCapacity - 1;
+        free = capacity = (int) (newCapacity * loadFactor);
+
+        int[] oldKeys = keys;
+        this.keys = new int[newCapacity];
+        Arrays.fill(keys, noEntryValue);
+
+        for (int i = oldKeys.length; i-- > 0; ) {
+            if (Unsafe.arrayGet(oldKeys, i) != noEntryValue) {
+                insertKey(Unsafe.arrayGet(oldKeys, i));
+            }
+        }
     }
 }

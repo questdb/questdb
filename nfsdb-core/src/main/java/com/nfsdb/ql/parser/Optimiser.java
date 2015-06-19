@@ -1,22 +1,22 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 package com.nfsdb.ql.parser;
 
@@ -686,12 +686,6 @@ public class Optimiser {
 
     private static final class TopologicalNodeFactory implements ObjectPoolFactory<TopologicalNode> {
         @Override
-        public void clear(TopologicalNode o) {
-            o.in = 0;
-            o.out.clear();
-        }
-
-        @Override
         public TopologicalNode newInstance() {
             return new TopologicalNode();
         }
@@ -699,29 +693,30 @@ public class Optimiser {
 
     private static final class IntListFactory implements ObjectPoolFactory<IntList> {
         @Override
-        public void clear(IntList o) {
-            o.clear();
-        }
-
-        @Override
         public IntList newInstance() {
             return new IntList();
         }
     }
 
-    private static final class TopologicalNode {
+    private static final class TopologicalNode implements Mutable {
         final ObjHashSet<TopologicalNode> out = new ObjHashSet<>();
         int index;
         int in = 0;
 
         @Override
-        public boolean equals(Object o) {
-            return this == o || o instanceof TopologicalNode && ((TopologicalNode) o).in == this.index;
+        public void clear() {
+            in = 0;
+            out.clear();
         }
 
         @Override
         public int hashCode() {
             return index;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            return this == o || o instanceof TopologicalNode && ((TopologicalNode) o).in == this.index;
         }
 
         @Override

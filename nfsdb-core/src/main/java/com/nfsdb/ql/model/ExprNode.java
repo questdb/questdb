@@ -18,12 +18,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  ******************************************************************************/
+
 package com.nfsdb.ql.model;
 
+import com.nfsdb.collections.Mutable;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.ObjectPoolFactory;
 
-public class ExprNode {
+public class ExprNode implements Mutable {
 
     public final static ExprNodeFactory FACTORY = new ExprNodeFactory();
     public final ObjList<ExprNode> args = new ObjList<>(4);
@@ -37,6 +39,18 @@ public class ExprNode {
     public IntrinsicValue intrinsicValue = IntrinsicValue.UNDEFINED;
 
     private ExprNode() {
+    }
+
+    public void clear() {
+        args.clear();
+        token = null;
+        precedence = 0;
+        position = 0;
+        lhs = null;
+        rhs = null;
+        type = null;
+        paramCount = 0;
+        intrinsicValue = IntrinsicValue.UNDEFINED;
     }
 
     public ExprNode init(NodeType type, String token, int precedence, int position) {
@@ -61,28 +75,11 @@ public class ExprNode {
                 '}';
     }
 
-    private void clear() {
-        args.clear();
-        token = null;
-        precedence = 0;
-        position = 0;
-        lhs = null;
-        rhs = null;
-        type = null;
-        paramCount = 0;
-        intrinsicValue = IntrinsicValue.UNDEFINED;
-    }
-
     public enum NodeType {
         OPERATION, CONSTANT, LITERAL, FUNCTION, CONTROL, SET_OPERATION
     }
 
     private static final class ExprNodeFactory implements ObjectPoolFactory<ExprNode> {
-        @Override
-        public void clear(ExprNode o) {
-            o.clear();
-        }
-
         @Override
         public ExprNode newInstance() {
             return new ExprNode();

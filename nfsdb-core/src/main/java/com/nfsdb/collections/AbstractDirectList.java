@@ -1,28 +1,28 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 package com.nfsdb.collections;
 
 import com.nfsdb.utils.Unsafe;
 
-public class AbstractDirectList extends DirectMemoryStructure {
+public class AbstractDirectList extends DirectMemoryStructure implements Mutable {
     public static final int CACHE_LINE_SIZE = 64;
     private final int pow2;
     private final int onePow2;
@@ -38,11 +38,6 @@ public class AbstractDirectList extends DirectMemoryStructure {
         this.onePow2 = (1 << pow2);
     }
 
-    AbstractDirectList(int pow2, AbstractDirectList that) {
-        this(pow2, (int) ((that.pos - that.start) >> pow2));
-        add(that);
-    }
-
     public final void add(AbstractDirectList that) {
         int count = (int) (that.pos - that.start);
         if (limit - pos < count) {
@@ -53,12 +48,6 @@ public class AbstractDirectList extends DirectMemoryStructure {
 
     }
 
-    public void addCapacity(long capacity) {
-        if (capacity << pow2 > limit - pos + onePow2) {
-            extend((int) (((limit - start + onePow2) >> pow2) + capacity));
-        }
-    }
-
     public void clear() {
         clear((byte) 0);
     }
@@ -66,15 +55,6 @@ public class AbstractDirectList extends DirectMemoryStructure {
     public void clear(byte b) {
         pos = start;
         zero(b);
-    }
-
-    public void reset() {
-        pos = start;
-    }
-
-    public void reset(int capacity) {
-        setCapacity(capacity);
-        reset();
     }
 
     public void setCapacity(long capacity) {

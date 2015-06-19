@@ -27,7 +27,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.Arrays;
 
-public class LongList {
+public class LongList implements Mutable {
     private static final int DEFAULT_ARRAY_SIZE = 16;
     private static final long noEntryValue = -1;
     /**
@@ -89,17 +89,16 @@ public class LongList {
 
     public int binarySearch(long v) {
         int low = 0;
-        int high = pos - 1;
+        int high = pos;
 
-        while (low <= high) {
+        while (low < high) {
 
             if (high - low < 65) {
                 return scanSearch(v);
             }
 
-            int mid = (low + high) >>> 1;
+            int mid = (low + high - 1) >>> 1;
             long midVal = Unsafe.arrayGet(buffer, mid);
-//            long midVal = Unsafe.getUnsafe().getLong(start + (mid << 3));
 
             if (midVal < v)
                 low = mid + 1;
@@ -230,20 +229,6 @@ public class LongList {
             return true;
         }
         return false;
-    }
-
-    public int scanSearch(long v) {
-        int sz = size();
-        for (int i = 0; i < sz; i++) {
-            long f = get(i);
-            if (f == v) {
-                return i;
-            }
-            if (f > v) {
-                return -(i + 1);
-            }
-        }
-        return -(sz + 1);
     }
 
     public void set(int index, long element) {
@@ -425,6 +410,20 @@ public class LongList {
             System.arraycopy(buffer, index + 1, buffer, index, move);
         }
         Unsafe.arrayPut(buffer, --pos, noEntryValue);
+    }
+
+    private int scanSearch(long v) {
+        int sz = size();
+        for (int i = 0; i < sz; i++) {
+            long f = getQuick(i);
+            if (f == v) {
+                return i;
+            }
+            if (f > v) {
+                return -(i + 1);
+            }
+        }
+        return -(sz + 1);
     }
 
     /**
