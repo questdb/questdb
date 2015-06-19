@@ -18,12 +18,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  ******************************************************************************/
+
 package com.nfsdb.query.spi;
 
 import com.nfsdb.Journal;
 import com.nfsdb.Partition;
-import com.nfsdb.collections.DirectLongList;
 import com.nfsdb.collections.IntList;
+import com.nfsdb.collections.LongList;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.query.UnorderedResultSet;
@@ -74,7 +75,7 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
         return journal.iteratePartitionsDesc(
                 new UnorderedResultSetBuilder<T>(interval) {
                     private final KVIndex filterKVIndexes[] = new KVIndex[filterSymbolKeys.size()];
-                    private final DirectLongList filterSymbolRows[] = new DirectLongList[filterSymbolKeys.size()];
+                    private final LongList filterSymbolRows[] = new LongList[filterSymbolKeys.size()];
                     private IntList keys = zone1Keys;
                     private IntList remainingKeys = zone2Keys;
 
@@ -93,7 +94,7 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
                             filterKVIndexes[i] = partition.getIndexForColumn(filterSymbols.getQuick(i));
                             int filterKey = filterSymbolKeys.getQuick(i);
                             if (filterKVIndexes[i].contains(filterKey)) {
-                                filterSymbolRows[i].setCapacity(filterKVIndexes[i].getValueCount(filterKey));
+                                filterSymbolRows[i].ensureCapacity(filterKVIndexes[i].getValueCount(filterKey));
                                 filterKVIndexes[i].getValues(filterKey, filterSymbolRows[i]);
                             } else {
                                 filterOk = false;
@@ -152,7 +153,7 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
 
                     {
                         for (int i = 0; i < filterSymbolRows.length; i++) {
-                            filterSymbolRows[i] = new DirectLongList();
+                            filterSymbolRows[i] = new LongList();
                         }
                     }
                 }

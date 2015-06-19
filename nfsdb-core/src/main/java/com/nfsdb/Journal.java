@@ -1,27 +1,27 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 
 package com.nfsdb;
 
-import com.nfsdb.collections.DirectLongList;
+import com.nfsdb.collections.LongList;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.ObjObjHashMap;
 import com.nfsdb.exceptions.JournalException;
@@ -163,12 +163,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
         }
 
         return -1;
-    }
-
-    @SuppressWarnings("EqualsBetweenInconvertibleTypes")
-    @Override
-    public boolean equals(Object o) {
-        return this == o || !(o == null || getClass() != o.getClass()) && key.equals(((Journal) o).key);
     }
 
     public void expireOpenFiles() {
@@ -359,6 +353,17 @@ public class Journal<T> implements Iterable<T>, Closeable {
         return key.hashCode();
     }
 
+    @SuppressWarnings("EqualsBetweenInconvertibleTypes")
+    @Override
+    public boolean equals(Object o) {
+        return this == o || !(o == null || getClass() != o.getClass()) && key.equals(((Journal) o).key);
+    }
+
+    @Override
+    public String toString() {
+        return getClass().getName() + "[location=" + location + ", " + "mode=" + getMode() + ", " + ", metadata=" + metadata + "]";
+    }
+
     /**
      * Same as #incrementBuffered(). The only difference that new instance of T is created on every iteration.
      *
@@ -507,7 +512,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      * @throws com.nfsdb.exceptions.JournalException if there is an error
      */
     @SuppressWarnings("unchecked")
-    public T[] read(DirectLongList rowIDs) throws JournalException {
+    public T[] read(LongList rowIDs) throws JournalException {
         T[] result = (T[]) Array.newInstance(metadata.getModelClass(), rowIDs.size());
         for (int i = 0, sz = rowIDs.size(); i < sz; i++) {
             result[i] = read(rowIDs.get(i));
@@ -574,11 +579,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
         return result;
     }
 
-    @Override
-    public String toString() {
-        return getClass().getName() + "[location=" + location + ", " + "mode=" + getMode() + ", " + ", metadata=" + metadata + "]";
-    }
-
     public TxIterator transactions() {
         if (txIterator == null) {
             txIterator = new TxIterator(txLog);
@@ -604,23 +604,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
         configureColumns();
         configureSymbolTableSynonyms();
         configurePartitions();
-    }
-
-    BitSet getInactiveColumns() {
-        return inactiveColumns;
-    }
-
-    long getTimestampOffset() {
-        return timestampOffset;
-    }
-
-    void removeIrregularPartitionInternal() {
-        if (irregularPartition != null) {
-            if (irregularPartition.isOpen()) {
-                irregularPartition.close();
-            }
-            irregularPartition = null;
-        }
     }
 
     private void configureColumns() throws JournalException {
@@ -709,6 +692,14 @@ public class Journal<T> implements Iterable<T>, Closeable {
         }
     }
 
+    BitSet getInactiveColumns() {
+        return inactiveColumns;
+    }
+
+    long getTimestampOffset() {
+        return timestampOffset;
+    }
+
     /**
      * Replaces current Lag partition, which is cached in this instance of Partition Manager with Lag partition,
      * which was written to _lag file by another process.
@@ -727,6 +718,15 @@ public class Journal<T> implements Iterable<T>, Closeable {
             long txPartitionSize = tx.journalMaxRowID == -1 ? 0 : Rows.toLocalRowID(tx.journalMaxRowID);
             partitions.getQuick(txPartitionIndex).applyTx(txPartitionSize, tx.indexPointers);
             configureIrregularPartition();
+        }
+    }
+
+    void removeIrregularPartitionInternal() {
+        if (irregularPartition != null) {
+            if (irregularPartition.isOpen()) {
+                irregularPartition.close();
+            }
+            irregularPartition = null;
         }
     }
 }

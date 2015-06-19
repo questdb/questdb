@@ -1,28 +1,27 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 package com.nfsdb.collections;
 
 import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Unsafe;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.Arrays;
 
@@ -30,7 +29,6 @@ import java.util.Arrays;
 public class IntObjHashMap<V> {
     private static final int MIN_INITIAL_CAPACITY = 16;
     private static final Object noEntryValue = new Object();
-    private final ValuesIterator valuesIterator = new ValuesIterator();
     private final double loadFactor;
     private V[] values;
     private int[] keys;
@@ -87,11 +85,6 @@ public class IntObjHashMap<V> {
 
     public int size() {
         return capacity - free;
-    }
-
-    public ValuesIterator values() {
-        valuesIterator.index = 0;
-        return valuesIterator;
     }
 
     private void insertKey(int key, V value) {
@@ -158,30 +151,6 @@ public class IntObjHashMap<V> {
             if (Unsafe.arrayGet(oldValues, i) != noEntryValue) {
                 insertKey(Unsafe.arrayGet(oldKeys, i), Unsafe.arrayGet(oldValues, i));
             }
-        }
-    }
-
-    public class ValuesIterator extends AbstractImmutableIterator<V> {
-        private int index;
-
-        @Override
-        public boolean hasNext() {
-            return index < values.length && (Unsafe.arrayGet(values, index) != noEntryValue || scan());
-        }
-
-        @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
-        @Override
-        public V next() {
-            return values[index++];
-        }
-
-        private boolean scan() {
-            do {
-                index++;
-            }
-            while (index < values.length && Unsafe.arrayGet(values, index) == noEntryValue);
-
-            return index < values.length;
         }
     }
 }

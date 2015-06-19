@@ -1,22 +1,22 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 package com.nfsdb.query.spi;
 
@@ -50,7 +50,7 @@ public class QueryAllImpl<T> implements QueryAll<T> {
         return journal.iteratePartitions(new OrderedResultSetBuilder<T>() {
             @Override
             public void read(long lo, long hi) throws JournalException {
-                result.addCapacity((int) (hi - lo + 1));
+                result.ensureCapacity((int) (hi - lo + 1));
                 for (long i = lo; i < hi + 1; i++) {
                     result.add(Rows.toRowID(partition.getPartitionIndex(), i));
                 }
@@ -121,11 +121,6 @@ public class QueryAllImpl<T> implements QueryAll<T> {
     }
 
     @Override
-    public Iterator<T> iterator() {
-        return new JournalIteratorImpl<>(journal, createRanges());
-    }
-
-    @Override
     public long size() {
         try {
             return journal.size();
@@ -144,6 +139,11 @@ public class QueryAllImpl<T> implements QueryAll<T> {
         QueryAllBuilderImpl<T> result = new QueryAllBuilderImpl<>(journal);
         result.setSymbol(symbol, values);
         return result;
+    }
+
+    @Override
+    public Iterator<T> iterator() {
+        return new JournalIteratorImpl<>(journal, createRanges());
     }
 
     private ObjList<JournalIteratorRange> createRanges() {

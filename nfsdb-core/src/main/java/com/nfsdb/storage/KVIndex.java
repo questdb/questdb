@@ -1,28 +1,28 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 
 package com.nfsdb.storage;
 
 import com.nfsdb.JournalMode;
-import com.nfsdb.collections.DirectLongList;
+import com.nfsdb.collections.LongList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.utils.ByteBuffers;
@@ -290,8 +290,8 @@ public class KVIndex implements Closeable {
      * @param key key value
      * @return List of values or exception if key doesn't exist.
      */
-    public DirectLongList getValues(int key) {
-        DirectLongList result = new DirectLongList();
+    public LongList getValues(int key) {
+        LongList result = new LongList();
         getValues(key, result);
         return result;
     }
@@ -304,7 +304,7 @@ public class KVIndex implements Closeable {
      * @param values the array to copy values to. The contents of this array will be overwritten with new values
      *               beginning from 0 index.
      */
-    public void getValues(int key, DirectLongList values) {
+    public void getValues(int key, LongList values) {
 
         if (key < 0) {
             return;
@@ -318,7 +318,7 @@ public class KVIndex implements Closeable {
         long rowBlockOffset = Unsafe.getUnsafe().getLong(address);
         long rowCount = Unsafe.getUnsafe().getLong(address + 8);
 
-        values.reset((int) rowCount);
+        values.clear();
         values.setPos((int) rowCount);
 
         int rowBlockCount = (int) (rowCount >>> bits) + 1;
@@ -505,17 +505,6 @@ public class KVIndex implements Closeable {
             return this.remainingRowCount > 0 || this.remainingBlockCount > 0;
         }
 
-        public long next() {
-            if (remainingRowCount > 0) {
-                return Unsafe.getUnsafe().getLong(address + ((--this.remainingRowCount) << 3));
-            } else {
-                remainingBlockCount--;
-                this.address = rData.getAddress(Unsafe.getUnsafe().getLong(address + (rowBlockLen << 3) + 8) - rowBlockSize, rowBlockSize);
-                this.remainingRowCount = mask;
-                return Unsafe.getUnsafe().getLong(address + (this.remainingRowCount << 3));
-            }
-        }
-
         public RevIndexCursor setKey(int key) {
             this.remainingBlockCount = 0;
             this.remainingRowCount = 0;
@@ -547,6 +536,18 @@ public class KVIndex implements Closeable {
             return this;
         }
 
+        public long next() {
+            if (remainingRowCount > 0) {
+                return Unsafe.getUnsafe().getLong(address + ((--this.remainingRowCount) << 3));
+            } else {
+                remainingBlockCount--;
+                this.address = rData.getAddress(Unsafe.getUnsafe().getLong(address + (rowBlockLen << 3) + 8) - rowBlockSize, rowBlockSize);
+                this.remainingRowCount = mask;
+                return Unsafe.getUnsafe().getLong(address + (this.remainingRowCount << 3));
+            }
+        }
+
+
         public long size() {
             return size;
         }
@@ -556,19 +557,6 @@ public class KVIndex implements Closeable {
         private long rowCount;
         private long size;
         private long address;
-
-        public boolean hasNext() {
-            return this.rowCount < size;
-        }
-
-        public long next() {
-            int r = (int) (rowCount++ & mask);
-            long v = Unsafe.getUnsafe().getLong(address + (r << 3));
-            if (r == mask) {
-                this.address = rData.getAddress(Unsafe.getUnsafe().getLong(address + (rowBlockLen << 3)) - rowBlockSize, rowBlockSize);
-            }
-            return v;
-        }
 
         public FwdIndexCursor setKey(int key) {
             this.rowCount = 0;
@@ -594,6 +582,21 @@ public class KVIndex implements Closeable {
             this.address = rData.getAddress(Unsafe.getUnsafe().getLong(addr + 16) - rowBlockSize, rowBlockSize);
             return this;
         }
+
+        public boolean hasNext() {
+            return this.rowCount < size;
+        }
+
+        public long next() {
+            int r = (int) (rowCount++ & mask);
+            long v = Unsafe.getUnsafe().getLong(address + (r << 3));
+            if (r == mask) {
+                this.address = rData.getAddress(Unsafe.getUnsafe().getLong(address + (rowBlockLen << 3)) - rowBlockSize, rowBlockSize);
+            }
+            return v;
+        }
+
+
 
         public long size() {
             return size;

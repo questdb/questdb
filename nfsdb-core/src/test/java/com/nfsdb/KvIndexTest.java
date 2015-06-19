@@ -1,26 +1,26 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 package com.nfsdb;
 
-import com.nfsdb.collections.DirectLongList;
+import com.nfsdb.collections.LongList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.storage.IndexCursor;
@@ -327,24 +327,23 @@ public class KvIndexTest extends AbstractTest {
 
     private void assertValues(long values[][], KVIndex index) {
         for (int i = 0; i < values.length; i++) {
-            try (DirectLongList array = index.getValues(i)) {
-                Assert.assertEquals(values[i].length, array.size());
-                for (int k = 0; k < values[i].length; k++) {
-                    Assert.assertEquals(values[i][k], array.get(k));
-                }
+            LongList array = index.getValues(i);
+            Assert.assertEquals(values[i].length, array.size());
+            for (int k = 0; k < values[i].length; k++) {
+                Assert.assertEquals(values[i][k], array.get(k));
+            }
 
-                IndexCursor cursor = index.cursor(i);
-                int k = (int) cursor.size();
-                while (cursor.hasNext()) {
-                    Assert.assertEquals(values[i][--k], cursor.next());
-                }
+            IndexCursor cursor = index.cursor(i);
+            int k = (int) cursor.size();
+            while (cursor.hasNext()) {
+                Assert.assertEquals(values[i][--k], cursor.next());
+            }
 
-                IndexCursor c = index.fwdCursor(i);
-                int n = 0;
-                while (c.hasNext()) {
-                    long l = c.next();
-                    Assert.assertEquals(values[i][n++], l);
-                }
+            IndexCursor c = index.fwdCursor(i);
+            int n = 0;
+            while (c.hasNext()) {
+                long l = c.next();
+                Assert.assertEquals(values[i][n++], l);
             }
         }
     }

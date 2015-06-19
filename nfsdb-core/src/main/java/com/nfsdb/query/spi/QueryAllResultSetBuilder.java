@@ -18,11 +18,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  ******************************************************************************/
+
 package com.nfsdb.query.spi;
 
 import com.nfsdb.Partition;
-import com.nfsdb.collections.DirectLongList;
 import com.nfsdb.collections.IntList;
+import com.nfsdb.collections.LongList;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.query.UnorderedResultSetBuilder;
@@ -77,7 +78,7 @@ public class QueryAllResultSetBuilder<T> extends UnorderedResultSetBuilder<T> {
                 if (searchIndices.length > 0) {
                     for (int k = 0; k < searchIndices.length; k++) {
                         if (searchIndices[k].contains(filterSymbolKeys.getQuick(k))) {
-                            DirectLongList searchLocalRowIDs = searchIndices[k].getValues(filterSymbolKeys.getQuick(k));
+                            LongList searchLocalRowIDs = searchIndices[k].getValues(filterSymbolKeys.getQuick(k));
 
                             IndexCursor cursor = index.cursor(symbolKey);
                             while (cursor.hasNext()) {
@@ -93,7 +94,7 @@ public class QueryAllResultSetBuilder<T> extends UnorderedResultSetBuilder<T> {
                     }
                 } else {
                     IndexCursor cursor = index.cursor(symbolKey);
-                    result.setCapacity((int) cursor.size());
+                    result.ensureCapacity((int) cursor.size());
                     while (cursor.hasNext()) {
                         long localRowID = cursor.next();
                         if (localRowID >= lo && localRowID <= hi) {

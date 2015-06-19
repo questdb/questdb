@@ -1,26 +1,25 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 package com.nfsdb.collections;
 
-import com.nfsdb.utils.Rnd;
 import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -55,10 +54,6 @@ public class DirectLongList extends AbstractDirectList {
 
     public DirectLongList(long capacity) {
         super(3, capacity);
-    }
-
-    public DirectLongList(DirectLongList that) {
-        super(3, that);
     }
 
     public void add(long x) {
@@ -111,12 +106,6 @@ public class DirectLongList extends AbstractDirectList {
     public void set(long p, long v) {
         assert p >= 0 && p <= (limit - start) >> 3;
         Unsafe.getUnsafe().putLong(start + (p << 3), v);
-    }
-
-    public void shuffle(Rnd rnd) {
-        for (int i = 0, sz = size(); i < sz; i++) {
-            swap(i, rnd.nextPositiveInt() & (sz - 1));
-        }
     }
 
     /**

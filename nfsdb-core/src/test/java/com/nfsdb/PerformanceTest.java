@@ -1,26 +1,26 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 package com.nfsdb;
 
-import com.nfsdb.collections.DirectLongList;
+import com.nfsdb.collections.LongList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.model.Quote;
@@ -148,18 +148,17 @@ public class PerformanceTest extends AbstractTest {
                 Assert.assertTrue("Count lookup must be under 150ns: " + t, t / 10 < 150);
             }
 
-            try (DirectLongList list = new DirectLongList()) {
-                for (int i = -10; i < 10; i++) {
-                    if (i == 0) {
-                        t = System.nanoTime();
-                    }
-                    index.getValues(13567 + i, list);
+            LongList list = new LongList();
+            for (int i = -10; i < 10; i++) {
+                if (i == 0) {
+                    t = System.nanoTime();
                 }
-                t = System.nanoTime() - t;
-                LOGGER.info("index values lookup latency: " + t / 10 + "ns");
-                if (enabled) {
-                    Assert.assertTrue("Values lookup must be under 1.5μs: " + t / 10, t / 10 < 1500);
-                }
+                index.getValues(13567 + i, list);
+            }
+            t = System.nanoTime() - t;
+            LOGGER.info("index values lookup latency: " + t / 10 + "ns");
+            if (enabled) {
+                Assert.assertTrue("Values lookup must be under 1.5μs: " + t / 10, t / 10 < 1500);
             }
         }
     }

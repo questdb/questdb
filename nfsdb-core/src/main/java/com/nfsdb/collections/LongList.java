@@ -1,26 +1,27 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 
 package com.nfsdb.collections;
 
+import com.nfsdb.utils.Rnd;
 import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -61,8 +62,14 @@ public class LongList {
         this.buffer = new long[capacity < DEFAULT_ARRAY_SIZE ? DEFAULT_ARRAY_SIZE : capacity];
     }
 
+    public LongList(LongList other) {
+        this.buffer = new long[other.size() < DEFAULT_ARRAY_SIZE ? DEFAULT_ARRAY_SIZE : other.size()];
+        setPos(other.size());
+        System.arraycopy(other.buffer, 0, this.buffer, 0, pos);
+    }
+
     public void add(long value) {
-        ensureCapacity0(pos + 1);
+        ensureCapacity(pos + 1);
         Unsafe.arrayPut(buffer, pos++, value);
     }
 
@@ -71,12 +78,37 @@ public class LongList {
         int s = that.size();
         ensureCapacity(p + s);
         System.arraycopy(that.buffer, 0, this.buffer, p, s);
+        pos += s;
     }
 
     public void add(int index, long element) {
-        ensureCapacity0(pos + 1);
-        System.arraycopy(buffer, index, buffer, index + 1, pos - index - 1);
+        ensureCapacity(++pos);
+        System.arraycopy(buffer, index, buffer, index + 1, pos - index - 2);
         Unsafe.arrayPut(buffer, index, element);
+    }
+
+    public int binarySearch(long v) {
+        int low = 0;
+        int high = pos - 1;
+
+        while (low <= high) {
+
+            if (high - low < 65) {
+                return scanSearch(v);
+            }
+
+            int mid = (low + high) >>> 1;
+            long midVal = Unsafe.arrayGet(buffer, mid);
+//            long midVal = Unsafe.getUnsafe().getLong(start + (mid << 3));
+
+            if (midVal < v)
+                low = mid + 1;
+            else if (midVal > v)
+                high = mid - 1;
+            else
+                return mid;
+        }
+        return -(low + 1);
     }
 
     public void clear() {
@@ -85,26 +117,23 @@ public class LongList {
     }
 
     public void clear(int capacity) {
-        ensureCapacity0(capacity);
+        ensureCapacity(capacity);
         pos = 0;
         Arrays.fill(buffer, noEntryValue);
     }
 
     public void ensureCapacity(int capacity) {
-        ensureCapacity0(capacity);
-        pos = capacity;
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public boolean equals(Object that) {
-        return this == that || that instanceof LongList && equals((LongList) that);
+        int l = buffer.length;
+        if (capacity > l) {
+            int newCap = Math.max(l << 1, capacity);
+            long[] buf = new long[newCap];
+            System.arraycopy(buffer, 0, buf, 0, l);
+            this.buffer = buf;
+        }
     }
 
     public void extendAndSet(int index, long value) {
-        ensureCapacity0(index + 1);
+        ensureCapacity(index + 1);
         if (index >= pos) {
             pos = index + 1;
         }
@@ -116,12 +145,6 @@ public class LongList {
             return Unsafe.arrayGet(buffer, index);
         }
         throw new ArrayIndexOutOfBoundsException(index);
-    }
-
-    public long getAndSetQuick(int index, int value) {
-        long v = Unsafe.arrayGet(buffer, index);
-        Unsafe.arrayPut(buffer, index, value);
-        return v;
     }
 
     /**
@@ -150,21 +173,6 @@ public class LongList {
     }
 
     /**
-     * Returns element at the specified position or null, if element index is
-     * out of bounds. This is an alternative to throwing runtime exception or
-     * doing preemptive check.
-     *
-     * @param index position of element
-     * @return element at the specified position.
-     */
-    public long getQuiet(int index) {
-        if (index < pos) {
-            return Unsafe.arrayGet(buffer, index);
-        }
-        return noEntryValue;
-    }
-
-    /**
      * {@inheritDoc}
      */
     @Override
@@ -175,6 +183,35 @@ public class LongList {
             hashCode = 31 * hashCode + (v == noEntryValue ? 0 : v);
         }
         return (int) hashCode;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public boolean equals(Object that) {
+        return this == that || that instanceof LongList && equals((LongList) that);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public String toString() {
+        if (toStringBuilder == null) {
+            toStringBuilder = new StringBuilder();
+        }
+
+        toStringBuilder.setLength(0);
+        toStringBuilder.append('[');
+        for (int i = 0, k = size(); i < k; i++) {
+            if (i > 0) {
+                toStringBuilder.append(',');
+            }
+            toStringBuilder.append(get(i));
+        }
+        toStringBuilder.append(']');
+        return toStringBuilder.toString();
     }
 
     public int indexOf(int o) {
@@ -195,11 +232,24 @@ public class LongList {
         return false;
     }
 
-    public long set(int index, long element) {
+    public int scanSearch(long v) {
+        int sz = size();
+        for (int i = 0; i < sz; i++) {
+            long f = get(i);
+            if (f == v) {
+                return i;
+            }
+            if (f > v) {
+                return -(i + 1);
+            }
+        }
+        return -(sz + 1);
+    }
+
+    public void set(int index, long element) {
         if (index < pos) {
-            long v = Unsafe.arrayGet(buffer, index);
             Unsafe.arrayPut(buffer, index, element);
-            return v;
+            return;
         }
         throw new ArrayIndexOutOfBoundsException(index);
     }
@@ -211,6 +261,12 @@ public class LongList {
 
     public void setQuick(int index, long value) {
         Unsafe.arrayPut(buffer, index, value);
+    }
+
+    public void shuffle(Rnd rnd) {
+        for (int i = 0, sz = size(); i < sz; i++) {
+            swap(i, rnd.nextPositiveInt() & (sz - 1));
+        }
     }
 
     public int size() {
@@ -330,51 +386,16 @@ public class LongList {
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public String toString() {
-        if (toStringBuilder == null) {
-            toStringBuilder = new StringBuilder();
-        }
-
-        toStringBuilder.setLength(0);
-        toStringBuilder.append('[');
-        for (int i = 0, k = size(); i < k; i++) {
-            if (i > 0) {
-                toStringBuilder.append(',');
-            }
-            toStringBuilder.append(get(i));
-        }
-        toStringBuilder.append(']');
-        return toStringBuilder.toString();
+    public LongList subset(int lo, int hi) {
+        int _hi = hi > pos ? pos : hi;
+        LongList that = new LongList(_hi - lo);
+        System.arraycopy(this.buffer, lo, that.buffer, 0, _hi - lo);
+        that.pos = _hi - lo;
+        return that;
     }
 
     public void zero(int value) {
         Arrays.fill(buffer, 0, pos, value);
-    }
-
-    private void removeIndex(int index) {
-        if (pos < 1 || index >= pos) {
-            return;
-        }
-        int move = pos - index - 1;
-        if (move > 0) {
-            System.arraycopy(buffer, index + 1, buffer, index, move);
-        }
-        Unsafe.arrayPut(buffer, --pos, noEntryValue);
-    }
-
-    @SuppressWarnings("unchecked")
-    private void ensureCapacity0(int capacity) {
-        int l = buffer.length;
-        if (capacity > l) {
-            int newCap = Math.max(l << 1, capacity);
-            long[] buf = new long[newCap];
-            System.arraycopy(buffer, 0, buf, 0, l);
-            this.buffer = buf;
-        }
     }
 
     private boolean equals(LongList that) {
@@ -395,6 +416,16 @@ public class LongList {
         Unsafe.arrayPut(buffer, a, Unsafe.arrayGet(buffer, b));
     }
 
+    private void removeIndex(int index) {
+        if (pos < 1 || index >= pos) {
+            return;
+        }
+        int move = pos - index - 1;
+        if (move > 0) {
+            System.arraycopy(buffer, index + 1, buffer, index, move);
+        }
+        Unsafe.arrayPut(buffer, --pos, noEntryValue);
+    }
 
     /**
      * Sorts the specified range of the array by Dual-Pivot Quicksort.
