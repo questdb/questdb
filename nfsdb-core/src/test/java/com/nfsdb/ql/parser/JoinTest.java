@@ -102,6 +102,18 @@ public class JoinTest {
     }
 
     @Test
+    public void testJoin() throws Exception {
+        parser.setContent("orders" +
+                " join customers on orders.customerId = customers.customerId or customers.customerId = suppliers.supplier" +
+                " join orderDetails d on d.orderId = orders.orderId" +
+                " join products on d.productId = products.productId" +
+                " join suppliers on products.supplier = suppliers.supplier" +
+                " where orders.orderId > 0");
+        Statement statement = parser.parse();
+        optimiser.compileJoins(statement.getQueryModel(), factory);
+    }
+
+    @Test
     public void testJoinCycle() throws Exception {
         try {
             parser.setContent("orders" +
@@ -114,6 +126,7 @@ public class JoinTest {
             optimiser.compileJoins(statement.getQueryModel(), factory);
             Assert.fail("Exception expected");
         } catch (ParserException e) {
+            Assert.assertEquals(161, e.getPosition());
             Assert.assertTrue(e.getMessage().contains("cycle"));
         }
     }

@@ -18,6 +18,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  ******************************************************************************/
+
 package com.nfsdb.ql.model;
 
 import com.nfsdb.collections.Mutable;
@@ -41,6 +42,7 @@ public class QueryModel implements Mutable {
     private ExprNode latestBy;
     private JournalRecordSource<? extends Record> recordSource;
     private JournalMetadata metadata;
+    private int position;
 
     protected QueryModel() {
     }
@@ -73,6 +75,7 @@ public class QueryModel implements Mutable {
         latestBy = null;
         recordSource = null;
         metadata = null;
+        position = 0;
     }
 
     public String getAlias() {
@@ -129,6 +132,14 @@ public class QueryModel implements Mutable {
 
     public ObjList<ExprNode> getOrderBy() {
         return orderBy;
+    }
+
+    public int getPosition() {
+        return position;
+    }
+
+    public void setPosition(int position) {
+        this.position = position;
     }
 
     public JournalRecordSource<? extends Record> getRecordSource() {

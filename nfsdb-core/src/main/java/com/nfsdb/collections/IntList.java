@@ -175,6 +175,24 @@ public class IntList implements Mutable {
         return toStringBuilder.toString();
     }
 
+    public void insertionSortL(int left, int right) {
+    /*
+     * Traditional (without sentinel) insertion sort,
+     * optimized for server VM, is used in case of
+     * the leftmost part.
+     */
+        for (int i = left, j = i; i < right; j = ++i) {
+            int ai = getQuick(i + 1);
+            while (ai < getQuick(j)) {
+                let(j + 1, j);
+                if (j-- == left) {
+                    break;
+                }
+            }
+            setQuick(j + 1, ai);
+        }
+    }
+
     public void set(int index, int element) {
         if (index < pos) {
             Unsafe.arrayPut(buffer, index, element);
@@ -331,10 +349,50 @@ public class IntList implements Mutable {
         return false;
     }
 
+    private void insertionSortR(int left, int right) {
+        // Skip the longest ascending sequence.
+        do {
+            if (left >= right) {
+                return;
+            }
+        } while (getQuick(++left) >= getQuick(left - 1));
+
+                /*
+                 * Every element from adjoining part plays the role
+                 * of sentinel, therefore this allows us to avoid the
+                 * left range check on each iteration. Moreover, we use
+                 * the more optimized algorithm, so called pair insertion
+                 * sort, which is faster (in the context of Quicksort)
+                 * than traditional implementation of insertion sort.
+                 */
+        for (int k = left; ++left <= right; k = ++left) {
+            int a1 = getQuick(k), a2 = getQuick(left);
+
+            if (a1 < a2) {
+                a2 = a1;
+                a1 = getQuick(left);
+            }
+            while (a1 < getQuick(--k)) {
+                let(k + 2, k);
+            }
+            setQuick(++k + 1, a1);
+
+            while (a2 < getQuick(--k)) {
+                let(k + 1, k);
+            }
+            setQuick(k + 1, a2);
+        }
+        int last = getQuick(right);
+
+        while (last < getQuick(--right)) {
+            let(right + 1, right);
+        }
+        setQuick(right + 1, last);
+    }
+
     private void let(int a, int b) {
         Unsafe.arrayPut(buffer, a, Unsafe.arrayGet(buffer, b));
     }
-
 
     /**
      * Sorts the specified range of the array by Dual-Pivot Quicksort.
@@ -350,62 +408,9 @@ public class IntList implements Mutable {
         // Use insertion sort on tiny arrays
         if (length < INSERTION_SORT_THRESHOLD) {
             if (leftmost) {
-                /*
-                 * Traditional (without sentinel) insertion sort,
-                 * optimized for server VM, is used in case of
-                 * the leftmost part.
-                 */
-                for (int i = left, j = i; i < right; j = ++i) {
-                    int ai = getQuick(i + 1);
-                    while (ai < getQuick(j)) {
-                        let(j + 1, j);
-                        if (j-- == left) {
-                            break;
-                        }
-                    }
-                    setQuick(j + 1, ai);
-                }
+                insertionSortL(left, right);
             } else {
-                /*
-                 * Skip the longest ascending sequence.
-                 */
-                do {
-                    if (left >= right) {
-                        return;
-                    }
-                } while (getQuick(++left) >= getQuick(left - 1));
-
-                /*
-                 * Every element from adjoining part plays the role
-                 * of sentinel, therefore this allows us to avoid the
-                 * left range check on each iteration. Moreover, we use
-                 * the more optimized algorithm, so called pair insertion
-                 * sort, which is faster (in the context of Quicksort)
-                 * than traditional implementation of insertion sort.
-                 */
-                for (int k = left; ++left <= right; k = ++left) {
-                    int a1 = getQuick(k), a2 = getQuick(left);
-
-                    if (a1 < a2) {
-                        a2 = a1;
-                        a1 = getQuick(left);
-                    }
-                    while (a1 < getQuick(--k)) {
-                        let(k + 2, k);
-                    }
-                    setQuick(++k + 1, a1);
-
-                    while (a2 < getQuick(--k)) {
-                        let(k + 1, k);
-                    }
-                    setQuick(k + 1, a2);
-                }
-                int last = getQuick(right);
-
-                while (last < getQuick(--right)) {
-                    let(right + 1, right);
-                }
-                setQuick(right + 1, last);
+                insertionSortR(left, right);
             }
             return;
         }

@@ -83,13 +83,23 @@ public class Optimiser {
         namedJoinMetadata.clear();
         allJoinMetadata.clear();
         dependencyChains.clear();
+        topologicalNodePool.reset();
 
         final ObjList<JoinModel> joinModels = model.getJoinModels();
+        int n = joinModels.size();
 
         // create metadata for all journals and sub-queries involved in this query
+        // also initialize unorderedTopologicalNodes once we are iterating over join models
         collectJoinSource(model, factory);
-        for (int i = 0, n = joinModels.size(); i < n; i++) {
+        unorderedTopologicalNodes.ensureCapacity(n + 1);
+        TopologicalNode node = topologicalNodePool.next();
+        node.index = 0;
+        unorderedTopologicalNodes.setQuick(0, node);
+        for (int i = 0; i < n; i++) {
             collectJoinSource(joinModels.getQuick(i), factory);
+            node = topologicalNodePool.next();
+            node.index = i + 1;
+            unorderedTopologicalNodes.setQuick(node.index, node);
         }
 
         // create dependency chains
@@ -97,19 +107,19 @@ public class Optimiser {
 
         intListPool.reset();
         traversePreOrderRecursive(model.getWhereClause(), null);
-        for (int i = 0, n = joinModels.size(); i < n; i++) {
+        for (int i = 0; i < n; i++) {
             traversePreOrderRecursive(joinModels.getQuick(i).getJoinCriteria(), null);
         }
 
         // create tree structure to order joins according to their dependencies
         // (topological sort)
-        for (int i = 0, n = dependencyChains.size(); i < n; i++) {
+        for (int i = 0, k = dependencyChains.size(); i < k; i++) {
             IntList l = dependencyChains.getQuick(i);
-            l.sort();
+            l.insertionSortL(0, l.size() - 1);
             collectTopologicalNodes(l);
         }
 
-        sortTopologicalNodes();
+        sortTopologicalNodes(model);
         System.out.println(orderedTopologicalNodes);
     }
 
@@ -158,20 +168,31 @@ public class Optimiser {
     }
 
     private void collectTopologicalNodes(IntList indices) {
-
-        topologicalNodePool.reset();
-
         int n = indices.size();
         if (n == 0) {
             return;
         }
 
-        TopologicalNode root = getTopologicalNode(indices.getQuick(0));
-        if (n > 1) {
-            for (int i = 1; i < n; i++) {
-                TopologicalNode node = getTopologicalNode(indices.getQuick(i));
-                root.out.add(node);
-                node.in++;
+//        TopologicalNode root = getTopologicalNode(indices.getQuick(0));
+//        if (n > 1) {
+//            for (int i = 1; i < n; i++) {
+//                TopologicalNode node = getTopologicalNode(indices.getQuick(i));
+//                root.out.add(node);
+//                node.in++;
+//            }
+//        }
+//
+
+        for (int i = 0; i < n; i++) {
+            int depIdx = indices.getQuick(i);
+            TopologicalNode dependant = unorderedTopologicalNodes.getQuick(depIdx);
+            for (int k = 0; k < i; k++) {
+                int idx = indices.getQuick(k);
+                if (idx < depIdx) {
+                    if (unorderedTopologicalNodes.getQuick(idx).out.add(dependant)) {
+                        dependant.in++;
+                    }
+                }
             }
         }
     }
@@ -411,20 +432,20 @@ public class Optimiser {
         return stack.pollFirst();
     }
 
-    private TopologicalNode getTopologicalNode(int index) {
-        TopologicalNode node;
-        int n = unorderedTopologicalNodes.size();
-        if (index < n) {
-            node = unorderedTopologicalNodes.getQuick(index);
-            if (node == null) {
-                unorderedTopologicalNodes.setQuick(index, node = topologicalNodePool.next());
-                node.index = index;
-            }
+    private int getCyclePosition(QueryModel model, int index) {
+        if (index == 0) {
+            return getCyclePosition0(model);
         } else {
-            unorderedTopologicalNodes.extendAndSet(index, node = topologicalNodePool.next());
-            node.index = index;
+            return getCyclePosition0(model.getJoinModels().getQuick(index - 1));
         }
-        return node;
+    }
+
+    private int getCyclePosition0(QueryModel model) {
+        if (model.getJournalName() != null) {
+            return model.getJournalName().position;
+        } else {
+            return model.getNestedModel().getPosition();
+        }
     }
 
     @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE"})
@@ -600,7 +621,7 @@ public class Optimiser {
         return new SelectedColumnsJournalRecordSource(rs, selectedColumns);
     }
 
-    private void sortTopologicalNodes() throws ParserException {
+    private void sortTopologicalNodes(QueryModel model) throws ParserException {
         orderedTopologicalNodes.clear();
         topologicalStack.clear();
 
@@ -634,7 +655,7 @@ public class Optimiser {
         for (int i = 0, n = unorderedTopologicalNodes.size(); i < n; i++) {
             TopologicalNode node = unorderedTopologicalNodes.getQuick(i);
             if (node.in > 0) {
-                throw new ParserException(0, "There is a cycle in join dependencies");
+                throw new ParserException(getCyclePosition(model, node.index), "There is a cycle in join dependencies");
             }
         }
     }
@@ -657,7 +678,6 @@ public class Optimiser {
             case OPERATION:
                 switch (node.token) {
                     case "and":
-                    case "or":
                         break;
                     default:
                         if (c == null) {
