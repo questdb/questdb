@@ -32,10 +32,7 @@ import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.utils.Files;
 import com.nfsdb.utils.Rnd;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.ClassRule;
-import org.junit.Test;
+import org.junit.*;
 
 public class JoinTest {
     @ClassRule
@@ -114,6 +111,7 @@ public class JoinTest {
     }
 
     @Test
+    @Ignore
     public void testJoinCycle() throws Exception {
         try {
             parser.setContent("orders" +
