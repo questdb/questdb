@@ -147,7 +147,7 @@ public class Optimiser {
         }
     }
 
-    private void collectJournalMetadata(QueryModel model, JournalReaderFactory factory) throws ParserException, JournalException {
+    void collectJournalMetadata(QueryModel model, JournalReaderFactory factory) throws ParserException, JournalException {
         ExprNode readerNode = model.getJournalName();
         if (readerNode.type != ExprNode.NodeType.LITERAL && readerNode.type != ExprNode.NodeType.CONSTANT) {
             throw new ParserException(readerNode.position, "Journal name must be either literal or string constant");

@@ -43,6 +43,7 @@ public class QueryModel implements Mutable {
     private JournalRecordSource<? extends Record> recordSource;
     private JournalMetadata metadata;
     private int position;
+    private JoinContext context;
 
     protected QueryModel() {
     }
@@ -88,6 +89,14 @@ public class QueryModel implements Mutable {
 
     public ObjList<QueryColumn> getColumns() {
         return columns;
+    }
+
+    public JoinContext getContext() {
+        return context;
+    }
+
+    public void setContext(JoinContext context) {
+        this.context = context;
     }
 
     public ObjList<String> getGroupBy() {

@@ -22,7 +22,8 @@
 package com.nfsdb.ql.parser;
 
 import com.nfsdb.PartitionType;
-import com.nfsdb.collections.ObjHashSet;
+import com.nfsdb.collections.CharSequenceHashSet;
+import com.nfsdb.collections.CharSequenceObjHashMap;
 import com.nfsdb.collections.ObjectPool;
 import com.nfsdb.factory.configuration.GenericIntBuilder;
 import com.nfsdb.factory.configuration.JournalStructure;
@@ -34,8 +35,9 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class QueryParser {
 
-    private static final ObjHashSet<CharSequence> aliasStopSet = new ObjHashSet<>();
-    private static final ObjHashSet<CharSequence> groupByStopSet = new ObjHashSet<>();
+    private static final CharSequenceHashSet aliasStopSet = new CharSequenceHashSet();
+    private static final CharSequenceHashSet groupByStopSet = new CharSequenceHashSet();
+    private static final CharSequenceObjHashMap<JoinModel.JoinType> joinStartSet = new CharSequenceObjHashMap<>();
 
     private final TokenStream toks = new TokenStream() {{
         defineSymbol("+");
@@ -68,7 +70,7 @@ public class QueryParser {
     }
 
     private void expectTok(CharSequence tok, CharSequence expected) throws ParserException {
-        if (!Chars.equals(tok, expected)) {
+        if (tok == null || !Chars.equals(tok, expected)) {
             throw err("\"" + expected + "\" expected");
         }
 
@@ -149,10 +151,16 @@ public class QueryParser {
         return null;
     }
 
-    private JoinModel parseJoin() throws ParserException {
+    private JoinModel parseJoin(CharSequence tok, JoinModel.JoinType type) throws ParserException {
         JoinModel joinModel = joinModelPool.next();
+        joinModel.setJoinType(type);
 
-        CharSequence tok = tok();
+        if (!Chars.equals(tok, "join")) {
+            expectTok(tok(), "join");
+        }
+
+        tok = tok();
+
         if (Chars.equals(tok, "(")) {
             joinModel.setNestedModel(parseQuery(true));
             expectTok(tok(), ")");
@@ -161,16 +169,30 @@ public class QueryParser {
             joinModel.setJournalName(expr());
         }
 
-        tok = tok();
+        tok = optionTok();
 
-        if (!Chars.equals(tok, "on")) {
+        if (tok != null && !aliasStopSet.contains(tok)) {
             joinModel.setAlias(tok.toString());
-            tok = tok();
+        } else {
+            toks.unparse();
         }
 
-        expectTok(tok, "on");
+        tok = optionTok();
 
-        joinModel.setJoinCriteria(expr());
+        if (type == JoinModel.JoinType.CROSS && tok != null && Chars.equals(tok, "on")) {
+            throw new ParserException(toks.position(), "Cross joins cannot have join clauses");
+        }
+
+        if (type != JoinModel.JoinType.CROSS) {
+            expectTok(tok, "on");
+            ExprNode expr = expr();
+            if (expr == null) {
+                throw new ParserException(toks.position(), "Expression expected");
+            }
+            joinModel.setJoinCriteria(expr);
+        } else {
+            toks.unparse();
+        }
 
         return joinModel;
     }
@@ -292,10 +314,11 @@ public class QueryParser {
             }
         }
 
-        // expect multiple [join]
+        // expect multiple [[inner | outer | cross] join]
 
-        while (tok != null && Chars.equals(tok, "join")) {
-            model.addJoinModel(parseJoin());
+        JoinModel.JoinType type;
+        while (tok != null && (type = joinStartSet.get(tok)) != null) {
+            model.addJoinModel(parseJoin(tok, type));
             tok = optionTok();
         }
 
@@ -393,11 +416,20 @@ public class QueryParser {
         aliasStopSet.add("where");
         aliasStopSet.add("latest");
         aliasStopSet.add("join");
+        aliasStopSet.add("inner");
+        aliasStopSet.add("outer");
+        aliasStopSet.add("cross");
         aliasStopSet.add("group");
         aliasStopSet.add("order");
+        aliasStopSet.add("on");
         //
         groupByStopSet.add("order");
         groupByStopSet.add(")");
         groupByStopSet.add(",");
+
+        joinStartSet.put("join", JoinModel.JoinType.INNER);
+        joinStartSet.put("inner", JoinModel.JoinType.INNER);
+        joinStartSet.put("outer", JoinModel.JoinType.OUTER);
+        joinStartSet.put("cross", JoinModel.JoinType.CROSS);
     }
 }

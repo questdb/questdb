@@ -20,30 +20,21 @@
  ******************************************************************************/
 package com.nfsdb.collections;
 
-import com.nfsdb.utils.Chars;
+public class FlyweightCharSequence implements CharSequence, Mutable {
+    public static final ObjectPoolFactory<FlyweightCharSequence> FACTORY = new ObjectPoolFactory<FlyweightCharSequence>() {
+        @Override
+        public FlyweightCharSequence newInstance() {
+            return new FlyweightCharSequence();
+        }
+    };
 
-public class FlyweightCharSequence implements CharSequence {
     private CharSequence delegate;
     private int lo;
     private int len;
 
     @Override
-    public int hashCode() {
-        if (len == 0) {
-            return 0;
-        }
+    public void clear() {
 
-        int h = 0;
-        int hi = lo + len;
-        for (int p = lo; p < hi; p++) {
-            h = 31 * h + delegate.charAt(p);
-        }
-        return h;
-    }
-
-    @Override
-    public boolean equals(Object obj) {
-        return this == obj || obj instanceof CharSequence && Chars.equals(this, (CharSequence) obj);
     }
 
     @Override
@@ -61,14 +52,14 @@ public class FlyweightCharSequence implements CharSequence {
         return null;
     }
 
-    public FlyweightCharSequence of(CharSequence delegate) {
-        return of(delegate, 1, delegate.length() - 2);
-    }
-
     public FlyweightCharSequence of(CharSequence delegate, int lo, int len) {
         this.delegate = delegate;
         this.lo = lo;
         this.len = len;
         return this;
+    }
+
+    public FlyweightCharSequence of(CharSequence delegate) {
+        return of(delegate, 1, delegate.length() - 2);
     }
 }

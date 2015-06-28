@@ -24,6 +24,7 @@ package com.nfsdb.ql.model;
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.ObjectPoolFactory;
+import com.nfsdb.io.sink.CharSink;
 
 public class ExprNode implements Mutable {
 
@@ -73,6 +74,37 @@ public class ExprNode implements Mutable {
                 ", args=" + args +
                 ", position=" + position +
                 '}';
+    }
+
+    public void toString(CharSink sink) {
+        switch (paramCount) {
+            case 0:
+                sink.put(token);
+                break;
+            case 1:
+            case 2:
+                if (lhs != null) {
+                    lhs.toString(sink);
+                }
+                sink.put(' ');
+                sink.put(token);
+                sink.put(' ');
+                if (rhs != null) {
+                    rhs.toString(sink);
+                }
+                break;
+            default:
+                sink.put(token);
+                sink.put('(');
+                for (int i = 0, n = args.size(); i < n; i++) {
+                    if (i > 0) {
+                        sink.put(',');
+                    }
+                    args.getQuick(i).toString(sink);
+                }
+                sink.put(')');
+                break;
+        }
     }
 
     public enum NodeType {

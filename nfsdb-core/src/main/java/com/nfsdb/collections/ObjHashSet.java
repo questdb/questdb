@@ -37,6 +37,7 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
     private static final Object noEntryValue = new Object();
     private final double loadFactor;
     private final ObjList<T> list;
+    private final ObjHashSet<T> temp;
     private T[] keys;
     private int free;
     private int capacity;
@@ -47,11 +48,17 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
     }
 
     public ObjHashSet(int initialCapacity) {
-        this(initialCapacity, 0.4f, 0.3f);
+        this(initialCapacity, 0.4f, 0.3f, true);
     }
 
     @SuppressWarnings("unchecked")
-    public ObjHashSet(int initialCapacity, double loadFactor, double hashFactor) {
+    public ObjHashSet(int initialCapacity, double loadFactor, double hashFactor, boolean makeTemp) {
+        if (makeTemp) {
+            temp = new ObjHashSet<>(MIN_INITIAL_CAPACITY, loadFactor, hashFactor, false);
+        } else {
+            temp = null;
+        }
+
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
@@ -133,19 +140,16 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
     }
 
     public boolean replaceAllWithOverlap(ObjHashSet<T> that) {
-        ObjHashSet<T> result = null;
+        temp.clear();
         for (int i = 0, k = that.size(); i < k; i++) {
             if (contains(that.get(i))) {
-                if (result == null) {
-                    result = new ObjHashSet<>();
-                }
-                result.add(that.get(i));
+                temp.add(that.get(i));
             }
         }
 
-        if (result != null) {
+        if (temp.size() > 0) {
             this.clear();
-            addAll(result);
+            addAll(temp);
             return true;
         }
         return false;

@@ -18,6 +18,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  ******************************************************************************/
+
 package com.nfsdb.ql.model;
 
 import com.nfsdb.collections.ObjectPoolFactory;
@@ -25,6 +26,7 @@ import com.nfsdb.collections.ObjectPoolFactory;
 public class JoinModel extends QueryModel {
     public static final JoinModelFactory FACTORY = new JoinModelFactory();
     private ExprNode joinCriteria;
+    private JoinType joinType;
 
     @Override
     public void clear() {
@@ -38,6 +40,18 @@ public class JoinModel extends QueryModel {
 
     public void setJoinCriteria(ExprNode joinCriteria) {
         this.joinCriteria = joinCriteria;
+    }
+
+    public JoinType getJoinType() {
+        return joinType;
+    }
+
+    public void setJoinType(JoinType joinType) {
+        this.joinType = joinType;
+    }
+
+    public enum JoinType {
+        INNER, OUTER, CROSS
     }
 
     public static final class JoinModelFactory implements ObjectPoolFactory<JoinModel> {

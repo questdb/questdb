@@ -18,9 +18,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  ******************************************************************************/
+
 package com.nfsdb.ql.parser;
 
 import com.nfsdb.ql.model.ExprNode;
+import com.nfsdb.ql.model.JoinModel;
 import com.nfsdb.ql.model.Statement;
 import com.nfsdb.ql.model.StatementType;
 import com.nfsdb.test.tools.AbstractTest;
@@ -30,6 +32,57 @@ import org.junit.Test;
 
 public class QueryParserTest extends AbstractTest {
     private final QueryParser parser = new QueryParser();
+
+    @Test
+    public void testCrossJoin() throws Exception {
+        try {
+            parse("select x from a a cross join b on b.x = a.x");
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(31, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("cannot"));
+        }
+    }
+
+    @Test
+    public void testCrossJoin2() throws Exception {
+        Statement statement = parse("select x from a a cross join b z");
+        Assert.assertNotNull(statement.getQueryModel());
+        Assert.assertEquals("a", statement.getQueryModel().getAlias());
+        Assert.assertEquals(1, statement.getQueryModel().getJoinModels().size());
+        Assert.assertEquals(JoinModel.JoinType.CROSS, statement.getQueryModel().getJoinModels().getQuick(0).getJoinType());
+        Assert.assertNull(statement.getQueryModel().getJoinModels().getQuick(0).getJoinCriteria());
+    }
+
+    @Test
+    public void testCrossJoin3() throws Exception {
+        Statement statement = parse(
+                "select x from a a " +
+                        "cross join b z " +
+                        "join c on a.x = c.x");
+        Assert.assertNotNull(statement.getQueryModel());
+        Assert.assertEquals("a", statement.getQueryModel().getAlias());
+        Assert.assertEquals(2, statement.getQueryModel().getJoinModels().size());
+        Assert.assertEquals(JoinModel.JoinType.CROSS, statement.getQueryModel().getJoinModels().getQuick(0).getJoinType());
+        Assert.assertNull(statement.getQueryModel().getJoinModels().getQuick(0).getJoinCriteria());
+        Assert.assertEquals(JoinModel.JoinType.INNER, statement.getQueryModel().getJoinModels().getQuick(1).getJoinType());
+        Assert.assertNotNull(statement.getQueryModel().getJoinModels().getQuick(1).getJoinCriteria());
+    }
+
+    @Test
+    public void testCrossJoinNoAlias() throws Exception {
+        Statement statement = parse(
+                "select x from a a " +
+                        "cross join b " +
+                        "join c on a.x = c.x");
+        Assert.assertNotNull(statement.getQueryModel());
+        Assert.assertEquals("a", statement.getQueryModel().getAlias());
+        Assert.assertEquals(2, statement.getQueryModel().getJoinModels().size());
+        Assert.assertEquals(JoinModel.JoinType.CROSS, statement.getQueryModel().getJoinModels().getQuick(0).getJoinType());
+        Assert.assertNull(statement.getQueryModel().getJoinModels().getQuick(0).getJoinCriteria());
+        Assert.assertEquals(JoinModel.JoinType.INNER, statement.getQueryModel().getJoinModels().getQuick(1).getJoinType());
+        Assert.assertNotNull(statement.getQueryModel().getJoinModels().getQuick(1).getJoinCriteria());
+    }
 
     @Test
     public void testEmptyGroupBy() throws Exception {
@@ -59,6 +112,16 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals(3, statement.getQueryModel().getGroupBy().size());
         Assert.assertEquals("[x,y,z]", statement.getQueryModel().getGroupBy().toString());
+    }
+
+    @Test
+    public void testInnerJoin() throws Exception {
+        Statement statement = parse("select x from a a inner join b on b.x = a.x");
+        Assert.assertNotNull(statement.getQueryModel());
+        Assert.assertEquals("a", statement.getQueryModel().getAlias());
+        Assert.assertEquals(1, statement.getQueryModel().getJoinModels().size());
+        Assert.assertEquals(JoinModel.JoinType.INNER, statement.getQueryModel().getJoinModels().getQuick(0).getJoinType());
+        Assert.assertEquals("b.xa.x=", TestUtils.toRpn(statement.getQueryModel().getJoinModels().getQuick(0).getJoinCriteria()));
     }
 
     @Test
@@ -95,6 +158,28 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
+    public void testInvalidInnerJoin1() throws Exception {
+        try {
+            parse("select x from a a inner join b z");
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(31, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("\"on\""));
+        }
+    }
+
+    @Test
+    public void testInvalidInnerJoin2() throws Exception {
+        try {
+            parse("select x from a a inner join b z on");
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(33, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("Expression"));
+        }
+    }
+
+    @Test
     public void testInvalidOrderBy1() throws Exception {
         try {
             parse("select x, y from tab order by x,");
@@ -113,6 +198,28 @@ public class QueryParserTest extends AbstractTest {
         } catch (ParserException e) {
             Assert.assertEquals(33, e.getPosition());
             Assert.assertTrue(e.getMessage().contains("Expression expected"));
+        }
+    }
+
+    @Test
+    public void testInvalidOuterJoin1() throws Exception {
+        try {
+            parse("select x from a a outer join b z");
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(31, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("\"on\""));
+        }
+    }
+
+    @Test
+    public void testInvalidOuterJoin2() throws Exception {
+        try {
+            parse("select x from a a outer join b z on");
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(33, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("Expression"));
         }
     }
 
@@ -230,6 +337,16 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertEquals("x", TestUtils.toRpn(statement.getQueryModel().getOrderBy().getQuick(0)));
         Assert.assertEquals("y", TestUtils.toRpn(statement.getQueryModel().getOrderBy().getQuick(1)));
         Assert.assertEquals("z", TestUtils.toRpn(statement.getQueryModel().getOrderBy().getQuick(2)));
+    }
+
+    @Test
+    public void testOuterJoin() throws Exception {
+        Statement statement = parse("select x from a a outer join b on b.x = a.x");
+        Assert.assertNotNull(statement.getQueryModel());
+        Assert.assertEquals("a", statement.getQueryModel().getAlias());
+        Assert.assertEquals(1, statement.getQueryModel().getJoinModels().size());
+        Assert.assertEquals(JoinModel.JoinType.OUTER, statement.getQueryModel().getJoinModels().getQuick(0).getJoinType());
+        Assert.assertEquals("b.xa.x=", TestUtils.toRpn(statement.getQueryModel().getJoinModels().getQuick(0).getJoinCriteria()));
     }
 
     @Test

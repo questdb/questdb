@@ -30,6 +30,7 @@ import com.nfsdb.model.configuration.ModelConfiguration;
 import com.nfsdb.ql.model.Statement;
 import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.test.tools.JournalTestFactory;
+import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Files;
 import com.nfsdb.utils.Rnd;
 import org.junit.*;
@@ -40,6 +41,7 @@ public class JoinTest {
 
     private final QueryParser parser = new QueryParser();
     private final Optimiser optimiser = new Optimiser();
+    private final JoinOptimiser joinOptimiser = new JoinOptimiser(optimiser);
 
     @BeforeClass
     public static void setUp() throws Exception {
@@ -99,27 +101,16 @@ public class JoinTest {
     }
 
     @Test
-    public void testJoin() throws Exception {
-        parser.setContent("orders" +
-                " join customers on orders.customerId = customers.customerId or customers.customerId = suppliers.supplier" +
-                " join orderDetails d on d.orderId = orders.orderId" +
-                " join products on d.productId = products.productId" +
-                " join suppliers on products.supplier = suppliers.supplier" +
-                " where orders.orderId > 0");
-        Statement statement = parser.parse();
-        optimiser.compileJoins(statement.getQueryModel(), factory);
-    }
-
-    @Test
     @Ignore
     public void testJoinCycle() throws Exception {
         try {
             parser.setContent("orders" +
-                    " join customers on orders.customerId = customers.customerId" +
-                    " join orderDetails d on d.orderId = orders.orderId and orders.orderId = products.productId" +
-                    " join products on d.productId = products.productId and orders.orderId = products.productId" +
-                    " join suppliers on products.supplier = suppliers.supplier" +
-                    " where orders.orderId = suppliers.supplier > 0");
+                            " join customers on orders.customerId = customers.customerId" +
+                            " join orderDetails d on d.orderId = orders.orderId and orders.orderId = products.productId" +
+                            " join products on d.productId = products.productId and orders.orderId = products.productId" +
+                            " join suppliers on products.supplier = suppliers.supplier" +
+                            " where orders.orderId = suppliers.supplier > 0"
+            );
             Statement statement = parser.parse();
             optimiser.compileJoins(statement.getQueryModel(), factory);
             Assert.fail("Exception expected");
@@ -129,12 +120,56 @@ public class JoinTest {
         }
     }
 
+    @Test
+    public void testJoinImpliedCrosses() throws Exception {
+        parser.setContent("orders" +
+                        " join customers on 1=1" +
+                        " join orderDetails d on 2=2" +
+                        " join products on 3=3" +
+                        " join suppliers on products.supplier = suppliers.supplier"
+        );
+        Statement statement = parser.parse();
+        joinOptimiser.compileJoins(statement.getQueryModel(), factory);
+
+        final String expected = "orders\n" +
+                "+ 0[ cross ] customers\n" +
+                "+ 1[ cross ] d\n" +
+                "+ 2[ cross ] products\n" +
+                "+ 3[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
+                "where 1 = 1 and 2 = 2 and 3 = 3\n";
+
+        TestUtils.assertEquals(expected, joinOptimiser.plan());
+    }
+
+    @Test
+    public void testJoinReorder() throws Exception {
+        parser.setContent("orders" +
+//                        " join customers on orders.customerId = customers.customerId" +
+                        " join customers on 1=1" +
+                        " join orderDetails d on d.orderId = orders.orderId and d.productId = customers.customerId" +
+//                        " join orderDetails d on d.orderId = orders.orderId" +
+                        " join products on d.productId = products.productId" +
+                        " join suppliers on products.supplier = suppliers.supplier" +
+                        " where d.productId = d.orderId"
+        );
+        Statement statement = parser.parse();
+        joinOptimiser.compileJoins(statement.getQueryModel(), factory);
+
+        final String expected = "orders\n" +
+                "+ 0[ inner ] customers ON d.productId = customers.customerId\n" +
+                "+ 1[ inner ] d (filter: d.productId = d.orderId) ON d.orderId = orders.orderId\n" +
+                "+ 2[ inner ] products ON d.productId = products.productId\n" +
+                "+ 3[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
+                "where 1 = 1\n";
+        TestUtils.assertEquals(expected, joinOptimiser.plan());
+    }
+
     private static void generateJoinData() throws JournalException {
         JournalWriter customers = factory.writer(
                 new JournalStructure("customers").
                         $int("customerId").
                         $str("customerName").
-                        $str("contactNAme").
+                        $str("contactName").
                         $str("address").
                         $str("city").
                         $str("postalCode").

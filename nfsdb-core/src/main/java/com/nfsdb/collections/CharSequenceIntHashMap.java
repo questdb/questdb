@@ -18,6 +18,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  ******************************************************************************/
+
 package com.nfsdb.collections;
 
 import com.nfsdb.utils.Chars;
@@ -63,7 +64,7 @@ public class CharSequenceIntHashMap implements Mutable {
     }
 
     public int get(CharSequence key) {
-        int index = key.hashCode() & mask;
+        int index = Chars.hashCode(key) & mask;
 
         if (Unsafe.arrayGet(keys, index) == noEntryValue) {
             return NO_ENTRY_VALUE;
@@ -77,7 +78,7 @@ public class CharSequenceIntHashMap implements Mutable {
     }
 
     public void put(CharSequence key, int value) {
-        int index = key.hashCode() & mask;
+        int index = Chars.hashCode(key) & mask;
         if (Unsafe.arrayGet(keys, index) == noEntryValue) {
             Unsafe.arrayPut(keys, index, key);
             Unsafe.arrayPut(values, index, value);
