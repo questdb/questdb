@@ -45,8 +45,8 @@ public class JoinOptimiser {
     private final IntHashSet deletedContexts = new IntHashSet();
     private final IntObjHashMap<ExprNode> preFilters = new IntObjHashMap<>();
     private final IntObjHashMap<ExprNode> postFilters = new IntObjHashMap<>();
-    private final ObjList<JoinContext> joinConditionsSwap1 = new ObjList<>();
-    private final ObjList<JoinContext> joinConditionsSwap2 = new ObjList<>();
+    private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
+    private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
     private final ObjectPool<JoinContext> contextPool = new ObjectPool<>(JoinContext.FACTORY, 16);
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
     private final IntList clausesToSteal = new IntList();
@@ -57,7 +57,7 @@ public class JoinOptimiser {
     private final LiteralCollector literalCollector = new LiteralCollector();
     private final StringSink planSink = new StringSink();
     private ExprNode globalFilter;
-    private ObjList<JoinContext> emittedJoinConditions;
+    private ObjList<JoinContext> emittedJoinClauses;
     private ObjList<JoinModel> joinModels;
     private QueryModel current;
 
@@ -65,7 +65,7 @@ public class JoinOptimiser {
         this.optimiser = optimiser;
     }
 
-    public void compileJoins(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    public void compile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         // prepare for new iteration
         namedJoinMetadata.clear();
         allJoinMetadata.clear();
@@ -85,15 +85,15 @@ public class JoinOptimiser {
         }
 
         contextPool.reset();
-        emittedJoinConditions = joinConditionsSwap1;
+        emittedJoinClauses = joinClausesSwap1;
 
         traversePreOrderRecursive(model.getWhereClause(), null);
         for (int i = 0; i < n; i++) {
             traversePreOrderRecursive(joinModels.getQuick(i).getJoinCriteria(), null);
         }
 
-        if (emittedJoinConditions.size() > 0) {
-            processEmittedConditions();
+        if (emittedJoinClauses.size() > 0) {
+            processEmittedJoinClauses();
         }
 
         trySwapJoinOrder();
@@ -243,11 +243,10 @@ public class JoinOptimiser {
     }
 
     private JoinContext mergeContexts(JoinContext a, JoinContext b) {
+        assert a.slaveIndex == b.slaveIndex;
 
         deletedContexts.clear();
         JoinContext r = contextPool.next();
-
-        assert a.slaveIndex == b.slaveIndex;
         // check if we merging a.x = b.x to a.y = b.y
         // or a.x = b.x to a.x = b.y, e.g. one of columns in the same
         for (int i = 0, n = b.aNames.size(); i < n; i++) {
@@ -277,25 +276,25 @@ public class JoinOptimiser {
                     // a.x = ?.x
                     //  |     ?
                     // a.x = ?.y
-                    processJoinCombo(k, abi, abn, abo, bbi, bbn, bbo);
+                    mergeContexts0(k, abi, abn, abo, bbi, bbn, bbo);
                     break;
                 } else if (abi == bai && Chars.equals(abn, ban)) {
                     // a.y = b.x
                     //    /
                     // b.x = a.x
-                    processJoinCombo(k, aai, aan, aao, bbi, bbn, bbo);
+                    mergeContexts0(k, aai, aan, aao, bbi, bbn, bbo);
                     break;
                 } else if (aai == bbi && Chars.equals(aan, bbn)) {
                     // a.x = b.x
                     //     \
                     // b.y = a.x
-                    processJoinCombo(k, abi, abn, abo, bai, ban, bao);
+                    mergeContexts0(k, abi, abn, abo, bai, ban, bao);
                     break;
                 } else if (abi == bbi && Chars.equals(abn, bbn)) {
                     // a.x = b.x
                     //        |
                     // a.y = b.x
-                    processJoinCombo(k, aai, aan, aao, bai, ban, bao);
+                    mergeContexts0(k, aai, aan, aao, bai, ban, bao);
                     break;
                 }
             }
@@ -319,6 +318,26 @@ public class JoinOptimiser {
         return r;
     }
 
+    private void mergeContexts0(int idx, int ai, CharSequence an, ExprNode ao, int bi, CharSequence bn, ExprNode bo) {
+        if (ai == bi && Chars.equals(an, bn)) {
+            deletedContexts.add(idx);
+            return;
+        }
+
+        if (ai == bi) {
+            // (same journal)
+            ExprNode node = exprNodePool.next().init(ExprNode.NodeType.OPERATION, "=", 0, 0);
+            node.paramCount = 2;
+            node.lhs = ao;
+            node.rhs = bo;
+            preFilters.put(ai, mergeFilters(preFilters.get(ai), node));
+            deletedContexts.add(idx);
+        } else {
+            // (different journals)
+            emittedJoinClauses.add(contextPool.next().add(ai, an, ao, bi, bn, bo));
+        }
+    }
+
     private ExprNode mergeFilters(ExprNode a, ExprNode b) {
         if (a == null && b == null) {
             return null;
@@ -339,44 +358,6 @@ public class JoinOptimiser {
         return n;
     }
 
-    /**
-     * Moves reversible join clauses, such as a.x = b.x from journal "from" to journal "to".
-     *
-     * @param to   target journal index
-     * @param from source journal index
-     * @param jc   context of target journal index
-     * @return false if "from" is outer joined journal, otherwise - true
-     */
-    private boolean move(int to, int from, JoinContext jc) {
-        int _to = to + 1;
-        JoinModel jm = joinModels.getQuick(from);
-        if (jm.getJoinType() == JoinModel.JoinType.OUTER) {
-            return false;
-        }
-
-        clausesToSteal.clear();
-
-        JoinContext that = jm.getContext();
-        if (that != null && that.parents.contains(_to)) {
-            int zc = that.aIndexes.size();
-            for (int z = 0; z < zc; z++) {
-                if (that.aIndexes.getQuick(z) == _to || that.bIndexes.getQuick(z) == _to) {
-                    clausesToSteal.add(z);
-                }
-            }
-
-            if (clausesToSteal.size() < zc) {
-                if (jc == null) {
-                    joinModels.getQuick(to).setContext(jc = contextPool.next());
-                }
-                jm.setContext(moveClauses(that, jc, clausesToSteal));
-                jc.slaveIndex = _to;
-                that.parents.remove(_to);
-            }
-        }
-        return true;
-    }
-
     private JoinContext moveClauses(JoinContext from, JoinContext to, IntList positions) {
         int p = 0;
         int m = positions.size();
@@ -394,42 +375,22 @@ public class JoinOptimiser {
         return result;
     }
 
-    private void processEmittedConditions() {
+    private void processEmittedJoinClauses() {
         // process emitted join conditions
         do {
-            ObjList<JoinContext> conditions = emittedJoinConditions;
+            ObjList<JoinContext> clauses = emittedJoinClauses;
 
-            if (conditions == joinConditionsSwap1) {
-                emittedJoinConditions = joinConditionsSwap2;
+            if (clauses == joinClausesSwap1) {
+                emittedJoinClauses = joinClausesSwap2;
             } else {
-                emittedJoinConditions = joinConditionsSwap1;
+                emittedJoinClauses = joinClausesSwap1;
             }
-            emittedJoinConditions.clear();
-            for (int i = 0, k = conditions.size(); i < k; i++) {
-                addJoinContext(conditions.getQuick(i));
+            emittedJoinClauses.clear();
+            for (int i = 0, k = clauses.size(); i < k; i++) {
+                addJoinContext(clauses.getQuick(i));
             }
-        } while (emittedJoinConditions.size() > 0);
+        } while (emittedJoinClauses.size() > 0);
 
-    }
-
-    private void processJoinCombo(int idx, int ai, CharSequence an, ExprNode ao, int bi, CharSequence bn, ExprNode bo) {
-        if (ai == bi && Chars.equals(an, bn)) {
-            deletedContexts.add(idx);
-            return;
-        }
-
-        if (ai == bi) {
-            // (same journal)
-            ExprNode node = exprNodePool.next().init(ExprNode.NodeType.OPERATION, "=", 0, 0);
-            node.paramCount = 2;
-            node.lhs = ao;
-            node.rhs = bo;
-            preFilters.put(ai, mergeFilters(preFilters.get(ai), node));
-            deletedContexts.add(idx);
-        } else {
-            // (different journals)
-            emittedJoinConditions.add(contextPool.next().add(ai, an, ao, bi, bn, bo));
-        }
     }
 
     private void resolveJoinMetadata(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
@@ -492,6 +453,44 @@ public class JoinOptimiser {
 
             return index;
         }
+    }
+
+    /**
+     * Moves reversible join clauses, such as a.x = b.x from journal "from" to journal "to".
+     *
+     * @param to   target journal index
+     * @param from source journal index
+     * @param jc   context of target journal index
+     * @return false if "from" is outer joined journal, otherwise - true
+     */
+    private boolean swapJoinOrder(int to, int from, JoinContext jc) {
+        int _to = to + 1;
+        JoinModel jm = joinModels.getQuick(from);
+        if (jm.getJoinType() == JoinModel.JoinType.OUTER) {
+            return false;
+        }
+
+        clausesToSteal.clear();
+
+        JoinContext that = jm.getContext();
+        if (that != null && that.parents.contains(_to)) {
+            int zc = that.aIndexes.size();
+            for (int z = 0; z < zc; z++) {
+                if (that.aIndexes.getQuick(z) == _to || that.bIndexes.getQuick(z) == _to) {
+                    clausesToSteal.add(z);
+                }
+            }
+
+            if (clausesToSteal.size() < zc) {
+                if (jc == null) {
+                    joinModels.getQuick(to).setContext(jc = contextPool.next());
+                }
+                jm.setContext(moveClauses(that, jc, clausesToSteal));
+                jc.slaveIndex = _to;
+                that.parents.remove(_to);
+            }
+        }
+        return true;
     }
 
     private void traversePreOrderRecursive(ExprNode node, JoinContext c) throws ParserException {
@@ -572,9 +571,9 @@ public class JoinOptimiser {
                 JoinContext jc = joinModels.getQuick(i).getContext();
                 if (jc == null || jc.parents.size() == 0) {
                     // look above i up to OUTER join
-                    for (int k = i - 1; k > -1 && move(i, k, jc); k--) ;
+                    for (int k = i - 1; k > -1 && swapJoinOrder(i, k, jc); k--) ;
                     // look below i for up to OUTER join
-                    for (int k = i + 1; k < n && move(i, k, jc); k++) ;
+                    for (int k = i + 1; k < n && swapJoinOrder(i, k, jc); k++) ;
                 }
 
 //                // get context again to check if anything moved there
@@ -587,10 +586,10 @@ public class JoinOptimiser {
         }
 
 //        if (crossCount > 0) {
-//            // this is a bit of a hack, "move" will not create context if it is already there
+//            // this is a bit of a hack, "swapJoinOrder" will not create context if it is already there
 //            // if it wasn't, it would crash with bad list index
 //            JoinContext jc = contextPool.next();
-//            for (int i = 0; i < n && move(-1, i, jc); i++);
+//            for (int i = 0; i < n && swapJoinOrder(-1, i, jc); i++);
 //            if (jc.parents.size() > 0) {
 //                current.setContext(jc);
 //            }
@@ -623,6 +622,5 @@ public class JoinOptimiser {
             names = literalCollectorBNames;
             return this;
         }
-
     }
 }

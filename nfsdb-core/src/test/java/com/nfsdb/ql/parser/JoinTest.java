@@ -33,7 +33,10 @@ import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Files;
 import com.nfsdb.utils.Rnd;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.ClassRule;
+import org.junit.Test;
 
 public class JoinTest {
     @ClassRule
@@ -53,7 +56,7 @@ public class JoinTest {
         try {
             parser.setContent("orders join customers on customerId = customerId");
             Statement statement = parser.parse();
-            optimiser.compileJoins(statement.getQueryModel(), factory);
+            joinOptimiser.compile(statement.getQueryModel(), factory);
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(25, e.getPosition());
@@ -66,7 +69,7 @@ public class JoinTest {
         try {
             parser.setContent("orders join customers on orders.customerId = c.customerId");
             Statement statement = parser.parse();
-            optimiser.compileJoins(statement.getQueryModel(), factory);
+            joinOptimiser.compile(statement.getQueryModel(), factory);
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(45, e.getPosition());
@@ -79,7 +82,7 @@ public class JoinTest {
         try {
             parser.setContent("orders join customers on customerIdx = customerId");
             Statement statement = parser.parse();
-            optimiser.compileJoins(statement.getQueryModel(), factory);
+            joinOptimiser.compile(statement.getQueryModel(), factory);
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(25, e.getPosition());
@@ -92,7 +95,7 @@ public class JoinTest {
         try {
             parser.setContent("orders join customer on customerId = customerId");
             Statement statement = parser.parse();
-            optimiser.compileJoins(statement.getQueryModel(), factory);
+            joinOptimiser.compile(statement.getQueryModel(), factory);
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(12, e.getPosition());
@@ -100,25 +103,25 @@ public class JoinTest {
         }
     }
 
-    @Test
-    @Ignore
-    public void testJoinCycle() throws Exception {
-        try {
-            parser.setContent("orders" +
-                            " join customers on orders.customerId = customers.customerId" +
-                            " join orderDetails d on d.orderId = orders.orderId and orders.orderId = products.productId" +
-                            " join products on d.productId = products.productId and orders.orderId = products.productId" +
-                            " join suppliers on products.supplier = suppliers.supplier" +
-                            " where orders.orderId = suppliers.supplier > 0"
-            );
-            Statement statement = parser.parse();
-            optimiser.compileJoins(statement.getQueryModel(), factory);
-            Assert.fail("Exception expected");
-        } catch (ParserException e) {
-            Assert.assertEquals(161, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("cycle"));
-        }
-    }
+//    @Test
+//    @Ignore
+//    public void testJoinCycle() throws Exception {
+//        try {
+//            parser.setContent("orders" +
+//                            " join customers on orders.customerId = customers.customerId" +
+//                            " join orderDetails d on d.orderId = orders.orderId and orders.orderId = products.productId" +
+//                            " join products on d.productId = products.productId and orders.orderId = products.productId" +
+//                            " join suppliers on products.supplier = suppliers.supplier" +
+//                            " where orders.orderId = suppliers.supplier > 0"
+//            );
+//            Statement statement = parser.parse();
+//            optimiser.compile(statement.getQueryModel(), factory);
+//            Assert.fail("Exception expected");
+//        } catch (ParserException e) {
+//            Assert.assertEquals(161, e.getPosition());
+//            Assert.assertTrue(e.getMessage().contains("cycle"));
+//        }
+//    }
 
     @Test
     public void testJoinImpliedCrosses() throws Exception {
@@ -129,7 +132,7 @@ public class JoinTest {
                         " join suppliers on products.supplier = suppliers.supplier"
         );
         Statement statement = parser.parse();
-        joinOptimiser.compileJoins(statement.getQueryModel(), factory);
+        joinOptimiser.compile(statement.getQueryModel(), factory);
 
         final String expected = "orders\n" +
                 "+ 0[ cross ] customers\n" +
@@ -153,7 +156,7 @@ public class JoinTest {
                         " where d.productId = d.orderId"
         );
         Statement statement = parser.parse();
-        joinOptimiser.compileJoins(statement.getQueryModel(), factory);
+        joinOptimiser.compile(statement.getQueryModel(), factory);
 
         final String expected = "orders\n" +
                 "+ 0[ inner ] customers ON d.productId = customers.customerId\n" +

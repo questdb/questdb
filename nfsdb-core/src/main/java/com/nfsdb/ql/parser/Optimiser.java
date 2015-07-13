@@ -18,10 +18,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  ******************************************************************************/
+
 package com.nfsdb.ql.parser;
 
 import com.nfsdb.JournalKey;
-import com.nfsdb.collections.*;
+import com.nfsdb.collections.Mutable;
+import com.nfsdb.collections.ObjHashSet;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.NoSuchColumnException;
 import com.nfsdb.factory.JournalReaderFactory;
@@ -46,8 +49,6 @@ import java.util.ArrayDeque;
 public class Optimiser {
 
     private final static NullConstant nullConstant = new NullConstant();
-    private final static TopologicalNodeFactory topologicalNodeFactory = new TopologicalNodeFactory();
-    private final static IntListFactory intListFactory = new IntListFactory();
 
     private final ArrayDeque<VirtualColumn> stack = new ArrayDeque<>();
     private final IntrinsicExtractor intrinsicExtractor = new IntrinsicExtractor();
@@ -57,16 +58,9 @@ public class Optimiser {
     private final ObjList<VirtualColumn> mutableArgs = new ObjList<>();
     private final StringSink columnNameAssembly = new StringSink();
     private final int columnNamePrefixLen;
-    private final ObjObjHashMap<String, RecordMetadata> namedJoinMetadata = new ObjObjHashMap<>();
-    private final ObjList<RecordMetadata> allJoinMetadata = new ObjList<>();
-    private final CharSequenceIntHashMap joinMetadataIndexLookup = new CharSequenceIntHashMap();
-    private final ObjList<IntList> dependencyChains = new ObjList<>();
-    private final FlyweightCharSequence aliasExtractor = new FlyweightCharSequence();
     private final ObjList<TopologicalNode> unorderedTopologicalNodes = new ObjList<>();
     private final ObjList<TopologicalNode> orderedTopologicalNodes = new ObjList<>();
     private final ArrayDeque<TopologicalNode> topologicalStack = new ArrayDeque<>();
-    private final ObjectPool<TopologicalNode> topologicalNodePool = new ObjectPool<>(topologicalNodeFactory, 16);
-    private final ObjectPool<IntList> intListPool = new ObjectPool<>(intListFactory, 16);
 
     public Optimiser() {
         // seed column name assembly with default column prefix, which we will reuse
@@ -76,75 +70,6 @@ public class Optimiser {
 
     public JournalRecordSource<? extends Record> compile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         return selectColumns(compile0(model, factory), model.getColumns());
-    }
-
-    public void compileJoins(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-        // prepare for new iteration
-        namedJoinMetadata.clear();
-        allJoinMetadata.clear();
-        dependencyChains.clear();
-        topologicalNodePool.reset();
-
-        final ObjList<JoinModel> joinModels = model.getJoinModels();
-        int n = joinModels.size();
-
-        // create metadata for all journals and sub-queries involved in this query
-        // also initialize unorderedTopologicalNodes once we are iterating over join models
-        collectJoinSource(model, factory);
-        unorderedTopologicalNodes.ensureCapacity(n + 1);
-        TopologicalNode node = topologicalNodePool.next();
-        node.index = 0;
-        unorderedTopologicalNodes.setQuick(0, node);
-        for (int i = 0; i < n; i++) {
-            collectJoinSource(joinModels.getQuick(i), factory);
-            node = topologicalNodePool.next();
-            node.index = i + 1;
-            unorderedTopologicalNodes.setQuick(node.index, node);
-        }
-
-        // create dependency chains
-        // chains consist of IntLists, so reset the pool to prepare for borrowing.
-
-        intListPool.reset();
-        traversePreOrderRecursive(model.getWhereClause(), null);
-        for (int i = 0; i < n; i++) {
-            traversePreOrderRecursive(joinModels.getQuick(i).getJoinCriteria(), null);
-        }
-
-        // create tree structure to order joins according to their dependencies
-        // (topological sort)
-        for (int i = 0, k = dependencyChains.size(); i < k; i++) {
-            IntList l = dependencyChains.getQuick(i);
-            l.insertionSortL(0, l.size() - 1);
-            collectTopologicalNodes(l);
-        }
-
-        sortTopologicalNodes(model);
-        System.out.println(orderedTopologicalNodes);
-    }
-
-    private void collectJoinSource(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-        RecordMetadata metadata;
-        if (model.getJournalName() != null) {
-            collectJournalMetadata(model, factory);
-            metadata = model.getMetadata();
-        } else {
-            JournalRecordSource<? extends Record> rs = compile(model, factory);
-            metadata = rs.getMetadata();
-            model.setRecordSource(rs);
-        }
-
-        int pos = allJoinMetadata.size();
-
-        allJoinMetadata.add(metadata);
-
-        if (model.getAlias() != null) {
-            namedJoinMetadata.put(model.getAlias(), metadata);
-            joinMetadataIndexLookup.put(model.getAlias(), pos);
-        } else if (model.getJournalName() != null) {
-            namedJoinMetadata.put(model.getJournalName().token, metadata);
-            joinMetadataIndexLookup.put(model.getJournalName().token, pos);
-        }
     }
 
     void collectJournalMetadata(QueryModel model, JournalReaderFactory factory) throws ParserException, JournalException {
@@ -165,36 +90,6 @@ public class Optimiser {
         }
 
         model.setMetadata(factory.getOrCreateMetadata(new JournalKey<>(reader)));
-    }
-
-    private void collectTopologicalNodes(IntList indices) {
-        int n = indices.size();
-        if (n == 0) {
-            return;
-        }
-
-//        TopologicalNode root = getTopologicalNode(indices.getQuick(0));
-//        if (n > 1) {
-//            for (int i = 1; i < n; i++) {
-//                TopologicalNode node = getTopologicalNode(indices.getQuick(i));
-//                root.out.add(node);
-//                node.in++;
-//            }
-//        }
-//
-
-        for (int i = 0; i < n; i++) {
-            int depIdx = indices.getQuick(i);
-            TopologicalNode dependant = unorderedTopologicalNodes.getQuick(depIdx);
-            for (int k = 0; k < i; k++) {
-                int idx = indices.getQuick(k);
-                if (idx < depIdx) {
-                    if (unorderedTopologicalNodes.getQuick(idx).out.add(dependant)) {
-                        dependant.in++;
-                    }
-                }
-            }
-        }
     }
 
     private JournalRecordSource<? extends Record> compile0(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
@@ -487,46 +382,6 @@ public class Optimiser {
         return f.isConstant() ? processConstantExpression(f) : f;
     }
 
-    private int lookupJournalIndex(ExprNode node) throws ParserException {
-        int dot = node.token.indexOf('.');
-        int index = -1;
-        if (dot == -1) {
-            for (int i = 0, n = allJoinMetadata.size(); i < n; i++) {
-                RecordMetadata m = allJoinMetadata.getQuick(i);
-                if (m.invalidColumn(node.token)) {
-                    continue;
-                }
-
-                if (index > -1) {
-                    throw new ParserException(node.position, "Ambiguous column name");
-                }
-
-                index = i;
-            }
-
-            if (index == -1) {
-                throw new InvalidColumnException(node.position);
-            }
-
-            return index;
-        } else {
-            aliasExtractor.of(node.token, 0, dot);
-            index = joinMetadataIndexLookup.get(aliasExtractor);
-
-            if (index == -1) {
-                throw new ParserException(node.position, "Invalid journal name/alias");
-            }
-            RecordMetadata m = allJoinMetadata.getQuick(index);
-
-            aliasExtractor.of(node.token, dot + 1, node.token.length() - dot - 1);
-            if (m.invalidColumn(aliasExtractor)) {
-                throw new InvalidColumnException(node.position);
-            }
-
-            return index;
-        }
-    }
-
     private VirtualColumn parseConstant(ExprNode node) throws ParserException {
 
         if ("null".equals(node.token)) {
@@ -657,64 +512,6 @@ public class Optimiser {
             if (node.in > 0) {
                 throw new ParserException(getCyclePosition(model, node.index), "There is a cycle in join dependencies");
             }
-        }
-    }
-
-    private void traversePreOrderRecursive(ExprNode node, IntList c) throws ParserException {
-        if (node == null) {
-            return;
-        }
-
-        IntList chain = null;
-
-        switch (node.type) {
-            case LITERAL:
-                if (c == null) {
-                    chain = c = intListPool.next();
-                }
-                c.add(lookupJournalIndex(node));
-                break;
-            case FUNCTION:
-            case OPERATION:
-                switch (node.token) {
-                    case "and":
-                        break;
-                    default:
-                        if (c == null) {
-                            chain = c = intListPool.next();
-                        }
-                        break;
-                }
-                break;
-            default:
-                break;
-        }
-
-        if (node.paramCount < 3) {
-            traversePreOrderRecursive(node.lhs, c);
-            traversePreOrderRecursive(node.rhs, c);
-        } else {
-            for (int i = 0; i < node.paramCount; i++) {
-                traversePreOrderRecursive(node.args.getQuick(i), c);
-            }
-        }
-
-        if (chain != null) {
-            dependencyChains.add(chain);
-        }
-    }
-
-    private static final class TopologicalNodeFactory implements ObjectPoolFactory<TopologicalNode> {
-        @Override
-        public TopologicalNode newInstance() {
-            return new TopologicalNode();
-        }
-    }
-
-    private static final class IntListFactory implements ObjectPoolFactory<IntList> {
-        @Override
-        public IntList newInstance() {
-            return new IntList();
         }
     }
 
