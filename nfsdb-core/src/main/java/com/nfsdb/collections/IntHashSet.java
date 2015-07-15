@@ -34,6 +34,7 @@ public class IntHashSet implements Mutable {
     public static final int MIN_INITIAL_CAPACITY = 16;
     private static final int noEntryValue = -1;
     private final double loadFactor;
+    private final IntList list;
     private int[] keys;
     private int free;
     private int capacity;
@@ -52,6 +53,7 @@ public class IntHashSet implements Mutable {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
+        this.list = new IntList(initialCapacity);
         int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
         this.loadFactor = loadFactor;
         keys = new int[capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity)];
@@ -62,8 +64,11 @@ public class IntHashSet implements Mutable {
 
     public boolean add(int key) {
         boolean r = insertKey(key);
-        if (free == 0) {
-            rehash();
+        if (r) {
+            list.add(key);
+            if (free == 0) {
+                rehash();
+            }
         }
         return r;
     }
@@ -77,7 +82,9 @@ public class IntHashSet implements Mutable {
     }
 
     public final void clear() {
+        free = capacity;
         Arrays.fill(keys, noEntryValue);
+        list.clear();
     }
 
     public boolean contains(int key) {
@@ -85,14 +92,21 @@ public class IntHashSet implements Mutable {
         return Unsafe.arrayGet(keys, index) != noEntryValue && (key == Unsafe.arrayGet(keys, index) || key == Unsafe.arrayGet(keys, index)) || probeContains(key, index);
     }
 
+    public int get(int index) {
+        return list.getQuick(index);
+    }
+
     public boolean remove(int key) {
-        int index = key & mask;
-        if (key == Unsafe.arrayGet(keys, index)) {
-            Unsafe.arrayPut(keys, index, noEntryValue);
-            free++;
-            return true;
+        if (list.remove(key)) {
+            int index = key & mask;
+            if (key == Unsafe.arrayGet(keys, index)) {
+                Unsafe.arrayPut(keys, index, noEntryValue);
+                free++;
+                return true;
+            }
+            return probeRemove(key, index);
         }
-        return probeRemove(key, index);
+        return false;
     }
 
     public int size() {

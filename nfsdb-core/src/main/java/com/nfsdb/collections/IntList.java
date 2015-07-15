@@ -716,4 +716,28 @@ public class IntList implements Mutable {
         setQuick(b, tmp);
     }
 
+    public boolean remove(int key) {
+        for (int i = 0, n = size(); i < n; i++) {
+            if (key == getQuick(i)) {
+                removeIdx(i);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public void removeIdx(int index) {
+        if (pos < 1 || index >= pos) {
+            return;
+        }
+        int move = pos - index - 1;
+        if (move > 0) {
+            System.arraycopy(buffer, index + 1, buffer, index, move);
+        }
+        Unsafe.arrayPut(buffer, --pos, noEntryValue);
+    }
+
 }

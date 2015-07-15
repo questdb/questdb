@@ -37,21 +37,38 @@ public class QueryParser {
 
     private static final CharSequenceHashSet aliasStopSet = new CharSequenceHashSet();
     private static final CharSequenceHashSet groupByStopSet = new CharSequenceHashSet();
-    private static final CharSequenceObjHashMap<JoinModel.JoinType> joinStartSet = new CharSequenceObjHashMap<>();
+    private static final CharSequenceObjHashMap<QueryModel.JoinType> joinStartSet = new CharSequenceObjHashMap<>();
+
+    static {
+        aliasStopSet.add("where");
+        aliasStopSet.add("latest");
+        aliasStopSet.add("join");
+        aliasStopSet.add("inner");
+        aliasStopSet.add("outer");
+        aliasStopSet.add("cross");
+        aliasStopSet.add("group");
+        aliasStopSet.add("order");
+        aliasStopSet.add("on");
+        //
+        groupByStopSet.add("order");
+        groupByStopSet.add(")");
+        groupByStopSet.add(",");
+
+        joinStartSet.put("join", QueryModel.JoinType.INNER);
+        joinStartSet.put("inner", QueryModel.JoinType.INNER);
+        joinStartSet.put("outer", QueryModel.JoinType.OUTER);
+        joinStartSet.put("cross", QueryModel.JoinType.CROSS);
+    }
 
     private final TokenStream toks = new TokenStream() {{
         defineSymbol("+");
     }};
-
     private final ExprParser exprParser = new ExprParser(toks);
     private final AstBuilder astBuilder = new AstBuilder();
     private final ObjectPool<QueryModel> queryModelPool = new ObjectPool<>(QueryModel.FACTORY, 8);
-    private final ObjectPool<JoinModel> joinModelPool = new ObjectPool<>(JoinModel.FACTORY, 16);
 
     public Statement parse() throws ParserException {
         queryModelPool.reset();
-        joinModelPool.reset();
-
         CharSequence tok = tok();
         if (Chars.equals(tok, "create")) {
             return parseCreateStatement();
@@ -151,8 +168,8 @@ public class QueryParser {
         return null;
     }
 
-    private JoinModel parseJoin(CharSequence tok, JoinModel.JoinType type) throws ParserException {
-        JoinModel joinModel = joinModelPool.next();
+    private QueryModel parseJoin(CharSequence tok, QueryModel.JoinType type) throws ParserException {
+        QueryModel joinModel = queryModelPool.next();
         joinModel.setJoinType(type);
 
         if (!Chars.equals(tok, "join")) {
@@ -179,11 +196,11 @@ public class QueryParser {
 
         tok = optionTok();
 
-        if (type == JoinModel.JoinType.CROSS && tok != null && Chars.equals(tok, "on")) {
+        if (type == QueryModel.JoinType.CROSS && tok != null && Chars.equals(tok, "on")) {
             throw new ParserException(toks.position(), "Cross joins cannot have join clauses");
         }
 
-        if (type != JoinModel.JoinType.CROSS) {
+        if (type != QueryModel.JoinType.CROSS) {
             expectTok(tok, "on");
             ExprNode expr = expr();
             if (expr == null) {
@@ -316,7 +333,7 @@ public class QueryParser {
 
         // expect multiple [[inner | outer | cross] join]
 
-        JoinModel.JoinType type;
+        QueryModel.JoinType type;
         while (tok != null && (type = joinStartSet.get(tok)) != null) {
             model.addJoinModel(parseJoin(tok, type));
             tok = optionTok();
@@ -410,26 +427,5 @@ public class QueryParser {
             throw err("Unexpected end of input");
         }
         return tok;
-    }
-
-    static {
-        aliasStopSet.add("where");
-        aliasStopSet.add("latest");
-        aliasStopSet.add("join");
-        aliasStopSet.add("inner");
-        aliasStopSet.add("outer");
-        aliasStopSet.add("cross");
-        aliasStopSet.add("group");
-        aliasStopSet.add("order");
-        aliasStopSet.add("on");
-        //
-        groupByStopSet.add("order");
-        groupByStopSet.add(")");
-        groupByStopSet.add(",");
-
-        joinStartSet.put("join", JoinModel.JoinType.INNER);
-        joinStartSet.put("inner", JoinModel.JoinType.INNER);
-        joinStartSet.put("outer", JoinModel.JoinType.OUTER);
-        joinStartSet.put("cross", JoinModel.JoinType.CROSS);
     }
 }

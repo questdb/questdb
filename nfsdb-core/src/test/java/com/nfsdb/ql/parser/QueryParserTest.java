@@ -22,7 +22,7 @@
 package com.nfsdb.ql.parser;
 
 import com.nfsdb.ql.model.ExprNode;
-import com.nfsdb.ql.model.JoinModel;
+import com.nfsdb.ql.model.QueryModel;
 import com.nfsdb.ql.model.Statement;
 import com.nfsdb.ql.model.StatementType;
 import com.nfsdb.test.tools.AbstractTest;
@@ -50,7 +50,7 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals("a", statement.getQueryModel().getAlias());
         Assert.assertEquals(1, statement.getQueryModel().getJoinModels().size());
-        Assert.assertEquals(JoinModel.JoinType.CROSS, statement.getQueryModel().getJoinModels().getQuick(0).getJoinType());
+        Assert.assertEquals(QueryModel.JoinType.CROSS, statement.getQueryModel().getJoinModels().getQuick(0).getJoinType());
         Assert.assertNull(statement.getQueryModel().getJoinModels().getQuick(0).getJoinCriteria());
     }
 
@@ -63,9 +63,9 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals("a", statement.getQueryModel().getAlias());
         Assert.assertEquals(2, statement.getQueryModel().getJoinModels().size());
-        Assert.assertEquals(JoinModel.JoinType.CROSS, statement.getQueryModel().getJoinModels().getQuick(0).getJoinType());
+        Assert.assertEquals(QueryModel.JoinType.CROSS, statement.getQueryModel().getJoinModels().getQuick(0).getJoinType());
         Assert.assertNull(statement.getQueryModel().getJoinModels().getQuick(0).getJoinCriteria());
-        Assert.assertEquals(JoinModel.JoinType.INNER, statement.getQueryModel().getJoinModels().getQuick(1).getJoinType());
+        Assert.assertEquals(QueryModel.JoinType.INNER, statement.getQueryModel().getJoinModels().getQuick(1).getJoinType());
         Assert.assertNotNull(statement.getQueryModel().getJoinModels().getQuick(1).getJoinCriteria());
     }
 
@@ -78,9 +78,9 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals("a", statement.getQueryModel().getAlias());
         Assert.assertEquals(2, statement.getQueryModel().getJoinModels().size());
-        Assert.assertEquals(JoinModel.JoinType.CROSS, statement.getQueryModel().getJoinModels().getQuick(0).getJoinType());
+        Assert.assertEquals(QueryModel.JoinType.CROSS, statement.getQueryModel().getJoinModels().getQuick(0).getJoinType());
         Assert.assertNull(statement.getQueryModel().getJoinModels().getQuick(0).getJoinCriteria());
-        Assert.assertEquals(JoinModel.JoinType.INNER, statement.getQueryModel().getJoinModels().getQuick(1).getJoinType());
+        Assert.assertEquals(QueryModel.JoinType.INNER, statement.getQueryModel().getJoinModels().getQuick(1).getJoinType());
         Assert.assertNotNull(statement.getQueryModel().getJoinModels().getQuick(1).getJoinCriteria());
     }
 
@@ -120,7 +120,7 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals("a", statement.getQueryModel().getAlias());
         Assert.assertEquals(1, statement.getQueryModel().getJoinModels().size());
-        Assert.assertEquals(JoinModel.JoinType.INNER, statement.getQueryModel().getJoinModels().getQuick(0).getJoinType());
+        Assert.assertEquals(QueryModel.JoinType.INNER, statement.getQueryModel().getJoinModels().getQuick(0).getJoinType());
         Assert.assertEquals("b.xa.x=", TestUtils.toRpn(statement.getQueryModel().getJoinModels().getQuick(0).getJoinCriteria()));
     }
 
@@ -345,7 +345,7 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals("a", statement.getQueryModel().getAlias());
         Assert.assertEquals(1, statement.getQueryModel().getJoinModels().size());
-        Assert.assertEquals(JoinModel.JoinType.OUTER, statement.getQueryModel().getJoinModels().getQuick(0).getJoinType());
+        Assert.assertEquals(QueryModel.JoinType.OUTER, statement.getQueryModel().getJoinModels().getQuick(0).getJoinType());
         Assert.assertEquals("b.xa.x=", TestUtils.toRpn(statement.getQueryModel().getJoinModels().getQuick(0).getJoinCriteria()));
     }
 

@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p/>
  * Copyright (c) 2014-2015. The NFSdb project and its contributors.
- *
+ * <p/>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p/>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -30,7 +30,6 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.ql.model.ExprNode;
 import com.nfsdb.ql.model.JoinContext;
-import com.nfsdb.ql.model.JoinModel;
 import com.nfsdb.ql.model.QueryModel;
 import com.nfsdb.utils.Chars;
 
@@ -44,7 +43,6 @@ public class JoinOptimiser {
     private final ObjectPool<ExprNode> exprNodePool = new ObjectPool<>(ExprNode.FACTORY, 16);
     private final IntHashSet deletedContexts = new IntHashSet();
     private final IntObjHashMap<ExprNode> preFilters = new IntObjHashMap<>();
-    private final IntObjHashMap<ExprNode> postFilters = new IntObjHashMap<>();
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
     private final ObjectPool<JoinContext> contextPool = new ObjectPool<>(JoinContext.FACTORY, 16);
@@ -56,10 +54,11 @@ public class JoinOptimiser {
     private final ObjList<CharSequence> literalCollectorBNames = new ObjList<>();
     private final LiteralCollector literalCollector = new LiteralCollector();
     private final StringSink planSink = new StringSink();
+    private final ObjList<QueryModel> joinModels = new ObjList<>();
+    private final IntList orderedJournals = new IntList();
+    private final IntStack orderingStack = new IntStack();
     private ExprNode globalFilter;
     private ObjList<JoinContext> emittedJoinClauses;
-    private ObjList<JoinModel> joinModels;
-    private QueryModel current;
 
     public JoinOptimiser(Optimiser optimiser) {
         this.optimiser = optimiser;
@@ -72,14 +71,13 @@ public class JoinOptimiser {
         joinMetadataIndexLookup.clear();
         csPool.reset();
         exprNodePool.reset();
+        joinModels.clear();
 
-        this.current = model;
-
-        joinModels = model.getJoinModels();
+        joinModels.add(model);
+        joinModels.add(model.getJoinModels());
         int n = joinModels.size();
 
         // create metadata for all journals and sub-queries involved in this query
-        resolveJoinMetadata(model, factory);
         for (int i = 0; i < n; i++) {
             resolveJoinMetadata(joinModels.getQuick(i), factory);
         }
@@ -87,9 +85,10 @@ public class JoinOptimiser {
         contextPool.reset();
         emittedJoinClauses = joinClausesSwap1;
 
-        traversePreOrderRecursive(model.getWhereClause(), null);
         for (int i = 0; i < n; i++) {
-            traversePreOrderRecursive(joinModels.getQuick(i).getJoinCriteria(), null);
+            QueryModel m = joinModels.getQuick(i);
+            traversePreOrderRecursive(m.getWhereClause(), null);
+            traversePreOrderRecursive(m.getJoinCriteria(), null);
         }
 
         if (emittedJoinClauses.size() > 0) {
@@ -99,49 +98,64 @@ public class JoinOptimiser {
         trySwapJoinOrder();
     }
 
+    private int orderJournals() {
+        this.orderedJournals.clear();
+        this.orderingStack.clear();
+
+
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            QueryModel q = joinModels.getQuick(i);
+            if (q.isCrossJoin() || 0 == q.getContext().parents.size()) {
+                orderingStack.push(i);
+            } else {
+                q.getContext().inCount = q.getContext().parents.size();
+            }
+        }
+
+        while (orderingStack.notEmpty()) {
+            //remove a node n from orderingStack
+            int index = orderingStack.pop();
+
+            //insert n into orderedJournals
+            orderedJournals.add(index);
+
+            IntHashSet dependencies = joinModels.getQuick(index).getDependencies();
+
+            //for each node m with an edge e from n to m do
+            for (int i = 0, k = dependencies.size(); i < k; i++) {
+                int depIndex = dependencies.get(i);
+                JoinContext jc = joinModels.getQuick(depIndex).getContext();
+                if (--jc.inCount == 0) {
+                    orderingStack.push(depIndex);
+                }
+            }
+        }
+
+        //Check to see if all edges are removed
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            QueryModel m = joinModels.getQuick(i);
+            if (!m.isCrossJoin() && m.getContext().inCount > 0) {
+                return Integer.MAX_VALUE;
+            }
+        }
+        return 1;
+    }
+
     public CharSequence plan() {
         planSink.clear();
-
-        if (current.getAlias() != null) {
-            planSink.put(current.getAlias());
-        } else if (current.getJournalName() != null) {
-            planSink.put(current.getJournalName().token);
-        } else {
-            planSink.put("subquery");
-        }
-
-        ExprNode f = preFilters.get(0);
-        if (f != null) {
-            planSink.put(" (filter: ");
-            f.toString(planSink);
-            planSink.put(')');
-        }
-
-        planSink.put('\n');
-
-
-        for (int i = 0, n = current.getJoinModels().size(); i < n; i++) {
-            final JoinModel m = current.getJoinModels().getQuick(i);
+        for (int i = 0, n = orderedJournals.size(); i < n; i++) {
+            final int index = orderedJournals.getQuick(i);
+            final QueryModel m = joinModels.getQuick(index);
             final JoinContext jc = m.getContext();
 
             final boolean cross = jc == null || jc.parents.size() == 0;
-            planSink.put('+').put(' ').put(i + 1);
-
-            m.getDependencies().toString(planSink);
-            planSink.put(' ');
-
-            if (jc != null) {
-                jc.parents.toString(planSink);
-            } else {
-                planSink.put('-');
-            }
-            planSink.put(' ');
+            planSink.put('+').put(' ').put(index);
 
             // join type
             planSink.put('[').put(' ');
-            if (m.getJoinType() == JoinModel.JoinType.CROSS || cross) {
+            if (m.getJoinType() == QueryModel.JoinType.CROSS || cross) {
                 planSink.put("cross");
-            } else if (m.getJoinType() == JoinModel.JoinType.INNER) {
+            } else if (m.getJoinType() == QueryModel.JoinType.INNER) {
                 planSink.put("inner");
             } else {
                 planSink.put("outer");
@@ -157,8 +171,8 @@ public class JoinOptimiser {
                 planSink.put("subquery");
             }
 
-            // pre-filter
-            ExprNode filter = preFilters.get(i + 1);
+//            // pre-filter
+            ExprNode filter = preFilters.get(index);
             if (filter != null) {
                 planSink.put(" (filter: ");
                 filter.toString(planSink);
@@ -222,7 +236,7 @@ public class JoinOptimiser {
     }
 
     private void addJoinContext(JoinContext context) {
-        JoinModel jm = joinModels.getQuick(context.slaveIndex - 1);
+        QueryModel jm = joinModels.getQuick(context.slaveIndex);
         JoinContext other = jm.getContext();
         if (other == null) {
             jm.setContext(context);
@@ -292,11 +306,7 @@ public class JoinOptimiser {
     }
 
     private void linkDependencies(int parent, int child) {
-        if (parent == 0) {
-            current.addDependency(child);
-        } else {
-            joinModels.getQuick(parent - 1).addDependency(child);
-        }
+        joinModels.getQuick(parent).addDependency(child);
     }
 
     private JoinContext mergeContexts(JoinContext a, JoinContext b) {
@@ -442,11 +452,6 @@ public class JoinOptimiser {
                 t.parents.add(bi);
                 linkDependencies(bi, ai);
             }
-
-//            int m1 = ai > bi ? ai : bi;
-//            t.slaveIndex = m1 > t.slaveIndex ? m1 : t.slaveIndex;
-//            t.parents.add(ai < bi ? ai : bi);
-
         }
 
         return result;
@@ -541,30 +546,33 @@ public class JoinOptimiser {
      * @return false if "from" is outer joined journal, otherwise - true
      */
     private boolean swapJoinOrder(int to, int from, JoinContext jc) {
-        int _to = to + 1;
-        JoinModel jm = joinModels.getQuick(from);
-        if (jm.getJoinType() == JoinModel.JoinType.OUTER) {
+        QueryModel jm = joinModels.getQuick(from);
+        if (jm.getJoinType() == QueryModel.JoinType.OUTER) {
             return false;
         }
 
         clausesToSteal.clear();
 
         JoinContext that = jm.getContext();
-        if (that != null && that.parents.contains(_to)) {
+        if (that != null && that.parents.contains(to)) {
             int zc = that.aIndexes.size();
             for (int z = 0; z < zc; z++) {
-                if (that.aIndexes.getQuick(z) == _to || that.bIndexes.getQuick(z) == _to) {
+                if (that.aIndexes.getQuick(z) == to || that.bIndexes.getQuick(z) == to) {
                     clausesToSteal.add(z);
                 }
             }
 
             if (clausesToSteal.size() < zc) {
-                joinModels.getQuick(_to - 1).getDependencies().clear();
+                QueryModel target = joinModels.getQuick(to);
+                target.getDependencies().clear();
                 if (jc == null) {
-                    joinModels.getQuick(to).setContext(jc = contextPool.next());
+                    target.setContext(jc = contextPool.next());
                 }
-                jc.slaveIndex = _to;
+                jc.slaveIndex = to;
                 jm.setContext(moveClauses(that, jc, clausesToSteal));
+                if (target.getJoinType() == QueryModel.JoinType.CROSS) {
+                    target.setJoinType(QueryModel.JoinType.INNER);
+                }
             }
         }
         return true;
@@ -638,37 +646,57 @@ public class JoinOptimiser {
      * journal "c" leaving "b" without clauses.
      */
     @SuppressWarnings("StatementWithEmptyBody")
-    private void trySwapJoinOrder() {
-//        int crossCount = 0;
+    private void trySwapJoinOrder() throws ParserException {
         int n = joinModels.size();
 
+        ObjList<QueryModel> crosses = new ObjList<>();
+        // collect crosses
         for (int i = 0; i < n; i++) {
-            JoinModel jm = joinModels.getQuick(i);
-            if (jm.getJoinType() != JoinModel.JoinType.OUTER) {
-                JoinContext jc = joinModels.getQuick(i).getContext();
-                if (jc == null || jc.parents.size() == 0) {
+            QueryModel q = joinModels.getQuick(i);
+            if (q.isCrossJoin()) {
+                crosses.add(q);
+            }
+        }
+
+        int cost = Integer.MAX_VALUE;
+        int root = -1;
+
+        // analyse state of tree for each set of n-1 crosses
+        for (int z = 0, zc = crosses.size(); z < zc; z++) {
+            for (int i = 0; i < zc; i++) {
+                if (z != i) {
+                    QueryModel q = crosses.getQuick(i);
+                    JoinContext jc = q.getContext();
                     // look above i up to OUTER join
                     for (int k = i - 1; k > -1 && swapJoinOrder(i, k, jc); k--) ;
                     // look below i for up to OUTER join
                     for (int k = i + 1; k < n && swapJoinOrder(i, k, jc); k++) ;
                 }
+            }
 
-//                // get context again to check if anything moved there
-//                jc = joinModels.getQuick(i).getContext();
-//                if (jc == null || jc.parents.size() == 0) {
-//                    crossCount++;
-//                }
-
+            int thisCost = orderJournals();
+            if (thisCost < cost) {
+                root = z;
+                cost = thisCost;
+                break;
             }
         }
 
-//        if (crossCount > 0) {
-//            // this is a bit of a hack, "swapJoinOrder" will not create context if it is already there
-//            // if it wasn't, it would crash with bad list index
-//            JoinContext jc = contextPool.next();
-//            for (int i = 0; i < n && swapJoinOrder(-1, i, jc); i++);
-//            if (jc.parents.size() > 0) {
-//                current.setContext(jc);
+        if (root == -1) {
+            throw new ParserException(0, "Cycle");
+        }
+
+
+//        for (int i = 0; i < n; i++) {
+//            QueryModel jm = joinModels.getQuick(i);
+//            if (jm.getJoinType() != QueryModel.JoinType.OUTER) {
+//                JoinContext jc = joinModels.getQuick(i).getContext();
+//                if (jc == null || jc.parents.size() == 0) {
+//                    // look above i up to OUTER join
+//                    for (int k = i - 1; k > -1 && swapJoinOrder(i, k, jc); k--) ;
+//                    // look below i for up to OUTER join
+//                    for (int k = i + 1; k < n && swapJoinOrder(i, k, jc); k++) ;
+//                }
 //            }
 //        }
     }

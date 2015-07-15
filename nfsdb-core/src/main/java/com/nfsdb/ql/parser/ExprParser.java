@@ -129,7 +129,6 @@ public class ExprParser {
                     if (braceCount == 0) {
                         toks.unparse();
                         break OUT;
-//                        throw new ParserException(toks.position(), "Unbalanced )");
                     }
 
                     thisBranch = Branch.RIGHT_BRACE;

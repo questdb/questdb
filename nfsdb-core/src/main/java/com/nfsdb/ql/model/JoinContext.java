@@ -41,6 +41,7 @@ public class JoinContext implements Mutable {
     public final IntHashSet parents = new IntHashSet(4);
     public boolean trivial = true;
     public int slaveIndex = -1;
+    public int inCount;
 
     @Override
     public void clear() {
