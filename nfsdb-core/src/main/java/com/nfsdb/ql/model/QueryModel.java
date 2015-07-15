@@ -36,7 +36,7 @@ public class QueryModel implements Mutable {
     private final ObjList<JoinModel> joinModels = new ObjList<>();
     private final ObjList<String> groupBy = new ObjList<>();
     private final ObjList<ExprNode> orderBy = new ObjList<>();
-    private final IntHashSet dependants = new IntHashSet();
+    private final IntHashSet dependencies = new IntHashSet();
     private final IntHashSet parents = new IntHashSet(4);
     private ExprNode whereClause;
     private QueryModel nestedModel;
@@ -56,8 +56,8 @@ public class QueryModel implements Mutable {
         columns.add(column);
     }
 
-    public void addDependant(int index) {
-        dependants.add(index);
+    public void addDependency(int index) {
+        dependencies.add(index);
     }
 
     public void addGroupBy(String name) {
@@ -77,7 +77,7 @@ public class QueryModel implements Mutable {
         joinModels.clear();
         groupBy.clear();
         orderBy.clear();
-        dependants.clear();
+        dependencies.clear();
         whereClause = null;
         nestedModel = null;
         journalName = null;
@@ -106,6 +106,10 @@ public class QueryModel implements Mutable {
 
     public void setContext(JoinContext context) {
         this.context = context;
+    }
+
+    public IntHashSet getDependencies() {
+        return dependencies;
     }
 
     public ObjList<String> getGroupBy() {

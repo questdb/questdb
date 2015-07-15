@@ -127,6 +127,16 @@ public class JoinOptimiser {
             final boolean cross = jc == null || jc.parents.size() == 0;
             planSink.put('+').put(' ').put(i + 1);
 
+            m.getDependencies().toString(planSink);
+            planSink.put(' ');
+
+            if (jc != null) {
+                jc.parents.toString(planSink);
+            } else {
+                planSink.put('-');
+            }
+            planSink.put(' ');
+
             // join type
             planSink.put('[').put(' ');
             if (m.getJoinType() == JoinModel.JoinType.CROSS || cross) {
@@ -263,7 +273,7 @@ public class JoinOptimiser {
                         int min = lhi < rhi ? lhi : rhi;
                         jc.slaveIndex = max;
                         jc.parents.add(min);
-                        linkDependants(min, max);
+                        linkDependencies(min, max);
                     }
                 } else {
                     // single journal reference
@@ -281,11 +291,11 @@ public class JoinOptimiser {
         return dot == -1 ? token : csPool.next().of(token, dot + 1, token.length() - dot - 1);
     }
 
-    private void linkDependants(int parent, int child) {
+    private void linkDependencies(int parent, int child) {
         if (parent == 0) {
-            current.addDependant(child);
+            current.addDependency(child);
         } else {
-            joinModels.getQuick(parent - 1).addDependant(child);
+            joinModels.getQuick(parent - 1).addDependency(child);
         }
     }
 
@@ -355,7 +365,7 @@ public class JoinOptimiser {
             int min = bai < bbi ? bai : bbi;
             r.slaveIndex = max;
             r.parents.add(min);
-            linkDependants(min, max);
+            linkDependencies(min, max);
         }
 
         // add remaining a nodes
@@ -404,7 +414,16 @@ public class JoinOptimiser {
         }
 
         JoinContext result = contextPool.next();
+        result.slaveIndex = from.slaveIndex;
+
         for (int i = 0, n = from.aIndexes.size(); i < n; i++) {
+            // logically those clauses we move away from "from" context
+            // should not longer exist in "from", but instead of implementing
+            // "delete" function, which would be manipulating underlying array
+            // on every invocation, we copy retained clauses to new context,
+            // which is "result".
+            // hence whenever exists in "positions" we copy clause to "to"
+            // otherwise copy to "result"
             JoinContext t = p < m && i == positions.getQuick(p) ? to : result;
             int ai = from.aIndexes.getQuick(i);
             int bi = from.bIndexes.getQuick(i);
@@ -414,9 +433,20 @@ public class JoinOptimiser {
             t.bIndexes.add(bi);
             t.bNames.add(from.bNames.getQuick(i));
             t.bNodes.add(from.bNodes.getQuick(i));
-            int m1 = ai > bi ? ai : bi;
-            t.slaveIndex = m1 > t.slaveIndex ? m1 : t.slaveIndex;
-            t.parents.add(ai < bi ? ai : bi);
+
+            // either ai or bi is definitely belongs to this context
+            if (ai != t.slaveIndex) {
+                t.parents.add(ai);
+                linkDependencies(ai, bi);
+            } else {
+                t.parents.add(bi);
+                linkDependencies(bi, ai);
+            }
+
+//            int m1 = ai > bi ? ai : bi;
+//            t.slaveIndex = m1 > t.slaveIndex ? m1 : t.slaveIndex;
+//            t.parents.add(ai < bi ? ai : bi);
+
         }
 
         return result;
@@ -529,12 +559,12 @@ public class JoinOptimiser {
             }
 
             if (clausesToSteal.size() < zc) {
+                joinModels.getQuick(_to - 1).getDependencies().clear();
                 if (jc == null) {
                     joinModels.getQuick(to).setContext(jc = contextPool.next());
                 }
-                jm.setContext(moveClauses(that, jc, clausesToSteal));
                 jc.slaveIndex = _to;
-                that.parents.remove(_to);
+                jm.setContext(moveClauses(that, jc, clausesToSteal));
             }
         }
         return true;

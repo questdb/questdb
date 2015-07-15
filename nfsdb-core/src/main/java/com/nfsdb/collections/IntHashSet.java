@@ -18,8 +18,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  ******************************************************************************/
+
 package com.nfsdb.collections;
 
+import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Unsafe;
 
@@ -98,19 +101,28 @@ public class IntHashSet implements Mutable {
 
     @Override
     public String toString() {
-        StringBuilder b = new StringBuilder();
-        b.append('[');
+        StringSink sink = new StringSink();
+        toString(sink);
+        return sink.toString();
+    }
+
+    public void toString(CharSink sink) {
+        sink.put('[');
+        boolean needComma = false;
         for (int i = 0, n = keys.length; i < n; i++) {
             if (keys[i] != noEntryValue) {
-                if (b.length() > 1) {
-                    b.append(',');
+                if (needComma) {
+                    sink.put(',');
                 }
-                b.append(keys[i]);
+                sink.put(keys[i]);
+
+                if (!needComma) {
+                    needComma = true;
+                }
             }
         }
 
-        b.append(']');
-        return b.toString();
+        sink.put(']');
     }
 
     private boolean insertKey(int key) {
