@@ -96,6 +96,23 @@ public class IntHashSet implements Mutable {
         return capacity - free;
     }
 
+    @Override
+    public String toString() {
+        StringBuilder b = new StringBuilder();
+        b.append('[');
+        for (int i = 0, n = keys.length; i < n; i++) {
+            if (keys[i] != noEntryValue) {
+                if (b.length() > 1) {
+                    b.append(',');
+                }
+                b.append(keys[i]);
+            }
+        }
+
+        b.append(']');
+        return b.toString();
+    }
+
     private boolean insertKey(int key) {
         int index = key & mask;
         if (Unsafe.arrayGet(keys, index) == noEntryValue) {

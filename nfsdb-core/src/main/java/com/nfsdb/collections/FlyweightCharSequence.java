@@ -20,6 +20,9 @@
  ******************************************************************************/
 package com.nfsdb.collections;
 
+import com.nfsdb.io.sink.StringSink;
+import org.jetbrains.annotations.NotNull;
+
 public class FlyweightCharSequence implements CharSequence, Mutable {
     public static final ObjectPoolFactory<FlyweightCharSequence> FACTORY = new ObjectPoolFactory<FlyweightCharSequence>() {
         @Override
@@ -61,5 +64,13 @@ public class FlyweightCharSequence implements CharSequence, Mutable {
 
     public FlyweightCharSequence of(CharSequence delegate) {
         return of(delegate, 1, delegate.length() - 2);
+    }
+
+    @NotNull
+    @Override
+    public String toString() {
+        StringSink b = new StringSink();
+        b.put(this);
+        return b.toString();
     }
 }

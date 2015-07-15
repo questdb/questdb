@@ -228,7 +228,7 @@ public final class TestUtils {
         Assert.assertEquals(expected.length(), actual.length());
         for (int i = 0; i < expected.length(); i++) {
             if (expected.charAt(i) != actual.charAt(i)) {
-                Assert.fail("Expected: " + expected + ", actual: " + actual);
+                Assert.fail("At: " + i + ". Expected: " + expected + ", actual: " + actual);
             }
         }
     }

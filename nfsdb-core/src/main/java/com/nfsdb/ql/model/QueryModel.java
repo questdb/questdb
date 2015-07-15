@@ -21,6 +21,7 @@
 
 package com.nfsdb.ql.model;
 
+import com.nfsdb.collections.IntHashSet;
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.ObjectPoolFactory;
@@ -35,6 +36,8 @@ public class QueryModel implements Mutable {
     private final ObjList<JoinModel> joinModels = new ObjList<>();
     private final ObjList<String> groupBy = new ObjList<>();
     private final ObjList<ExprNode> orderBy = new ObjList<>();
+    private final IntHashSet dependants = new IntHashSet();
+    private final IntHashSet parents = new IntHashSet(4);
     private ExprNode whereClause;
     private QueryModel nestedModel;
     private ExprNode journalName;
@@ -45,11 +48,16 @@ public class QueryModel implements Mutable {
     private int position;
     private JoinContext context;
 
+
     protected QueryModel() {
     }
 
     public void addColumn(QueryColumn column) {
         columns.add(column);
+    }
+
+    public void addDependant(int index) {
+        dependants.add(index);
     }
 
     public void addGroupBy(String name) {
@@ -69,6 +77,7 @@ public class QueryModel implements Mutable {
         joinModels.clear();
         groupBy.clear();
         orderBy.clear();
+        dependants.clear();
         whereClause = null;
         nestedModel = null;
         journalName = null;

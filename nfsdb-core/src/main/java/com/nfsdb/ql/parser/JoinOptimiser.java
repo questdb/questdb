@@ -110,6 +110,13 @@ public class JoinOptimiser {
             planSink.put("subquery");
         }
 
+        ExprNode f = preFilters.get(0);
+        if (f != null) {
+            planSink.put(" (filter: ");
+            f.toString(planSink);
+            planSink.put(')');
+        }
+
         planSink.put('\n');
 
 
@@ -118,7 +125,7 @@ public class JoinOptimiser {
             final JoinContext jc = m.getContext();
 
             final boolean cross = jc == null || jc.parents.size() == 0;
-            planSink.put('+').put(' ').put(i);
+            planSink.put('+').put(' ').put(i + 1);
 
             // join type
             planSink.put('[').put(' ');
@@ -175,6 +182,35 @@ public class JoinOptimiser {
         return planSink;
     }
 
+    private void addFilterOrEmitJoin(int idx, int ai, CharSequence an, ExprNode ao, int bi, CharSequence bn, ExprNode bo) {
+        if (ai == bi && Chars.equals(an, bn)) {
+            deletedContexts.add(idx);
+            return;
+        }
+
+        if (ai == bi) {
+            // (same journal)
+            ExprNode node = exprNodePool.next().init(ExprNode.NodeType.OPERATION, "=", 0, 0);
+            node.paramCount = 2;
+            node.lhs = ao;
+            node.rhs = bo;
+            preFilters.put(ai, mergeFilters(preFilters.get(ai), node));
+            deletedContexts.add(idx);
+        } else {
+            // (different journals)
+            JoinContext jc = contextPool.next();
+            jc.aIndexes.add(ai);
+            jc.aNames.add(an);
+            jc.aNodes.add(ao);
+            jc.bIndexes.add(bi);
+            jc.bNames.add(bn);
+            jc.bNodes.add(bo);
+            jc.slaveIndex = ai > bi ? ai : bi;
+            jc.parents.add(ai < bi ? ai : bi);
+            emittedJoinClauses.add(jc);
+        }
+    }
+
     private void addJoinContext(JoinContext context) {
         JoinModel jm = joinModels.getQuick(context.slaveIndex - 1);
         JoinContext other = jm.getContext();
@@ -223,8 +259,11 @@ public class JoinOptimiser {
                         jc.bNames.add(literalCollectorBNames.getQuick(0));
                         jc.aIndexes.add(lhi);
                         jc.bIndexes.add(rhi);
-                        jc.slaveIndex = lhi > rhi ? lhi : rhi;
-                        jc.parents.add(lhi < rhi ? lhi : rhi);
+                        int max = lhi > rhi ? lhi : rhi;
+                        int min = lhi < rhi ? lhi : rhi;
+                        jc.slaveIndex = max;
+                        jc.parents.add(min);
+                        linkDependants(min, max);
                     }
                 } else {
                     // single journal reference
@@ -240,6 +279,14 @@ public class JoinOptimiser {
 
     private CharSequence extractColumnName(CharSequence token, int dot) {
         return dot == -1 ? token : csPool.next().of(token, dot + 1, token.length() - dot - 1);
+    }
+
+    private void linkDependants(int parent, int child) {
+        if (parent == 0) {
+            current.addDependant(child);
+        } else {
+            joinModels.getQuick(parent - 1).addDependant(child);
+        }
     }
 
     private JoinContext mergeContexts(JoinContext a, JoinContext b) {
@@ -276,29 +323,39 @@ public class JoinOptimiser {
                     // a.x = ?.x
                     //  |     ?
                     // a.x = ?.y
-                    mergeContexts0(k, abi, abn, abo, bbi, bbn, bbo);
+                    addFilterOrEmitJoin(k, abi, abn, abo, bbi, bbn, bbo);
                     break;
                 } else if (abi == bai && Chars.equals(abn, ban)) {
                     // a.y = b.x
                     //    /
                     // b.x = a.x
-                    mergeContexts0(k, aai, aan, aao, bbi, bbn, bbo);
+                    addFilterOrEmitJoin(k, aai, aan, aao, bbi, bbn, bbo);
                     break;
                 } else if (aai == bbi && Chars.equals(aan, bbn)) {
                     // a.x = b.x
                     //     \
                     // b.y = a.x
-                    mergeContexts0(k, abi, abn, abo, bai, ban, bao);
+                    addFilterOrEmitJoin(k, abi, abn, abo, bai, ban, bao);
                     break;
                 } else if (abi == bbi && Chars.equals(abn, bbn)) {
                     // a.x = b.x
                     //        |
                     // a.y = b.x
-                    mergeContexts0(k, aai, aan, aao, bai, ban, bao);
+                    addFilterOrEmitJoin(k, aai, aan, aao, bai, ban, bao);
                     break;
                 }
             }
-            r.add(bai, ban, bao, bbi, bbn, bbo);
+            r.aIndexes.add(bai);
+            r.aNames.add(ban);
+            r.aNodes.add(bao);
+            r.bIndexes.add(bbi);
+            r.bNames.add(bbn);
+            r.bNodes.add(bbo);
+            int max = bai > bbi ? bai : bbi;
+            int min = bai < bbi ? bai : bbi;
+            r.slaveIndex = max;
+            r.parents.add(min);
+            linkDependants(min, max);
         }
 
         // add remaining a nodes
@@ -316,26 +373,6 @@ public class JoinOptimiser {
         }
 
         return r;
-    }
-
-    private void mergeContexts0(int idx, int ai, CharSequence an, ExprNode ao, int bi, CharSequence bn, ExprNode bo) {
-        if (ai == bi && Chars.equals(an, bn)) {
-            deletedContexts.add(idx);
-            return;
-        }
-
-        if (ai == bi) {
-            // (same journal)
-            ExprNode node = exprNodePool.next().init(ExprNode.NodeType.OPERATION, "=", 0, 0);
-            node.paramCount = 2;
-            node.lhs = ao;
-            node.rhs = bo;
-            preFilters.put(ai, mergeFilters(preFilters.get(ai), node));
-            deletedContexts.add(idx);
-        } else {
-            // (different journals)
-            emittedJoinClauses.add(contextPool.next().add(ai, an, ao, bi, bn, bo));
-        }
     }
 
     private ExprNode mergeFilters(ExprNode a, ExprNode b) {
@@ -369,7 +406,17 @@ public class JoinOptimiser {
         JoinContext result = contextPool.next();
         for (int i = 0, n = from.aIndexes.size(); i < n; i++) {
             JoinContext t = p < m && i == positions.getQuick(p) ? to : result;
-            t.add(from.aIndexes.getQuick(i), from.aNames.getQuick(i), from.aNodes.getQuick(i), from.bIndexes.getQuick(i), from.bNames.getQuick(i), from.bNodes.getQuick(i));
+            int ai = from.aIndexes.getQuick(i);
+            int bi = from.bIndexes.getQuick(i);
+            t.aIndexes.add(ai);
+            t.aNames.add(from.aNames.getQuick(i));
+            t.aNodes.add(from.aNodes.getQuick(i));
+            t.bIndexes.add(bi);
+            t.bNames.add(from.bNames.getQuick(i));
+            t.bNodes.add(from.bNodes.getQuick(i));
+            int m1 = ai > bi ? ai : bi;
+            t.slaveIndex = m1 > t.slaveIndex ? m1 : t.slaveIndex;
+            t.parents.add(ai < bi ? ai : bi);
         }
 
         return result;

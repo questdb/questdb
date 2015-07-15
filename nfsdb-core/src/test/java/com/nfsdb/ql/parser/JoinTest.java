@@ -135,12 +135,96 @@ public class JoinTest {
         joinOptimiser.compile(statement.getQueryModel(), factory);
 
         final String expected = "orders\n" +
-                "+ 0[ cross ] customers\n" +
-                "+ 1[ cross ] d\n" +
-                "+ 2[ cross ] products\n" +
-                "+ 3[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
+                "+ 1[ cross ] customers\n" +
+                "+ 2[ cross ] d\n" +
+                "+ 3[ cross ] products\n" +
+                "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
                 "where 1 = 1 and 2 = 2 and 3 = 3\n";
 
+        TestUtils.assertEquals(expected, joinOptimiser.plan());
+    }
+
+    @Test
+    public void testJoinMultipleFields() throws Exception {
+        parser.setContent("orders" +
+                        " join customers on orders.customerId = customers.customerId" +
+                        " join orderDetails d on d.orderId = orders.orderId and d.productId = customers.customerId" +
+                        " join products on d.productId = products.productId" +
+                        " join suppliers on products.supplier = suppliers.supplier" +
+                        " where d.productId = d.orderId"
+        );
+        Statement statement = parser.parse();
+        joinOptimiser.compile(statement.getQueryModel(), factory);
+
+        final String expected = "orders\n" +
+                "+ 1[ inner ] customers ON orders.customerId = customers.customerId\n" +
+                "+ 2[ inner ] d (filter: d.productId = d.orderId) ON d.productId = customers.customerId and d.orderId = orders.orderId\n" +
+                "+ 3[ inner ] products ON d.productId = products.productId\n" +
+                "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
+                "\n";
+        TestUtils.assertEquals(expected, joinOptimiser.plan());
+    }
+
+    @Test
+    public void testJoinOneFieldToTwo() throws Exception {
+        parser.setContent("orders" +
+                        " join customers on orders.customerId = customers.customerId" +
+                        " join orderDetails d on d.orderId = orders.orderId and d.orderId = customers.customerId" +
+                        " join products on d.productId = products.productId" +
+                        " join suppliers on products.supplier = suppliers.supplier" +
+                        " where d.productId = d.orderId"
+        );
+        Statement statement = parser.parse();
+        joinOptimiser.compile(statement.getQueryModel(), factory);
+
+        final String expected = "orders (filter: orders.customerId = orders.orderId)\n" +
+                "+ 1[ inner ] customers ON orders.orderId = customers.customerId\n" +
+                "+ 2[ inner ] d (filter: d.productId = d.orderId) ON d.orderId = customers.customerId and d.orderId = orders.orderId\n" +
+                "+ 3[ inner ] products ON d.productId = products.productId\n" +
+                "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
+                "\n";
+        TestUtils.assertEquals(expected, joinOptimiser.plan());
+    }
+
+    @Test
+    public void testJoinOneFieldToTwoAcross() throws Exception {
+        parser.setContent("orders" +
+                        " join customers on orders.customerId = customers.customerId" +
+                        " join orderDetails d on orders.orderId = d.orderId and d.orderId = customers.customerId" +
+                        " join products on d.productId = products.productId" +
+                        " join suppliers on products.supplier = suppliers.supplier" +
+                        " where d.productId = d.orderId"
+        );
+        Statement statement = parser.parse();
+        joinOptimiser.compile(statement.getQueryModel(), factory);
+
+        final String expected = "orders (filter: orders.customerId = orders.orderId)\n" +
+                "+ 1[ inner ] customers ON orders.orderId = customers.customerId\n" +
+                "+ 2[ inner ] d (filter: d.productId = d.orderId) ON d.orderId = customers.customerId and orders.orderId = d.orderId\n" +
+                "+ 3[ inner ] products ON d.productId = products.productId\n" +
+                "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
+                "\n";
+        TestUtils.assertEquals(expected, joinOptimiser.plan());
+    }
+
+    @Test
+    public void testJoinOneFieldToTwoAcross2() throws Exception {
+        parser.setContent("orders" +
+                        " join customers on orders.customerId = customers.customerId" +
+                        " join orderDetails d on d.orderId = customers.customerId and orders.orderId = d.orderId" +
+                        " join products on d.productId = products.productId" +
+                        " join suppliers on products.supplier = suppliers.supplier" +
+                        " where d.productId = d.orderId"
+        );
+        Statement statement = parser.parse();
+        joinOptimiser.compile(statement.getQueryModel(), factory);
+
+        final String expected = "orders (filter: orders.customerId = orders.orderId)\n" +
+                "+ 1[ inner ] customers ON customers.customerId = orders.orderId\n" +
+                "+ 2[ inner ] d (filter: d.productId = d.orderId) ON orders.orderId = d.orderId and d.orderId = customers.customerId\n" +
+                "+ 3[ inner ] products ON d.productId = products.productId\n" +
+                "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
+                "\n";
         TestUtils.assertEquals(expected, joinOptimiser.plan());
     }
 
@@ -159,10 +243,10 @@ public class JoinTest {
         joinOptimiser.compile(statement.getQueryModel(), factory);
 
         final String expected = "orders\n" +
-                "+ 0[ inner ] customers ON d.productId = customers.customerId\n" +
-                "+ 1[ inner ] d (filter: d.productId = d.orderId) ON d.orderId = orders.orderId\n" +
-                "+ 2[ inner ] products ON d.productId = products.productId\n" +
-                "+ 3[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
+                "+ 1[ inner ] customers ON d.productId = customers.customerId\n" +
+                "+ 2[ inner ] d (filter: d.productId = d.orderId) ON d.orderId = orders.orderId\n" +
+                "+ 3[ inner ] products ON d.productId = products.productId\n" +
+                "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
                 "where 1 = 1\n";
         TestUtils.assertEquals(expected, joinOptimiser.plan());
     }

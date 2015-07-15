@@ -42,19 +42,6 @@ public class JoinContext implements Mutable {
     public boolean trivial = true;
     public int slaveIndex = -1;
 
-    public JoinContext add(int ai, CharSequence an, ExprNode ao, int bi, CharSequence bn, ExprNode bo) {
-        aIndexes.add(ai);
-        aNames.add(an);
-        aNodes.add(ao);
-        bIndexes.add(bi);
-        bNames.add(bn);
-        bNodes.add(bo);
-        int m = ai > bi ? ai : bi;
-        slaveIndex = m > slaveIndex ? m : slaveIndex;
-        parents.add(ai < bi ? ai : bi);
-        return this;
-    }
-
     @Override
     public void clear() {
         aIndexes.clear();
@@ -67,5 +54,6 @@ public class JoinContext implements Mutable {
 
         trivial = true;
         slaveIndex = -1;
+        parents.clear();
     }
 }
