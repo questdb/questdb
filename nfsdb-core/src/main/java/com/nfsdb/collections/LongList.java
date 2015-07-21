@@ -239,7 +239,7 @@ public class LongList implements Mutable {
         throw new ArrayIndexOutOfBoundsException(index);
     }
 
-    public void setPos(int pos) {
+    final public void setPos(int pos) {
         ensureCapacity(pos);
         this.pos = pos;
     }

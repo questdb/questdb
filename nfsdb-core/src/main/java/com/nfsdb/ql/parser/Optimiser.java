@@ -382,6 +382,7 @@ public class Optimiser {
         return f.isConstant() ? processConstantExpression(f) : f;
     }
 
+    @SuppressFBWarnings({"ES_COMPARING_STRINGS_WITH_EQ"})
     private VirtualColumn parseConstant(ExprNode node) throws ParserException {
 
         if ("null".equals(node.token)) {

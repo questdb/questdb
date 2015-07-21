@@ -1,17 +1,17 @@
 /*******************************************************************************
- * _  _ ___ ___     _ _
+ *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- * <p/>
+ *
  * Copyright (c) 2014-2015. The NFSdb project and its contributors.
- * <p/>
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * <p/>
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * <p/>
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -55,8 +55,10 @@ public class JoinOptimiser {
     private final LiteralCollector literalCollector = new LiteralCollector();
     private final StringSink planSink = new StringSink();
     private final ObjList<QueryModel> joinModels = new ObjList<>();
-    private final IntList orderedJournals = new IntList();
     private final IntStack orderingStack = new IntStack();
+    private IntList orderedJournals;
+    private IntList orderedJournals1 = new IntList();
+    private IntList orderedJournals2 = new IntList();
     private ExprNode globalFilter;
     private ObjList<JoinContext> emittedJoinClauses;
 
@@ -96,49 +98,6 @@ public class JoinOptimiser {
         }
 
         trySwapJoinOrder();
-    }
-
-    private int orderJournals() {
-        this.orderedJournals.clear();
-        this.orderingStack.clear();
-
-
-        for (int i = 0, n = joinModels.size(); i < n; i++) {
-            QueryModel q = joinModels.getQuick(i);
-            if (q.isCrossJoin() || 0 == q.getContext().parents.size()) {
-                orderingStack.push(i);
-            } else {
-                q.getContext().inCount = q.getContext().parents.size();
-            }
-        }
-
-        while (orderingStack.notEmpty()) {
-            //remove a node n from orderingStack
-            int index = orderingStack.pop();
-
-            //insert n into orderedJournals
-            orderedJournals.add(index);
-
-            IntHashSet dependencies = joinModels.getQuick(index).getDependencies();
-
-            //for each node m with an edge e from n to m do
-            for (int i = 0, k = dependencies.size(); i < k; i++) {
-                int depIndex = dependencies.get(i);
-                JoinContext jc = joinModels.getQuick(depIndex).getContext();
-                if (--jc.inCount == 0) {
-                    orderingStack.push(depIndex);
-                }
-            }
-        }
-
-        //Check to see if all edges are removed
-        for (int i = 0, n = joinModels.size(); i < n; i++) {
-            QueryModel m = joinModels.getQuick(i);
-            if (!m.isCrossJoin() && m.getContext().inCount > 0) {
-                return Integer.MAX_VALUE;
-            }
-        }
-        return 1;
     }
 
     public CharSequence plan() {
@@ -219,7 +178,6 @@ public class JoinOptimiser {
             node.lhs = ao;
             node.rhs = bo;
             preFilters.put(ai, mergeFilters(preFilters.get(ai), node));
-            deletedContexts.add(idx);
         } else {
             // (different journals)
             JoinContext jc = contextPool.next();
@@ -233,6 +191,8 @@ public class JoinOptimiser {
             jc.parents.add(ai < bi ? ai : bi);
             emittedJoinClauses.add(jc);
         }
+
+        deletedContexts.add(idx);
     }
 
     private void addJoinContext(JoinContext context) {
@@ -380,16 +340,34 @@ public class JoinOptimiser {
 
         // add remaining a nodes
         for (int i = 0, n = a.aNames.size(); i < n; i++) {
-            if (deletedContexts.contains(i)) {
-                continue;
+            int aai, abi, min, max;
+
+            aai = a.aIndexes.getQuick(i);
+            abi = a.bIndexes.getQuick(i);
+
+            if (aai < abi) {
+                min = aai;
+                max = abi;
+            } else {
+                min = abi;
+                max = aai;
             }
-            r.aNames.add(a.aNames.getQuick(i));
-            r.bNames.add(a.bNames.getQuick(i));
-            r.aIndexes.add(a.aIndexes.getQuick(i));
-            r.bIndexes.add(a.bIndexes.getQuick(i));
-            r.aNodes.add(a.aNodes.getQuick(i));
-            r.bNodes.add(a.bNodes.getQuick(i));
-            r.parents.add(a.parents);
+
+            if (deletedContexts.contains(i)) {
+                if (!r.parents.contains(min)) {
+                    unlinkDependencies(min, max);
+                }
+            } else {
+                r.aNames.add(a.aNames.getQuick(i));
+                r.bNames.add(a.bNames.getQuick(i));
+                r.aIndexes.add(aai);
+                r.bIndexes.add(abi);
+                r.aNodes.add(a.aNodes.getQuick(i));
+                r.bNodes.add(a.bNodes.getQuick(i));
+
+                r.parents.add(min);
+                linkDependencies(min, max);
+            }
         }
 
         return r;
@@ -455,6 +433,72 @@ public class JoinOptimiser {
         }
 
         return result;
+    }
+
+    private int orderJournals(IntList ordered) {
+        ordered.clear();
+        this.orderingStack.clear();
+
+        IntList pureCrosses = new IntList();
+
+        int cost = 0;
+
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            QueryModel q = joinModels.getQuick(i);
+            if (q.isCrossJoin() || 0 == q.getContext().parents.size()) {
+                if (q.getDependencies().size() > 0) {
+                    orderingStack.push(i);
+                } else {
+                    pureCrosses.add(i);
+                }
+            } else {
+                q.getContext().inCount = q.getContext().parents.size();
+            }
+        }
+
+        while (orderingStack.notEmpty()) {
+            //remove a node n from orderingStack
+            int index = orderingStack.pop();
+
+            //insert n into orderedJournals
+            ordered.add(index);
+
+            QueryModel m = joinModels.getQuick(index);
+
+            switch (m.getJoinType()) {
+                case CROSS:
+                    cost += 10;
+                    break;
+                default:
+                    cost += 5;
+            }
+
+            IntHashSet dependencies = m.getDependencies();
+
+            //for each node m with an edge e from n to m do
+            for (int i = 0, k = dependencies.size(); i < k; i++) {
+                int depIndex = dependencies.get(i);
+                JoinContext jc = joinModels.getQuick(depIndex).getContext();
+                if (--jc.inCount == 0) {
+                    orderingStack.push(depIndex);
+                }
+            }
+        }
+
+        //Check to see if all edges are removed
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            QueryModel m = joinModels.getQuick(i);
+            if (!m.isCrossJoin() && m.getContext().inCount > 0) {
+                return Integer.MAX_VALUE;
+            }
+        }
+
+        // add pure crosses at end of ordered journal list
+        for (int i = 0, n = pureCrosses.size(); i < n; i++) {
+            ordered.add(pureCrosses.getQuick(i));
+        }
+
+        return cost;
     }
 
     private void processEmittedJoinClauses() {
@@ -585,7 +629,7 @@ public class JoinOptimiser {
 
         JoinContext context = null;
 
-        if (c == null && (node.type == ExprNode.NodeType.LITERAL || (node.type == ExprNode.NodeType.OPERATION && !node.token.equals("and")))) {
+        if (c == null && (node.type == ExprNode.NodeType.LITERAL || (node.type == ExprNode.NodeType.OPERATION && !"and".equals(node.token)))) {
             context = c = contextPool.next();
         }
 
@@ -674,31 +718,29 @@ public class JoinOptimiser {
                 }
             }
 
-            int thisCost = orderJournals();
+            IntList ordered;
+            if (orderedJournals == orderedJournals1) {
+                ordered = orderedJournals2;
+            } else {
+                ordered = orderedJournals1;
+            }
+
+            ordered.clear();
+            int thisCost = orderJournals(ordered);
             if (thisCost < cost) {
                 root = z;
                 cost = thisCost;
-                break;
+                orderedJournals = ordered;
             }
         }
 
         if (root == -1) {
             throw new ParserException(0, "Cycle");
         }
+    }
 
-
-//        for (int i = 0; i < n; i++) {
-//            QueryModel jm = joinModels.getQuick(i);
-//            if (jm.getJoinType() != QueryModel.JoinType.OUTER) {
-//                JoinContext jc = joinModels.getQuick(i).getContext();
-//                if (jc == null || jc.parents.size() == 0) {
-//                    // look above i up to OUTER join
-//                    for (int k = i - 1; k > -1 && swapJoinOrder(i, k, jc); k--) ;
-//                    // look below i for up to OUTER join
-//                    for (int k = i + 1; k < n && swapJoinOrder(i, k, jc); k++) ;
-//                }
-//            }
-//        }
+    private void unlinkDependencies(int parent, int child) {
+        joinModels.getQuick(parent).removeDependency(child);
     }
 
     private class LiteralCollector implements Visitor {

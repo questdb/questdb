@@ -1,17 +1,17 @@
 /*******************************************************************************
- * _  _ ___ ___     _ _
+ *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- * <p/>
+ *
  * Copyright (c) 2014-2015. The NFSdb project and its contributors.
- * <p/>
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * <p/>
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * <p/>
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -37,7 +37,6 @@ public class QueryModel implements Mutable {
     private final ObjList<String> groupBy = new ObjList<>();
     private final ObjList<ExprNode> orderBy = new ObjList<>();
     private final IntHashSet dependencies = new IntHashSet();
-    private final IntHashSet parents = new IntHashSet(4);
     private ExprNode whereClause;
     private QueryModel nestedModel;
     private ExprNode journalName;
@@ -51,22 +50,6 @@ public class QueryModel implements Mutable {
     private JoinType joinType;
 
     protected QueryModel() {
-    }
-
-    public ExprNode getJoinCriteria() {
-        return joinCriteria;
-    }
-
-    public void setJoinCriteria(ExprNode joinCriteria) {
-        this.joinCriteria = joinCriteria;
-    }
-
-    public JoinType getJoinType() {
-        return joinType;
-    }
-
-    public void setJoinType(JoinType joinType) {
-        this.joinType = joinType;
     }
 
     public void addColumn(QueryColumn column) {
@@ -127,10 +110,6 @@ public class QueryModel implements Mutable {
         this.context = context;
     }
 
-    public boolean isCrossJoin() {
-        return joinType == JoinType.CROSS || context == null || context.parents.size() == 0;
-    }
-
     public IntHashSet getDependencies() {
         return dependencies;
     }
@@ -139,8 +118,24 @@ public class QueryModel implements Mutable {
         return groupBy;
     }
 
+    public ExprNode getJoinCriteria() {
+        return joinCriteria;
+    }
+
+    public void setJoinCriteria(ExprNode joinCriteria) {
+        this.joinCriteria = joinCriteria;
+    }
+
     public ObjList<QueryModel> getJoinModels() {
         return joinModels;
+    }
+
+    public JoinType getJoinType() {
+        return joinType;
+    }
+
+    public void setJoinType(JoinType joinType) {
+        this.joinType = joinType;
     }
 
     public ExprNode getJournalName() {
@@ -201,6 +196,14 @@ public class QueryModel implements Mutable {
 
     public void setWhereClause(ExprNode whereClause) {
         this.whereClause = whereClause;
+    }
+
+    public boolean isCrossJoin() {
+        return joinType == JoinType.CROSS || context == null || context.parents.size() == 0;
+    }
+
+    public void removeDependency(int index) {
+        dependencies.remove(index);
     }
 
     public enum JoinType {

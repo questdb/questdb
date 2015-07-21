@@ -18,9 +18,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  ******************************************************************************/
+
 package com.nfsdb.collections;
 
 import com.nfsdb.io.sink.StringSink;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
 
 public class FlyweightCharSequence implements CharSequence, Mutable {
@@ -66,6 +68,7 @@ public class FlyweightCharSequence implements CharSequence, Mutable {
         return of(delegate, 1, delegate.length() - 2);
     }
 
+    @SuppressFBWarnings({"RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE"})
     @NotNull
     @Override
     public String toString() {
