@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p/>
  * Copyright (c) 2014-2015. The NFSdb project and its contributors.
- *
+ * <p/>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p/>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -122,7 +122,7 @@ public class JoinTest {
                         "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
                         "+ 2[ inner ] d (filter: d.orderId = d.productId) ON d.productId = orders.orderId\n" +
                         "+ 1[ inner ] customers ON orders.customerId = customers.customerId\n" +
-                "\n";
+                        "\n";
 
         TestUtils.assertEquals(expected, joinOptimiser.plan());
     }
@@ -144,7 +144,7 @@ public class JoinTest {
                         "+ 0[ cross ] orders\n" +
                         "+ 1[ cross ] customers\n" +
                         "+ 2[ cross ] d\n" +
-                "where 1 = 1 and 2 = 2 and 3 = 3\n";
+                        "where 1 = 1 and 2 = 2 and 3 = 3\n";
 
         TestUtils.assertEquals(expected, joinOptimiser.plan());
     }
@@ -167,7 +167,7 @@ public class JoinTest {
                         "+ 2[ inner ] d (filter: d.productId = d.orderId) ON d.productId = customers.customerId and d.orderId = orders.orderId\n" +
                         "+ 3[ inner ] products ON d.productId = products.productId\n" +
                         "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
-                "\n";
+                        "\n";
         TestUtils.assertEquals(expected, joinOptimiser.plan());
     }
 
@@ -189,7 +189,7 @@ public class JoinTest {
                         "+ 2[ inner ] d (filter: d.productId = d.orderId) ON d.orderId = customers.customerId\n" +
                         "+ 3[ inner ] products ON d.productId = products.productId\n" +
                         "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
-                "\n";
+                        "\n";
         TestUtils.assertEquals(expected, joinOptimiser.plan());
     }
 
@@ -211,7 +211,7 @@ public class JoinTest {
                         "+ 2[ inner ] d (filter: d.productId = d.orderId) ON d.orderId = customers.customerId\n" +
                         "+ 3[ inner ] products ON d.productId = products.productId\n" +
                         "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
-                "\n";
+                        "\n";
         TestUtils.assertEquals(expected, joinOptimiser.plan());
     }
 
@@ -233,7 +233,7 @@ public class JoinTest {
                         "+ 3[ inner ] products ON d.productId = products.productId\n" +
                         "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
                         "+ 1[ inner ] customers ON customers.customerId = orders.orderId\n" +
-                "\n";
+                        "\n";
         TestUtils.assertEquals(expected, joinOptimiser.plan());
     }
 
@@ -255,7 +255,7 @@ public class JoinTest {
                         "+ 1[ inner ] d (filter: d.productId = d.orderId) ON d.orderId = orders.customerId\n" +
                         "+ 3[ inner ] products ON d.productId = products.productId\n" +
                         "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
-                "\n";
+                        "\n";
         TestUtils.assertEquals(expected, joinOptimiser.plan());
     }
 
@@ -300,7 +300,7 @@ public class JoinTest {
                         "+ 1[ inner ] orders ON d.orderId = orders.orderId\n" +
                         "+ 3[ inner ] products ON d.productId = products.productId\n" +
                         "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
-                "\n";
+                        "\n";
         TestUtils.assertEquals(expected, joinOptimiser.plan());
     }
 
@@ -325,7 +325,7 @@ public class JoinTest {
                         "+ 4[ inner ] products ON d.productId = products.productId\n" +
                         "+ 5[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
                         "+ 1[ cross ] customers\n" +
-                "where 1 = 1\n";
+                        "where 1 = 1\n";
         TestUtils.assertEquals(expected, joinOptimiser.plan());
     }
 
