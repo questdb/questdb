@@ -144,7 +144,7 @@ public class JoinTest {
                         "+ 0[ cross ] orders\n" +
                         "+ 1[ cross ] customers\n" +
                         "+ 2[ cross ] d\n" +
-                        "where 1 = 1 and 2 = 2 and 3 = 3\n";
+                        "\n";
 
         TestUtils.assertEquals(expected, joinOptimiser.plan());
     }
@@ -278,7 +278,7 @@ public class JoinTest {
                 "+ 1[ inner ] customers ON d.productId = customers.customerId\n" +
                 "+ 3[ inner ] products ON d.productId = products.productId\n" +
                 "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
-                "where 1 = 1\n";
+                "\n";
         TestUtils.assertEquals(expected, joinOptimiser.plan());
     }
 
@@ -325,7 +325,30 @@ public class JoinTest {
                         "+ 4[ inner ] products ON d.productId = products.productId\n" +
                         "+ 5[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
                         "+ 1[ cross ] customers\n" +
-                        "where 1 = 1\n";
+                        "\n";
+        TestUtils.assertEquals(expected, joinOptimiser.plan());
+    }
+
+    @Test
+    public void testJoinWithFilter() throws Exception {
+        parser.setContent("customers" +
+                        " cross join orders" +
+                        " join orderDetails d on d.orderId = orders.orderId and d.productId = customers.customerId" +
+                        " join products on d.productId = products.productId" +
+                        " join suppliers on products.supplier = suppliers.supplier" +
+                        " where d.productId = d.orderId" +
+                        " and (products.price > d.quantity or d.orderId = orders.orderId) and d.quantity < orders.orderId"
+        );
+        Statement statement = parser.parse();
+        joinOptimiser.compile(statement.getQueryModel(), factory);
+
+        final String expected =
+                "+ 0[ cross ] customers\n" +
+                        "+ 2[ inner ] d (filter: d.productId = d.orderId) ON d.productId = customers.customerId (post-filter: d.quantity < orders.orderId)\n" +
+                        "+ 1[ inner ] orders ON d.orderId = orders.orderId\n" +
+                        "+ 3[ inner ] products ON d.productId = products.productId (post-filter: products.price > d.quantity or d.orderId = orders.orderId)\n" +
+                        "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
+                        "\n";
         TestUtils.assertEquals(expected, joinOptimiser.plan());
     }
 

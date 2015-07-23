@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p/>
  * Copyright (c) 2014-2015. The NFSdb project and its contributors.
- *
+ * <p/>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p/>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -43,6 +43,7 @@ public class JoinOptimiser {
     private final ObjectPool<ExprNode> exprNodePool = new ObjectPool<>(ExprNode.FACTORY, 16);
     private final IntHashSet deletedContexts = new IntHashSet();
     private final IntObjHashMap<ExprNode> preFilters = new IntObjHashMap<>();
+    private final IntObjHashMap<ExprNode> postFilters = new IntObjHashMap<>();
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
     private final ObjectPool<JoinContext> contextPool = new ObjectPool<>(JoinContext.FACTORY, 16);
@@ -56,10 +57,24 @@ public class JoinOptimiser {
     private final StringSink planSink = new StringSink();
     private final ObjList<QueryModel> joinModels = new ObjList<>();
     private final IntStack orderingStack = new IntStack();
+    private final ObjList<ExprNode> globalFilterParts = new ObjList<>();
+    private final ObjList<QueryModel> tempCrosses = new ObjList<>();
+    private final IntList tempCrossIndexes = new IntList();
+    private final IntHashSet constantConditions = new IntHashSet();
+    private final IntHashSet postFilterRemoved = new IntHashSet();
+    private final IntHashSet postFilterAvailable = new IntHashSet();
+    private final ObjList<IntList> postFilterJournalRefs = new ObjList<>();
+    private final ObjList<CharSequence> postFilterThrowawayNames = new ObjList<>();
+    private final ObjectPool<IntList> intListPool = new ObjectPool<>(new ObjectPoolFactory<IntList>() {
+        @Override
+        public IntList newInstance() {
+            return new IntList();
+        }
+    }, 16);
+
     private IntList orderedJournals;
     private IntList orderedJournals1 = new IntList();
     private IntList orderedJournals2 = new IntList();
-    private ExprNode globalFilter;
     private ObjList<JoinContext> emittedJoinClauses;
 
     public JoinOptimiser(Optimiser optimiser) {
@@ -67,14 +82,7 @@ public class JoinOptimiser {
     }
 
     public void compile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-        // prepare for new iteration
-        namedJoinMetadata.clear();
-        allJoinMetadata.clear();
-        joinMetadataIndexLookup.clear();
-        csPool.reset();
-        exprNodePool.reset();
-        joinModels.clear();
-
+        clearState();
         joinModels.add(model);
         joinModels.add(model.getJoinModels());
         int n = joinModels.size();
@@ -84,13 +92,12 @@ public class JoinOptimiser {
             resolveJoinMetadata(joinModels.getQuick(i), factory);
         }
 
-        contextPool.reset();
         emittedJoinClauses = joinClausesSwap1;
 
         for (int i = 0; i < n; i++) {
             QueryModel m = joinModels.getQuick(i);
-            traversePreOrderRecursive(m.getWhereClause(), null);
-            traversePreOrderRecursive(m.getJoinCriteria(), null);
+            processJoinConditions(m.getWhereClause(), null);
+            processJoinConditions(m.getJoinCriteria(), null);
         }
 
         if (emittedJoinClauses.size() > 0) {
@@ -98,6 +105,7 @@ public class JoinOptimiser {
         }
 
         trySwapJoinOrder();
+        tryAssignPostJoinFilters();
     }
 
     public CharSequence plan() {
@@ -130,7 +138,7 @@ public class JoinOptimiser {
                 planSink.put("subquery");
             }
 
-//            // pre-filter
+            // pre-filter
             ExprNode filter = preFilters.get(index);
             if (filter != null) {
                 planSink.put(" (filter: ");
@@ -151,13 +159,15 @@ public class JoinOptimiser {
                 }
             }
 
-            planSink.put('\n');
-        }
+            // post-filter
+            filter = postFilters.get(index);
+            if (filter != null) {
+                planSink.put(" (post-filter: ");
+                filter.toString(planSink);
+                planSink.put(')');
+            }
 
-        // global filter
-        if (globalFilter != null) {
-            planSink.put("where ");
-            globalFilter.toString(planSink);
+            planSink.put('\n');
         }
 
         planSink.put('\n');
@@ -195,6 +205,10 @@ public class JoinOptimiser {
         deletedContexts.add(idx);
     }
 
+    private void addGlobalFilter(ExprNode node) {
+        this.globalFilterParts.add(node);
+    }
+
     private void addJoinContext(JoinContext context) {
         QueryModel jm = joinModels.getQuick(context.slaveIndex);
         JoinContext other = jm.getContext();
@@ -225,7 +239,7 @@ public class JoinOptimiser {
                     jc.slaveIndex = literalCollectorBIndexes.getQuick(0);
                     preFilters.put(jc.slaveIndex, mergeFilters(preFilters.get(jc.slaveIndex), node));
                 } else {
-                    globalFilter = mergeFilters(globalFilter, node);
+                    addGlobalFilter(node);
                 }
                 break;
             case 1:
@@ -256,9 +270,27 @@ public class JoinOptimiser {
                 }
                 break;
             default:
-                globalFilter = mergeFilters(globalFilter, node);
+                addGlobalFilter(node);
                 break;
         }
+    }
+
+    private void clearState() {
+        namedJoinMetadata.clear();
+        allJoinMetadata.clear();
+        joinMetadataIndexLookup.clear();
+        csPool.reset();
+        exprNodePool.reset();
+        joinModels.clear();
+        globalFilterParts.clear();
+        contextPool.reset();
+        preFilters.clear();
+        postFilters.clear();
+        constantConditions.clear();
+        postFilterRemoved.clear();
+        postFilterAvailable.clear();
+        postFilterJournalRefs.clear();
+        intListPool.reset();
     }
 
     private CharSequence extractColumnName(CharSequence token, int dot) {
@@ -439,8 +471,6 @@ public class JoinOptimiser {
         ordered.clear();
         this.orderingStack.clear();
 
-        IntList pureCrosses = new IntList();
-
         int cost = 0;
 
         for (int i = 0, n = joinModels.size(); i < n; i++) {
@@ -449,7 +479,7 @@ public class JoinOptimiser {
                 if (q.getDependencies().size() > 0) {
                     orderingStack.push(i);
                 } else {
-                    pureCrosses.add(i);
+                    tempCrossIndexes.add(i);
                 }
             } else {
                 q.getContext().inCount = q.getContext().parents.size();
@@ -494,8 +524,8 @@ public class JoinOptimiser {
         }
 
         // add pure crosses at end of ordered journal list
-        for (int i = 0, n = pureCrosses.size(); i < n; i++) {
-            ordered.add(pureCrosses.getQuick(i));
+        for (int i = 0, n = tempCrossIndexes.size(); i < n; i++) {
+            ordered.add(tempCrossIndexes.getQuick(i));
         }
 
         return cost;
@@ -517,6 +547,56 @@ public class JoinOptimiser {
             }
         } while (emittedJoinClauses.size() > 0);
 
+    }
+
+    private void processJoinConditions(ExprNode node, JoinContext c) throws ParserException {
+
+        if (node == null) {
+            return;
+        }
+
+        JoinContext context = null;
+
+        if (c == null && (node.type == ExprNode.NodeType.LITERAL || (node.type == ExprNode.NodeType.OPERATION && !"and".equals(node.token)))) {
+            context = c = contextPool.next();
+        }
+
+        boolean descend = true;
+
+        if (c != null) {
+            switch (node.type) {
+                case OPERATION:
+                    switch (node.token) {
+                        case "and":
+                            break;
+                        case "=":
+                            analyseEquals(node, c);
+                            descend = false;
+                            break;
+                        default:
+                            addGlobalFilter(node);
+                            descend = false;
+                            break;
+                    }
+                    break;
+                default:
+                    break;
+            }
+        }
+        if (descend) {
+            if (node.paramCount < 3) {
+                processJoinConditions(node.lhs, c);
+                processJoinConditions(node.rhs, c);
+            } else {
+                for (int i = 0; i < node.paramCount; i++) {
+                    processJoinConditions(node.args.getQuick(i), c);
+                }
+            }
+        }
+
+        if (context != null && context.slaveIndex > -1) {
+            addJoinContext(context);
+        }
     }
 
     private void resolveJoinMetadata(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
@@ -622,60 +702,50 @@ public class JoinOptimiser {
         return true;
     }
 
-    private void traversePreOrderRecursive(ExprNode node, JoinContext c) throws ParserException {
-        if (node == null) {
-            return;
+    private void tryAssignPostJoinFilters() throws ParserException {
+
+        // collect journal indexes from each part of global filter
+        int pc = globalFilterParts.size();
+        for (int i = 0; i < pc; i++) {
+            IntList indexes = intListPool.next();
+            traversalAlgo.traverse(globalFilterParts.getQuick(i), literalCollector.to(indexes, postFilterThrowawayNames));
+            postFilterJournalRefs.add(indexes);
+            postFilterThrowawayNames.clear();
         }
 
-        JoinContext context = null;
+        // match journal references to set of journals in join order
+        for (int i = 0, n = orderedJournals.size(); i < n; i++) {
+            postFilterAvailable.add(orderedJournals.getQuick(i));
 
-        if (c == null && (node.type == ExprNode.NodeType.LITERAL || (node.type == ExprNode.NodeType.OPERATION && !"and".equals(node.token)))) {
-            context = c = contextPool.next();
-        }
+            for (int k = 0; k < pc; k++) {
+                if (postFilterRemoved.contains(k)) {
+                    continue;
+                }
 
-        boolean descend = true;
-
-        if (c != null) {
-            switch (node.type) {
-                case LITERAL:
-                    break;
-                case FUNCTION:
-                    break;
-                case OPERATION:
-                    switch (node.token) {
-                        case "and":
+                IntList refs = postFilterJournalRefs.getQuick(k);
+                int rs = refs.size();
+                if (rs == 0) {
+                    // condition has no journal references
+                    // must evaluate as constant
+                    postFilterRemoved.add(k);
+                    constantConditions.add(k);
+                } else {
+                    boolean remove = true;
+                    for (int y = 0; y < rs; y++) {
+                        if (!postFilterAvailable.contains(refs.getQuick(y))) {
+                            remove = false;
                             break;
-                        case "or":
-                            c.trivial = false;
-                            break;
-                        case "=":
-                            if (c.trivial) {
-                                analyseEquals(node, c);
-                                descend = false;
-                            }
-                            break;
-                        default:
-                            break;
+                        }
                     }
-                    break;
-                default:
-                    break;
-            }
-        }
-        if (descend) {
-            if (node.paramCount < 3) {
-                traversePreOrderRecursive(node.lhs, c);
-                traversePreOrderRecursive(node.rhs, c);
-            } else {
-                for (int i = 0; i < node.paramCount; i++) {
-                    traversePreOrderRecursive(node.args.getQuick(i), c);
+                    if (remove) {
+                        postFilterRemoved.add(k);
+                        postFilters.put(i, globalFilterParts.getQuick(k));
+                    }
                 }
             }
         }
 
-        if (context != null && context.slaveIndex > -1) {
-            addJoinContext(context);
-        }
+        assert postFilterRemoved.size() == pc;
     }
 
     /**
@@ -693,12 +763,12 @@ public class JoinOptimiser {
     private void trySwapJoinOrder() throws ParserException {
         int n = joinModels.size();
 
-        ObjList<QueryModel> crosses = new ObjList<>();
+        tempCrosses.clear();
         // collect crosses
         for (int i = 0; i < n; i++) {
             QueryModel q = joinModels.getQuick(i);
             if (q.isCrossJoin()) {
-                crosses.add(q);
+                tempCrosses.add(q);
             }
         }
 
@@ -706,10 +776,10 @@ public class JoinOptimiser {
         int root = -1;
 
         // analyse state of tree for each set of n-1 crosses
-        for (int z = 0, zc = crosses.size(); z < zc; z++) {
+        for (int z = 0, zc = tempCrosses.size(); z < zc; z++) {
             for (int i = 0; i < zc; i++) {
                 if (z != i) {
-                    QueryModel q = crosses.getQuick(i);
+                    QueryModel q = tempCrosses.getQuick(i);
                     JoinContext jc = q.getContext();
                     // look above i up to OUTER join
                     for (int k = i - 1; k > -1 && swapJoinOrder(i, k, jc); k--) ;
@@ -767,6 +837,12 @@ public class JoinOptimiser {
         private Visitor rhs() {
             indexes = literalCollectorBIndexes;
             names = literalCollectorBNames;
+            return this;
+        }
+
+        private Visitor to(IntList indexes, ObjList<CharSequence> names) {
+            this.indexes = indexes;
+            this.names = names;
             return this;
         }
     }

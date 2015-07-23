@@ -39,7 +39,6 @@ public class JoinContext implements Mutable {
     public final ObjList<ExprNode> bNodes = new ObjList<>();
     // indexes of parent join clauses
     public final IntHashSet parents = new IntHashSet(4);
-    public boolean trivial = true;
     public int slaveIndex = -1;
     public int inCount;
 
@@ -53,7 +52,6 @@ public class JoinContext implements Mutable {
         bNames.clear();
         bNodes.clear();
 
-        trivial = true;
         slaveIndex = -1;
         parents.clear();
     }
