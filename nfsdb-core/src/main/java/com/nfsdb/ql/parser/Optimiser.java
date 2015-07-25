@@ -22,8 +22,6 @@
 package com.nfsdb.ql.parser;
 
 import com.nfsdb.JournalKey;
-import com.nfsdb.collections.Mutable;
-import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.NoSuchColumnException;
@@ -42,6 +40,7 @@ import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Interval;
 import com.nfsdb.utils.Numbers;
+import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;
@@ -58,9 +57,6 @@ public class Optimiser {
     private final ObjList<VirtualColumn> mutableArgs = new ObjList<>();
     private final StringSink columnNameAssembly = new StringSink();
     private final int columnNamePrefixLen;
-    private final ObjList<TopologicalNode> unorderedTopologicalNodes = new ObjList<>();
-    private final ObjList<TopologicalNode> orderedTopologicalNodes = new ObjList<>();
-    private final ArrayDeque<TopologicalNode> topologicalStack = new ArrayDeque<>();
 
     public Optimiser() {
         // seed column name assembly with default column prefix, which we will reuse
@@ -290,34 +286,40 @@ public class Optimiser {
     }
 
     private RowSource createRecordSourceForStr(IntrinsicModel im) {
-        if (im.keyValues.size() == 1) {
-            return new KvIndexStrLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.getLast()));
-        } else {
-            RowSource src = null;
-            for (int i = 0, k = im.keyValues.size(); i < k; i++) {
-                if (src == null) {
-                    src = new KvIndexStrLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(i)), true);
-                } else {
-                    src = new MergingRowSource(src, new KvIndexStrLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(i)), true));
+        int nSrc = im.keyValues.size();
+        switch (nSrc) {
+            case 1:
+                return new KvIndexStrLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.getLast()));
+            case 2:
+                return new MergingRowSource(
+                        new KvIndexStrLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(0)), true),
+                        new KvIndexStrLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(1)), true)
+                );
+            default:
+                RowSource sources[] = new RowSource[nSrc];
+                for (int i = 0; i < nSrc; i++) {
+                    Unsafe.arrayPut(sources, i, new KvIndexStrLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(i)), true));
                 }
-            }
-            return src;
+                return new HeapMergingRowSource(sources);
         }
     }
 
     private RowSource createRecordSourceForSym(IntrinsicModel im) {
-        if (im.keyValues.size() == 1) {
-            return new KvIndexSymLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.getLast()));
-        } else {
-            RowSource src = null;
-            for (int i = 0, k = im.keyValues.size(); i < k; i++) {
-                if (src == null) {
-                    src = new KvIndexSymLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(i)), true);
-                } else {
-                    src = new MergingRowSource(src, new KvIndexSymLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(i)), true));
+        int nSrc = im.keyValues.size();
+        switch (nSrc) {
+            case 1:
+                return new KvIndexSymLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.getLast()));
+            case 2:
+                return new MergingRowSource(
+                        new KvIndexSymLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(0)), true),
+                        new KvIndexSymLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(1)), true)
+                );
+            default:
+                RowSource sources[] = new RowSource[nSrc];
+                for (int i = 0; i < nSrc; i++) {
+                    Unsafe.arrayPut(sources, i, new KvIndexSymLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(i)), true));
                 }
-            }
-            return src;
+                return new HeapMergingRowSource(sources);
         }
     }
 
@@ -325,22 +327,6 @@ public class Optimiser {
         virtualColumnBuilderVisitor.metadata = metadata;
         traversalAlgo.traverse(node, virtualColumnBuilderVisitor);
         return stack.poll();
-    }
-
-    private int getCyclePosition(QueryModel model, int index) {
-        if (index == 0) {
-            return getCyclePosition0(model);
-        } else {
-            return getCyclePosition0(model.getJoinModels().getQuick(index - 1));
-        }
-    }
-
-    private int getCyclePosition0(QueryModel model) {
-        if (model.getJournalName() != null) {
-            return model.getJournalName().position;
-        } else {
-            return model.getNestedModel().getPosition();
-        }
     }
 
     @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE"})
@@ -475,72 +461,6 @@ public class Optimiser {
             rs = new VirtualColumnJournalRecordSource(rs, virtualColumns);
         }
         return new SelectedColumnsJournalRecordSource(rs, selectedColumns);
-    }
-
-    private void sortTopologicalNodes(QueryModel model) throws ParserException {
-        orderedTopologicalNodes.clear();
-        topologicalStack.clear();
-
-        //stack <- Set of all nodes with no incoming edges
-        ArrayDeque<TopologicalNode> stack = topologicalStack;
-
-        for (int i = 0, n = unorderedTopologicalNodes.size(); i < n; i++) {
-            TopologicalNode node = unorderedTopologicalNodes.getQuick(i);
-            if (node.in == 0) {
-                stack.push(node);
-            }
-        }
-
-        while (!stack.isEmpty()) {
-            //remove a node n from stack
-            TopologicalNode n = stack.poll();
-
-            //insert n into ordered
-            orderedTopologicalNodes.add(n);
-
-            //for each node m with an edge e from n to m do
-            for (int i = 0, k = n.out.size(); i < k; i++) {
-                TopologicalNode m = n.out.get(i);
-                if ((--m.in) == 0) {
-                    stack.push(m);
-                }
-            }
-            n.out.clear();
-        }
-        //Check to see if all edges are removed
-        for (int i = 0, n = unorderedTopologicalNodes.size(); i < n; i++) {
-            TopologicalNode node = unorderedTopologicalNodes.getQuick(i);
-            if (node.in > 0) {
-                throw new ParserException(getCyclePosition(model, node.index), "There is a cycle in join dependencies");
-            }
-        }
-    }
-
-    private static final class TopologicalNode implements Mutable {
-        final ObjHashSet<TopologicalNode> out = new ObjHashSet<>();
-        int index;
-        int in = 0;
-
-        @Override
-        public void clear() {
-            in = 0;
-            out.clear();
-        }
-
-        @Override
-        public int hashCode() {
-            return index;
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            return this == o || o instanceof TopologicalNode && ((TopologicalNode) o).in == this.index;
-        }
-
-        @Override
-        public String toString() {
-            return Integer.toString(index);
-        }
     }
 
     private class VirtualColumnBuilder implements Visitor {

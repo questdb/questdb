@@ -69,12 +69,11 @@ public class MinHeapTest extends AbstractTest {
             }
 
             p = 0;
-            while (heap.size() > 0) {
+            while (heap.hasNext()) {
                 int idx = heap.popIndex();
                 long v;
                 if (cursors[idx].hasNext()) {
-                    long a = cursors[idx].next();
-                    v = heap.popAndReplace(idx, a);
+                    v = heap.popAndReplace(idx, cursors[idx].next());
                 } else {
                     v = heap.popValue();
                 }

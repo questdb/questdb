@@ -1,22 +1,22 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
- *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
- *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
- *
- *  http://www.apache.org/licenses/LICENSE-2.0
- *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
+ * <p/>
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * <p/>
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * <p/>
+ * http://www.apache.org/licenses/LICENSE-2.0
+ * <p/>
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 
 package com.nfsdb.ql.parser;
@@ -158,6 +158,46 @@ public class OptimiserTest extends AbstractOptimiserTest {
                 "2508\t113\t132\t19\tCGCJ\t2015-03-12T00:00:09.070Z\n";
 
         assertThat(expected1, "select x * y, x - y, x, y, z, timestamp from tab where z ~ '^C.*J+'");
+    }
+
+    @Test
+    public void testIntervalAndIndexHeapSearch() throws Exception {
+        JournalWriter<Quote> w = factory.writer(Quote.class, "q");
+        TestUtils.generateQuoteData(w, 3600 * 24 * 10, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
+        w.commit();
+
+        final String expected =
+                "ADM.L\t837.343750000000\t0.061431560665\t2015-02-12T10:00:04.000Z\n" +
+                        "BP.L\t564.425537109375\t0.000000003711\t2015-02-12T10:00:40.000Z\n" +
+                        "WTB.L\t646.000000000000\t512.000000000000\t2015-02-12T10:00:55.000Z\n" +
+                        "WTB.L\t1024.000000000000\t0.000036626770\t2015-02-12T10:01:02.000Z\n" +
+                        "WTB.L\t676.215667724609\t0.000000047206\t2015-02-12T10:01:09.000Z\n" +
+                        "BP.L\t768.000000000000\t0.000000011709\t2015-02-12T10:01:18.000Z\n" +
+                        "BP.L\t512.000000000000\t74.948242187500\t2015-02-12T10:01:31.000Z\n" +
+                        "WTB.L\t784.000000000000\t320.000000000000\t2015-02-12T10:01:36.000Z\n" +
+                        "BP.L\t980.000000000000\t133.570312500000\t2015-02-12T10:02:14.000Z\n" +
+                        "ADM.L\t768.000000000000\t296.109375000000\t2015-02-12T10:02:35.000Z\n" +
+                        "WTB.L\t1024.000000000000\t0.000000055754\t2015-02-12T10:02:38.000Z\n" +
+                        "BP.L\t807.750000000000\t705.548904418945\t2015-02-12T10:02:49.000Z\n" +
+                        "BP.L\t949.156250000000\t63.068359375000\t2015-02-12T10:02:53.000Z\n" +
+                        "WTB.L\t505.468750000000\t1024.000000000000\t2015-02-12T10:03:09.000Z\n" +
+                        "ADM.L\t768.000000000000\t0.000047940810\t2015-02-12T10:03:19.000Z\n" +
+                        "BP.L\t968.953491210938\t0.029868379235\t2015-02-12T10:03:21.000Z\n" +
+                        "ADM.L\t512.000000000000\t0.000000000000\t2015-02-12T10:03:31.000Z\n" +
+                        "WTB.L\t1024.000000000000\t0.001693658938\t2015-02-12T10:03:32.000Z\n" +
+                        "WTB.L\t642.662750244141\t1008.000000000000\t2015-02-12T10:03:53.000Z\n" +
+                        "BP.L\t512.000000000000\t0.000000318310\t2015-02-12T10:03:56.000Z\n" +
+                        "BP.L\t788.000000000000\t55.569427490234\t2015-02-12T10:04:02.000Z\n" +
+                        "BP.L\t768.000000000000\t924.000000000000\t2015-02-12T10:04:04.000Z\n" +
+                        "ADM.L\t718.848632812500\t907.609375000000\t2015-02-12T10:04:13.000Z\n" +
+                        "ADM.L\t965.062500000000\t0.000000591804\t2015-02-12T10:04:22.000Z\n" +
+                        "ADM.L\t696.000000000000\t9.672361135483\t2015-02-12T10:04:25.000Z\n" +
+                        "BP.L\t992.000000000000\t0.750000000000\t2015-02-12T10:04:27.000Z\n" +
+                        "WTB.L\t813.869140625000\t0.000338987120\t2015-02-12T10:04:31.000Z\n" +
+                        "BP.L\t518.117187500000\t765.889160156250\t2015-02-12T10:04:33.000Z\n" +
+                        "WTB.L\t824.867187500000\t350.810546875000\t2015-02-12T10:04:40.000Z\n";
+
+        assertThat(expected, "select sym, bid, ask, timestamp from q where timestamp = '2015-02-12T10:00:00;5m' and sym in ('BP.L','ADM.L', 'WTB.L') and bid > 500");
     }
 
     @Test
@@ -489,6 +529,82 @@ public class OptimiserTest extends AbstractOptimiserTest {
                 "FZICFOQEVPXJYQR\t0.044912695885\t64.000000000000\t2015-03-12T00:01:37.820Z\n";
 
         assertThat(expected, "select id, x, y, timestamp from tab where id in ('FZICFOQEVPXJYQR', 'UHUTMTRRNGCIPFZ')");
+    }
+
+    @Test
+    public void testMultipleStrIdSearchUsingHeapMerge() throws Exception {
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $str("id").index().buckets(32).
+                        $double("x").
+                        $double("y").
+                        $ts()
+
+        );
+
+        Rnd rnd = new Rnd();
+        ObjHashSet<String> names = getNames(rnd, 1024);
+
+        int mask = 1023;
+        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+
+        for (int i = 0; i < 10000; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            ew.putStr(0, names.get(rnd.nextInt() & mask));
+            ew.putDouble(1, rnd.nextDouble());
+            ew.putDouble(2, rnd.nextDouble());
+            ew.putDate(3, t += 10);
+            ew.append();
+        }
+        w.commit();
+
+        final String expected =
+                "UHUTMTRRNGCIPFZ\t0.000006506322\t-261.000000000000\t2015-03-12T00:00:00.220Z\n" +
+                        "FZICFOQEVPXJYQR\t0.000000166602\t367.625000000000\t2015-03-12T00:00:00.260Z\n" +
+                        "KJSMSSUQSRLTKVV\t0.000000000000\t696.000000000000\t2015-03-12T00:00:01.200Z\n" +
+                        "FZICFOQEVPXJYQR\t57.308933258057\t28.255742073059\t2015-03-12T00:00:09.750Z\n" +
+                        "UHUTMTRRNGCIPFZ\t0.000005319798\t-727.000000000000\t2015-03-12T00:00:10.060Z\n" +
+                        "KJSMSSUQSRLTKVV\t-512.000000000000\t12.906219482422\t2015-03-12T00:00:11.190Z\n" +
+                        "FZICFOQEVPXJYQR\t-432.500000000000\t0.013725134078\t2015-03-12T00:00:13.470Z\n" +
+                        "FZICFOQEVPXJYQR\t-247.761962890625\t768.000000000000\t2015-03-12T00:00:15.170Z\n" +
+                        "UHUTMTRRNGCIPFZ\t438.929687500000\t0.000031495110\t2015-03-12T00:00:18.300Z\n" +
+                        "FZICFOQEVPXJYQR\t264.789741516113\t0.033011944033\t2015-03-12T00:00:19.630Z\n" +
+                        "FZICFOQEVPXJYQR\t6.671853065491\t1.936547994614\t2015-03-12T00:00:20.620Z\n" +
+                        "KJSMSSUQSRLTKVV\t664.132812500000\t512.000000000000\t2015-03-12T00:00:25.960Z\n" +
+                        "UHUTMTRRNGCIPFZ\t864.000000000000\t-1024.000000000000\t2015-03-12T00:00:25.970Z\n" +
+                        "UHUTMTRRNGCIPFZ\t0.002082723950\t0.000000001586\t2015-03-12T00:00:26.760Z\n" +
+                        "KJSMSSUQSRLTKVV\t0.000000078358\t-1024.000000000000\t2015-03-12T00:00:27.350Z\n" +
+                        "UHUTMTRRNGCIPFZ\t-976.561523437500\t0.446909941733\t2015-03-12T00:00:29.530Z\n" +
+                        "KJSMSSUQSRLTKVV\t192.000000000000\t984.000000000000\t2015-03-12T00:00:30.260Z\n" +
+                        "UHUTMTRRNGCIPFZ\t0.001273257891\t1.239676237106\t2015-03-12T00:00:31.270Z\n" +
+                        "UHUTMTRRNGCIPFZ\t-287.234375000000\t236.000000000000\t2015-03-12T00:00:33.720Z\n" +
+                        "FZICFOQEVPXJYQR\t1.589631736279\t128.217994689941\t2015-03-12T00:00:34.580Z\n" +
+                        "UHUTMTRRNGCIPFZ\t32.605212211609\t0.000000182797\t2015-03-12T00:00:35.120Z\n" +
+                        "UHUTMTRRNGCIPFZ\t0.000029479873\t11.629675865173\t2015-03-12T00:00:35.710Z\n" +
+                        "UHUTMTRRNGCIPFZ\t269.668342590332\t0.000553555525\t2015-03-12T00:00:35.990Z\n" +
+                        "UHUTMTRRNGCIPFZ\t0.000461809614\t64.250000000000\t2015-03-12T00:00:37.140Z\n" +
+                        "FZICFOQEVPXJYQR\t-572.296875000000\t0.000020149632\t2015-03-12T00:00:37.190Z\n" +
+                        "UHUTMTRRNGCIPFZ\t512.000000000000\t49.569551467896\t2015-03-12T00:00:40.250Z\n" +
+                        "FZICFOQEVPXJYQR\t0.000005206652\t0.272554814816\t2015-03-12T00:00:49.770Z\n" +
+                        "FZICFOQEVPXJYQR\t0.001125814480\t0.105613868684\t2015-03-12T00:01:06.100Z\n" +
+                        "UHUTMTRRNGCIPFZ\t704.000000000000\t44.546960830688\t2015-03-12T00:01:06.420Z\n" +
+                        "UHUTMTRRNGCIPFZ\t258.500000000000\t0.263136833906\t2015-03-12T00:01:07.450Z\n" +
+                        "FZICFOQEVPXJYQR\t192.000000000000\t-380.804687500000\t2015-03-12T00:01:08.610Z\n" +
+                        "FZICFOQEVPXJYQR\t56.567952156067\t0.086345635355\t2015-03-12T00:01:13.980Z\n" +
+                        "KJSMSSUQSRLTKVV\t595.603515625000\t0.000000033307\t2015-03-12T00:01:15.060Z\n" +
+                        "UHUTMTRRNGCIPFZ\t0.000097790253\t0.000000006182\t2015-03-12T00:01:17.060Z\n" +
+                        "FZICFOQEVPXJYQR\t128.000000000000\t469.091918945313\t2015-03-12T00:01:19.730Z\n" +
+                        "FZICFOQEVPXJYQR\t-592.000000000000\t0.000000797945\t2015-03-12T00:01:20.410Z\n" +
+                        "FZICFOQEVPXJYQR\t519.500000000000\t0.049629654735\t2015-03-12T00:01:22.360Z\n" +
+                        "FZICFOQEVPXJYQR\t24.736416816711\t92.901168823242\t2015-03-12T00:01:22.830Z\n" +
+                        "FZICFOQEVPXJYQR\t336.000000000000\t0.000000089523\t2015-03-12T00:01:26.920Z\n" +
+                        "KJSMSSUQSRLTKVV\t0.091930281371\t482.941406250000\t2015-03-12T00:01:30.760Z\n" +
+                        "KJSMSSUQSRLTKVV\t539.789093017578\t396.667968750000\t2015-03-12T00:01:35.470Z\n" +
+                        "FZICFOQEVPXJYQR\t0.044912695885\t64.000000000000\t2015-03-12T00:01:37.820Z\n" +
+                        "KJSMSSUQSRLTKVV\t10.140126943588\t0.000004704022\t2015-03-12T00:01:38.600Z\n";
+
+        assertThat(expected, "select id, x, y, timestamp from tab where id in ('FZICFOQEVPXJYQR', 'UHUTMTRRNGCIPFZ', 'KJSMSSUQSRLTKVV')");
     }
 
     @Test

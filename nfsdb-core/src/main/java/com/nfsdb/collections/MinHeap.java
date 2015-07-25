@@ -28,6 +28,10 @@ public class MinHeap {
         size = 0;
     }
 
+    public boolean hasNext() {
+        return size > 0;
+    }
+
     public long popAndReplace(int index, long value) {
         long v = Unsafe.arrayGet(buf, 0);
         int p = binSearch(value);
@@ -56,10 +60,6 @@ public class MinHeap {
             System.arraycopy(src, 1, src, 0, size);
         }
         return v;
-    }
-
-    public int size() {
-        return size;
     }
 
     @SuppressWarnings("StatementWithEmptyBody")
