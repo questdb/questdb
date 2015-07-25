@@ -590,7 +590,7 @@ public class KVIndex implements Closeable {
         public long next() {
             int r = (int) (rowCount++ & mask);
             long v = Unsafe.getUnsafe().getLong(address + (r << 3));
-            if (r == mask) {
+            if (r == mask && rowCount < size) {
                 this.address = rData.getAddress(Unsafe.getUnsafe().getLong(address + (rowBlockLen << 3)) - rowBlockSize, rowBlockSize);
             }
             return v;

@@ -42,7 +42,7 @@ public class PostOrderTreeTraversalAlgo {
 
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
-                stack.addFirst(node);
+                stack.push(node);
                 indexStack.push(0);
                 node = node.rhs;
             } else {
@@ -52,7 +52,7 @@ public class PostOrderTreeTraversalAlgo {
                         node = peek.lhs;
                     } else {
                         visitor.visit(peek);
-                        lastVisited = stack.pollFirst();
+                        lastVisited = stack.poll();
                         indexStack.pop();
                     }
                 } else {
@@ -62,7 +62,7 @@ public class PostOrderTreeTraversalAlgo {
                         indexStack.update(index + 1);
                     } else {
                         visitor.visit(peek);
-                        lastVisited = stack.pollFirst();
+                        lastVisited = stack.poll();
                         indexStack.pop();
                     }
                 }

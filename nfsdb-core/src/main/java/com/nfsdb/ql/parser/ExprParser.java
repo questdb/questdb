@@ -102,7 +102,7 @@ public class ExprParser {
                     // pop operators off the stack onto the output queue. If no left
                     // parentheses are encountered, either the separator was misplaced or
                     // parentheses were mismatched.
-                    while ((node = opStack.pollFirst()) != null && node.token.charAt(0) != '(') {
+                    while ((node = opStack.poll()) != null && node.token.charAt(0) != '(') {
                         listener.onNode(node);
                     }
 
@@ -138,7 +138,7 @@ public class ExprParser {
                     // Pop the left parenthesis from the stack, but not onto the output queue.
                     //        If the token at the top of the stack is a function token, pop it onto the output queue.
                     //        If the stack runs out without finding a left parenthesis, then there are mismatched parentheses.
-                    while ((node = opStack.pollFirst()) != null && node.token.charAt(0) != '(') {
+                    while ((node = opStack.poll()) != null && node.token.charAt(0) != '(') {
                         listener.onNode(node);
                     }
 
@@ -147,7 +147,7 @@ public class ExprParser {
                         node.paramCount = (prevChar == '(' ? 0 : paramCount + 1) + (node.paramCount == 2 ? 1 : 0);
                         node.type = ExprNode.NodeType.FUNCTION;
                         listener.onNode(node);
-                        opStack.pollFirst();
+                        opStack.poll();
                         if (paramCountStack.notEmpty()) {
                             paramCount = paramCountStack.pop();
                         }
@@ -208,7 +208,7 @@ public class ExprParser {
                             if (greaterPrecedence &&
                                     (type != Operator.OperatorType.UNARY || (type == Operator.OperatorType.UNARY && other.paramCount == 1))) {
                                 listener.onNode(other);
-                                opStack.pollFirst();
+                                opStack.poll();
                             } else {
                                 break;
                             }

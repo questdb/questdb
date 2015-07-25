@@ -138,28 +138,28 @@ public class Optimiser {
                 switch (node.type) {
                     case LITERAL:
                         // lookup column
-                        stack.addFirst(lookupColumn(node, metadata));
+                        stack.push(lookupColumn(node, metadata));
                         break;
                     case CONSTANT:
-                        stack.addFirst(parseConstant(node));
+                        stack.push(parseConstant(node));
                         break;
                     default:
                         // lookup zero arg function from symbol table
-                        stack.addFirst(lookupFunction(node, mutableSig.setName(node.token).setParamCount(0), null));
+                        stack.push(lookupFunction(node, mutableSig.setName(node.token).setParamCount(0), null));
                 }
                 break;
             default:
                 mutableArgs.ensureCapacity(argCount);
                 mutableSig.setName(node.token).setParamCount(argCount);
                 for (int n = 0; n < argCount; n++) {
-                    VirtualColumn c = stack.pollFirst();
+                    VirtualColumn c = stack.poll();
                     if (c == null) {
                         throw new ParserException(node.position, "Too few arguments");
                     }
                     mutableSig.paramType(n, c.getType(), c.isConstant());
                     mutableArgs.setQuick(n, c);
                 }
-                stack.addFirst(lookupFunction(node, mutableSig, mutableArgs));
+                stack.push(lookupFunction(node, mutableSig, mutableArgs));
         }
     }
 
@@ -324,7 +324,7 @@ public class Optimiser {
     private VirtualColumn createVirtualColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
         virtualColumnBuilderVisitor.metadata = metadata;
         traversalAlgo.traverse(node, virtualColumnBuilderVisitor);
-        return stack.pollFirst();
+        return stack.poll();
     }
 
     private int getCyclePosition(QueryModel model, int index) {
@@ -487,13 +487,13 @@ public class Optimiser {
         for (int i = 0, n = unorderedTopologicalNodes.size(); i < n; i++) {
             TopologicalNode node = unorderedTopologicalNodes.getQuick(i);
             if (node.in == 0) {
-                stack.addFirst(node);
+                stack.push(node);
             }
         }
 
         while (!stack.isEmpty()) {
             //remove a node n from stack
-            TopologicalNode n = stack.pollFirst();
+            TopologicalNode n = stack.poll();
 
             //insert n into ordered
             orderedTopologicalNodes.add(n);
@@ -502,7 +502,7 @@ public class Optimiser {
             for (int i = 0, k = n.out.size(); i < k; i++) {
                 TopologicalNode m = n.out.get(i);
                 if ((--m.in) == 0) {
-                    stack.addFirst(m);
+                    stack.push(m);
                 }
             }
             n.out.clear();

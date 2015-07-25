@@ -33,6 +33,8 @@ import com.nfsdb.ql.model.JoinContext;
 import com.nfsdb.ql.model.QueryModel;
 import com.nfsdb.utils.Chars;
 
+import java.util.ArrayDeque;
+
 public class JoinOptimiser {
 
     private final ObjectPool<FlyweightCharSequence> csPool = new ObjectPool<>(FlyweightCharSequence.FACTORY, 64);
@@ -57,7 +59,7 @@ public class JoinOptimiser {
     private final StringSink planSink = new StringSink();
     private final ObjList<QueryModel> joinModels = new ObjList<>();
     private final IntStack orderingStack = new IntStack();
-    private final ObjList<ExprNode> globalFilterParts = new ObjList<>();
+    private final ObjList<ExprNode> filterNodes = new ObjList<>();
     private final ObjList<QueryModel> tempCrosses = new ObjList<>();
     private final IntList tempCrossIndexes = new IntList();
     private final IntHashSet constantConditions = new IntHashSet();
@@ -71,6 +73,7 @@ public class JoinOptimiser {
             return new IntList();
         }
     }, 16);
+    private final ArrayDeque<ExprNode> joinConditionStack = new ArrayDeque<>();
 
     private IntList orderedJournals;
     private IntList orderedJournals1 = new IntList();
@@ -96,8 +99,8 @@ public class JoinOptimiser {
 
         for (int i = 0; i < n; i++) {
             QueryModel m = joinModels.getQuick(i);
-            processJoinConditions(m.getWhereClause(), null);
-            processJoinConditions(m.getJoinCriteria(), null);
+            processJoinConditions(m.getWhereClause());
+            processJoinConditions(m.getJoinCriteria());
         }
 
         if (emittedJoinClauses.size() > 0) {
@@ -175,6 +178,10 @@ public class JoinOptimiser {
         return planSink;
     }
 
+    private void addFilterNode(ExprNode node) {
+        this.filterNodes.add(node);
+    }
+
     private void addFilterOrEmitJoin(int idx, int ai, CharSequence an, ExprNode ao, int bi, CharSequence bn, ExprNode bo) {
         if (ai == bi && Chars.equals(an, bn)) {
             deletedContexts.add(idx);
@@ -205,10 +212,6 @@ public class JoinOptimiser {
         deletedContexts.add(idx);
     }
 
-    private void addGlobalFilter(ExprNode node) {
-        this.globalFilterParts.add(node);
-    }
-
     private void addJoinContext(JoinContext context) {
         QueryModel jm = joinModels.getQuick(context.slaveIndex);
         JoinContext other = jm.getContext();
@@ -219,7 +222,7 @@ public class JoinOptimiser {
         }
     }
 
-    private void analyseEquals(ExprNode node, JoinContext jc) throws ParserException {
+    private void analyseEquals(ExprNode node) throws ParserException {
         literalCollectorAIndexes.clear();
         literalCollectorBIndexes.clear();
 
@@ -232,17 +235,22 @@ public class JoinOptimiser {
         int aSize = literalCollectorAIndexes.size();
         int bSize = literalCollectorBIndexes.size();
 
+        JoinContext jc;
+
         switch (aSize) {
             case 0:
                 if (bSize == 1) {
                     // single journal reference
+                    jc = contextPool.next();
                     jc.slaveIndex = literalCollectorBIndexes.getQuick(0);
                     preFilters.put(jc.slaveIndex, mergeFilters(preFilters.get(jc.slaveIndex), node));
+                    addJoinContext(jc);
                 } else {
-                    addGlobalFilter(node);
+                    addFilterNode(node);
                 }
                 break;
             case 1:
+                jc = contextPool.next();
                 int lhi = literalCollectorAIndexes.getQuick(0);
                 if (bSize == 1) {
                     int rhi = literalCollectorBIndexes.getQuick(0);
@@ -268,9 +276,10 @@ public class JoinOptimiser {
                     jc.slaveIndex = lhi;
                     preFilters.put(lhi, mergeFilters(preFilters.get(lhi), node));
                 }
+                addJoinContext(jc);
                 break;
             default:
-                addGlobalFilter(node);
+                addFilterNode(node);
                 break;
         }
     }
@@ -282,7 +291,7 @@ public class JoinOptimiser {
         csPool.reset();
         exprNodePool.reset();
         joinModels.clear();
-        globalFilterParts.clear();
+        filterNodes.clear();
         contextPool.reset();
         preFilters.clear();
         postFilters.clear();
@@ -549,53 +558,30 @@ public class JoinOptimiser {
 
     }
 
-    private void processJoinConditions(ExprNode node, JoinContext c) throws ParserException {
-
-        if (node == null) {
-            return;
-        }
-
-        JoinContext context = null;
-
-        if (c == null && (node.type == ExprNode.NodeType.LITERAL || (node.type == ExprNode.NodeType.OPERATION && !"and".equals(node.token)))) {
-            context = c = contextPool.next();
-        }
-
-        boolean descend = true;
-
-        if (c != null) {
-            switch (node.type) {
-                case OPERATION:
-                    switch (node.token) {
-                        case "and":
-                            break;
-                        case "=":
-                            analyseEquals(node, c);
-                            descend = false;
-                            break;
-                        default:
-                            addGlobalFilter(node);
-                            descend = false;
-                            break;
-                    }
-                    break;
-                default:
-                    break;
-            }
-        }
-        if (descend) {
-            if (node.paramCount < 3) {
-                processJoinConditions(node.lhs, c);
-                processJoinConditions(node.rhs, c);
-            } else {
-                for (int i = 0; i < node.paramCount; i++) {
-                    processJoinConditions(node.args.getQuick(i), c);
+    private void processJoinConditions(ExprNode node) throws ParserException {
+        // pre-order traversal
+        joinConditionStack.clear();
+        while (!joinConditionStack.isEmpty() || node != null) {
+            if (node != null) {
+                switch (node.token) {
+                    case "and":
+                        if (node.rhs != null) {
+                            joinConditionStack.push(node.rhs);
+                        }
+                        node = node.lhs;
+                        break;
+                    case "=":
+                        analyseEquals(node);
+                        node = null;
+                        break;
+                    default:
+                        addFilterNode(node);
+                        node = null;
+                        break;
                 }
+            } else {
+                node = joinConditionStack.poll();
             }
-        }
-
-        if (context != null && context.slaveIndex > -1) {
-            addJoinContext(context);
         }
     }
 
@@ -705,10 +691,10 @@ public class JoinOptimiser {
     private void tryAssignPostJoinFilters() throws ParserException {
 
         // collect journal indexes from each part of global filter
-        int pc = globalFilterParts.size();
+        int pc = filterNodes.size();
         for (int i = 0; i < pc; i++) {
             IntList indexes = intListPool.next();
-            traversalAlgo.traverse(globalFilterParts.getQuick(i), literalCollector.to(indexes, postFilterThrowawayNames));
+            traversalAlgo.traverse(filterNodes.getQuick(i), literalCollector.to(indexes, postFilterThrowawayNames));
             postFilterJournalRefs.add(indexes);
             postFilterThrowawayNames.clear();
         }
@@ -739,7 +725,7 @@ public class JoinOptimiser {
                     }
                     if (remove) {
                         postFilterRemoved.add(k);
-                        postFilters.put(i, globalFilterParts.getQuick(k));
+                        postFilters.put(i, filterNodes.getQuick(k));
                     }
                 }
             }

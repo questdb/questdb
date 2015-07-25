@@ -79,7 +79,7 @@ public class SelectedColumnSplitter {
                     node = null;
                 }
             } else {
-                node = stack.pop();
+                node = stack.poll();
             }
         }
         return root;

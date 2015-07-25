@@ -71,16 +71,16 @@ public class IntrinsicExtractor {
                 switch (node.token) {
                     case "and":
                         if (!removeAndIntrinsics(node.rhs, m)) {
-                            stack.addFirst(node.rhs);
+                            stack.push(node.rhs);
                         }
                         node = removeAndIntrinsics(node.lhs, m) ? null : node.lhs;
                         break;
                     default:
-                        node = stack.pollFirst();
+                        node = stack.poll();
                         break;
                 }
             } else {
-                node = stack.pollFirst();
+                node = stack.poll();
             }
         }
         model.filter = collapseIntrinsicNodes(root);

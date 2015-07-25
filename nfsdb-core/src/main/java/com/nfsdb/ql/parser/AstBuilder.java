@@ -37,15 +37,15 @@ public class AstBuilder implements ExprListener {
             case 0:
                 break;
             case 1:
-                node.rhs = stack.pollFirst();
+                node.rhs = stack.poll();
                 break;
             case 2:
-                node.rhs = stack.pollFirst();
-                node.lhs = stack.pollFirst();
+                node.rhs = stack.poll();
+                node.lhs = stack.poll();
                 break;
             default:
                 for (int i = 0; i < node.paramCount; i++) {
-                    node.args.add(stack.pollFirst());
+                    node.args.add(stack.poll());
                 }
         }
         stack.push(node);
@@ -56,6 +56,6 @@ public class AstBuilder implements ExprListener {
     }
 
     public ExprNode root() {
-        return stack.pollFirst();
+        return stack.poll();
     }
 }
