@@ -74,10 +74,9 @@ public class JoinOptimiser {
         }
     }, 16);
     private final ArrayDeque<ExprNode> joinConditionStack = new ArrayDeque<>();
-
+    private final IntList orderedJournals1 = new IntList();
+    private final IntList orderedJournals2 = new IntList();
     private IntList orderedJournals;
-    private IntList orderedJournals1 = new IntList();
-    private IntList orderedJournals2 = new IntList();
     private ObjList<JoinContext> emittedJoinClauses;
 
     public JoinOptimiser(Optimiser optimiser) {
