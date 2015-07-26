@@ -361,7 +361,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
 
     @Override
     public String toString() {
-        return getClass().getName() + "[location=" + location + ", " + "mode=" + getMode() + ", " + ", metadata=" + metadata + "]";
+        return getClass().getName() + "[location=" + location + ", " + "mode=" + getMode() + ", " + ", metadata=" + metadata + ']';
     }
 
     /**

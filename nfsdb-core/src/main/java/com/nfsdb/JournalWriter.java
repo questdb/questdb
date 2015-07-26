@@ -193,12 +193,6 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
-    @SuppressWarnings("EqualsBetweenInconvertibleTypes")
-    @Override
-    public boolean equals(Object o) {
-        return this == o || !(o == null || getClass() != o.getClass()) && getKey().equals(((Journal) o).getKey());
-    }
-
     @Override
     public JournalMode getMode() {
         return JournalMode.APPEND;
@@ -207,6 +201,12 @@ public class JournalWriter<T> extends Journal<T> {
     @Override
     public int hashCode() {
         return getKey().hashCode();
+    }
+
+    @SuppressWarnings("EqualsBetweenInconvertibleTypes")
+    @Override
+    public boolean equals(Object o) {
+        return this == o || !(o == null || getClass() != o.getClass()) && getKey().equals(((Journal) o).getKey());
     }
 
     @Override
@@ -681,7 +681,7 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     Partition<T> createTempPartition() throws JournalException {
-        return createTempPartition(Constants.TEMP_DIRECTORY_PREFIX + "." + System.currentTimeMillis() + "." + UUID.randomUUID());
+        return createTempPartition(Constants.TEMP_DIRECTORY_PREFIX + '.' + System.currentTimeMillis() + '.' + UUID.randomUUID());
     }
 
     Partition<T> getAppendPartition() throws JournalException {

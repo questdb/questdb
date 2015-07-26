@@ -28,8 +28,10 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.ha.JournalServer;
 import com.nfsdb.ha.auth.AuthorizationHandler;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.nfsdb.examples.model.Price;
 
+import java.io.UnsupportedEncodingException;
 import java.util.concurrent.TimeUnit;
 
 public class AuthReplicationServerMain {
@@ -47,8 +49,9 @@ public class AuthReplicationServerMain {
     public void start() throws Exception {
         JournalFactory factory = new JournalFactory(location);
         JournalServer server = new JournalServer(factory, new AuthorizationHandler() {
+            @SuppressFBWarnings("BED_BOGUS_EXCEPTION_DECLARATION")
             @Override
-            public boolean isAuthorized(byte[] token, ObjList<JournalKey> requestedKeys) throws Exception {
+            public boolean isAuthorized(byte[] token, ObjList<JournalKey> requestedKeys) throws UnsupportedEncodingException {
                 return "MY SECRET".equals(new String(token, "UTF8"));
             }
         });

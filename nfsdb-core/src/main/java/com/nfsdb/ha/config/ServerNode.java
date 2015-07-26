@@ -66,7 +66,7 @@ public class ServerNode {
         this.id = id;
         this.hostname = hostname;
         this.port = port;
-        this.address = hostname + ":" + port;
+        this.address = hostname + ':' + port;
     }
 
     public String getAddress() {

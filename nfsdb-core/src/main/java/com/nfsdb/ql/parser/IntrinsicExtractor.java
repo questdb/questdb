@@ -369,7 +369,7 @@ public class IntrinsicExtractor {
         return parseInterval(seq, 0, seq.length(), position);
     }
 
-    @SuppressFBWarnings({"CLI_CONSTANT_LIST_INDEX"})
+    @SuppressFBWarnings({"CLI_CONSTANT_LIST_INDEX", "EXS_EXCEPTION_SOFTENING_RETURN_FALSE"})
     private boolean parseInterval(CharSequence seq, int lo, int lim, int position) throws ParserException {
         int pos[] = new int[3];
         int p = -1;

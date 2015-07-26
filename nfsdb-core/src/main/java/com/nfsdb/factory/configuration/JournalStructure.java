@@ -252,7 +252,7 @@ public class JournalStructure implements MetadataBuilder<Object> {
 
             int index = nameToIndexMap.get(f.getName());
             if (index == -1) {
-                LOGGER.warn("Unusable member field: " + clazz.getName() + "." + f.getName());
+                LOGGER.warn("Unusable member field: " + clazz.getName() + '.' + f.getName());
                 continue;
             }
 

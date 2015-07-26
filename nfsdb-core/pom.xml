@@ -31,7 +31,7 @@
     <groupId>com.nfsdb</groupId>
     <artifactId>nfsdb-core</artifactId>
     <packaging>jar</packaging>
-    <name>NFSdb.Core.Library</name>
+    <name>NFSdb.Core</name>
     <description>Low Latency, high throughput database and cache</description>
 
     <url>http://github.nfsdb.org</url>

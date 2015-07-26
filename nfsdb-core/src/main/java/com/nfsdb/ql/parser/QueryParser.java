@@ -38,28 +38,6 @@ public class QueryParser {
     private static final CharSequenceHashSet aliasStopSet = new CharSequenceHashSet();
     private static final CharSequenceHashSet groupByStopSet = new CharSequenceHashSet();
     private static final CharSequenceObjHashMap<QueryModel.JoinType> joinStartSet = new CharSequenceObjHashMap<>();
-
-    static {
-        aliasStopSet.add("where");
-        aliasStopSet.add("latest");
-        aliasStopSet.add("join");
-        aliasStopSet.add("inner");
-        aliasStopSet.add("outer");
-        aliasStopSet.add("cross");
-        aliasStopSet.add("group");
-        aliasStopSet.add("order");
-        aliasStopSet.add("on");
-        //
-        groupByStopSet.add("order");
-        groupByStopSet.add(")");
-        groupByStopSet.add(",");
-
-        joinStartSet.put("join", QueryModel.JoinType.INNER);
-        joinStartSet.put("inner", QueryModel.JoinType.INNER);
-        joinStartSet.put("outer", QueryModel.JoinType.OUTER);
-        joinStartSet.put("cross", QueryModel.JoinType.CROSS);
-    }
-
     private final TokenStream toks = new TokenStream() {{
         defineSymbol("+");
     }};
@@ -86,6 +64,7 @@ public class QueryParser {
         return new ParserException(toks.position(), msg);
     }
 
+    @SuppressFBWarnings("UCPM_USE_CHARACTER_PARAMETERIZED_METHOD")
     private void expectTok(CharSequence tok, CharSequence expected) throws ParserException {
         if (tok == null || !Chars.equals(tok, expected)) {
             throw err("\"" + expected + "\" expected");
@@ -427,5 +406,26 @@ public class QueryParser {
             throw err("Unexpected end of input");
         }
         return tok;
+    }
+
+    static {
+        aliasStopSet.add("where");
+        aliasStopSet.add("latest");
+        aliasStopSet.add("join");
+        aliasStopSet.add("inner");
+        aliasStopSet.add("outer");
+        aliasStopSet.add("cross");
+        aliasStopSet.add("group");
+        aliasStopSet.add("order");
+        aliasStopSet.add("on");
+        //
+        groupByStopSet.add("order");
+        groupByStopSet.add(")");
+        groupByStopSet.add(",");
+
+        joinStartSet.put("join", QueryModel.JoinType.INNER);
+        joinStartSet.put("inner", QueryModel.JoinType.INNER);
+        joinStartSet.put("outer", QueryModel.JoinType.OUTER);
+        joinStartSet.put("cross", QueryModel.JoinType.CROSS);
     }
 }

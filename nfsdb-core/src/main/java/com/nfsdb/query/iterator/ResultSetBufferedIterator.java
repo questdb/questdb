@@ -50,13 +50,13 @@ public class ResultSetBufferedIterator<T> extends AbstractImmutableIterator<T> i
     }
 
     @Override
-    public boolean isEmpty() {
-        return false;
+    public T next() {
+        return get(cursor++);
     }
 
     @Override
-    public T next() {
-        return get(cursor++);
+    public boolean isEmpty() {
+        return false;
     }
 
     @Override
@@ -75,7 +75,7 @@ public class ResultSetBufferedIterator<T> extends AbstractImmutableIterator<T> i
             rs.read(rsIndex, obj);
             return obj;
         } catch (JournalException e) {
-            throw new JournalRuntimeException("Journal exception at [" + rsIndex + "]", e);
+            throw new JournalRuntimeException("Journal exception at [" + rsIndex + ']', e);
         }
     }
 }

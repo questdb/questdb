@@ -38,6 +38,7 @@ public final class Files {
     private Files() {
     } // Prevent construction.
 
+    @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_RETURN_FALSE")
     public static boolean delete(File file) {
         try {
             deleteOrException(file);

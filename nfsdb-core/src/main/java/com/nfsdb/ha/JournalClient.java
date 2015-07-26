@@ -399,7 +399,7 @@ public class JournalClient {
                     while (running.get() && !connected && retryCount-- > 0 && loginRetryCount > 0) {
                         try {
                             LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(config.getReconnectPolicy().getSleepBetweenRetriesMillis()));
-                            LOGGER.info("Retrying reconnect ... [" + (retryCount + 1) + "]");
+                            LOGGER.info("Retrying reconnect ... [" + (retryCount + 1) + ']');
                             close0();
                             handshake();
                             connected = true;

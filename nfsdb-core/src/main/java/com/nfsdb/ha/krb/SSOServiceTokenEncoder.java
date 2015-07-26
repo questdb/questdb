@@ -50,21 +50,6 @@ public class SSOServiceTokenEncoder implements Closeable {
         copy("/Microsoft.IdentityModel.dll", temp);
     }
 
-    @SuppressFBWarnings({"PATH_TRAVERSAL_IN"})
-    private static void copy(String resource, File dir) throws IOException {
-        URL url = SSOServiceTokenEncoder.class.getResource(resource);
-        if (url == null) {
-            throw new IOException("Broken package? Resource not found: " + resource);
-        }
-
-        File file = new File(url.getPath());
-        try (FileChannel in = new FileInputStream(file).getChannel()) {
-            try (FileChannel out = new FileOutputStream(new File(dir, file.getName())).getChannel()) {
-                out.transferFrom(in, 0, in.size());
-            }
-        }
-    }
-
     @Override
     public void close() throws IOException {
         if (clean) {
@@ -79,7 +64,7 @@ public class SSOServiceTokenEncoder implements Closeable {
             throw new IOException("ActiveDirectory SSO is only available on Windows platforms");
         }
 
-        try (InputStream in = Runtime.getRuntime().exec(temp.getAbsolutePath() + NFSKRB_EXE + " " + serviceName).getInputStream()) {
+        try (InputStream in = Runtime.getRuntime().exec(temp.getAbsolutePath() + NFSKRB_EXE + ' ' + serviceName).getInputStream()) {
             bos.reset();
             byte buf[] = new byte[4096];
             int len;
@@ -98,5 +83,20 @@ public class SSOServiceTokenEncoder implements Closeable {
 
     public boolean isAvailable() {
         return osName != null && osName.startsWith("Windows") && "amd64".equals(osArch);
+    }
+
+    @SuppressFBWarnings({"PATH_TRAVERSAL_IN"})
+    private static void copy(String resource, File dir) throws IOException {
+        URL url = SSOServiceTokenEncoder.class.getResource(resource);
+        if (url == null) {
+            throw new IOException("Broken package? Resource not found: " + resource);
+        }
+
+        File file = new File(url.getPath());
+        try (FileChannel in = new FileInputStream(file).getChannel()) {
+            try (FileChannel out = new FileOutputStream(new File(dir, file.getName())).getChannel()) {
+                out.transferFrom(in, 0, in.size());
+            }
+        }
     }
 }

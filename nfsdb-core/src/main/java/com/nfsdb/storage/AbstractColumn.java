@@ -70,7 +70,7 @@ public abstract class AbstractColumn implements Closeable {
 
     @Override
     public String toString() {
-        return this.getClass().getName() + "[file=" + mappedFile + ", size=" + size() + "]";
+        return this.getClass().getName() + "[file=" + mappedFile + ", size=" + size() + ']';
     }
 
     public abstract void truncate(long size);

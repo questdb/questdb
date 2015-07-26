@@ -170,7 +170,7 @@ public class MemoryFile implements Closeable {
 
     @Override
     public String toString() {
-        return this.getClass().getName() + "[file=" + file + ", appendOffset=" + getAppendOffset() + "]";
+        return this.getClass().getName() + "[file=" + file + ", appendOffset=" + getAppendOffset() + ']';
     }
 
     private long allocateAddress(long offset, int size) {

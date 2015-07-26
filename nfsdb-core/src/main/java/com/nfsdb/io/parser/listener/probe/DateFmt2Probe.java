@@ -25,6 +25,7 @@ import com.nfsdb.io.ImportedColumnMetadata;
 import com.nfsdb.io.ImportedColumnType;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Dates;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class DateFmt2Probe implements TypeProbe {
     @Override
@@ -36,6 +37,7 @@ public class DateFmt2Probe implements TypeProbe {
         return m;
     }
 
+    @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_RETURN_FALSE")
     @Override
     public boolean probe(CharSequence seq) {
         try {

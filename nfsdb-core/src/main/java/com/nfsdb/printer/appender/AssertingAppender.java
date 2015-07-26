@@ -36,7 +36,7 @@ public class AssertingAppender implements Appender {
         if (index < expected.length) {
             String s = stringBuilder.toString();
             if (!expected[index].equals(s)) {
-                throw new AssertionError(("\n\n>>>> Expected [ " + (index + 1) + " ]>>>>\n") + expected[index] + "\n<<<<  Actual  <<<<\n" + s + "\n");
+                throw new AssertionError(("\n\n>>>> Expected [ " + (index + 1) + " ]>>>>\n") + expected[index] + "\n<<<<  Actual  <<<<\n" + s + '\n');
             }
         } else {
             throw new AssertionError("!!! Expected " + expected.length + " lines, actual " + index);

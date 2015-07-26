@@ -56,11 +56,6 @@ public class JournalIteratorImpl<T> extends AbstractImmutableIterator<T> impleme
     }
 
     @Override
-    public boolean isEmpty() {
-        return ranges == null || ranges.size() == 0;
-    }
-
-    @Override
     public T next() {
         try {
             T result = journal.read(Rows.toRowID(currentPartitionID, currentRowID));
@@ -72,8 +67,13 @@ public class JournalIteratorImpl<T> extends AbstractImmutableIterator<T> impleme
             }
             return result;
         } catch (JournalException e) {
-            throw new JournalRuntimeException("Error in iterator [" + this + "]", e);
+            throw new JournalRuntimeException("Error in iterator [%s]", e, this);
         }
+    }
+
+    @Override
+    public boolean isEmpty() {
+        return ranges == null || ranges.size() == 0;
     }
 
     @Override

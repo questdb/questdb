@@ -36,7 +36,7 @@ public class JournalMetadataException extends JournalException {
     public JournalMetadataException(JournalMetadata mo, JournalMetadata mn) {
         super("Checksum mismatch. Check log for details");
         b.append("Metadata mismatch for journal:\n");
-        b.append("Location: ").append(mo.getLocation()).append("\n");
+        b.append("Location: ").append(mo.getLocation()).append('\n');
         sep();
         b();
         pad(FIRST_COL_PAD, "column#");
@@ -91,8 +91,16 @@ public class JournalMetadataException extends JournalException {
         LOGGER.error(b.toString());
     }
 
-    private void pad(String value) {
-        pad(DEFAULT_COL_PAD, value);
+    private void b() {
+        b.append('|');
+    }
+
+    private void col(ColumnMetadata m) {
+        pad((m.distinctCountHint > 0 ? m.distinctCountHint + " ~ " : "") + (m.indexed ? '#' : "") + m.name + (m.sameAs != null ? " -> " + m.sameAs : "") + ' ' + m.type.name() + '(' + m.size + ')');
+    }
+
+    private void e() {
+        b.append('\n');
     }
 
     private void pad(int w, String value) {
@@ -107,20 +115,12 @@ public class JournalMetadataException extends JournalException {
         b.append("  |");
     }
 
+    private void pad(String value) {
+        pad(DEFAULT_COL_PAD, value);
+    }
+
     private void sep() {
         b.append("+-------------------------------------------------------------------------------------------------------+\n");
-    }
-
-    private void b() {
-        b.append("|");
-    }
-
-    private void e() {
-        b.append("\n");
-    }
-
-    private void col(ColumnMetadata m) {
-        pad((m.distinctCountHint > 0 ? m.distinctCountHint + " ~ " : "") + (m.indexed ? "#" : "") + m.name + (m.sameAs != null ? " -> " + m.sameAs : "") + " " + m.type.name() + "(" + m.size + ")");
     }
 
     private void skip() {

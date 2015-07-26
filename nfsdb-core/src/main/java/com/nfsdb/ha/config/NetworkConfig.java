@@ -194,7 +194,7 @@ public class NetworkConfig {
 
         try {
             DatagramChannel dc = DatagramChannel.open(family)
-                    .setOption(StandardSocketOptions.SO_REUSEADDR, true)
+                    .setOption(StandardSocketOptions.SO_REUSEADDR, Boolean.TRUE)
                     .setOption(StandardSocketOptions.IP_MULTICAST_IF, ifn)
                     .bind(new InetSocketAddress(getMultiCastPort()));
 

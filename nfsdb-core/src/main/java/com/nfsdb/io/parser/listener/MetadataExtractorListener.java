@@ -1,22 +1,22 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
- *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
- *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
- *
- *  http://www.apache.org/licenses/LICENSE-2.0
- *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
+ * <p/>
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * <p/>
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * <p/>
+ * http://www.apache.org/licenses/LICENSE-2.0
+ * <p/>
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 package com.nfsdb.io.parser.listener;
 
@@ -28,6 +28,7 @@ import com.nfsdb.io.ImportSchema;
 import com.nfsdb.io.ImportedColumnMetadata;
 import com.nfsdb.io.ImportedColumnType;
 import com.nfsdb.io.parser.listener.probe.*;
+import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.storage.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -40,7 +41,7 @@ public class MetadataExtractorListener implements Listener, Closeable {
     private static final TypeProbe probes[] = new TypeProbe[]{new IntProbe(), new LongProbe(), new DoubleProbe(), new BooleanProbe(), new DateIsoProbe(), new DateFmt1Probe(), new DateFmt2Probe()};
     private static final int probeLen = probes.length;
     public final int frequencyMapAreaSize;
-    private final StringBuilder normBuilder = new StringBuilder();
+    private final StringSink tempSink = new StringSink();
     private final ImportSchema importSchema;
     private int fieldCount;
     private int histogram[];
@@ -151,7 +152,9 @@ public class MetadataExtractorListener implements Listener, Closeable {
         // make up field names if there is no header
         if (!header) {
             for (int i = 0; i < fieldCount; i++) {
-                metadata[i].name = "f" + i;
+                tempSink.clear();
+                tempSink.put('f').put(i);
+                metadata[i].name = tempSink.toString();
             }
         }
 
@@ -229,7 +232,7 @@ public class MetadataExtractorListener implements Listener, Closeable {
 
     private String normalise(CharSequence seq) {
         boolean capNext = false;
-        normBuilder.setLength(0);
+        tempSink.clear();
         for (int i = 0, l = seq.length(); i < l; i++) {
             char c = seq.charAt(i);
             switch (c) {
@@ -239,14 +242,14 @@ public class MetadataExtractorListener implements Listener, Closeable {
                     break;
                 default:
                     if (capNext) {
-                        normBuilder.append(Character.toUpperCase(c));
+                        tempSink.put(Character.toUpperCase(c));
                         capNext = false;
                     } else {
-                        normBuilder.append(c);
+                        tempSink.put(c);
                     }
             }
         }
-        return normBuilder.toString();
+        return tempSink.toString();
     }
 
     private void stashPossibleHeader(CharSequence values[], int hi) {

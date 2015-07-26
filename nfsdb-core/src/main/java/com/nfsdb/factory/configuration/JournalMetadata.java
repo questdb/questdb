@@ -268,19 +268,19 @@ public class JournalMetadata<T> implements RecordMetadata {
 
         StringBuilder b = new StringBuilder();
         sep(b);
-        b.append("|");
+        b.append('|');
         pad(b, TO_STRING_COL1_PAD, "Location:");
         pad(b, TO_STRING_COL2_PAD, location).append('\n');
 
 
-        b.append("|");
+        b.append('|');
         pad(b, TO_STRING_COL1_PAD, "Partition by");
         pad(b, TO_STRING_COL2_PAD, partitionBy.name()).append('\n');
         sep(b);
 
 
         for (int i = 0; i < columnCount; i++) {
-            b.append("|");
+            b.append('|');
             pad(b, TO_STRING_COL1_PAD, Integer.toString(i));
             col(b, columnMetadata[i]);
             b.append('\n');
@@ -310,7 +310,7 @@ public class JournalMetadata<T> implements RecordMetadata {
     }
 
     private void col(StringBuilder b, ColumnMetadata m) {
-        pad(b, TO_STRING_COL2_PAD, (m.distinctCountHint > 0 ? m.distinctCountHint + " ~ " : "") + (m.indexed ? "#" : "") + m.name + (m.sameAs != null ? " -> " + m.sameAs : "") + " " + m.type.name() + "(" + m.size + ")");
+        pad(b, TO_STRING_COL2_PAD, (m.distinctCountHint > 0 ? m.distinctCountHint + " ~ " : "") + (m.indexed ? '#' : "") + m.name + (m.sameAs != null ? " -> " + m.sameAs : "") + ' ' + m.type.name() + '(' + m.size + ')');
     }
 
     private StringBuilder pad(StringBuilder b, int w, String value) {
@@ -333,9 +333,9 @@ public class JournalMetadata<T> implements RecordMetadata {
     }
 
     private void sep(StringBuilder b) {
-        b.append("+");
+        b.append('+');
         for (int i = 0; i < TO_STRING_COL1_PAD + TO_STRING_COL2_PAD + 5; i++) {
-            b.append("-");
+            b.append('-');
         }
         b.append("+\n");
     }

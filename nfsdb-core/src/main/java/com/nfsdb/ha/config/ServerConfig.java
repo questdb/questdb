@@ -106,7 +106,7 @@ public class ServerConfig extends NetworkConfig {
             return channel;
         } catch (IOException e) {
 
-            throw new JournalNetworkException("Cannot open server socket [" + address + "]", e);
+            throw new JournalNetworkException("Cannot open server socket [" + address + ']', e);
         }
     }
 

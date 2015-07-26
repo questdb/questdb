@@ -47,6 +47,7 @@ public class JournalEventProcessor {
         return sequence;
     }
 
+    @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_RETURN_FALSE")
     public boolean process(JournalEventHandler handler, boolean blocking) {
         this.barrier.clearAlert();
         try {

@@ -31,7 +31,7 @@
     <groupId>com.nfsdb</groupId>
     <artifactId>nfsdb-examples</artifactId>
     <packaging>jar</packaging>
-    <name>NFSdb.Example.Code</name>
+    <name>NFSdb.Examples</name>
     <description>Code examples and usage scenarios for NFSdb</description>
 
     <url>http://github.nfsdb.org</url>

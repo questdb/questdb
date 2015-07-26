@@ -75,7 +75,7 @@ public class JournalConcurrentIterator<T> extends AbstractConcurrentIterator<T> 
                             break;
                         }
                     } catch (JournalException e) {
-                        throw new JournalRuntimeException("Error in iterator [" + this + "]", e);
+                        throw new JournalRuntimeException("Error in iterator [%s]", e, this);
                     }
                 }
             }

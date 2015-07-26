@@ -36,7 +36,7 @@ public class NamedDaemonThreadFactory implements ThreadFactory {
 
     @Override
     public Thread newThread(@NotNull Runnable r) {
-        Thread th = new Thread(r, name + "-" + (count++));
+        Thread th = new Thread(r, name + '-' + (count++));
         th.setDaemon(daemon);
         return th;
     }
