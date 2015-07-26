@@ -25,9 +25,9 @@ import com.nfsdb.collections.*;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.io.sink.StringSink;
-import com.nfsdb.ql.JournalRecordSource;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordMetadata;
+import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.model.ExprNode;
 import com.nfsdb.ql.model.JoinContext;
 import com.nfsdb.ql.model.QueryModel;
@@ -638,7 +638,7 @@ public class JoinOptimiser {
             optimiser.collectJournalMetadata(model, factory);
             metadata = model.getMetadata();
         } else {
-            JournalRecordSource<? extends Record> rs = optimiser.compile(model, factory);
+            RecordSource<? extends Record> rs = optimiser.compile(model, factory);
             metadata = rs.getMetadata();
             model.setRecordSource(rs);
         }

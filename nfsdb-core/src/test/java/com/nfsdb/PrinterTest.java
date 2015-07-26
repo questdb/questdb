@@ -32,7 +32,6 @@ import com.nfsdb.utils.Dates;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -97,18 +96,18 @@ public class PrinterTest {
         private final List<String> output = new ArrayList<>();
 
         @Override
-        public void append(StringBuilder stringBuilder) throws IOException {
+        public void append(StringBuilder stringBuilder) {
             output.add(stringBuilder.toString());
+        }
+
+        @Override
+        public void close() {
+            output.clear();
         }
 
         public void assertLine(String expected, int line) {
             Assert.assertTrue("Appender receiver too few lines: " + line + " >= " + output.size(), line < output.size());
             Assert.assertEquals(expected, output.get(line));
-        }
-
-        @Override
-        public void close() throws IOException {
-            output.clear();
         }
     }
 }

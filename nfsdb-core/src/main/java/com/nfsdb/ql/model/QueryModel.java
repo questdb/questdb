@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p/>
  * Copyright (c) 2014-2015. The NFSdb project and its contributors.
- *
+ * <p/>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p/>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -26,8 +26,8 @@ import com.nfsdb.collections.Mutable;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.ObjectPoolFactory;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.ql.JournalRecordSource;
 import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordSource;
 
 public class QueryModel implements Mutable {
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
@@ -42,9 +42,8 @@ public class QueryModel implements Mutable {
     private ExprNode journalName;
     private String alias;
     private ExprNode latestBy;
-    private JournalRecordSource<? extends Record> recordSource;
+    private RecordSource<? extends Record> recordSource;
     private JournalMetadata metadata;
-    private int position;
     private JoinContext context;
     private ExprNode joinCriteria;
     private JoinType joinType;
@@ -85,7 +84,6 @@ public class QueryModel implements Mutable {
         latestBy = null;
         recordSource = null;
         metadata = null;
-        position = 0;
         joinCriteria = null;
         joinType = JoinType.INNER;
     }
@@ -174,19 +172,11 @@ public class QueryModel implements Mutable {
         return orderBy;
     }
 
-    public int getPosition() {
-        return position;
-    }
-
-    public void setPosition(int position) {
-        this.position = position;
-    }
-
-    public JournalRecordSource<? extends Record> getRecordSource() {
+    public RecordSource<? extends Record> getRecordSource() {
         return recordSource;
     }
 
-    public void setRecordSource(JournalRecordSource<? extends Record> recordSource) {
+    public void setRecordSource(RecordSource<? extends Record> recordSource) {
         this.recordSource = recordSource;
     }
 

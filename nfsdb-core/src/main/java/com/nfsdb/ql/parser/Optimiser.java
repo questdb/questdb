@@ -64,7 +64,7 @@ public class Optimiser {
         columnNamePrefixLen = 3;
     }
 
-    public JournalRecordSource<? extends Record> compile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    public RecordSource<? extends Record> compile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         return selectColumns(compile0(model, factory), model.getColumns());
     }
 
@@ -88,11 +88,11 @@ public class Optimiser {
         model.setMetadata(factory.getOrCreateMetadata(new JournalKey<>(reader)));
     }
 
-    private JournalRecordSource<? extends Record> compile0(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private RecordSource<? extends Record> compile0(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         if (model.getJournalName() != null) {
             return createRecordSource(model, factory);
         } else {
-            JournalRecordSource<? extends Record> rs = compile(model.getNestedModel(), factory);
+            RecordSource<? extends Record> rs = compile(model.getNestedModel(), factory);
             if (model.getWhereClause() == null) {
                 return rs;
             }
@@ -160,7 +160,7 @@ public class Optimiser {
     }
 
     @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT", "CC_CYCLOMATIC_COMPLEXITY"})
-    private JournalRecordSource<? extends Record> createRecordSource(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private RecordSource<? extends Record> createRecordSource(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         JournalMetadata metadata = model.getMetadata();
 
         if (metadata == null) {
@@ -417,7 +417,7 @@ public class Optimiser {
         }
     }
 
-    private JournalRecordSource<? extends Record> selectColumns(JournalRecordSource<? extends Record> rs, ObjList<QueryColumn> columns) throws ParserException {
+    private RecordSource<? extends Record> selectColumns(RecordSource<? extends Record> rs, ObjList<QueryColumn> columns) throws ParserException {
         if (columns.size() == 0) {
             return rs;
         }
@@ -458,9 +458,9 @@ public class Optimiser {
         }
 
         if (virtualColumns != null) {
-            rs = new VirtualColumnJournalRecordSource(rs, virtualColumns);
+            rs = new VirtualColumnRecordSource(rs, virtualColumns);
         }
-        return new SelectedColumnsJournalRecordSource(rs, selectedColumns);
+        return new SelectedColumnsRecordSource(rs, selectedColumns);
     }
 
     private class VirtualColumnBuilder implements Visitor {

@@ -29,8 +29,4 @@ public class JournalConfigurationException extends JournalRuntimeException {
     public JournalConfigurationException(String message, Object... args) {
         super(message, args);
     }
-
-    public JournalConfigurationException(String message, Throwable cause) {
-        super(message, cause);
-    }
 }

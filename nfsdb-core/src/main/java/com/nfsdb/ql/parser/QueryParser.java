@@ -260,7 +260,7 @@ public class QueryParser {
         CharSequence tok;
         QueryModel model = queryModelPool.next();
 
-        model.setPosition(toks.position());
+//        model.setPosition(toks.position());
 
         tok = tok();
 

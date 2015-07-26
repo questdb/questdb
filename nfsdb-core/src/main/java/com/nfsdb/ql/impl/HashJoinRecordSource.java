@@ -1,22 +1,22 @@
 /*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
- *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
- *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
- *
- *  http://www.apache.org/licenses/LICENSE-2.0
- *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
+ * <p/>
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * <p/>
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * <p/>
+ * http://www.apache.org/licenses/LICENSE-2.0
+ * <p/>
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 
 package com.nfsdb.ql.impl;
@@ -46,6 +46,8 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
     private final ObjList<RecordColumnMetadata> slaveColumns = new ObjList<>();
     private final IntList masterColIndex = new IntList();
     private final IntList slaveColIndex = new IntList();
+    private final RowIdHolderRecord rowIdRecord = new RowIdHolderRecord();
+    private final boolean byRowId;
     private RecordCursor<? extends Record> slaveCursor;
     private RecordCursor<? extends Record> masterCursor;
     private MultiRecordMap hashTable;
@@ -61,7 +63,8 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
         this.slaveSource = slaveSource;
         this.metadata = new SplitRecordMetadata(masterSource.getMetadata(), slaveSource.getMetadata());
         this.currentRecord = new SplitRecord(metadata, masterSource.getMetadata().getColumnCount());
-        this.hashTable = buildHashTable(masterSource, masterColumns, slaveSource, slaveColumns);
+        this.byRowId = slaveSource.supportsRowIdAccess();
+        this.hashTable = createRecordMap(masterSource, masterColumns, slaveSource, slaveColumns);
     }
 
     @Override
@@ -75,26 +78,6 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
     @Override
     public RecordMetadata getMetadata() {
         return metadata;
-    }
-
-    @Override
-    public SymFacade getSymFacade() {
-        return null;
-    }
-
-    @Override
-    public boolean hasNext() {
-        if (hashTableCursor != null && hashTableCursor.hasNext()) {
-            currentRecord.setB(hashTableCursor.next());
-            return true;
-        }
-        return hasNext0();
-    }
-
-    @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
-    @Override
-    public SplitRecord next() {
-        return currentRecord;
     }
 
     @Override
@@ -112,10 +95,55 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
         hashTable.clear();
     }
 
-    private MultiRecordMap buildHashTable(RecordSource<? extends Record> masterSource,
-                                          ObjList<String> masterColumns,
-                                          RecordSource<? extends Record> slaveSource,
-                                          ObjList<String> slaveColumns) {
+    @Override
+    public boolean supportsRowIdAccess() {
+        return false;
+    }
+
+    @Override
+    public SymFacade getSymFacade() {
+        return null;
+    }
+
+    @Override
+    public Record getByRowId(long rowId) {
+        return null;
+    }
+
+    @Override
+    public boolean hasNext() {
+        if (hashTableCursor != null && hashTableCursor.hasNext()) {
+            Record rec = hashTableCursor.next();
+            currentRecord.setB(byRowId ? slaveCursor.getByRowId(rec.getLong(0)) : rec);
+            return true;
+        }
+        return hasNext0();
+    }
+
+    @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
+    @Override
+    public SplitRecord next() {
+        return currentRecord;
+    }
+
+    private void buildHashTable() {
+        for (Record r : slaveCursor) {
+            MultiMap.KeyWriter key = hashTable.claimKey();
+            for (int i = 0, k = slaveColumns.size(); i < k; i++) {
+                setKey(key, r, slaveColumns.getQuick(i).getType(), slaveColIndex.getQuick(i));
+            }
+            if (byRowId) {
+                hashTable.add(key, rowIdRecord.init(r.getRowId()));
+            } else {
+                hashTable.add(key, r);
+            }
+        }
+    }
+
+    private MultiRecordMap createRecordMap(RecordSource<? extends Record> masterSource,
+                                           ObjList<String> masterColumns,
+                                           RecordSource<? extends Record> slaveSource,
+                                           ObjList<String> slaveColumns) {
         RecordMetadata mm = masterSource.getMetadata();
         for (int i = 0, k = masterColumns.size(); i < k; i++) {
             int index = mm.getColumnIndex(masterColumns.getQuick(i));
@@ -131,18 +159,12 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
             this.slaveColumns.add(sm.getColumn(index));
             builder.keyColumn(sm.getColumn(index));
         }
-        builder.setRecordMetadata(slaveSource.getMetadata());
-        return builder.build();
-    }
-
-    private void buildHashTable() {
-        for (Record r : slaveCursor) {
-            MultiMap.KeyWriter key = hashTable.claimKey();
-            for (int i = 0, k = slaveColumns.size(); i < k; i++) {
-                setKey(key, r, slaveColumns.getQuick(i).getType(), slaveColIndex.getQuick(i));
-            }
-            hashTable.add(key, r);
+        if (byRowId) {
+            builder.setRecordMetadata(rowIdRecord.getMetadata());
+        } else {
+            builder.setRecordMetadata(slaveSource.getMetadata());
         }
+        return builder.build();
     }
 
     private boolean hasNext0() {
@@ -160,7 +182,11 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
             hashTableCursor = hashTable.get(key);
 
             if (hashTableCursor.hasNext()) {
-                currentRecord.setB(hashTableCursor.next());
+                if (byRowId) {
+                    currentRecord.setB(slaveCursor.getByRowId(hashTableCursor.next().getLong(0)));
+                } else {
+                    currentRecord.setB(hashTableCursor.next());
+                }
                 return true;
             }
         }
