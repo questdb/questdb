@@ -73,7 +73,7 @@ public class JoinOptimiser {
             return new IntList();
         }
     }, 16);
-    private final ArrayDeque<ExprNode> joinConditionStack = new ArrayDeque<>();
+    private final ArrayDeque<ExprNode> andConditionStack = new ArrayDeque<>();
     private final IntList orderedJournals1 = new IntList();
     private final IntList orderedJournals2 = new IntList();
     private IntList orderedJournals;
@@ -98,8 +98,8 @@ public class JoinOptimiser {
 
         for (int i = 0; i < n; i++) {
             QueryModel m = joinModels.getQuick(i);
-            processJoinConditions(m.getWhereClause());
-            processJoinConditions(m.getJoinCriteria());
+            processAndConditions(m.getWhereClause());
+            processAndConditions(m.getJoinCriteria());
         }
 
         if (emittedJoinClauses.size() > 0) {
@@ -539,6 +539,43 @@ public class JoinOptimiser {
         return cost;
     }
 
+    /**
+     * Splits "where" clauses into "and" concatenated list of boolean expressions.
+     *
+     * @param node expression node
+     * @throws ParserException
+     */
+    private void processAndConditions(ExprNode node) throws ParserException {
+        // pre-order traversal
+        andConditionStack.clear();
+        while (!andConditionStack.isEmpty() || node != null) {
+            if (node != null) {
+                switch (node.token) {
+                    case "and":
+                        if (node.rhs != null) {
+                            andConditionStack.push(node.rhs);
+                        }
+                        node = node.lhs;
+                        break;
+                    case "=":
+                        analyseEquals(node);
+                        node = null;
+                        break;
+                    case "or":
+                        processOrConditions(node);
+                        node = null;
+                        break;
+                    default:
+                        addFilterNode(node);
+                        node = null;
+                        break;
+                }
+            } else {
+                node = andConditionStack.poll();
+            }
+        }
+    }
+
     private void processEmittedJoinClauses() {
         // process emitted join conditions
         do {
@@ -557,31 +594,42 @@ public class JoinOptimiser {
 
     }
 
-    private void processJoinConditions(ExprNode node) throws ParserException {
-        // pre-order traversal
-        joinConditionStack.clear();
-        while (!joinConditionStack.isEmpty() || node != null) {
-            if (node != null) {
-                switch (node.token) {
-                    case "and":
-                        if (node.rhs != null) {
-                            joinConditionStack.push(node.rhs);
-                        }
-                        node = node.lhs;
-                        break;
-                    case "=":
-                        analyseEquals(node);
-                        node = null;
-                        break;
-                    default:
-                        addFilterNode(node);
-                        node = null;
-                        break;
-                }
-            } else {
-                node = joinConditionStack.poll();
-            }
-        }
+    /**
+     * There are two ways "or" conditions can go:
+     * - all "or" conditions have at least one fields in common
+     * e.g. a.x = b.x or a.x = b.y
+     * this can be implemented as a hash join where master table is "b"
+     * and slave table is "a" keyed on "a.x" so that
+     * if HashTable contains all rows of "a" keyed on "a.x"
+     * hash join algorithm can do:
+     * rows = HashTable.get(b.x);
+     * if (rows == null) {
+     * rows = HashTable.get(b.y);
+     * }
+     * <p/>
+     * in this case tables can be reordered as long as "b" is processed
+     * before "a"
+     * <p/>
+     * - second possibility is where all "or" conditions are random
+     * in which case query like this:
+     * <p/>
+     * from a
+     * join c on a.x = c.x
+     * join b on a.x = b.x or c.y = b.y
+     * <p/>
+     * can be rewritten to:
+     * <p/>
+     * from a
+     * join c on a.x = c.x
+     * join b on a.x = b.x
+     * union
+     * from a
+     * join c on a.x = c.x
+     * join b on c.y = b.y
+     */
+    private void processOrConditions(ExprNode node) {
+        // stub: use filter
+        addFilterNode(node);
     }
 
     private void resolveJoinMetadata(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
@@ -744,7 +792,7 @@ public class JoinOptimiser {
      * the system that prefers child table with lowest index will attribute c.x = b.x clause to
      * journal "c" leaving "b" without clauses.
      */
-    @SuppressWarnings("StatementWithEmptyBody")
+    @SuppressWarnings({"StatementWithEmptyBody", "ConstantConditions"})
     private void trySwapJoinOrder() throws ParserException {
         int n = joinModels.size();
 
