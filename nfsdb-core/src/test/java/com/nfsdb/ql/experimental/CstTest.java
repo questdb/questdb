@@ -23,8 +23,6 @@ package com.nfsdb.ql.experimental;
 
 import com.nfsdb.Journal;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.collections.mmap.MapValues;
-import com.nfsdb.collections.mmap.MultiMap;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
@@ -33,6 +31,8 @@ import com.nfsdb.model.Band;
 import com.nfsdb.model.Quote;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordSource;
+import com.nfsdb.ql.collections.MapValues;
+import com.nfsdb.ql.collections.MultiMap;
 import com.nfsdb.ql.impl.*;
 import com.nfsdb.ql.ops.SymGlue;
 import com.nfsdb.ql.ops.SymRecordSourceColumn;

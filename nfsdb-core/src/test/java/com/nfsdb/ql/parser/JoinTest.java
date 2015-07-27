@@ -283,6 +283,31 @@ public class JoinTest {
     }
 
     @Test
+    public void testJoinReorder3() throws Exception {
+        parser.setContent("orders" +
+//                        " join customers on orders.customerId = customers.customerId" +
+                        " outer join customers on 1=1" +
+                        " join shippers on shippers.shipper = orders.orderId" +
+                        " join orderDetails d on d.orderId = orders.orderId and d.productId = shippers.shipper" +
+                        " join suppliers on products.supplier = suppliers.supplier" +
+                        " join products on d.productId = products.productId" +
+                        " where d.productId = d.orderId"
+        );
+        Statement statement = parser.parse();
+        joinOptimiser.compile(statement.getQueryModel(), factory);
+
+        final String expected =
+                "+ 0[ cross ] orders\n" +
+                        "+ 2[ inner ] shippers ON shippers.shipper = orders.orderId\n" +
+                        "+ 3[ inner ] d (filter: d.productId = d.orderId) ON d.productId = shippers.shipper and d.orderId = orders.orderId\n" +
+                        "+ 5[ inner ] products ON d.productId = products.productId\n" +
+                        "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
+                        "+ 1[ cross ] customers\n" +
+                        "\n";
+        TestUtils.assertEquals(expected, joinOptimiser.plan());
+    }
+
+    @Test
     public void testJoinReorderRoot() throws Exception {
         parser.setContent("customers" +
                         " cross join orders" +

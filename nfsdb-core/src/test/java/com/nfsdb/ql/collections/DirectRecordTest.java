@@ -19,9 +19,10 @@
  *  limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.collections;
+package com.nfsdb.ql.collections;
 
 import com.nfsdb.JournalWriter;
+import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;

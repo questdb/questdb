@@ -20,9 +20,9 @@
  ******************************************************************************/
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.collections.mmap.MapValues;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.ql.Record;
+import com.nfsdb.ql.collections.MapValues;
 
 public class FirstLongAggregationFunction extends AbstractSingleColumnAggregatorFunction {
 

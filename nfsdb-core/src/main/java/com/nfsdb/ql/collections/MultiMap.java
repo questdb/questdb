@@ -18,7 +18,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  ******************************************************************************/
-package com.nfsdb.collections.mmap;
+package com.nfsdb.ql.collections;
 
 import com.nfsdb.collections.*;
 import com.nfsdb.exceptions.JournalRuntimeException;

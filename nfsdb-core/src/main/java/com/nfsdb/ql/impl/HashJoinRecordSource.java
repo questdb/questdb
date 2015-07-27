@@ -24,12 +24,12 @@ package com.nfsdb.ql.impl;
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.collections.IntList;
 import com.nfsdb.collections.ObjList;
-import com.nfsdb.collections.mmap.MultiMap;
-import com.nfsdb.collections.mmap.MultiRecordMap;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.*;
+import com.nfsdb.ql.collections.MultiMap;
+import com.nfsdb.ql.collections.MultiRecordMap;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
@@ -76,6 +76,16 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
     }
 
     @Override
+    public Record getByRowId(long rowId) {
+        return null;
+    }
+
+    @Override
+    public SymFacade getSymFacade() {
+        return null;
+    }
+
+    @Override
     public RecordMetadata getMetadata() {
         return metadata;
     }
@@ -98,16 +108,6 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
     @Override
     public boolean supportsRowIdAccess() {
         return false;
-    }
-
-    @Override
-    public SymFacade getSymFacade() {
-        return null;
-    }
-
-    @Override
-    public Record getByRowId(long rowId) {
-        return null;
     }
 
     @Override

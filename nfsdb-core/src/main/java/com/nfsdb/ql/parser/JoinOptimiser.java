@@ -60,7 +60,7 @@ public class JoinOptimiser {
     private final ObjList<QueryModel> joinModels = new ObjList<>();
     private final IntStack orderingStack = new IntStack();
     private final ObjList<ExprNode> filterNodes = new ObjList<>();
-    private final ObjList<QueryModel> tempCrosses = new ObjList<>();
+    private final IntList tempCrosses = new IntList();
     private final IntList tempCrossIndexes = new IntList();
     private final IntHashSet constantConditions = new IntHashSet();
     private final IntHashSet postFilterRemoved = new IntHashSet();
@@ -801,7 +801,7 @@ public class JoinOptimiser {
         for (int i = 0; i < n; i++) {
             QueryModel q = joinModels.getQuick(i);
             if (q.isCrossJoin()) {
-                tempCrosses.add(q);
+                tempCrosses.add(i);
             }
         }
 
@@ -812,12 +812,12 @@ public class JoinOptimiser {
         for (int z = 0, zc = tempCrosses.size(); z < zc; z++) {
             for (int i = 0; i < zc; i++) {
                 if (z != i) {
-                    QueryModel q = tempCrosses.getQuick(i);
-                    JoinContext jc = q.getContext();
+                    int to = tempCrosses.getQuick(i);
+                    JoinContext jc = joinModels.getQuick(to).getContext();
                     // look above i up to OUTER join
-                    for (int k = i - 1; k > -1 && swapJoinOrder(i, k, jc); k--) ;
+                    for (int k = i - 1; k > -1 && swapJoinOrder(to, k, jc); k--) ;
                     // look below i for up to OUTER join
-                    for (int k = i + 1; k < n && swapJoinOrder(i, k, jc); k++) ;
+                    for (int k = i + 1; k < n && swapJoinOrder(to, k, jc); k++) ;
                 }
             }
 

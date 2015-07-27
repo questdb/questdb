@@ -18,8 +18,10 @@
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  ******************************************************************************/
-package com.nfsdb.collections;
+package com.nfsdb.ql.collections;
 
+import com.nfsdb.collections.DirectCharSequence;
+import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
@@ -117,10 +119,6 @@ public class DirectRecord extends AbstractRecord {
         return Unsafe.getUnsafe().getDouble(address + offsets[col]);
     }
 
-    public int getFixedBlockLength() {
-        return fixedBlockLen;
-    }
-
     @Override
     public float getFloat(int col) {
         assert offsets[col] >= 0;
@@ -179,6 +177,10 @@ public class DirectRecord extends AbstractRecord {
     @Override
     public String getSym(int col) {
         return getStr(col).toString();
+    }
+
+    public int getFixedBlockLength() {
+        return fixedBlockLen;
     }
 
     public void init(long offset) {

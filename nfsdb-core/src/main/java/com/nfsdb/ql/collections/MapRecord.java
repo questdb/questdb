@@ -18,7 +18,7 @@
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  ******************************************************************************/
-package com.nfsdb.collections.mmap;
+package com.nfsdb.ql.collections;
 
 import com.nfsdb.collections.DirectCharSequence;
 import com.nfsdb.collections.DirectInputStream;
@@ -135,13 +135,6 @@ public final class MapRecord extends AbstractRecord {
         return metadata.getColumn(index).getSymbolTable().value(getInt(index));
     }
 
-    MapRecord init(long address) {
-        this.address0 = address;
-        this.address1 = address + keyDataOffset;
-        this.address2 = address + keyBlockOffset;
-        return this;
-    }
-
     private long address0(int index) {
 
         if (index < split) {
@@ -153,5 +146,12 @@ public final class MapRecord extends AbstractRecord {
         }
 
         return Unsafe.getUnsafe().getInt(address2 + (index - split - 1) * 4) + address0;
+    }
+
+    MapRecord init(long address) {
+        this.address0 = address;
+        this.address1 = address + keyDataOffset;
+        this.address2 = address + keyBlockOffset;
+        return this;
     }
 }

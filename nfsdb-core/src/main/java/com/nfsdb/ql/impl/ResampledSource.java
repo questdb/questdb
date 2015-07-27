@@ -23,14 +23,14 @@ package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.collections.ObjList;
-import com.nfsdb.collections.mmap.MapRecordValueInterceptor;
-import com.nfsdb.collections.mmap.MapValues;
-import com.nfsdb.collections.mmap.MultiMap;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.ql.*;
+import com.nfsdb.ql.collections.MapRecordValueInterceptor;
+import com.nfsdb.ql.collections.MapValues;
+import com.nfsdb.ql.collections.MultiMap;
 import com.nfsdb.utils.Dates;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -96,6 +96,16 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
     }
 
     @Override
+    public Record getByRowId(long rowId) {
+        return null;
+    }
+
+    @Override
+    public SymFacade getSymFacade() {
+        return recordCursor.getSymFacade();
+    }
+
+    @Override
     public RecordMetadata getMetadata() {
         return map.getMetadata();
     }
@@ -115,16 +125,6 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
     @Override
     public boolean supportsRowIdAccess() {
         return false;
-    }
-
-    @Override
-    public SymFacade getSymFacade() {
-        return recordCursor.getSymFacade();
-    }
-
-    @Override
-    public Record getByRowId(long rowId) {
-        return null;
     }
 
     @Override

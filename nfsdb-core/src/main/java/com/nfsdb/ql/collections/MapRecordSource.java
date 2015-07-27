@@ -18,7 +18,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  ******************************************************************************/
-package com.nfsdb.collections.mmap;
+package com.nfsdb.ql.collections;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.ql.Record;
@@ -44,12 +44,12 @@ public final class MapRecordSource extends AbstractImmutableIterator<Record> imp
     }
 
     @Override
-    public SymFacade getSymFacade() {
+    public Record getByRowId(long rowId) {
         return null;
     }
 
     @Override
-    public Record getByRowId(long rowId) {
+    public SymFacade getSymFacade() {
         return null;
     }
 

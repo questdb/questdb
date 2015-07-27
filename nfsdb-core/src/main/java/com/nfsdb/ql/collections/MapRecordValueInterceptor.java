@@ -19,7 +19,7 @@
  *  limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.collections.mmap;
+package com.nfsdb.ql.collections;
 
 public interface MapRecordValueInterceptor {
     void beforeRecord(MapValues values);

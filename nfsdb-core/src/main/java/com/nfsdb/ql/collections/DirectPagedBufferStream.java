@@ -18,8 +18,9 @@
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  ******************************************************************************/
-package com.nfsdb.collections;
+package com.nfsdb.ql.collections;
 
+import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.utils.Unsafe;
 
 import java.io.IOException;

@@ -18,7 +18,7 @@
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  ******************************************************************************/
-package com.nfsdb.collections.mmap;
+package com.nfsdb.ql.collections;
 
 import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -61,13 +61,13 @@ public final class MapValues {
         Unsafe.getUnsafe().putLong(address0(index), value);
     }
 
+    private long address0(int index) {
+        return address + valueOffsets[index];
+    }
+
     MapValues init(long address, boolean _new) {
         this.address = address;
         this._new = _new;
         return this;
-    }
-
-    private long address0(int index) {
-        return address + valueOffsets[index];
     }
 }

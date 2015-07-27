@@ -19,8 +19,11 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.collections;
+package com.nfsdb.ql.collections;
 
+import com.nfsdb.collections.DirectInputStream;
+import com.nfsdb.collections.DirectLongList;
+import com.nfsdb.collections.Mutable;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Unsafe;

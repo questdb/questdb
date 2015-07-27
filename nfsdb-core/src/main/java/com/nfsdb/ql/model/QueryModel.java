@@ -196,6 +196,11 @@ public class QueryModel implements Mutable {
         dependencies.remove(index);
     }
 
+    @Override
+    public String toString() {
+        return alias != null ? alias : journalName.token;
+    }
+
     public enum JoinType {
         INNER, OUTER, CROSS
     }

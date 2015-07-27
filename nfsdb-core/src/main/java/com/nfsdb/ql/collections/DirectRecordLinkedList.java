@@ -18,8 +18,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  ******************************************************************************/
-package com.nfsdb.collections;
+package com.nfsdb.ql.collections;
 
+import com.nfsdb.collections.AbstractImmutableIterator;
+import com.nfsdb.collections.Mutable;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordMetadata;
@@ -56,12 +58,12 @@ public class DirectRecordLinkedList extends AbstractImmutableIterator<Record> im
     }
 
     @Override
-    public SymFacade getSymFacade() {
+    public Record getByRowId(long rowId) {
         return null;
     }
 
     @Override
-    public Record getByRowId(long rowId) {
+    public SymFacade getSymFacade() {
         return null;
     }
 

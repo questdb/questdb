@@ -20,8 +20,6 @@
  ******************************************************************************/
 package com.nfsdb;
 
-import com.nfsdb.collections.mmap.MapValues;
-import com.nfsdb.collections.mmap.MultiMap;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.CharSink;
@@ -29,6 +27,8 @@ import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.model.Quote;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
+import com.nfsdb.ql.collections.MapValues;
+import com.nfsdb.ql.collections.MultiMap;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;

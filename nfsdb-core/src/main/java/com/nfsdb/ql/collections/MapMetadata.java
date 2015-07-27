@@ -19,7 +19,7 @@
  *  limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.collections.mmap;
+package com.nfsdb.ql.collections;
 
 import com.nfsdb.collections.ObjIntHashMap;
 import com.nfsdb.exceptions.JournalRuntimeException;

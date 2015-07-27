@@ -21,9 +21,9 @@
 
 package com.nfsdb.ql.impl;
 
-import com.nfsdb.collections.mmap.MultiMap;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.ql.Record;
+import com.nfsdb.ql.collections.MultiMap;
 import com.nfsdb.storage.ColumnType;
 
 public final class KeyWriterHelper {

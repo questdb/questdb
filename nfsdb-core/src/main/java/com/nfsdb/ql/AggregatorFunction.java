@@ -20,8 +20,8 @@
  ******************************************************************************/
 package com.nfsdb.ql;
 
-import com.nfsdb.collections.mmap.MapValues;
 import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.ql.collections.MapValues;
 
 public interface AggregatorFunction {
 

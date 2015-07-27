@@ -21,7 +21,6 @@
 package com.nfsdb.io.parser.listener;
 
 import com.nfsdb.collections.ObjList;
-import com.nfsdb.collections.mmap.MultiMap;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.io.ImportManager;
 import com.nfsdb.io.ImportSchema;
@@ -29,6 +28,7 @@ import com.nfsdb.io.ImportedColumnMetadata;
 import com.nfsdb.io.ImportedColumnType;
 import com.nfsdb.io.parser.listener.probe.*;
 import com.nfsdb.io.sink.StringSink;
+import com.nfsdb.ql.collections.MultiMap;
 import com.nfsdb.storage.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
