@@ -122,7 +122,7 @@ public class JournalPrinter implements Closeable {
         return this;
     }
 
-    public void header() throws IOException {
+    public void header() {
         rowBuilder.setLength(0);
         for (int i = 0; i < ff.size(); i++) {
             if (i > 0) {
@@ -140,7 +140,7 @@ public class JournalPrinter implements Closeable {
         appender.append(rowBuilder);
     }
 
-    public void out(Object... instances) throws IOException {
+    public void out(Object... instances) {
         configure();
         rowBuilder.setLength(0);
         for (int i = 0, sz = ff.size(); i < sz; i++) {

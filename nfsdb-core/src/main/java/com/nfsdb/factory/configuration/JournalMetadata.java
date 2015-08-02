@@ -29,7 +29,6 @@ import com.nfsdb.exceptions.NoSuchColumnException;
 import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.storage.HugeBuffer;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import org.jetbrains.annotations.NotNull;
 
 import java.lang.StringBuilder;
 import java.lang.reflect.Constructor;
@@ -143,7 +142,6 @@ public class JournalMetadata<T> implements RecordMetadata {
     }
 
     @Override
-    @NotNull
     public ColumnMetadata getColumn(CharSequence name) {
         return getColumn(getColumnIndex(name));
     }

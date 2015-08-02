@@ -65,15 +65,13 @@ public class CharSequenceHashSet implements Mutable {
         clear();
     }
 
-    public boolean add(CharSequence key) {
-        boolean r = insertKey(key);
-        if (r) {
+    public void add(CharSequence key) {
+        if (insertKey(key)) {
             list.add(key);
             if (free == 0) {
                 rehash();
             }
         }
-        return r;
     }
 
     public final void clear() {

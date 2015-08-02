@@ -22,7 +22,7 @@ package com.nfsdb;
 
 
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.factory.JournalPool;
+import com.nfsdb.factory.JournalFactoryPool;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.model.Quote;
@@ -36,13 +36,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
 
-public class JournalPoolTest extends AbstractTest {
+public class JournalFactoryPoolTest extends AbstractTest {
 
     @Test
     public void testNonPartitionedReads() throws Exception {
         JournalConfiguration configuration = factory.getConfiguration();
         try {
-            final JournalPool pool = new JournalPool(configuration, 10);
+            final JournalFactoryPool pool = new JournalFactoryPool(configuration, 10);
             final int threadCount = 5;
             final int recordCount = 1000;
 

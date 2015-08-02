@@ -38,13 +38,13 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
     private final ObjObjHashMap<JournalKey, Journal> readers = new ObjObjHashMap<>();
     private final ObjObjHashMap<JournalKey, JournalBulkReader> bulkReaders = new ObjObjHashMap<>();
     private final List<Journal> journalList = new ArrayList<>();
-    private JournalPool pool;
+    private JournalFactoryPool pool;
 
     public JournalCachingFactory(JournalConfiguration configuration) {
         super(configuration);
     }
 
-    public JournalCachingFactory(JournalConfiguration configuration, JournalPool pool) {
+    public JournalCachingFactory(JournalConfiguration configuration, JournalFactoryPool pool) {
         super(configuration);
         this.pool = pool;
     }
@@ -57,6 +57,19 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
             result = new JournalBulkReader<>(getOrCreateMetadata(key), key);
             result.setCloseListener(this);
             bulkReaders.put(key, result);
+            journalList.add(result);
+        }
+        return result;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
+        Journal<T> result = readers.get(key);
+        if (result == null) {
+            result = new Journal<>(getOrCreateMetadata(key), key);
+            result.setCloseListener(this);
+            readers.put(key, result);
             journalList.add(result);
         }
         return result;
@@ -77,11 +90,6 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
         }
     }
 
-    @Override
-    public boolean closing(Journal journal) {
-        return false;
-    }
-
     @SuppressWarnings("unchecked")
     @Override
     public Journal reader(JournalMetadata metadata) throws JournalException {
@@ -97,16 +105,8 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
     }
 
     @Override
-    @SuppressWarnings("unchecked")
-    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        Journal<T> result = readers.get(key);
-        if (result == null) {
-            result = new Journal<>(getOrCreateMetadata(key), key);
-            result.setCloseListener(this);
-            readers.put(key, result);
-            journalList.add(result);
-        }
-        return result;
+    public boolean closing(Journal journal) {
+        return false;
     }
 
     public void refresh() throws JournalException {

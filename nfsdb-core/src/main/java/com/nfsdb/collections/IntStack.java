@@ -46,21 +46,6 @@ public class IntStack implements Mutable {
         }
     }
 
-    public boolean contains(int o) {
-        if (o == noEntryValue) {
-            return false;
-        }
-        int i = head;
-        int x;
-        while ((x = Unsafe.arrayGet(elements, i)) != noEntryValue) {
-            if (o == x) {
-                return true;
-            }
-            i = (i + 1) & mask;
-        }
-        return false;
-    }
-
     public boolean notEmpty() {
         return head != tail;
     }

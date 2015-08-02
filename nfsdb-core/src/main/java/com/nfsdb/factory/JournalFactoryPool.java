@@ -33,14 +33,14 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
-public class JournalPool implements Closeable {
-    private static final Logger LOGGER = Logger.getLogger(JournalPool.class);
+public class JournalFactoryPool implements Closeable {
+    private static final Logger LOGGER = Logger.getLogger(JournalFactoryPool.class);
 
     private final ArrayBlockingQueue<JournalCachingFactory> pool;
     private final ExecutorService service = Executors.newCachedThreadPool(new NamedDaemonThreadFactory("pool-release-thread", true));
     private final AtomicBoolean running = new AtomicBoolean(true);
 
-    public JournalPool(JournalConfiguration configuration, int capacity) throws InterruptedException {
+    public JournalFactoryPool(JournalConfiguration configuration, int capacity) throws InterruptedException {
         this.pool = new ArrayBlockingQueue<>(capacity, true);
         for (int i = 0; i < capacity; i++) {
             pool.put(new JournalCachingFactory(configuration, this));

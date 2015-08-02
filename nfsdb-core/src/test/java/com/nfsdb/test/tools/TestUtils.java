@@ -424,7 +424,7 @@ public final class TestUtils {
         }
     }
 
-    private static <T> void out(JournalPrinter p, JournalIterator<T> iterator) throws IOException {
+    private static <T> void out(JournalPrinter p, JournalIterator<T> iterator) {
         for (T o : iterator) {
             p.out(o);
         }

@@ -73,14 +73,6 @@ public class IntHashSet implements Mutable {
         return r;
     }
 
-    public void add(IntHashSet that) {
-        for (int i = 0, n = that.keys.length; i < n; i++) {
-            if (Unsafe.arrayGet(that.keys, i) != noEntryValue) {
-                add(Unsafe.arrayGet(that.keys, i));
-            }
-        }
-    }
-
     public final void clear() {
         free = capacity;
         Arrays.fill(keys, noEntryValue);
@@ -96,17 +88,16 @@ public class IntHashSet implements Mutable {
         return list.getQuick(index);
     }
 
-    public boolean remove(int key) {
+    public void remove(int key) {
         if (list.remove(key)) {
             int index = key & mask;
             if (key == Unsafe.arrayGet(keys, index)) {
                 Unsafe.arrayPut(keys, index, noEntryValue);
                 free++;
-                return true;
+            } else {
+                probeRemove(key, index);
             }
-            return probeRemove(key, index);
         }
-        return false;
     }
 
     public int size() {
@@ -177,17 +168,16 @@ public class IntHashSet implements Mutable {
         } while (true);
     }
 
-    private boolean probeRemove(int key, int index) {
+    private void probeRemove(int key, int index) {
         int i = index;
         do {
             index = (index + 1) & mask;
             if (key == Unsafe.arrayGet(keys, index)) {
                 Unsafe.arrayPut(keys, index, noEntryValue);
                 free++;
-                return true;
+                break;
             }
         } while (i != index);
-        return false;
     }
 
     @SuppressWarnings({"unchecked"})

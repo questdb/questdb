@@ -68,15 +68,6 @@ public class ObjList<T> implements Mutable {
     /**
      * {@inheritDoc}
      */
-    public void add(int index, T element) {
-        ensureCapacity0(pos + 1);
-        System.arraycopy(buffer, index, buffer, index + 1, pos - index - 1);
-        Unsafe.arrayPut(buffer, index, element);
-    }
-
-    /**
-     * {@inheritDoc}
-     */
     public void clear() {
         pos = 0;
         Arrays.fill(buffer, null);
@@ -245,18 +236,6 @@ public class ObjList<T> implements Mutable {
             return true;
         }
         return false;
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    public T set(int index, T element) {
-        if (index < pos) {
-            T obj = Unsafe.arrayGet(buffer, index);
-            Unsafe.arrayPut(buffer, index, element);
-            return obj;
-        }
-        throw new ArrayIndexOutOfBoundsException(index);
     }
 
     public void setQuick(int index, T value) {
