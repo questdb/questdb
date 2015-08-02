@@ -3,15 +3,15 @@
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- * <p/>
+ * <p>
  * Copyright (c) 2014-2015. The NFSdb project and its contributors.
- * <p/>
+ * <p>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * <p/>
+ * <p>
  * http://www.apache.org/licenses/LICENSE-2.0
- * <p/>
+ * <p>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -39,6 +39,13 @@ import com.nfsdb.utils.Chars;
 import java.util.ArrayDeque;
 
 public class JoinOptimiser {
+
+    private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
+
+    static {
+        nullConstants.add("null");
+        nullConstants.add("NaN");
+    }
 
     private final ObjectPool<FlyweightCharSequence> csPool = new ObjectPool<>(FlyweightCharSequence.FACTORY, 64);
     private final Optimiser optimiser;
@@ -99,20 +106,12 @@ public class JoinOptimiser {
                 int index = orderedJournals.getQuick(i);
                 QueryModel m = joinModels.getQuick(index);
 
-                // check if there are pre-filters
-                ExprNode where = preFilters.get(index);
-                if (where != null) {
-                    m.setWhereClause(where);
-                }
+                // pre-filters
+                // this includes erasing "where" clause on top level query
+                m.setWhereClause(preFilters.get(index));
 
                 // compile
                 RecordSource<? extends Record> rs = optimiser.compile(m, factory);
-
-                // check if there are post-filters
-                where = postFilters.get(index);
-                if (where != null) {
-                    rs = new FilteredJournalRecordSource(rs, optimiser.createVirtualColumn(where, rs.getMetadata()));
-                }
 
                 // check if this is the root of joins
                 if (current == null) {
@@ -150,9 +149,16 @@ public class JoinOptimiser {
                             masterCols.add(cb);
                             slaveCols.add(ca);
                         }
-                        current = new HashJoinRecordSource(current, masterCols, rs, slaveCols);
+                        current = new HashJoinRecordSource(current, masterCols, rs, slaveCols, m.getJoinType() == QueryModel.JoinType.OUTER);
                     }
                 }
+
+                // check if there are post-filters
+                ExprNode filter = postFilters.get(index);
+                if (filter != null) {
+                    current = new FilteredJournalRecordSource(current, optimiser.createVirtualColumn(filter, current.getMetadata()));
+                }
+
             }
 
             return current;
@@ -253,6 +259,7 @@ public class JoinOptimiser {
             planSink.put('\n');
         }
 
+
         planSink.put('\n');
 
         return planSink;
@@ -348,7 +355,7 @@ public class JoinOptimiser {
 
         switch (aSize) {
             case 0:
-                if (bSize == 1) {
+                if (bSize == 1 && literalCollector.nullCount == 0) {
                     // single journal reference
                     jc = contextPool.next();
                     jc.slaveIndex = literalCollectorBIndexes.getQuick(0);
@@ -380,12 +387,15 @@ public class JoinOptimiser {
                         jc.parents.add(min);
                         linkDependencies(min, max);
                     }
-                } else {
+                    addJoinContext(jc);
+                } else if (literalCollector.nullCount == 0) {
                     // single journal reference
                     jc.slaveIndex = lhi;
                     preFilters.put(lhi, mergeFilters(preFilters.get(lhi), node));
+                    addJoinContext(jc);
+                } else {
+                    addFilterNode(node);
                 }
-                addJoinContext(jc);
                 break;
             default:
                 addFilterNode(node);
@@ -960,15 +970,22 @@ public class JoinOptimiser {
     private class LiteralCollector implements Visitor {
         private IntList indexes;
         private ObjList<CharSequence> names;
+        private int nullCount;
 
         @Override
         public void visit(ExprNode node) throws ParserException {
-            if (node.type == ExprNode.NodeType.LITERAL) {
-                int dot = node.token.indexOf('.');
-                CharSequence name = extractColumnName(node.token, dot);
-                int index = resolveJournalIndex(dot == -1 ? null : csPool.next().of(node.token, 0, dot), name, node.position);
-                indexes.add(index);
-                names.add(name);
+            switch (node.type) {
+                case LITERAL:
+                    int dot = node.token.indexOf('.');
+                    CharSequence name = extractColumnName(node.token, dot);
+                    indexes.add(resolveJournalIndex(dot == -1 ? null : csPool.next().of(node.token, 0, dot), name, node.position));
+                    names.add(name);
+                    break;
+                case CONSTANT:
+                    if (nullConstants.contains(node.token)) {
+                        nullCount++;
+                    }
+                    break;
             }
         }
 

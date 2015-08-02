@@ -22,6 +22,7 @@ package com.nfsdb.ql.ops;
 
 import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
+import com.nfsdb.utils.Numbers;
 
 public class LongEqualsNaNOperator extends AbstractBinaryOperator {
 
@@ -31,6 +32,6 @@ public class LongEqualsNaNOperator extends AbstractBinaryOperator {
 
     @Override
     public boolean getBool(Record rec) {
-        return lhs.getLong(rec) == Long.MIN_VALUE;
+        return lhs.getLong(rec) == Numbers.LONG_NaN;
     }
 }

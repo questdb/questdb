@@ -3,15 +3,15 @@
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- * <p/>
+ * <p>
  * Copyright (c) 2014-2015. The NFSdb project and its contributors.
- * <p/>
+ * <p>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * <p/>
+ * <p>
  * http://www.apache.org/licenses/LICENSE-2.0
- * <p/>
+ * <p>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -48,6 +48,8 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
     private final IntList slaveColIndex = new IntList();
     private final RowIdHolderRecord rowIdRecord = new RowIdHolderRecord();
     private final boolean byRowId;
+    private final boolean outer;
+    private final NullRecord nullRecord;
     private RecordCursor<? extends Record> slaveCursor;
     private RecordCursor<? extends Record> masterCursor;
     private MultiRecordMap hashTable;
@@ -58,13 +60,16 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
             RecordSource<? extends Record> masterSource,
             ObjList<CharSequence> masterColumns,
             RecordSource<? extends Record> slaveSource,
-            ObjList<CharSequence> slaveColumns) {
+            ObjList<CharSequence> slaveColumns,
+            boolean outer) {
         this.masterSource = masterSource;
         this.slaveSource = slaveSource;
         this.metadata = new SplitRecordMetadata(masterSource.getMetadata(), slaveSource.getMetadata());
         this.currentRecord = new SplitRecord(metadata, masterSource.getMetadata().getColumnCount());
         this.byRowId = slaveSource.supportsRowIdAccess();
         this.hashTable = createRecordMap(masterSource, masterColumns, slaveSource, slaveColumns);
+        this.outer = outer;
+        this.nullRecord = new NullRecord(slaveSource.getMetadata());
     }
 
     @Override
@@ -169,7 +174,6 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
 
     private boolean hasNext0() {
         while (masterCursor.hasNext()) {
-
             Record r = masterCursor.next();
             currentRecord.setA(r);
 
@@ -187,6 +191,10 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
                 } else {
                     currentRecord.setB(hashTableCursor.next());
                 }
+                return true;
+            } else if (outer) {
+                hashTableCursor = null;
+                currentRecord.setB(nullRecord);
                 return true;
             }
         }

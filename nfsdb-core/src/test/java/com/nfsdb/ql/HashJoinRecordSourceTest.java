@@ -89,7 +89,8 @@ public class HashJoinRecordSourceTest {
                         new JournalSource(new JournalPartitionSource(aw, false), new AllRowSource()),
                         new ObjList<CharSequence>() {{
                             add("band");
-                        }}
+                        }},
+                        false
                 ),
                 new ObjList<String>() {{
                     add("genre");
@@ -101,6 +102,51 @@ public class HashJoinRecordSourceTest {
                 "metal\n" +
                 "pop\n" +
                 "rock\n", sink.toString());
+    }
+
+    @Test
+    public void testOuterHashJoin() throws Exception {
+        bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
+        bw.append(new Band().setName("band2").setType("blues").setUrl("http://band2.com"));
+        bw.append(new Band().setName("band3").setType("jazz").setUrl("http://band3.com"));
+        bw.append(new Band().setName("band1").setType("jazz").setUrl("http://new.band1.com"));
+        bw.append(new Band().setName("band5").setType("jazz").setUrl("http://new.band5.com"));
+
+        bw.commit();
+
+        aw.append(new Album().setName("album X").setBand("band1").setGenre("pop"));
+        aw.append(new Album().setName("album Y").setBand("band3").setGenre("metal"));
+        aw.append(new Album().setName("album BZ").setBand("band1").setGenre("rock"));
+
+        aw.commit();
+
+        StringSink sink = new StringSink();
+        RecordSourcePrinter p = new RecordSourcePrinter(sink);
+        RecordSource<? extends Record> joinResult = new SelectedColumnsRecordSource(
+                new HashJoinRecordSource(
+                        new JournalSource(new JournalPartitionSource(bw, false), new AllRowSource()),
+                        new ObjList<CharSequence>() {{
+                            add("name");
+                        }},
+                        new JournalSource(new JournalPartitionSource(aw, false), new AllRowSource()),
+                        new ObjList<CharSequence>() {{
+                            add("band");
+                        }},
+                        true
+                ),
+                new ObjList<String>() {{
+                    add("genre");
+                    add("url");
+                }}
+        );
+        p.print(joinResult);
+        Assert.assertEquals("pop\thttp://band1.com\n" +
+                "rock\thttp://band1.com\n" +
+                "\thttp://band2.com\n" +
+                "metal\thttp://band3.com\n" +
+                "pop\thttp://new.band1.com\n" +
+                "rock\thttp://new.band1.com\n" +
+                "\thttp://new.band5.com\n", sink.toString());
     }
 
     @Test
@@ -120,7 +166,8 @@ public class HashJoinRecordSourceTest {
                 new JournalSource(new JournalPartitionSource(w2, false), new AllRowSource()),
                 new ObjList<CharSequence>() {{
                     add("sym");
-                }}
+                }},
+                false
         );
 
         long t = System.currentTimeMillis();
@@ -166,7 +213,8 @@ public class HashJoinRecordSourceTest {
                         new JournalSource(new JournalPartitionSource(aw, false), new AllRowSource()),
                         new ObjList<CharSequence>() {{
                             add("band");
-                        }}
+                        }},
+                        false
                 ),
                 new ObjList<String>() {{
                     add("genre");
