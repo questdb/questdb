@@ -41,11 +41,14 @@ public class DirectRecordLinkedList extends AbstractImmutableIterator<Record> im
         bufferRecord = new DirectRecord(recordMetadata, buffer);
     }
 
-    public long append(Record record, long prevRecordOffset) {
-        long recordAddressBegin = buffer.getWriteOffsetQuick(8 + bufferRecord.getFixedBlockLength());
-        Unsafe.getUnsafe().putLong(buffer.toAddress(recordAddressBegin), prevRecordOffset);
-        bufferRecord.write(record, recordAddressBegin + 8);
-        return recordAddressBegin;
+    public long append(Record record, long prevOffset) {
+        long offset = buffer.getWriteOffsetQuick(8 + bufferRecord.getFixedBlockLength());
+        if (prevOffset != -1) {
+            Unsafe.getUnsafe().putLong(buffer.toAddress(prevOffset), offset);
+        }
+        Unsafe.getUnsafe().putLong(buffer.toAddress(offset), -1L);
+        bufferRecord.write(record, offset + 8);
+        return offset;
     }
 
     public void clear() {

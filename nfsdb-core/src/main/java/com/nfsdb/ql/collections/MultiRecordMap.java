@@ -43,7 +43,11 @@ public class MultiRecordMap implements Closeable, Mutable {
             builder.keyColumn(key);
         }
         builder.valueColumn(new ColumnMetadata() {{
-            setName("offset");
+            setName("top");
+            setType(ColumnType.LONG);
+        }});
+        builder.valueColumn(new ColumnMetadata() {{
+            setName("current");
             setType(ColumnType.LONG);
         }});
         builder.setLoadFactor(loadFactor);
@@ -53,11 +57,15 @@ public class MultiRecordMap implements Closeable, Mutable {
         records = new DirectRecordLinkedList(valueMetadata, capacity, avgRecSize);
     }
 
-    public void add(MultiMap.KeyWriter key, Record value) {
+    public void add(MultiMap.KeyWriter key, Record record) {
         MapValues values = map.getOrCreateValues(key);
-        long prevVal = values.isNew() ? -1 : values.getLong(0);
-        long newVal = records.append(value, prevVal);
-        values.putLong(0, newVal);
+        if (values.isNew()) {
+            long offset = records.append(record, -1);
+            values.putLong(0, offset);
+            values.putLong(1, offset);
+        } else {
+            values.putLong(1, records.append(record, values.getLong(1)));
+        }
     }
 
     public MultiMap.KeyWriter claimKey() {

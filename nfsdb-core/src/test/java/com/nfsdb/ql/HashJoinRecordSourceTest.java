@@ -83,11 +83,11 @@ public class HashJoinRecordSourceTest {
         RecordSource<? extends Record> joinResult = new SelectedColumnsRecordSource(
                 new HashJoinRecordSource(
                         new JournalSource(new JournalPartitionSource(bw, false), new AllRowSource()),
-                        new ObjList<String>() {{
+                        new ObjList<CharSequence>() {{
                             add("name");
                         }},
                         new JournalSource(new JournalPartitionSource(aw, false), new AllRowSource()),
-                        new ObjList<String>() {{
+                        new ObjList<CharSequence>() {{
                             add("band");
                         }}
                 ),
@@ -96,7 +96,11 @@ public class HashJoinRecordSourceTest {
                 }}
         );
         p.print(joinResult);
-        Assert.assertEquals("rock\npop\nmetal\nrock\npop\n", sink.toString());
+        Assert.assertEquals("pop\n" +
+                "rock\n" +
+                "metal\n" +
+                "pop\n" +
+                "rock\n", sink.toString());
     }
 
     @Test
@@ -110,11 +114,11 @@ public class HashJoinRecordSourceTest {
 
         RecordSource<Record> j = new HashJoinRecordSource(
                 new JournalSource(new JournalPartitionSource(w1, false), new AllRowSource()),
-                new ObjList<String>() {{
+                new ObjList<CharSequence>() {{
                     add("sym");
                 }},
                 new JournalSource(new JournalPartitionSource(w2, false), new AllRowSource()),
-                new ObjList<String>() {{
+                new ObjList<CharSequence>() {{
                     add("sym");
                 }}
         );
@@ -156,11 +160,11 @@ public class HashJoinRecordSourceTest {
         RecordSource<? extends Record> joinResult = new SelectedColumnsRecordSource(
                 new HashJoinRecordSource(
                         new JournalSource(new JournalPartitionSource(bw, false), new AllRowSource()),
-                        new ObjList<String>() {{
+                        new ObjList<CharSequence>() {{
                             add("name");
                         }},
                         new JournalSource(new JournalPartitionSource(aw, false), new AllRowSource()),
-                        new ObjList<String>() {{
+                        new ObjList<CharSequence>() {{
                             add("band");
                         }}
                 ),
@@ -169,6 +173,10 @@ public class HashJoinRecordSourceTest {
                 }}
         );
         p.print(joinResult);
-        Assert.assertEquals("rock\npop\nmetal\nrock\npop\n", sink.toString());
+        Assert.assertEquals("pop\n" +
+                "rock\n" +
+                "metal\n" +
+                "pop\n" +
+                "rock\n", sink.toString());
     }
 }

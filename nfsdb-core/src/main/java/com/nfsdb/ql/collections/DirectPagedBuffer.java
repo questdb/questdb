@@ -22,7 +22,7 @@
 package com.nfsdb.ql.collections;
 
 import com.nfsdb.collections.DirectInputStream;
-import com.nfsdb.collections.DirectLongList;
+import com.nfsdb.collections.LongList;
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.utils.Numbers;
@@ -36,7 +36,7 @@ class DirectPagedBuffer implements Closeable, Mutable {
     private final int pageCapacity;
     private final int mask;
     private final int bits;
-    private DirectLongList pages;
+    private LongList pages;
     private long cachePageHi;
     private long cachePageLo;
 
@@ -44,7 +44,7 @@ class DirectPagedBuffer implements Closeable, Mutable {
         this.pageCapacity = Numbers.ceilPow2(pageCapacity);
         this.bits = 31 - Integer.numberOfLeadingZeros(this.pageCapacity);
         this.mask = this.pageCapacity - 1;
-        pages = new DirectLongList(1);
+        pages = new LongList();
         allocateAddress();
     }
 
@@ -94,7 +94,6 @@ class DirectPagedBuffer implements Closeable, Mutable {
                     Unsafe.getUnsafe().freeMemory(address);
                 }
             }
-            pages.close();
             pages = null;
         }
     }

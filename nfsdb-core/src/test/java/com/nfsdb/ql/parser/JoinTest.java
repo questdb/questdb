@@ -26,11 +26,14 @@ import com.nfsdb.JournalWriter;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalStructure;
+import com.nfsdb.io.RecordSourcePrinter;
+import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.model.configuration.ModelConfiguration;
 import com.nfsdb.ql.model.Statement;
 import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.test.tools.TestUtils;
+import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Files;
 import com.nfsdb.utils.Rnd;
 import org.junit.Assert;
@@ -45,6 +48,8 @@ public class JoinTest {
     private final QueryParser parser = new QueryParser();
     private final Optimiser optimiser = new Optimiser();
     private final JoinOptimiser joinOptimiser = new JoinOptimiser(optimiser);
+    private final StringSink sink = new StringSink();
+    private final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
 
     @BeforeClass
     public static void setUp() throws Exception {
@@ -56,7 +61,7 @@ public class JoinTest {
         try {
             parser.setContent("orders join customers on customerId = customerId");
             Statement statement = parser.parse();
-            joinOptimiser.compile(statement.getQueryModel(), factory);
+            joinOptimiser.optimise(statement.getQueryModel(), factory);
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(25, e.getPosition());
@@ -65,11 +70,23 @@ public class JoinTest {
     }
 
     @Test
+    public void testInnerJoin() throws Exception {
+        final String expected = "2010\tLEWZJEDH\tVQETDFWXBORLVX\tnull\tVYDKHMBZYWCLOWYXRCLMXUXVYWJNVXBTHRMCONV\tEPTWJZKQOMX\tXTGNJ\t2015-07-10T00:00:02.010Z\t1449695406\t2010\t1818\tKVUV\t2015-07-10T00:00:23.037Z\tQOCFKEKYOHR\n" +
+                "2010\tLEWZJEDH\tVQETDFWXBORLVX\tnull\tVYDKHMBZYWCLOWYXRCLMXUXVYWJNVXBTHRMCONV\tEPTWJZKQOMX\tXTGNJ\t2015-07-10T00:00:02.010Z\t109581610\t2010\t165\tJ\t2015-07-10T00:00:26.440Z\tUFIS\n" +
+                "2010\tLEWZJEDH\tVQETDFWXBORLVX\tnull\tVYDKHMBZYWCLOWYXRCLMXUXVYWJNVXBTHRMCONV\tEPTWJZKQOMX\tXTGNJ\t2015-07-10T00:00:02.010Z\t948961019\t2010\t1465\tQKKJZ\t2015-07-10T00:01:10.460Z\tKYRPKUMDZ\n" +
+                "2010\tLEWZJEDH\tVQETDFWXBORLVX\tnull\tVYDKHMBZYWCLOWYXRCLMXUXVYWJNVXBTHRMCONV\tEPTWJZKQOMX\tXTGNJ\t2015-07-10T00:00:02.010Z\t1845223371\t2010\t560\tDGEEWB\t2015-07-10T00:01:16.548Z\tCMLDOCP\n" +
+                "2010\tLEWZJEDH\tVQETDFWXBORLVX\tnull\tVYDKHMBZYWCLOWYXRCLMXUXVYWJNVXBTHRMCONV\tEPTWJZKQOMX\tXTGNJ\t2015-07-10T00:00:02.010Z\t622550242\t2010\t970\tTKT\t2015-07-10T00:01:23.486Z\tDXHNVXVE\n" +
+                "2010\tLEWZJEDH\tVQETDFWXBORLVX\tnull\tVYDKHMBZYWCLOWYXRCLMXUXVYWJNVXBTHRMCONV\tEPTWJZKQOMX\tXTGNJ\t2015-07-10T00:00:02.010Z\t1819202167\t2010\t1851\tGRDU\t2015-07-10T00:01:30.749Z\tRFQCCUCHBZHY\n";
+
+        assertQuery(expected, "customers join orders on customers.customerId = orders.customerId where customerName ~ 'LEWZJEDH'");
+    }
+
+    @Test
     public void testInvalidAlias() throws Exception {
         try {
             parser.setContent("orders join customers on orders.customerId = c.customerId");
             Statement statement = parser.parse();
-            joinOptimiser.compile(statement.getQueryModel(), factory);
+            joinOptimiser.optimise(statement.getQueryModel(), factory);
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(45, e.getPosition());
@@ -82,7 +99,7 @@ public class JoinTest {
         try {
             parser.setContent("orders join customers on customerIdx = customerId");
             Statement statement = parser.parse();
-            joinOptimiser.compile(statement.getQueryModel(), factory);
+            joinOptimiser.optimise(statement.getQueryModel(), factory);
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(25, e.getPosition());
@@ -95,7 +112,7 @@ public class JoinTest {
         try {
             parser.setContent("orders join customer on customerId = customerId");
             Statement statement = parser.parse();
-            joinOptimiser.compile(statement.getQueryModel(), factory);
+            joinOptimiser.optimise(statement.getQueryModel(), factory);
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(12, e.getPosition());
@@ -114,14 +131,14 @@ public class JoinTest {
                         " where orders.orderId = suppliers.supplier"
         );
         Statement statement = parser.parse();
-        joinOptimiser.compile(statement.getQueryModel(), factory);
+        joinOptimiser.optimise(statement.getQueryModel(), factory);
 
         final String expected =
                 "+ 0[ cross ] orders\n" +
-                        "+ 3[ inner ] products (filter: products.productId = products.supplier) ON orders.orderId = products.supplier\n" +
-                        "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
+                        "+ 3[ inner ] products (filter: products.productId = products.supplier) ON products.supplier = orders.orderId\n" +
+                        "+ 4[ inner ] suppliers ON suppliers.supplier = products.supplier\n" +
                         "+ 2[ inner ] d (filter: d.orderId = d.productId) ON d.productId = orders.orderId\n" +
-                        "+ 1[ inner ] customers ON orders.customerId = customers.customerId\n" +
+                        "+ 1[ inner ] customers ON customers.customerId = orders.customerId\n" +
                         "\n";
 
         TestUtils.assertEquals(expected, joinOptimiser.plan());
@@ -136,11 +153,11 @@ public class JoinTest {
                         " join suppliers on products.supplier = suppliers.supplier"
         );
         Statement statement = parser.parse();
-        joinOptimiser.compile(statement.getQueryModel(), factory);
+        joinOptimiser.optimise(statement.getQueryModel(), factory);
 
         final String expected =
                 "+ 3[ cross ] products\n" +
-                        "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
+                        "+ 4[ inner ] suppliers ON suppliers.supplier = products.supplier\n" +
                         "+ 0[ cross ] orders\n" +
                         "+ 1[ cross ] customers\n" +
                         "+ 2[ cross ] d\n" +
@@ -159,14 +176,14 @@ public class JoinTest {
                         " where d.productId = d.orderId"
         );
         Statement statement = parser.parse();
-        joinOptimiser.compile(statement.getQueryModel(), factory);
+        joinOptimiser.optimise(statement.getQueryModel(), factory);
 
         final String expected =
                 "+ 0[ cross ] orders\n" +
-                        "+ 1[ inner ] customers ON orders.customerId = customers.customerId\n" +
+                        "+ 1[ inner ] customers ON customers.customerId = orders.customerId\n" +
                         "+ 2[ inner ] d (filter: d.productId = d.orderId) ON d.productId = customers.customerId and d.orderId = orders.orderId\n" +
-                        "+ 3[ inner ] products ON d.productId = products.productId\n" +
-                        "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
+                        "+ 3[ inner ] products ON products.productId = d.productId\n" +
+                        "+ 4[ inner ] suppliers ON suppliers.supplier = products.supplier\n" +
                         "\n";
         TestUtils.assertEquals(expected, joinOptimiser.plan());
     }
@@ -181,14 +198,14 @@ public class JoinTest {
                         " where d.productId = d.orderId"
         );
         Statement statement = parser.parse();
-        joinOptimiser.compile(statement.getQueryModel(), factory);
+        joinOptimiser.optimise(statement.getQueryModel(), factory);
 
         final String expected =
                 "+ 0[ cross ] orders (filter: orders.customerId = orders.orderId)\n" +
-                        "+ 1[ inner ] customers ON orders.orderId = customers.customerId\n" +
+                        "+ 1[ inner ] customers ON customers.customerId = orders.orderId\n" +
                         "+ 2[ inner ] d (filter: d.productId = d.orderId) ON d.orderId = customers.customerId\n" +
-                        "+ 3[ inner ] products ON d.productId = products.productId\n" +
-                        "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
+                        "+ 3[ inner ] products ON products.productId = d.productId\n" +
+                        "+ 4[ inner ] suppliers ON suppliers.supplier = products.supplier\n" +
                         "\n";
         TestUtils.assertEquals(expected, joinOptimiser.plan());
     }
@@ -203,14 +220,14 @@ public class JoinTest {
                         " where d.productId = d.orderId"
         );
         Statement statement = parser.parse();
-        joinOptimiser.compile(statement.getQueryModel(), factory);
+        joinOptimiser.optimise(statement.getQueryModel(), factory);
 
         final String expected =
                 "+ 0[ cross ] orders (filter: orders.customerId = orders.orderId)\n" +
-                        "+ 1[ inner ] customers ON orders.orderId = customers.customerId\n" +
+                        "+ 1[ inner ] customers ON customers.customerId = orders.orderId\n" +
                         "+ 2[ inner ] d (filter: d.productId = d.orderId) ON d.orderId = customers.customerId\n" +
-                        "+ 3[ inner ] products ON d.productId = products.productId\n" +
-                        "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
+                        "+ 3[ inner ] products ON products.productId = d.productId\n" +
+                        "+ 4[ inner ] suppliers ON suppliers.supplier = products.supplier\n" +
                         "\n";
         TestUtils.assertEquals(expected, joinOptimiser.plan());
     }
@@ -225,13 +242,13 @@ public class JoinTest {
                         " where d.productId = d.orderId"
         );
         Statement statement = parser.parse();
-        joinOptimiser.compile(statement.getQueryModel(), factory);
+        joinOptimiser.optimise(statement.getQueryModel(), factory);
 
         final String expected =
                 "+ 0[ cross ] orders (filter: orders.customerId = orders.orderId)\n" +
-                        "+ 2[ inner ] d (filter: d.productId = d.orderId) ON orders.orderId = d.orderId\n" +
-                        "+ 3[ inner ] products ON d.productId = products.productId\n" +
-                        "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
+                        "+ 2[ inner ] d (filter: d.productId = d.orderId) ON d.orderId = orders.orderId\n" +
+                        "+ 3[ inner ] products ON products.productId = d.productId\n" +
+                        "+ 4[ inner ] suppliers ON suppliers.supplier = products.supplier\n" +
                         "+ 1[ inner ] customers ON customers.customerId = orders.orderId\n" +
                         "\n";
         TestUtils.assertEquals(expected, joinOptimiser.plan());
@@ -247,14 +264,14 @@ public class JoinTest {
                         " where d.productId = d.orderId"
         );
         Statement statement = parser.parse();
-        joinOptimiser.compile(statement.getQueryModel(), factory);
+        joinOptimiser.optimise(statement.getQueryModel(), factory);
 
         final String expected =
                 "+ 0[ cross ] orders (filter: orders.orderId = orders.customerId)\n" +
-                        "+ 2[ inner ] customers ON orders.customerId = customers.customerId\n" +
+                        "+ 2[ inner ] customers ON customers.customerId = orders.customerId\n" +
                         "+ 1[ inner ] d (filter: d.productId = d.orderId) ON d.orderId = orders.customerId\n" +
-                        "+ 3[ inner ] products ON d.productId = products.productId\n" +
-                        "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
+                        "+ 3[ inner ] products ON products.productId = d.productId\n" +
+                        "+ 4[ inner ] suppliers ON suppliers.supplier = products.supplier\n" +
                         "\n";
         TestUtils.assertEquals(expected, joinOptimiser.plan());
     }
@@ -262,22 +279,20 @@ public class JoinTest {
     @Test
     public void testJoinReorder() throws Exception {
         parser.setContent("orders" +
-//                        " join customers on orders.customerId = customers.customerId" +
                         " join customers on 1=1" +
                         " join orderDetails d on d.orderId = orders.orderId and d.productId = customers.customerId" +
-//                        " join orderDetails d on d.orderId = orders.orderId" +
                         " join products on d.productId = products.productId" +
                         " join suppliers on products.supplier = suppliers.supplier" +
                         " where d.productId = d.orderId"
         );
         Statement statement = parser.parse();
-        joinOptimiser.compile(statement.getQueryModel(), factory);
+        joinOptimiser.optimise(statement.getQueryModel(), factory);
 
         final String expected = "+ 0[ cross ] orders\n" +
                 "+ 2[ inner ] d (filter: d.productId = d.orderId) ON d.orderId = orders.orderId\n" +
-                "+ 1[ inner ] customers ON d.productId = customers.customerId\n" +
-                "+ 3[ inner ] products ON d.productId = products.productId\n" +
-                "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
+                "+ 1[ inner ] customers ON customers.customerId = d.productId\n" +
+                "+ 3[ inner ] products ON products.productId = d.productId\n" +
+                "+ 4[ inner ] suppliers ON suppliers.supplier = products.supplier\n" +
                 "\n";
         TestUtils.assertEquals(expected, joinOptimiser.plan());
     }
@@ -285,7 +300,6 @@ public class JoinTest {
     @Test
     public void testJoinReorder3() throws Exception {
         parser.setContent("orders" +
-//                        " join customers on orders.customerId = customers.customerId" +
                         " outer join customers on 1=1" +
                         " join shippers on shippers.shipper = orders.orderId" +
                         " join orderDetails d on d.orderId = orders.orderId and d.productId = shippers.shipper" +
@@ -294,14 +308,14 @@ public class JoinTest {
                         " where d.productId = d.orderId"
         );
         Statement statement = parser.parse();
-        joinOptimiser.compile(statement.getQueryModel(), factory);
+        joinOptimiser.optimise(statement.getQueryModel(), factory);
 
         final String expected =
                 "+ 0[ cross ] orders\n" +
                         "+ 2[ inner ] shippers ON shippers.shipper = orders.orderId\n" +
                         "+ 3[ inner ] d (filter: d.productId = d.orderId) ON d.productId = shippers.shipper and d.orderId = orders.orderId\n" +
-                        "+ 5[ inner ] products ON d.productId = products.productId\n" +
-                        "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
+                        "+ 5[ inner ] products ON products.productId = d.productId\n" +
+                        "+ 4[ inner ] suppliers ON suppliers.supplier = products.supplier\n" +
                         "+ 1[ cross ] customers\n" +
                         "\n";
         TestUtils.assertEquals(expected, joinOptimiser.plan());
@@ -317,14 +331,14 @@ public class JoinTest {
                         " where d.productId = d.orderId"
         );
         Statement statement = parser.parse();
-        joinOptimiser.compile(statement.getQueryModel(), factory);
+        joinOptimiser.optimise(statement.getQueryModel(), factory);
 
         final String expected =
                 "+ 0[ cross ] customers\n" +
                         "+ 2[ inner ] d (filter: d.productId = d.orderId) ON d.productId = customers.customerId\n" +
-                        "+ 1[ inner ] orders ON d.orderId = orders.orderId\n" +
-                        "+ 3[ inner ] products ON d.productId = products.productId\n" +
-                        "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
+                        "+ 1[ inner ] orders ON orders.orderId = d.orderId\n" +
+                        "+ 3[ inner ] products ON products.productId = d.productId\n" +
+                        "+ 4[ inner ] suppliers ON suppliers.supplier = products.supplier\n" +
                         "\n";
         TestUtils.assertEquals(expected, joinOptimiser.plan());
     }
@@ -332,7 +346,6 @@ public class JoinTest {
     @Test
     public void testJoinReorderRoot2() throws Exception {
         parser.setContent("orders" +
-//                        " join customers on orders.customerId = customers.customerId" +
                         " outer join customers on 1=1" +
                         " join shippers on shippers.shipper = orders.orderId" +
                         " join orderDetails d on d.orderId = orders.orderId and d.productId = shippers.shipper" +
@@ -341,14 +354,14 @@ public class JoinTest {
                         " where d.productId = d.orderId"
         );
         Statement statement = parser.parse();
-        joinOptimiser.compile(statement.getQueryModel(), factory);
+        joinOptimiser.optimise(statement.getQueryModel(), factory);
 
         final String expected =
                 "+ 0[ cross ] orders\n" +
                         "+ 2[ inner ] shippers ON shippers.shipper = orders.orderId\n" +
                         "+ 3[ inner ] d (filter: d.productId = d.orderId) ON d.productId = shippers.shipper and d.orderId = orders.orderId\n" +
-                        "+ 4[ inner ] products ON d.productId = products.productId\n" +
-                        "+ 5[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
+                        "+ 4[ inner ] products ON products.productId = d.productId\n" +
+                        "+ 5[ inner ] suppliers ON suppliers.supplier = products.supplier\n" +
                         "+ 1[ cross ] customers\n" +
                         "\n";
         TestUtils.assertEquals(expected, joinOptimiser.plan());
@@ -364,15 +377,14 @@ public class JoinTest {
                         " where d.productId = d.orderId" +
                         " and (products.price > d.quantity or d.orderId = orders.orderId) and d.quantity < orders.orderId"
         );
-        Statement statement = parser.parse();
-        joinOptimiser.compile(statement.getQueryModel(), factory);
+        joinOptimiser.optimise(parser.parse().getQueryModel(), factory);
 
         final String expected =
                 "+ 0[ cross ] customers\n" +
                         "+ 2[ inner ] d (filter: d.productId = d.orderId) ON d.productId = customers.customerId (post-filter: d.quantity < orders.orderId)\n" +
-                        "+ 1[ inner ] orders ON d.orderId = orders.orderId\n" +
-                        "+ 3[ inner ] products ON d.productId = products.productId (post-filter: products.price > d.quantity or d.orderId = orders.orderId)\n" +
-                        "+ 4[ inner ] suppliers ON products.supplier = suppliers.supplier\n" +
+                        "+ 1[ inner ] orders ON orders.orderId = d.orderId\n" +
+                        "+ 3[ inner ] products ON products.productId = d.productId (post-filter: products.price > d.quantity or d.orderId = orders.orderId)\n" +
+                        "+ 4[ inner ] suppliers ON suppliers.supplier = products.supplier\n" +
                         "\n";
         TestUtils.assertEquals(expected, joinOptimiser.plan());
     }
@@ -457,6 +469,7 @@ public class JoinTest {
         );
 
         final Rnd rnd = new Rnd();
+        long time = Dates.parseDateTime("2015-07-10T00:00:00.000Z");
 
         // statics
         int countryCount = 196;
@@ -475,7 +488,7 @@ public class JoinTest {
             w.putStr(4, rnd.nextChars(rnd.nextInt() & 63));
             w.putStr(5, rnd.nextChars(rnd.nextInt() & 15));
             w.putSym(6, countries.getQuick(rnd.nextPositiveInt() % 196));
-            w.putDate(7, System.currentTimeMillis());
+            w.putDate(7, time++);
             w.append();
         }
         customers.commit();
@@ -485,7 +498,7 @@ public class JoinTest {
             JournalEntryWriter w = categories.entryWriter();
             w.putSym(0, rnd.nextChars(rnd.nextInt() & 15));
             w.putStr(1, rnd.nextChars(rnd.nextInt() & 63));
-            w.putDate(2, System.currentTimeMillis());
+            w.putDate(2, time++);
             w.append();
         }
         categories.commit();
@@ -498,7 +511,7 @@ public class JoinTest {
             w.putStr(1, rnd.nextChars(rnd.nextInt() & 15));
             w.putStr(2, rnd.nextChars(rnd.nextInt() & 15));
             w.putDate(3, 0);
-            w.putDate(4, System.currentTimeMillis());
+            w.putDate(4, time++);
             w.append();
         }
         employees.commit();
@@ -513,7 +526,7 @@ public class JoinTest {
             w.putStr(4, rnd.nextChars(rnd.nextInt() & 7));
             w.putSym(5, countries.getQuick(rnd.nextPositiveInt() % countryCount));
             w.putStr(6, rnd.nextChars(rnd.nextInt() & 15));
-            w.putDate(7, System.currentTimeMillis());
+            w.putDate(7, time++);
             w.append();
         }
         suppliers.commit();
@@ -532,7 +545,7 @@ public class JoinTest {
             w.putSym(2, supplierTab.value(rnd.nextPositiveInt() % supplierTabSize));
             w.putSym(3, categoryTab.value(rnd.nextPositiveInt() % categoryTabSize));
             w.putDouble(4, rnd.nextDouble());
-            w.putDate(5, System.currentTimeMillis());
+            w.putDate(5, time++);
             w.append();
         }
         products.commit();
@@ -553,7 +566,7 @@ public class JoinTest {
         for (int i = 0; i < 100000; i++) {
             int orderId = rnd.nextPositiveInt();
 
-            JournalEntryWriter w = orders.entryWriter(System.currentTimeMillis());
+            JournalEntryWriter w = orders.entryWriter(time++);
             w.putInt(0, orderId);
             w.putInt(1, rnd.nextPositiveInt() % customerCount);
             w.putInt(2, rnd.nextPositiveInt() % productCount);
@@ -574,5 +587,12 @@ public class JoinTest {
         }
         orders.commit();
         orderDetails.commit();
+    }
+
+    private void assertQuery(String expected, String query) throws ParserException, JournalException {
+        sink.clear();
+        parser.setContent(query);
+        printer.print(joinOptimiser.optimise(parser.parse().getQueryModel(), factory).compile(), factory);
+        TestUtils.assertEquals(expected, sink);
     }
 }

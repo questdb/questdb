@@ -28,6 +28,9 @@ import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.ql.RecordSource;
+import com.nfsdb.ql.impl.CrossJoinRecordSource;
+import com.nfsdb.ql.impl.FilteredJournalRecordSource;
+import com.nfsdb.ql.impl.HashJoinRecordSource;
 import com.nfsdb.ql.model.ExprNode;
 import com.nfsdb.ql.model.JoinContext;
 import com.nfsdb.ql.model.QueryModel;
@@ -78,13 +81,89 @@ public class JoinOptimiser {
     private final IntList orderedJournals2 = new IntList();
     private IntList orderedJournals;
     private ObjList<JoinContext> emittedJoinClauses;
+    private JournalReaderFactory factory;
 
     public JoinOptimiser(Optimiser optimiser) {
         this.optimiser = optimiser;
     }
 
-    public void compile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    public RecordSource<? extends Record> compile() throws JournalException, ParserException {
+        if (factory == null) {
+            throw new JournalException("No context specified, optimise() first!");
+        }
+
+        try {
+            RecordSource<? extends Record> current = null;
+
+            for (int i = 0, n = orderedJournals.size(); i < n; i++) {
+                int index = orderedJournals.getQuick(i);
+                QueryModel m = joinModels.getQuick(index);
+
+                // check if there are pre-filters
+                ExprNode where = preFilters.get(index);
+                if (where != null) {
+                    m.setWhereClause(where);
+                }
+
+                // compile
+                RecordSource<? extends Record> rs = optimiser.compile(m, factory);
+
+                // check if there are post-filters
+                where = postFilters.get(index);
+                if (where != null) {
+                    rs = new FilteredJournalRecordSource(rs, optimiser.createVirtualColumn(where, rs.getMetadata()));
+                }
+
+                // check if this is the root of joins
+                if (current == null) {
+                    current = rs;
+                } else {
+                    // not the root, join to "current"
+                    if (m.getJoinType() == QueryModel.JoinType.CROSS) {
+                        // there are fields to analyse
+                        current = new CrossJoinRecordSource(current, rs);
+                    } else {
+                        JoinContext jc = m.getContext();
+                        RecordMetadata bm = current.getMetadata();
+                        RecordMetadata am = rs.getMetadata();
+
+                        ObjList<CharSequence> masterCols = null;
+                        ObjList<CharSequence> slaveCols = null;
+
+                        for (int k = 0, kn = jc.aIndexes.size(); k < kn; k++) {
+
+                            CharSequence ca = jc.aNames.getQuick(k);
+                            CharSequence cb = jc.bNames.getQuick(k);
+
+                            if (am.getColumn(ca).getType() != bm.getColumn(cb).getType()) {
+                                throw new ParserException(jc.aNodes.getQuick(k).position, "Column type mismatch");
+                            }
+
+                            if (masterCols == null) {
+                                masterCols = new ObjList<>();
+                            }
+
+                            if (slaveCols == null) {
+                                slaveCols = new ObjList<>();
+                            }
+
+                            masterCols.add(cb);
+                            slaveCols.add(ca);
+                        }
+                        current = new HashJoinRecordSource(current, masterCols, rs, slaveCols);
+                    }
+                }
+            }
+
+            return current;
+        } finally {
+            clearState();
+        }
+    }
+
+    public JoinOptimiser optimise(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         clearState();
+        this.factory = factory;
         joinModels.add(model);
         joinModels.add(model.getJoinModels());
         int n = joinModels.size();
@@ -108,6 +187,8 @@ public class JoinOptimiser {
 
         trySwapJoinOrder();
         tryAssignPostJoinFilters();
+        alignJoinFields();
+        return this;
     }
 
     public CharSequence plan() {
@@ -221,6 +302,35 @@ public class JoinOptimiser {
         }
     }
 
+    /**
+     * Move fields that belong to slave journal to left and parent fields
+     * to right of equals operator.
+     */
+    private void alignJoinFields() {
+        for (int i = 0, n = orderedJournals.size(); i < n; i++) {
+            JoinContext jc = joinModels.getQuick(orderedJournals.getQuick(i)).getContext();
+            if (jc != null) {
+                int index = jc.slaveIndex;
+                for (int k = 0, kc = jc.aIndexes.size(); k < kc; k++) {
+                    if (jc.aIndexes.getQuick(k) != index) {
+                        int idx = jc.aIndexes.getQuick(k);
+                        CharSequence name = jc.aNames.getQuick(k);
+                        ExprNode node = jc.aNodes.getQuick(k);
+
+                        jc.aIndexes.setQuick(k, jc.bIndexes.getQuick(k));
+                        jc.aNames.setQuick(k, jc.bNames.getQuick(k));
+                        jc.aNodes.setQuick(k, jc.bNodes.getQuick(k));
+
+                        jc.bIndexes.setQuick(k, idx);
+                        jc.bNames.setQuick(k, name);
+                        jc.bNodes.setQuick(k, node);
+                    }
+                }
+            }
+
+        }
+    }
+
     private void analyseEquals(ExprNode node) throws ParserException {
         literalCollectorAIndexes.clear();
         literalCollectorBIndexes.clear();
@@ -299,6 +409,7 @@ public class JoinOptimiser {
         postFilterAvailable.clear();
         postFilterJournalRefs.clear();
         intListPool.reset();
+        factory = null;
     }
 
     private CharSequence extractColumnName(CharSequence token, int dot) {

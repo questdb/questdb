@@ -56,9 +56,9 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     public HashJoinRecordSource(
             RecordSource<? extends Record> masterSource,
-            ObjList<String> masterColumns,
+            ObjList<CharSequence> masterColumns,
             RecordSource<? extends Record> slaveSource,
-            ObjList<String> slaveColumns) {
+            ObjList<CharSequence> slaveColumns) {
         this.masterSource = masterSource;
         this.slaveSource = slaveSource;
         this.metadata = new SplitRecordMetadata(masterSource.getMetadata(), slaveSource.getMetadata());
@@ -141,9 +141,9 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
     }
 
     private MultiRecordMap createRecordMap(RecordSource<? extends Record> masterSource,
-                                           ObjList<String> masterColumns,
+                                           ObjList<CharSequence> masterColumns,
                                            RecordSource<? extends Record> slaveSource,
-                                           ObjList<String> slaveColumns) {
+                                           ObjList<CharSequence> slaveColumns) {
         RecordMetadata mm = masterSource.getMetadata();
         for (int i = 0, k = masterColumns.size(); i < k; i++) {
             int index = mm.getColumnIndex(masterColumns.getQuick(i));
