@@ -23,14 +23,14 @@ package com.nfsdb.ql;
 
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
-import com.nfsdb.ql.parser.Optimiser;
 import com.nfsdb.ql.parser.ParserException;
 import com.nfsdb.ql.parser.QueryParser;
+import com.nfsdb.ql.parser.RecordSourceBuilder;
 
 public class Compiler {
 
     private final QueryParser parser = new QueryParser();
-    private final Optimiser optimiser = new Optimiser();
+    private final RecordSourceBuilder optimiser = new RecordSourceBuilder();
 
     public RecordSource<? extends Record> compile(CharSequence query, JournalReaderFactory factory) throws ParserException, JournalException {
         parser.setContent(query);

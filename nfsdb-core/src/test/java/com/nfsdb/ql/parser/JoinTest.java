@@ -47,225 +47,13 @@ public class JoinTest {
     public static final JournalTestFactory factory = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
 
     private final QueryParser parser = new QueryParser();
-    private final Optimiser optimiser = new Optimiser();
-    private final JoinOptimiser joinOptimiser = new JoinOptimiser(optimiser);
+    private final RecordSourceBuilder joinOptimiser = new RecordSourceBuilder();
     private final StringSink sink = new StringSink();
     private final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
 
     @BeforeClass
     public static void setUp() throws Exception {
         generateJoinData();
-    }
-
-    private static void generateJoinData() throws JournalException {
-        JournalWriter customers = factory.writer(
-                new JournalStructure("customers").
-                        $int("customerId").
-                        $str("customerName").
-                        $str("contactName").
-                        $str("address").
-                        $str("city").
-                        $str("postalCode").
-                        $sym("country").
-                        $ts()
-        );
-
-        JournalWriter categories = factory.writer(
-                new JournalStructure("categories").
-                        $sym("category").index().valueCountHint(1000).
-                        $str("description").
-                        $ts()
-        );
-
-        JournalWriter employees = factory.writer(
-                new JournalStructure("employees").
-                        $str("employeeId").index().buckets(2048).
-                        $str("firstName").
-                        $str("lastName").
-                        $date("birthday").
-                        $ts()
-        );
-
-        JournalWriter orderDetails = factory.writer(
-                new JournalStructure("orderDetails").
-                        $int("orderDetailId").
-                        $int("orderId").
-                        $int("productId").
-                        $int("quantity").
-                        $ts()
-        );
-
-        JournalWriter orders = factory.writer(
-                new JournalStructure("orders").
-                        $int("orderId").
-                        $int("customerId").
-                        $int("productId").
-                        $str("employeeId").index().
-                        $ts("orderDate").
-                        $sym("shipper").
-                        $()
-        );
-
-        JournalWriter products = factory.writer(
-                new JournalStructure("products").
-                        $int("productId").
-                        $str("productName").
-                        $sym("supplier").index().valueCountHint(1000).
-                        $sym("category").index().valueCountHint(1000).
-                        $double("price").
-                        $ts()
-        );
-
-
-        JournalWriter shippers = factory.writer(
-                new JournalStructure("shippers").
-                        $sym("shipper").
-                        $str("phone").
-                        $ts()
-        );
-
-        JournalWriter suppliers = factory.writer(
-                new JournalStructure("suppliers").
-                        $sym("supplier").valueCountHint(1000).
-                        $str("contactName").
-                        $str("address").
-                        $str("city").
-                        $str("postalCode").
-                        $sym("country").index().
-                        $str("phone").
-                        $ts()
-        );
-
-        final Rnd rnd = new Rnd();
-        long time = Dates.parseDateTime("2015-07-10T00:00:00.000Z");
-
-        // statics
-        int countryCount = 196;
-        ObjList<String> countries = new ObjList<>();
-        for (int i = 0; i < countryCount; i++) {
-            countries.add(rnd.nextString(rnd.nextInt() & 15));
-        }
-
-        IntHashSet blackList = new IntHashSet();
-        // customers
-        int customerCount = 10000;
-        for (int i = 0; i < customerCount; i++) {
-
-            if (rnd.nextPositiveInt() % 100 == 0) {
-                blackList.add(i);
-            }
-
-            JournalEntryWriter w = customers.entryWriter();
-            w.putInt(0, i);
-            w.putStr(1, rnd.nextChars(rnd.nextInt() & 15));
-            w.putStr(2, rnd.nextChars(rnd.nextInt() & 31));
-            w.putStr(4, rnd.nextChars(rnd.nextInt() & 63));
-            w.putStr(5, rnd.nextChars(rnd.nextInt() & 15));
-            w.putSym(6, countries.getQuick(rnd.nextPositiveInt() % 196));
-            w.putDate(7, time++);
-            w.append();
-        }
-        customers.commit();
-
-        // categories
-        for (int i = 0; i < 100; i++) {
-            JournalEntryWriter w = categories.entryWriter();
-            w.putSym(0, rnd.nextChars(rnd.nextInt() & 15));
-            w.putStr(1, rnd.nextChars(rnd.nextInt() & 63));
-            w.putDate(2, time++);
-            w.append();
-        }
-        categories.commit();
-
-        // employees
-        int employeeCount = 2000;
-        for (int i = 0; i < employeeCount; i++) {
-            JournalEntryWriter w = employees.entryWriter();
-            w.putStr(0, rnd.nextChars(rnd.nextInt() & 7));
-            w.putStr(1, rnd.nextChars(rnd.nextInt() & 15));
-            w.putStr(2, rnd.nextChars(rnd.nextInt() & 15));
-            w.putDate(3, 0);
-            w.putDate(4, time++);
-            w.append();
-        }
-        employees.commit();
-
-        // suppliers
-        for (int i = 0; i < 100; i++) {
-            JournalEntryWriter w = suppliers.entryWriter();
-            w.putSym(0, rnd.nextChars(rnd.nextInt() & 15));
-            w.putStr(1, rnd.nextChars(rnd.nextInt() & 15));
-            w.putStr(2, rnd.nextChars(rnd.nextInt() & 15));
-            w.putStr(3, rnd.nextChars(rnd.nextInt() & 15));
-            w.putStr(4, rnd.nextChars(rnd.nextInt() & 7));
-            w.putSym(5, countries.getQuick(rnd.nextPositiveInt() % countryCount));
-            w.putStr(6, rnd.nextChars(rnd.nextInt() & 15));
-            w.putDate(7, time++);
-            w.append();
-        }
-        suppliers.commit();
-
-        SymbolTable categoryTab = categories.getSymbolTable("category");
-        int categoryTabSize = categoryTab.size();
-        SymbolTable supplierTab = suppliers.getSymbolTable("supplier");
-        int supplierTabSize = supplierTab.size();
-
-        // products
-        int productCount = 2000;
-        for (int i = 0; i < productCount; i++) {
-            JournalEntryWriter w = products.entryWriter();
-            w.putInt(0, i);
-            w.putStr(1, rnd.nextChars(rnd.nextInt() & 15));
-            w.putSym(2, supplierTab.value(rnd.nextPositiveInt() % supplierTabSize));
-            w.putSym(3, categoryTab.value(rnd.nextPositiveInt() % categoryTabSize));
-            w.putDouble(4, rnd.nextDouble());
-            w.putDate(5, time++);
-            w.append();
-        }
-        products.commit();
-
-        // shippers
-        for (int i = 0; i < 20; i++) {
-            JournalEntryWriter w = shippers.entryWriter();
-            w.putSym(0, rnd.nextChars(rnd.nextInt() & 15));
-            w.putStr(1, rnd.nextChars(rnd.nextInt() & 7));
-            w.append();
-        }
-        shippers.commit();
-
-        SymbolTable shipperTab = shippers.getSymbolTable("shipper");
-        int shipperTabSize = shipperTab.size();
-
-        int d = 0;
-        for (int i = 0; i < 100000; i++) {
-            int customerId = rnd.nextPositiveInt() % customerCount;
-            if (blackList.contains(customerId)) {
-                continue;
-            }
-
-            int orderId = rnd.nextPositiveInt();
-            JournalEntryWriter w = orders.entryWriter(time++);
-
-            w.putInt(0, orderId);
-            w.putInt(1, customerId);
-            w.putInt(2, rnd.nextPositiveInt() % productCount);
-            w.putStr(3, employees.getPartition(0, true).getFlyweightStr(rnd.nextPositiveLong() % employeeCount, 0));
-            w.putSym(5, shipperTab.value(rnd.nextPositiveInt() % shipperTabSize));
-            w.append();
-
-            int k = (rnd.nextInt() & 3) + 1;
-
-            for (int n = 0; n < k; n++) {
-                JournalEntryWriter dw = orderDetails.entryWriter();
-                dw.putInt(0, ++d);
-                dw.putInt(1, orderId);
-                dw.putInt(2, rnd.nextPositiveInt() % productCount);
-                dw.putInt(3, (rnd.nextInt() & 3) + 1);
-                dw.append();
-            }
-        }
-        orders.commit();
-        orderDetails.commit();
     }
 
     @Test
@@ -669,6 +457,217 @@ public class JoinTest {
                 "customers c" +
                         " outer join orders o on c.customerId = o.customerId" +
                         " where orderId = NaN");
+    }
+
+    private static void generateJoinData() throws JournalException {
+        JournalWriter customers = factory.writer(
+                new JournalStructure("customers").
+                        $int("customerId").
+                        $str("customerName").
+                        $str("contactName").
+                        $str("address").
+                        $str("city").
+                        $str("postalCode").
+                        $sym("country").
+                        $ts()
+        );
+
+        JournalWriter categories = factory.writer(
+                new JournalStructure("categories").
+                        $sym("category").index().valueCountHint(1000).
+                        $str("description").
+                        $ts()
+        );
+
+        JournalWriter employees = factory.writer(
+                new JournalStructure("employees").
+                        $str("employeeId").index().buckets(2048).
+                        $str("firstName").
+                        $str("lastName").
+                        $date("birthday").
+                        $ts()
+        );
+
+        JournalWriter orderDetails = factory.writer(
+                new JournalStructure("orderDetails").
+                        $int("orderDetailId").
+                        $int("orderId").
+                        $int("productId").
+                        $int("quantity").
+                        $ts()
+        );
+
+        JournalWriter orders = factory.writer(
+                new JournalStructure("orders").
+                        $int("orderId").
+                        $int("customerId").
+                        $int("productId").
+                        $str("employeeId").index().
+                        $ts("orderDate").
+                        $sym("shipper").
+                        $()
+        );
+
+        JournalWriter products = factory.writer(
+                new JournalStructure("products").
+                        $int("productId").
+                        $str("productName").
+                        $sym("supplier").index().valueCountHint(1000).
+                        $sym("category").index().valueCountHint(1000).
+                        $double("price").
+                        $ts()
+        );
+
+
+        JournalWriter shippers = factory.writer(
+                new JournalStructure("shippers").
+                        $sym("shipper").
+                        $str("phone").
+                        $ts()
+        );
+
+        JournalWriter suppliers = factory.writer(
+                new JournalStructure("suppliers").
+                        $sym("supplier").valueCountHint(1000).
+                        $str("contactName").
+                        $str("address").
+                        $str("city").
+                        $str("postalCode").
+                        $sym("country").index().
+                        $str("phone").
+                        $ts()
+        );
+
+        final Rnd rnd = new Rnd();
+        long time = Dates.parseDateTime("2015-07-10T00:00:00.000Z");
+
+        // statics
+        int countryCount = 196;
+        ObjList<String> countries = new ObjList<>();
+        for (int i = 0; i < countryCount; i++) {
+            countries.add(rnd.nextString(rnd.nextInt() & 15));
+        }
+
+        IntHashSet blackList = new IntHashSet();
+        // customers
+        int customerCount = 10000;
+        for (int i = 0; i < customerCount; i++) {
+
+            if (rnd.nextPositiveInt() % 100 == 0) {
+                blackList.add(i);
+            }
+
+            JournalEntryWriter w = customers.entryWriter();
+            w.putInt(0, i);
+            w.putStr(1, rnd.nextChars(rnd.nextInt() & 15));
+            w.putStr(2, rnd.nextChars(rnd.nextInt() & 31));
+            w.putStr(4, rnd.nextChars(rnd.nextInt() & 63));
+            w.putStr(5, rnd.nextChars(rnd.nextInt() & 15));
+            w.putSym(6, countries.getQuick(rnd.nextPositiveInt() % 196));
+            w.putDate(7, time++);
+            w.append();
+        }
+        customers.commit();
+
+        // categories
+        for (int i = 0; i < 100; i++) {
+            JournalEntryWriter w = categories.entryWriter();
+            w.putSym(0, rnd.nextChars(rnd.nextInt() & 15));
+            w.putStr(1, rnd.nextChars(rnd.nextInt() & 63));
+            w.putDate(2, time++);
+            w.append();
+        }
+        categories.commit();
+
+        // employees
+        int employeeCount = 2000;
+        for (int i = 0; i < employeeCount; i++) {
+            JournalEntryWriter w = employees.entryWriter();
+            w.putStr(0, rnd.nextChars(rnd.nextInt() & 7));
+            w.putStr(1, rnd.nextChars(rnd.nextInt() & 15));
+            w.putStr(2, rnd.nextChars(rnd.nextInt() & 15));
+            w.putDate(3, 0);
+            w.putDate(4, time++);
+            w.append();
+        }
+        employees.commit();
+
+        // suppliers
+        for (int i = 0; i < 100; i++) {
+            JournalEntryWriter w = suppliers.entryWriter();
+            w.putSym(0, rnd.nextChars(rnd.nextInt() & 15));
+            w.putStr(1, rnd.nextChars(rnd.nextInt() & 15));
+            w.putStr(2, rnd.nextChars(rnd.nextInt() & 15));
+            w.putStr(3, rnd.nextChars(rnd.nextInt() & 15));
+            w.putStr(4, rnd.nextChars(rnd.nextInt() & 7));
+            w.putSym(5, countries.getQuick(rnd.nextPositiveInt() % countryCount));
+            w.putStr(6, rnd.nextChars(rnd.nextInt() & 15));
+            w.putDate(7, time++);
+            w.append();
+        }
+        suppliers.commit();
+
+        SymbolTable categoryTab = categories.getSymbolTable("category");
+        int categoryTabSize = categoryTab.size();
+        SymbolTable supplierTab = suppliers.getSymbolTable("supplier");
+        int supplierTabSize = supplierTab.size();
+
+        // products
+        int productCount = 2000;
+        for (int i = 0; i < productCount; i++) {
+            JournalEntryWriter w = products.entryWriter();
+            w.putInt(0, i);
+            w.putStr(1, rnd.nextChars(rnd.nextInt() & 15));
+            w.putSym(2, supplierTab.value(rnd.nextPositiveInt() % supplierTabSize));
+            w.putSym(3, categoryTab.value(rnd.nextPositiveInt() % categoryTabSize));
+            w.putDouble(4, rnd.nextDouble());
+            w.putDate(5, time++);
+            w.append();
+        }
+        products.commit();
+
+        // shippers
+        for (int i = 0; i < 20; i++) {
+            JournalEntryWriter w = shippers.entryWriter();
+            w.putSym(0, rnd.nextChars(rnd.nextInt() & 15));
+            w.putStr(1, rnd.nextChars(rnd.nextInt() & 7));
+            w.append();
+        }
+        shippers.commit();
+
+        SymbolTable shipperTab = shippers.getSymbolTable("shipper");
+        int shipperTabSize = shipperTab.size();
+
+        int d = 0;
+        for (int i = 0; i < 100000; i++) {
+            int customerId = rnd.nextPositiveInt() % customerCount;
+            if (blackList.contains(customerId)) {
+                continue;
+            }
+
+            int orderId = rnd.nextPositiveInt();
+            JournalEntryWriter w = orders.entryWriter(time++);
+
+            w.putInt(0, orderId);
+            w.putInt(1, customerId);
+            w.putInt(2, rnd.nextPositiveInt() % productCount);
+            w.putStr(3, employees.getPartition(0, true).getFlyweightStr(rnd.nextPositiveLong() % employeeCount, 0));
+            w.putSym(5, shipperTab.value(rnd.nextPositiveInt() % shipperTabSize));
+            w.append();
+
+            int k = (rnd.nextInt() & 3) + 1;
+
+            for (int n = 0; n < k; n++) {
+                JournalEntryWriter dw = orderDetails.entryWriter();
+                dw.putInt(0, ++d);
+                dw.putInt(1, orderId);
+                dw.putInt(2, rnd.nextPositiveInt() % productCount);
+                dw.putInt(3, (rnd.nextInt() & 3) + 1);
+                dw.append();
+            }
+        }
+        orders.commit();
+        orderDetails.commit();
     }
 
     private void assertPlan(String expected, String query) throws ParserException, JournalException {
