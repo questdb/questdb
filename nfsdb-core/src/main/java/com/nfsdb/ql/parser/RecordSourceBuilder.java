@@ -60,8 +60,7 @@ public class RecordSourceBuilder {
     private final CharSequenceIntHashMap joinMetadataIndexLookup = new CharSequenceIntHashMap();
     private final ObjectPool<ExprNode> exprNodePool = new ObjectPool<>(ExprNode.FACTORY, 16);
     private final IntHashSet deletedContexts = new IntHashSet();
-//    private final IntObjHashMap<ExprNode> preFilters = new IntObjHashMap<>();
-    private final IntObjHashMap<ExprNode> postFilters = new IntObjHashMap<>();
+    //    private final IntObjHashMap<ExprNode> postFilters = new IntObjHashMap<>();
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
     private final ObjectPool<JoinContext> contextPool = new ObjectPool<>(JoinContext.FACTORY, 16);
@@ -157,7 +156,7 @@ public class RecordSourceBuilder {
                 }
 
                 // check if there are post-filters
-                ExprNode filter = postFilters.get(index);
+                ExprNode filter = m.getPostJoinWhereClause();
                 if (filter != null) {
                     current = new FilteredJournalRecordSource(current, createVirtualColumn(filter, current.getMetadata()));
                 }
@@ -219,25 +218,6 @@ public class RecordSourceBuilder {
         return this;
     }
 
-    private void resetJoinTypes(QueryModel parent) {
-        ObjList<QueryModel> joinModels = parent.getJoinModels();
-        for (int i = 0, n = joinModels.size(); i < n; i++) {
-            QueryModel m = joinModels.getQuick(i);
-            JoinContext c = m.getContext();
-
-            if (m.getJoinType() == QueryModel.JoinType.CROSS) {
-                if (c != null && c.parents.size() > 0) {
-                    m.setJoinType(QueryModel.JoinType.INNER);
-                }
-            } else {
-                if (c == null || c.parents.size() == 0) {
-                    m.setJoinType(QueryModel.JoinType.CROSS);
-                }
-            }
-        }
-    }
-
-
     public CharSequence plan(QueryModel parent) {
         ObjList<QueryModel> joinModels = parent.getJoinModels();
         planSink.clear();
@@ -291,7 +271,7 @@ public class RecordSourceBuilder {
             }
 
             // post-filter
-            filter = postFilters.get(index);
+            filter = m.getPostJoinWhereClause();
             if (filter != null) {
                 planSink.put(" (post-filter: ");
                 filter.toString(planSink);
@@ -344,6 +324,25 @@ public class RecordSourceBuilder {
             jm.setContext(context);
         } else {
             jm.setContext(mergeContexts(parent, other, context));
+        }
+    }
+
+    private void addWhereClause(QueryModel parent, int index, ExprNode filter) {
+        if (filter == null) {
+            return;
+        }
+
+        QueryModel m = parent.getJoinModels().getQuick(index);
+        ExprNode old = m.getWhereClause();
+
+        if (old == null) {
+            m.setWhereClause(filter);
+        } else {
+            ExprNode n = exprNodePool.next().init(ExprNode.NodeType.OPERATION, "and", 0, 0);
+            n.paramCount = 2;
+            n.lhs = old;
+            n.rhs = filter;
+            m.setWhereClause(n);
         }
     }
 
@@ -450,7 +449,7 @@ public class RecordSourceBuilder {
 
         if (metadata == null) {
             journalMetadata = collectJournalMetadata(model, factory);
-        } else if (metadata instanceof JournalMetadata){
+        } else if (metadata instanceof JournalMetadata) {
             journalMetadata = (JournalMetadata) metadata;
         } else {
             throw new ParserException(0, "Internal error: invalid metadata");
@@ -616,9 +615,7 @@ public class RecordSourceBuilder {
         csPool.reset();
         exprNodePool.reset();
         contextPool.reset();
-        postFilters.clear();
         constantConditions.clear();
-        postFilterJournalRefs.clear();
         intListPool.reset();
     }
 
@@ -862,25 +859,6 @@ public class RecordSourceBuilder {
         }
 
         return r;
-    }
-
-    private void addWhereClause(QueryModel parent, int index, ExprNode filter) {
-        if (filter == null) {
-            return;
-        }
-
-        QueryModel m =parent.getJoinModels().getQuick(index);
-        ExprNode old = m.getWhereClause();
-
-        if (old == null) {
-            m.setWhereClause(filter);
-        } else {
-            ExprNode n = exprNodePool.next().init(ExprNode.NodeType.OPERATION, "and", 0, 0);
-            n.paramCount = 2;
-            n.lhs = old;
-            n.rhs = filter;
-            m.setWhereClause(n);
-        }
     }
 
     private JoinContext moveClauses(QueryModel parent, JoinContext from, JoinContext to, IntList positions) {
@@ -1132,6 +1110,24 @@ public class RecordSourceBuilder {
         parent.addParsedWhereNode(node);
     }
 
+    private void resetJoinTypes(QueryModel parent) {
+        ObjList<QueryModel> joinModels = parent.getJoinModels();
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            QueryModel m = joinModels.getQuick(i);
+            JoinContext c = m.getContext();
+
+            if (m.getJoinType() == QueryModel.JoinType.CROSS) {
+                if (c != null && c.parents.size() > 0) {
+                    m.setJoinType(QueryModel.JoinType.INNER);
+                }
+            } else {
+                if (c == null || c.parents.size() == 0) {
+                    m.setJoinType(QueryModel.JoinType.CROSS);
+                }
+            }
+        }
+    }
+
     private void resolveJoinMetadata(QueryModel parent, int index, JournalReaderFactory factory) throws JournalException, ParserException {
         QueryModel model = parent.getJoinModels().getQuick(index);
         if (model.getJournalName() != null) {
@@ -1280,6 +1276,7 @@ public class RecordSourceBuilder {
 
         postFilterAvailable.clear();
         postFilterRemoved.clear();
+        postFilterJournalRefs.clear();
 
         literalCollector.withParent(parent);
         ObjList<ExprNode> filterNodes = parent.getParsedWhere();
@@ -1294,7 +1291,8 @@ public class RecordSourceBuilder {
 
         // match journal references to set of journals in join order
         for (int i = 0, n = orderedJournals.size(); i < n; i++) {
-            postFilterAvailable.add(orderedJournals.getQuick(i));
+            int index = orderedJournals.getQuick(i);
+            postFilterAvailable.add(index);
 
             for (int k = 0; k < pc; k++) {
                 if (postFilterRemoved.contains(k)) {
@@ -1318,7 +1316,8 @@ public class RecordSourceBuilder {
                     }
                     if (remove) {
                         postFilterRemoved.add(k);
-                        postFilters.put(i, filterNodes.getQuick(k));
+                        parent.getJoinModels().getQuick(index).setPostJoinWhereClause(filterNodes.getQuick(k));
+//                        postFilters.put(i, filterNodes.getQuick(k));
                     }
                 }
             }

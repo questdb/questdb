@@ -316,8 +316,8 @@ public class JoinTest {
     @Test
     public void testJoinWithFilter() throws Exception {
         assertPlan("+ 0[ cross ] customers\n" +
-                        "+ 2[ inner ] d (filter: d.productId = d.orderId) ON d.productId = customers.customerId (post-filter: d.quantity < orders.orderId)\n" +
-                        "+ 1[ inner ] orders ON orders.orderId = d.orderId\n" +
+                        "+ 2[ inner ] d (filter: d.productId = d.orderId) ON d.productId = customers.customerId\n" +
+                        "+ 1[ inner ] orders ON orders.orderId = d.orderId (post-filter: d.quantity < orders.orderId)\n" +
                         "+ 3[ inner ] products ON products.productId = d.productId (post-filter: products.price > d.quantity or d.orderId = orders.orderId)\n" +
                         "+ 4[ inner ] suppliers ON suppliers.supplier = products.supplier\n" +
                         "\n",

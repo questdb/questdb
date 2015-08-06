@@ -40,6 +40,7 @@ public class QueryModel implements Mutable {
     private ExprNode whereClause;
     // list of "and" concatenated expressions
     private ObjList<ExprNode> parsedWhere = new ObjList<>();
+    private ExprNode postJoinWhereClause;
     private QueryModel nestedModel;
     private ExprNode journalName;
     private String alias;
@@ -183,6 +184,14 @@ public class QueryModel implements Mutable {
 
     public ObjList<ExprNode> getParsedWhere() {
         return parsedWhere;
+    }
+
+    public ExprNode getPostJoinWhereClause() {
+        return postJoinWhereClause;
+    }
+
+    public void setPostJoinWhereClause(ExprNode postJoinWhereClause) {
+        this.postJoinWhereClause = postJoinWhereClause;
     }
 
     public RecordSource<? extends Record> getRecordSource() {
