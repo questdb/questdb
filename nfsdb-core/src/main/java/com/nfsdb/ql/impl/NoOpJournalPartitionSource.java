@@ -24,10 +24,7 @@ import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.ql.PartitionCursor;
-import com.nfsdb.ql.PartitionSlice;
-import com.nfsdb.ql.PartitionSource;
-import com.nfsdb.ql.SymFacade;
+import com.nfsdb.ql.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class NoOpJournalPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource, PartitionCursor {

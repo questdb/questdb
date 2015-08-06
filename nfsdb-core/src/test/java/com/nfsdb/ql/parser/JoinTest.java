@@ -30,6 +30,7 @@ import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.model.configuration.ModelConfiguration;
+import com.nfsdb.ql.model.QueryModel;
 import com.nfsdb.ql.model.Statement;
 import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.test.tools.JournalTestFactory;
@@ -672,16 +673,17 @@ public class JoinTest {
 
     private void assertPlan(String expected, String query) throws ParserException, JournalException {
         parser.setContent(query);
-        joinOptimiser.optimise(parser.parse().getQueryModel(), factory);
-        TestUtils.assertEquals(expected, joinOptimiser.plan());
+        QueryModel model = parser.parse().getQueryModel();
+        joinOptimiser.optimise(model, factory);
+        TestUtils.assertEquals(expected, joinOptimiser.plan(model));
     }
 
     private void assertQuery(String expected, String query) throws ParserException, JournalException {
         sink.clear();
         parser.setContent(query);
-        joinOptimiser.optimise(parser.parse().getQueryModel(), factory);
-//        System.out.println(joinOptimiser.plan());
-        printer.print(joinOptimiser.compile(), factory);
+        QueryModel model = parser.parse().getQueryModel();
+        joinOptimiser.optimise(model, factory);
+        printer.print(joinOptimiser.compileX(model, factory), factory);
         TestUtils.assertEquals(expected, sink);
     }
 }

@@ -3,15 +3,15 @@
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- * <p/>
+ * <p>
  * Copyright (c) 2014-2015. The NFSdb project and its contributors.
- * <p/>
+ * <p>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * <p/>
+ * <p>
  * http://www.apache.org/licenses/LICENSE-2.0
- * <p/>
+ * <p>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -25,8 +25,8 @@ import com.nfsdb.collections.IntHashSet;
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.ObjectPoolFactory;
-import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.ql.RecordSource;
 
 public class QueryModel implements Mutable {
@@ -38,17 +38,20 @@ public class QueryModel implements Mutable {
     private final ObjList<ExprNode> orderBy = new ObjList<>();
     private final IntHashSet dependencies = new IntHashSet();
     private ExprNode whereClause;
+    // list of "and" concatenated expressions
+    private ObjList<ExprNode> parsedWhere = new ObjList<>();
     private QueryModel nestedModel;
     private ExprNode journalName;
     private String alias;
     private ExprNode latestBy;
     private RecordSource<? extends Record> recordSource;
-    private JournalMetadata metadata;
+    private RecordMetadata metadata;
     private JoinContext context;
     private ExprNode joinCriteria;
     private JoinType joinType;
 
     protected QueryModel() {
+        joinModels.add(this);
     }
 
     public void addColumn(QueryColumn column) {
@@ -71,12 +74,18 @@ public class QueryModel implements Mutable {
         orderBy.add(node);
     }
 
+    public void addParsedWhereNode(ExprNode node) {
+        parsedWhere.add(node);
+    }
+
     public void clear() {
         columns.clear();
         joinModels.clear();
+        joinModels.add(this);
         groupBy.clear();
         orderBy.clear();
         dependencies.clear();
+        parsedWhere.clear();
         whereClause = null;
         nestedModel = null;
         journalName = null;
@@ -152,11 +161,11 @@ public class QueryModel implements Mutable {
         this.latestBy = latestBy;
     }
 
-    public JournalMetadata getMetadata() {
+    public RecordMetadata getMetadata() {
         return metadata;
     }
 
-    public void setMetadata(JournalMetadata metadata) {
+    public void setMetadata(RecordMetadata metadata) {
         this.metadata = metadata;
     }
 
@@ -170,6 +179,10 @@ public class QueryModel implements Mutable {
 
     public ObjList<ExprNode> getOrderBy() {
         return orderBy;
+    }
+
+    public ObjList<ExprNode> getParsedWhere() {
+        return parsedWhere;
     }
 
     public RecordSource<? extends Record> getRecordSource() {

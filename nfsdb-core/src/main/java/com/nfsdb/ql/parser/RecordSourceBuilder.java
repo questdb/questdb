@@ -3,15 +3,15 @@
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- * <p/>
+ * <p>
  * Copyright (c) 2014-2015. The NFSdb project and its contributors.
- * <p/>
+ * <p>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * <p/>
+ * <p>
  * http://www.apache.org/licenses/LICENSE-2.0
- * <p/>
+ * <p>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -57,8 +57,6 @@ public class RecordSourceBuilder {
     private final StringSink columnNameAssembly = new StringSink();
     private final int columnNamePrefixLen;
     private final ObjectPool<FlyweightCharSequence> csPool = new ObjectPool<>(FlyweightCharSequence.FACTORY, 64);
-    private final ObjObjHashMap<String, RecordMetadata> namedJoinMetadata = new ObjObjHashMap<>();
-    private final ObjList<RecordMetadata> allJoinMetadata = new ObjList<>();
     private final CharSequenceIntHashMap joinMetadataIndexLookup = new CharSequenceIntHashMap();
     private final ObjectPool<ExprNode> exprNodePool = new ObjectPool<>(ExprNode.FACTORY, 16);
     private final IntHashSet deletedContexts = new IntHashSet();
@@ -75,9 +73,7 @@ public class RecordSourceBuilder {
     private final ObjList<CharSequence> literalCollectorBNames = new ObjList<>();
     private final LiteralCollector literalCollector = new LiteralCollector();
     private final StringSink planSink = new StringSink();
-    private final ObjList<QueryModel> joinModels = new ObjList<>();
     private final IntStack orderingStack = new IntStack();
-    private final ObjList<ExprNode> filterNodes = new ObjList<>();
     private final IntList tempCrosses = new IntList();
     private final IntList tempCrossIndexes = new IntList();
     private final IntHashSet constantConditions = new IntHashSet();
@@ -96,7 +92,6 @@ public class RecordSourceBuilder {
     private final IntList orderedJournals2 = new IntList();
     private IntList orderedJournals;
     private ObjList<JoinContext> emittedJoinClauses;
-    private JournalReaderFactory factory;
 
     public RecordSourceBuilder() {
         // seed column name assembly with default column prefix, which we will reuse
@@ -108,11 +103,9 @@ public class RecordSourceBuilder {
         return selectColumns(compile0(model, factory), model.getColumns());
     }
 
-    public RecordSource<? extends Record> compile() throws JournalException, ParserException {
-        if (factory == null) {
-            throw new JournalException("No context specified, optimise() first!");
-        }
+    public RecordSource<? extends Record> compileX(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
 
+        ObjList<QueryModel> joinModels = model.getJoinModels();
         try {
             RecordSource<? extends Record> current = null;
 
@@ -187,37 +180,37 @@ public class RecordSourceBuilder {
         return stack.poll();
     }
 
-    public RecordSourceBuilder optimise(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    public RecordSourceBuilder optimise(QueryModel parent, JournalReaderFactory factory) throws JournalException, ParserException {
         clearState();
-        this.factory = factory;
-        joinModels.add(model);
-        joinModels.add(model.getJoinModels());
+        ObjList<QueryModel> joinModels = parent.getJoinModels();
+
         int n = joinModels.size();
 
         // create metadata for all journals and sub-queries involved in this query
         for (int i = 0; i < n; i++) {
-            resolveJoinMetadata(joinModels.getQuick(i), factory);
+            resolveJoinMetadata(parent, i, factory);
         }
 
         emittedJoinClauses = joinClausesSwap1;
 
         for (int i = 0; i < n; i++) {
             QueryModel m = joinModels.getQuick(i);
-            processAndConditions(m.getWhereClause());
-            processAndConditions(m.getJoinCriteria());
+            processAndConditions(parent, m.getWhereClause());
+            processAndConditions(parent, m.getJoinCriteria());
         }
 
         if (emittedJoinClauses.size() > 0) {
-            processEmittedJoinClauses();
+            processEmittedJoinClauses(parent);
         }
 
-        trySwapJoinOrder();
-        tryAssignPostJoinFilters();
-        alignJoinFields();
+        trySwapJoinOrder(parent);
+        tryAssignPostJoinFilters(parent);
+        alignJoinFields(parent);
         return this;
     }
 
-    public CharSequence plan() {
+    public CharSequence plan(QueryModel parent) {
+        ObjList<QueryModel> joinModels = parent.getJoinModels();
         planSink.clear();
         for (int i = 0, n = orderedJournals.size(); i < n; i++) {
             final int index = orderedJournals.getQuick(i);
@@ -285,10 +278,6 @@ public class RecordSourceBuilder {
         return planSink;
     }
 
-    private void addFilterNode(ExprNode node) {
-        this.filterNodes.add(node);
-    }
-
     private void addFilterOrEmitJoin(int idx, int ai, CharSequence an, ExprNode ao, int bi, CharSequence bn, ExprNode bo) {
         if (ai == bi && Chars.equals(an, bn)) {
             deletedContexts.add(idx);
@@ -319,13 +308,13 @@ public class RecordSourceBuilder {
         deletedContexts.add(idx);
     }
 
-    private void addJoinContext(JoinContext context) {
-        QueryModel jm = joinModels.getQuick(context.slaveIndex);
+    private void addJoinContext(QueryModel parent, JoinContext context) {
+        QueryModel jm = parent.getJoinModels().getQuick(context.slaveIndex);
         JoinContext other = jm.getContext();
         if (other == null) {
             jm.setContext(context);
         } else {
-            jm.setContext(mergeContexts(other, context));
+            jm.setContext(mergeContexts(parent, other, context));
         }
     }
 
@@ -333,7 +322,8 @@ public class RecordSourceBuilder {
      * Move fields that belong to slave journal to left and parent fields
      * to right of equals operator.
      */
-    private void alignJoinFields() {
+    private void alignJoinFields(QueryModel parent) {
+        ObjList<QueryModel> joinModels = parent.getJoinModels();
         for (int i = 0, n = orderedJournals.size(); i < n; i++) {
             JoinContext jc = joinModels.getQuick(orderedJournals.getQuick(i)).getContext();
             if (jc != null) {
@@ -358,13 +348,14 @@ public class RecordSourceBuilder {
         }
     }
 
-    private void analyseEquals(ExprNode node) throws ParserException {
+    private void analyseEquals(QueryModel parent, ExprNode node) throws ParserException {
         literalCollectorAIndexes.clear();
         literalCollectorBIndexes.clear();
 
         literalCollectorANames.clear();
         literalCollectorBNames.clear();
 
+        literalCollector.withParent(parent);
         traversalAlgo.traverse(node.lhs, literalCollector.lhs());
         traversalAlgo.traverse(node.rhs, literalCollector.rhs());
 
@@ -380,9 +371,9 @@ public class RecordSourceBuilder {
                     jc = contextPool.next();
                     jc.slaveIndex = literalCollectorBIndexes.getQuick(0);
                     preFilters.put(jc.slaveIndex, mergeFilters(preFilters.get(jc.slaveIndex), node));
-                    addJoinContext(jc);
+                    addJoinContext(parent, jc);
                 } else {
-                    addFilterNode(node);
+                    parent.addParsedWhereNode(node);
                 }
                 break;
             case 1:
@@ -405,34 +396,38 @@ public class RecordSourceBuilder {
                         int min = lhi < rhi ? lhi : rhi;
                         jc.slaveIndex = max;
                         jc.parents.add(min);
-                        linkDependencies(min, max);
+                        linkDependencies(parent, min, max);
                     }
-                    addJoinContext(jc);
+                    addJoinContext(parent, jc);
                 } else if (literalCollector.nullCount == 0) {
                     // single journal reference
                     jc.slaveIndex = lhi;
                     preFilters.put(lhi, mergeFilters(preFilters.get(lhi), node));
-                    addJoinContext(jc);
+                    addJoinContext(parent, jc);
                 } else {
-                    addFilterNode(node);
+                    parent.addParsedWhereNode(node);
                 }
                 break;
             default:
-                addFilterNode(node);
+                parent.addParsedWhereNode(node);
                 break;
         }
     }
 
     @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT", "CC_CYCLOMATIC_COMPLEXITY"})
     private RecordSource<? extends Record> buildJournalRecordSource(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-        JournalMetadata metadata = model.getMetadata();
+        RecordMetadata metadata = model.getMetadata();
+        JournalMetadata journalMetadata;
 
         if (metadata == null) {
-            collectJournalMetadata(model, factory);
-            metadata = model.getMetadata();
+            journalMetadata = collectJournalMetadata(model, factory);
+        } else if (metadata instanceof JournalMetadata){
+            journalMetadata = (JournalMetadata) metadata;
+        } else {
+            throw new ParserException(0, "Internal error: invalid metadata");
         }
 
-        PartitionSource ps = new JournalPartitionSource(metadata, true);
+        PartitionSource ps = new JournalPartitionSource(journalMetadata, true);
         RowSource rs = null;
 
         String latestByCol = null;
@@ -445,11 +440,11 @@ public class RecordSourceBuilder {
                 throw new ParserException(latestByNode.position, "Column name expected");
             }
 
-            if (metadata.invalidColumn(latestByNode.token)) {
+            if (journalMetadata.invalidColumn(latestByNode.token)) {
                 throw new InvalidColumnException(latestByNode.position);
             }
 
-            latestByMetadata = metadata.getColumn(latestByNode.token);
+            latestByMetadata = journalMetadata.getColumn(latestByNode.token);
 
             ColumnType type = latestByMetadata.getType();
             if (type != ColumnType.SYMBOL && type != ColumnType.STRING) {
@@ -465,9 +460,9 @@ public class RecordSourceBuilder {
 
         ExprNode where = model.getWhereClause();
         if (where != null) {
-            IntrinsicModel im = intrinsicExtractor.extract(where, metadata, latestByCol);
+            IntrinsicModel im = intrinsicExtractor.extract(where, journalMetadata, latestByCol);
 
-            VirtualColumn filter = im.filter != null ? createVirtualColumn(im.filter, metadata) : null;
+            VirtualColumn filter = im.filter != null ? createVirtualColumn(im.filter, journalMetadata) : null;
 
             if (filter != null) {
                 if (filter.getType() != ColumnType.BOOLEAN) {
@@ -485,7 +480,7 @@ public class RecordSourceBuilder {
             }
 
             if (im.intrinsicValue == IntrinsicValue.FALSE) {
-                ps = new NoOpJournalPartitionSource(metadata);
+                ps = new NoOpJournalPartitionSource(journalMetadata);
             } else {
 
                 if (im.intervalHi < Long.MAX_VALUE || im.intervalLo > Long.MIN_VALUE) {
@@ -504,7 +499,7 @@ public class RecordSourceBuilder {
 
                 if (latestByCol == null) {
                     if (im.keyColumn != null) {
-                        switch (metadata.getColumn(im.keyColumn).type) {
+                        switch (journalMetadata.getColumn(im.keyColumn).getType()) {
                             case SYMBOL:
                                 rs = buildRowSourceForSym(im);
                                 break;
@@ -588,25 +583,18 @@ public class RecordSourceBuilder {
     }
 
     private void clearState() {
-        namedJoinMetadata.clear();
-        allJoinMetadata.clear();
         joinMetadataIndexLookup.clear();
         csPool.reset();
         exprNodePool.reset();
-        joinModels.clear();
-        filterNodes.clear();
         contextPool.reset();
         preFilters.clear();
         postFilters.clear();
         constantConditions.clear();
-        postFilterRemoved.clear();
-        postFilterAvailable.clear();
         postFilterJournalRefs.clear();
         intListPool.reset();
-        factory = null;
     }
 
-    private void collectJournalMetadata(QueryModel model, JournalReaderFactory factory) throws ParserException, JournalException {
+    private JournalMetadata collectJournalMetadata(QueryModel model, JournalReaderFactory factory) throws ParserException, JournalException {
         ExprNode readerNode = model.getJournalName();
         if (readerNode.type != ExprNode.NodeType.LITERAL && readerNode.type != ExprNode.NodeType.CONSTANT) {
             throw new ParserException(readerNode.position, "Journal name must be either literal or string constant");
@@ -623,7 +611,7 @@ public class RecordSourceBuilder {
             throw new ParserException(readerNode.position, "Journal directory is of unknown format");
         }
 
-        model.setMetadata(factory.getOrCreateMetadata(new JournalKey<>(reader)));
+        return factory.getOrCreateMetadata(new JournalKey<>(reader));
     }
 
     private RecordSource<? extends Record> compile0(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
@@ -701,8 +689,8 @@ public class RecordSourceBuilder {
         return dot == -1 ? token : csPool.next().of(token, dot + 1, token.length() - dot - 1);
     }
 
-    private void linkDependencies(int parent, int child) {
-        joinModels.getQuick(parent).addDependency(child);
+    private void linkDependencies(QueryModel model, int parent, int child) {
+        model.getJoinModels().getQuick(parent).addDependency(child);
     }
 
     @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE"})
@@ -744,7 +732,7 @@ public class RecordSourceBuilder {
         return f.isConstant() ? processConstantExpression(f) : f;
     }
 
-    private JoinContext mergeContexts(JoinContext a, JoinContext b) {
+    private JoinContext mergeContexts(QueryModel parent, JoinContext a, JoinContext b) {
         assert a.slaveIndex == b.slaveIndex;
 
         deletedContexts.clear();
@@ -810,7 +798,7 @@ public class RecordSourceBuilder {
             int min = bai < bbi ? bai : bbi;
             r.slaveIndex = max;
             r.parents.add(min);
-            linkDependencies(min, max);
+            linkDependencies(parent, min, max);
         }
 
         // add remaining a nodes
@@ -830,7 +818,7 @@ public class RecordSourceBuilder {
 
             if (deletedContexts.contains(i)) {
                 if (!r.parents.contains(min)) {
-                    unlinkDependencies(min, max);
+                    unlinkDependencies(parent, min, max);
                 }
             } else {
                 r.aNames.add(a.aNames.getQuick(i));
@@ -841,7 +829,7 @@ public class RecordSourceBuilder {
                 r.bNodes.add(a.bNodes.getQuick(i));
 
                 r.parents.add(min);
-                linkDependencies(min, max);
+                linkDependencies(parent, min, max);
             }
         }
 
@@ -868,7 +856,7 @@ public class RecordSourceBuilder {
         return n;
     }
 
-    private JoinContext moveClauses(JoinContext from, JoinContext to, IntList positions) {
+    private JoinContext moveClauses(QueryModel parent, JoinContext from, JoinContext to, IntList positions) {
         int p = 0;
         int m = positions.size();
 
@@ -900,19 +888,20 @@ public class RecordSourceBuilder {
             // either ai or bi is definitely belongs to this context
             if (ai != t.slaveIndex) {
                 t.parents.add(ai);
-                linkDependencies(ai, bi);
+                linkDependencies(parent, ai, bi);
             } else {
                 t.parents.add(bi);
-                linkDependencies(bi, ai);
+                linkDependencies(parent, bi, ai);
             }
         }
 
         return result;
     }
 
-    private int orderJournals(IntList ordered) {
+    private int orderJournals(QueryModel parent, IntList ordered) {
         ordered.clear();
         this.orderingStack.clear();
+        ObjList<QueryModel> joinModels = parent.getJoinModels();
 
         int cost = 0;
 
@@ -1016,7 +1005,7 @@ public class RecordSourceBuilder {
      * @param node expression node
      * @throws ParserException
      */
-    private void processAndConditions(ExprNode node) throws ParserException {
+    private void processAndConditions(QueryModel parent, ExprNode node) throws ParserException {
         // pre-order traversal
         andConditionStack.clear();
         while (!andConditionStack.isEmpty() || node != null) {
@@ -1029,15 +1018,15 @@ public class RecordSourceBuilder {
                         node = node.lhs;
                         break;
                     case "=":
-                        analyseEquals(node);
+                        analyseEquals(parent, node);
                         node = null;
                         break;
                     case "or":
-                        processOrConditions(node);
+                        processOrConditions(parent, node);
                         node = null;
                         break;
                     default:
-                        addFilterNode(node);
+                        parent.addParsedWhereNode(node);
                         node = null;
                         break;
                 }
@@ -1060,7 +1049,7 @@ public class RecordSourceBuilder {
         }
     }
 
-    private void processEmittedJoinClauses() {
+    private void processEmittedJoinClauses(QueryModel model) {
         // process emitted join conditions
         do {
             ObjList<JoinContext> clauses = emittedJoinClauses;
@@ -1072,7 +1061,7 @@ public class RecordSourceBuilder {
             }
             emittedJoinClauses.clear();
             for (int i = 0, k = clauses.size(); i < k; i++) {
-                addJoinContext(clauses.getQuick(i));
+                addJoinContext(model, clauses.getQuick(i));
             }
         } while (emittedJoinClauses.size() > 0);
 
@@ -1090,19 +1079,19 @@ public class RecordSourceBuilder {
      * if (rows == null) {
      * rows = HashTable.get(b.y);
      * }
-     * <p/>
+     * <p>
      * in this case tables can be reordered as long as "b" is processed
      * before "a"
-     * <p/>
+     * <p>
      * - second possibility is where all "or" conditions are random
      * in which case query like this:
-     * <p/>
+     * <p>
      * from a
      * join c on a.x = c.x
      * join b on a.x = b.x or c.y = b.y
-     * <p/>
+     * <p>
      * can be rewritten to:
-     * <p/>
+     * <p>
      * from a
      * join c on a.x = c.x
      * join b on a.x = b.x
@@ -1111,41 +1100,36 @@ public class RecordSourceBuilder {
      * join c on a.x = c.x
      * join b on c.y = b.y
      */
-    private void processOrConditions(ExprNode node) {
+    private void processOrConditions(QueryModel parent, ExprNode node) {
         // stub: use filter
-        addFilterNode(node);
+        parent.addParsedWhereNode(node);
     }
 
-    private void resolveJoinMetadata(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-        RecordMetadata metadata;
+    private void resolveJoinMetadata(QueryModel parent, int index, JournalReaderFactory factory) throws JournalException, ParserException {
+        QueryModel model = parent.getJoinModels().getQuick(index);
         if (model.getJournalName() != null) {
-            collectJournalMetadata(model, factory);
-            metadata = model.getMetadata();
+            model.setMetadata(collectJournalMetadata(model, factory));
         } else {
             RecordSource<? extends Record> rs = compile(model, factory);
-            metadata = rs.getMetadata();
+            model.setMetadata(rs.getMetadata());
             model.setRecordSource(rs);
         }
 
-        int pos = allJoinMetadata.size();
-
-        allJoinMetadata.add(metadata);
 
         if (model.getAlias() != null) {
-            namedJoinMetadata.put(model.getAlias(), metadata);
-            joinMetadataIndexLookup.put(model.getAlias(), pos);
+            joinMetadataIndexLookup.put(model.getAlias(), index);
         } else if (model.getJournalName() != null) {
-            namedJoinMetadata.put(model.getJournalName().token, metadata);
-            joinMetadataIndexLookup.put(model.getJournalName().token, pos);
+            joinMetadataIndexLookup.put(model.getJournalName().token, index);
         }
+        //todo: check what happens when subquery does not have alias
     }
 
-    private int resolveJournalIndex(CharSequence alias, CharSequence column, int position) throws ParserException {
-
+    private int resolveJournalIndex(QueryModel parent, CharSequence alias, CharSequence column, int position) throws ParserException {
+        ObjList<QueryModel> joinModels = parent.getJoinModels();
         int index = -1;
         if (alias == null) {
-            for (int i = 0, n = allJoinMetadata.size(); i < n; i++) {
-                RecordMetadata m = allJoinMetadata.getQuick(i);
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                RecordMetadata m = joinModels.getQuick(i).getMetadata();
                 if (m.invalidColumn(column)) {
                     continue;
                 }
@@ -1168,7 +1152,7 @@ public class RecordSourceBuilder {
             if (index == -1) {
                 throw new ParserException(position, "Invalid journal name/alias");
             }
-            RecordMetadata m = allJoinMetadata.getQuick(index);
+            RecordMetadata m = joinModels.getQuick(index).getMetadata();
 
             if (m.invalidColumn(column)) {
                 throw new InvalidColumnException(position);
@@ -1232,7 +1216,8 @@ public class RecordSourceBuilder {
      * @param jc   context of target journal index
      * @return false if "from" is outer joined journal, otherwise - true
      */
-    private boolean swapJoinOrder(int to, int from, JoinContext jc) {
+    private boolean swapJoinOrder(QueryModel parent, int to, int from, JoinContext jc) {
+        ObjList<QueryModel> joinModels = parent.getJoinModels();
         QueryModel jm = joinModels.getQuick(from);
         if (jm.getJoinType() == QueryModel.JoinType.OUTER) {
             return false;
@@ -1256,7 +1241,7 @@ public class RecordSourceBuilder {
                     target.setContext(jc = contextPool.next());
                 }
                 jc.slaveIndex = to;
-                jm.setContext(moveClauses(that, jc, clausesToSteal));
+                jm.setContext(moveClauses(parent, that, jc, clausesToSteal));
                 if (target.getJoinType() == QueryModel.JoinType.CROSS) {
                     target.setJoinType(QueryModel.JoinType.INNER);
                 }
@@ -1265,8 +1250,13 @@ public class RecordSourceBuilder {
         return true;
     }
 
-    private void tryAssignPostJoinFilters() throws ParserException {
+    private void tryAssignPostJoinFilters(QueryModel parent) throws ParserException {
 
+        postFilterAvailable.clear();
+        postFilterRemoved.clear();
+
+        literalCollector.withParent(parent);
+        ObjList<ExprNode> filterNodes = parent.getParsedWhere();
         // collect journal indexes from each part of global filter
         int pc = filterNodes.size();
         for (int i = 0; i < pc; i++) {
@@ -1314,16 +1304,17 @@ public class RecordSourceBuilder {
     /**
      * Identify joined journals without join clause and try to find other reversible join clauses
      * that may be applied to it. For example when these journals joined"
-     * <p/>
+     * <p>
      * from a
      * join b on c.x = b.x
      * join c on c.y = a.y
-     * <p/>
+     * <p>
      * the system that prefers child table with lowest index will attribute c.x = b.x clause to
      * journal "c" leaving "b" without clauses.
      */
     @SuppressWarnings({"StatementWithEmptyBody", "ConstantConditions"})
-    private void trySwapJoinOrder() throws ParserException {
+    private void trySwapJoinOrder(QueryModel parent) throws ParserException {
+        ObjList<QueryModel> joinModels = parent.getJoinModels();
         int n = joinModels.size();
 
         tempCrosses.clear();
@@ -1345,9 +1336,9 @@ public class RecordSourceBuilder {
                     int to = tempCrosses.getQuick(i);
                     JoinContext jc = joinModels.getQuick(to).getContext();
                     // look above i up to OUTER join
-                    for (int k = i - 1; k > -1 && swapJoinOrder(to, k, jc); k--) ;
+                    for (int k = i - 1; k > -1 && swapJoinOrder(parent, to, k, jc); k--) ;
                     // look below i for up to OUTER join
-                    for (int k = i + 1; k < n && swapJoinOrder(to, k, jc); k++) ;
+                    for (int k = i + 1; k < n && swapJoinOrder(parent, to, k, jc); k++) ;
                 }
             }
 
@@ -1359,7 +1350,7 @@ public class RecordSourceBuilder {
             }
 
             ordered.clear();
-            int thisCost = orderJournals(ordered);
+            int thisCost = orderJournals(parent, ordered);
             if (thisCost < cost) {
                 root = z;
                 cost = thisCost;
@@ -1372,8 +1363,8 @@ public class RecordSourceBuilder {
         }
     }
 
-    private void unlinkDependencies(int parent, int child) {
-        joinModels.getQuick(parent).removeDependency(child);
+    private void unlinkDependencies(QueryModel model, int parent, int child) {
+        model.getJoinModels().getQuick(parent).removeDependency(child);
     }
 
     private class VirtualColumnBuilder implements Visitor {
@@ -1389,6 +1380,7 @@ public class RecordSourceBuilder {
         private IntList indexes;
         private ObjList<CharSequence> names;
         private int nullCount;
+        private QueryModel parent;
 
         private Visitor lhs() {
             indexes = literalCollectorAIndexes;
@@ -1408,13 +1400,17 @@ public class RecordSourceBuilder {
             return this;
         }
 
+        private void withParent(QueryModel parent) {
+            this.parent = parent;
+        }
+
         @Override
         public void visit(ExprNode node) throws ParserException {
             switch (node.type) {
                 case LITERAL:
                     int dot = node.token.indexOf('.');
                     CharSequence name = extractColumnName(node.token, dot);
-                    indexes.add(resolveJournalIndex(dot == -1 ? null : csPool.next().of(node.token, 0, dot), name, node.position));
+                    indexes.add(resolveJournalIndex(parent, dot == -1 ? null : csPool.next().of(node.token, 0, dot), name, node.position));
                     names.add(name);
                     break;
                 case CONSTANT:
