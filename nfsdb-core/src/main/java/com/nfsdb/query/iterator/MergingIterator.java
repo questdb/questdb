@@ -1,23 +1,24 @@
-/*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+/*
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
- ******************************************************************************/
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.nfsdb.query.iterator;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
@@ -37,18 +38,6 @@ public class MergingIterator<T> extends AbstractImmutableIterator<T> {
 
     public static <T, X extends ImmutableIterator<T>> ImmutableIterator<T> merge(List<X> iterators, Comparator<T> comparator) {
         return merge(iterators, comparator, 0);
-    }
-
-    private static <T, X extends ImmutableIterator<T>> ImmutableIterator<T> merge(List<X> iterators, Comparator<T> comparator, int index) {
-        if (iterators == null || iterators.isEmpty()) {
-            throw new IllegalArgumentException();
-        }
-
-        if (iterators.size() - index == 1) {
-            return iterators.get(index);
-        }
-
-        return new MergingIterator<T>().$new(iterators.get(index), merge(iterators, comparator, ++index), comparator);
     }
 
     public MergingIterator<T> $new(Iterator<T> a, Iterator<T> b, Comparator<T> comparator) {
@@ -86,5 +75,17 @@ public class MergingIterator<T> extends AbstractImmutableIterator<T> {
         }
 
         return result;
+    }
+
+    private static <T, X extends ImmutableIterator<T>> ImmutableIterator<T> merge(List<X> iterators, Comparator<T> comparator, int index) {
+        if (iterators == null || iterators.isEmpty()) {
+            throw new IllegalArgumentException();
+        }
+
+        if (iterators.size() - index == 1) {
+            return iterators.get(index);
+        }
+
+        return new MergingIterator<T>().$new(iterators.get(index), merge(iterators, comparator, ++index), comparator);
     }
 }

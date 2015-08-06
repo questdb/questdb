@@ -1,23 +1,24 @@
-/*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+/*
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
- ******************************************************************************/
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.nfsdb.test.tools;
 
 import com.nfsdb.*;
@@ -83,8 +84,31 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
     }
 
     @Override
+    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
+        Journal<T> result = super.reader(key);
+        journals.add(result);
+        result.setCloseListener(this);
+        return result;
+    }
+
+    @Override
     public <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException {
         JournalBulkWriter<T> writer = super.bulkWriter(key);
+        journals.add(writer);
+        writer.setCloseListener(this);
+        return writer;
+    }
+
+    @Override
+    public <T> JournalWriter<T> writer(JournalKey<T> key) throws JournalException {
+        JournalWriter<T> writer = super.writer(key);
+        journals.add(writer);
+        writer.setCloseListener(this);
+        return writer;
+    }
+
+    public <T> JournalWriter<T> writer(MetadataBuilder<T> b) throws JournalException {
+        JournalWriter<T> writer = super.writer(b);
         journals.add(writer);
         writer.setCloseListener(this);
         return writer;
@@ -103,28 +127,5 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
         journals.add(reader);
         reader.setCloseListener(this);
         return reader;
-    }
-
-    @Override
-    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        Journal<T> result = super.reader(key);
-        journals.add(result);
-        result.setCloseListener(this);
-        return result;
-    }
-
-    @Override
-    public <T> JournalWriter<T> writer(JournalKey<T> key) throws JournalException {
-        JournalWriter<T> writer = super.writer(key);
-        journals.add(writer);
-        writer.setCloseListener(this);
-        return writer;
-    }
-
-    public <T> JournalWriter<T> writer(MetadataBuilder<T> b) throws JournalException {
-        JournalWriter<T> writer = super.writer(b);
-        journals.add(writer);
-        writer.setCloseListener(this);
-        return writer;
     }
 }

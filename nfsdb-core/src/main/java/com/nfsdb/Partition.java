@@ -1,23 +1,23 @@
-/*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+/*
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
- ******************************************************************************/
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 package com.nfsdb;
 
@@ -518,62 +518,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
     }
 
-    void clearTx() {
-        applyTx(Journal.TX_LIMIT_EVAL, null);
-    }
-
-    void commit() throws JournalException {
-        for (int i = 0, k = indexProxies.size(); i < k; i++) {
-            indexProxies.getQuick(i).getIndex().commit();
-        }
-    }
-
-    void force() throws JournalException {
-        for (int i = 0, k = indexProxies.size(); i < k; i++) {
-            indexProxies.getQuick(i).getIndex().force();
-        }
-
-        if (columns != null) {
-            for (int i = 0; i < columns.length; i++) {
-                AbstractColumn column = Unsafe.arrayGet(columns, i);
-                if (column != null) {
-                    column.force();
-                }
-            }
-        }
-    }
-
-    void getIndexPointers(long[] pointers) throws JournalException {
-        for (int i = 0, k = indexProxies.size(); i < k; i++) {
-            SymbolIndexProxy<T> proxy = indexProxies.getQuick(i);
-            pointers[proxy.getColumnIndex()] = proxy.getIndex().getTxAddress();
-        }
-    }
-
-    final void setPartitionDir(File partitionDir, long[] indexTxAddresses) {
-        boolean create = partitionDir != null && !partitionDir.equals(this.partitionDir);
-        this.partitionDir = partitionDir;
-        if (create) {
-            createSymbolIndexProxies(indexTxAddresses);
-        }
-    }
-
-    void truncate(long newSize) throws JournalException {
-        if (isOpen() && size() > newSize) {
-            for (int i = 0, k = indexProxies.size(); i < k; i++) {
-                indexProxies.getQuick(i).getIndex().truncate(newSize);
-            }
-            for (int i = 0; i < columns.length; i++) {
-                if (Unsafe.arrayGet(columns, i) != null) {
-                    Unsafe.arrayGet(columns, i).truncate(newSize);
-                }
-            }
-
-            commitColumns();
-            clearTx();
-        }
-    }
-
     private void appendBin(T obj, int i, ColumnMetadata meta) {
         ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, meta.offset);
         if (buf == null) {
@@ -588,6 +532,16 @@ public class Partition<T> implements Iterable<T>, Closeable {
             return;
         }
         throw new JournalRuntimeException("Invalid column index: %d in %s", i, this);
+    }
+
+    void clearTx() {
+        applyTx(Journal.TX_LIMIT_EVAL, null);
+    }
+
+    void commit() throws JournalException {
+        for (int i = 0, k = indexProxies.size(); i < k; i++) {
+            indexProxies.getQuick(i).getIndex().commit();
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -608,9 +562,31 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
     }
 
+    void force() throws JournalException {
+        for (int i = 0, k = indexProxies.size(); i < k; i++) {
+            indexProxies.getQuick(i).getIndex().force();
+        }
+
+        if (columns != null) {
+            for (int i = 0; i < columns.length; i++) {
+                AbstractColumn column = Unsafe.arrayGet(columns, i);
+                if (column != null) {
+                    column.force();
+                }
+            }
+        }
+    }
+
     private FixedColumn getFixedWidthColumn(int i) {
         checkColumnIndex(i);
         return (FixedColumn) Unsafe.arrayGet(columns, i);
+    }
+
+    void getIndexPointers(long[] pointers) throws JournalException {
+        for (int i = 0, k = indexProxies.size(); i < k; i++) {
+            SymbolIndexProxy<T> proxy = indexProxies.getQuick(i);
+            pointers[proxy.getColumnIndex()] = proxy.getIndex().getTxAddress();
+        }
     }
 
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
@@ -674,6 +650,30 @@ public class Partition<T> implements Iterable<T>, Closeable {
             buf.limit(size);
             ((VariableColumn) Unsafe.arrayGet(columns, i)).getBin(localRowID, buf);
             buf.flip();
+        }
+    }
+
+    final void setPartitionDir(File partitionDir, long[] indexTxAddresses) {
+        boolean create = partitionDir != null && !partitionDir.equals(this.partitionDir);
+        this.partitionDir = partitionDir;
+        if (create) {
+            createSymbolIndexProxies(indexTxAddresses);
+        }
+    }
+
+    void truncate(long newSize) throws JournalException {
+        if (isOpen() && size() > newSize) {
+            for (int i = 0, k = indexProxies.size(); i < k; i++) {
+                indexProxies.getQuick(i).getIndex().truncate(newSize);
+            }
+            for (int i = 0; i < columns.length; i++) {
+                if (Unsafe.arrayGet(columns, i) != null) {
+                    Unsafe.arrayGet(columns, i).truncate(newSize);
+                }
+            }
+
+            commitColumns();
+            clearTx();
         }
     }
 }

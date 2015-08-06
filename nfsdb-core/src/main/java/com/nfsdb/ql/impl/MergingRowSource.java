@@ -1,23 +1,24 @@
-/*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+/*
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
- ******************************************************************************/
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.factory.configuration.JournalMetadata;
@@ -46,6 +47,29 @@ public class MergingRowSource implements RowSource, RowCursor {
     }
 
     @Override
+    public void prepare(SymFacade facade) {
+        lhs.prepare(facade);
+        rhs.prepare(facade);
+    }
+
+    @Override
+    public RowCursor prepareCursor(PartitionSlice slice) {
+        this.lhc = lhs.prepareCursor(slice);
+        this.rhc = rhs.prepareCursor(slice);
+        nxtl = -1;
+        nxtr = -1;
+        return this;
+    }
+
+    @Override
+    public void reset() {
+        this.lhs.reset();
+        this.rhs.reset();
+        this.nxtl = -1;
+        this.nxtr = -1;
+    }
+
+    @Override
     public boolean hasNext() {
         return nxtl > -1 || lhc.hasNext() || nxtr > -1 || rhc.hasNext();
     }
@@ -71,28 +95,5 @@ public class MergingRowSource implements RowSource, RowCursor {
         }
 
         return result;
-    }
-
-    @Override
-    public void prepare(SymFacade facade) {
-        lhs.prepare(facade);
-        rhs.prepare(facade);
-    }
-
-    @Override
-    public RowCursor prepareCursor(PartitionSlice slice) {
-        this.lhc = lhs.prepareCursor(slice);
-        this.rhc = rhs.prepareCursor(slice);
-        nxtl = -1;
-        nxtr = -1;
-        return this;
-    }
-
-    @Override
-    public void reset() {
-        this.lhs.reset();
-        this.rhs.reset();
-        this.nxtl = -1;
-        this.nxtr = -1;
     }
 }

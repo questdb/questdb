@@ -1,23 +1,23 @@
-/*******************************************************************************
- * _  _ ___ ___     _ _
+/*
+ *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- * <p>
+ *
  * Copyright (c) 2014-2015. The NFSdb project and its contributors.
- * <p>
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * <p>
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * <p>
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.parser;
 
@@ -120,19 +120,6 @@ public class JoinTest {
             Assert.assertEquals(12, e.getPosition());
             Assert.assertTrue(e.getMessage().contains("Journal does not exist"));
         }
-    }
-
-    @Test
-    public void testJoinSubQuery() throws Exception {
-        assertPlan("+ 0[ cross ] orders\n" +
-                        "+ 1[ inner ] {\n" +
-                        "  customers (filter: customerName ~ 'X')\n" +
-                        "} ON customerName = orderId\n" +
-                        "\n",
-                "orders" +
-                        " cross join (select customerId, customerName from customers where customerName ~ 'X')" +
-                        " where orderId = customerName");
-
     }
 
     @Test
@@ -313,6 +300,19 @@ public class JoinTest {
                         " join products on d.productId = products.productId" +
                         " join suppliers on products.supplier = suppliers.supplier" +
                         " where d.productId = d.orderId");
+    }
+
+    @Test
+    public void testJoinSubQuery() throws Exception {
+        assertPlan("+ 0[ cross ] orders\n" +
+                        "+ 1[ inner ] {\n" +
+                        "  customers (filter: customerName ~ 'X')\n" +
+                        "} ON customerName = orderId\n" +
+                        "\n",
+                "orders" +
+                        " cross join (select customerId, customerName from customers where customerName ~ 'X')" +
+                        " where orderId = customerName");
+
     }
 
     @Test

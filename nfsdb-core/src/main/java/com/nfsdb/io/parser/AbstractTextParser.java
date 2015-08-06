@@ -1,23 +1,24 @@
-/*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+/*
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
- ******************************************************************************/
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.nfsdb.io.parser;
 
 import com.nfsdb.collections.DirectByteCharSequence;
@@ -103,6 +104,31 @@ public abstract class AbstractTextParser implements TextParser {
         this.header = header;
     }
 
+    private void calcField() {
+        if (fields == null || fields.length == fieldIndex) {
+            DirectByteCharSequence sa[] = new DirectByteCharSequence[fieldIndex + 1];
+            if (fields != null) {
+                System.arraycopy(fields, 0, sa, 0, fieldIndex);
+            }
+            sa[fieldIndex] = new DirectByteCharSequence();
+            fields = sa;
+        }
+    }
+
+    private void growRollBuf(long len) {
+        LOGGER.warn("Resizing line roll buffer: " + lineRollBufLen + " -> " + len);
+        long p = Unsafe.getUnsafe().allocateMemory(len);
+        long l = lineRollBufCur - lineRollBufPtr;
+        if (l > 0) {
+            Unsafe.getUnsafe().copyMemory(lineRollBufPtr, p, l);
+        }
+        Unsafe.getUnsafe().freeMemory(lineRollBufPtr);
+        shift(lineRollBufPtr - p);
+        lineRollBufCur = p + l;
+        lineRollBufPtr = p;
+        lineRollBufLen = len;
+    }
+
     protected void ignoreEolOnce() {
         eol = true;
         fieldIndex = 0;
@@ -137,6 +163,17 @@ public abstract class AbstractTextParser implements TextParser {
         Unsafe.getUnsafe().copyMemory(lo + lastLineStart, lineRollBufPtr, l);
         lineRollBufCur = lineRollBufPtr + l;
         shift(lo + lastLineStart - lineRollBufPtr);
+    }
+
+    private void shift(long d) {
+        for (int i = 0; i < fieldIndex; i++) {
+            fields[i].lshift(d);
+        }
+        this.fieldLo -= d;
+        this.fieldHi -= d;
+        if (lastQuotePos > -1) {
+            this.lastQuotePos -= d;
+        }
     }
 
     protected void stashField() {
@@ -193,41 +230,5 @@ public abstract class AbstractTextParser implements TextParser {
     protected void uneol(long lo) {
         eol = false;
         this.lastLineStart = this.fieldLo - lo;
-    }
-
-    private void calcField() {
-        if (fields == null || fields.length == fieldIndex) {
-            DirectByteCharSequence sa[] = new DirectByteCharSequence[fieldIndex + 1];
-            if (fields != null) {
-                System.arraycopy(fields, 0, sa, 0, fieldIndex);
-            }
-            sa[fieldIndex] = new DirectByteCharSequence();
-            fields = sa;
-        }
-    }
-
-    private void growRollBuf(long len) {
-        LOGGER.warn("Resizing line roll buffer: " + lineRollBufLen + " -> " + len);
-        long p = Unsafe.getUnsafe().allocateMemory(len);
-        long l = lineRollBufCur - lineRollBufPtr;
-        if (l > 0) {
-            Unsafe.getUnsafe().copyMemory(lineRollBufPtr, p, l);
-        }
-        Unsafe.getUnsafe().freeMemory(lineRollBufPtr);
-        shift(lineRollBufPtr - p);
-        lineRollBufCur = p + l;
-        lineRollBufPtr = p;
-        lineRollBufLen = len;
-    }
-
-    private void shift(long d) {
-        for (int i = 0; i < fieldIndex; i++) {
-            fields[i].lshift(d);
-        }
-        this.fieldLo -= d;
-        this.fieldHi -= d;
-        if (lastQuotePos > -1) {
-            this.lastQuotePos -= d;
-        }
     }
 }

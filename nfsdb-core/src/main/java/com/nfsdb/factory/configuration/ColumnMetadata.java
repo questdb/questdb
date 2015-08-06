@@ -1,23 +1,24 @@
-/*******************************************************************************
- *   _  _ ___ ___     _ _
- *  | \| | __/ __| __| | |__
- *  | .` | _|\__ \/ _` | '_ \
- *  |_|\_|_| |___/\__,_|_.__/
+/*
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
  *
- *  Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2015. The NFSdb project and its contributors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
- ******************************************************************************/
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.nfsdb.factory.configuration;
 
 import com.nfsdb.storage.ColumnType;
@@ -56,26 +57,6 @@ public class ColumnMetadata implements RecordColumnMetadata {
     }
 
     @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-
-        ColumnMetadata that = (ColumnMetadata) o;
-
-        return avgSize == that.avgSize
-                && bitHint == that.bitHint
-                && distinctCountHint == that.distinctCountHint
-                && indexBitHint == that.indexBitHint
-                && indexed == that.indexed
-                && noCache == that.noCache
-                && size == that.size
-                && name.equals(that.name)
-                && !(sameAs != null ? !sameAs.equals(that.sameAs) : that.sameAs != null)
-                && type == that.type;
-
-    }
-
-    @Override
     public int getBucketCount() {
         return distinctCountHint;
     }
@@ -106,6 +87,11 @@ public class ColumnMetadata implements RecordColumnMetadata {
     }
 
     @Override
+    public boolean isIndexed() {
+        return indexed;
+    }
+
+    @Override
     public int hashCode() {
         int result = name.hashCode();
         result = 31 * result + type.hashCode();
@@ -120,21 +106,23 @@ public class ColumnMetadata implements RecordColumnMetadata {
     }
 
     @Override
-    public boolean isIndexed() {
-        return indexed;
-    }
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
 
-    public void read(HugeBuffer buf) {
-        name = buf.getStr();
-        type = ColumnType.valueOf(buf.getStr());
-        size = buf.getInt();
-        avgSize = buf.getInt();
-        indexed = buf.getBool();
-        bitHint = buf.getInt();
-        indexBitHint = buf.getInt();
-        distinctCountHint = buf.getInt();
-        sameAs = buf.getStr();
-        noCache = buf.getBool();
+        ColumnMetadata that = (ColumnMetadata) o;
+
+        return avgSize == that.avgSize
+                && bitHint == that.bitHint
+                && distinctCountHint == that.distinctCountHint
+                && indexBitHint == that.indexBitHint
+                && indexed == that.indexed
+                && noCache == that.noCache
+                && size == that.size
+                && name.equals(that.name)
+                && !(sameAs != null ? !sameAs.equals(that.sameAs) : that.sameAs != null)
+                && type == that.type;
+
     }
 
     @Override
@@ -152,6 +140,19 @@ public class ColumnMetadata implements RecordColumnMetadata {
                 ", sameAs='" + sameAs + '\'' +
                 ", noCache=" + noCache +
                 '}';
+    }
+
+    public void read(HugeBuffer buf) {
+        name = buf.getStr();
+        type = ColumnType.valueOf(buf.getStr());
+        size = buf.getInt();
+        avgSize = buf.getInt();
+        indexed = buf.getBool();
+        bitHint = buf.getInt();
+        indexBitHint = buf.getInt();
+        distinctCountHint = buf.getInt();
+        sameAs = buf.getStr();
+        noCache = buf.getBool();
     }
 
     public void write(HugeBuffer buf) {
