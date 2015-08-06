@@ -21,10 +21,9 @@
 
 package com.nfsdb.ql.model;
 
-import com.nfsdb.collections.IntHashSet;
-import com.nfsdb.collections.Mutable;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.collections.ObjectPoolFactory;
+import com.nfsdb.collections.*;
+import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.ql.RecordSource;
@@ -37,6 +36,9 @@ public class QueryModel implements Mutable {
     private final ObjList<String> groupBy = new ObjList<>();
     private final ObjList<ExprNode> orderBy = new ObjList<>();
     private final IntHashSet dependencies = new IntHashSet();
+    private final IntList orderedJoinModels1 = new IntList();
+    private final IntList orderedJoinModels2 = new IntList();
+    private final StringSink planSink = new StringSink();
     private ExprNode whereClause;
     // list of "and" concatenated expressions
     private ObjList<ExprNode> parsedWhere = new ObjList<>();
@@ -50,6 +52,8 @@ public class QueryModel implements Mutable {
     private JoinContext context;
     private ExprNode joinCriteria;
     private JoinType joinType;
+    private IntList orderedJoinModels = orderedJoinModels2;
+
 
     protected QueryModel() {
         joinModels.add(this);
@@ -182,6 +186,17 @@ public class QueryModel implements Mutable {
         return orderBy;
     }
 
+    public IntList getOrderedJoinModels() {
+        return orderedJoinModels;
+    }
+
+    public void setOrderedJoinModels(IntList that) {
+        if (that != orderedJoinModels1 && that != orderedJoinModels2) {
+            throw new JournalRuntimeException("Passing foreign list breaks convention");
+        }
+        this.orderedJoinModels = that;
+    }
+
     public ObjList<ExprNode> getParsedWhere() {
         return parsedWhere;
     }
@@ -214,6 +229,28 @@ public class QueryModel implements Mutable {
         return joinType == JoinType.CROSS || context == null || context.parents.size() == 0;
     }
 
+    /**
+     * Optimiser may be attempting to order join clauses several times.
+     * Every time ordering takes place optimiser will keep at most two lists:
+     * one is last known order the other is new order. If new order cost is better
+     * optimiser will replace last known order with new one.
+     * <p>
+     * To facilitate this behaviour the function will always return non-current list.
+     *
+     * @return non current order list.
+     */
+    public IntList nextOrderedJoinModels() {
+        IntList ordered = orderedJoinModels == orderedJoinModels1 ? orderedJoinModels2 : orderedJoinModels1;
+        ordered.clear();
+        return ordered;
+    }
+
+    public CharSequence plan() {
+        planSink.clear();
+        plan(planSink, 0);
+        return planSink;
+    }
+
     public void removeDependency(int index) {
         dependencies.remove(index);
     }
@@ -221,6 +258,100 @@ public class QueryModel implements Mutable {
     @Override
     public String toString() {
         return alias != null ? alias : (journalName != null ? journalName.token : "{" + nestedModel.toString() + "}");
+    }
+
+    private void plan(StringSink sink, int pad) {
+        ObjList<QueryModel> joinModels = getJoinModels();
+        if (joinModels.size() > 1) {
+            IntList ordered = getOrderedJoinModels();
+            for (int i = 0, n = ordered.size(); i < n; i++) {
+                final int index = ordered.getQuick(i);
+                final QueryModel m = joinModels.getQuick(index);
+                final JoinContext jc = m.getContext();
+
+                final boolean cross = jc == null || jc.parents.size() == 0;
+                sink.put(' ', pad).put('+').put(' ').put(index);
+
+                // join type
+                sink.put('[').put(' ');
+                if (m.getJoinType() == QueryModel.JoinType.CROSS || cross) {
+                    sink.put("cross");
+                } else if (m.getJoinType() == QueryModel.JoinType.INNER) {
+                    sink.put("inner");
+                } else {
+                    sink.put("outer");
+                }
+                sink.put(' ').put(']').put(' ');
+
+                // journal name/alias
+                if (m.getAlias() != null) {
+                    sink.put(m.getAlias());
+                } else if (m.getJournalName() != null) {
+                    sink.put(m.getJournalName().token);
+                } else {
+                    sink.put('{').put('\n');
+                    m.getNestedModel().plan(sink, pad + 2);
+                    sink.put('}');
+                }
+
+                // pre-filter
+                ExprNode filter = getJoinModels().getQuick(index).getWhereClause();
+                if (filter != null) {
+                    sink.put(" (filter: ");
+                    filter.toString(sink);
+                    sink.put(')');
+                }
+
+                // join clause
+                if (!cross && jc.aIndexes.size() > 0) {
+                    sink.put(" ON ");
+                    for (int k = 0, z = jc.aIndexes.size(); k < z; k++) {
+                        if (k > 0) {
+                            sink.put(" and ");
+                        }
+                        jc.aNodes.getQuick(k).toString(sink);
+                        sink.put(" = ");
+                        jc.bNodes.getQuick(k).toString(sink);
+                    }
+                }
+
+                // post-filter
+                filter = m.getPostJoinWhereClause();
+                if (filter != null) {
+                    sink.put(" (post-filter: ");
+                    filter.toString(sink);
+                    sink.put(')');
+                }
+                sink.put('\n');
+            }
+        } else {
+            sink.put(' ', pad);
+            // journal name/alias
+            if (getAlias() != null) {
+                sink.put(getAlias());
+            } else if (getJournalName() != null) {
+                sink.put(getJournalName().token);
+            } else {
+                getNestedModel().plan(sink, pad + 2);
+            }
+
+            // pre-filter
+            ExprNode filter = getWhereClause();
+            if (filter != null) {
+                sink.put(" (filter: ");
+                filter.toString(sink);
+                sink.put(')');
+            }
+
+            ExprNode latestBy = getLatestBy();
+            if (latestBy != null) {
+                sink.put(" (latest by: ");
+                latestBy.toString(sink);
+                sink.put(')');
+            }
+
+        }
+        sink.put('\n');
     }
 
     public enum JoinType {

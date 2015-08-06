@@ -60,7 +60,6 @@ public class RecordSourceBuilder {
     private final CharSequenceIntHashMap joinMetadataIndexLookup = new CharSequenceIntHashMap();
     private final ObjectPool<ExprNode> exprNodePool = new ObjectPool<>(ExprNode.FACTORY, 16);
     private final IntHashSet deletedContexts = new IntHashSet();
-    //    private final IntObjHashMap<ExprNode> postFilters = new IntObjHashMap<>();
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
     private final ObjectPool<JoinContext> contextPool = new ObjectPool<>(JoinContext.FACTORY, 16);
@@ -71,7 +70,6 @@ public class RecordSourceBuilder {
     private final IntList literalCollectorBIndexes = new IntList();
     private final ObjList<CharSequence> literalCollectorBNames = new ObjList<>();
     private final LiteralCollector literalCollector = new LiteralCollector();
-    private final StringSink planSink = new StringSink();
     private final IntStack orderingStack = new IntStack();
     private final IntList tempCrosses = new IntList();
     private final IntList tempCrossIndexes = new IntList();
@@ -87,9 +85,6 @@ public class RecordSourceBuilder {
         }
     }, 16);
     private final ArrayDeque<ExprNode> andConditionStack = new ArrayDeque<>();
-    private final IntList orderedJournals1 = new IntList();
-    private final IntList orderedJournals2 = new IntList();
-    private IntList orderedJournals;
     private ObjList<JoinContext> emittedJoinClauses;
 
     public RecordSourceBuilder() {
@@ -105,11 +100,12 @@ public class RecordSourceBuilder {
     public RecordSource<? extends Record> compileX(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
 
         ObjList<QueryModel> joinModels = model.getJoinModels();
+        IntList ordered = model.getOrderedJoinModels();
         try {
             RecordSource<? extends Record> current = null;
 
-            for (int i = 0, n = orderedJournals.size(); i < n; i++) {
-                int index = orderedJournals.getQuick(i);
+            for (int i = 0, n = ordered.size(); i < n; i++) {
+                int index = ordered.getQuick(i);
                 QueryModel m = joinModels.getQuick(index);
 
                 // compile
@@ -218,75 +214,6 @@ public class RecordSourceBuilder {
         return this;
     }
 
-    public CharSequence plan(QueryModel parent) {
-        ObjList<QueryModel> joinModels = parent.getJoinModels();
-        planSink.clear();
-        for (int i = 0, n = orderedJournals.size(); i < n; i++) {
-            final int index = orderedJournals.getQuick(i);
-            final QueryModel m = joinModels.getQuick(index);
-            final JoinContext jc = m.getContext();
-
-            final boolean cross = jc == null || jc.parents.size() == 0;
-            planSink.put('+').put(' ').put(index);
-
-            // join type
-            planSink.put('[').put(' ');
-            if (m.getJoinType() == QueryModel.JoinType.CROSS || cross) {
-                planSink.put("cross");
-            } else if (m.getJoinType() == QueryModel.JoinType.INNER) {
-                planSink.put("inner");
-            } else {
-                planSink.put("outer");
-            }
-            planSink.put(' ').put(']').put(' ');
-
-            // journal name/alias
-            if (m.getAlias() != null) {
-                planSink.put(m.getAlias());
-            } else if (m.getJournalName() != null) {
-                planSink.put(m.getJournalName().token);
-            } else {
-                planSink.put("subquery");
-            }
-
-            // pre-filter
-            ExprNode filter = parent.getJoinModels().getQuick(index).getWhereClause();
-            if (filter != null) {
-                planSink.put(" (filter: ");
-                filter.toString(planSink);
-                planSink.put(')');
-            }
-
-            // join clause
-            if (!cross && jc.aIndexes.size() > 0) {
-                planSink.put(" ON ");
-                for (int k = 0, z = jc.aIndexes.size(); k < z; k++) {
-                    if (k > 0) {
-                        planSink.put(" and ");
-                    }
-                    jc.aNodes.getQuick(k).toString(planSink);
-                    planSink.put(" = ");
-                    jc.bNodes.getQuick(k).toString(planSink);
-                }
-            }
-
-            // post-filter
-            filter = m.getPostJoinWhereClause();
-            if (filter != null) {
-                planSink.put(" (post-filter: ");
-                filter.toString(planSink);
-                planSink.put(')');
-            }
-
-            planSink.put('\n');
-        }
-
-
-        planSink.put('\n');
-
-        return planSink;
-    }
-
     private void addFilterOrEmitJoin(QueryModel parent, int idx, int ai, CharSequence an, ExprNode ao, int bi, CharSequence bn, ExprNode bo) {
         if (ai == bi && Chars.equals(an, bn)) {
             deletedContexts.add(idx);
@@ -352,8 +279,9 @@ public class RecordSourceBuilder {
      */
     private void alignJoinFields(QueryModel parent) {
         ObjList<QueryModel> joinModels = parent.getJoinModels();
-        for (int i = 0, n = orderedJournals.size(); i < n; i++) {
-            JoinContext jc = joinModels.getQuick(orderedJournals.getQuick(i)).getContext();
+        IntList ordered = parent.getOrderedJoinModels();
+        for (int i = 0, n = ordered.size(); i < n; i++) {
+            JoinContext jc = joinModels.getQuick(ordered.getQuick(i)).getContext();
             if (jc != null) {
                 int index = jc.slaveIndex;
                 for (int k = 0, kc = jc.aIndexes.size(); k < kc; k++) {
@@ -1289,9 +1217,10 @@ public class RecordSourceBuilder {
             postFilterThrowawayNames.clear();
         }
 
+        IntList ordered = parent.getOrderedJoinModels();
         // match journal references to set of journals in join order
-        for (int i = 0, n = orderedJournals.size(); i < n; i++) {
-            int index = orderedJournals.getQuick(i);
+        for (int i = 0, n = ordered.size(); i < n; i++) {
+            int index = ordered.getQuick(i);
             postFilterAvailable.add(index);
 
             for (int k = 0; k < pc; k++) {
@@ -1367,19 +1296,12 @@ public class RecordSourceBuilder {
                 }
             }
 
-            IntList ordered;
-            if (orderedJournals == orderedJournals1) {
-                ordered = orderedJournals2;
-            } else {
-                ordered = orderedJournals1;
-            }
-
-            ordered.clear();
+            IntList ordered = parent.nextOrderedJoinModels();
             int thisCost = orderJournals(parent, ordered);
             if (thisCost < cost) {
                 root = z;
                 cost = thisCost;
-                orderedJournals = ordered;
+                parent.setOrderedJoinModels(ordered);
             }
         }
 

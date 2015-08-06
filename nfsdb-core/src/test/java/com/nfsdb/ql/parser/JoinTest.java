@@ -125,7 +125,9 @@ public class JoinTest {
     @Test
     public void testJoinSubQuery() throws Exception {
         assertPlan("+ 0[ cross ] orders\n" +
-                        "+ 1[ inner ] subquery ON customerName = orderId\n" +
+                        "+ 1[ inner ] {\n" +
+                        "  customers (filter: customerName ~ 'X')\n" +
+                        "} ON customerName = orderId\n" +
                         "\n",
                 "orders" +
                         " cross join (select customerId, customerName from customers where customerName ~ 'X')" +
@@ -686,7 +688,7 @@ public class JoinTest {
         parser.setContent(query);
         QueryModel model = parser.parse().getQueryModel();
         joinOptimiser.optimise(model, factory);
-        TestUtils.assertEquals(expected, joinOptimiser.plan(model));
+        TestUtils.assertEquals(expected, model.plan());
     }
 
     private void assertQuery(String expected, String query) throws ParserException, JournalException {
