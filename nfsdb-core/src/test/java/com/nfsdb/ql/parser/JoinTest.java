@@ -123,6 +123,17 @@ public class JoinTest {
     }
 
     @Test
+    public void testJoinSubQuery() throws Exception {
+        assertPlan("+ 0[ cross ] orders\n" +
+                        "+ 1[ inner ] subquery ON customerName = orderId\n" +
+                        "\n",
+                "orders" +
+                        " cross join (select customerId, customerName from customers where customerName ~ 'X')" +
+                        " where orderId = customerName");
+
+    }
+
+    @Test
     public void testJoinCycle() throws Exception {
         assertPlan("+ 0[ cross ] orders\n" +
                         "+ 3[ inner ] products (filter: products.productId = products.supplier) ON products.supplier = orders.orderId\n" +

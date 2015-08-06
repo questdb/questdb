@@ -211,7 +211,7 @@ public class QueryModel implements Mutable {
 
     @Override
     public String toString() {
-        return alias != null ? alias : journalName.token;
+        return alias != null ? alias : (journalName != null ? journalName.token : "{" + nestedModel.toString() + "}");
     }
 
     public enum JoinType {
