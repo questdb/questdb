@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,16 +17,16 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.model;
 
-import com.nfsdb.collections.ObjHashSet;
+import com.nfsdb.collections.CharSequenceHashSet;
 import com.nfsdb.ql.impl.IntervalSource;
 import com.nfsdb.utils.Dates;
 
 public class IntrinsicModel {
-    public final ObjHashSet<String> keyValues = new ObjHashSet<>();
+    public final CharSequenceHashSet keyValues = new CharSequenceHashSet(true);
     public String keyColumn;
     public long intervalLo = Long.MIN_VALUE;
     public long intervalHi = Long.MAX_VALUE;

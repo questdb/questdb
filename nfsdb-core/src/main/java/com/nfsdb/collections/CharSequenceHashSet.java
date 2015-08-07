@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.collections;
 
@@ -33,6 +33,7 @@ public class CharSequenceHashSet implements Mutable {
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final double loadFactor;
     private final ObjList<CharSequence> list;
+    private final CharSequenceHashSet temp;
     private CharSequence[] keys;
     private int free;
     private int capacity;
@@ -42,11 +43,15 @@ public class CharSequenceHashSet implements Mutable {
         this(MIN_INITIAL_CAPACITY);
     }
 
-    public CharSequenceHashSet(int initialCapacity) {
-        this(initialCapacity, 0.4f, 0.3f);
+    public CharSequenceHashSet(boolean mktemp) {
+        this(MIN_INITIAL_CAPACITY, 0.4, 0.3, mktemp);
     }
 
-    public CharSequenceHashSet(int initialCapacity, double loadFactor, double hashFactor) {
+    public CharSequenceHashSet(int initialCapacity) {
+        this(initialCapacity, 0.4, 0.3, false);
+    }
+
+    public CharSequenceHashSet(int initialCapacity, double loadFactor, double hashFactor, boolean mktemp) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
@@ -62,6 +67,11 @@ public class CharSequenceHashSet implements Mutable {
         mask = keys.length - 1;
         free = this.capacity = initialCapacity;
         this.list = new ObjList<>(free);
+        if (mktemp) {
+            temp = new CharSequenceHashSet(false);
+        } else {
+            temp = null;
+        }
         clear();
     }
 
@@ -71,6 +81,12 @@ public class CharSequenceHashSet implements Mutable {
             if (free == 0) {
                 rehash();
             }
+        }
+    }
+
+    public void addAll(CharSequenceHashSet that) {
+        for (int i = 0, k = that.size(); i < k; i++) {
+            add(that.get(i));
         }
     }
 
@@ -102,6 +118,22 @@ public class CharSequenceHashSet implements Mutable {
                 return true;
             }
             return probeRemove(key, index);
+        }
+        return false;
+    }
+
+    public boolean replaceAllWithOverlap(CharSequenceHashSet that) {
+        temp.clear();
+        for (int i = 0, k = that.size(); i < k; i++) {
+            if (contains(that.get(i))) {
+                temp.add(that.get(i));
+            }
+        }
+
+        if (temp.size() > 0) {
+            this.clear();
+            addAll(temp);
+            return true;
         }
         return false;
     }

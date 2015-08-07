@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,13 +17,13 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.Partition;
+import com.nfsdb.collections.CharSequenceHashSet;
 import com.nfsdb.collections.LongList;
-import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalMetadata;
@@ -41,14 +41,14 @@ public class KvIndexStrListHeadRowSource extends AbstractRowSource {
 
     private final String column;
     private final VirtualColumn filter;
-    private final ObjHashSet<String> values;
+    private final CharSequenceHashSet values;
     private final LongList rows = new LongList();
     private JournalRecord rec;
     private int keyIndex;
     private int buckets;
     private int columnIndex;
 
-    public KvIndexStrListHeadRowSource(String column, ObjHashSet<String> values, VirtualColumn filter) {
+    public KvIndexStrListHeadRowSource(String column, CharSequenceHashSet values, VirtualColumn filter) {
         this.column = column;
         this.values = values;
         this.filter = filter;

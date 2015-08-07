@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,12 +17,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
+import com.nfsdb.collections.CharSequenceHashSet;
 import com.nfsdb.collections.FlyweightCharSequence;
-import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.RecordMetadata;
@@ -47,7 +47,7 @@ public class IntrinsicExtractor {
     private final ObjList<ExprNode> keyNodes = new ObjList<>();
     private final ObjList<ExprNode> timestampNodes = new ObjList<>();
     private final IntrinsicModel model = new IntrinsicModel();
-    private final ObjHashSet<String> tempKeys = new ObjHashSet<>();
+    private final CharSequenceHashSet tempKeys = new CharSequenceHashSet();
     private RecordColumnMetadata timestamp;
     private String preferredKeyColumn;
 

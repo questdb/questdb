@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.collections;
 
@@ -37,7 +37,6 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
     private static final Object noEntryValue = new Object();
     private final double loadFactor;
     private final ObjList<T> list;
-    private final ObjHashSet<T> temp;
     private T[] keys;
     private int free;
     private int capacity;
@@ -48,17 +47,11 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
     }
 
     public ObjHashSet(int initialCapacity) {
-        this(initialCapacity, 0.4f, 0.3f, true);
+        this(initialCapacity, 0.4f, 0.3f);
     }
 
     @SuppressWarnings("unchecked")
-    public ObjHashSet(int initialCapacity, double loadFactor, double hashFactor, boolean makeTemp) {
-        if (makeTemp) {
-            temp = new ObjHashSet<>(MIN_INITIAL_CAPACITY, loadFactor, hashFactor, false);
-        } else {
-            temp = null;
-        }
-
+    public ObjHashSet(int initialCapacity, double loadFactor, double hashFactor) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
@@ -75,12 +68,6 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
         free = this.capacity = initialCapacity;
         this.list = new ObjList<>(free);
         clear();
-    }
-
-    public void addAll(ObjHashSet<T> that) {
-        for (int i = 0, k = that.size(); i < k; i++) {
-            add(that.get(i));
-        }
     }
 
     public T get(int index) {
@@ -137,22 +124,6 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
     @Override
     public String toString() {
         return list.toString();
-    }
-
-    public boolean replaceAllWithOverlap(ObjHashSet<T> that) {
-        temp.clear();
-        for (int i = 0, k = that.size(); i < k; i++) {
-            if (contains(that.get(i))) {
-                temp.add(that.get(i));
-            }
-        }
-
-        if (temp.size() > 0) {
-            this.clear();
-            addAll(temp);
-            return true;
-        }
-        return false;
     }
 
     private int idx(T key) {

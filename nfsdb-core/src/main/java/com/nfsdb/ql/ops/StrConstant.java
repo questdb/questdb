@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.ops;
 
@@ -25,13 +25,14 @@ import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.SymFacade;
 import com.nfsdb.storage.ColumnType;
+import com.nfsdb.utils.Chars;
 
 public class StrConstant extends AbstractVirtualColumn {
     private final String value;
 
-    public StrConstant(String value) {
+    public StrConstant(CharSequence value) {
         super(ColumnType.STRING);
-        this.value = value;
+        this.value = Chars.toString(value);
     }
 
     @Override
