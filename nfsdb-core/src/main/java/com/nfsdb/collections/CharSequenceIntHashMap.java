@@ -31,7 +31,8 @@ import java.util.Arrays;
 public class CharSequenceIntHashMap implements Mutable {
     private static final int MIN_INITIAL_CAPACITY = 16;
     private static final int NO_ENTRY_VALUE = -1;
-    private static final CharSequence noEntryValue = new NullCharSequence();
+    private static final CharSequence noEntryKey = new NullCharSequence();
+    private final int noEntryValue;
     private final double loadFactor;
     private CharSequence[] keys;
     private int[] values;
@@ -44,11 +45,12 @@ public class CharSequenceIntHashMap implements Mutable {
     }
 
     public CharSequenceIntHashMap(int initialCapacity) {
-        this(initialCapacity, 0.5);
+        this(initialCapacity, 0.5, NO_ENTRY_VALUE);
     }
 
     @SuppressWarnings("unchecked")
-    public CharSequenceIntHashMap(int initialCapacity, double loadFactor) {
+    public CharSequenceIntHashMap(int initialCapacity, double loadFactor, int noEntryValue) {
+        this.noEntryValue = noEntryValue;
         int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
         capacity = capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);
         this.loadFactor = loadFactor;
@@ -60,14 +62,14 @@ public class CharSequenceIntHashMap implements Mutable {
     }
 
     public final void clear() {
-        Arrays.fill(keys, noEntryValue);
+        Arrays.fill(keys, noEntryKey);
     }
 
     public int get(CharSequence key) {
         int index = Chars.hashCode(key) & mask;
 
-        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-            return NO_ENTRY_VALUE;
+        if (Unsafe.arrayGet(keys, index) == noEntryKey) {
+            return noEntryValue;
         }
 
         if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
@@ -79,7 +81,7 @@ public class CharSequenceIntHashMap implements Mutable {
 
     public boolean put(CharSequence key, int value) {
         int index = Chars.hashCode(key) & mask;
-        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
+        if (Unsafe.arrayGet(keys, index) == noEntryKey) {
             Unsafe.arrayPut(keys, index, key);
             Unsafe.arrayPut(values, index, value);
             free--;
@@ -97,6 +99,21 @@ public class CharSequenceIntHashMap implements Mutable {
         return probeInsert(key, index, value);
     }
 
+    public boolean putIfAbsent(CharSequence key, int value) {
+        int index = key.hashCode() & mask;
+        if (Unsafe.arrayGet(keys, index) == noEntryKey) {
+            keys[index] = key;
+            values[index] = value;
+            free--;
+            if (free == 0) {
+                rehash();
+            }
+            return true;
+        }
+
+        return !Chars.equals(Unsafe.arrayGet(keys, index), key) && probeInsertIfAbsent(key, index, value);
+    }
+
     public int size() {
         return capacity - free;
     }
@@ -104,8 +121,8 @@ public class CharSequenceIntHashMap implements Mutable {
     private int probe(CharSequence key, int index) {
         do {
             index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-                return NO_ENTRY_VALUE;
+            if (Unsafe.arrayGet(keys, index) == noEntryKey) {
+                return noEntryValue;
             }
             if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
                 return Unsafe.arrayGet(values, index);
@@ -116,7 +133,7 @@ public class CharSequenceIntHashMap implements Mutable {
     private boolean probeInsert(CharSequence key, int index, int value) {
         do {
             index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryValue) {
+            if (Unsafe.arrayGet(keys, index) == noEntryKey) {
                 Unsafe.arrayPut(keys, index, key);
                 Unsafe.arrayPut(values, index, value);
                 free--;
@@ -133,6 +150,25 @@ public class CharSequenceIntHashMap implements Mutable {
         } while (true);
     }
 
+    private boolean probeInsertIfAbsent(CharSequence key, int index, int value) {
+        do {
+            index = (index + 1) & mask;
+            if (Unsafe.arrayGet(keys, index) == noEntryKey) {
+                Unsafe.arrayPut(keys, index, key);
+                Unsafe.arrayPut(values, index, value);
+                free--;
+                if (free == 0) {
+                    rehash();
+                }
+                return true;
+            }
+
+            if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
+                return false;
+            }
+        } while (true);
+    }
+
     private void rehash() {
 
         int newCapacity = values.length << 1;
@@ -142,10 +178,10 @@ public class CharSequenceIntHashMap implements Mutable {
         CharSequence[] oldKeys = keys;
         this.keys = new CharSequence[newCapacity];
         this.values = new int[newCapacity];
-        Arrays.fill(keys, noEntryValue);
+        Arrays.fill(keys, noEntryKey);
 
         for (int i = oldKeys.length; i-- > 0; ) {
-            if (Unsafe.arrayGet(oldKeys, i) != noEntryValue) {
+            if (Unsafe.arrayGet(oldKeys, i) != noEntryKey) {
                 put(Unsafe.arrayGet(oldKeys, i), Unsafe.arrayGet(oldValues, i));
             }
         }

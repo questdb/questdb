@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,11 +17,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl;
 
-import com.nfsdb.collections.ObjIntHashMap;
+import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.RecordMetadata;
@@ -31,7 +31,7 @@ public class VirtualRecordMetadata implements RecordMetadata {
     private final RecordMetadata base;
     private final ObjList<VirtualColumn> virtualColumns;
     private final int split;
-    private final ObjIntHashMap<CharSequence> nameToIndexMap = new ObjIntHashMap<>();
+    private final CharSequenceIntHashMap nameToIndexMap = new CharSequenceIntHashMap();
 
     public VirtualRecordMetadata(RecordMetadata base, ObjList<VirtualColumn> virtualColumns) {
         this.base = base;

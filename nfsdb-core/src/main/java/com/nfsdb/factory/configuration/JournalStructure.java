@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,12 +17,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.factory.configuration;
 
 import com.nfsdb.PartitionType;
-import com.nfsdb.collections.ObjIntHashMap;
+import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.storage.ColumnType;
@@ -44,7 +44,7 @@ import java.util.concurrent.TimeUnit;
 public class JournalStructure implements MetadataBuilder<Object> {
     private static final Logger LOGGER = Logger.getLogger(JournalStructure.class);
     private final List<ColumnMetadata> metadata = new ArrayList<>();
-    private final ObjIntHashMap<String> nameToIndexMap = new ObjIntHashMap<>();
+    private final CharSequenceIntHashMap nameToIndexMap = new CharSequenceIntHashMap();
     private String location;
     private int tsColumnIndex = -1;
     private PartitionType partitionBy = PartitionType.NONE;

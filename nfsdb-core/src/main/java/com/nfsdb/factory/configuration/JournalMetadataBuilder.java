@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,12 +17,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.factory.configuration;
 
 import com.nfsdb.PartitionType;
-import com.nfsdb.collections.ObjIntHashMap;
+import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.collections.ObjObjHashMap;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.storage.ColumnType;
@@ -43,7 +43,7 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
     private final ObjObjHashMap<String, ColumnMetadata> columnMetadata = new ObjObjHashMap<>();
     private final Class<T> modelClass;
     private Constructor<T> constructor;
-    private ObjIntHashMap<String> nameToIndexMap;
+    private CharSequenceIntHashMap nameToIndexMap;
     private String location;
     private int tsColumnIndex = -1;
     private PartitionType partitionBy = PartitionType.NONE;
@@ -248,7 +248,7 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
 
         List<Field> classFields = getAllFields(new ArrayList<Field>(), modelClass);
 
-        this.nameToIndexMap = new ObjIntHashMap<>(classFields.size());
+        this.nameToIndexMap = new CharSequenceIntHashMap(classFields.size());
         this.location = modelClass.getCanonicalName();
 
         for (int i = 0; i < classFields.size(); i++) {

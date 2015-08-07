@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,11 +17,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.collections;
 
-import com.nfsdb.collections.ObjIntHashMap;
+import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.RecordMetadata;
@@ -30,13 +30,13 @@ import java.util.List;
 
 public final class MapMetadata implements RecordMetadata {
 
-    private final ObjIntHashMap<CharSequence> nameCache;
+    private final CharSequenceIntHashMap nameCache;
     private final int columnCount;
     private final RecordColumnMetadata[] columns;
 
     public MapMetadata(List<RecordColumnMetadata> valueColumns, List<RecordColumnMetadata> keyColumns) {
         this.columnCount = valueColumns.size() + keyColumns.size();
-        this.nameCache = new ObjIntHashMap<>(columnCount);
+        this.nameCache = new CharSequenceIntHashMap(columnCount);
         this.columns = new RecordColumnMetadata[columnCount];
         int split = valueColumns.size();
 

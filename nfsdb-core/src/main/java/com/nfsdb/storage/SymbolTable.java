@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,13 +17,13 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.storage;
 
 import com.nfsdb.JournalMode;
 import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.collections.ObjIntHashMap;
+import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalInvalidSymbolValueException;
@@ -44,7 +44,7 @@ public class SymbolTable implements Closeable {
     private static final double CACHE_LOAD_FACTOR = 0.2;
     private final int hashKeyCount;
     private final String column;
-    private final ObjIntHashMap<CharSequence> valueCache;
+    private final CharSequenceIntHashMap valueCache;
     private final ObjList<String> keyCache;
     private final boolean noCache;
     private final Iter iter = new Iter();
@@ -78,7 +78,7 @@ public class SymbolTable implements Closeable {
         this.size = size;
 
         this.index = new KVIndex(new File(directory, column + HASH_INDEX_FILE_SUFFIX), this.hashKeyCount, keyCount, txCountHint, mode, indexTxAddress);
-        this.valueCache = new ObjIntHashMap<>(noCache ? 0 : keyCount, VALUE_NOT_FOUND);
+        this.valueCache = new CharSequenceIntHashMap(noCache ? 0 : keyCount, 0.5, VALUE_NOT_FOUND);
         this.keyCache = new ObjList<>(noCache ? 0 : keyCount);
     }
 

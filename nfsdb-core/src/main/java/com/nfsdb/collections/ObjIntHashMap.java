@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.collections;
 
@@ -43,10 +43,6 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
 
     public ObjIntHashMap() {
         this(8);
-    }
-
-    public ObjIntHashMap(int initialCapacity, int noKeyValue) {
-        this(initialCapacity, 0.5, noKeyValue);
     }
 
     public ObjIntHashMap(int initialCapacity) {

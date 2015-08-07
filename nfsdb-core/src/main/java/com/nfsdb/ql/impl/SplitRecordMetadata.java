@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,18 +17,18 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl;
 
-import com.nfsdb.collections.ObjIntHashMap;
+import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.RecordMetadata;
 
 public class SplitRecordMetadata implements RecordMetadata {
     private final int columnCount;
-    private final ObjIntHashMap<CharSequence> columnIndices;
+    private final CharSequenceIntHashMap columnIndices;
     private final RecordColumnMetadata[] columns;
     private final RecordColumnMetadata timestampMetadata;
 
@@ -37,7 +37,7 @@ public class SplitRecordMetadata implements RecordMetadata {
         int split = a.getColumnCount();
         this.timestampMetadata = a.getTimestampMetadata();
         this.columnCount = split + b.getColumnCount();
-        this.columnIndices = new ObjIntHashMap<>(columnCount);
+        this.columnIndices = new CharSequenceIntHashMap(columnCount);
         this.columns = new RecordColumnMetadata[columnCount];
 
         for (int i = 0; i < split; i++) {
