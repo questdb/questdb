@@ -224,7 +224,7 @@ public final class TestUtils {
 
     public static void assertEquals(CharSequence expected, CharSequence actual) {
         if (expected.length() != actual.length()) {
-            Assert.fail("Expected \"" + expected + "\" but have \"" + actual + "\" (length: " + expected.length() + " vs " + actual.length() + ")");
+            Assert.fail("Expected: \n`" + expected + "`\n but have \n`" + actual + "`\n (length: " + expected.length() + " vs " + actual.length() + ")");
         }
         Assert.assertEquals(expected.length(), actual.length());
         for (int i = 0; i < expected.length(); i++) {

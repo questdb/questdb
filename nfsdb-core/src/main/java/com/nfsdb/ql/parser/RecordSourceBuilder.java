@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.parser;
 
@@ -73,7 +73,7 @@ public class RecordSourceBuilder {
     private final IntList tempCrosses = new IntList();
     private final IntList tempCrossIndexes = new IntList();
     private final IntHashSet postFilterRemoved = new IntHashSet();
-    private final IntHashSet postFilterAvailable = new IntHashSet();
+    private final IntHashSet journalsSoFar = new IntHashSet();
     private final ObjList<IntList> postFilterJournalRefs = new ObjList<>();
     private final ObjList<CharSequence> postFilterThrowawayNames = new ObjList<>();
     private final ObjectPool<IntList> intListPool = new ObjectPool<>(new ObjectPoolFactory<IntList>() {
@@ -149,6 +149,10 @@ public class RecordSourceBuilder {
         QueryModel m = parent.getJoinModels().getQuick(index);
         ExprNode old = m.getWhereClause();
 
+        if (filter == old) {
+            return;
+        }
+
         if (old == null) {
             m.setWhereClause(filter);
         } else {
@@ -199,6 +203,7 @@ public class RecordSourceBuilder {
         literalCollectorBNames.clear();
 
         literalCollector.withParent(parent);
+        literalCollector.resetNullCount();
         traversalAlgo.traverse(node.lhs, literalCollector.lhs());
         traversalAlgo.traverse(node.rhs, literalCollector.rhs());
 
@@ -323,83 +328,78 @@ public class RecordSourceBuilder {
     }
 
     private RecordSource<? extends Record> compile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-        return selectColumns(optimise(model, factory).compile0(model, factory), model.getColumns());
-    }
-
-    private RecordSource<? extends Record> compile0(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-        return model.getJoinModels().size() > 1 ? compileJoins(model, factory) : compile1(model, factory);
-    }
-
-    private RecordSource<? extends Record> compile1(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-        return model.getJournalName() != null ? compileSingleJournal(model, factory) : compileSubQuery(model, factory);
+        return selectColumns(
+                model.getJoinModels().size() > 1 ?
+                        optimise(model, factory).compileJoins(model, factory) :
+                        optimise(model, factory).compileSingleOrSubquery(model, factory), model.getColumns()
+        );
     }
 
     private RecordSource<? extends Record> compileJoins(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
 
         ObjList<QueryModel> joinModels = model.getJoinModels();
         IntList ordered = model.getOrderedJoinModels();
-        try {
-            RecordSource<? extends Record> current = null;
+        RecordSource<? extends Record> current = null;
 
-            for (int i = 0, n = ordered.size(); i < n; i++) {
-                int index = ordered.getQuick(i);
-                QueryModel m = joinModels.getQuick(index);
+        for (int i = 0, n = ordered.size(); i < n; i++) {
+            int index = ordered.getQuick(i);
+            QueryModel m = joinModels.getQuick(index);
 
-                // compile
-                RecordSource<? extends Record> rs = compile1(m, factory);
-
-                // check if this is the root of joins
-                if (current == null) {
-                    current = rs;
-                } else {
-                    // not the root, join to "current"
-                    if (m.getJoinType() == QueryModel.JoinType.CROSS) {
-                        // there are fields to analyse
-                        current = new CrossJoinRecordSource(current, rs);
-                    } else {
-                        JoinContext jc = m.getContext();
-                        RecordMetadata bm = current.getMetadata();
-                        RecordMetadata am = rs.getMetadata();
-
-                        ObjList<CharSequence> masterCols = null;
-                        ObjList<CharSequence> slaveCols = null;
-
-                        for (int k = 0, kn = jc.aIndexes.size(); k < kn; k++) {
-
-                            CharSequence ca = jc.aNames.getQuick(k);
-                            CharSequence cb = jc.bNames.getQuick(k);
-
-                            if (am.getColumn(ca).getType() != bm.getColumn(cb).getType()) {
-                                throw new ParserException(jc.aNodes.getQuick(k).position, "Column type mismatch");
-                            }
-
-                            if (masterCols == null) {
-                                masterCols = new ObjList<>();
-                            }
-
-                            if (slaveCols == null) {
-                                slaveCols = new ObjList<>();
-                            }
-
-                            masterCols.add(cb);
-                            slaveCols.add(ca);
-                        }
-                        current = new HashJoinRecordSource(current, masterCols, rs, slaveCols, m.getJoinType() == QueryModel.JoinType.OUTER);
-                    }
-                }
-
-                // check if there are post-filters
-                ExprNode filter = m.getPostJoinWhereClause();
-                if (filter != null) {
-                    current = new FilteredJournalRecordSource(current, createVirtualColumn(filter, current.getMetadata()));
-                }
-
+            // compile
+            RecordSource<? extends Record> rs = m.getRecordSource();
+            if (rs == null) {
+                rs = compileSingleOrSubquery(m, factory);
             }
 
-            return current;
-        } finally {
-            clearState();
+            // check if this is the root of joins
+            if (current == null) {
+                current = rs;
+            } else {
+                // not the root, join to "current"
+                if (m.getJoinType() == QueryModel.JoinType.CROSS) {
+                    // there are fields to analyse
+                    current = new CrossJoinRecordSource(current, rs);
+                } else {
+                    JoinContext jc = m.getContext();
+                    RecordMetadata bm = current.getMetadata();
+                    RecordMetadata am = rs.getMetadata();
+
+                    ObjList<CharSequence> masterCols = null;
+                    ObjList<CharSequence> slaveCols = null;
+
+                    for (int k = 0, kn = jc.aIndexes.size(); k < kn; k++) {
+
+                        CharSequence ca = jc.aNames.getQuick(k);
+                        CharSequence cb = jc.bNames.getQuick(k);
+
+                        if (am.getColumn(ca).getType() != bm.getColumn(cb).getType()) {
+                            throw new ParserException(jc.aNodes.getQuick(k).position, "Column type mismatch");
+                        }
+
+                        if (masterCols == null) {
+                            masterCols = new ObjList<>();
+                        }
+
+                        if (slaveCols == null) {
+                            slaveCols = new ObjList<>();
+                        }
+
+                        masterCols.add(cb);
+                        slaveCols.add(ca);
+                    }
+                    current = new HashJoinRecordSource(current, masterCols, rs, slaveCols, m.getJoinType() == QueryModel.JoinType.OUTER);
+                }
+            }
+
+            // check if there are post-filters
+            ExprNode filter = m.getPostJoinWhereClause();
+            if (filter != null) {
+                current = new FilteredJournalRecordSource(current, createVirtualColumn(filter, current.getMetadata()));
+            }
+
         }
+
+        return current;
     }
 
     @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT", "CC_CYCLOMATIC_COMPLEXITY"})
@@ -530,6 +530,10 @@ public class RecordSourceBuilder {
         }
 
         return new JournalSource(ps, rs == null ? new AllRowSource() : rs);
+    }
+
+    private RecordSource<? extends Record> compileSingleOrSubquery(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+        return model.getJournalName() != null ? compileSingleJournal(model, factory) : compileSubQuery(model, factory);
     }
 
     private RecordSource<? extends Record> compileSubQuery(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
@@ -1025,19 +1029,19 @@ public class RecordSourceBuilder {
      * if (rows == null) {
      * rows = HashTable.get(b.y);
      * }
-     * <p/>
+     * <p>
      * in this case tables can be reordered as long as "b" is processed
      * before "a"
-     * <p/>
+     * <p>
      * - second possibility is where all "or" conditions are random
      * in which case query like this:
-     * <p/>
+     * <p>
      * from a
      * join c on a.x = c.x
      * join b on a.x = b.x or c.y = b.y
-     * <p/>
+     * <p>
      * can be rewritten to:
-     * <p/>
+     * <p>
      * from a
      * join c on a.x = c.x
      * join b on a.x = b.x
@@ -1216,9 +1220,10 @@ public class RecordSourceBuilder {
 
     private void tryAssignPostJoinFilters(QueryModel parent) throws ParserException {
 
-        postFilterAvailable.clear();
+        journalsSoFar.clear();
         postFilterRemoved.clear();
         postFilterJournalRefs.clear();
+        IntList nullCounts = new IntList();
 
         literalCollector.withParent(parent);
         ObjList<ExprNode> filterNodes = parent.getParsedWhere();
@@ -1226,8 +1231,10 @@ public class RecordSourceBuilder {
         int pc = filterNodes.size();
         for (int i = 0; i < pc; i++) {
             IntList indexes = intListPool.next();
+            literalCollector.resetNullCount();
             traversalAlgo.traverse(filterNodes.getQuick(i), literalCollector.to(indexes, postFilterThrowawayNames));
             postFilterJournalRefs.add(indexes);
+            nullCounts.add(literalCollector.nullCount);
             postFilterThrowawayNames.clear();
         }
 
@@ -1235,7 +1242,7 @@ public class RecordSourceBuilder {
         // match journal references to set of journals in join order
         for (int i = 0, n = ordered.size(); i < n; i++) {
             int index = ordered.getQuick(i);
-            postFilterAvailable.add(index);
+            journalsSoFar.add(index);
 
             for (int k = 0; k < pc; k++) {
                 if (postFilterRemoved.contains(k)) {
@@ -1249,18 +1256,23 @@ public class RecordSourceBuilder {
                     // must evaluate as constant
                     postFilterRemoved.add(k);
                     parent.addParsedWhereConst(k);
+                } else if (rs == 1 && nullCounts.getQuick(k) == 0) {
+                    // get single journal reference out of the way right away
+                    // we don't have to wait until "our" journal comes along
+                    postFilterRemoved.add(k);
+                    addWhereClause(parent, refs.getQuick(0), filterNodes.getQuick(k));
                 } else {
-                    boolean remove = true;
+                    boolean qualifies = true;
+                    // check if filter references journals processed so far
                     for (int y = 0; y < rs; y++) {
-                        if (!postFilterAvailable.contains(refs.getQuick(y))) {
-                            remove = false;
+                        if (!journalsSoFar.contains(refs.getQuick(y))) {
+                            qualifies = false;
                             break;
                         }
                     }
-                    if (remove) {
+                    if (qualifies) {
                         postFilterRemoved.add(k);
                         parent.getJoinModels().getQuick(index).setPostJoinWhereClause(filterNodes.getQuick(k));
-//                        postFilters.put(i, filterNodes.getQuick(k));
                     }
                 }
             }
@@ -1272,11 +1284,11 @@ public class RecordSourceBuilder {
     /**
      * Identify joined journals without join clause and try to find other reversible join clauses
      * that may be applied to it. For example when these journals joined"
-     * <p/>
+     * <p>
      * from a
      * join b on c.x = b.x
      * join c on c.y = a.y
-     * <p/>
+     * <p>
      * the system that prefers child table with lowest index will attribute c.x = b.x clause to
      * journal "c" leaving "b" without clauses.
      */
@@ -1347,6 +1359,10 @@ public class RecordSourceBuilder {
             indexes = literalCollectorAIndexes;
             names = literalCollectorANames;
             return this;
+        }
+
+        private void resetNullCount() {
+            nullCount = 0;
         }
 
         private Visitor rhs() {

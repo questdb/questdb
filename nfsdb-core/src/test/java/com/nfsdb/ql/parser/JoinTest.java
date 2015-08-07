@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.parser;
 
@@ -37,7 +37,10 @@ import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Files;
 import com.nfsdb.utils.Rnd;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.ClassRule;
+import org.junit.Test;
 
 public class JoinTest {
     @ClassRule
@@ -86,6 +89,15 @@ public class JoinTest {
     }
 
     @Test
+    public void testGenericPreFilterPlacement() throws Exception {
+        assertPlan("+ 0[ cross ] customers (filter: customerName ~ 'WTBHZVPVZZ')\n" +
+                        "+ 1[ inner ] orders ON orders.customerId = customers.customerId\n" +
+                        "\n",
+                "select customerName, orderId, productId " +
+                        "from customers join orders on customers.customerId = orders.customerId where customerName ~ 'WTBHZVPVZZ'");
+    }
+
+    @Test
     public void testInnerJoin() throws Exception {
         final String expected = "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t1605271283\t9619\t486\t\t2015-07-10T00:00:29.443Z\tYM\n" +
                 "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t401073894\t9619\t1645\tDND\t2015-07-10T00:00:31.115Z\tFNMURHFGESODNWN\n" +
@@ -99,15 +111,26 @@ public class JoinTest {
     }
 
     @Test
-    @Ignore
     public void testInnerJoinSubQuery() throws Exception {
-        final String expected = "";
+        final String expected =
+                "WTBHZVPVZZ\tBOKHCKYDMWZ\t1605271283\n" +
+                        "WTBHZVPVZZ\tKD\t401073894\n" +
+                        "WTBHZVPVZZ\tBWJG\t921021073\n" +
+                        "WTBHZVPVZZ\tK\t1986641415\n" +
+                        "WTBHZVPVZZ\tBXWG\t1635896684\n" +
+                        "WTBHZVPVZZ\tKRBCWYMNOQS\t189633559\n" +
+                        "WTBHZVPVZZ\tFEOLY\t960875992\n";
 
-        assertQuery(expected, "(" +
+        assertQuery(expected, "select customerName, productName, orderId from (" +
                 "select customerName, orderId, productId " +
                 "from customers join orders on customers.customerId = orders.customerId where customerName ~ 'WTBHZVPVZZ'" +
                 ") x" +
                 " join products p on p.productId = x.productId");
+
+        assertQuery(expected, "select customerName, productName, orderId " +
+                " from customers join orders o on customers.customerId = o.customerId " +
+                " join products p on p.productId = o.productId" +
+                " where customerName ~ 'WTBHZVPVZZ'");
     }
 
     @Test

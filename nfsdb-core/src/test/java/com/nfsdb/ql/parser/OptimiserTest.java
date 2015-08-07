@@ -1430,6 +1430,13 @@ public class OptimiserTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testTwoRegexes() throws Exception {
+        createTab();
+        String plan = compile("select id, x, y from tab where id ~ 'XY' and id ~ 'X'").toString();
+        System.out.println(plan);
+    }
+
+    @Test
     public void testUnindexedIntNaN() throws Exception {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").

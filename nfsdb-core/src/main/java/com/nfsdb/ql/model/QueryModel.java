@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.model;
 
@@ -111,6 +111,11 @@ public class QueryModel implements Mutable {
         joinType = JoinType.INNER;
         orderedJoinModels1.clear();
         orderedJoinModels2.clear();
+        parsedWhereConsts.clear();
+        aliasIndexes.clear();
+        postJoinWhereClause = null;
+        context = null;
+        orderedJoinModels = orderedJoinModels2;
     }
 
     public ExprNode getAlias() {
