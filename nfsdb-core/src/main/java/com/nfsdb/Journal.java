@@ -328,10 +328,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
         return symbolTables.size();
     }
 
-    public long getTimestamp(T o) {
-        return Unsafe.getUnsafe().getLong(o, timestampOffset);
-    }
-
     public Comparator<T> getTimestampComparator() {
         return timestampComparator;
     }
@@ -415,16 +411,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
         return -1;
     }
 
-    /**
-     * Is the specified Journal type compatible with this one.
-     *
-     * @param that a Journal to test
-     * @return true if the specified Journal type compatible with this one
-     */
-    public boolean isCompatible(Journal<T> that) {
-        return this.getMetadata().isCompatible(that.getMetadata(), true);
-    }
-
     public boolean isOpen() {
         return open;
     }
@@ -454,31 +440,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
     @Override
     public Iterator<T> iterator() {
         return query().all().iterator();
-    }
-
-    public Partition<T> lastNonEmptyNonLag() throws JournalException {
-
-        int count = nonLagPartitionCount();
-        if (count > 0) {
-
-            Partition<T> result = getPartition(count - 1, true);
-
-            while (true) {
-                if (result.size() > 0) {
-                    return result;
-                }
-
-                if (result.getPartitionIndex() == 0) {
-                    break;
-                }
-
-                result = getPartition(result.getPartitionIndex() - 1, true);
-            }
-
-            return result;
-        } else {
-            return null;
-        }
     }
 
     @SuppressWarnings("unchecked")
@@ -696,8 +657,47 @@ public class Journal<T> implements Iterable<T>, Closeable {
         return inactiveColumns;
     }
 
+    long getTimestamp(T o) {
+        return Unsafe.getUnsafe().getLong(o, timestampOffset);
+    }
+
     long getTimestampOffset() {
         return timestampOffset;
+    }
+
+    /**
+     * Is the specified Journal type compatible with this one.
+     *
+     * @param that a Journal to test
+     * @return true if the specified Journal type compatible with this one
+     */
+    boolean isCompatible(Journal<T> that) {
+        return this.getMetadata().isCompatible(that.getMetadata(), true);
+    }
+
+    Partition<T> lastNonEmptyNonLag() throws JournalException {
+
+        int count = nonLagPartitionCount();
+        if (count > 0) {
+
+            Partition<T> result = getPartition(count - 1, true);
+
+            while (true) {
+                if (result.size() > 0) {
+                    return result;
+                }
+
+                if (result.getPartitionIndex() == 0) {
+                    break;
+                }
+
+                result = getPartition(result.getPartitionIndex() - 1, true);
+            }
+
+            return result;
+        } else {
+            return null;
+        }
     }
 
     /**

@@ -42,12 +42,12 @@ public class CharSequenceObjHashMap<V> implements Mutable {
         this(8);
     }
 
-    public CharSequenceObjHashMap(int initialCapacity) {
+    private CharSequenceObjHashMap(int initialCapacity) {
         this(initialCapacity, 0.5);
     }
 
     @SuppressWarnings("unchecked")
-    public CharSequenceObjHashMap(int initialCapacity, double loadFactor) {
+    private CharSequenceObjHashMap(int initialCapacity, double loadFactor) {
         int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
         capacity = capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);
         this.loadFactor = loadFactor;

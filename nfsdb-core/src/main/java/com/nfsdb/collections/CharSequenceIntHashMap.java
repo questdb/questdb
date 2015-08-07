@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.collections;
 
@@ -99,7 +99,7 @@ public class CharSequenceIntHashMap implements Mutable {
         return probeInsert(key, index, value);
     }
 
-    public boolean putIfAbsent(CharSequence key, int value) {
+    public void putIfAbsent(CharSequence key, int value) {
         int index = key.hashCode() & mask;
         if (Unsafe.arrayGet(keys, index) == noEntryKey) {
             keys[index] = key;
@@ -108,10 +108,13 @@ public class CharSequenceIntHashMap implements Mutable {
             if (free == 0) {
                 rehash();
             }
-            return true;
         }
 
-        return !Chars.equals(Unsafe.arrayGet(keys, index), key) && probeInsertIfAbsent(key, index, value);
+        if (Chars.equals(Unsafe.arrayGet(keys, index), key)) {
+            return;
+        }
+
+        probeInsertIfAbsent(key, index, value);
     }
 
     public int size() {
@@ -150,7 +153,7 @@ public class CharSequenceIntHashMap implements Mutable {
         } while (true);
     }
 
-    private boolean probeInsertIfAbsent(CharSequence key, int index, int value) {
+    private void probeInsertIfAbsent(CharSequence key, int index, int value) {
         do {
             index = (index + 1) & mask;
             if (Unsafe.arrayGet(keys, index) == noEntryKey) {
@@ -160,11 +163,11 @@ public class CharSequenceIntHashMap implements Mutable {
                 if (free == 0) {
                     rehash();
                 }
-                return true;
+                return;
             }
 
             if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-                return false;
+                return;
             }
         } while (true);
     }

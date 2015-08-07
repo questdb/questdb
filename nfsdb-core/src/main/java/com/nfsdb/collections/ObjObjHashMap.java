@@ -49,7 +49,7 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
     }
 
     @SuppressWarnings("unchecked")
-    public ObjObjHashMap(int initialCapacity, double loadFactor) {
+    private ObjObjHashMap(int initialCapacity, double loadFactor) {
         int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
         capacity = capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);
         this.loadFactor = loadFactor;

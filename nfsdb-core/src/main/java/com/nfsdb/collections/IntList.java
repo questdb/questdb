@@ -165,20 +165,6 @@ public class IntList implements Mutable {
         return false;
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    public void removeIdx(int index) {
-        if (pos < 1 || index >= pos) {
-            return;
-        }
-        int move = pos - index - 1;
-        if (move > 0) {
-            System.arraycopy(buffer, index + 1, buffer, index, move);
-        }
-        Unsafe.arrayPut(buffer, --pos, noEntryValue);
-    }
-
     public void set(int index, int element) {
         if (index < pos) {
             Unsafe.arrayPut(buffer, index, element);
@@ -222,6 +208,20 @@ public class IntList implements Mutable {
             }
         }
         return false;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    private void removeIdx(int index) {
+        if (pos < 1 || index >= pos) {
+            return;
+        }
+        int move = pos - index - 1;
+        if (move > 0) {
+            System.arraycopy(buffer, index + 1, buffer, index, move);
+        }
+        Unsafe.arrayPut(buffer, --pos, noEntryValue);
     }
 
 }

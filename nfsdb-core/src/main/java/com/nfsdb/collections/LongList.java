@@ -265,13 +265,68 @@ public class LongList implements Mutable {
         sort(0, size() - 1);
     }
 
+    public LongList subset(int lo, int hi) {
+        int _hi = hi > pos ? pos : hi;
+        LongList that = new LongList(_hi - lo);
+        System.arraycopy(this.buffer, lo, that.buffer, 0, _hi - lo);
+        that.pos = _hi - lo;
+        return that;
+    }
+
+    public void zero(int value) {
+        Arrays.fill(buffer, 0, pos, value);
+    }
+
+    private boolean equals(LongList that) {
+        if (this.pos == that.pos) {
+            for (int i = 0, n = pos; i < n; i++) {
+                long lhs = this.getQuick(i);
+                if (lhs == noEntryValue) {
+                    return that.getQuick(i) == noEntryValue;
+                } else if (lhs == that.getQuick(i)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private void let(int a, int b) {
+        Unsafe.arrayPut(buffer, a, Unsafe.arrayGet(buffer, b));
+    }
+
+    private void removeIndex(int index) {
+        if (pos < 1 || index >= pos) {
+            return;
+        }
+        int move = pos - index - 1;
+        if (move > 0) {
+            System.arraycopy(buffer, index + 1, buffer, index, move);
+        }
+        Unsafe.arrayPut(buffer, --pos, noEntryValue);
+    }
+
+    private int scanSearch(long v) {
+        int sz = size();
+        for (int i = 0; i < sz; i++) {
+            long f = getQuick(i);
+            if (f == v) {
+                return i;
+            }
+            if (f > v) {
+                return -(i + 1);
+            }
+        }
+        return -(sz + 1);
+    }
+
     /**
      * Sorts the specified range of the array.
      *
      * @param left  the index of the first element, inclusive, to be sorted
      * @param right the index of the last element, inclusive, to be sorted
      */
-    public void sort(int left, int right) {
+    private void sort(int left, int right) {
         // Use Quicksort on small arrays
         if (right - left < QUICKSORT_THRESHOLD) {
             sort(left, right, true);
@@ -369,61 +424,6 @@ public class LongList implements Mutable {
             a = b;
             b = t;
         }
-    }
-
-    public LongList subset(int lo, int hi) {
-        int _hi = hi > pos ? pos : hi;
-        LongList that = new LongList(_hi - lo);
-        System.arraycopy(this.buffer, lo, that.buffer, 0, _hi - lo);
-        that.pos = _hi - lo;
-        return that;
-    }
-
-    public void zero(int value) {
-        Arrays.fill(buffer, 0, pos, value);
-    }
-
-    private boolean equals(LongList that) {
-        if (this.pos == that.pos) {
-            for (int i = 0, n = pos; i < n; i++) {
-                long lhs = this.getQuick(i);
-                if (lhs == noEntryValue) {
-                    return that.getQuick(i) == noEntryValue;
-                } else if (lhs == that.getQuick(i)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    private void let(int a, int b) {
-        Unsafe.arrayPut(buffer, a, Unsafe.arrayGet(buffer, b));
-    }
-
-    private void removeIndex(int index) {
-        if (pos < 1 || index >= pos) {
-            return;
-        }
-        int move = pos - index - 1;
-        if (move > 0) {
-            System.arraycopy(buffer, index + 1, buffer, index, move);
-        }
-        Unsafe.arrayPut(buffer, --pos, noEntryValue);
-    }
-
-    private int scanSearch(long v) {
-        int sz = size();
-        for (int i = 0; i < sz; i++) {
-            long f = getQuick(i);
-            if (f == v) {
-                return i;
-            }
-            if (f > v) {
-                return -(i + 1);
-            }
-        }
-        return -(sz + 1);
     }
 
     /**

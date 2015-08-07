@@ -21,7 +21,10 @@
 
 package com.nfsdb.ql.collections;
 
-import com.nfsdb.collections.*;
+import com.nfsdb.collections.DirectInputStream;
+import com.nfsdb.collections.DirectMemoryStructure;
+import com.nfsdb.collections.LongList;
+import com.nfsdb.collections.Mutable;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.Record;
@@ -55,8 +58,8 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
 
     private MultiMap(int capacity, long dataSize, float loadFactor, List<RecordColumnMetadata> valueColumns, List<RecordColumnMetadata> keyColumns, List<MapRecordValueInterceptor> interceptors) {
         this.loadFactor = loadFactor;
-        this.address = Unsafe.getUnsafe().allocateMemory(dataSize + AbstractDirectList.CACHE_LINE_SIZE);
-        this.kStart = kPos = this.address + (this.address & (AbstractDirectList.CACHE_LINE_SIZE - 1));
+        this.address = Unsafe.getUnsafe().allocateMemory(dataSize + Unsafe.CACHE_LINE_SIZE);
+        this.kStart = kPos = this.address + (this.address & (Unsafe.CACHE_LINE_SIZE - 1));
         this.kLimit = kStart + dataSize;
 
         this.keyCapacity = (int) (capacity / loadFactor);
@@ -241,8 +244,8 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
 
     private void resize() {
         long kCapacity = (kLimit - kStart) << 1;
-        long kAddress = Unsafe.getUnsafe().allocateMemory(kCapacity + AbstractDirectList.CACHE_LINE_SIZE);
-        long kStart = kAddress + (kAddress & (AbstractDirectList.CACHE_LINE_SIZE - 1));
+        long kAddress = Unsafe.getUnsafe().allocateMemory(kCapacity + Unsafe.CACHE_LINE_SIZE);
+        long kStart = kAddress + (kAddress & (Unsafe.CACHE_LINE_SIZE - 1));
 
         Unsafe.getUnsafe().copyMemory(this.kStart, kStart, kCapacity >> 1);
         Unsafe.getUnsafe().freeMemory(this.address);

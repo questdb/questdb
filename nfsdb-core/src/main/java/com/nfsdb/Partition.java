@@ -267,10 +267,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
         return iterator(0, size() - 1);
     }
 
-    public Iterator<T> iterator(long start, long end) {
-        return new PartitionIterator<>(this, start, end);
-    }
-
     public Partition<T> open() throws JournalException {
         access();
         if (columns == null) {
@@ -281,14 +277,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
     public ConcurrentIterator<T> parallelIterator() {
         return parallelIterator(0, size() - 1);
-    }
-
-    public ConcurrentIterator<T> parallelIterator(long lo, long hi) {
-        return parallelIterator(lo, hi, 1024);
-    }
-
-    public ConcurrentIterator<T> parallelIterator(long lo, long hi, int bufferSize) {
-        return new PartitionConcurrentIterator<>(this, lo, hi, bufferSize);
     }
 
     public T read(long localRowID) {
@@ -337,47 +325,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
                     readBin(localRowID, obj, i, m);
             }
         }
-    }
-
-    /**
-     * Rebuild the index of a column using the default keyCountHint and recordCountHint values.
-     *
-     * @param columnIndex the column index
-     * @throws com.nfsdb.exceptions.JournalException if the operation fails
-     */
-    public void rebuildIndex(int columnIndex) throws JournalException {
-        JournalMetadata<T> meta = journal.getMetadata();
-        rebuildIndex(columnIndex,
-                columnMetadata[columnIndex].distinctCountHint,
-                meta.getRecordHint(),
-                meta.getTxCountHint());
-    }
-
-    /**
-     * Rebuild the index of a column.
-     *
-     * @param columnIndex     the column index
-     * @param keyCountHint    the key count hint override
-     * @param recordCountHint the record count hint override
-     * @throws com.nfsdb.exceptions.JournalException if the operation fails
-     */
-    public void rebuildIndex(int columnIndex, int keyCountHint, int recordCountHint, int txCountHint) throws JournalException {
-        final long time = LOGGER.isInfoEnabled() ? System.nanoTime() : 0L;
-
-        getIndexForColumn(columnIndex).close();
-
-        File base = new File(partitionDir, columnMetadata[columnIndex].name);
-        KVIndex.delete(base);
-
-        try (KVIndex index = new KVIndex(base, keyCountHint, recordCountHint, txCountHint, JournalMode.APPEND, 0)) {
-            FixedColumn col = getFixedWidthColumn(columnIndex);
-            for (long localRowID = 0, sz = size(); localRowID < sz; localRowID++) {
-                index.add(col.getInt(localRowID), localRowID);
-            }
-            index.commit();
-        }
-
-        LOGGER.debug("REBUILT %s [%dms]", base, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - time));
     }
 
     public void rebuildIndexes() throws JournalException {
@@ -454,7 +401,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
                 return this;
         }
     }
-
 
     void append(Iterator<T> it) throws JournalException {
         while (it.hasNext()) {
@@ -534,7 +480,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
         throw new JournalRuntimeException("Invalid column index: %d in %s", i, this);
     }
 
-    void clearTx() {
+    private void clearTx() {
         applyTx(Journal.TX_LIMIT_EVAL, null);
     }
 
@@ -589,6 +535,10 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
     }
 
+    private Iterator<T> iterator(long start, long end) {
+        return new PartitionIterator<>(this, start, end);
+    }
+
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     private void open0() throws JournalException {
         columns = new AbstractColumn[journal.getMetadata().getColumnCount()];
@@ -631,6 +581,14 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
     }
 
+    private ConcurrentIterator<T> parallelIterator(long lo, long hi) {
+        return parallelIterator(lo, hi, 1024);
+    }
+
+    private ConcurrentIterator<T> parallelIterator(long lo, long hi, int bufferSize) {
+        return new PartitionConcurrentIterator<>(this, lo, hi, bufferSize);
+    }
+
     private void readBin(long localRowID, T obj, int i, ColumnMetadata m) {
         int size = ((VariableColumn) Unsafe.arrayGet(columns, i)).getBinSize(localRowID);
         ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, m.offset);
@@ -651,6 +609,47 @@ public class Partition<T> implements Iterable<T>, Closeable {
             ((VariableColumn) Unsafe.arrayGet(columns, i)).getBin(localRowID, buf);
             buf.flip();
         }
+    }
+
+    /**
+     * Rebuild the index of a column using the default keyCountHint and recordCountHint values.
+     *
+     * @param columnIndex the column index
+     * @throws com.nfsdb.exceptions.JournalException if the operation fails
+     */
+    private void rebuildIndex(int columnIndex) throws JournalException {
+        JournalMetadata<T> meta = journal.getMetadata();
+        rebuildIndex(columnIndex,
+                columnMetadata[columnIndex].distinctCountHint,
+                meta.getRecordHint(),
+                meta.getTxCountHint());
+    }
+
+    /**
+     * Rebuild the index of a column.
+     *
+     * @param columnIndex     the column index
+     * @param keyCountHint    the key count hint override
+     * @param recordCountHint the record count hint override
+     * @throws com.nfsdb.exceptions.JournalException if the operation fails
+     */
+    private void rebuildIndex(int columnIndex, int keyCountHint, int recordCountHint, int txCountHint) throws JournalException {
+        final long time = LOGGER.isInfoEnabled() ? System.nanoTime() : 0L;
+
+        getIndexForColumn(columnIndex).close();
+
+        File base = new File(partitionDir, columnMetadata[columnIndex].name);
+        KVIndex.delete(base);
+
+        try (KVIndex index = new KVIndex(base, keyCountHint, recordCountHint, txCountHint, JournalMode.APPEND, 0)) {
+            FixedColumn col = getFixedWidthColumn(columnIndex);
+            for (long localRowID = 0, sz = size(); localRowID < sz; localRowID++) {
+                index.add(col.getInt(localRowID), localRowID);
+            }
+            index.commit();
+        }
+
+        LOGGER.debug("REBUILT %s [%dms]", base, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - time));
     }
 
     final void setPartitionDir(File partitionDir, long[] indexTxAddresses) {

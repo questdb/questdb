@@ -55,19 +55,6 @@ public class ObjList<T> implements Mutable {
     /**
      * {@inheritDoc}
      */
-    public void add(ObjList<T> values) {
-        int n = values.size();
-        int p = pos;
-        ensureCapacity0(p + n);
-        for (int i = 0; i < n; i++) {
-            Unsafe.arrayPut(buffer, p++, values.getQuick(i));
-        }
-        pos = p;
-    }
-
-    /**
-     * {@inheritDoc}
-     */
     public void clear() {
         pos = 0;
         Arrays.fill(buffer, null);
@@ -187,22 +174,6 @@ public class ObjList<T> implements Mutable {
     /**
      * {@inheritDoc}
      */
-    public int indexOf(Object o) {
-        if (o == null) {
-            return indexOfNull();
-        } else {
-            for (int i = 0, n = pos; i < n; i++) {
-                if (o.equals(getQuick(i))) {
-                    return i;
-                }
-            }
-            return -1;
-        }
-    }
-
-    /**
-     * {@inheritDoc}
-     */
     @NotNull
     public Iterator<T> iterator() {
         iterator.n = 0;
@@ -272,6 +243,22 @@ public class ObjList<T> implements Mutable {
             }
         }
         return false;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    private int indexOf(Object o) {
+        if (o == null) {
+            return indexOfNull();
+        } else {
+            for (int i = 0, n = pos; i < n; i++) {
+                if (o.equals(getQuick(i))) {
+                    return i;
+                }
+            }
+            return -1;
+        }
     }
 
     private int indexOfNull() {

@@ -26,7 +26,7 @@ import com.nfsdb.ql.model.ExprNode;
 
 import java.util.ArrayDeque;
 
-public class PostOrderTreeTraversalAlgo {
+class PostOrderTreeTraversalAlgo {
     private final ArrayDeque<ExprNode> stack = new ArrayDeque<>();
     private final IntStack indexStack = new IntStack();
 

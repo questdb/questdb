@@ -1395,6 +1395,8 @@ public class RecordSourceBuilder {
                         nullCount++;
                     }
                     break;
+                default:
+                    break;
             }
         }
     }

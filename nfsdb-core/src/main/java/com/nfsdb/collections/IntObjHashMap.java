@@ -41,12 +41,12 @@ public class IntObjHashMap<V> implements Mutable {
         this(8);
     }
 
-    public IntObjHashMap(int initialCapacity) {
+    private IntObjHashMap(int initialCapacity) {
         this(initialCapacity, 0.5f);
     }
 
     @SuppressWarnings("unchecked")
-    public IntObjHashMap(int initialCapacity, double loadFactor) {
+    private IntObjHashMap(int initialCapacity, double loadFactor) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }

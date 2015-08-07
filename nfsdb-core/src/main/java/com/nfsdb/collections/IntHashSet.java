@@ -31,7 +31,7 @@ import java.util.Arrays;
 
 public class IntHashSet implements Mutable {
 
-    public static final int MIN_INITIAL_CAPACITY = 16;
+    private static final int MIN_INITIAL_CAPACITY = 16;
     private static final int noEntryValue = -1;
     private final double loadFactor;
     private final IntList list;
@@ -49,7 +49,7 @@ public class IntHashSet implements Mutable {
     }
 
     @SuppressWarnings("unchecked")
-    public IntHashSet(int initialCapacity, double loadFactor) {
+    private IntHashSet(int initialCapacity, double loadFactor) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
@@ -111,25 +111,6 @@ public class IntHashSet implements Mutable {
         return sink.toString();
     }
 
-    public void toString(CharSink sink) {
-        sink.put('[');
-        boolean needComma = false;
-        for (int i = 0, n = keys.length; i < n; i++) {
-            if (keys[i] != noEntryValue) {
-                if (needComma) {
-                    sink.put(',');
-                }
-                sink.put(keys[i]);
-
-                if (!needComma) {
-                    needComma = true;
-                }
-            }
-        }
-
-        sink.put(']');
-    }
-
     private boolean insertKey(int key) {
         int index = key & mask;
         if (Unsafe.arrayGet(keys, index) == noEntryValue) {
@@ -181,7 +162,7 @@ public class IntHashSet implements Mutable {
     }
 
     @SuppressWarnings({"unchecked"})
-    protected void rehash() {
+    private void rehash() {
         int newCapacity = keys.length << 1;
         mask = newCapacity - 1;
         free = capacity = (int) (newCapacity * loadFactor);
@@ -195,5 +176,24 @@ public class IntHashSet implements Mutable {
                 insertKey(Unsafe.arrayGet(oldKeys, i));
             }
         }
+    }
+
+    private void toString(CharSink sink) {
+        sink.put('[');
+        boolean needComma = false;
+        for (int i = 0, n = keys.length; i < n; i++) {
+            if (keys[i] != noEntryValue) {
+                if (needComma) {
+                    sink.put(',');
+                }
+                sink.put(keys[i]);
+
+                if (!needComma) {
+                    needComma = true;
+                }
+            }
+        }
+
+        sink.put(']');
     }
 }

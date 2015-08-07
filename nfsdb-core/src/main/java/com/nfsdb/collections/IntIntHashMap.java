@@ -29,7 +29,7 @@ import java.util.Arrays;
 
 public class IntIntHashMap implements Mutable {
 
-    public static final int MIN_INITIAL_CAPACITY = 16;
+    private static final int MIN_INITIAL_CAPACITY = 16;
     private static final int noEntryValue = -1;
     private final double loadFactor;
     private int[] values;
@@ -41,12 +41,12 @@ public class IntIntHashMap implements Mutable {
         this(8);
     }
 
-    public IntIntHashMap(int initialCapacity) {
+    private IntIntHashMap(int initialCapacity) {
         this(initialCapacity, 0.5f);
     }
 
     @SuppressWarnings("unchecked")
-    public IntIntHashMap(int initialCapacity, double loadFactor) {
+    private IntIntHashMap(int initialCapacity, double loadFactor) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
@@ -123,7 +123,7 @@ public class IntIntHashMap implements Mutable {
     }
 
     @SuppressWarnings({"unchecked"})
-    protected void rehash() {
+    private void rehash() {
 
         int newCapacity = values.length << 1;
         mask = newCapacity - 1;

@@ -56,7 +56,7 @@ public class QueryModel implements Mutable {
     private JoinType joinType;
     private IntList orderedJoinModels = orderedJoinModels2;
 
-    protected QueryModel() {
+    private QueryModel() {
         joinModels.add(this);
     }
 

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.collections;
 
@@ -47,11 +47,11 @@ public class CharSequenceHashSet implements Mutable {
         this(MIN_INITIAL_CAPACITY, 0.4, 0.3, mktemp);
     }
 
-    public CharSequenceHashSet(int initialCapacity) {
+    private CharSequenceHashSet(int initialCapacity) {
         this(initialCapacity, 0.4, 0.3, false);
     }
 
-    public CharSequenceHashSet(int initialCapacity, double loadFactor, double hashFactor, boolean mktemp) {
+    private CharSequenceHashSet(int initialCapacity, double loadFactor, double hashFactor, boolean mktemp) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
@@ -107,19 +107,6 @@ public class CharSequenceHashSet implements Mutable {
 
     public CharSequence getLast() {
         return list.getLast();
-    }
-
-    public boolean remove(CharSequence key) {
-        if (list.remove(key)) {
-            int index = idx(key);
-            if (key.equals(Unsafe.arrayGet(keys, index))) {
-                Unsafe.arrayPut(keys, index, null);
-                free++;
-                return true;
-            }
-            return probeRemove(key, index);
-        }
-        return false;
     }
 
     public boolean replaceAllWithOverlap(CharSequenceHashSet that) {
@@ -193,19 +180,6 @@ public class CharSequenceHashSet implements Mutable {
                 return false;
             }
         } while (true);
-    }
-
-    private boolean probeRemove(CharSequence key, int index) {
-        int i = index;
-        do {
-            index = (index + 1) & mask;
-            if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-                Unsafe.arrayPut(keys, index, null);
-                free++;
-                return true;
-            }
-        } while (i != index);
-        return false;
     }
 
     @SuppressWarnings({"unchecked"})

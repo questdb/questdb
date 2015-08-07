@@ -28,6 +28,7 @@ import java.lang.reflect.Field;
 public final class Unsafe {
     public static final long CHAR_OFFSET;
     public static final long BYTE_OFFSET;
+    public final static int CACHE_LINE_SIZE = 64;
     private static final sun.misc.Unsafe UNSAFE;
     private static final long OBJ_OFFSET;
     private static final long OBJ_SCALE;
