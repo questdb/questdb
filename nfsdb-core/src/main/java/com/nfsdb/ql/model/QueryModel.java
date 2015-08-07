@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.model;
 
@@ -39,13 +39,15 @@ public class QueryModel implements Mutable {
     private final IntList orderedJoinModels1 = new IntList();
     private final IntList orderedJoinModels2 = new IntList();
     private final StringSink planSink = new StringSink();
-    private ExprNode whereClause;
+    private final CharSequenceIntHashMap aliasIndexes = new CharSequenceIntHashMap();
     // list of "and" concatenated expressions
-    private ObjList<ExprNode> parsedWhere = new ObjList<>();
+    private final ObjList<ExprNode> parsedWhere = new ObjList<>();
+    private final IntHashSet parsedWhereConsts = new IntHashSet();
+    private ExprNode whereClause;
     private ExprNode postJoinWhereClause;
     private QueryModel nestedModel;
     private ExprNode journalName;
-    private String alias;
+    private ExprNode alias;
     private ExprNode latestBy;
     private RecordSource<? extends Record> recordSource;
     private RecordMetadata metadata;
@@ -54,9 +56,12 @@ public class QueryModel implements Mutable {
     private JoinType joinType;
     private IntList orderedJoinModels = orderedJoinModels2;
 
-
     protected QueryModel() {
         joinModels.add(this);
+    }
+
+    public boolean addAliasIndex(ExprNode node, int index) {
+        return aliasIndexes.put(node.token, index);
     }
 
     public void addColumn(QueryColumn column) {
@@ -77,6 +82,10 @@ public class QueryModel implements Mutable {
 
     public void addOrderBy(ExprNode node) {
         orderBy.add(node);
+    }
+
+    public void addParsedWhereConst(int index) {
+        parsedWhereConsts.add(index);
     }
 
     public void addParsedWhereNode(ExprNode node) {
@@ -100,14 +109,20 @@ public class QueryModel implements Mutable {
         metadata = null;
         joinCriteria = null;
         joinType = JoinType.INNER;
+        orderedJoinModels1.clear();
+        orderedJoinModels2.clear();
     }
 
-    public String getAlias() {
+    public ExprNode getAlias() {
         return alias;
     }
 
-    public void setAlias(String alias) {
+    public void setAlias(ExprNode alias) {
         this.alias = alias;
+    }
+
+    public int getAliasIndex(CharSequence alias) {
+        return aliasIndexes.get(alias);
     }
 
     public ObjList<QueryColumn> getColumns() {
@@ -234,7 +249,7 @@ public class QueryModel implements Mutable {
      * Every time ordering takes place optimiser will keep at most two lists:
      * one is last known order the other is new order. If new order cost is better
      * optimiser will replace last known order with new one.
-     * <p>
+     * <p/>
      * To facilitate this behaviour the function will always return non-current list.
      *
      * @return non current order list.
@@ -257,7 +272,7 @@ public class QueryModel implements Mutable {
 
     @Override
     public String toString() {
-        return alias != null ? alias : (journalName != null ? journalName.token : "{" + nestedModel.toString() + "}");
+        return alias != null ? alias.token : (journalName != null ? journalName.token : "{" + nestedModel.toString() + "}");
     }
 
     private void plan(StringSink sink, int pad) {
@@ -285,7 +300,7 @@ public class QueryModel implements Mutable {
 
                 // journal name/alias
                 if (m.getAlias() != null) {
-                    sink.put(m.getAlias());
+                    sink.put(m.getAlias().token);
                 } else if (m.getJournalName() != null) {
                     sink.put(m.getJournalName().token);
                 } else {
@@ -328,7 +343,7 @@ public class QueryModel implements Mutable {
             sink.put(' ', pad);
             // journal name/alias
             if (getAlias() != null) {
-                sink.put(getAlias());
+                sink.put(getAlias().token);
             } else if (getJournalName() != null) {
                 sink.put(getJournalName().token);
             } else {

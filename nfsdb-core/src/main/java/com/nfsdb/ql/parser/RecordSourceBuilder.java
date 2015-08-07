@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
@@ -57,7 +57,6 @@ public class RecordSourceBuilder {
     private final StringSink columnNameAssembly = new StringSink();
     private final int columnNamePrefixLen;
     private final ObjectPool<FlyweightCharSequence> csPool = new ObjectPool<>(FlyweightCharSequence.FACTORY, 64);
-    private final CharSequenceIntHashMap joinMetadataIndexLookup = new CharSequenceIntHashMap();
     private final ObjectPool<ExprNode> exprNodePool = new ObjectPool<>(ExprNode.FACTORY, 16);
     private final IntHashSet deletedContexts = new IntHashSet();
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
@@ -73,7 +72,6 @@ public class RecordSourceBuilder {
     private final IntStack orderingStack = new IntStack();
     private final IntList tempCrosses = new IntList();
     private final IntList tempCrossIndexes = new IntList();
-    private final IntHashSet constantConditions = new IntHashSet();
     private final IntHashSet postFilterRemoved = new IntHashSet();
     private final IntHashSet postFilterAvailable = new IntHashSet();
     private final ObjList<IntList> postFilterJournalRefs = new ObjList<>();
@@ -93,125 +91,14 @@ public class RecordSourceBuilder {
         columnNamePrefixLen = 3;
     }
 
-    public RecordSource<? extends Record> compile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-        return selectColumns(compile0(model, factory), model.getColumns());
-    }
-
-    public RecordSource<? extends Record> compileX(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-
-        ObjList<QueryModel> joinModels = model.getJoinModels();
-        IntList ordered = model.getOrderedJoinModels();
-        try {
-            RecordSource<? extends Record> current = null;
-
-            for (int i = 0, n = ordered.size(); i < n; i++) {
-                int index = ordered.getQuick(i);
-                QueryModel m = joinModels.getQuick(index);
-
-                // compile
-                RecordSource<? extends Record> rs = compile(m, factory);
-
-                // check if this is the root of joins
-                if (current == null) {
-                    current = rs;
-                } else {
-                    // not the root, join to "current"
-                    if (m.getJoinType() == QueryModel.JoinType.CROSS) {
-                        // there are fields to analyse
-                        current = new CrossJoinRecordSource(current, rs);
-                    } else {
-                        JoinContext jc = m.getContext();
-                        RecordMetadata bm = current.getMetadata();
-                        RecordMetadata am = rs.getMetadata();
-
-                        ObjList<CharSequence> masterCols = null;
-                        ObjList<CharSequence> slaveCols = null;
-
-                        for (int k = 0, kn = jc.aIndexes.size(); k < kn; k++) {
-
-                            CharSequence ca = jc.aNames.getQuick(k);
-                            CharSequence cb = jc.bNames.getQuick(k);
-
-                            if (am.getColumn(ca).getType() != bm.getColumn(cb).getType()) {
-                                throw new ParserException(jc.aNodes.getQuick(k).position, "Column type mismatch");
-                            }
-
-                            if (masterCols == null) {
-                                masterCols = new ObjList<>();
-                            }
-
-                            if (slaveCols == null) {
-                                slaveCols = new ObjList<>();
-                            }
-
-                            masterCols.add(cb);
-                            slaveCols.add(ca);
-                        }
-                        current = new HashJoinRecordSource(current, masterCols, rs, slaveCols, m.getJoinType() == QueryModel.JoinType.OUTER);
-                    }
-                }
-
-                // check if there are post-filters
-                ExprNode filter = m.getPostJoinWhereClause();
-                if (filter != null) {
-                    current = new FilteredJournalRecordSource(current, createVirtualColumn(filter, current.getMetadata()));
-                }
-
-            }
-
-            return current;
-        } finally {
-            clearState();
-        }
-    }
-
-    public VirtualColumn createVirtualColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
-        virtualColumnBuilderVisitor.metadata = metadata;
-        traversalAlgo.traverse(node, virtualColumnBuilderVisitor);
-        return stack.poll();
-    }
-
-    public RecordSourceBuilder optimise(QueryModel parent, JournalReaderFactory factory) throws JournalException, ParserException {
+    public RecordSource<? extends Record> resetAndCompile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         clearState();
-        ObjList<QueryModel> joinModels = parent.getJoinModels();
+        return compile(model, factory);
+    }
 
-        int n = joinModels.size();
-
-        // create metadata for all journals and sub-queries involved in this query
-        for (int i = 0; i < n; i++) {
-            resolveJoinMetadata(parent, i, factory);
-        }
-
-        emittedJoinClauses = joinClausesSwap1;
-
-        // for sake of clarity, "parent" model is the first in the list of
-        // joinModels, e.g. joinModels.get(0) == parent
-        // only parent model is allowed to have "where" clause
-        // so we can assume that "where" clauses of joinModel elements are all null (except for element 0).
-        // in case one of joinModels is subquery, its entire query model will be set as
-        // nestedModel, e.g. "where" clause is still null there as well
-
-        ExprNode where = parent.getWhereClause();
-
-        // clear where clause of parent so that
-        // optimiser can assign there correct nodes
-
-        parent.setWhereClause(null);
-        processAndConditions(parent, where);
-
-        for (int i = 1; i < n; i++) {
-            processAndConditions(parent, joinModels.getQuick(i).getJoinCriteria());
-        }
-
-        if (emittedJoinClauses.size() > 0) {
-            processEmittedJoinClauses(parent);
-        }
-
-        trySwapJoinOrder(parent);
-        resetJoinTypes(parent);
-        tryAssignPostJoinFilters(parent);
-        alignJoinFields(parent);
-        return this;
+    public RecordSourceBuilder resetAndOptimise(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+        clearState();
+        return optimise(model, factory);
     }
 
     private void addFilterOrEmitJoin(QueryModel parent, int idx, int ai, CharSequence an, ExprNode ao, int bi, CharSequence bn, ExprNode bo) {
@@ -370,8 +257,153 @@ public class RecordSourceBuilder {
         }
     }
 
+    private RowSource buildRowSourceForStr(IntrinsicModel im) {
+        int nSrc = im.keyValues.size();
+        switch (nSrc) {
+            case 1:
+                return new KvIndexStrLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.getLast()));
+            case 2:
+                return new MergingRowSource(
+                        new KvIndexStrLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(0)), true),
+                        new KvIndexStrLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(1)), true)
+                );
+            default:
+                RowSource sources[] = new RowSource[nSrc];
+                for (int i = 0; i < nSrc; i++) {
+                    Unsafe.arrayPut(sources, i, new KvIndexStrLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(i)), true));
+                }
+                return new HeapMergingRowSource(sources);
+        }
+    }
+
+    private RowSource buildRowSourceForSym(IntrinsicModel im) {
+        int nSrc = im.keyValues.size();
+        switch (nSrc) {
+            case 1:
+                return new KvIndexSymLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.getLast()));
+            case 2:
+                return new MergingRowSource(
+                        new KvIndexSymLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(0)), true),
+                        new KvIndexSymLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(1)), true)
+                );
+            default:
+                RowSource sources[] = new RowSource[nSrc];
+                for (int i = 0; i < nSrc; i++) {
+                    Unsafe.arrayPut(sources, i, new KvIndexSymLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(i)), true));
+                }
+                return new HeapMergingRowSource(sources);
+        }
+    }
+
+    private void clearState() {
+        csPool.reset();
+        exprNodePool.reset();
+        contextPool.reset();
+        intListPool.reset();
+    }
+
+    private JournalMetadata collectJournalMetadata(QueryModel model, JournalReaderFactory factory) throws ParserException, JournalException {
+        ExprNode readerNode = model.getJournalName();
+        if (readerNode.type != ExprNode.NodeType.LITERAL && readerNode.type != ExprNode.NodeType.CONSTANT) {
+            throw new ParserException(readerNode.position, "Journal name must be either literal or string constant");
+        }
+
+        JournalConfiguration configuration = factory.getConfiguration();
+
+        String reader = Chars.stripQuotes(readerNode.token);
+        if (configuration.exists(reader) == JournalConfiguration.JournalExistenceCheck.DOES_NOT_EXIST) {
+            throw new ParserException(readerNode.position, "Journal does not exist");
+        }
+
+        if (configuration.exists(reader) == JournalConfiguration.JournalExistenceCheck.EXISTS_FOREIGN) {
+            throw new ParserException(readerNode.position, "Journal directory is of unknown format");
+        }
+
+        return factory.getOrCreateMetadata(new JournalKey<>(reader));
+    }
+
+    private RecordSource<? extends Record> compile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+        return selectColumns(optimise(model, factory).compile0(model, factory), model.getColumns());
+    }
+
+    private RecordSource<? extends Record> compile0(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+        return model.getJoinModels().size() > 1 ? compileJoins(model, factory) : compile1(model, factory);
+    }
+
+    private RecordSource<? extends Record> compile1(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+        return model.getJournalName() != null ? compileSingleJournal(model, factory) : compileSubQuery(model, factory);
+    }
+
+    private RecordSource<? extends Record> compileJoins(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        IntList ordered = model.getOrderedJoinModels();
+        try {
+            RecordSource<? extends Record> current = null;
+
+            for (int i = 0, n = ordered.size(); i < n; i++) {
+                int index = ordered.getQuick(i);
+                QueryModel m = joinModels.getQuick(index);
+
+                // compile
+                RecordSource<? extends Record> rs = compile1(m, factory);
+
+                // check if this is the root of joins
+                if (current == null) {
+                    current = rs;
+                } else {
+                    // not the root, join to "current"
+                    if (m.getJoinType() == QueryModel.JoinType.CROSS) {
+                        // there are fields to analyse
+                        current = new CrossJoinRecordSource(current, rs);
+                    } else {
+                        JoinContext jc = m.getContext();
+                        RecordMetadata bm = current.getMetadata();
+                        RecordMetadata am = rs.getMetadata();
+
+                        ObjList<CharSequence> masterCols = null;
+                        ObjList<CharSequence> slaveCols = null;
+
+                        for (int k = 0, kn = jc.aIndexes.size(); k < kn; k++) {
+
+                            CharSequence ca = jc.aNames.getQuick(k);
+                            CharSequence cb = jc.bNames.getQuick(k);
+
+                            if (am.getColumn(ca).getType() != bm.getColumn(cb).getType()) {
+                                throw new ParserException(jc.aNodes.getQuick(k).position, "Column type mismatch");
+                            }
+
+                            if (masterCols == null) {
+                                masterCols = new ObjList<>();
+                            }
+
+                            if (slaveCols == null) {
+                                slaveCols = new ObjList<>();
+                            }
+
+                            masterCols.add(cb);
+                            slaveCols.add(ca);
+                        }
+                        current = new HashJoinRecordSource(current, masterCols, rs, slaveCols, m.getJoinType() == QueryModel.JoinType.OUTER);
+                    }
+                }
+
+                // check if there are post-filters
+                ExprNode filter = m.getPostJoinWhereClause();
+                if (filter != null) {
+                    current = new FilteredJournalRecordSource(current, createVirtualColumn(filter, current.getMetadata()));
+                }
+
+            }
+
+            return current;
+        } finally {
+            clearState();
+        }
+    }
+
     @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT", "CC_CYCLOMATIC_COMPLEXITY"})
-    private RecordSource<? extends Record> buildJournalRecordSource(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private RecordSource<? extends Record> compileSingleJournal(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         RecordMetadata metadata = model.getMetadata();
         JournalMetadata journalMetadata;
 
@@ -500,107 +532,38 @@ public class RecordSourceBuilder {
         return new JournalSource(ps, rs == null ? new AllRowSource() : rs);
     }
 
-    private RowSource buildRowSourceForStr(IntrinsicModel im) {
-        int nSrc = im.keyValues.size();
-        switch (nSrc) {
-            case 1:
-                return new KvIndexStrLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.getLast()));
-            case 2:
-                return new MergingRowSource(
-                        new KvIndexStrLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(0)), true),
-                        new KvIndexStrLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(1)), true)
-                );
+    private RecordSource<? extends Record> compileSubQuery(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+
+        RecordSource<? extends Record> rs = compile(model.getNestedModel(), factory);
+        if (model.getWhereClause() == null) {
+            return rs;
+        }
+
+        RecordMetadata m = rs.getMetadata();
+        IntrinsicModel im = intrinsicExtractor.extract(model.getWhereClause(), m, null);
+
+        switch (im.intrinsicValue) {
+            case FALSE:
+                return new NoOpJournalRecordSource(rs);
             default:
-                RowSource sources[] = new RowSource[nSrc];
-                for (int i = 0; i < nSrc; i++) {
-                    Unsafe.arrayPut(sources, i, new KvIndexStrLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(i)), true));
+                if (im.intervalSource != null) {
+                    rs = new IntervalJournalRecordSource(rs, im.intervalSource);
                 }
-                return new HeapMergingRowSource(sources);
-        }
-    }
-
-    private RowSource buildRowSourceForSym(IntrinsicModel im) {
-        int nSrc = im.keyValues.size();
-        switch (nSrc) {
-            case 1:
-                return new KvIndexSymLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.getLast()));
-            case 2:
-                return new MergingRowSource(
-                        new KvIndexSymLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(0)), true),
-                        new KvIndexSymLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(1)), true)
-                );
-            default:
-                RowSource sources[] = new RowSource[nSrc];
-                for (int i = 0; i < nSrc; i++) {
-                    Unsafe.arrayPut(sources, i, new KvIndexSymLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(i)), true));
-                }
-                return new HeapMergingRowSource(sources);
-        }
-    }
-
-    private void clearState() {
-        joinMetadataIndexLookup.clear();
-        csPool.reset();
-        exprNodePool.reset();
-        contextPool.reset();
-        constantConditions.clear();
-        intListPool.reset();
-    }
-
-    private JournalMetadata collectJournalMetadata(QueryModel model, JournalReaderFactory factory) throws ParserException, JournalException {
-        ExprNode readerNode = model.getJournalName();
-        if (readerNode.type != ExprNode.NodeType.LITERAL && readerNode.type != ExprNode.NodeType.CONSTANT) {
-            throw new ParserException(readerNode.position, "Journal name must be either literal or string constant");
-        }
-
-        JournalConfiguration configuration = factory.getConfiguration();
-
-        String reader = Chars.stripQuotes(readerNode.token);
-        if (configuration.exists(reader) == JournalConfiguration.JournalExistenceCheck.DOES_NOT_EXIST) {
-            throw new ParserException(readerNode.position, "Journal does not exist");
-        }
-
-        if (configuration.exists(reader) == JournalConfiguration.JournalExistenceCheck.EXISTS_FOREIGN) {
-            throw new ParserException(readerNode.position, "Journal directory is of unknown format");
-        }
-
-        return factory.getOrCreateMetadata(new JournalKey<>(reader));
-    }
-
-    private RecordSource<? extends Record> compile0(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-        if (model.getJournalName() != null) {
-            return buildJournalRecordSource(model, factory);
-        } else {
-            RecordSource<? extends Record> rs = compile(model.getNestedModel(), factory);
-            if (model.getWhereClause() == null) {
-                return rs;
-            }
-
-            RecordMetadata m = rs.getMetadata();
-            IntrinsicModel im = intrinsicExtractor.extract(model.getWhereClause(), m, null);
-
-            switch (im.intrinsicValue) {
-                case FALSE:
-                    return new NoOpJournalRecordSource(rs);
-                default:
-                    if (im.intervalSource != null) {
-                        rs = new IntervalJournalRecordSource(rs, im.intervalSource);
-                    }
-                    if (im.filter != null) {
-                        VirtualColumn vc = createVirtualColumn(im.filter, m);
-                        if (vc.isConstant()) {
-                            if (vc.getBool(null)) {
-                                return rs;
-                            } else {
-                                return new NoOpJournalRecordSource(rs);
-                            }
+                if (im.filter != null) {
+                    VirtualColumn vc = createVirtualColumn(im.filter, m);
+                    if (vc.isConstant()) {
+                        if (vc.getBool(null)) {
+                            return rs;
+                        } else {
+                            return new NoOpJournalRecordSource(rs);
                         }
-                        return new FilteredJournalRecordSource(rs, vc);
-                    } else {
-                        return rs;
                     }
-            }
+                    return new FilteredJournalRecordSource(rs, vc);
+                } else {
+                    return rs;
+                }
         }
+
     }
 
     private void createColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
@@ -636,6 +599,12 @@ public class RecordSourceBuilder {
                 }
                 stack.push(lookupFunction(node, mutableSig, mutableArgs));
         }
+    }
+
+    private VirtualColumn createVirtualColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
+        virtualColumnBuilderVisitor.metadata = metadata;
+        traversalAlgo.traverse(node, virtualColumnBuilderVisitor);
+        return stack.poll();
     }
 
     private CharSequence extractColumnName(CharSequence token, int dot) {
@@ -831,6 +800,50 @@ public class RecordSourceBuilder {
         return result;
     }
 
+    private RecordSourceBuilder optimise(QueryModel parent, JournalReaderFactory factory) throws JournalException, ParserException {
+        ObjList<QueryModel> joinModels = parent.getJoinModels();
+
+        int n = joinModels.size();
+        if (n > 1) {
+
+            // create metadata for all journals and sub-queries involved in this query
+            for (int i = 0; i < n; i++) {
+                resolveJoinMetadata(parent, i, factory);
+            }
+
+            emittedJoinClauses = joinClausesSwap1;
+
+            // for sake of clarity, "parent" model is the first in the list of
+            // joinModels, e.g. joinModels.get(0) == parent
+            // only parent model is allowed to have "where" clause
+            // so we can assume that "where" clauses of joinModel elements are all null (except for element 0).
+            // in case one of joinModels is subquery, its entire query model will be set as
+            // nestedModel, e.g. "where" clause is still null there as well
+
+            ExprNode where = parent.getWhereClause();
+
+            // clear where clause of parent so that
+            // optimiser can assign there correct nodes
+
+            parent.setWhereClause(null);
+            processAndConditions(parent, where);
+
+            for (int i = 1; i < n; i++) {
+                processAndConditions(parent, joinModels.getQuick(i).getJoinCriteria());
+            }
+
+            if (emittedJoinClauses.size() > 0) {
+                processEmittedJoinClauses(parent);
+            }
+
+            trySwapJoinOrder(parent);
+            resetJoinTypes(parent);
+            tryAssignPostJoinFilters(parent);
+            alignJoinFields(parent);
+        }
+        return this;
+    }
+
     private int orderJournals(QueryModel parent, IntList ordered) {
         ordered.clear();
         this.orderingStack.clear();
@@ -1012,19 +1025,19 @@ public class RecordSourceBuilder {
      * if (rows == null) {
      * rows = HashTable.get(b.y);
      * }
-     * <p>
+     * <p/>
      * in this case tables can be reordered as long as "b" is processed
      * before "a"
-     * <p>
+     * <p/>
      * - second possibility is where all "or" conditions are random
      * in which case query like this:
-     * <p>
+     * <p/>
      * from a
      * join c on a.x = c.x
      * join b on a.x = b.x or c.y = b.y
-     * <p>
+     * <p/>
      * can be rewritten to:
-     * <p>
+     * <p/>
      * from a
      * join c on a.x = c.x
      * join b on a.x = b.x
@@ -1061,16 +1074,17 @@ public class RecordSourceBuilder {
         if (model.getJournalName() != null) {
             model.setMetadata(collectJournalMetadata(model, factory));
         } else {
-            RecordSource<? extends Record> rs = compile(model, factory);
+            RecordSource<? extends Record> rs = compile(model.getNestedModel(), factory);
             model.setMetadata(rs.getMetadata());
             model.setRecordSource(rs);
         }
 
-
         if (model.getAlias() != null) {
-            joinMetadataIndexLookup.put(model.getAlias(), index);
+            if (!parent.addAliasIndex(model.getAlias(), index)) {
+                throw new ParserException(model.getAlias().position, "Duplicate alias");
+            }
         } else if (model.getJournalName() != null) {
-            joinMetadataIndexLookup.put(model.getJournalName().token, index);
+            parent.addAliasIndex(model.getJournalName(), index);
         }
     }
 
@@ -1097,7 +1111,7 @@ public class RecordSourceBuilder {
 
             return index;
         } else {
-            index = joinMetadataIndexLookup.get(alias);
+            index = parent.getAliasIndex(alias);
 
             if (index == -1) {
                 throw new ParserException(position, "Invalid journal name/alias");
@@ -1234,7 +1248,7 @@ public class RecordSourceBuilder {
                     // condition has no journal references
                     // must evaluate as constant
                     postFilterRemoved.add(k);
-                    constantConditions.add(k);
+                    parent.addParsedWhereConst(k);
                 } else {
                     boolean remove = true;
                     for (int y = 0; y < rs; y++) {
@@ -1258,11 +1272,11 @@ public class RecordSourceBuilder {
     /**
      * Identify joined journals without join clause and try to find other reversible join clauses
      * that may be applied to it. For example when these journals joined"
-     * <p>
+     * <p/>
      * from a
      * join b on c.x = b.x
      * join c on c.y = a.y
-     * <p>
+     * <p/>
      * the system that prefers child table with lowest index will attribute c.x = b.x clause to
      * journal "c" leaving "b" without clauses.
      */

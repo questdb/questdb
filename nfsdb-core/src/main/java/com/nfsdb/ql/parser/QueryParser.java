@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
@@ -168,7 +168,8 @@ public class QueryParser {
         tok = optionTok();
 
         if (tok != null && !aliasStopSet.contains(tok)) {
-            joinModel.setAlias(tok.toString());
+            toks.unparse();
+            joinModel.setAlias(expr());
         } else {
             toks.unparse();
         }
@@ -283,7 +284,8 @@ public class QueryParser {
             // check if tok is not "where" - should be alias
 
             if (tok != null && !aliasStopSet.contains(tok)) {
-                model.setAlias(tok.toString());
+                toks.unparse();
+                model.setAlias(expr());
                 tok = optionTok();
             }
 
@@ -298,7 +300,8 @@ public class QueryParser {
             tok = optionTok();
 
             if (tok != null && !aliasStopSet.contains(tok)) {
-                model.setAlias(tok.toString());
+                toks.unparse();
+                model.setAlias(expr());
                 tok = optionTok();
             }
 

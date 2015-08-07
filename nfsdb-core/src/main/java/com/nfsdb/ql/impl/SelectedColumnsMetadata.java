@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,11 +17,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl;
 
-import com.nfsdb.collections.ObjIntHashMap;
+import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
@@ -32,12 +32,12 @@ import java.util.Arrays;
 public class SelectedColumnsMetadata implements RecordMetadata {
     private final RecordMetadata delegate;
     private final int reindex[];
-    private final ObjIntHashMap<CharSequence> nameIndex;
+    private final CharSequenceIntHashMap nameIndex;
 
     public SelectedColumnsMetadata(RecordMetadata delegate, ObjList<String> names) {
         this.delegate = delegate;
         int k = names.size();
-        this.nameIndex = new ObjIntHashMap<>(k);
+        this.nameIndex = new CharSequenceIntHashMap(k);
         this.reindex = new int[k];
         for (int i = 0; i < k; i++) {
             reindex[i] = delegate.getColumnIndex(names.getQuick(i));

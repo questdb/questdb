@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql;
 
@@ -30,10 +30,10 @@ import com.nfsdb.ql.parser.RecordSourceBuilder;
 public class Compiler {
 
     private final QueryParser parser = new QueryParser();
-    private final RecordSourceBuilder optimiser = new RecordSourceBuilder();
+    private final RecordSourceBuilder builder = new RecordSourceBuilder();
 
     public RecordSource<? extends Record> compile(CharSequence query, JournalReaderFactory factory) throws ParserException, JournalException {
         parser.setContent(query);
-        return optimiser.compile(parser.parse().getQueryModel(), factory);
+        return builder.resetAndCompile(parser.parse().getQueryModel(), factory);
     }
 }

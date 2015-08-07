@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
@@ -31,17 +31,13 @@ import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.model.configuration.ModelConfiguration;
 import com.nfsdb.ql.model.QueryModel;
-import com.nfsdb.ql.model.Statement;
 import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Files;
 import com.nfsdb.utils.Rnd;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.ClassRule;
-import org.junit.Test;
+import org.junit.*;
 
 public class JoinTest {
     @ClassRule
@@ -60,14 +56,33 @@ public class JoinTest {
     @Test
     public void testAmbiguousColumn() throws Exception {
         try {
-            parser.setContent("orders join customers on customerId = customerId");
-            Statement statement = parser.parse();
-            joinOptimiser.optimise(statement.getQueryModel(), factory);
+            assertPlan("", "orders join customers on customerId = customerId");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(25, e.getPosition());
             Assert.assertTrue(e.getMessage().contains("Ambiguous"));
         }
+    }
+
+    @Test
+    public void testDuplicateAlias() throws Exception {
+        try {
+            assertPlan("", "customers a" +
+                    " cross join orders a");
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(30, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("Duplicate"));
+        }
+    }
+
+    @Test
+    public void testDuplicateJournals() throws Exception {
+        assertPlan("+ 0[ cross ] customers\n" +
+                        "+ 1[ cross ] customers\n" +
+                        "\n",
+                "customers" +
+                        " cross join customers");
     }
 
     @Test
@@ -84,11 +99,21 @@ public class JoinTest {
     }
 
     @Test
+    @Ignore
+    public void testInnerJoinSubQuery() throws Exception {
+        final String expected = "";
+
+        assertQuery(expected, "(" +
+                "select customerName, orderId, productId " +
+                "from customers join orders on customers.customerId = orders.customerId where customerName ~ 'WTBHZVPVZZ'" +
+                ") x" +
+                " join products p on p.productId = x.productId");
+    }
+
+    @Test
     public void testInvalidAlias() throws Exception {
         try {
-            parser.setContent("orders join customers on orders.customerId = c.customerId");
-            Statement statement = parser.parse();
-            joinOptimiser.optimise(statement.getQueryModel(), factory);
+            assertPlan("", "orders join customers on orders.customerId = c.customerId");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(45, e.getPosition());
@@ -99,9 +124,7 @@ public class JoinTest {
     @Test
     public void testInvalidColumn() throws Exception {
         try {
-            parser.setContent("orders join customers on customerIdx = customerId");
-            Statement statement = parser.parse();
-            joinOptimiser.optimise(statement.getQueryModel(), factory);
+            assertPlan("", "orders join customers on customerIdx = customerId");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(25, e.getPosition());
@@ -112,9 +135,7 @@ public class JoinTest {
     @Test
     public void testInvalidTableName() throws Exception {
         try {
-            parser.setContent("orders join customer on customerId = customerId");
-            Statement statement = parser.parse();
-            joinOptimiser.optimise(statement.getQueryModel(), factory);
+            assertPlan("", "orders join customer on customerId = customerId");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(12, e.getPosition());
@@ -687,7 +708,7 @@ public class JoinTest {
     private void assertPlan(String expected, String query) throws ParserException, JournalException {
         parser.setContent(query);
         QueryModel model = parser.parse().getQueryModel();
-        joinOptimiser.optimise(model, factory);
+        joinOptimiser.resetAndOptimise(model, factory);
         TestUtils.assertEquals(expected, model.plan());
     }
 
@@ -695,8 +716,7 @@ public class JoinTest {
         sink.clear();
         parser.setContent(query);
         QueryModel model = parser.parse().getQueryModel();
-        joinOptimiser.optimise(model, factory);
-        printer.print(joinOptimiser.compileX(model, factory), factory);
+        printer.print(joinOptimiser.resetAndCompile(model, factory), factory);
         TestUtils.assertEquals(expected, sink);
     }
 }

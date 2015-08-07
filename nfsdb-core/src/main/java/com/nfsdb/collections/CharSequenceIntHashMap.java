@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.collections;
 
@@ -77,7 +77,7 @@ public class CharSequenceIntHashMap implements Mutable {
         return probe(key, index);
     }
 
-    public void put(CharSequence key, int value) {
+    public boolean put(CharSequence key, int value) {
         int index = Chars.hashCode(key) & mask;
         if (Unsafe.arrayGet(keys, index) == noEntryValue) {
             Unsafe.arrayPut(keys, index, key);
@@ -86,15 +86,15 @@ public class CharSequenceIntHashMap implements Mutable {
             if (free == 0) {
                 rehash();
             }
-            return;
+            return true;
         }
 
         if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
             Unsafe.arrayPut(values, index, value);
-            return;
+            return false;
         }
 
-        probeInsert(key, index, value);
+        return probeInsert(key, index, value);
     }
 
     public int size() {
@@ -113,7 +113,7 @@ public class CharSequenceIntHashMap implements Mutable {
         } while (true);
     }
 
-    private void probeInsert(CharSequence key, int index, int value) {
+    private boolean probeInsert(CharSequence key, int index, int value) {
         do {
             index = (index + 1) & mask;
             if (Unsafe.arrayGet(keys, index) == noEntryValue) {
@@ -123,12 +123,12 @@ public class CharSequenceIntHashMap implements Mutable {
                 if (free == 0) {
                     rehash();
                 }
-                return;
+                return true;
             }
 
             if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
                 Unsafe.arrayPut(values, index, value);
-                return;
+                return false;
             }
         } while (true);
     }
