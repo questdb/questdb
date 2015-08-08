@@ -83,6 +83,7 @@ public class RecordSourceBuilder {
         }
     }, 16);
     private final ArrayDeque<ExprNode> andConditionStack = new ArrayDeque<>();
+    private final IntList nullCounts = new IntList();
     private ObjList<JoinContext> emittedJoinClauses;
 
     public RecordSourceBuilder() {
@@ -262,6 +263,25 @@ public class RecordSourceBuilder {
         }
     }
 
+    private RowSource buildRowSourceForInt(IntrinsicModel im) throws ParserException {
+        int nSrc = im.keyValues.size();
+        switch (nSrc) {
+            case 1:
+                return new KvIndexIntLookupRowSource(im.keyColumn, new IntConstant(toInt(im.keyValues.getLast(), im.keyValuePositions.getLast())));
+            case 2:
+                return new MergingRowSource(
+                        new KvIndexIntLookupRowSource(im.keyColumn, new IntConstant(toInt(im.keyValues.get(0), im.keyValuePositions.getQuick(0))), true),
+                        new KvIndexIntLookupRowSource(im.keyColumn, new IntConstant(toInt(im.keyValues.get(1), im.keyValuePositions.getQuick(1))), true)
+                );
+            default:
+                RowSource sources[] = new RowSource[nSrc];
+                for (int i = 0; i < nSrc; i++) {
+                    Unsafe.arrayPut(sources, i, new KvIndexIntLookupRowSource(im.keyColumn, new IntConstant(toInt(im.keyValues.get(i), im.keyValuePositions.getQuick(i))), true));
+                }
+                return new HeapMergingRowSource(sources);
+        }
+    }
+
     private RowSource buildRowSourceForStr(IntrinsicModel im) {
         int nSrc = im.keyValues.size();
         switch (nSrc) {
@@ -435,7 +455,7 @@ public class RecordSourceBuilder {
             latestByMetadata = journalMetadata.getColumn(latestByNode.token);
 
             ColumnType type = latestByMetadata.getType();
-            if (type != ColumnType.SYMBOL && type != ColumnType.STRING) {
+            if (type != ColumnType.SYMBOL && type != ColumnType.STRING && type != ColumnType.INT) {
                 throw new ParserException(latestByNode.position, "Expected symbol or string column, found: " + type);
             }
 
@@ -494,6 +514,8 @@ public class RecordSourceBuilder {
                             case STRING:
                                 rs = buildRowSourceForStr(im);
                                 break;
+                            case INT:
+                                rs = buildRowSourceForInt(im);
                         }
                     }
 
@@ -504,25 +526,31 @@ public class RecordSourceBuilder {
                     switch (latestByMetadata.getType()) {
                         case SYMBOL:
                             if (im.keyColumn != null) {
-                                rs = new KvIndexSymListHeadRowSource(latestByCol, im.keyValues, filter);
+                                rs = new KvIndexSymListHeadRowSource(latestByCol, new CharSequenceHashSet(im.keyValues), filter);
                             } else {
-                                rs = new KvIndexAllSymHeadRowSource(latestByCol, filter);
+                                rs = new KvIndexSymAllHeadRowSource(latestByCol, filter);
                             }
                             break;
                         case STRING:
                             if (im.keyColumn != null) {
-                                rs = new KvIndexStrListHeadRowSource(latestByCol, im.keyValues, filter);
+                                rs = new KvIndexStrListHeadRowSource(latestByCol, new CharSequenceHashSet(im.keyValues), filter);
                             } else {
                                 throw new ParserException(latestByNode.position, "Filter on string column expected");
                             }
                             break;
+                        case INT:
+                            if (im.keyColumn != null) {
+                                rs = new KvIndexIntListHeadRowSource(latestByCol, toIntHashSet(im), filter);
+                            } else {
+                                throw new ParserException(latestByNode.position, "Filter on int column expected");
+                            }
                     }
                 }
             }
         } else if (latestByCol != null) {
             switch (latestByMetadata.getType()) {
                 case SYMBOL:
-                    rs = new KvIndexAllSymHeadRowSource(latestByCol, null);
+                    rs = new KvIndexSymAllHeadRowSource(latestByCol, null);
                     break;
                 case STRING:
                     throw new ParserException(latestByNode.position, "Filter on string column expected");
@@ -1218,12 +1246,36 @@ public class RecordSourceBuilder {
         return true;
     }
 
+    private int toInt(CharSequence cs, int pos) throws ParserException {
+        try {
+            return Numbers.parseInt(cs);
+        } catch (NumberFormatException e) {
+            throw new ParserException(pos, "int value expected");
+        }
+    }
+
+    private IntHashSet toIntHashSet(IntrinsicModel im) throws ParserException {
+        IntHashSet set = null;
+        for (int i = 0, n = im.keyValues.size(); i < n; i++) {
+            try {
+                int v = Numbers.parseInt(im.keyValues.get(i));
+                if (set == null) {
+                    set = new IntHashSet(im.keyValues.size());
+                }
+                set.add(v);
+            } catch (NumberFormatException e) {
+                throw new ParserException(im.keyValuePositions.get(i), "int value expected");
+            }
+        }
+        return set;
+    }
+
     private void tryAssignPostJoinFilters(QueryModel parent) throws ParserException {
 
         journalsSoFar.clear();
         postFilterRemoved.clear();
         postFilterJournalRefs.clear();
-        IntList nullCounts = new IntList();
+        nullCounts.clear();
 
         literalCollector.withParent(parent);
         ObjList<ExprNode> filterNodes = parent.getParsedWhere();

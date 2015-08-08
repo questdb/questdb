@@ -65,7 +65,7 @@ public class CollectionsTest {
         list2.add(1001);
         list2.add(2001);
 
-        list.add(list2);
+        list.addAll(list2);
 
 
         Assert.assertEquals(N + 2, list.size());
@@ -78,7 +78,7 @@ public class CollectionsTest {
             list3.add(i + 5000);
         }
 
-        list.add(list3);
+        list.addAll(list3);
         Assert.assertEquals(2 * N + 2, list.size());
     }
 

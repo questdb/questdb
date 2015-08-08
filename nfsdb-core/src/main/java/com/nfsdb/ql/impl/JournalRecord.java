@@ -25,7 +25,6 @@ import com.nfsdb.Partition;
 import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.RecordMetadata;
-import com.nfsdb.storage.FixedColumn;
 
 import java.io.OutputStream;
 
@@ -39,7 +38,7 @@ public class JournalRecord extends AbstractRecord {
 
     @Override
     public byte get(int col) {
-        return ((FixedColumn) partition.getAbstractColumn(col)).getByte(rowid);
+        return partition.fixCol(col).getByte(rowid);
     }
 
     @Override

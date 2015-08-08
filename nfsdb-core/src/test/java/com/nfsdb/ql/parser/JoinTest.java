@@ -57,6 +57,19 @@ public class JoinTest {
     }
 
     @Test
+    public void testAllOrdersForACustomers() throws Exception {
+        assertQuery("32209860\t1\t1000\tMZPFIR\t2015-07-10T00:00:17.050Z\tOJXJCNBLYTOIYI\n" +
+                        "1020826110\t1\t1884\tGRG\t2015-07-10T00:00:21.152Z\tQXOLEEXZ\n" +
+                        "1921430865\t1\t1682\tXV\t2015-07-10T00:00:27.676Z\tMZCMZMHGTIQ\n" +
+                        "355660772\t1\t1766\tOFN\t2015-07-10T00:00:33.004Z\tW\n" +
+                        "1078912382\t1\t1296\tYBHPRQD\t2015-07-10T00:00:54.661Z\tYJZPHQDJKOM\n" +
+                        "1173798559\t1\t387\t\t2015-07-10T00:01:00.700Z\tKZRCKS\n" +
+                        "132190528\t1\t1088\t\t2015-07-10T00:01:07.110Z\tFBLGGTZEN\n" +
+                        "385427654\t1\t1703\tXEMP\t2015-07-10T00:01:33.250Z\tMZCMZMHGTIQ\n",
+                "orders where customerId = 1 ");
+    }
+
+    @Test
     public void testAmbiguousColumn() throws Exception {
         try {
             assertPlan("", "orders join customers on customerId = customerId");
@@ -374,6 +387,31 @@ public class JoinTest {
                         " join suppliers on products.supplier = suppliers.supplier" +
                         " where d.productId = d.orderId" +
                         " and (products.price > d.quantity or d.orderId = orders.orderId) and d.quantity < orders.orderId");
+    }
+
+    @Test
+    public void testLatestOrderForACustomers() throws Exception {
+        assertQuery("385427654\t1\t1703\tXEMP\t2015-07-10T00:01:33.250Z\tMZCMZMHGTIQ\n",
+                "orders latest by customerId where customerId = 1 and employeeId = 'XEMP'");
+    }
+
+    @Test
+    public void testLatestOrderForACustomersNoFilter() throws Exception {
+        try {
+            assertQuery("", "orders latest by customerId where employeeId = 'XEMP'");
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(17, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("Filter on int"));
+        }
+    }
+
+    @Test
+    public void testLatestOrderForListOfCustomers() throws Exception {
+        assertQuery("385427654\t1\t1703\tXEMP\t2015-07-10T00:01:33.250Z\tMZCMZMHGTIQ\n" +
+                        "607937606\t2\t548\tOVU\t2015-07-10T00:01:49.101Z\tRZVZJQRNYSRKZSJ\n" +
+                        "855411970\t3\t1829\tBRSYPN\t2015-07-10T00:01:51.990Z\tOJXJCNBLYTOIYI\n",
+                "orders latest by customerId where customerId in (1,2,3)");
     }
 
     @Test

@@ -94,7 +94,7 @@ public class SingleJournalSearchTest {
                                 new JournalPartitionSource(journal, false),
                                 new SingleIntervalSource(new Interval("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z"))
                         ),
-                        new KvIndexAllSymHeadRowSource(
+                        new KvIndexSymAllHeadRowSource(
                                 "sym"
                                 , null
                         )
@@ -128,7 +128,7 @@ public class SingleJournalSearchTest {
                                 new SingleIntervalSource(new Interval("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z"))
 
                         ),
-                        new KvIndexAllSymHeadRowSource(
+                        new KvIndexSymAllHeadRowSource(
                                 "sym",
                                 filter
                         )

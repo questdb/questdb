@@ -33,7 +33,6 @@ public class CharSequenceHashSet implements Mutable {
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final double loadFactor;
     private final ObjList<CharSequence> list;
-    private final CharSequenceHashSet temp;
     private CharSequence[] keys;
     private int free;
     private int capacity;
@@ -43,15 +42,16 @@ public class CharSequenceHashSet implements Mutable {
         this(MIN_INITIAL_CAPACITY);
     }
 
-    public CharSequenceHashSet(boolean mktemp) {
-        this(MIN_INITIAL_CAPACITY, 0.4, 0.3, mktemp);
+    public CharSequenceHashSet(CharSequenceHashSet that) {
+        this(that.capacity, that.loadFactor, 0.3);
+        addAll(that);
     }
 
     private CharSequenceHashSet(int initialCapacity) {
-        this(initialCapacity, 0.4, 0.3, false);
+        this(initialCapacity, 0.4, 0.3);
     }
 
-    private CharSequenceHashSet(int initialCapacity, double loadFactor, double hashFactor, boolean mktemp) {
+    private CharSequenceHashSet(int initialCapacity, double loadFactor, double hashFactor) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
@@ -67,21 +67,18 @@ public class CharSequenceHashSet implements Mutable {
         mask = keys.length - 1;
         free = this.capacity = initialCapacity;
         this.list = new ObjList<>(free);
-        if (mktemp) {
-            temp = new CharSequenceHashSet(false);
-        } else {
-            temp = null;
-        }
         clear();
     }
 
-    public void add(CharSequence key) {
+    public boolean add(CharSequence key) {
         if (insertKey(key)) {
             list.add(key);
             if (free == 0) {
                 rehash();
             }
+            return true;
         }
+        return false;
     }
 
     public void addAll(CharSequenceHashSet that) {
@@ -107,22 +104,6 @@ public class CharSequenceHashSet implements Mutable {
 
     public CharSequence getLast() {
         return list.getLast();
-    }
-
-    public boolean replaceAllWithOverlap(CharSequenceHashSet that) {
-        temp.clear();
-        for (int i = 0, k = that.size(); i < k; i++) {
-            if (contains(that.get(i))) {
-                temp.add(that.get(i));
-            }
-        }
-
-        if (temp.size() > 0) {
-            this.clear();
-            addAll(temp);
-            return true;
-        }
-        return false;
     }
 
     public int size() {

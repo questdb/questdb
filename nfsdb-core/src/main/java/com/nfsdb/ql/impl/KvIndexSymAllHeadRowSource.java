@@ -22,7 +22,6 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.Partition;
-import com.nfsdb.collections.CharSequenceHashSet;
 import com.nfsdb.collections.LongList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
@@ -33,24 +32,20 @@ import com.nfsdb.ql.SymFacade;
 import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
-import com.nfsdb.storage.VariableColumn;
-import com.nfsdb.utils.Hash;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class KvIndexStrListHeadRowSource extends AbstractRowSource {
+public class KvIndexSymAllHeadRowSource extends AbstractRowSource {
 
     private final String column;
     private final VirtualColumn filter;
-    private final CharSequenceHashSet values;
     private final LongList rows = new LongList();
     private JournalRecord rec;
     private int keyIndex;
-    private int buckets;
+    private int valueCount;
     private int columnIndex;
 
-    public KvIndexStrListHeadRowSource(String column, CharSequenceHashSet values, VirtualColumn filter) {
+    public KvIndexSymAllHeadRowSource(String column, VirtualColumn filter) {
         this.column = column;
-        this.values = values;
         this.filter = filter;
     }
 
@@ -58,7 +53,6 @@ public class KvIndexStrListHeadRowSource extends AbstractRowSource {
     public void configure(JournalMetadata metadata) {
         this.rec = new JournalRecord(metadata);
         this.columnIndex = metadata.getColumnIndex(column);
-        this.buckets = metadata.getColumn(columnIndex).distinctCountHint;
     }
 
     @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
@@ -67,19 +61,17 @@ public class KvIndexStrListHeadRowSource extends AbstractRowSource {
         try {
             Partition partition = rec.partition = slice.partition.open();
             KVIndex index = partition.getIndexForColumn(columnIndex);
-            VariableColumn col = partition.varCol(columnIndex);
-
             long lo = slice.lo - 1;
             long hi = slice.calcHi ? partition.size() : slice.hi + 1;
             rows.clear();
 
-            for (int i = 0, n = values.size(); i < n; i++) {
-                IndexCursor c = index.cursor(Hash.boundedHash(values.get(i), buckets));
+            for (int i = 0, n = valueCount; i < n; i++) {
+                IndexCursor c = index.cursor(i);
                 long r = -1;
                 boolean found = false;
                 while (c.hasNext()) {
                     r = rec.rowid = c.next();
-                    if (r > lo && r < hi && col.cmpStr(r, values.get(i)) && (filter == null || filter.getBool(rec))) {
+                    if (r > lo && r < hi && (filter == null || filter.getBool(rec))) {
                         found = true;
                         break;
                     }
@@ -107,13 +99,14 @@ public class KvIndexStrListHeadRowSource extends AbstractRowSource {
 
     @Override
     public long next() {
-        return rec.rowid = rows.getQuick(keyIndex++);
+        return rec.rowid = rows.get(keyIndex++);
     }
 
     @Override
-    public void prepare(SymFacade symFacade) {
+    public void prepare(SymFacade facade) {
         if (filter != null) {
-            filter.prepare(symFacade);
+            filter.prepare(facade);
         }
+        valueCount = facade.getSymbolTable(column).size();
     }
 }

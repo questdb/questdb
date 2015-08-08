@@ -47,7 +47,7 @@ public class IntList implements Mutable {
         Unsafe.arrayPut(buffer, pos++, value);
     }
 
-    public void add(IntList that) {
+    public void addAll(IntList that) {
         int p = pos;
         int s = that.size();
         ensureCapacity(p + s);
@@ -83,6 +83,13 @@ public class IntList implements Mutable {
             return Unsafe.arrayGet(buffer, index);
         }
         throw new ArrayIndexOutOfBoundsException(index);
+    }
+
+    public int getLast() {
+        if (pos > 0) {
+            return Unsafe.arrayGet(buffer, pos - 1);
+        }
+        return noEntryValue;
     }
 
     /**

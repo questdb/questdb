@@ -22,6 +22,7 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.Partition;
+import com.nfsdb.collections.IntHashSet;
 import com.nfsdb.collections.LongList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
@@ -30,22 +31,25 @@ import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.RowCursor;
 import com.nfsdb.ql.SymFacade;
 import com.nfsdb.ql.ops.VirtualColumn;
+import com.nfsdb.storage.FixedColumn;
 import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class KvIndexAllSymHeadRowSource extends AbstractRowSource {
+public class KvIndexIntListHeadRowSource extends AbstractRowSource {
 
     private final String column;
     private final VirtualColumn filter;
+    private final IntHashSet values;
     private final LongList rows = new LongList();
     private JournalRecord rec;
     private int keyIndex;
-    private int valueCount;
+    private int buckets;
     private int columnIndex;
 
-    public KvIndexAllSymHeadRowSource(String column, VirtualColumn filter) {
+    public KvIndexIntListHeadRowSource(String column, IntHashSet values, VirtualColumn filter) {
         this.column = column;
+        this.values = values;
         this.filter = filter;
     }
 
@@ -53,6 +57,7 @@ public class KvIndexAllSymHeadRowSource extends AbstractRowSource {
     public void configure(JournalMetadata metadata) {
         this.rec = new JournalRecord(metadata);
         this.columnIndex = metadata.getColumnIndex(column);
+        this.buckets = metadata.getColumn(columnIndex).distinctCountHint;
     }
 
     @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
@@ -61,17 +66,19 @@ public class KvIndexAllSymHeadRowSource extends AbstractRowSource {
         try {
             Partition partition = rec.partition = slice.partition.open();
             KVIndex index = partition.getIndexForColumn(columnIndex);
+            FixedColumn col = partition.fixCol(columnIndex);
+
             long lo = slice.lo - 1;
             long hi = slice.calcHi ? partition.size() : slice.hi + 1;
             rows.clear();
 
-            for (int i = 0, n = valueCount; i < n; i++) {
-                IndexCursor c = index.cursor(i);
+            for (int i = 0, n = values.size(); i < n; i++) {
+                IndexCursor c = index.cursor(values.get(i) & buckets);
                 long r = -1;
                 boolean found = false;
                 while (c.hasNext()) {
                     r = rec.rowid = c.next();
-                    if (r > lo && r < hi && (filter == null || filter.getBool(rec))) {
+                    if (r > lo && r < hi && col.getInt(r) == values.get(i) && (filter == null || filter.getBool(rec))) {
                         found = true;
                         break;
                     }
@@ -99,14 +106,13 @@ public class KvIndexAllSymHeadRowSource extends AbstractRowSource {
 
     @Override
     public long next() {
-        return rec.rowid = rows.get(keyIndex++);
+        return rec.rowid = rows.getQuick(keyIndex++);
     }
 
     @Override
-    public void prepare(SymFacade facade) {
+    public void prepare(SymFacade symFacade) {
         if (filter != null) {
-            filter.prepare(facade);
+            filter.prepare(symFacade);
         }
-        valueCount = facade.getSymbolTable(column).size();
     }
 }

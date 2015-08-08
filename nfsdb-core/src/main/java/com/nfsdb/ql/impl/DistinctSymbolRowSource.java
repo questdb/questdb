@@ -59,7 +59,7 @@ public class DistinctSymbolRowSource extends AbstractRowSource {
 
     @Override
     public RowCursor prepareCursor(PartitionSlice slice) {
-        column = (FixedColumn) slice.partition.getAbstractColumn(columnIndex);
+        column = slice.partition.fixCol(columnIndex);
         cursor = delegate.prepareCursor(slice);
         return this;
     }

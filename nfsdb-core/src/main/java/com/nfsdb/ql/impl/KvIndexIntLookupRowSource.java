@@ -27,55 +27,50 @@ import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.RowCursor;
 import com.nfsdb.ql.ops.VirtualColumn;
+import com.nfsdb.storage.FixedColumn;
 import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
-import com.nfsdb.storage.VariableColumn;
-import com.nfsdb.utils.Hash;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class KvIndexStrLookupRowSource extends AbstractRowSource {
+@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
+public class KvIndexIntLookupRowSource extends AbstractRowSource {
 
     private final String columnName;
-    private final VirtualColumn valueFunction;
     private final boolean newCursor;
+    private final int value;
+    private int columnIndex;
+    private int key = -2;
     private IndexCursor indexCursor;
     private long lo;
     private long hi;
     private long rowid;
-    private CharSequence currentValue;
-    private VariableColumn column;
-    private int buckets;
-    private int columnIndex;
     private boolean hasNext = false;
+    private FixedColumn column;
 
-    public KvIndexStrLookupRowSource(String columnName, VirtualColumn valueFunction) {
+    public KvIndexIntLookupRowSource(String columnName, VirtualColumn valueFunction) {
         this(columnName, valueFunction, false);
     }
 
-    public KvIndexStrLookupRowSource(String columnName, VirtualColumn valueFunction, boolean newCursor) {
+    public KvIndexIntLookupRowSource(String columnName, VirtualColumn valueFunction, boolean newCursor) {
         this.columnName = columnName;
-        this.valueFunction = valueFunction;
         this.newCursor = newCursor;
+        this.value = valueFunction.getInt(null);
     }
 
     @Override
     public void configure(JournalMetadata metadata) {
         this.columnIndex = metadata.getColumnIndex(columnName);
-        this.buckets = metadata.getColumn(columnIndex).distinctCountHint;
+        this.key = value & metadata.getColumn(columnIndex).distinctCountHint;
     }
 
-    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
     @Override
     public RowCursor prepareCursor(PartitionSlice slice) {
         try {
-            this.column = slice.partition.varCol(columnIndex);
+            column = slice.partition.fixCol(columnIndex);
             KVIndex index = slice.partition.getIndexForColumn(columnIndex);
-            CharSequence cs = valueFunction.getFlyweightStr(null);
-            this.currentValue = cs == null ? null : cs.toString();
-            this.indexCursor = newCursor ? index.newFwdCursor(Hash.boundedHash(currentValue, buckets)) : index.fwdCursor(Hash.boundedHash(currentValue, buckets));
+            this.indexCursor = newCursor ? index.newFwdCursor(key) : index.fwdCursor(key);
             this.lo = slice.lo - 1;
             this.hi = slice.calcHi ? slice.partition.open().size() : slice.hi + 1;
-            this.hasNext = false;
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
@@ -98,7 +93,7 @@ public class KvIndexStrLookupRowSource extends AbstractRowSource {
         if (indexCursor != null) {
             while (indexCursor.hasNext()) {
                 long r = indexCursor.next();
-                if (r > lo && r < hi && column.cmpStr(r, currentValue)) {
+                if (r > lo && r < hi && column.getInt(r) == value) {
                     this.rowid = r;
                     return hasNext = true;
                 }

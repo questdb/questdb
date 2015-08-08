@@ -138,6 +138,11 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
     }
 
+    public FixedColumn fixCol(int i) {
+        checkColumnIndex(i);
+        return (FixedColumn) Unsafe.arrayGet(columns, i);
+    }
+
     public AbstractColumn getAbstractColumn(int i) {
         checkColumnIndex(i);
         return Unsafe.arrayGet(columns, i);
@@ -386,6 +391,11 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
     }
 
+    public VariableColumn varCol(int i) {
+        checkColumnIndex(i);
+        return (VariableColumn) Unsafe.arrayGet(columns, i);
+    }
+
     Partition<T> access() {
         switch (journal.getMetadata().getPartitionType()) {
             case NONE:
@@ -503,11 +513,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
                 sparseIndexProxies[i] = null;
             }
         }
-    }
-
-    private FixedColumn fixCol(int i) {
-        checkColumnIndex(i);
-        return (FixedColumn) Unsafe.arrayGet(columns, i);
     }
 
     void force() throws JournalException {
@@ -671,10 +676,5 @@ public class Partition<T> implements Iterable<T>, Closeable {
             commitColumns();
             clearTx();
         }
-    }
-
-    private VariableColumn varCol(int i) {
-        checkColumnIndex(i);
-        return (VariableColumn) Unsafe.arrayGet(columns, i);
     }
 }

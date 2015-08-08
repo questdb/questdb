@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,12 +17,13 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.parser;
 
 import com.nfsdb.collections.CharSequenceHashSet;
 import com.nfsdb.collections.FlyweightCharSequence;
+import com.nfsdb.collections.IntList;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.RecordMetadata;
@@ -48,6 +49,9 @@ public class IntrinsicExtractor {
     private final ObjList<ExprNode> timestampNodes = new ObjList<>();
     private final IntrinsicModel model = new IntrinsicModel();
     private final CharSequenceHashSet tempKeys = new CharSequenceHashSet();
+    private final IntList tempPos = new IntList();
+    private final CharSequenceHashSet tempK = new CharSequenceHashSet();
+    private final IntList tempP = new IntList();
     private RecordColumnMetadata timestamp;
     private String preferredKeyColumn;
 
@@ -116,6 +120,7 @@ public class IntrinsicExtractor {
                 switch (meta.getType()) {
                     case SYMBOL:
                     case STRING:
+                    case INT:
                         if (meta.isIndexed()) {
 
                             // check if we are limited by preferred column
@@ -135,7 +140,9 @@ public class IntrinsicExtractor {
                             if (newColumn) {
                                 model.keyColumn = a.token;
                                 model.keyValues.clear();
+                                model.keyValuePositions.clear();
                                 model.keyValues.add(value);
+                                model.keyValuePositions.add(b.position);
                                 for (int n = 0, k = keyNodes.size(); n < k; n++) {
                                     keyNodes.getQuick(n).intrinsicValue = IntrinsicValue.UNDEFINED;
                                 }
@@ -146,7 +153,9 @@ public class IntrinsicExtractor {
                                 // otherwise invalidate entire model
                                 if (model.keyValues.contains(value)) {
                                     model.keyValues.clear();
+                                    model.keyValuePositions.clear();
                                     model.keyValues.add(value);
+                                    model.keyValuePositions.add(b.position);
                                 } else {
                                     model.intrinsicValue = IntrinsicValue.FALSE;
                                     return false;
@@ -300,6 +309,7 @@ public class IntrinsicExtractor {
 
             int i = node.paramCount - 1;
             tempKeys.clear();
+            tempPos.clear();
 
             // collect and analyze values of indexed field
             // if any of values is not an indexed constant - bail out
@@ -307,14 +317,18 @@ public class IntrinsicExtractor {
                 if (node.rhs == null || node.rhs.type != ExprNode.NodeType.CONSTANT) {
                     return false;
                 }
-                tempKeys.add(Chars.stripQuotes(node.rhs.token));
+                if (tempKeys.add(Chars.stripQuotes(node.rhs.token))) {
+                    tempPos.add(node.position);
+                }
             } else {
                 for (i--; i > -1; i--) {
                     ExprNode c = node.args.getQuick(i);
                     if (c.type != ExprNode.NodeType.CONSTANT) {
                         return false;
                     }
-                    tempKeys.add(Chars.stripQuotes(c.token));
+                    if (tempKeys.add(Chars.stripQuotes(c.token))) {
+                        tempPos.add(c.position);
+                    }
                 }
             }
 
@@ -322,7 +336,9 @@ public class IntrinsicExtractor {
             // and reset intrinsic values on nodes associated with old column
             if (newColumn) {
                 model.keyValues.clear();
+                model.keyValuePositions.clear();
                 model.keyValues.addAll(tempKeys);
+                model.keyValuePositions.addAll(tempPos);
                 for (int n = 0, k = keyNodes.size(); n < k; n++) {
                     keyNodes.getQuick(n).intrinsicValue = IntrinsicValue.UNDEFINED;
                 }
@@ -330,9 +346,7 @@ public class IntrinsicExtractor {
                 model.keyColumn = col;
             } else {
                 // calculate overlap of values
-                if (!model.keyValues.replaceAllWithOverlap(tempKeys)) {
-                    model.intrinsicValue = IntrinsicValue.FALSE;
-                }
+                replaceAllWithOverlap();
             }
 
             keyNodes.add(node);
@@ -486,6 +500,27 @@ public class IntrinsicExtractor {
                 return analyzeEquals(node, m);
             default:
                 return false;
+        }
+    }
+
+    private void replaceAllWithOverlap() {
+        tempK.clear();
+        tempP.clear();
+        for (int i = 0, k = tempKeys.size(); i < k; i++) {
+            if (model.keyValues.contains(tempKeys.get(i))) {
+                if (tempK.add(tempKeys.get(i))) {
+                    tempP.add(tempPos.get(i));
+                }
+            }
+        }
+
+        if (tempK.size() > 0) {
+            model.keyValues.clear();
+            model.keyValuePositions.clear();
+            model.keyValues.addAll(tempK);
+            model.keyValuePositions.addAll(tempP);
+        } else {
+            model.intrinsicValue = IntrinsicValue.FALSE;
         }
     }
 }

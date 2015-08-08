@@ -69,7 +69,7 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
 
         zone1Keys.clear(symbolKeys.size());
         zone2Keys.clear(symbolKeys.size());
-        zone1Keys.add(symbolKeys);
+        zone1Keys.addAll(symbolKeys);
 
         //noinspection ConstantConditions
         return journal.iteratePartitionsDesc(

@@ -152,6 +152,7 @@ public class IntrinsicExtractorTest extends AbstractTest {
         IntrinsicModel m = modelOf("sym in ('x','y') and sym = 'y'");
         Assert.assertNull(m.filter);
         Assert.assertEquals("[y]", m.keyValues.toString());
+        Assert.assertEquals("[12]", m.keyValuePositions.toString());
     }
 
     @Test
@@ -207,6 +208,7 @@ public class IntrinsicExtractorTest extends AbstractTest {
         Assert.assertTrue(m.intervalHi < Long.MAX_VALUE);
         Assert.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[a,b,c]", m.keyValues.toString());
+        Assert.assertEquals("[8,13,18]", m.keyValuePositions.toString());
         Assert.assertNull(m.filter);
     }
 

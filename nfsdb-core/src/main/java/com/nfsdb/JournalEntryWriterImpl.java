@@ -202,8 +202,8 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
     private void putInt0(int index, int value) {
         if (meta(index).indexed) {
             int h = value & meta(index).distinctCountHint;
-            Unsafe.arrayPut(koTuple, index * 2, h < 0 ? -h : h);
-            Unsafe.arrayPut(koTuple, index * 2 + 1, fixCol(index).putInt(value));
+            Unsafe.arrayPut(koTuple, index * 2L, h < 0 ? -h : h);
+            Unsafe.arrayPut(koTuple, index * 2L + 1L, fixCol(index).putInt(value));
         } else {
             fixCol(index).putInt(value);
         }
@@ -211,8 +211,8 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
 
     private void putNullStr(int index) {
         if (meta(index).indexed) {
-            Unsafe.arrayPut(koTuple, index * 2, SymbolTable.VALUE_IS_NULL);
-            Unsafe.arrayPut(koTuple, index * 2 + 1, varCol(index).putNull());
+            Unsafe.arrayPut(koTuple, index * 2L, SymbolTable.VALUE_IS_NULL);
+            Unsafe.arrayPut(koTuple, index * 2L + 1L, varCol(index).putNull());
         } else {
             varCol(index).putNull();
         }
@@ -220,8 +220,8 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
 
     private void putString0(int index, CharSequence value) {
         if (meta(index).indexed) {
-            Unsafe.arrayPut(koTuple, index * 2, value == null ? SymbolTable.VALUE_IS_NULL : Hash.boundedHash(value, Unsafe.arrayGet(meta, index).distinctCountHint));
-            Unsafe.arrayPut(koTuple, index * 2 + 1, varCol(index).putStr(value));
+            Unsafe.arrayPut(koTuple, index * 2L, value == null ? SymbolTable.VALUE_IS_NULL : Hash.boundedHash(value, Unsafe.arrayGet(meta, index).distinctCountHint));
+            Unsafe.arrayPut(koTuple, index * 2L + 1L, varCol(index).putStr(value));
         } else {
             varCol(index).putStr(value);
         }
