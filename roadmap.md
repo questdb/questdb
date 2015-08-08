@@ -5,7 +5,7 @@ __lang__
 - simple resampling (where aggregation function produces single row of values)
 - multi-row aggregation
 - multi-row resampling
-- classic sql joins (hash, nested loops)
+- ~~classic sql joins (hash, nested loops)~~
 - time joins (merge)
 - as of joins
 - ordering
