@@ -30,6 +30,8 @@ import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.model.configuration.ModelConfiguration;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.model.QueryModel;
 import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.test.tools.JournalTestFactory;
@@ -144,6 +146,15 @@ public class JoinTest {
                 " from customers join orders o on customers.customerId = o.customerId " +
                 " join products p on p.productId = o.productId" +
                 " where customerName ~ 'WTBHZVPVZZ'");
+    }
+
+    @Test
+    public void testIntrinsicFalse() throws Exception {
+        assertQuery("customerName\tproductName\torderId\n",
+                "select customerName, productName, orderId " +
+                        " from customers join orders o on customers.customerId = o.customerId " +
+                        " join products p on p.productId = o.productId" +
+                        " where customerName ~ 'WTBHZVPVZZ' and 1 > 1", true);
     }
 
     @Test
@@ -774,10 +785,18 @@ public class JoinTest {
     }
 
     private void assertQuery(String expected, String query) throws ParserException, JournalException {
+        assertQuery(expected, query, false);
+    }
+
+    private void assertQuery(String expected, String query, boolean header) throws ParserException, JournalException {
         sink.clear();
         parser.setContent(query);
         QueryModel model = parser.parse().getQueryModel();
-        printer.print(joinOptimiser.resetAndCompile(model, factory), factory);
+        RecordSource<? extends Record> src = joinOptimiser.resetAndCompile(model, factory);
+        if (header) {
+            printer.printHeader(src.getMetadata());
+        }
+        printer.print(src, factory);
         TestUtils.assertEquals(expected, sink);
     }
 }

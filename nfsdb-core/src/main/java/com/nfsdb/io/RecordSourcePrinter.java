@@ -78,11 +78,20 @@ public class RecordSourcePrinter {
         }
     }
 
-
     public void print(RecordCursor<? extends Record> src, RecordMetadata metadata) {
         while (src.hasNext()) {
             print(src.next(), metadata);
         }
+    }
+
+    public void printHeader(RecordMetadata metadata) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (i > 0) {
+                sink.put(delimiter);
+            }
+            sink.put(metadata.getColumn(i).getName());
+        }
+        sink.put('\n');
     }
 
     private void printRecord(Record r, RecordMetadata m, int i) {

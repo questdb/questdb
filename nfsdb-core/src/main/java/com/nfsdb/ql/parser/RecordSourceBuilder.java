@@ -146,23 +146,8 @@ public class RecordSourceBuilder {
         if (filter == null) {
             return;
         }
-
         QueryModel m = parent.getJoinModels().getQuick(index);
-        ExprNode old = m.getWhereClause();
-
-        if (filter == old) {
-            return;
-        }
-
-        if (old == null) {
-            m.setWhereClause(filter);
-        } else {
-            ExprNode n = exprNodePool.next().init(ExprNode.NodeType.OPERATION, "and", 0, 0);
-            n.paramCount = 2;
-            n.lhs = old;
-            n.rhs = filter;
-            m.setWhereClause(n);
-        }
+        m.setWhereClause(concatFilters(m.getWhereClause(), filter));
     }
 
     /**
@@ -267,16 +252,16 @@ public class RecordSourceBuilder {
         int nSrc = im.keyValues.size();
         switch (nSrc) {
             case 1:
-                return new KvIndexIntLookupRowSource(im.keyColumn, new IntConstant(toInt(im.keyValues.getLast(), im.keyValuePositions.getLast())));
+                return new KvIndexIntLookupRowSource(im.keyColumn, toInt(im.keyValues.getLast(), im.keyValuePositions.getLast()));
             case 2:
                 return new MergingRowSource(
-                        new KvIndexIntLookupRowSource(im.keyColumn, new IntConstant(toInt(im.keyValues.get(0), im.keyValuePositions.getQuick(0))), true),
-                        new KvIndexIntLookupRowSource(im.keyColumn, new IntConstant(toInt(im.keyValues.get(1), im.keyValuePositions.getQuick(1))), true)
+                        new KvIndexIntLookupRowSource(im.keyColumn, toInt(im.keyValues.get(0), im.keyValuePositions.getQuick(0)), true),
+                        new KvIndexIntLookupRowSource(im.keyColumn, toInt(im.keyValues.get(1), im.keyValuePositions.getQuick(1)), true)
                 );
             default:
                 RowSource sources[] = new RowSource[nSrc];
                 for (int i = 0; i < nSrc; i++) {
-                    Unsafe.arrayPut(sources, i, new KvIndexIntLookupRowSource(im.keyColumn, new IntConstant(toInt(im.keyValues.get(i), im.keyValuePositions.getQuick(i))), true));
+                    Unsafe.arrayPut(sources, i, new KvIndexIntLookupRowSource(im.keyColumn, toInt(im.keyValues.get(i), im.keyValuePositions.getQuick(i)), true));
                 }
                 return new HeapMergingRowSource(sources);
         }
@@ -286,16 +271,16 @@ public class RecordSourceBuilder {
         int nSrc = im.keyValues.size();
         switch (nSrc) {
             case 1:
-                return new KvIndexStrLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.getLast()));
+                return new KvIndexStrLookupRowSource(im.keyColumn, Chars.toString(im.keyValues.getLast()));
             case 2:
                 return new MergingRowSource(
-                        new KvIndexStrLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(0)), true),
-                        new KvIndexStrLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(1)), true)
+                        new KvIndexStrLookupRowSource(im.keyColumn, Chars.toString(im.keyValues.get(0)), true),
+                        new KvIndexStrLookupRowSource(im.keyColumn, Chars.toString(im.keyValues.get(1)), true)
                 );
             default:
                 RowSource sources[] = new RowSource[nSrc];
                 for (int i = 0; i < nSrc; i++) {
-                    Unsafe.arrayPut(sources, i, new KvIndexStrLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(i)), true));
+                    Unsafe.arrayPut(sources, i, new KvIndexStrLookupRowSource(im.keyColumn, Chars.toString(im.keyValues.get(i)), true));
                 }
                 return new HeapMergingRowSource(sources);
         }
@@ -305,16 +290,16 @@ public class RecordSourceBuilder {
         int nSrc = im.keyValues.size();
         switch (nSrc) {
             case 1:
-                return new KvIndexSymLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.getLast()));
+                return new KvIndexSymLookupRowSource(im.keyColumn, Chars.toString(im.keyValues.getLast()));
             case 2:
                 return new MergingRowSource(
-                        new KvIndexSymLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(0)), true),
-                        new KvIndexSymLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(1)), true)
+                        new KvIndexSymLookupRowSource(im.keyColumn, Chars.toString(im.keyValues.get(0)), true),
+                        new KvIndexSymLookupRowSource(im.keyColumn, Chars.toString(im.keyValues.get(1)), true)
                 );
             default:
                 RowSource sources[] = new RowSource[nSrc];
                 for (int i = 0; i < nSrc; i++) {
-                    Unsafe.arrayPut(sources, i, new KvIndexSymLookupRowSource(im.keyColumn, new StrConstant(im.keyValues.get(i)), true));
+                    Unsafe.arrayPut(sources, i, new KvIndexSymLookupRowSource(im.keyColumn, Chars.toString(im.keyValues.get(i)), true));
                 }
                 return new HeapMergingRowSource(sources);
         }
@@ -419,6 +404,9 @@ public class RecordSourceBuilder {
 
         }
 
+        if (joinModelIsFalse(model)) {
+            return new NoOpJournalRecordSource(current);
+        }
         return current;
     }
 
@@ -598,6 +586,22 @@ public class RecordSourceBuilder {
 
     }
 
+    private ExprNode concatFilters(ExprNode old, ExprNode filter) {
+        if (filter == null || filter == old) {
+            return old;
+        }
+
+        if (old == null) {
+            return filter;
+        } else {
+            ExprNode n = exprNodePool.next().init(ExprNode.NodeType.OPERATION, "and", 0, 0);
+            n.paramCount = 2;
+            n.lhs = old;
+            n.rhs = filter;
+            return n;
+        }
+    }
+
     private void createColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
         mutableArgs.clear();
         mutableSig.clear();
@@ -641,6 +645,27 @@ public class RecordSourceBuilder {
 
     private CharSequence extractColumnName(CharSequence token, int dot) {
         return dot == -1 ? token : csPool.next().of(token, dot + 1, token.length() - dot - 1);
+    }
+
+    private boolean joinModelIsFalse(QueryModel model) throws ParserException {
+        ExprNode current = null;
+        IntHashSet constants = model.getParsedWhereConsts();
+        ObjList<ExprNode> whereNodes = model.getParsedWhere();
+
+        for (int i = 0, n = constants.size(); i < n; i++) {
+            current = concatFilters(current, whereNodes.getQuick(constants.get(i)));
+        }
+
+        if (current == null) {
+            return false;
+        }
+
+        VirtualColumn col = createVirtualColumn(current, null);
+        if (col.isConstant()) {
+            return !col.getBool(null);
+        } else {
+            throw new ParserException(0, "Internal error: expected constant");
+        }
     }
 
     private void linkDependencies(QueryModel model, int parent, int child) {

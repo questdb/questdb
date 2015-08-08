@@ -221,6 +221,10 @@ public class QueryModel implements Mutable {
         return parsedWhere;
     }
 
+    public IntHashSet getParsedWhereConsts() {
+        return parsedWhereConsts;
+    }
+
     public ExprNode getPostJoinWhereClause() {
         return postJoinWhereClause;
     }

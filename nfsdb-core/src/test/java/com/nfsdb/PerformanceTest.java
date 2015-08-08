@@ -28,7 +28,6 @@ import com.nfsdb.model.Quote;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.impl.*;
-import com.nfsdb.ql.ops.StrConstant;
 import com.nfsdb.query.api.QueryAllBuilder;
 import com.nfsdb.query.api.QueryHeadBuilder;
 import com.nfsdb.storage.KVIndex;
@@ -94,7 +93,7 @@ public class PerformanceTest extends AbstractTest {
                             new JournalPartitionSource(journal, true),
                             new SingleIntervalSource(interval)
 
-                    ), new KvIndexSymLookupRowSource("sym", new StrConstant("LLOY.L"))
+                    ), new KvIndexSymLookupRowSource("sym", "LLOY.L")
             );
 
 

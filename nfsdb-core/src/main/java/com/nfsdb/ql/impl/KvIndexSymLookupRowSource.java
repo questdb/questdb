@@ -27,7 +27,6 @@ import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.RowCursor;
 import com.nfsdb.ql.SymFacade;
-import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -36,7 +35,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 public class KvIndexSymLookupRowSource extends AbstractRowSource {
 
     private final String symbol;
-    private final VirtualColumn valueFunction;
+    private final String value;
     private final boolean newCursor;
     private int columnIndex;
     private int symbolKey = -2;
@@ -47,13 +46,13 @@ public class KvIndexSymLookupRowSource extends AbstractRowSource {
     private long rowid;
     private boolean hasNext = false;
 
-    public KvIndexSymLookupRowSource(String symbol, VirtualColumn valueFunction) {
-        this(symbol, valueFunction, false);
+    public KvIndexSymLookupRowSource(String symbol, String value) {
+        this(symbol, value, false);
     }
 
-    public KvIndexSymLookupRowSource(String symbol, VirtualColumn valueFunction, boolean newCursor) {
+    public KvIndexSymLookupRowSource(String symbol, String value, boolean newCursor) {
         this.symbol = symbol;
-        this.valueFunction = valueFunction;
+        this.value = value;
         this.newCursor = newCursor;
     }
 
@@ -113,6 +112,6 @@ public class KvIndexSymLookupRowSource extends AbstractRowSource {
 
     @Override
     public void prepare(SymFacade facade) {
-        symbolKey = facade.getSymbolTable(symbol).getQuick(valueFunction.getFlyweightStr(null));
+        symbolKey = facade.getSymbolTable(symbol).getQuick(value);
     }
 }

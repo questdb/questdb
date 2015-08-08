@@ -26,7 +26,6 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.RowCursor;
-import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.storage.FixedColumn;
 import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
@@ -47,14 +46,14 @@ public class KvIndexIntLookupRowSource extends AbstractRowSource {
     private boolean hasNext = false;
     private FixedColumn column;
 
-    public KvIndexIntLookupRowSource(String columnName, VirtualColumn valueFunction) {
-        this(columnName, valueFunction, false);
+    public KvIndexIntLookupRowSource(String columnName, int value) {
+        this(columnName, value, false);
     }
 
-    public KvIndexIntLookupRowSource(String columnName, VirtualColumn valueFunction, boolean newCursor) {
+    public KvIndexIntLookupRowSource(String columnName, int value, boolean newCursor) {
         this.columnName = columnName;
         this.newCursor = newCursor;
-        this.value = valueFunction.getInt(null);
+        this.value = value;
     }
 
     @Override
