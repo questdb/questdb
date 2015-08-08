@@ -21,6 +21,7 @@
 
 package com.nfsdb.factory.configuration;
 
+import com.nfsdb.utils.Numbers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class IntBuilder<T> extends AbstractMetadataBuilder<T> {
@@ -32,7 +33,7 @@ public class IntBuilder<T> extends AbstractMetadataBuilder<T> {
     }
 
     public IntBuilder<T> buckets(int buckets) {
-        this.meta.distinctCountHint = buckets;
+        this.meta.distinctCountHint = Numbers.ceilPow2(buckets) - 1;
         return this;
     }
 

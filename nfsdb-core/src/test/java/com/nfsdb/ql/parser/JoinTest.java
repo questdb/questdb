@@ -558,7 +558,7 @@ public class JoinTest {
         JournalWriter orders = factory.writer(
                 new JournalStructure("orders").
                         $int("orderId").
-                        $int("customerId").
+                        $int("customerId").index().
                         $int("productId").
                         $str("employeeId").index().
                         $ts("orderDate").

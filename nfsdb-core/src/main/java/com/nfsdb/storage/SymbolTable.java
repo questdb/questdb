@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.storage;
 
@@ -30,6 +30,7 @@ import com.nfsdb.exceptions.JournalInvalidSymbolValueException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Hash;
+import com.nfsdb.utils.Numbers;
 
 import java.io.Closeable;
 import java.io.File;
@@ -55,7 +56,7 @@ public class SymbolTable implements Closeable {
     public SymbolTable(int keyCount, int avgStringSize, int txCountHint, File directory, String column, JournalMode mode, int size, long indexTxAddress, boolean noCache) throws JournalException {
         // number of hash keys stored in index
         // assume it is 20% of stated capacity
-        this.hashKeyCount = Math.max(1, (int) (keyCount * CACHE_LOAD_FACTOR));
+        this.hashKeyCount = Numbers.ceilPow2(Math.max(2, (int) (keyCount * CACHE_LOAD_FACTOR))) - 1;
         this.column = column;
         this.noCache = noCache;
         JournalMode m;

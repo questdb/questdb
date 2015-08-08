@@ -21,6 +21,8 @@
 
 package com.nfsdb.factory.configuration;
 
+import com.nfsdb.utils.Numbers;
+
 public class StringBuilder<T> extends AbstractMetadataBuilder<T> {
 
     public StringBuilder(JournalMetadataBuilder<T> parent, ColumnMetadata meta) {
@@ -29,7 +31,7 @@ public class StringBuilder<T> extends AbstractMetadataBuilder<T> {
     }
 
     public StringBuilder<T> buckets(int buckets) {
-        this.meta.distinctCountHint = buckets;
+        this.meta.distinctCountHint = Numbers.ceilPow2(buckets) - 1;
         return this;
     }
 

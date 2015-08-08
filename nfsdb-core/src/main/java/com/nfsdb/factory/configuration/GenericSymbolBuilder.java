@@ -22,6 +22,7 @@
 package com.nfsdb.factory.configuration;
 
 import com.nfsdb.storage.ColumnType;
+import com.nfsdb.utils.Numbers;
 
 public class GenericSymbolBuilder extends AbstractGenericMetadataBuilder {
     public GenericSymbolBuilder(JournalStructure parent, ColumnMetadata meta) {
@@ -51,7 +52,7 @@ public class GenericSymbolBuilder extends AbstractGenericMetadataBuilder {
     }
 
     public GenericSymbolBuilder valueCountHint(int valueCountHint) {
-        this.meta.distinctCountHint = valueCountHint;
+        this.meta.distinctCountHint = Numbers.ceilPow2(valueCountHint) - 1;
         return this;
     }
 }

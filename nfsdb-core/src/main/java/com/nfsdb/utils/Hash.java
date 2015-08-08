@@ -30,10 +30,10 @@ public final class Hash {
      *
      * @param s   char sequence
      * @param max max value of hashCode()
-     * @return positive integer between 0 and max-1
+     * @return power of 2 integer
      */
     public static int boundedHash(CharSequence s, int max) {
-        return s == null ? -1 : (s.hashCode() & 0xFFFFFFF) % max;
+        return s == null ? -1 : (s.hashCode() & 0xFFFFFFF) & max;
     }
 
     /**

@@ -41,6 +41,13 @@ public class NumbersTest {
     }
 
     @Test
+    public void testCeilPow2() throws Exception {
+        Assert.assertEquals(16, Numbers.ceilPow2(15));
+        Assert.assertEquals(16, Numbers.ceilPow2(16));
+        Assert.assertEquals(32, Numbers.ceilPow2(17));
+    }
+
+    @Test
     public void testFormatByte() throws Exception {
         for (int i = 0; i < 1000; i++) {
             byte n = (byte) rnd.nextInt();
@@ -344,5 +351,4 @@ public class NumbersTest {
     public void testParseWrongNan() throws Exception {
         Numbers.parseDouble("NaN1");
     }
-
 }

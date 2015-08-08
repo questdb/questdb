@@ -191,7 +191,7 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
 
     private void putInt0(int index, int value) {
         if (meta[index].indexed) {
-            int h = value % meta[index].distinctCountHint;
+            int h = value & meta[index].distinctCountHint;
             koTuple[index * 2] = h < 0 ? -h : h;
             koTuple[index * 2 + 1] = ((FixedColumn) columns[index]).putInt(value);
         } else {

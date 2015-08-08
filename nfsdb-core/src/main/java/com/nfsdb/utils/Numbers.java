@@ -296,15 +296,17 @@ public final class Numbers {
     }
 
     public static int ceilPow2(int value) {
-        value |= (value >>> 1);
-        value |= (value >>> 2);
-        value |= (value >>> 4);
-        value |= (value >>> 8);
-        value |= (value >>> 16);
-        value++;
+        if ((value != 0) && (value & (value - 1)) > 0) {
+            value |= (value >>> 1);
+            value |= (value >>> 2);
+            value |= (value >>> 4);
+            value |= (value >>> 8);
+            value |= (value >>> 16);
+            value++;
 
-        if (value < 0) {
-            value >>>= 1;
+            if (value < 0) {
+                value >>>= 1;
+            }
         }
 
         return value;

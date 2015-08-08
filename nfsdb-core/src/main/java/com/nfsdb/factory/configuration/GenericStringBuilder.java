@@ -22,6 +22,7 @@
 package com.nfsdb.factory.configuration;
 
 import com.nfsdb.storage.ColumnType;
+import com.nfsdb.utils.Numbers;
 
 public class GenericStringBuilder extends AbstractGenericMetadataBuilder {
 
@@ -32,7 +33,7 @@ public class GenericStringBuilder extends AbstractGenericMetadataBuilder {
     }
 
     public GenericStringBuilder buckets(int buckets) {
-        this.meta.distinctCountHint = buckets;
+        this.meta.distinctCountHint = Numbers.ceilPow2(buckets) - 1;
         return this;
     }
 

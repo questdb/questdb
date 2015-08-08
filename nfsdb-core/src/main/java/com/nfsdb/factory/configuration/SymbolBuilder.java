@@ -23,6 +23,7 @@ package com.nfsdb.factory.configuration;
 
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.storage.ColumnType;
+import com.nfsdb.utils.Numbers;
 
 public class SymbolBuilder<T> extends AbstractMetadataBuilder<T> {
     public SymbolBuilder(JournalMetadataBuilder<T> parent, ColumnMetadata meta) {
@@ -55,7 +56,7 @@ public class SymbolBuilder<T> extends AbstractMetadataBuilder<T> {
     }
 
     public SymbolBuilder<T> valueCountHint(int valueCountHint) {
-        this.meta.distinctCountHint = valueCountHint;
+        this.meta.distinctCountHint = Numbers.ceilPow2(valueCountHint) - 1;
         return this;
     }
 }

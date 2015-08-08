@@ -417,7 +417,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
                     case INT:
                         int v = Unsafe.getUnsafe().getInt(obj, m.offset);
                         if (m.indexed) {
-                            sparseIndexProxies[i].getIndex().add(v % m.distinctCountHint, ((FixedColumn) Unsafe.arrayGet(columns, i)).putInt(v));
+                            sparseIndexProxies[i].getIndex().add(v & m.distinctCountHint, ((FixedColumn) Unsafe.arrayGet(columns, i)).putInt(v));
                         } else {
                             ((FixedColumn) Unsafe.arrayGet(columns, i)).putInt(v);
                         }

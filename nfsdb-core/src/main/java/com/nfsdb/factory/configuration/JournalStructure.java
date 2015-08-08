@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.factory.configuration;
 
@@ -28,6 +28,7 @@ import com.nfsdb.logging.Logger;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Chars;
+import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -152,7 +153,7 @@ public class JournalStructure implements MetadataBuilder<Object> {
         for (int i = 0, sz = metadata.size(); i < sz; i++) {
             ColumnMetadata meta = metadata.get(i);
             if (meta.indexed && meta.distinctCountHint < 2) {
-                meta.distinctCountHint = Math.max(2, (int) (recordCountHint * 0.01));
+                meta.distinctCountHint = Numbers.ceilPow2(Math.max(2, (int) (recordCountHint * 0.01))) - 1;
             }
 
             if (meta.size == 0 && meta.avgSize == 0) {
@@ -161,7 +162,7 @@ public class JournalStructure implements MetadataBuilder<Object> {
 
             // distinctCount
             if (meta.distinctCountHint < 1 && meta.type == ColumnType.SYMBOL) {
-                meta.distinctCountHint = (int) (recordCountHint * 0.2); //20%
+                meta.distinctCountHint = Numbers.ceilPow2((int) (recordCountHint * 0.2)) - 1; //20%
             }
 
             switch (meta.type) {
