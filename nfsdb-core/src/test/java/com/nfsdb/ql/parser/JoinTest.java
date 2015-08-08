@@ -30,9 +30,9 @@ import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.model.configuration.ModelConfiguration;
+import com.nfsdb.ql.Compiler;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordSource;
-import com.nfsdb.ql.model.QueryModel;
 import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.test.tools.TestUtils;
@@ -48,8 +48,7 @@ public class JoinTest {
     @ClassRule
     public static final JournalTestFactory factory = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
 
-    private final QueryParser parser = new QueryParser();
-    private final RecordSourceBuilder joinOptimiser = new RecordSourceBuilder();
+    private final Compiler compiler = new Compiler(factory);
     private final StringSink sink = new StringSink();
     private final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
 
@@ -778,10 +777,7 @@ public class JoinTest {
     }
 
     private void assertPlan(String expected, String query) throws ParserException, JournalException {
-        parser.setContent(query);
-        QueryModel model = parser.parse().getQueryModel();
-        joinOptimiser.resetAndOptimise(model, factory);
-        TestUtils.assertEquals(expected, model.plan());
+        TestUtils.assertEquals(expected, compiler.plan(query));
     }
 
     private void assertQuery(String expected, String query) throws ParserException, JournalException {
@@ -790,9 +786,7 @@ public class JoinTest {
 
     private void assertQuery(String expected, String query, boolean header) throws ParserException, JournalException {
         sink.clear();
-        parser.setContent(query);
-        QueryModel model = parser.parse().getQueryModel();
-        RecordSource<? extends Record> src = joinOptimiser.resetAndCompile(model, factory);
+        RecordSource<? extends Record> src = compiler.compile(query);
         if (header) {
             printer.printHeader(src.getMetadata());
         }

@@ -62,7 +62,7 @@ public class RecordSourcePrinter {
     @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
     public void print(RecordSource<? extends Record> src) {
         try {
-            print(src.prepareCursor(null), src.getMetadata());
+            printCursor(src.prepareCursor(null));
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
@@ -72,13 +72,14 @@ public class RecordSourcePrinter {
     @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
     public void print(RecordSource<? extends Record> src, JournalReaderFactory factory) {
         try {
-            print(src.prepareCursor(factory), src.getMetadata());
+            printCursor(src.prepareCursor(factory));
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
     }
 
-    public void print(RecordCursor<? extends Record> src, RecordMetadata metadata) {
+    public void printCursor(RecordCursor<? extends Record> src) {
+        RecordMetadata metadata = src.getMetadata();
         while (src.hasNext()) {
             print(src.next(), metadata);
         }

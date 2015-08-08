@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,12 +17,13 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql;
 
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
+import com.nfsdb.ql.model.QueryModel;
 import com.nfsdb.ql.parser.ParserException;
 import com.nfsdb.ql.parser.QueryParser;
 import com.nfsdb.ql.parser.RecordSourceBuilder;
@@ -31,9 +32,23 @@ public class Compiler {
 
     private final QueryParser parser = new QueryParser();
     private final RecordSourceBuilder builder = new RecordSourceBuilder();
+    private final JournalReaderFactory factory;
 
-    public RecordSource<? extends Record> compile(CharSequence query, JournalReaderFactory factory) throws ParserException, JournalException {
-        parser.setContent(query);
-        return builder.resetAndCompile(parser.parse().getQueryModel(), factory);
+    public Compiler(JournalReaderFactory factory) {
+        this.factory = factory;
+    }
+
+    public RecordSource<? extends Record> compile(CharSequence query) throws ParserException, JournalException {
+        return builder.resetAndCompile(parser.parse(query).getQueryModel(), factory);
+    }
+
+    public JournalReaderFactory getFactory() {
+        return factory;
+    }
+
+    public CharSequence plan(CharSequence query) throws ParserException, JournalException {
+        QueryModel model = parser.parse(query).getQueryModel();
+        builder.resetAndOptimise(model, factory);
+        return model.plan();
     }
 }

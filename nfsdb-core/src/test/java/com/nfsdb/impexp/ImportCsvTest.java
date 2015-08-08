@@ -42,7 +42,7 @@ import java.io.IOException;
 
 public class ImportCsvTest extends AbstractTest {
 
-    private final Compiler compiler = new Compiler();
+    private final Compiler compiler = new Compiler(factory);
 
     @Test
     public void testImport() throws Exception {
@@ -118,7 +118,7 @@ public class ImportCsvTest extends AbstractTest {
     }
 
     private void assertThat(String expected, String query) throws ParserException, JournalException {
-        RecordSource<? extends Record> rs = compiler.compile(query, factory);
+        RecordSource<? extends Record> rs = compiler.compile(query);
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
         p.print(rs, factory);

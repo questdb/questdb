@@ -24,6 +24,7 @@ package com.nfsdb.ql.collections;
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
+import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.ql.SymFacade;
 import com.nfsdb.utils.Unsafe;
 
@@ -52,6 +53,11 @@ public final class MapRecordSource extends AbstractImmutableIterator<Record> imp
     @Override
     public SymFacade getSymFacade() {
         return null;
+    }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return record.getMetadata();
     }
 
     @Override

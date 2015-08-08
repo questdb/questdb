@@ -35,9 +35,11 @@ import java.io.IOException;
 public class DirectRecordLinkedList extends AbstractImmutableIterator<Record> implements Closeable, RecordCursor<Record>, Mutable {
     private final DirectPagedBuffer buffer;
     private final DirectRecord bufferRecord;
+    private final RecordMetadata metadata;
     private long readOffset = -1;
 
     public DirectRecordLinkedList(RecordMetadata recordMetadata, long recordCount, long avgRecSize) {
+        this.metadata = recordMetadata;
         this.buffer = new DirectPagedBuffer((recordCount * avgRecSize > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) (recordCount * avgRecSize)) / 2);
         bufferRecord = new DirectRecord(recordMetadata, buffer);
     }
@@ -69,6 +71,11 @@ public class DirectRecordLinkedList extends AbstractImmutableIterator<Record> im
     @Override
     public SymFacade getSymFacade() {
         return null;
+    }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return metadata;
     }
 
     @Override

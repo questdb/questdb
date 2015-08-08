@@ -1291,8 +1291,8 @@ public class OptimiserTest2 extends AbstractOptimiserTest {
     public void testSigLookupError() throws Exception {
         createTabWithNaNs2();
         try {
-            compile("select x,y from tab where x~0");
-            Assert.fail("Exception expected");
+                compiler.compile("select x,y from tab where x~0");
+                Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(28, e.getPosition());
             Assert.assertTrue(e.getMessage().contains("No such function"));
@@ -1361,8 +1361,8 @@ public class OptimiserTest2 extends AbstractOptimiserTest {
     public void testSubQuery3() throws Exception {
         createTabWithNaNs2();
         try {
-            compile("select id, z from (select id from tab where z = NaN) where id = 'KKUSIMYDXUUSKCX'");
-            Assert.fail("Exception expected");
+                compiler.compile("select id, z from (select id from tab where z = NaN) where id = 'KKUSIMYDXUUSKCX'");
+                Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(11, e.getPosition());
             Assert.assertTrue(e.getMessage().contains("Invalid column"));

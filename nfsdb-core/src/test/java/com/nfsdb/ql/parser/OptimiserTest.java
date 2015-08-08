@@ -38,14 +38,14 @@ public class OptimiserTest extends AbstractOptimiserTest {
     @Test
     public void testConstantCondition1() throws Exception {
         createTab();
-        String plan = compile("select id, x, y from tab where x > 0 and 1 > 1").toString();
+        String plan = compiler.compile("select id, x, y from tab where x > 0 and 1 > 1").toString();
         Assert.assertTrue(plan.contains("NoOpJournalPartitionSource"));
     }
 
     @Test
     public void testConstantCondition2() throws Exception {
         createTab();
-        String plan = compile("select id, x, y from tab where x > 0 or 1 = 1").toString();
+        String plan = compiler.compile("select id, x, y from tab where x > 0 or 1 = 1").toString();
         Assert.assertTrue(plan.contains("AllRowSource"));
         Assert.assertFalse(plan.contains("NoOpJournalPartitionSource"));
     }
@@ -53,7 +53,7 @@ public class OptimiserTest extends AbstractOptimiserTest {
     @Test
     public void testConstantCondition3() throws Exception {
         createTab();
-        String plan = compile("select id, x, y from tab where 1 > 1 or 2 > 2").toString();
+        String plan = compiler.compile("select id, x, y from tab where 1 > 1 or 2 > 2").toString();
         Assert.assertTrue(plan.contains("NoOpJournalPartitionSource"));
     }
 
@@ -240,7 +240,7 @@ public class OptimiserTest extends AbstractOptimiserTest {
     public void testInvalidLatestByColumn1() throws Exception {
         factory.writer(Quote.class, "q");
         try {
-            compile("select sym, bid, ask, timestamp from q latest by symx where sym in ('GKN.L') and ask > 100");
+            compiler.compile("select sym, bid, ask, timestamp from q latest by symx where sym in ('GKN.L') and ask > 100");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(49, e.getPosition());
@@ -252,7 +252,7 @@ public class OptimiserTest extends AbstractOptimiserTest {
     public void testInvalidLatestByColumn2() throws Exception {
         factory.writer(Quote.class, "q");
         try {
-            compile("select sym, bid, ask, timestamp from q latest by ask where sym in ('GKN.L') and ask > 100");
+            compiler.compile("select sym, bid, ask, timestamp from q latest by ask where sym in ('GKN.L') and ask > 100");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(49, e.getPosition());
@@ -264,7 +264,7 @@ public class OptimiserTest extends AbstractOptimiserTest {
     public void testInvalidLatestByColumn3() throws Exception {
         factory.writer(Quote.class, "q");
         try {
-            compile("select sym, bid, ask, timestamp from q latest by mode where sym in ('GKN.L') and ask > 100");
+            compiler.compile("select sym, bid, ask, timestamp from q latest by mode where sym in ('GKN.L') and ask > 100");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(49, e.getPosition());
@@ -276,7 +276,7 @@ public class OptimiserTest extends AbstractOptimiserTest {
     public void testInvalidLiteralColumn() throws Exception {
         factory.writer(Quote.class, "q");
         try {
-            compile("select sym, bid, ask, timestamp1 from q latest by sym where sym in ('GKN.L') and ask > 100");
+            compiler.compile("select sym, bid, ask, timestamp1 from q latest by sym where sym in ('GKN.L') and ask > 100");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(22, e.getPosition());
@@ -288,7 +288,7 @@ public class OptimiserTest extends AbstractOptimiserTest {
     public void testInvalidVirtualColumn() throws Exception {
         factory.writer(Quote.class, "q");
         try {
-            compile("select sym, (bid+ask2)/2, timestamp from q latest by sym where sym in ('GKN.L') and ask > 100");
+            compiler.compile("select sym, (bid+ask2)/2, timestamp from q latest by sym where sym in ('GKN.L') and ask > 100");
             Assert.fail("Exception expected");
         } catch (InvalidColumnException e) {
             Assert.assertEquals(17, e.getPosition());
@@ -299,7 +299,7 @@ public class OptimiserTest extends AbstractOptimiserTest {
     public void testInvalidWhereColumn1() throws Exception {
         factory.writer(Quote.class, "q");
         try {
-            compile("select sym, bid, ask, timestamp from q where sym2 in ('GKN.L') and ask > 100");
+            compiler.compile("select sym, bid, ask, timestamp from q where sym2 in ('GKN.L') and ask > 100");
             Assert.fail("Exception expected");
         } catch (InvalidColumnException e) {
             Assert.assertEquals(45, e.getPosition());
@@ -310,7 +310,7 @@ public class OptimiserTest extends AbstractOptimiserTest {
     public void testInvalidWhereColumn2() throws Exception {
         factory.writer(Quote.class, "q");
         try {
-            compile("select sym, bid, ask, timestamp from q where sym in ('GKN.L') and ask2 > 100");
+            compiler.compile("select sym, bid, ask, timestamp from q where sym in ('GKN.L') and ask2 > 100");
             Assert.fail("Exception expected");
         } catch (InvalidColumnException e) {
             Assert.assertEquals(66, e.getPosition());
@@ -320,7 +320,7 @@ public class OptimiserTest extends AbstractOptimiserTest {
     @Test
     public void testJournalDoesNotExist() throws Exception {
         try {
-            compile("select id, x, y, timestamp from q where id = ");
+            compiler.compile("select id, x, y, timestamp from q where id = ");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
             Assert.assertEquals(32, e.getPosition());
@@ -383,7 +383,7 @@ public class OptimiserTest extends AbstractOptimiserTest {
     public void testLatestByStrIrrelevantFilter() throws Exception {
         createIndexedTab();
         try {
-            compile("select id, x, y, timestamp from tab latest by id where x > y");
+            compiler.compile("select id, x, y, timestamp from tab latest by id where x > y");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(46, e.getPosition());
@@ -395,7 +395,7 @@ public class OptimiserTest extends AbstractOptimiserTest {
     public void testLatestByStrNoFilter() throws Exception {
         createIndexedTab();
         try {
-            compile("select id, x, y, timestamp from tab latest by id");
+            compiler.compile("select id, x, y, timestamp from tab latest by id");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(46, e.getPosition());
@@ -458,7 +458,7 @@ public class OptimiserTest extends AbstractOptimiserTest {
     public void testMissingEqualsArgument() throws Exception {
         factory.writer(Quote.class, "q");
         try {
-            compile("select id, x, y, timestamp from q where id = ");
+            compiler.compile("select id, x, y, timestamp from q where id = ");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
             Assert.assertEquals(43, e.getPosition());
@@ -1432,7 +1432,7 @@ public class OptimiserTest extends AbstractOptimiserTest {
     @Test
     public void testTwoRegexes() throws Exception {
         createTab();
-        String plan = compile("select id, x, y from tab where id ~ 'XY' and id ~ 'X'").toString();
+        String plan = compiler.compile("select id, x, y from tab where id ~ 'XY' and id ~ 'X'").toString();
         System.out.println(plan);
     }
 

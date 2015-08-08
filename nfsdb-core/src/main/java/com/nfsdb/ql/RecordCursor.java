@@ -26,5 +26,7 @@ import com.nfsdb.collections.ImmutableIterator;
 public interface RecordCursor<T extends Record> extends ImmutableIterator<T> {
     T getByRowId(long rowId);
 
+    RecordMetadata getMetadata();
+
     SymFacade getSymFacade();
 }

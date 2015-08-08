@@ -36,14 +36,15 @@ import org.junit.Assert;
 import org.junit.Before;
 
 public abstract class AbstractOptimiserTest extends AbstractTest {
-    private final Compiler compiler = new Compiler();
     private final StringSink sink = new StringSink();
     private final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
+    protected Compiler compiler;
     private JournalCachingFactory f;
 
     @Before
     public void setUp() {
         this.f = new JournalCachingFactory(factory.getConfiguration());
+        this.compiler = new Compiler(f);
     }
 
     @After
@@ -52,20 +53,16 @@ public abstract class AbstractOptimiserTest extends AbstractTest {
     }
 
     protected void assertThat(String expected, String query) throws JournalException, ParserException {
-        RecordSource<? extends Record> rs = compile(query);
+        RecordSource<? extends Record> rs = compiler.compile(query);
 
         sink.clear();
-        printer.print(rs.prepareCursor(f), rs.getMetadata());
+        printer.printCursor(rs.prepareCursor(f));
         Assert.assertEquals(expected, sink.toString());
 
         rs.reset();
         sink.clear();
-        printer.print(rs.prepareCursor(f), rs.getMetadata());
+        printer.printCursor(rs.prepareCursor(f));
         Assert.assertEquals(expected, sink.toString());
-    }
-
-    protected RecordSource<? extends Record> compile(CharSequence query) throws ParserException, JournalException {
-        return compiler.compile(query, f);
     }
 
     protected ObjHashSet<String> getNames(Rnd r, int n) {

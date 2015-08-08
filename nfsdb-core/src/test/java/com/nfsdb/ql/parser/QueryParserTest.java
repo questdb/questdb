@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.parser;
 
@@ -36,7 +36,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testCrossJoin() throws Exception {
         try {
-            parse("select x from a a cross join b on b.x = a.x");
+            parser.parse("select x from a a cross join b on b.x = a.x");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(31, e.getPosition());
@@ -46,7 +46,7 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testCrossJoin2() throws Exception {
-        Statement statement = parse("select x from a a cross join b z");
+        Statement statement = parser.parse("select x from a a cross join b z");
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals("a", statement.getQueryModel().getAlias().token);
         Assert.assertEquals(2, statement.getQueryModel().getJoinModels().size());
@@ -56,10 +56,9 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testCrossJoin3() throws Exception {
-        Statement statement = parse(
-                "select x from a a " +
-                        "cross join b z " +
-                        "join c on a.x = c.x");
+        Statement statement = parser.parse("select x from a a " +
+                "cross join b z " +
+                "join c on a.x = c.x");
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals("a", statement.getQueryModel().getAlias().token);
         Assert.assertEquals(3, statement.getQueryModel().getJoinModels().size());
@@ -71,10 +70,9 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testCrossJoinNoAlias() throws Exception {
-        Statement statement = parse(
-                "select x from a a " +
-                        "cross join b " +
-                        "join c on a.x = c.x");
+        Statement statement = parser.parse("select x from a a " +
+                "cross join b " +
+                "join c on a.x = c.x");
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals("a", statement.getQueryModel().getAlias().token);
         Assert.assertEquals(3, statement.getQueryModel().getJoinModels().size());
@@ -87,7 +85,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testEmptyGroupBy() throws Exception {
         try {
-            parse("select x, y from tab group by");
+            parser.parse("select x, y from tab group by");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
             Assert.assertEquals(27, e.getPosition());
@@ -98,7 +96,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testEmptyOrderBy() throws Exception {
         try {
-            parse("select x, y from tab order by");
+            parser.parse("select x, y from tab order by");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
             Assert.assertEquals(27, e.getPosition());
@@ -108,7 +106,7 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testGroupBy1() throws Exception {
-        Statement statement = parse("select x,y from tab group by x,y,z");
+        Statement statement = parser.parse("select x,y from tab group by x,y,z");
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals(3, statement.getQueryModel().getGroupBy().size());
         Assert.assertEquals("[x,y,z]", statement.getQueryModel().getGroupBy().toString());
@@ -116,7 +114,7 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testInnerJoin() throws Exception {
-        Statement statement = parse("select x from a a inner join b on b.x = a.x");
+        Statement statement = parser.parse("select x from a a inner join b on b.x = a.x");
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals("a", statement.getQueryModel().getAlias().token);
         Assert.assertEquals(2, statement.getQueryModel().getJoinModels().size());
@@ -127,7 +125,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testInvalidGroupBy1() throws Exception {
         try {
-            parse("select x, y from tab group by x,");
+            parser.parse("select x, y from tab group by x,");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
             Assert.assertEquals(32, e.getPosition());
@@ -138,7 +136,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testInvalidGroupBy2() throws Exception {
         try {
-            parse("select x, y from (tab group by x,)");
+            parser.parse("select x, y from (tab group by x,)");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
             Assert.assertEquals(33, e.getPosition());
@@ -149,7 +147,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testInvalidGroupBy3() throws Exception {
         try {
-            parse("select x, y from tab group by x, order by y");
+            parser.parse("select x, y from tab group by x, order by y");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
             Assert.assertEquals(33, e.getPosition());
@@ -160,7 +158,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testInvalidInnerJoin1() throws Exception {
         try {
-            parse("select x from a a inner join b z");
+            parser.parse("select x from a a inner join b z");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(31, e.getPosition());
@@ -171,7 +169,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testInvalidInnerJoin2() throws Exception {
         try {
-            parse("select x from a a inner join b z on");
+            parser.parse("select x from a a inner join b z on");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(33, e.getPosition());
@@ -182,7 +180,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testInvalidOrderBy1() throws Exception {
         try {
-            parse("select x, y from tab order by x,");
+            parser.parse("select x, y from tab order by x,");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
             Assert.assertEquals(32, e.getPosition());
@@ -193,7 +191,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testInvalidOrderBy2() throws Exception {
         try {
-            parse("select x, y from (tab order by x,)");
+            parser.parse("select x, y from (tab order by x,)");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
             Assert.assertEquals(33, e.getPosition());
@@ -204,7 +202,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testInvalidOuterJoin1() throws Exception {
         try {
-            parse("select x from a a outer join b z");
+            parser.parse("select x from a a outer join b z");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(31, e.getPosition());
@@ -215,7 +213,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testInvalidOuterJoin2() throws Exception {
         try {
-            parse("select x from a a outer join b z on");
+            parser.parse("select x from a a outer join b z on");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(33, e.getPosition());
@@ -226,7 +224,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testInvalidSubQuery() throws Exception {
         try {
-            parse("select x,y from (tab where x = 100) latest by x");
+            parser.parse("select x,y from (tab where x = 100) latest by x");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(36, e.getPosition());
@@ -237,7 +235,7 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testJoin1() throws Exception {
-        Statement statement = parse("select x, y from (select x from tab t2 latest by x where x > 100) t1 " +
+        Statement statement = parser.parse("select x, y from (select x from tab t2 latest by x where x > 100) t1 " +
                 "join tab2 xx2 on tab2.x = t1.x " +
                 "join tab3 on xx2.x > tab3.b " +
                 "join (select x,y from tab4 latest by z where a > b) x4 on x4.x = t1.y " +
@@ -272,7 +270,7 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testJoin2() throws Exception {
-        Statement statement = parse("select x from ((tab join tab2 on tab.x=tab2.x) join tab3 on tab3.x = tab2.x)");
+        Statement statement = parser.parse("select x from ((tab join tab2 on tab.x=tab2.x) join tab3 on tab3.x = tab2.x)");
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals(1, statement.getQueryModel().getJoinModels().size());
         Assert.assertNotNull(statement.getQueryModel().getNestedModel());
@@ -289,9 +287,7 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testMostRecentWhereClause() throws Exception {
-        QueryParser parser = new QueryParser();
-        parser.setContent("select a+b*c x, sum(z)+25 ohoh from zyzy latest by x where a in (x,y) and b = 10");
-        Statement statement = parser.parse();
+        Statement statement = parser.parse("select a+b*c x, sum(z)+25 ohoh from zyzy latest by x where a in (x,y) and b = 10");
         Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
         // journal name
         Assert.assertEquals("zyzy", statement.getQueryModel().getJournalName().token);
@@ -307,9 +303,7 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testMultipleExpressions() throws Exception {
-        QueryParser parser = new QueryParser();
-        parser.setContent("select a+b*c x, sum(z)+25 ohoh from zyzy");
-        Statement statement = parser.parse();
+        Statement statement = parser.parse("select a+b*c x, sum(z)+25 ohoh from zyzy");
         Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals("zyzy", statement.getQueryModel().getJournalName().token);
@@ -320,7 +314,7 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testOptionalSelect() throws Exception {
-        Statement statement = parse("tab t2 latest by x where x > 100");
+        Statement statement = parser.parse("tab t2 latest by x where x > 100");
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals("tab", TestUtils.toRpn(statement.getQueryModel().getJournalName()));
         Assert.assertEquals("t2", statement.getQueryModel().getAlias().token);
@@ -331,7 +325,7 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testOrderBy1() throws Exception {
-        Statement statement = parse("select x,y from tab order by x,y,z");
+        Statement statement = parser.parse("select x,y from tab order by x,y,z");
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals(3, statement.getQueryModel().getOrderBy().size());
         Assert.assertEquals("x", TestUtils.toRpn(statement.getQueryModel().getOrderBy().getQuick(0)));
@@ -341,7 +335,7 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testOuterJoin() throws Exception {
-        Statement statement = parse("select x from a a outer join b on b.x = a.x");
+        Statement statement = parser.parse("select x from a a outer join b on b.x = a.x");
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals("a", statement.getQueryModel().getAlias().token);
         Assert.assertEquals(2, statement.getQueryModel().getJoinModels().size());
@@ -351,7 +345,7 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testSelectPlainColumns() throws Exception {
-        Statement statement = parse("select a,b,c from t");
+        Statement statement = parser.parse("select a,b,c from t");
 
         Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
         Assert.assertNotNull(statement.getQueryModel());
@@ -364,7 +358,7 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testSelectSingleExpression() throws Exception {
-        Statement statement = parse("select a+b*c x from t");
+        Statement statement = parser.parse("select a+b*c x from t");
         Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals(1, statement.getQueryModel().getColumns().size());
@@ -375,7 +369,7 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testSubQuery() throws Exception {
-        Statement statement = parse("select x, y from (select x from tab t2 latest by x where x > 100) t1 " +
+        Statement statement = parser.parse("select x, y from (select x from tab t2 latest by x where x > 100) t1 " +
                 "where y > 0");
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertNotNull(statement.getQueryModel().getNestedModel());
@@ -391,7 +385,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testUnbalancedBracketInSubQuery() throws Exception {
         try {
-            parse("select x from (tab where x > 10 t1");
+            parser.parse("select x from (tab where x > 10 t1");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(32, e.getPosition());
@@ -401,7 +395,7 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testWhereClause() throws Exception {
-        Statement statement = parse("select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 10");
+        Statement statement = parser.parse("select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 10");
         Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
         // journal name
         Assert.assertEquals("zyzy", statement.getQueryModel().getJournalName().token);
@@ -413,8 +407,4 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertEquals("axyinb10=and", TestUtils.toRpn(statement.getQueryModel().getWhereClause()));
     }
 
-    private Statement parse(CharSequence query) throws ParserException {
-        parser.setContent(query);
-        return parser.parse();
-    }
 }

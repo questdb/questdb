@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.parser;
 
@@ -45,7 +45,8 @@ public class QueryParser {
     private final AstBuilder astBuilder = new AstBuilder();
     private final ObjectPool<QueryModel> queryModelPool = new ObjectPool<>(QueryModel.FACTORY, 8);
 
-    public Statement parse() throws ParserException {
+    public Statement parse(CharSequence query) throws ParserException {
+        toks.setContent(query);
         queryModelPool.reset();
         CharSequence tok = tok();
         if (Chars.equals(tok, "create")) {
@@ -54,10 +55,6 @@ public class QueryParser {
 
         toks.unparse();
         return new Statement(StatementType.QUERY_JOURNAL, parseQuery(false));
-    }
-
-    public void setContent(CharSequence cs) {
-        toks.setContent(cs);
     }
 
     private ParserException err(String msg) {

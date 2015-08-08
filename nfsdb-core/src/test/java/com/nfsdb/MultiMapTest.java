@@ -139,7 +139,7 @@ public class MultiMapTest extends AbstractTest {
 
         RecordSourcePrinter out = new RecordSourcePrinter(sink);
         RecordCursor<Record> c = map.getCursor();
-        out.print(c, map.getMetadata());
+        out.printCursor(c);
         map.free();
 
         Assert.assertEquals(expected, sink.toString());

@@ -97,9 +97,9 @@ public class RecordSourceBuilder {
         return compile(model, factory);
     }
 
-    public RecordSourceBuilder resetAndOptimise(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    public void resetAndOptimise(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         clearState();
-        return optimise(model, factory);
+        optimise(model, factory);
     }
 
     private void addFilterOrEmitJoin(QueryModel parent, int idx, int ai, CharSequence an, ExprNode ao, int bi, CharSequence bn, ExprNode bo) {
