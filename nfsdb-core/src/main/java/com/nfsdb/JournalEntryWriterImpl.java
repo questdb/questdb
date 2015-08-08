@@ -26,10 +26,12 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.storage.*;
 import com.nfsdb.utils.Hash;
+import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Arrays;
 
 public class JournalEntryWriterImpl implements JournalEntryWriter {
     private final JournalWriter journal;
@@ -56,13 +58,13 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
     @Override
     public void append() throws JournalException {
         for (int i = 0, l = meta.length; i < l; i++) {
-            if (skipped[i]) {
+            if (Unsafe.arrayGet(skipped, i)) {
                 putNull(i);
             }
-            columns[i].commit();
+            Unsafe.arrayGet(columns, i).commit();
 
-            if (meta[i].indexed) {
-                indexProxies[i].getIndex().add((int) koTuple[i * 2], koTuple[i * 2 + 1]);
+            if (meta(i).indexed) {
+                Unsafe.arrayGet(indexProxies, i).getIndex().add((int) Unsafe.arrayGet(koTuple, i * 2), Unsafe.arrayGet(koTuple, i * 2 + 1));
             }
         }
         partition.applyTx(Journal.TX_LIMIT_EVAL, null);
@@ -72,61 +74,61 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
     @Override
     public void put(int index, byte value) {
         assertType(index, ColumnType.BYTE);
-        ((FixedColumn) columns[index]).putByte(value);
-        skipped[index] = false;
+        fixCol(index).putByte(value);
+        skip(index);
     }
 
     @Override
     public void putBin(int index, InputStream value) {
         putBin0(index, value);
-        skipped[index] = false;
+        skip(index);
     }
 
     public OutputStream putBin(int index) {
-        skipped[index] = false;
-        return ((VariableColumn) columns[index]).putBin();
+        skip(index);
+        return varCol(index).putBin();
     }
 
     @Override
     public void putBool(int index, boolean value) {
         assertType(index, ColumnType.BOOLEAN);
-        ((FixedColumn) columns[index]).putBool(value);
-        skipped[index] = false;
+        fixCol(index).putBool(value);
+        skip(index);
     }
 
     @Override
     public void putDate(int index, long value) {
         assertType(index, ColumnType.DATE);
-        ((FixedColumn) columns[index]).putLong(value);
-        skipped[index] = false;
+        fixCol(index).putLong(value);
+        skip(index);
     }
 
     @Override
     public void putDouble(int index, double value) {
         assertType(index, ColumnType.DOUBLE);
-        ((FixedColumn) columns[index]).putDouble(value);
-        skipped[index] = false;
+        fixCol(index).putDouble(value);
+        skip(index);
     }
 
     @Override
     public void putFloat(int index, float value) {
         assertType(index, ColumnType.FLOAT);
-        ((FixedColumn) columns[index]).putFloat(value);
-        skipped[index] = false;
+        fixCol(index).putFloat(value);
+        skip(index);
     }
 
     @Override
     public void putInt(int index, int value) {
         assertType(index, ColumnType.INT);
         putInt0(index, value);
-        skipped[index] = false;
+        skip(index);
     }
 
     @Override
     public void putLong(int index, long value) {
         assertType(index, ColumnType.LONG);
-        ((FixedColumn) columns[index]).putLong(value);
-        skipped[index] = false;
+        fixCol(index).putLong(value);
+        skip(index);
     }
 
     @Override
@@ -154,33 +156,33 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
                 putBin0(index, null);
                 break;
             default:
-                ((FixedColumn) columns[index]).putNull();
+                fixCol(index).putNull();
         }
     }
 
     @Override
     public void putShort(int index, short value) {
         assertType(index, ColumnType.SHORT);
-        ((FixedColumn) columns[index]).putShort(value);
-        skipped[index] = false;
+        fixCol(index).putShort(value);
+        skip(index);
     }
 
     @Override
     public void putStr(int index, CharSequence value) {
         assertType(index, ColumnType.STRING);
         putString0(index, value);
-        skipped[index] = false;
+        skip(index);
     }
 
     @Override
     public void putSym(int index, CharSequence value) {
         assertType(index, ColumnType.SYMBOL);
         putSymbol0(index, value);
-        skipped[index] = false;
+        skip(index);
     }
 
     public void putBin0(int index, InputStream value) {
-        ((VariableColumn) columns[index]).putBin(value);
+        varCol(index).putBin(value);
     }
 
     private void assertType(int index, ColumnType t) {
@@ -189,31 +191,39 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
         }
     }
 
+    private FixedColumn fixCol(int index) {
+        return (FixedColumn) Unsafe.arrayGet(columns, index);
+    }
+
+    private ColumnMetadata meta(int index) {
+        return Unsafe.arrayGet(meta, index);
+    }
+
     private void putInt0(int index, int value) {
-        if (meta[index].indexed) {
-            int h = value & meta[index].distinctCountHint;
-            koTuple[index * 2] = h < 0 ? -h : h;
-            koTuple[index * 2 + 1] = ((FixedColumn) columns[index]).putInt(value);
+        if (meta(index).indexed) {
+            int h = value & meta(index).distinctCountHint;
+            Unsafe.arrayPut(koTuple, index * 2, h < 0 ? -h : h);
+            Unsafe.arrayPut(koTuple, index * 2 + 1, fixCol(index).putInt(value));
         } else {
-            ((FixedColumn) columns[index]).putInt(value);
+            fixCol(index).putInt(value);
         }
     }
 
     private void putNullStr(int index) {
-        if (meta[index].indexed) {
-            koTuple[index * 2] = SymbolTable.VALUE_IS_NULL;
-            koTuple[index * 2 + 1] = ((VariableColumn) columns[index]).putNull();
+        if (meta(index).indexed) {
+            Unsafe.arrayPut(koTuple, index * 2, SymbolTable.VALUE_IS_NULL);
+            Unsafe.arrayPut(koTuple, index * 2 + 1, varCol(index).putNull());
         } else {
-            ((VariableColumn) columns[index]).putNull();
+            varCol(index).putNull();
         }
     }
 
     private void putString0(int index, CharSequence value) {
-        if (meta[index].indexed) {
-            koTuple[index * 2] = value == null ? SymbolTable.VALUE_IS_NULL : Hash.boundedHash(value, meta[index].distinctCountHint);
-            koTuple[index * 2 + 1] = ((VariableColumn) columns[index]).putStr(value);
+        if (meta(index).indexed) {
+            Unsafe.arrayPut(koTuple, index * 2, value == null ? SymbolTable.VALUE_IS_NULL : Hash.boundedHash(value, Unsafe.arrayGet(meta, index).distinctCountHint));
+            Unsafe.arrayPut(koTuple, index * 2 + 1, varCol(index).putStr(value));
         } else {
-            ((VariableColumn) columns[index]).putStr(value);
+            varCol(index).putStr(value);
         }
     }
 
@@ -222,13 +232,13 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
         if (value == null) {
             key = SymbolTable.VALUE_IS_NULL;
         } else {
-            key = meta[index].symbolTable.put(value);
+            key = meta(index).symbolTable.put(value);
         }
-        if (meta[index].indexed) {
+        if (meta(index).indexed) {
             koTuple[index * 2] = key;
-            koTuple[index * 2 + 1] = ((FixedColumn) columns[index]).putInt(key);
+            koTuple[index * 2 + 1] = fixCol(index).putInt(key);
         } else {
-            ((FixedColumn) columns[index]).putInt(key);
+            fixCol(index).putInt(key);
         }
     }
 
@@ -240,12 +250,18 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
         }
         this.timestamp = timestamp;
 
-        for (int i = 0, l = skipped.length; i < l; i++) {
-            skipped[i] = true;
-        }
+        Arrays.fill(skipped, true);
 
         if (timestampIndex != -1) {
             putDate(timestampIndex, timestamp);
         }
+    }
+
+    private void skip(int index) {
+        Unsafe.arrayPut(skipped, index, false);
+    }
+
+    private VariableColumn varCol(int index) {
+        return (VariableColumn) Unsafe.arrayGet(columns, index);
     }
 }

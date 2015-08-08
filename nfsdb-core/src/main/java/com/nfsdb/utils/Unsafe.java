@@ -36,6 +36,8 @@ public final class Unsafe {
     private static final long INT_SCALE;
     private static final long LONG_OFFSET;
     private static final long LONG_SCALE;
+    private static final long BOOL_OFFSET;
+    private static final long BOOL_SCALE;
 
 
     private Unsafe() {
@@ -50,6 +52,10 @@ public final class Unsafe {
         return Unsafe.getUnsafe().getInt(array, INT_OFFSET + (index * INT_SCALE));
     }
 
+    public static boolean arrayGet(boolean[] array, int index) {
+        return Unsafe.getUnsafe().getBoolean(array, BOOL_OFFSET + (index * BOOL_SCALE));
+    }
+
     public static long arrayGet(long[] array, int index) {
         return Unsafe.getUnsafe().getLong(array, LONG_OFFSET + (index * LONG_SCALE));
     }
@@ -60,6 +66,10 @@ public final class Unsafe {
 
     public static void arrayPut(int[] array, int index, int value) {
         Unsafe.getUnsafe().putInt(array, INT_OFFSET + index * INT_SCALE, value);
+    }
+
+    public static void arrayPut(boolean[] array, int index, boolean value) {
+        Unsafe.getUnsafe().putBoolean(array, BOOL_OFFSET + index * BOOL_SCALE, value);
     }
 
     public static void arrayPut(long[] array, long index, long value) {
@@ -86,6 +96,9 @@ public final class Unsafe {
 
             CHAR_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(char[].class);
             BYTE_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(byte[].class);
+
+            BOOL_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(boolean[].class);
+            BOOL_SCALE = Unsafe.getUnsafe().arrayIndexScale(boolean[].class);
         } catch (Exception e) {
             throw new JournalRuntimeException(e);
         }

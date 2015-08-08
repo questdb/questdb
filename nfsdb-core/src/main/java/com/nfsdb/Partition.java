@@ -144,30 +144,27 @@ public class Partition<T> implements Iterable<T>, Closeable {
     }
 
     public void getBin(long localRowID, int columnIndex, OutputStream s) {
-        checkColumnIndex(columnIndex);
-        ((VariableColumn) columns[columnIndex]).getBin(localRowID, s);
+        varCol(columnIndex).getBin(localRowID, s);
     }
 
     public DirectInputStream getBin(long localRowID, int columnIndex) {
-        checkColumnIndex(columnIndex);
-        return ((VariableColumn) columns[columnIndex]).getBin(localRowID);
+        return varCol(columnIndex).getBin(localRowID);
     }
 
     public boolean getBoolean(long localRowID, int columnIndex) {
-        return getFixedWidthColumn(columnIndex).getBool(localRowID);
+        return fixCol(columnIndex).getBool(localRowID);
     }
 
     public double getDouble(long localRowID, int columnIndex) {
-        return getFixedWidthColumn(columnIndex).getDouble(localRowID);
+        return fixCol(columnIndex).getDouble(localRowID);
     }
 
     public float getFloat(long localRowID, int columnIndex) {
-        return getFixedWidthColumn(columnIndex).getFloat(localRowID);
+        return fixCol(columnIndex).getFloat(localRowID);
     }
 
     public CharSequence getFlyweightStr(long localRowID, int columnIndex) {
-        checkColumnIndex(columnIndex);
-        return ((VariableColumn) columns[columnIndex]).getFlyweightStr(localRowID);
+        return varCol(columnIndex).getFlyweightStr(localRowID);
     }
 
     public KVIndex getIndexForColumn(String columnName) throws JournalException {
@@ -183,7 +180,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
     }
 
     public int getInt(long localRowID, int columnIndex) {
-        return getFixedWidthColumn(columnIndex).getInt(localRowID);
+        return fixCol(columnIndex).getInt(localRowID);
     }
 
     public Interval getInterval() {
@@ -199,7 +196,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
     }
 
     public long getLong(long localRowID, int columnIndex) {
-        return getFixedWidthColumn(columnIndex).getLong(localRowID);
+        return fixCol(columnIndex).getLong(localRowID);
     }
 
     public String getName() {
@@ -219,7 +216,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
     }
 
     public short getShort(long localRowID, int columnIndex) {
-        return getFixedWidthColumn(columnIndex).getShort(localRowID);
+        return fixCol(columnIndex).getShort(localRowID);
     }
 
     public String getStr(long localRowID, int columnIndex) {
@@ -377,7 +374,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
                 for (int n = 0, k = indexProxies.size(); n < k; n++) {
                     SymbolIndexProxy<T> proxy = indexProxies.getQuick(n);
                     KVIndex index = proxy.getIndex();
-                    FixedColumn col = getFixedWidthColumn(proxy.getColumnIndex());
+                    FixedColumn col = fixCol(proxy.getColumnIndex());
                     for (long i = oldSize; i < newSize; i++) {
                         index.add(col.getInt(i), i);
                     }
@@ -508,6 +505,11 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
     }
 
+    private FixedColumn fixCol(int i) {
+        checkColumnIndex(i);
+        return (FixedColumn) Unsafe.arrayGet(columns, i);
+    }
+
     void force() throws JournalException {
         for (int i = 0, k = indexProxies.size(); i < k; i++) {
             indexProxies.getQuick(i).getIndex().force();
@@ -521,11 +523,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
                 }
             }
         }
-    }
-
-    private FixedColumn getFixedWidthColumn(int i) {
-        checkColumnIndex(i);
-        return (FixedColumn) Unsafe.arrayGet(columns, i);
     }
 
     void getIndexPointers(long[] pointers) throws JournalException {
@@ -577,7 +574,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
 
         int tsIndex = journal.getMetadata().getTimestampIndex();
         if (tsIndex > -1) {
-            timestampColumn = getFixedWidthColumn(tsIndex);
+            timestampColumn = fixCol(tsIndex);
         }
     }
 
@@ -642,7 +639,7 @@ public class Partition<T> implements Iterable<T>, Closeable {
         KVIndex.delete(base);
 
         try (KVIndex index = new KVIndex(base, keyCountHint, recordCountHint, txCountHint, JournalMode.APPEND, 0)) {
-            FixedColumn col = getFixedWidthColumn(columnIndex);
+            FixedColumn col = fixCol(columnIndex);
             for (long localRowID = 0, sz = size(); localRowID < sz; localRowID++) {
                 index.add(col.getInt(localRowID), localRowID);
             }
@@ -674,5 +671,10 @@ public class Partition<T> implements Iterable<T>, Closeable {
             commitColumns();
             clearTx();
         }
+    }
+
+    private VariableColumn varCol(int i) {
+        checkColumnIndex(i);
+        return (VariableColumn) Unsafe.arrayGet(columns, i);
     }
 }
