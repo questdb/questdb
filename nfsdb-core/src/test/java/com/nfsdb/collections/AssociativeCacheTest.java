@@ -45,9 +45,9 @@ public class AssociativeCacheTest {
         Rnd rnd = new Rnd();
 
         for (int i = 0; i < 16 * 64; i++) {
-            CharSequence k = rnd.nextString(4);
+            CharSequence k = rnd.nextString(10);
             all.add(k);
-            CharSequence o = cache.put(k, rnd.nextString(6));
+            CharSequence o = cache.put(k, rnd.nextString(10));
             if (o != null) {
                 reject.add(o);
             }
@@ -59,5 +59,6 @@ public class AssociativeCacheTest {
                 Assert.assertTrue(reject.contains(k));
             }
         }
+        Assert.assertEquals(512, reject.size());
     }
 }

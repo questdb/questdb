@@ -38,9 +38,7 @@ public class QueryParser {
     private static final CharSequenceHashSet aliasStopSet = new CharSequenceHashSet();
     private static final CharSequenceHashSet groupByStopSet = new CharSequenceHashSet();
     private static final CharSequenceObjHashMap<QueryModel.JoinType> joinStartSet = new CharSequenceObjHashMap<>();
-    private final TokenStream toks = new TokenStream() {{
-        defineSymbol("+");
-    }};
+    private final TokenStream toks = new TokenStream();
     private final ExprParser exprParser = new ExprParser(toks);
     private final AstBuilder astBuilder = new AstBuilder();
     private final ObjectPool<QueryModel> queryModelPool = new ObjectPool<>(QueryModel.FACTORY, 8);
