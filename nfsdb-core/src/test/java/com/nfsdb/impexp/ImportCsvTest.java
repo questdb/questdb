@@ -28,8 +28,6 @@ import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.io.*;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.ql.Compiler;
-import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.parser.ParserException;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.test.tools.AbstractTest;
@@ -118,10 +116,9 @@ public class ImportCsvTest extends AbstractTest {
     }
 
     private void assertThat(String expected, String query) throws ParserException, JournalException {
-        RecordSource<? extends Record> rs = compiler.compile(query);
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        p.print(rs, factory);
+        p.printCursor(compiler.compile(query));
         Assert.assertEquals(expected, sink.toString());
 
     }

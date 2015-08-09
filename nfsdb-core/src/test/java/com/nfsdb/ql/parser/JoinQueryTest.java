@@ -27,39 +27,24 @@ import com.nfsdb.collections.IntHashSet;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalStructure;
-import com.nfsdb.io.RecordSourcePrinter;
-import com.nfsdb.io.sink.StringSink;
-import com.nfsdb.model.configuration.ModelConfiguration;
-import com.nfsdb.ql.Compiler;
-import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordSource;
 import com.nfsdb.storage.SymbolTable;
-import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Dates;
-import com.nfsdb.utils.Files;
 import com.nfsdb.utils.Rnd;
 import org.junit.Assert;
 import org.junit.BeforeClass;
-import org.junit.ClassRule;
 import org.junit.Test;
 
-public class JoinTest {
-    @ClassRule
-    public static final JournalTestFactory factory = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
-
-    private final Compiler compiler = new Compiler(factory);
-    private final StringSink sink = new StringSink();
-    private final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
+public class JoinQueryTest extends AbstractOptimiserTest {
 
     @BeforeClass
-    public static void setUp() throws Exception {
+    public static void setUpClass() throws Exception {
         generateJoinData();
     }
 
     @Test
     public void testAllOrdersForACustomers() throws Exception {
-        assertQuery("32209860\t1\t1000\tMZPFIR\t2015-07-10T00:00:17.050Z\tOJXJCNBLYTOIYI\n" +
+        assertThat("32209860\t1\t1000\tMZPFIR\t2015-07-10T00:00:17.050Z\tOJXJCNBLYTOIYI\n" +
                         "1020826110\t1\t1884\tGRG\t2015-07-10T00:00:21.152Z\tQXOLEEXZ\n" +
                         "1921430865\t1\t1682\tXV\t2015-07-10T00:00:27.676Z\tMZCMZMHGTIQ\n" +
                         "355660772\t1\t1766\tOFN\t2015-07-10T00:00:33.004Z\tW\n" +
@@ -121,7 +106,7 @@ public class JoinTest {
                 "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t189633559\t9619\t830\tRQMR\t2015-07-10T00:01:20.166Z\tQPL\n" +
                 "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t960875992\t9619\t960\t\t2015-07-10T00:01:29.735Z\tYJZPHQDJKOM\n";
 
-        assertQuery(expected, "customers join orders on customers.customerId = orders.customerId where customerName ~ 'WTBHZVPVZZ'");
+        assertThat(expected, "customers join orders on customers.customerId = orders.customerId where customerName ~ 'WTBHZVPVZZ'");
     }
 
     @Test
@@ -135,13 +120,13 @@ public class JoinTest {
                         "WTBHZVPVZZ\tKRBCWYMNOQS\t189633559\n" +
                         "WTBHZVPVZZ\tFEOLY\t960875992\n";
 
-        assertQuery(expected, "select customerName, productName, orderId from (" +
+        assertThat(expected, "select customerName, productName, orderId from (" +
                 "select customerName, orderId, productId " +
                 "from customers join orders on customers.customerId = orders.customerId where customerName ~ 'WTBHZVPVZZ'" +
                 ") x" +
                 " join products p on p.productId = x.productId");
 
-        assertQuery(expected, "select customerName, productName, orderId " +
+        assertThat(expected, "select customerName, productName, orderId " +
                 " from customers join orders o on customers.customerId = o.customerId " +
                 " join products p on p.productId = o.productId" +
                 " where customerName ~ 'WTBHZVPVZZ'");
@@ -149,7 +134,7 @@ public class JoinTest {
 
     @Test
     public void testIntrinsicFalse() throws Exception {
-        assertQuery("customerName\tproductName\torderId\n",
+        assertThat("customerName\tproductName\torderId\n",
                 "select customerName, productName, orderId " +
                         " from customers join orders o on customers.customerId = o.customerId " +
                         " join products p on p.productId = o.productId" +
@@ -401,14 +386,14 @@ public class JoinTest {
 
     @Test
     public void testLatestOrderForACustomers() throws Exception {
-        assertQuery("385427654\t1\t1703\tXEMP\t2015-07-10T00:01:33.250Z\tMZCMZMHGTIQ\n",
+        assertThat("385427654\t1\t1703\tXEMP\t2015-07-10T00:01:33.250Z\tMZCMZMHGTIQ\n",
                 "orders latest by customerId where customerId = 1 and employeeId = 'XEMP'");
     }
 
     @Test
     public void testLatestOrderForACustomersNoFilter() throws Exception {
         try {
-            assertQuery("", "orders latest by customerId where employeeId = 'XEMP'");
+            assertThat("", "orders latest by customerId where employeeId = 'XEMP'");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(17, e.getPosition());
@@ -418,7 +403,7 @@ public class JoinTest {
 
     @Test
     public void testLatestOrderForListOfCustomers() throws Exception {
-        assertQuery("385427654\t1\t1703\tXEMP\t2015-07-10T00:01:33.250Z\tMZCMZMHGTIQ\n" +
+        assertThat("385427654\t1\t1703\tXEMP\t2015-07-10T00:01:33.250Z\tMZCMZMHGTIQ\n" +
                         "607937606\t2\t548\tOVU\t2015-07-10T00:01:49.101Z\tRZVZJQRNYSRKZSJ\n" +
                         "855411970\t3\t1829\tBRSYPN\t2015-07-10T00:01:51.990Z\tOJXJCNBLYTOIYI\n",
                 "orders latest by customerId where customerId in (1,2,3)");
@@ -530,7 +515,7 @@ public class JoinTest {
                 "9977\tINDD\tMIRNGQQJMVOHKXHIYFMUMLXDGEQIEGT\tnull\tXULPFZVERXTYXHEIXXTUSJFKTHCHSXYTBLILZKTHJTFSFQPTUZHIURBOMPGHUR\tMUIYMRYE\tWLZKDMPVR\t2015-07-10T00:00:09.977Z\tNaN\tNaN\tNaN\t\t\tnull\n" +
                 "9992\tHTEOO\tFEVRVVUBNQZINQYGSBOXQGTVNRLXE\tnull\tHJBNFHODEFEMCKSVYWTQPMEVLLSJINDCHSPTIZDB\tDXIUYZNJ\tORD\t2015-07-10T00:00:09.992Z\tNaN\tNaN\tNaN\t\t\tnull\n";
 
-        assertQuery(expected, "customers c" +
+        assertThat(expected, "customers c" +
                 " outer join orders o on c.customerId = o.customerId " +
                 " where orderId = NaN");
     }
@@ -778,19 +763,5 @@ public class JoinTest {
 
     private void assertPlan(String expected, String query) throws ParserException, JournalException {
         TestUtils.assertEquals(expected, compiler.plan(query));
-    }
-
-    private void assertQuery(String expected, String query) throws ParserException, JournalException {
-        assertQuery(expected, query, false);
-    }
-
-    private void assertQuery(String expected, String query, boolean header) throws ParserException, JournalException {
-        sink.clear();
-        RecordSource<? extends Record> src = compiler.compile(query);
-        if (header) {
-            printer.printHeader(src.getMetadata());
-        }
-        printer.print(src, factory);
-        TestUtils.assertEquals(expected, sink);
     }
 }

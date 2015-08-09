@@ -21,6 +21,7 @@
 
 package com.nfsdb.ql;
 
+import com.nfsdb.collections.AssociativeCache;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.ql.model.QueryModel;
@@ -33,17 +34,20 @@ public class Compiler {
     private final QueryParser parser = new QueryParser();
     private final RecordSourceBuilder builder = new RecordSourceBuilder();
     private final JournalReaderFactory factory;
+    private final AssociativeCache<RecordSource<? extends Record>> cache = new AssociativeCache<>(8, 1024);
 
     public Compiler(JournalReaderFactory factory) {
         this.factory = factory;
     }
 
-    public RecordSource<? extends Record> compile(CharSequence query) throws ParserException, JournalException {
-        return builder.resetAndCompile(parser.parse(query).getQueryModel(), factory);
-    }
-
-    public JournalReaderFactory getFactory() {
-        return factory;
+    public RecordCursor<? extends Record> compile(CharSequence query) throws ParserException, JournalException {
+        RecordSource<? extends Record> rs = cache.get(query);
+        if (rs == null) {
+            rs = builder.resetAndCompile(parser.parse(query).getQueryModel(), factory);
+        } else {
+            rs.reset();
+        }
+        return rs.prepareCursor(factory);
     }
 
     public CharSequence plan(CharSequence query) throws ParserException, JournalException {

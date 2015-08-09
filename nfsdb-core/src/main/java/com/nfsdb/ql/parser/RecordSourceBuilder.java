@@ -310,6 +310,8 @@ public class RecordSourceBuilder {
         exprNodePool.reset();
         contextPool.reset();
         intListPool.reset();
+        joinClausesSwap1.clear();
+        joinClausesSwap2.clear();
     }
 
     private JournalMetadata collectJournalMetadata(QueryModel model, JournalReaderFactory factory) throws ParserException, JournalException {
@@ -902,6 +904,7 @@ public class RecordSourceBuilder {
     }
 
     private int orderJournals(QueryModel parent, IntList ordered) {
+        tempCrossIndexes.clear();
         ordered.clear();
         this.orderingStack.clear();
         ObjList<QueryModel> joinModels = parent.getJoinModels();

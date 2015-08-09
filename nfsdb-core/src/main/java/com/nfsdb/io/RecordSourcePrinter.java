@@ -79,7 +79,15 @@ public class RecordSourcePrinter {
     }
 
     public void printCursor(RecordCursor<? extends Record> src) {
+        printCursor(src, false);
+    }
+
+    public void printCursor(RecordCursor<? extends Record> src, boolean header) {
         RecordMetadata metadata = src.getMetadata();
+        if (header) {
+            printHeader(metadata);
+        }
+
         while (src.hasNext()) {
             print(src.next(), metadata);
         }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl;
 
@@ -62,8 +62,6 @@ public class KvIndexSymListHeadRowSource extends AbstractRowSource {
     @Override
     public RowCursor prepareCursor(PartitionSlice slice) {
         try {
-            // todo: storing rowids in an array does not scale
-            // implement using priority queue
             Partition partition = rec.partition = slice.partition.open();
             KVIndex index = partition.getIndexForColumn(column);
             long lo = slice.lo - 1;
