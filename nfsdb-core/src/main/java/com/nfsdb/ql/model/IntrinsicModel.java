@@ -36,6 +36,7 @@ public class IntrinsicModel {
     public long millis = Long.MIN_VALUE;
     public IntervalSource intervalSource;
     public IntrinsicValue intrinsicValue = IntrinsicValue.UNDEFINED;
+    public boolean keyValuesIsLambda = false;
 
     public void clearInterval() {
         this.intervalLo = Long.MIN_VALUE;
@@ -65,6 +66,7 @@ public class IntrinsicModel {
         millis = Long.MIN_VALUE;
         intervalSource = null;
         intrinsicValue = IntrinsicValue.UNDEFINED;
+        keyValuesIsLambda = false;
     }
 
     @Override

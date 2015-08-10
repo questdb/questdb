@@ -24,6 +24,7 @@ package com.nfsdb.ql.ops;
 import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordSource;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
 
@@ -84,6 +85,11 @@ abstract class AbstractVirtualColumn implements VirtualColumn {
 
     @Override
     public long getLong(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public RecordSource<? extends Record> getRecordSource() {
         throw new UnsupportedOperationException();
     }
 

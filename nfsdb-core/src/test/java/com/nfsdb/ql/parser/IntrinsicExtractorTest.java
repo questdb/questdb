@@ -107,6 +107,28 @@ public class IntrinsicExtractorTest extends AbstractTest {
     }
 
     @Test
+    public void testConstVsLambda() throws Exception {
+        IntrinsicModel m = modelOf("ex in (1,2) and sym in (`xyz`)");
+        Assert.assertEquals("sym", m.keyColumn);
+        Assert.assertEquals(1, m.keyValues.size());
+        Assert.assertEquals("xyz", m.keyValues.get(0));
+        Assert.assertTrue(m.keyValuesIsLambda);
+        Assert.assertNotNull(m.filter);
+        Assert.assertEquals("ex12in", TestUtils.toRpn(m.filter));
+    }
+
+    @Test
+    public void testConstVsLambda2() throws Exception {
+        IntrinsicModel m = modelOf("sym in (1,2) and sym in (`xyz`)");
+        Assert.assertEquals("sym", m.keyColumn);
+        Assert.assertEquals(1, m.keyValues.size());
+        Assert.assertEquals("xyz", m.keyValues.get(0));
+        Assert.assertTrue(m.keyValuesIsLambda);
+        Assert.assertNotNull(m.filter);
+        Assert.assertEquals("sym12in", TestUtils.toRpn(m.filter));
+    }
+
+    @Test
     public void testEqualsChoiceOfColumns() throws Exception {
         IntrinsicModel m = modelOf("sym = 'X' and ex = 'Y'");
         assertFilter(m, "'Y'ex=");
@@ -458,6 +480,17 @@ public class IntrinsicExtractorTest extends AbstractTest {
     }
 
     @Test
+    public void testLambdaVsConst() throws Exception {
+        IntrinsicModel m = modelOf("sym in (`xyz`) and ex in (1,2)");
+        Assert.assertEquals("sym", m.keyColumn);
+        Assert.assertEquals(1, m.keyValues.size());
+        Assert.assertEquals("xyz", m.keyValues.get(0));
+        Assert.assertTrue(m.keyValuesIsLambda);
+        Assert.assertNotNull(m.filter);
+        Assert.assertEquals("ex12in", TestUtils.toRpn(m.filter));
+    }
+
+    @Test
     public void testListOfValuesNegativeOverlap() throws Exception {
         IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and sym in ('a', 'z') and sym in ('c')");
         Assert.assertEquals(IntrinsicValue.FALSE, m.intrinsicValue);
@@ -601,6 +634,13 @@ public class IntrinsicExtractorTest extends AbstractTest {
     }
 
     @Test
+    public void testSimpleLambda() throws Exception {
+        IntrinsicModel m = modelOf("sym in (`xyz`)");
+        Assert.assertEquals("xyz", m.keyValues.get(0));
+        Assert.assertTrue(m.keyValuesIsLambda);
+    }
+
+    @Test
     public void testSingleQuoteInterval() throws Exception {
         IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
         Assert.assertTrue(m.intervalLo > Long.MIN_VALUE);
@@ -629,6 +669,17 @@ public class IntrinsicExtractorTest extends AbstractTest {
         Assert.assertEquals("[a,b]", m.keyValues.toString());
         Assert.assertEquals("2014-01-01T12:30:00.000Z", Dates.toString(m.intervalLo));
         Assert.assertEquals("2014-01-02T12:30:00.000Z", Dates.toString(m.intervalHi));
+    }
+
+    @Test
+    public void testTwoDiffColLambdas() throws Exception {
+        IntrinsicModel m = modelOf("sym in (`xyz`) and ex in (`kkk`)");
+        Assert.assertEquals("sym", m.keyColumn);
+        Assert.assertEquals(1, m.keyValues.size());
+        Assert.assertEquals("xyz", m.keyValues.get(0));
+        Assert.assertTrue(m.keyValuesIsLambda);
+        Assert.assertNotNull(m.filter);
+        Assert.assertEquals(ExprNode.NodeType.LAMBDA, m.filter.rhs.type);
     }
 
     @Test
@@ -665,6 +716,17 @@ public class IntrinsicExtractorTest extends AbstractTest {
         Assert.assertTrue(m.intervalHi < Long.MAX_VALUE);
         Assert.assertEquals("2014-01-01T16:30:00.000Z", Dates.toString(m.intervalLo));
         Assert.assertEquals("2014-01-02T12:30:00.000Z", Dates.toString(m.intervalHi));
+    }
+
+    @Test
+    public void testTwoSameColLambdas() throws Exception {
+        try {
+            modelOf("sym in (`xyz`) and sym in (`kkk`)");
+            Assert.fail("exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(4, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("Multiple lambda"));
+        }
     }
 
     private void assertFilter(IntrinsicModel m, CharSequence expected) throws ParserException {

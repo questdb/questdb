@@ -25,6 +25,7 @@ import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.SymFacade;
 
 import java.io.OutputStream;
@@ -50,6 +51,8 @@ public interface VirtualColumn extends RecordColumnMetadata {
     int getInt(Record rec);
 
     long getLong(Record rec);
+
+    RecordSource<? extends Record> getRecordSource();
 
     short getShort(Record rec);
 

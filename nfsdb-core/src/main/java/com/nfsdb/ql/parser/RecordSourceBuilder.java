@@ -542,8 +542,8 @@ public class RecordSourceBuilder {
                 case SYMBOL:
                     rs = new KvIndexSymAllHeadRowSource(latestByCol, null);
                     break;
-                case STRING:
-                    throw new ParserException(latestByNode.position, "Filter on string column expected");
+                default:
+                    throw new ParserException(latestByNode.position, "Only SYM columns can be used here without filter");
             }
         }
 

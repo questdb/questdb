@@ -218,7 +218,9 @@ public class IntrinsicExtractor {
         if (metadata.invalidColumn(col.token)) {
             throw new InvalidColumnException(col.position);
         }
-        return analyzeInInterval(col, node) || analyzeListOfValues(col.token, metadata, node);
+        return analyzeInInterval(col, node)
+                || analyzeListOfValues(col.token, metadata, node)
+                || analyzeInLambda(col.token, metadata, node);
     }
 
     @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE", "LEST_LOST_EXCEPTION_STACK_TRACE"})
@@ -258,6 +260,48 @@ public class IntrinsicExtractor {
             model.overlapInterval(loMillis, hiMillis);
             in.intrinsicValue = IntrinsicValue.TRUE;
             timestampNodes.add(in);
+            return true;
+        }
+        return false;
+    }
+
+    private boolean analyzeInLambda(String col, RecordMetadata meta, ExprNode node) throws ParserException {
+        RecordColumnMetadata colMeta = meta.getColumn(col);
+        if (colMeta.isIndexed()) {
+            if (preferredKeyColumn != null && !col.equals(preferredKeyColumn)) {
+                return false;
+            }
+
+            if (node.rhs == null || node.rhs.type != ExprNode.NodeType.LAMBDA) {
+                return false;
+            }
+
+            // check if we already have indexed column and it is of worse selectivity
+            if (model.keyColumn != null
+                    && (!model.keyColumn.equals(col))
+                    && colMeta.getBucketCount() <= meta.getColumn(model.keyColumn).getBucketCount()) {
+                return false;
+            }
+
+            // todo: this is going to fail if "in" args are functions
+            if ((col.equals(model.keyColumn) && model.keyValuesIsLambda) || node.paramCount > 2) {
+                throw new ParserException(node.position, "Multiple lambda expressions not supported");
+            }
+
+            model.keyValues.clear();
+            model.keyValuePositions.clear();
+            model.keyValues.add(Chars.stripQuotes(node.rhs.token));
+            model.keyValuePositions.add(node.position);
+            model.keyValuesIsLambda = true;
+
+            // revert previously processed nodes
+            for (int n = 0, k = keyNodes.size(); n < k; n++) {
+                keyNodes.getQuick(n).intrinsicValue = IntrinsicValue.UNDEFINED;
+            }
+            keyNodes.clear();
+            model.keyColumn = col;
+            keyNodes.add(node);
+            node.intrinsicValue = IntrinsicValue.TRUE;
             return true;
         }
         return false;
@@ -344,14 +388,19 @@ public class IntrinsicExtractor {
                 }
                 keyNodes.clear();
                 model.keyColumn = col;
-            } else {
+
+                keyNodes.add(node);
+                node.intrinsicValue = IntrinsicValue.TRUE;
+                return true;
+
+            } else if (!model.keyValuesIsLambda) {
                 // calculate overlap of values
                 replaceAllWithOverlap();
-            }
 
-            keyNodes.add(node);
-            node.intrinsicValue = IntrinsicValue.TRUE;
-            return true;
+                keyNodes.add(node);
+                node.intrinsicValue = IntrinsicValue.TRUE;
+                return true;
+            }
         }
         return false;
     }

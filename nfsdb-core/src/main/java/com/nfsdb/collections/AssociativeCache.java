@@ -51,8 +51,8 @@ public class AssociativeCache<V> {
         this.rows = Math.max(MINROWS, Numbers.ceilPow2(rows));
 
         int size = this.rows * this.blocks;
-        if (size <= 0) {
-            throw new IllegalArgumentException("Cache is too large");
+        if (size < 0) {
+            throw new OutOfMemoryError();
         }
         this.keys = new CharSequence[size];
         this.values = (V[]) new Object[size];

@@ -21,33 +21,22 @@
 
 package com.nfsdb.collections;
 
-public class SplitCharSequence extends AbstractCharSequence {
-    private CharSequence lhs;
-    private CharSequence rhs;
-    private int split;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import org.jetbrains.annotations.NotNull;
 
-    public void init(CharSequence lhs, CharSequence rhs) {
-        this.lhs = lhs;
-        this.rhs = rhs;
-        this.split = lhs.length();
-    }
+public abstract class AbstractCharSequence implements CharSequence {
 
+    private StringBuilder builder;
+
+    @SuppressFBWarnings("RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE")
+    @NotNull
     @Override
-    public int length() {
-        return split + rhs.length();
-    }
-
-    @Override
-    public char charAt(int index) {
-        if (index < split) {
-            return lhs.charAt(index);
+    public String toString() {
+        if (builder == null) {
+            builder = new StringBuilder();
         } else {
-            return rhs.charAt(index - split);
+            builder.setLength(0);
         }
-    }
-
-    @Override
-    public CharSequence subSequence(int start, int end) {
-        return null;
+        return builder.append(this).toString();
     }
 }

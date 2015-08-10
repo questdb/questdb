@@ -108,7 +108,7 @@ public class ExprNode implements Mutable {
     }
 
     public enum NodeType {
-        OPERATION, CONSTANT, LITERAL, FUNCTION, CONTROL, SET_OPERATION
+        OPERATION, CONSTANT, LITERAL, FUNCTION, CONTROL, SET_OPERATION, LAMBDA
     }
 
     private static final class ExprNodeFactory implements ObjectPoolFactory<ExprNode> {

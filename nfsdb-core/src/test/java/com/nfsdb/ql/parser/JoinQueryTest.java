@@ -33,6 +33,7 @@ import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Rnd;
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class JoinQueryTest extends AbstractOptimiserTest {
@@ -85,6 +86,17 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                         "\n",
                 "customers" +
                         " cross join customers");
+    }
+
+    @Test
+    public void testExceptionOnIntLatestByWithoutFilter() throws Exception {
+        try {
+            assertThat("", "orders latest by customerId");
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(17, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("Only SYM columns"));
+        }
     }
 
     @Test
@@ -548,6 +560,12 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                 "customers c" +
                         " outer join orders o on c.customerId = o.customerId" +
                         " where orderId = NaN");
+    }
+
+    @Test
+    @Ignore
+    public void testSimpleLambda() throws Exception {
+        assertThat("", "orders latest by customerId where customerId in (`customers where customerName ~ 'X'`)");
     }
 
     private static void generateJoinData() throws JournalException {

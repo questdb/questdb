@@ -21,11 +21,11 @@
 
 package com.nfsdb.ql.parser;
 
+import com.nfsdb.collections.AbstractCharSequence;
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.collections.IntObjHashMap;
 import com.nfsdb.utils.Chars;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -130,6 +130,9 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
                         case '"':
                             term = '"';
                             break;
+                        case '`':
+                            term = '`';
+                            break;
                         default:
                             if ((token = token(c)) != null) {
                                 return last = token;
@@ -157,6 +160,16 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
                         default:
                             _hi++;
                     }
+                    break;
+                case '`':
+                    switch (c) {
+                        case '`':
+                            _hi += 2;
+                            return last = floatingSequence;
+                        default:
+                            _hi++;
+                    }
+                    break;
             }
         }
         return last = floatingSequence;
@@ -209,7 +222,7 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
         }
     }
 
-    public class FloatingSequence implements CharSequence {
+    public class FloatingSequence extends AbstractCharSequence {
         @Override
         public int length() {
             return _hi - _lo;
@@ -223,18 +236,6 @@ public class TokenStream extends AbstractImmutableIterator<CharSequence> {
         @Override
         public CharSequence subSequence(int start, int end) {
             throw new UnsupportedOperationException();
-        }
-
-        @SuppressFBWarnings({"RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE"})
-        @Override
-        @NotNull
-        public String toString() {
-            int l = this.length();
-            char data[] = new char[l];
-            for (int i = 0; i < l; i++) {
-                data[i] = this.charAt(i);
-            }
-            return new String(data);
         }
     }
 }

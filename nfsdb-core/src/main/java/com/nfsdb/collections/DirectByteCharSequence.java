@@ -22,13 +22,10 @@
 package com.nfsdb.collections;
 
 import com.nfsdb.utils.Unsafe;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import org.jetbrains.annotations.NotNull;
 
-public class DirectByteCharSequence implements CharSequence {
+public class DirectByteCharSequence extends AbstractCharSequence {
     private long lo;
     private long hi;
-    private StringBuilder builder;
 
     public void init(long lo, long hi) {
         this.lo = lo;
@@ -57,17 +54,4 @@ public class DirectByteCharSequence implements CharSequence {
         this.lo -= delta;
         this.hi -= delta;
     }
-
-    @SuppressFBWarnings({"RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE"})
-    @NotNull
-    @Override
-    public String toString() {
-        if (builder == null) {
-            builder = new StringBuilder();
-        } else {
-            builder.setLength(0);
-        }
-        return builder.append(this).toString();
-    }
-
 }

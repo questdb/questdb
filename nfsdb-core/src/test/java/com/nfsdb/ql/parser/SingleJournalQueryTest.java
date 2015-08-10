@@ -954,7 +954,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(46, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("column expected"));
+            Assert.assertTrue(e.getMessage().contains("Only SYM columns"));
         }
     }
 

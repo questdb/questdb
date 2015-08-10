@@ -23,14 +23,11 @@ package com.nfsdb.collections;
 
 import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Unsafe;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import org.jetbrains.annotations.NotNull;
 
-public class DirectCharSequence implements CharSequence {
+public class DirectCharSequence extends AbstractCharSequence {
     private long lo;
     private long hi;
     private int len;
-    private StringBuilder builder;
 
     @Override
     public int hashCode() {
@@ -48,18 +45,6 @@ public class DirectCharSequence implements CharSequence {
     @Override
     public boolean equals(Object obj) {
         return this == obj || obj instanceof CharSequence && Chars.equals(this, (CharSequence) obj);
-    }
-
-    @SuppressFBWarnings({"RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE"})
-    @NotNull
-    @Override
-    public String toString() {
-        if (builder == null) {
-            builder = new StringBuilder();
-        } else {
-            builder.setLength(0);
-        }
-        return builder.append(this).toString();
     }
 
     public DirectCharSequence init(long lo, long hi) {

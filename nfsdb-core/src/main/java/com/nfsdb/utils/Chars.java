@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.utils;
 
@@ -119,12 +119,14 @@ public final class Chars {
             return s;
         }
 
-        char c = s.charAt(0);
-        if (c == '\'' || c == '"') {
-            return s.substring(1, l - 1);
+        switch (s.charAt(0)) {
+            case '\'':
+            case '"':
+            case '`':
+                return s.substring(1, l - 1);
+            default:
+                return s;
         }
-
-        return s;
     }
 
     public static String toString(CharSequence s) {

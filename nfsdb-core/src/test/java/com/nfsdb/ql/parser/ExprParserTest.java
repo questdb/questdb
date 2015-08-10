@@ -67,6 +67,11 @@ public class ExprParserTest {
     }
 
     @Test
+    public void testLambda() throws Exception {
+        x("a`blah blah`inyand", "a in (`blah blah`) and y");
+    }
+
+    @Test
     public void testLiteralExit() throws Exception {
         x("abxybzc*+", "a + b * c(b(x,y),z) lit");
     }

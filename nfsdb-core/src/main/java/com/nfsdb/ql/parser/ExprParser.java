@@ -21,6 +21,7 @@
 
 package com.nfsdb.ql.parser;
 
+import com.nfsdb.collections.IntHashSet;
 import com.nfsdb.collections.IntStack;
 import com.nfsdb.collections.ObjectPool;
 import com.nfsdb.ql.model.ExprNode;
@@ -32,6 +33,7 @@ import java.util.Deque;
 
 public class ExprParser {
 
+    private static final IntHashSet nonLiteralBranches = new IntHashSet();
     private final TokenStream toks;
     private final Deque<ExprNode> opStack = new ArrayDeque<>();
     private final IntStack paramCountStack = new IntStack();
@@ -153,6 +155,11 @@ public class ExprParser {
                         }
                     }
                     break;
+                case '`':
+                    thisBranch = Branch.LAMBDA;
+                    // If the token is a number, then add it to the output queue.
+                    listener.onNode(exprNodePool.next().init(ExprNode.NodeType.LAMBDA, tok.toString(), 0, toks.position()));
+                    break;
                 case '0':
                 case '1':
                 case '2':
@@ -227,10 +234,10 @@ public class ExprParser {
                                 node.paramCount = 2;
                         }
                         opStack.push(node);
-                    } else if (thisBranch != Branch.RIGHT_BRACE && thisBranch != Branch.CONSTANT && thisBranch != Branch.LITERAL) {
+                    } else if (!nonLiteralBranches.contains(thisBranch.ordinal())) {
                         thisBranch = Branch.LITERAL;
                         // If the token is a function token, then push it onto the stack.
-                        opStack.push(exprNodePool.next().init(ExprNode.NodeType.LITERAL, tok.toString(), Integer.MIN_VALUE, toks.position()));
+                        opStack.push(exprNodePool.next().init(ExprNode.NodeType.LITERAL, Chars.toString(tok), Integer.MIN_VALUE, toks.position()));
                     } else {
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input
@@ -248,8 +255,14 @@ public class ExprParser {
         }
     }
 
-
     private enum Branch {
-        NONE, COMMA, LEFT_BRACE, RIGHT_BRACE, CONSTANT, OPERATOR, LITERAL
+        NONE, COMMA, LEFT_BRACE, RIGHT_BRACE, CONSTANT, OPERATOR, LITERAL, LAMBDA
+    }
+
+    static {
+        nonLiteralBranches.add(Branch.RIGHT_BRACE.ordinal());
+        nonLiteralBranches.add(Branch.CONSTANT.ordinal());
+        nonLiteralBranches.add(Branch.LITERAL.ordinal());
+        nonLiteralBranches.add(Branch.LAMBDA.ordinal());
     }
 }

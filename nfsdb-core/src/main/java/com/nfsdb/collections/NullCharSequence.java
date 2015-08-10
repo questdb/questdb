@@ -21,29 +21,15 @@
 
 package com.nfsdb.collections;
 
-public class SplitCharSequence extends AbstractCharSequence {
-    private CharSequence lhs;
-    private CharSequence rhs;
-    private int split;
-
-    public void init(CharSequence lhs, CharSequence rhs) {
-        this.lhs = lhs;
-        this.rhs = rhs;
-        this.split = lhs.length();
-    }
-
+class NullCharSequence extends AbstractCharSequence {
     @Override
     public int length() {
-        return split + rhs.length();
+        return 0;
     }
 
     @Override
     public char charAt(int index) {
-        if (index < split) {
-            return lhs.charAt(index);
-        } else {
-            return rhs.charAt(index - split);
-        }
+        return 0;
     }
 
     @Override
