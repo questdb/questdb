@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.ops;
 
@@ -26,7 +26,7 @@ import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordSource;
-import com.nfsdb.ql.SymFacade;
+import com.nfsdb.ql.StorageFacade;
 
 import java.io.OutputStream;
 
@@ -64,7 +64,7 @@ public interface VirtualColumn extends RecordColumnMetadata {
 
     boolean isConstant();
 
-    void prepare(SymFacade facade);
+    void prepare(StorageFacade facade);
 
     void setName(String name);
 }

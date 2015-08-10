@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql;
 
@@ -62,7 +62,7 @@ public class VirtualColumnTest extends AbstractTest {
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
 
         // select ccy, bid, bid+12.5 plus from xyz
-        VirtualColumnRecordSource src = new VirtualColumnRecordSource(w.rows(), new ObjList<VirtualColumn>() {{
+        VirtualColumnRecordSource src = new VirtualColumnRecordSource(compiler.compileSource("xyz"), new ObjList<VirtualColumn>() {{
             add(new AddDoubleOperator() {{
                 setName("plus");
                 setLhs(new DoubleRecordSourceColumn(w.getMetadata().getColumnIndex("bid")));
@@ -70,7 +70,7 @@ public class VirtualColumnTest extends AbstractTest {
             }});
         }});
 
-        p.print(src);
+        p.printCursor(src.prepareCursor(factory));
 
         final String expected = "VTJWCPSWHY\t-104.021850585938\t-91.521850585938\n" +
                 "PEHNRXGZSX\t0.000020634160\t12.500020634160\n" +
@@ -200,7 +200,7 @@ public class VirtualColumnTest extends AbstractTest {
         // select ccy, bid+12.5 plus from xyz
         RecordSource<? extends Record> src = new SelectedColumnsRecordSource(
                 new VirtualColumnRecordSource(
-                        w.rows(),
+                        compiler.compileSource("xyz"),
                         new ObjList<VirtualColumn>() {{
                             add(new AddDoubleOperator() {{
                                 setName("plus");
@@ -214,7 +214,7 @@ public class VirtualColumnTest extends AbstractTest {
                     add("plus");
                 }});
 
-        p.print(src);
+        p.printCursor(src.prepareCursor(factory));
 
         final String expected = "VTJWCPSWHY\t-91.521850585938\n" +
                 "PEHNRXGZSX\t12.500020634160\n" +

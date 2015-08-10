@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl;
 
@@ -28,7 +28,7 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.RowCursor;
-import com.nfsdb.ql.SymFacade;
+import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
@@ -103,7 +103,7 @@ public class KvIndexSymAllHeadRowSource extends AbstractRowSource {
     }
 
     @Override
-    public void prepare(SymFacade facade) {
+    public void prepare(StorageFacade facade) {
         if (filter != null) {
             filter.prepare(facade);
         }

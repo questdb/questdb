@@ -23,7 +23,7 @@ package com.nfsdb.ql.ops;
 
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
-import com.nfsdb.ql.SymFacade;
+import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Chars;
 
@@ -56,6 +56,6 @@ public class StrConstant extends AbstractVirtualColumn {
     }
 
     @Override
-    public void prepare(SymFacade facade) {
+    public void prepare(StorageFacade facade) {
     }
 }

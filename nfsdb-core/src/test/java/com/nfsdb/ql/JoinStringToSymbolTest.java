@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql;
 
@@ -92,16 +92,16 @@ public class JoinStringToSymbolTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        p.print(
+        p.printCursor(
                 new CrossJoinRecordSource(
                         new JournalSource(
-                                new JournalPartitionSource(aw, false), new AllRowSource()
+                                new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()
                         ),
 
                         new JournalSource(
-                                new JournalPartitionSource(bw, false), new AllRowSource()
+                                new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()
                         )
-                )
+                ).prepareCursor(factory)
         );
 
         final String expected = "band1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\n" +
@@ -142,24 +142,24 @@ public class JoinStringToSymbolTest {
 
         StatefulJournalSourceImpl master = new StatefulJournalSourceImpl(
                 new JournalSource(
-                        new JournalPartitionSource(aw, false), new AllRowSource()
+                        new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()
                 )
         );
 
         StrGlue glue = new StrGlue(master, new StrRecordSourceColumn(master.getMetadata().getColumnIndex("band")));
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        p.print(
+        p.printCursor(
                 new NestedLoopJoinRecordSource(
                         master,
                         new JournalSource(
-                                new JournalPartitionSource(bw, false),
+                                new JournalPartitionSource(bw.getMetadata(), false),
                                 new KvIndexTopRowSource(
                                         "name"
                                         , new SymByStrLookupKeySource(bw.getSymbolTable("name"), glue)
                                         , null
                                 ))
-                )
+                ).prepareCursor(factory)
         );
 //        System.out.println(sink.toString());
         Assert.assertEquals(expected, sink.toString());
@@ -188,7 +188,7 @@ public class JoinStringToSymbolTest {
 
         StatefulJournalSourceImpl master = new StatefulJournalSourceImpl(
                 new JournalSource(
-                        new JournalPartitionSource(aw, false), new AllRowSource()
+                        new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()
                 )
         );
 
@@ -200,17 +200,17 @@ public class JoinStringToSymbolTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        p.print(
+        p.printCursor(
                 new NestedLoopJoinRecordSource(
                         master,
                         new JournalSource(
-                                new JournalPartitionSource(bw, false),
+                                new JournalPartitionSource(bw.getMetadata(), false),
                                 new KvIndexTopRowSource(
                                         "name"
                                         , new SymByStrLookupKeySource(bw.getSymbolTable("name"), glue)
                                         , filter
                                 ))
-                )
+                ).prepareCursor(factory)
         );
         Assert.assertEquals(expected, sink.toString());
     }

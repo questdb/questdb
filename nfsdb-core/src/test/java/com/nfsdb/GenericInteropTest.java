@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
@@ -25,8 +25,8 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalMetadataException;
 import com.nfsdb.factory.configuration.JournalMetadataBuilder;
 import com.nfsdb.factory.configuration.JournalStructure;
+import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
-import com.nfsdb.ql.impl.JournalRecord;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -77,9 +77,8 @@ public class GenericInteropTest extends AbstractTest {
 
         writer.commit();
 
-        Journal reader = factory.reader("test");
-        RecordCursor<JournalRecord> src = reader.rows().prepareCursor(null);
-        JournalRecord e;
+        RecordCursor<? extends Record> src = compiler.compile("test");
+        Record e;
 
         Assert.assertTrue(src.hasNext());
         Assert.assertNotNull(e = src.next());
@@ -311,9 +310,8 @@ public class GenericInteropTest extends AbstractTest {
         writer.append(d);
         writer.commit();
 
-        Journal reader = factory.reader("test");
-        RecordCursor<JournalRecord> src = reader.rows().prepareCursor(null);
-        JournalRecord e;
+        RecordCursor<? extends Record> src = compiler.compile("test");
+        Record e;
 
         Assert.assertTrue(src.hasNext());
         Assert.assertNotNull(e = src.next());

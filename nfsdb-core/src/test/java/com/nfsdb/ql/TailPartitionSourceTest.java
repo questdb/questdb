@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql;
 
@@ -93,11 +93,11 @@ public class TailPartitionSourceTest extends AbstractTest {
 
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
 
-        p.print(
+        p.printCursor(
                 new JournalSource(
-                        new JournalTailPartitionSource(w, false, Rows.toRowID(1, 30))
+                        new JournalTailPartitionSource(w.getMetadata(), false, Rows.toRowID(1, 30))
                         , new AllRowSource()
-                )
+                ).prepareCursor(factory)
         );
 
         Assert.assertEquals(expected, sink.toString());

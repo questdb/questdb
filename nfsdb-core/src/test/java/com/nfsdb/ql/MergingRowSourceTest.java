@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql;
 
@@ -40,10 +40,10 @@ public class MergingRowSourceTest extends AbstractTest {
         RowSource srcA = new KvIndexSymLookupRowSource("sym", "BP.L", true);
         RowSource srcB = new KvIndexSymLookupRowSource("sym", "WTB.L", true);
 
-        RecordSource<? extends Record> rs = new JournalSource(new JournalPartitionSource(w, true), new HeapMergingRowSource(srcA, srcB));
+        RecordSource<? extends Record> rs = new JournalSource(new JournalPartitionSource(w.getMetadata(), true), new HeapMergingRowSource(srcA, srcB));
 
         long last = 0;
-        RecordCursor<? extends Record> c = rs.prepareCursor(null);
+        RecordCursor<? extends Record> c = rs.prepareCursor(factory);
         int ts = rs.getMetadata().getColumnIndex("timestamp");
         while (c.hasNext()) {
             long r = c.next().getDate(ts);
@@ -60,10 +60,10 @@ public class MergingRowSourceTest extends AbstractTest {
         RowSource srcA = new KvIndexSymLookupRowSource("sym", "BP.L", true);
         RowSource srcB = new KvIndexSymLookupRowSource("sym", "WTB.L", true);
 
-        RecordSource<? extends Record> rs = new JournalSource(new JournalPartitionSource(w, true), new MergingRowSource(srcA, srcB));
+        RecordSource<? extends Record> rs = new JournalSource(new JournalPartitionSource(w.getMetadata(), true), new MergingRowSource(srcA, srcB));
 
         long last = 0;
-        RecordCursor<? extends Record> c = rs.prepareCursor(null);
+        RecordCursor<? extends Record> c = rs.prepareCursor(factory);
         int ts = rs.getMetadata().getColumnIndex("timestamp");
         while (c.hasNext()) {
             long r = c.next().getDate(ts);

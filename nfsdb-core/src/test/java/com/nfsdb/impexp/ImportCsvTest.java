@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.impexp;
 
@@ -27,7 +27,6 @@ import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.io.*;
 import com.nfsdb.io.sink.StringSink;
-import com.nfsdb.ql.Compiler;
 import com.nfsdb.ql.parser.ParserException;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.test.tools.AbstractTest;
@@ -39,8 +38,6 @@ import java.io.File;
 import java.io.IOException;
 
 public class ImportCsvTest extends AbstractTest {
-
-    private final Compiler compiler = new Compiler(factory);
 
     @Test
     public void testImport() throws Exception {
@@ -70,7 +67,7 @@ public class ImportCsvTest extends AbstractTest {
         File actual = new File(factory.getConfiguration().getJournalBase(), "exp.csv");
         File expected = new File(this.getClass().getResource("/csv/test-export-expected.csv").getFile());
 
-        ExportManager.export(factory, location, actual, TextFileFormat.CSV);
+        ExportManager.export(compiler.compile("'" + location + "'"), actual, TextFileFormat.CSV);
         TestUtils.assertEquals(actual, expected);
     }
 

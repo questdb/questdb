@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.collections;
 
@@ -26,7 +26,7 @@ import com.nfsdb.collections.Mutable;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordMetadata;
-import com.nfsdb.ql.SymFacade;
+import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.utils.Unsafe;
 
 import java.io.Closeable;
@@ -69,13 +69,13 @@ public class DirectRecordLinkedList extends AbstractImmutableIterator<Record> im
     }
 
     @Override
-    public SymFacade getSymFacade() {
-        return null;
+    public RecordMetadata getMetadata() {
+        return metadata;
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
+    public StorageFacade getSymFacade() {
+        return null;
     }
 
     @Override

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,11 +17,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql;
 
 import com.nfsdb.JournalWriter;
+import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
@@ -91,7 +92,7 @@ public class SingleJournalSearchTest {
         assertEquals(expected,
                 new JournalSource(
                         new MultiIntervalPartitionSource(
-                                new JournalPartitionSource(journal, false),
+                                new JournalPartitionSource(journal.getMetadata(), true),
                                 new SingleIntervalSource(new Interval("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z"))
                         ),
                         new KvIndexSymAllHeadRowSource(
@@ -122,8 +123,8 @@ public class SingleJournalSearchTest {
                 new JournalSource(
                         new MultiIntervalPartitionSource(
                                 new JournalPartitionSource(
-                                        journal
-                                        , false
+                                        journal.getMetadata()
+                                        , true
                                 ),
                                 new SingleIntervalSource(new Interval("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z"))
 
@@ -137,8 +138,8 @@ public class SingleJournalSearchTest {
 
     }
 
-    private void assertEquals(CharSequence expected, RecordSource<? extends Record> src) {
-        new RecordSourcePrinter(sink).print(src);
+    private void assertEquals(CharSequence expected, RecordSource<? extends Record> src) throws JournalException {
+        new RecordSourcePrinter(sink).printCursor(src.prepareCursor(factory));
         Assert.assertEquals(expected, sink.toString());
         sink.flush();
     }

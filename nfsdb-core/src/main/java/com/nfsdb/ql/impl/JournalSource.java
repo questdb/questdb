@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl;
 
@@ -48,8 +48,8 @@ public class JournalSource extends AbstractJournalSource<JournalRecord> implemen
     }
 
     @Override
-    public SymFacade getSymFacade() {
-        return partitionCursor.getSymFacade();
+    public StorageFacade getSymFacade() {
+        return partitionCursor.getStorageFacade();
     }
 
     @Override
@@ -60,7 +60,7 @@ public class JournalSource extends AbstractJournalSource<JournalRecord> implemen
     @Override
     public RecordCursor<JournalRecord> prepareCursor(JournalReaderFactory factory) throws JournalException {
         this.partitionCursor = partitionSource.prepareCursor(factory);
-        this.rowSource.prepare(partitionCursor.getSymFacade());
+        this.rowSource.prepare(partitionCursor.getStorageFacade());
         return this;
     }
 

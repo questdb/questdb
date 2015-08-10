@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
@@ -30,9 +30,6 @@ import com.nfsdb.factory.JournalClosingListener;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.Constants;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.ql.impl.AllRowSource;
-import com.nfsdb.ql.impl.JournalPartitionSource;
-import com.nfsdb.ql.impl.JournalSource;
 import com.nfsdb.query.AbstractResultSetBuilder;
 import com.nfsdb.query.api.Query;
 import com.nfsdb.query.iterator.ConcurrentIterator;
@@ -501,13 +498,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
             return true;
         }
         return false;
-    }
-
-    public JournalSource rows() {
-        return new JournalSource(
-                new JournalPartitionSource(this, true)
-                , new AllRowSource()
-        );
     }
 
     /**

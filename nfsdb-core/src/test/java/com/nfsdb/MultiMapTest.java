@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
@@ -125,7 +125,7 @@ public class MultiMapTest extends AbstractTest {
                 .setLoadFactor(0.5f)
                 .build();
 
-        for (Record e : w.rows().prepareCursor(factory)) {
+        for (Record e : compiler.compile("quote")) {
             long ts = e.getLong(tsIndex);
 
             MapValues val = map.getOrCreateValues(

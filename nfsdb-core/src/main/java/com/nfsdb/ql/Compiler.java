@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql;
 
@@ -41,13 +41,22 @@ public class Compiler {
     }
 
     public RecordCursor<? extends Record> compile(CharSequence query) throws ParserException, JournalException {
+        return compileSource(query).prepareCursor(factory);
+    }
+
+    public <T> RecordCursor<? extends Record> compile(Class<T> clazz) throws JournalException, ParserException {
+        return compile(clazz.getName());
+    }
+
+    public RecordSource<? extends Record> compileSource(CharSequence query) throws ParserException, JournalException {
         RecordSource<? extends Record> rs = cache.get(query);
         if (rs == null) {
             rs = builder.resetAndCompile(parser.parse(query).getQueryModel(), factory);
+//            cache.put(query, rs);
         } else {
             rs.reset();
         }
-        return rs.prepareCursor(factory);
+        return rs;
     }
 
     public CharSequence plan(CharSequence query) throws ParserException, JournalException {

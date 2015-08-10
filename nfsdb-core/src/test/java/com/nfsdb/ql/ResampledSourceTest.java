@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql;
 
@@ -228,7 +228,7 @@ public class ResampledSourceTest extends AbstractTest {
         // select count(), first(ask), last(ask), sym, ts sample by sym, 1m
         ResampledSource resampledSource = new ResampledSource(
                 new JournalSource(
-                        new JournalPartitionSource(r, false)
+                        new JournalPartitionSource(r.getMetadata(), false)
                         , new AllRowSource()
                 )
                 ,
@@ -247,7 +247,7 @@ public class ResampledSourceTest extends AbstractTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter out = new RecordSourcePrinter(sink);
-        out.print(resampledSource);
+            out.printCursor(resampledSource.prepareCursor(factory));
         Assert.assertEquals(expected, sink.toString());
     }
 }

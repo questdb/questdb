@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl;
 
@@ -45,10 +45,10 @@ public class MultiIntervalPartitionSourceTest extends AbstractTest {
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
 
-        p.print(
+            p.printCursor(
                 new JournalSource(
                         new MultiIntervalPartitionSource(
-                                new JournalPartitionSource(w, true),
+                                new JournalPartitionSource(w.getMetadata(), true),
                                 new MillisIntervalSource(
                                         new Interval("2014-03-10T07:00:00.000Z", "2014-03-10T07:15:00.000Z"),
                                         30 * Dates.MINUTE_MILLIS,
@@ -56,7 +56,7 @@ public class MultiIntervalPartitionSourceTest extends AbstractTest {
                                 )
                         ),
                         new AllRowSource()
-                )
+                ).prepareCursor(factory)
         );
 
         final String expected = "2014-03-10T07:00:00.000Z\tGKN.L\t290.000000000000\t320.000000000000\t1070060020\t627764827\tFast trading\tLXE\n" +

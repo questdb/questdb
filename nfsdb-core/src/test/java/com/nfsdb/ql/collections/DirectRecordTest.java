@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.collections;
 
@@ -27,9 +27,10 @@ import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
+import com.nfsdb.ql.Compiler;
 import com.nfsdb.ql.Record;
-import com.nfsdb.ql.impl.JournalRecord;
-import com.nfsdb.ql.impl.JournalSource;
+import com.nfsdb.ql.RecordSource;
+import com.nfsdb.ql.parser.ParserException;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.utils.Files;
 import org.junit.Rule;
@@ -46,6 +47,7 @@ import static org.junit.Assert.assertEquals;
 public class DirectRecordTest {
     @Rule
     public final JournalTestFactory factory;
+    public final Compiler compiler;
 
     public DirectRecordTest() {
         try {
@@ -53,13 +55,14 @@ public class DirectRecordTest {
                     new JournalConfigurationBuilder() {{
                     }}.build(Files.makeTempDir())
             );
+            this.compiler = new Compiler(factory);
         } catch (JournalConfigurationException e) {
             throw new JournalRuntimeException(e);
         }
     }
 
     @Test
-    public void testAllFieldTypesField() throws JournalException, IOException {
+    public void testAllFieldTypesField() throws JournalException, IOException, ParserException {
         writeAndReadRecords(factory.writer(AllFieldTypes.class), 1000, 64 * 1024,
                 new RecordGenerator<AllFieldTypes>() {
 
@@ -110,7 +113,7 @@ public class DirectRecordTest {
     }
 
     @Test
-    public void testSaveBinOverPageEdge() throws JournalException, IOException {
+    public void testSaveBinOverPageEdge() throws JournalException, IOException, ParserException {
         final int pageLen = 100;
         writeAndReadRecords(factory.writer(Binary.class), 1, pageLen,
                 new RecordGenerator<Binary>() {
@@ -140,7 +143,7 @@ public class DirectRecordTest {
     }
 
     @Test
-    public void testSaveLongField() throws JournalException, IOException {
+    public void testSaveLongField() throws JournalException, IOException, ParserException {
         writeAndReadRecords(factory.writer(LongValue.class), 100, 450,
                 new RecordGenerator<LongValue>() {
 
@@ -158,7 +161,7 @@ public class DirectRecordTest {
     }
 
     @Test
-    public void testSaveNullBinAndStrings() throws JournalException, IOException {
+    public void testSaveNullBinAndStrings() throws JournalException, IOException, ParserException {
         final int pageLen = 100;
         writeAndReadRecords(factory.writer(StringLongBinary.class), 3, pageLen,
                 new RecordGenerator<StringLongBinary>() {
@@ -192,16 +195,17 @@ public class DirectRecordTest {
                 });
     }
 
-    public <T> void writeAndReadRecords(JournalWriter<T> longJournal, int count, int pageSize, RecordGenerator<T> generator) throws IOException, JournalException {
+    public <T> void writeAndReadRecords(JournalWriter<T> longJournal, int count, int pageSize, RecordGenerator<T> generator) throws IOException, JournalException, ParserException {
         for (int i = 0; i < count; i++) {
             longJournal.append(generator.generate(i));
         }
+        longJournal.commit();
 
-        JournalSource rows = longJournal.rows();
+        RecordSource<? extends Record> rows = compiler.compileSource(longJournal.getLocation().getName());
         try (DirectPagedBuffer buffer = new DirectPagedBuffer(pageSize)) {
-            DirectRecord dr = new DirectRecord(longJournal.rows().getMetadata(), buffer);
+            DirectRecord dr = new DirectRecord(longJournal.getMetadata(), buffer);
             List<Long> offsets = new ArrayList<>();
-            for (JournalRecord rec : rows.prepareCursor(factory)) {
+            for (Record rec : rows.prepareCursor(factory)) {
                 offsets.add(dr.write(rec));
             }
 

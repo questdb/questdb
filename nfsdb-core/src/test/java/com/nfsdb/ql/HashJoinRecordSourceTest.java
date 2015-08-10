@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql;
 
@@ -82,11 +82,11 @@ public class HashJoinRecordSourceTest {
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
         RecordSource<? extends Record> joinResult = new SelectedColumnsRecordSource(
                 new HashJoinRecordSource(
-                        new JournalSource(new JournalPartitionSource(bw, false), new AllRowSource()),
+                        new JournalSource(new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()),
                         new ObjList<CharSequence>() {{
                             add("name");
                         }},
-                        new JournalSource(new JournalPartitionSource(aw, false), new AllRowSource()),
+                        new JournalSource(new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()),
                         new ObjList<CharSequence>() {{
                             add("band");
                         }},
@@ -96,7 +96,7 @@ public class HashJoinRecordSourceTest {
                     add("genre");
                 }}
         );
-        p.print(joinResult);
+        p.printCursor(joinResult.prepareCursor(factory));
         Assert.assertEquals("pop\n" +
                 "rock\n" +
                 "metal\n" +
@@ -114,11 +114,11 @@ public class HashJoinRecordSourceTest {
         TestUtils.generateQuoteData(w2, 100000);
 
         RecordSource<Record> j = new HashJoinRecordSource(
-                new JournalSource(new JournalPartitionSource(w1, false), new AllRowSource()),
+                new JournalSource(new JournalPartitionSource(w1.getMetadata(), false), new AllRowSource()),
                 new ObjList<CharSequence>() {{
                     add("sym");
                 }},
-                new JournalSource(new JournalPartitionSource(w2, false), new AllRowSource()),
+                new JournalSource(new JournalPartitionSource(w2.getMetadata(), false), new AllRowSource()),
                 new ObjList<CharSequence>() {{
                     add("sym");
                 }},
@@ -161,11 +161,11 @@ public class HashJoinRecordSourceTest {
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
         RecordSource<? extends Record> joinResult = new SelectedColumnsRecordSource(
                 new HashJoinRecordSource(
-                        new JournalSource(new JournalPartitionSource(bw, false), new AllRowSource()),
+                        new JournalSource(new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()),
                         new ObjList<CharSequence>() {{
                             add("name");
                         }},
-                        new JournalSource(new JournalPartitionSource(aw, false), new AllRowSource()),
+                        new JournalSource(new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()),
                         new ObjList<CharSequence>() {{
                             add("band");
                         }},
@@ -175,7 +175,7 @@ public class HashJoinRecordSourceTest {
                     add("genre");
                 }}
         );
-        p.print(joinResult);
+        p.printCursor(joinResult.prepareCursor(factory));
         Assert.assertEquals("pop\n" +
                 "rock\n" +
                 "metal\n" +
@@ -203,11 +203,11 @@ public class HashJoinRecordSourceTest {
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
         RecordSource<? extends Record> joinResult = new SelectedColumnsRecordSource(
                 new HashJoinRecordSource(
-                        new JournalSource(new JournalPartitionSource(bw, false), new AllRowSource()),
+                        new JournalSource(new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()),
                         new ObjList<CharSequence>() {{
                             add("name");
                         }},
-                        new JournalSource(new JournalPartitionSource(aw, false), new AllRowSource()),
+                        new JournalSource(new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()),
                         new ObjList<CharSequence>() {{
                             add("band");
                         }},
@@ -218,7 +218,7 @@ public class HashJoinRecordSourceTest {
                     add("url");
                 }}
         );
-        p.print(joinResult);
+        p.printCursor(joinResult.prepareCursor(factory));
         Assert.assertEquals("pop\thttp://band1.com\n" +
                 "rock\thttp://band1.com\n" +
                 "\thttp://band2.com\n" +

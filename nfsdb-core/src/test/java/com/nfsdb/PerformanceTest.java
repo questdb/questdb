@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,17 +17,19 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
 import com.nfsdb.collections.LongList;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.factory.JournalCachingFactory;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.model.Quote;
+import com.nfsdb.ql.Compiler;
 import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordSource;
-import com.nfsdb.ql.impl.*;
+import com.nfsdb.ql.RecordCursor;
+import com.nfsdb.ql.parser.ParserException;
 import com.nfsdb.query.api.QueryAllBuilder;
 import com.nfsdb.query.api.QueryHeadBuilder;
 import com.nfsdb.storage.KVIndex;
@@ -76,38 +78,29 @@ public class PerformanceTest extends AbstractTest {
         }
     }
 
+    @SuppressWarnings("StatementWithEmptyBody")
     @Test
-    public void testAllBySymbolValueOverIntervalNew() throws JournalException {
+    public void testAllBySymbolValueOverIntervalNew() throws JournalException, ParserException, InterruptedException {
 
         JournalWriter<Quote> w = factory.writer(Quote.class, "quote", TEST_DATA_SIZE);
         TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
         w.commit();
 
-        try (Journal<Quote> journal = factory.reader(Quote.class)) {
-            int count = 1000;
-            Interval interval = new Interval(Dates.parseDateTime("2013-10-15T10:00:00.000Z"), Dates.parseDateTime("2013-10-05T10:00:00.000Z"));
-            long t = 0;
+        JournalCachingFactory cf = new JournalCachingFactory(factory.getConfiguration());
+        Compiler compiler = new Compiler(cf);
 
-            RecordSource<? extends Record> rs = new JournalSource(
-                    new MultiIntervalPartitionSource(
-                            new JournalPartitionSource(journal, true),
-                            new SingleIntervalSource(interval)
-
-                    ), new KvIndexSymLookupRowSource("sym", "LLOY.L")
-            );
-
-
-            for (int i = -1000; i < count; i++) {
-                if (i == 0) {
-                    t = System.nanoTime();
-                }
-                for (Iterator<? extends Record> iterator = rs.prepareCursor(null).iterator(); iterator.hasNext(); ) {
-                    iterator.next();
-                }
-                rs.reset();
+        int count = 1000;
+        long t = 0;
+        for (int i = -count; i < count; i++) {
+            if (i == 0) {
+                t = System.nanoTime();
             }
-            LOGGER.info("NEW journal.query().all().withKeys(\"LLOY.L\").slice(interval) (query only) latency: " + (System.nanoTime() - t) / count / 1000 + "μs");
+            for (Record r : compiler.compile("quote where timestamp = '2013-10-05T10:00:00.000Z;10d' and sym = 'LLOY.L'")) {
+            }
         }
+        LOGGER.info("NEW journal.query().all().withKeys(\"LLOY.L\").slice(interval) (query only) latency: " + (System.nanoTime() - t) / count / 1000 + "μs");
+
+        cf.close();
     }
 
     @Test
@@ -163,7 +156,7 @@ public class PerformanceTest extends AbstractTest {
     }
 
     @Test
-    public void testJournalAppendAndReadSpeed() throws JournalException {
+    public void testJournalAppendAndReadSpeed() throws JournalException, ParserException {
         JournalWriter<Quote> w = factory.writer(Quote.class, "quote", TEST_DATA_SIZE);
         long t = 0;
         int count = 10;
@@ -205,9 +198,9 @@ public class PerformanceTest extends AbstractTest {
             if (i == 0) {
                 t = System.nanoTime();
             }
-            RecordSource<JournalRecord> s = w.rows();
+            RecordCursor<? extends Record> s = compiler.compile("quote");
             int cnt = 0;
-            for (Record r : s.prepareCursor(null)) {
+            for (Record r : s) {
                 r.getLong(0);
                 r.getSym(1);
                 r.getDouble(2);

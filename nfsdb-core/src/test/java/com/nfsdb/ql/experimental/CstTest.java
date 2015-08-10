@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.experimental;
 
@@ -29,6 +29,7 @@ import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.model.Album;
 import com.nfsdb.model.Band;
 import com.nfsdb.model.Quote;
+import com.nfsdb.ql.Compiler;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.collections.MapValues;
@@ -45,6 +46,7 @@ import com.nfsdb.utils.Files;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Test;
+
 
 public class CstTest {
 
@@ -71,6 +73,8 @@ public class CstTest {
             }}.build(Files.makeTempDir())
     );
 
+    private final Compiler compiler = new Compiler(factory);
+
     @BeforeClass
     public static void setUp() throws Exception {
         TestData.appendQuoteData2(factory.writer(Quote.class, "quote"));
@@ -89,7 +93,7 @@ public class CstTest {
 
         StatefulJournalSourceImpl m = new StatefulJournalSourceImpl(
                 new JournalSource(
-                        new JournalPartitionSource(master, false),
+                        new JournalPartitionSource(master.getMetadata(), false),
                         new AllRowSource()
                 )
         );
@@ -98,7 +102,7 @@ public class CstTest {
         RecordSource<? extends Record> src = new NestedLoopJoinRecordSource(
                 m,
                 new JournalSource(
-                        new JournalPartitionSource(slave, false),
+                        new JournalPartitionSource(slave.getMetadata(), false),
                         new KvIndexTopRowSource(
                                 "sym",
                                 new SymBySymCachingLookupKeySource(slave.getSymbolTable("sym"), glue),
@@ -259,7 +263,7 @@ public class CstTest {
                     .build();
 
             long prev = -1;
-            for (Record e : w.rows().prepareCursor(factory)) {
+            for (Record e : compiler.compile("quote")) {
                 long ts = Dates.floorMI(e.getLong(tsIndex));
 
                 if (ts != prev) {

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.collections;
 
@@ -25,7 +25,7 @@ import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordMetadata;
-import com.nfsdb.ql.SymFacade;
+import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.utils.Unsafe;
 
 import java.util.List;
@@ -51,13 +51,13 @@ public final class MapRecordSource extends AbstractImmutableIterator<Record> imp
     }
 
     @Override
-    public SymFacade getSymFacade() {
-        return null;
+    public RecordMetadata getMetadata() {
+        return record.getMetadata();
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return record.getMetadata();
+    public StorageFacade getSymFacade() {
+        return null;
     }
 
     @Override

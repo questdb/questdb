@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,13 +17,13 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.ops;
 
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
-import com.nfsdb.ql.SymFacade;
+import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.storage.ColumnType;
 
 public class NullConstant extends AbstractVirtualColumn {
@@ -53,6 +53,6 @@ public class NullConstant extends AbstractVirtualColumn {
     }
 
     @Override
-    public void prepare(SymFacade facade) {
+    public void prepare(StorageFacade facade) {
     }
 }

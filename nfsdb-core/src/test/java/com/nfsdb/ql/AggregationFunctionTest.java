@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,13 +17,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql;
 
 import com.nfsdb.Journal;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.collections.ObjList;
+import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
@@ -334,10 +335,10 @@ public class AggregationFunctionTest extends AbstractTest {
         );
     }
 
-    private void assertFunc(final AggregatorFunction func, String expected, boolean print) {
+    private void assertFunc(final AggregatorFunction func, String expected, boolean print) throws JournalException {
         ResampledSource resampledSource = new ResampledSource(
                 new JournalSource(
-                        new JournalPartitionSource(r, false)
+                        new JournalPartitionSource(r.getMetadata(), false)
                         , new AllRowSource()
                 )
                 ,
@@ -354,7 +355,7 @@ public class AggregationFunctionTest extends AbstractTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter out = new RecordSourcePrinter(sink);
-        out.print(resampledSource);
+        out.printCursor(resampledSource.prepareCursor(factory));
         if (print) {
             System.out.println(sink.toString());
         }

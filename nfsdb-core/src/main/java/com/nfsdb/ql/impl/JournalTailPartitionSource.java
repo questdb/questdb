@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl;
 
@@ -30,7 +30,7 @@ import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.PartitionCursor;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.PartitionSource;
-import com.nfsdb.ql.SymFacade;
+import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.utils.Rows;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -40,7 +40,7 @@ public class JournalTailPartitionSource extends AbstractImmutableIterator<Partit
     private final PartitionSlice slice = new PartitionSlice();
     private final JournalMetadata metadata;
     private final boolean dynamicJournal;
-    private final MasterSymFacade symFacade = new MasterSymFacade();
+    private final MasterStorageFacade symFacade = new MasterStorageFacade();
     private Journal journal;
     private int partitionIndex;
     private long lo;
@@ -78,7 +78,7 @@ public class JournalTailPartitionSource extends AbstractImmutableIterator<Partit
     }
 
     @Override
-    public SymFacade getSymFacade() {
+    public StorageFacade getStorageFacade() {
         return symFacade;
     }
 

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql;
 
@@ -104,16 +104,16 @@ public class JoinSymbolOnSymbolTest {
         // **inner join
         // **join first head after
         StatefulJournalSourceImpl master = new StatefulJournalSourceImpl(
-                new JournalSource(new JournalPartitionSource(bw, false), new AllRowSource())
+                new JournalSource(new JournalPartitionSource(bw.getMetadata(), true), new AllRowSource())
         );
 
         SymGlue glue = new SymGlue(master, new SymRecordSourceColumn(master.getMetadata().getColumnIndex("name")));
 
-        out.print(
+        out.printCursor(
                 new InnerSkipNullJoinRecordSource(
                         new NestedLoopJoinRecordSource(
                                 master,
-                                new JournalSource(new JournalPartitionSource(aw, false),
+                                new JournalSource(new JournalPartitionSource(aw.getMetadata(), false),
                                         new DistinctSymbolRowSource(
                                                 new KvIndexRowSource(
                                                         "band"
@@ -123,7 +123,7 @@ public class JoinSymbolOnSymbolTest {
                                         )
                                 )
                         )
-                )
+                ).prepareCursor(factory)
         );
         Assert.assertEquals(expected, sink.toString());
     }
@@ -151,22 +151,22 @@ public class JoinSymbolOnSymbolTest {
 
         // from band join album head by name
         StatefulJournalSourceImpl master = new StatefulJournalSourceImpl(
-                new JournalSource(new JournalPartitionSource(bw, false), new AllRowSource())
+                new JournalSource(new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource())
         );
 
         SymGlue glue = new SymGlue(master, new SymRecordSourceColumn(master.getMetadata().getColumnIndex("name")));
 
-        out.print(
+        out.printCursor(
                 new InnerSkipNullJoinRecordSource(
                         new NestedLoopJoinRecordSource(
                                 master,
-                                new JournalSource(new JournalPartitionSource(aw, false),
+                                new JournalSource(new JournalPartitionSource(aw.getMetadata(), false),
                                         new KvIndexRowSource(
                                                 "band"
                                                 , new SymBySymLookupKeySource(aw.getSymbolTable("band"), glue)
                                         ))
                         )
-                )
+                ).prepareCursor(factory)
         );
         Assert.assertEquals(expected, sink.toString());
     }
@@ -193,7 +193,7 @@ public class JoinSymbolOnSymbolTest {
 
         // from band outer join album
         // this is data-driven one to many
-        out.print(buildSource(bw, aw));
+        out.printCursor(buildSource(bw, aw).prepareCursor(factory));
         Assert.assertEquals(expected, sink.toString());
     }
 
@@ -230,18 +230,18 @@ public class JoinSymbolOnSymbolTest {
         // **head by name is applied after join
 
         StatefulJournalSourceImpl master = new StatefulJournalSourceImpl(
-                new JournalSource(new JournalPartitionSource(bw, false),
+                new JournalSource(new JournalPartitionSource(bw.getMetadata(), false),
                         new AllRowSource()
                 )
         );
 
         SymGlue glue = new SymGlue(master, new SymRecordSourceColumn(master.getMetadata().getColumnIndex("name")));
 
-        out.print(
+        out.printCursor(
                 new NestedLoopJoinRecordSource(
                         master,
                         new JournalSource(
-                                new JournalPartitionSource(aw, false),
+                                new JournalPartitionSource(aw.getMetadata(), false),
                                 new DistinctSymbolRowSource(
                                         new KvIndexRowSource(
                                                 "band",
@@ -249,7 +249,7 @@ public class JoinSymbolOnSymbolTest {
                                         )
                                         , "name"
                                 ))
-                )
+                ).prepareCursor(factory)
         );
         Assert.assertEquals(expected, sink.toString());
     }
@@ -274,7 +274,7 @@ public class JoinSymbolOnSymbolTest {
         aw.commit();
 
         // from band outer join album
-        out.print(buildSource(bw, aw));
+        out.printCursor(buildSource(bw, aw).prepareCursor(factory));
         Assert.assertEquals(expected, sink.toString());
     }
 
@@ -300,21 +300,22 @@ public class JoinSymbolOnSymbolTest {
 
         // from album join band head by name
         StatefulJournalSourceImpl master = new StatefulJournalSourceImpl(
-                new JournalSource(new JournalPartitionSource(aw, false), new AllRowSource())
+                new JournalSource(new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource())
         );
 
         SymGlue glue = new SymGlue(master, new SymRecordSourceColumn(master.getMetadata().getColumnIndex("band")));
-        out.print(new NestedLoopJoinRecordSource(
-                master,
-                new JournalSource(
-                        new JournalPartitionSource(bw, false),
-                        new KvIndexTopRowSource(
-                                "name"
-                                , new SymBySymLookupKeySource(bw.getSymbolTable("name"), glue)
-                                , null
+        out.printCursor(new NestedLoopJoinRecordSource(
+                        master,
+                        new JournalSource(
+                                new JournalPartitionSource(bw.getMetadata(), false),
+                                new KvIndexTopRowSource(
+                                        "name"
+                                        , new SymBySymLookupKeySource(bw.getSymbolTable("name"), glue)
+                                        , null
+                                )
                         )
-                )
-        ));
+                ).prepareCursor(factory)
+        );
 
         Assert.assertEquals(expected, sink.toString());
     }
@@ -322,7 +323,7 @@ public class JoinSymbolOnSymbolTest {
     private RecordSource<? extends Record> buildSource(Journal<Band> bw, Journal<Album> aw) {
         StatefulJournalSourceImpl master = new StatefulJournalSourceImpl(
                 new JournalSource(
-                        new JournalPartitionSource(bw, false),
+                        new JournalPartitionSource(bw.getMetadata(), true),
                         new AllRowSource())
         );
 
@@ -330,7 +331,7 @@ public class JoinSymbolOnSymbolTest {
         return new NestedLoopJoinRecordSource(
                 master,
                 new JournalSource(
-                        new JournalPartitionSource(aw, false),
+                        new JournalPartitionSource(aw.getMetadata(), false),
                         new KvIndexRowSource("band"
                                 , new SymBySymLookupKeySource(aw.getSymbolTable("band"), glue)
                         )

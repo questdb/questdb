@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,16 +17,23 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.Journal;
-import com.nfsdb.ql.SymFacade;
+import com.nfsdb.factory.JournalReaderFactory;
+import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.storage.SymbolTable;
 
-public class MasterSymFacade implements SymFacade {
+public class MasterStorageFacade implements StorageFacade {
     private Journal journal;
+    private JournalReaderFactory factory;
+
+    @Override
+    public JournalReaderFactory getFactory() {
+        return factory;
+    }
 
     @Override
     public SymbolTable getSymbolTable(int index) {
@@ -37,6 +44,10 @@ public class MasterSymFacade implements SymFacade {
     @Override
     public SymbolTable getSymbolTable(String name) {
         return journal.getSymbolTable(name);
+    }
+
+    public void setFactory(JournalReaderFactory factory) {
+        this.factory = factory;
     }
 
     public void setJournal(Journal journal) {

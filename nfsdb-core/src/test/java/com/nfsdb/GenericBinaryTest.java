@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,13 +17,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalStructure;
-import com.nfsdb.ql.impl.JournalRecord;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.parser.ParserException;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.utils.Rnd;
 import org.junit.Assert;
@@ -50,7 +51,7 @@ public class GenericBinaryTest extends AbstractTest {
         JournalWriter writer = getGenericWriter();
         List<byte[]> expected = getBytes();
         writeInputStream(writer, expected);
-        assertEquals(expected, readOutputStream(writer));
+        assertEquals(expected, readOutputStream());
     }
 
     @Test
@@ -60,7 +61,7 @@ public class GenericBinaryTest extends AbstractTest {
         writeOutputStream(writer, expected);
 
         List<byte[]> actual = new ArrayList<>();
-        for (JournalRecord e : writer.rows().prepareCursor(null)) {
+        for (Record e : compiler.compile("bintest")) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             InputStream in = e.getBin(0);
 
@@ -79,7 +80,7 @@ public class GenericBinaryTest extends AbstractTest {
         JournalWriter writer = getGenericWriter();
         List<byte[]> expected = getBytes();
         writeOutputStream(writer, expected);
-        assertEquals(expected, readOutputStream(writer));
+        assertEquals(expected, readOutputStream());
     }
 
     @Test
@@ -92,7 +93,7 @@ public class GenericBinaryTest extends AbstractTest {
             w.append();
         }
         writer.commit();
-        assertEquals(expected, readOutputStream(writer));
+        assertEquals(expected, readOutputStream());
     }
 
     private void assertEquals(List<byte[]> expected, List<byte[]> actual) {
@@ -131,9 +132,9 @@ public class GenericBinaryTest extends AbstractTest {
         return actual;
     }
 
-    private List<byte[]> readOutputStream(Journal reader) throws JournalException {
+    private List<byte[]> readOutputStream() throws JournalException, ParserException {
         List<byte[]> result = new ArrayList<>();
-        for (JournalRecord e : reader.rows().prepareCursor(null)) {
+        for (Record e : compiler.compile("bintest")) {
             ByteArrayOutputStream o = new ByteArrayOutputStream();
             e.getBin(0, o);
             result.add(o.toByteArray());
