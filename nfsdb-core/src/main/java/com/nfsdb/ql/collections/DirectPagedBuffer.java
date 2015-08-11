@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.collections;
 
@@ -52,7 +52,7 @@ class DirectPagedBuffer implements Closeable, Mutable {
         long writeOffset = cachePageLo;
         long size = value.getLength();
         if (size < 0 || writeOffset < 0) {
-            throw new IndexOutOfBoundsException();
+            throw new OutOfMemoryError();
         }
 
         // Find last page needed.
@@ -68,7 +68,7 @@ class DirectPagedBuffer implements Closeable, Mutable {
         }
 
         do {
-            long writeAddress = pages.get(pageIndex);
+            long writeAddress = pages.getQuick(pageIndex);
             pageOffset = writeOffset & mask;
             writeAddress += pageOffset;
             long writeSize = Math.min(size, pageCapacity - pageOffset);
@@ -78,12 +78,19 @@ class DirectPagedBuffer implements Closeable, Mutable {
             writeOffset = 0;
             pageIndex++;
         } while (size > 0);
+
+        if (cachePageHi <= cachePageLo) {
+            cachePageHi = ((cachePageLo >>> bits) << bits) + pageCapacity;
+        }
     }
 
     public void clear() {
-        //todo: retain allocated pages when clearing
         cachePageLo = 0;
         cachePageHi = cachePageLo + pageCapacity;
+    }
+
+    @Override
+    public void close() throws IOException {
         for (int i = 0; i < pages.size(); i++) {
             long address = pages.getQuick(i);
             if (address != 0) {
@@ -91,12 +98,6 @@ class DirectPagedBuffer implements Closeable, Mutable {
             }
         }
         pages.clear();
-        allocateAddress(0);
-    }
-
-    @Override
-    public void close() throws IOException {
-        clear();
     }
 
     public long getBlockLen(long offset) {
@@ -135,7 +136,7 @@ class DirectPagedBuffer implements Closeable, Mutable {
         }
 
         do {
-            long readAddress = pages.get(pageIndex);
+            long readAddress = pages.getQuick(pageIndex);
             if (readAddress == 0) {
                 return readLen;
             }
@@ -183,7 +184,9 @@ class DirectPagedBuffer implements Closeable, Mutable {
     }
 
     private long allocatePage(int index) {
-        pages.add(Unsafe.getUnsafe().allocateMemory(pageCapacity));
-        return (pages.size() - 1) << bits;
+        if (index <= pages.size()) {
+            pages.extendAndSet(index, Unsafe.getUnsafe().allocateMemory(pageCapacity));
+        }
+        return index << bits;
     }
 }

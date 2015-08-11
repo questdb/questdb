@@ -28,7 +28,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 
-public class DirectLinkedBufferTest {
+public class DirectPagedBufferTest {
     @Rule
     public final ExpectedException exception = ExpectedException.none();
 
