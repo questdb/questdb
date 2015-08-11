@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.collections;
 
@@ -36,7 +36,7 @@ class DirectPagedBuffer implements Closeable, Mutable {
     private final int pageCapacity;
     private final int mask;
     private final int bits;
-    private LongList pages;
+    private final LongList pages;
     private long cachePageHi;
     private long cachePageLo;
 
@@ -45,7 +45,7 @@ class DirectPagedBuffer implements Closeable, Mutable {
         this.bits = 31 - Integer.numberOfLeadingZeros(this.pageCapacity);
         this.mask = this.pageCapacity - 1;
         pages = new LongList();
-        allocateAddress();
+        allocateAddress(0);
     }
 
     public void append(DirectInputStream value) {
@@ -81,21 +81,22 @@ class DirectPagedBuffer implements Closeable, Mutable {
     }
 
     public void clear() {
-        cachePageLo = pages.get(0);
+        //todo: retain allocated pages when clearing
+        cachePageLo = 0;
         cachePageHi = cachePageLo + pageCapacity;
+        for (int i = 0; i < pages.size(); i++) {
+            long address = pages.getQuick(i);
+            if (address != 0) {
+                Unsafe.getUnsafe().freeMemory(address);
+            }
+        }
+        pages.clear();
+        allocateAddress(0);
     }
 
     @Override
     public void close() throws IOException {
-        if (pages != null) {
-            for (int i = 0; i < pages.size(); i++) {
-                long address = pages.get(i);
-                if (address != 0) {
-                    Unsafe.getUnsafe().freeMemory(address);
-                }
-            }
-            pages = null;
-        }
+        clear();
     }
 
     public long getBlockLen(long offset) {
@@ -104,20 +105,20 @@ class DirectPagedBuffer implements Closeable, Mutable {
 
     public long getWriteOffsetQuick(long length) {
         if (cachePageLo + length > cachePageHi) {
-            allocateAddress();
+            allocateAddress((cachePageLo + length) >>> bits);
         }
         return (cachePageLo += length) - length;
     }
 
     public long getWriteOffsetWithChecks(long length) {
         if (cachePageLo + length > cachePageHi) {
-            allocateAddressChecked(length);
+            allocateAddressChecked((cachePageLo + length) >>> bits, length);
         }
         return (cachePageLo += length) - length;
     }
 
     public long toAddress(long offset) {
-        return pages.get((int) (offset >> bits)) + (offset & mask);
+        return pages.get((int) (offset >>> bits)) + (offset & mask);
     }
 
     public long write(long writeTo, long readOffset, long size) {
@@ -166,19 +167,22 @@ class DirectPagedBuffer implements Closeable, Mutable {
         }
     }
 
-    private void allocateAddress() {
-        cachePageLo = allocatePage();
+    private void allocateAddress(long index) {
+        if (index > Integer.MAX_VALUE) {
+            throw new OutOfMemoryError();
+        }
+        cachePageLo = allocatePage((int) index);
         cachePageHi = cachePageLo + pageCapacity;
     }
 
-    private void allocateAddressChecked(long length) {
+    private void allocateAddressChecked(long index, long length) {
         if (length > pageCapacity) {
             throw new JournalRuntimeException("Failed to allocate page of length %d. Maximum page size %d", length, pageCapacity);
         }
-        allocateAddress();
+        allocateAddress(index);
     }
 
-    private long allocatePage() {
+    private long allocatePage(int index) {
         pages.add(Unsafe.getUnsafe().allocateMemory(pageCapacity));
         return (pages.size() - 1) << bits;
     }

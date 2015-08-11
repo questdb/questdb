@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.collections;
 
@@ -115,12 +115,6 @@ public class LongList implements Mutable {
         Arrays.fill(buffer, noEntryValue);
     }
 
-    public void clear(int capacity) {
-        ensureCapacity(capacity);
-        pos = 0;
-        Arrays.fill(buffer, noEntryValue);
-    }
-
     public void ensureCapacity(int capacity) {
         int l = buffer.length;
         if (capacity > l) {
@@ -137,6 +131,10 @@ public class LongList implements Mutable {
             pos = index + 1;
         }
         Unsafe.arrayPut(buffer, index, value);
+    }
+
+    public void fill(long value) {
+        Arrays.fill(buffer, value);
     }
 
     public long get(int index) {

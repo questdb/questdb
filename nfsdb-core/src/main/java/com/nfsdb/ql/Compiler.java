@@ -52,7 +52,7 @@ public class Compiler {
         RecordSource<? extends Record> rs = cache.get(query);
         if (rs == null) {
             rs = builder.resetAndCompile(parser.parse(query).getQueryModel(), factory);
-//            cache.put(query, rs);
+            cache.put(query, rs);
         } else {
             rs.reset();
         }

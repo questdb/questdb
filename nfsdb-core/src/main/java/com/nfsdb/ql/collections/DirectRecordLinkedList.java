@@ -56,6 +56,7 @@ public class DirectRecordLinkedList extends AbstractImmutableIterator<Record> im
 
     public void clear() {
         buffer.clear();
+        readOffset = -1;
     }
 
     @Override

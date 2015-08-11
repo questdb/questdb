@@ -147,7 +147,6 @@ public class DirectRecordTest {
         writeAndReadRecords(factory.writer(LongValue.class), 100, 450,
                 new RecordGenerator<LongValue>() {
 
-
                     @Override
                     public void assertRecord(Record value, int i) {
                         assertEquals((long) i, value.getLong(0));
@@ -231,10 +230,6 @@ public class DirectRecordTest {
 
         LongValue(long val) {
             value = val;
-        }
-
-        public long getValue() {
-            return value;
         }
     }
 
