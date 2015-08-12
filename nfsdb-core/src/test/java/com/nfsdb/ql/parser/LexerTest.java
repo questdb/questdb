@@ -28,10 +28,10 @@ import org.junit.Test;
 
 import java.util.Iterator;
 
-public class TokenStreamTest {
+public class LexerTest {
     @Test
     public void testEdgeSymbol() throws Exception {
-        TokenStream ts = new TokenStream();
+        Lexer ts = new Lexer();
         ts.defineSymbol(" ");
         ts.defineSymbol("+");
         ts.defineSymbol("(");
@@ -49,7 +49,7 @@ public class TokenStreamTest {
 
     @Test
     public void testNullContent() throws Exception {
-        TokenStream ts = new TokenStream();
+        Lexer ts = new Lexer();
         ts.defineSymbol(" ");
         ts.setContent(null);
         Assert.assertFalse(ts.iterator().hasNext());
@@ -57,7 +57,7 @@ public class TokenStreamTest {
 
     @Test
     public void testQuotedToken() throws Exception {
-        TokenStream ts = new TokenStream();
+        Lexer ts = new Lexer();
         ts.defineSymbol("+");
         ts.defineSymbol("++");
         ts.defineSymbol("*");
@@ -74,7 +74,7 @@ public class TokenStreamTest {
 
     @Test
     public void testSingleQuotedToken() throws Exception {
-        TokenStream ts = new TokenStream();
+        Lexer ts = new Lexer();
         ts.defineSymbol("+");
         ts.defineSymbol("++");
         ts.defineSymbol("*");
@@ -91,7 +91,7 @@ public class TokenStreamTest {
 
     @Test
     public void testSymbolLookup() throws Exception {
-        TokenStream ts = new TokenStream();
+        Lexer ts = new Lexer();
         ts.defineSymbol("+");
         ts.defineSymbol("++");
         ts.defineSymbol("*");
@@ -108,7 +108,7 @@ public class TokenStreamTest {
 
     @Test
     public void testUnparse() {
-        TokenStream ts = new TokenStream();
+        Lexer ts = new Lexer();
         ts.defineSymbol("+");
         ts.defineSymbol("++");
         ts.defineSymbol("*");

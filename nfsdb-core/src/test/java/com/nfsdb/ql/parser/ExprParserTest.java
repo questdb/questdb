@@ -21,6 +21,7 @@
 
 package com.nfsdb.ql.parser;
 
+import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;

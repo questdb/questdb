@@ -26,6 +26,7 @@ import com.nfsdb.JournalWriter;
 import com.nfsdb.collections.IntHashSet;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.test.tools.TestUtils;
@@ -33,7 +34,6 @@ import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Rnd;
 import org.junit.Assert;
 import org.junit.BeforeClass;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class JoinQueryTest extends AbstractOptimiserTest {
@@ -563,7 +563,6 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
-    @Ignore
     public void testSimpleLambda() throws Exception {
         assertThat("", "orders latest by customerId where customerId in (`customers where customerName ~ 'X'`)");
     }

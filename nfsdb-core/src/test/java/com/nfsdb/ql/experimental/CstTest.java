@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.experimental;
 
@@ -29,7 +29,6 @@ import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.model.Album;
 import com.nfsdb.model.Band;
 import com.nfsdb.model.Quote;
-import com.nfsdb.ql.Compiler;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.collections.MapValues;
@@ -37,6 +36,7 @@ import com.nfsdb.ql.collections.MultiMap;
 import com.nfsdb.ql.impl.*;
 import com.nfsdb.ql.ops.SymGlue;
 import com.nfsdb.ql.ops.SymRecordSourceColumn;
+import com.nfsdb.ql.parser.Compiler;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.test.tools.TestData;

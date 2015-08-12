@@ -22,6 +22,7 @@
 package com.nfsdb.ql.parser;
 
 import com.nfsdb.collections.ObjObjHashMap;
+import com.nfsdb.ql.ops.fact.Signature;
 import com.nfsdb.storage.ColumnType;
 import org.junit.Assert;
 import org.junit.Test;

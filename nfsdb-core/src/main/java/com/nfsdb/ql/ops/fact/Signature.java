@@ -19,7 +19,7 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ql.parser;
+package com.nfsdb.ql.ops.fact;
 
 import com.nfsdb.collections.IntList;
 import com.nfsdb.collections.Mutable;

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.collections;
 
@@ -26,11 +26,11 @@ import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.ql.Compiler;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordSource;
-import com.nfsdb.ql.parser.ParserException;
+import com.nfsdb.ql.parser.Compiler;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.utils.Files;
 import org.junit.Rule;

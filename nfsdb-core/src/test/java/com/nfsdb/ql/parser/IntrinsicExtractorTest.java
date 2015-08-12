@@ -22,6 +22,7 @@
 package com.nfsdb.ql.parser;
 
 import com.nfsdb.JournalWriter;
+import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.model.Quote;
 import com.nfsdb.ql.model.ExprNode;
 import com.nfsdb.ql.model.IntrinsicModel;
@@ -38,10 +39,10 @@ public class IntrinsicExtractorTest extends AbstractTest {
 
     private final RpnBuilder rpn = new RpnBuilder();
     private final ExprParser p = new ExprParser();
-    private final AstBuilder ast = new AstBuilder();
+    private final ExprAstBuilder ast = new ExprAstBuilder();
     private final IntrinsicExtractor e = new IntrinsicExtractor();
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
-    private final Visitor rpnBuilderVisitor = new Visitor() {
+    private final PostOrderTreeTraversalAlgo.Visitor rpnBuilderVisitor = new PostOrderTreeTraversalAlgo.Visitor() {
         @Override
         public void visit(ExprNode node) {
             rpn.onNode(node);

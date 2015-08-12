@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,19 +17,19 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb;
 
 import com.nfsdb.collections.LongList;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.JournalCachingFactory;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.model.Quote;
-import com.nfsdb.ql.Compiler;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
-import com.nfsdb.ql.parser.ParserException;
+import com.nfsdb.ql.parser.Compiler;
 import com.nfsdb.query.api.QueryAllBuilder;
 import com.nfsdb.query.api.QueryHeadBuilder;
 import com.nfsdb.storage.KVIndex;

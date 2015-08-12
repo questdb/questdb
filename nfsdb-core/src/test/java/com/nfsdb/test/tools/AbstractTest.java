@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,12 +17,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.test.tools;
 
 import com.nfsdb.model.configuration.ModelConfiguration;
-import com.nfsdb.ql.Compiler;
+import com.nfsdb.ql.parser.Compiler;
 import com.nfsdb.utils.Files;
 import org.junit.Rule;
 

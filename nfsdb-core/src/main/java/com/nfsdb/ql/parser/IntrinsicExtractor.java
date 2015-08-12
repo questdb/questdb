@@ -25,6 +25,8 @@ import com.nfsdb.collections.CharSequenceHashSet;
 import com.nfsdb.collections.FlyweightCharSequence;
 import com.nfsdb.collections.IntList;
 import com.nfsdb.collections.ObjList;
+import com.nfsdb.exceptions.InvalidColumnException;
+import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.ql.impl.MillisIntervalSource;
@@ -41,7 +43,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;
 
-public class IntrinsicExtractor {
+final class IntrinsicExtractor {
 
     private final ArrayDeque<ExprNode> stack = new ArrayDeque<>();
     private final FlyweightCharSequence quoteEraser = new FlyweightCharSequence();
@@ -54,43 +56,6 @@ public class IntrinsicExtractor {
     private final IntList tempP = new IntList();
     private RecordColumnMetadata timestamp;
     private String preferredKeyColumn;
-
-    public IntrinsicModel extract(ExprNode node, RecordMetadata m, String preferredKeyColumn) throws ParserException {
-        this.stack.clear();
-        this.model.reset();
-        this.keyNodes.clear();
-        this.timestampNodes.clear();
-        this.timestamp = m.getTimestampMetadata();
-        this.preferredKeyColumn = preferredKeyColumn;
-
-        // pre-order iterative tree traversal
-        // see: http://en.wikipedia.org/wiki/Tree_traversal
-
-        if (removeAndIntrinsics(node, m)) {
-            return model;
-        }
-        ExprNode root = node;
-
-        while (!stack.isEmpty() || node != null) {
-            if (node != null) {
-                switch (node.token) {
-                    case "and":
-                        if (!removeAndIntrinsics(node.rhs, m)) {
-                            stack.push(node.rhs);
-                        }
-                        node = removeAndIntrinsics(node.lhs, m) ? null : node.lhs;
-                        break;
-                    default:
-                        node = stack.poll();
-                        break;
-                }
-            } else {
-                node = stack.poll();
-            }
-        }
-        model.filter = collapseIntrinsicNodes(root);
-        return model;
-    }
 
     private boolean analyzeEquals(ExprNode node, RecordMetadata m) throws ParserException {
         return node.paramCount == 2 && (analyzeEquals0(node, node.lhs, node.rhs, m) || analyzeEquals0(node, node.rhs, node.lhs, m));
@@ -427,6 +392,43 @@ public class IntrinsicExtractor {
             }
         }
         return node;
+    }
+
+    IntrinsicModel extract(ExprNode node, RecordMetadata m, String preferredKeyColumn) throws ParserException {
+        this.stack.clear();
+        this.model.reset();
+        this.keyNodes.clear();
+        this.timestampNodes.clear();
+        this.timestamp = m.getTimestampMetadata();
+        this.preferredKeyColumn = preferredKeyColumn;
+
+        // pre-order iterative tree traversal
+        // see: http://en.wikipedia.org/wiki/Tree_traversal
+
+        if (removeAndIntrinsics(node, m)) {
+            return model;
+        }
+        ExprNode root = node;
+
+        while (!stack.isEmpty() || node != null) {
+            if (node != null) {
+                switch (node.token) {
+                    case "and":
+                        if (!removeAndIntrinsics(node.rhs, m)) {
+                            stack.push(node.rhs);
+                        }
+                        node = removeAndIntrinsics(node.lhs, m) ? null : node.lhs;
+                        break;
+                    default:
+                        node = stack.poll();
+                        break;
+                }
+            } else {
+                node = stack.poll();
+            }
+        }
+        model.filter = collapseIntrinsicNodes(root);
+        return model;
     }
 
     private boolean parseInterval(CharSequence seq, int position) throws ParserException {

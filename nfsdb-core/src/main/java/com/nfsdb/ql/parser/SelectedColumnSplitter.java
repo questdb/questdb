@@ -23,6 +23,7 @@ package com.nfsdb.ql.parser;
 
 import com.nfsdb.collections.ObjObjHashMap;
 import com.nfsdb.collections.ObjectPool;
+import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.ql.model.ExprNode;
 
 import java.util.ArrayDeque;
@@ -42,7 +43,7 @@ public class SelectedColumnSplitter {
 
     public static void main(String[] args) throws ParserException {
         ExprParser parser = new ExprParser();
-        AstBuilder builder = new AstBuilder();
+        ExprAstBuilder builder = new ExprAstBuilder();
         parser.parseExpr("a+sum(b)*count()", builder);
 
 

@@ -22,15 +22,16 @@
 package com.nfsdb.ql.parser;
 
 import com.nfsdb.collections.IntStack;
+import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.ql.model.ExprNode;
 
 import java.util.ArrayDeque;
 
-class PostOrderTreeTraversalAlgo {
+final class PostOrderTreeTraversalAlgo {
     private final ArrayDeque<ExprNode> stack = new ArrayDeque<>();
     private final IntStack indexStack = new IntStack();
 
-    public void traverse(ExprNode node, Visitor visitor) throws ParserException {
+    void traverse(ExprNode node, Visitor visitor) throws ParserException {
 
         // post-order iterative tree traversal
         // see http://en.wikipedia.org/wiki/Tree_traversal
@@ -70,4 +71,7 @@ class PostOrderTreeTraversalAlgo {
         }
     }
 
+    public interface Visitor {
+        void visit(ExprNode node) throws ParserException;
+    }
 }

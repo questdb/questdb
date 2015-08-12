@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,22 +17,23 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
-package com.nfsdb.ql;
+package com.nfsdb.ql.parser;
 
 import com.nfsdb.collections.AssociativeCache;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.JournalReaderFactory;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordCursor;
+import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.model.QueryModel;
-import com.nfsdb.ql.parser.ParserException;
-import com.nfsdb.ql.parser.QueryParser;
-import com.nfsdb.ql.parser.RecordSourceBuilder;
 
 public class Compiler {
 
     private final QueryParser parser = new QueryParser();
-    private final RecordSourceBuilder builder = new RecordSourceBuilder();
+    private final QueryCompiler builder = new QueryCompiler();
     private final JournalReaderFactory factory;
     private final AssociativeCache<RecordSource<? extends Record>> cache = new AssociativeCache<>(8, 1024);
 

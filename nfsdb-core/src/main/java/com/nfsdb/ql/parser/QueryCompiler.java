@@ -23,8 +23,10 @@ package com.nfsdb.ql.parser;
 
 import com.nfsdb.JournalKey;
 import com.nfsdb.collections.*;
+import com.nfsdb.exceptions.InvalidColumnException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.NoSuchColumnException;
+import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
@@ -36,6 +38,7 @@ import com.nfsdb.ql.model.*;
 import com.nfsdb.ql.ops.*;
 import com.nfsdb.ql.ops.fact.FunctionFactories;
 import com.nfsdb.ql.ops.fact.FunctionFactory;
+import com.nfsdb.ql.ops.fact.Signature;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Interval;
@@ -45,7 +48,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;
 
-public class RecordSourceBuilder {
+final class QueryCompiler {
 
     private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
     private final static NullConstant nullConstant = new NullConstant();
@@ -86,20 +89,10 @@ public class RecordSourceBuilder {
     private final IntList nullCounts = new IntList();
     private ObjList<JoinContext> emittedJoinClauses;
 
-    public RecordSourceBuilder() {
+    QueryCompiler() {
         // seed column name assembly with default column prefix, which we will reuse
         columnNameAssembly.put("col");
         columnNamePrefixLen = 3;
-    }
-
-    public RecordSource<? extends Record> resetAndCompile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-        clearState();
-        return compile(model, factory);
-    }
-
-    public void resetAndOptimise(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-        clearState();
-        optimise(model, factory);
     }
 
     private void addFilterOrEmitJoin(QueryModel parent, int idx, int ai, CharSequence an, ExprNode ao, int bi, CharSequence bn, ExprNode bo) {
@@ -516,6 +509,7 @@ public class RecordSourceBuilder {
                     switch (latestByMetadata.getType()) {
                         case SYMBOL:
                             if (im.keyColumn != null) {
+                                // todo: check for lambda
                                 rs = new KvIndexSymListHeadRowSource(latestByCol, new CharSequenceHashSet(im.keyValues), filter);
                             } else {
                                 rs = new KvIndexSymAllHeadRowSource(latestByCol, filter);
@@ -523,6 +517,7 @@ public class RecordSourceBuilder {
                             break;
                         case STRING:
                             if (im.keyColumn != null) {
+                                // todo: check for lambda
                                 rs = new KvIndexStrListHeadRowSource(latestByCol, new CharSequenceHashSet(im.keyValues), filter);
                             } else {
                                 throw new ParserException(latestByNode.position, "Filter on string column expected");
@@ -530,6 +525,7 @@ public class RecordSourceBuilder {
                             break;
                         case INT:
                             if (im.keyColumn != null) {
+                                // todo: check of lambda
                                 rs = new KvIndexIntListHeadRowSource(latestByCol, toIntHashSet(im), filter);
                             } else {
                                 throw new ParserException(latestByNode.position, "Filter on int column expected");
@@ -859,7 +855,7 @@ public class RecordSourceBuilder {
         return result;
     }
 
-    private RecordSourceBuilder optimise(QueryModel parent, JournalReaderFactory factory) throws JournalException, ParserException {
+    private QueryCompiler optimise(QueryModel parent, JournalReaderFactory factory) throws JournalException, ParserException {
         ObjList<QueryModel> joinModels = parent.getJoinModels();
 
         int n = joinModels.size();
@@ -1109,6 +1105,16 @@ public class RecordSourceBuilder {
     private void processOrConditions(QueryModel parent, ExprNode node) {
         // stub: use filter
         parent.addParsedWhereNode(node);
+    }
+
+    RecordSource<? extends Record> resetAndCompile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+        clearState();
+        return compile(model, factory);
+    }
+
+    void resetAndOptimise(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+        clearState();
+        optimise(model, factory);
     }
 
     private void resetJoinTypes(QueryModel parent) {
@@ -1420,7 +1426,7 @@ public class RecordSourceBuilder {
         model.getJoinModels().getQuick(parent).removeDependency(child);
     }
 
-    private class VirtualColumnBuilder implements Visitor {
+    private class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
         private RecordMetadata metadata;
 
         @Override
@@ -1429,13 +1435,13 @@ public class RecordSourceBuilder {
         }
     }
 
-    private class LiteralCollector implements Visitor {
+    private class LiteralCollector implements PostOrderTreeTraversalAlgo.Visitor {
         private IntList indexes;
         private ObjList<CharSequence> names;
         private int nullCount;
         private QueryModel parent;
 
-        private Visitor lhs() {
+        private PostOrderTreeTraversalAlgo.Visitor lhs() {
             indexes = literalCollectorAIndexes;
             names = literalCollectorANames;
             return this;
@@ -1445,13 +1451,13 @@ public class RecordSourceBuilder {
             nullCount = 0;
         }
 
-        private Visitor rhs() {
+        private PostOrderTreeTraversalAlgo.Visitor rhs() {
             indexes = literalCollectorBIndexes;
             names = literalCollectorBNames;
             return this;
         }
 
-        private Visitor to(IntList indexes, ObjList<CharSequence> names) {
+        private PostOrderTreeTraversalAlgo.Visitor to(IntList indexes, ObjList<CharSequence> names) {
             this.indexes = indexes;
             this.names = names;
             return this;

@@ -25,6 +25,7 @@ import com.nfsdb.PartitionType;
 import com.nfsdb.collections.CharSequenceHashSet;
 import com.nfsdb.collections.CharSequenceObjHashMap;
 import com.nfsdb.collections.ObjectPool;
+import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.GenericIntBuilder;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.ql.model.*;
@@ -33,27 +34,15 @@ import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Numbers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class QueryParser {
+final class QueryParser {
 
     private static final CharSequenceHashSet aliasStopSet = new CharSequenceHashSet();
     private static final CharSequenceHashSet groupByStopSet = new CharSequenceHashSet();
     private static final CharSequenceObjHashMap<QueryModel.JoinType> joinStartSet = new CharSequenceObjHashMap<>();
-    private final TokenStream toks = new TokenStream();
+    private final Lexer toks = new Lexer();
     private final ExprParser exprParser = new ExprParser(toks);
-    private final AstBuilder astBuilder = new AstBuilder();
+    private final ExprAstBuilder astBuilder = new ExprAstBuilder();
     private final ObjectPool<QueryModel> queryModelPool = new ObjectPool<>(QueryModel.FACTORY, 8);
-
-    public Statement parse(CharSequence query) throws ParserException {
-        toks.setContent(query);
-        queryModelPool.reset();
-        CharSequence tok = tok();
-        if (Chars.equals(tok, "create")) {
-            return parseCreateStatement();
-        }
-
-        toks.unparse();
-        return new Statement(StatementType.QUERY_JOURNAL, parseQuery(false));
-    }
 
     private ParserException err(String msg) {
         return new ParserException(toks.position(), msg);
@@ -93,6 +82,18 @@ public class QueryParser {
             }
         }
         return null;
+    }
+
+    Statement parse(CharSequence query) throws ParserException {
+        toks.setContent(query);
+        queryModelPool.reset();
+        CharSequence tok = tok();
+        if (Chars.equals(tok, "create")) {
+            return parseCreateStatement();
+        }
+
+        toks.unparse();
+        return new Statement(StatementType.QUERY_JOURNAL, parseQuery(false));
     }
 
     private Statement parseCreateJournal() throws ParserException {

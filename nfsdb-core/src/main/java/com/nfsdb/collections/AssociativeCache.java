@@ -85,14 +85,7 @@ public class AssociativeCache<V> {
         int lo = _lo(key);
         CharSequence ok = Unsafe.arrayGet(keys, lo + bmask);
         if (ok != null) {
-            V ov = Unsafe.arrayGet(values, lo + bmask);
-            if (ov instanceof Closeable) {
-                try {
-                    ((Closeable) ov).close();
-                } catch (IOException e) {
-                    LOGGER.warn("Caught exception: ", e);
-                }
-            }
+            free(lo + bmask);
         }
         System.arraycopy(keys, lo, keys, lo + 1, bmask);
         System.arraycopy(values, lo, values, lo + 1, bmask);
@@ -103,5 +96,16 @@ public class AssociativeCache<V> {
 
     private int _lo(CharSequence key) {
         return (Chars.hashCode(key) & rmask) << bshift;
+    }
+
+    private void free(int lo) {
+        V ov = Unsafe.arrayGet(values, lo + bmask);
+        if (ov instanceof Closeable) {
+            try {
+                ((Closeable) ov).close();
+            } catch (IOException e) {
+                LOGGER.warn("Caught exception: ", e);
+            }
+        }
     }
 }

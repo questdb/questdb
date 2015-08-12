@@ -32,7 +32,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 
-public class TokenStream extends AbstractImmutableIterator<CharSequence> {
+public class Lexer extends AbstractImmutableIterator<CharSequence> {
     private final IntObjHashMap<List<CharSequence>> symbols = new IntObjHashMap<>();
     private final CharSequence floatingSequence = new FloatingSequence();
     private final LenComparator comparator = new LenComparator();

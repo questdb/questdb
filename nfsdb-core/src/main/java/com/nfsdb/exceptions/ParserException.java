@@ -19,10 +19,17 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ql.parser;
+package com.nfsdb.exceptions;
 
-public class InvalidColumnException extends ParserException {
-    public InvalidColumnException(int position) {
-        super(position, "Invalid column");
+public class ParserException extends Exception {
+    private final int position;
+
+    public ParserException(int position, String message) {
+        super("at (" + position + "): " + message);
+        this.position = position;
+    }
+
+    public int getPosition() {
+        return position;
     }
 }

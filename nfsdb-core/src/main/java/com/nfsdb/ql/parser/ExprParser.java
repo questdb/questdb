@@ -24,6 +24,7 @@ package com.nfsdb.ql.parser;
 import com.nfsdb.collections.IntHashSet;
 import com.nfsdb.collections.IntStack;
 import com.nfsdb.collections.ObjectPool;
+import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.ql.model.ExprNode;
 import com.nfsdb.utils.Chars;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -34,19 +35,19 @@ import java.util.Deque;
 public class ExprParser {
 
     private static final IntHashSet nonLiteralBranches = new IntHashSet();
-    private final TokenStream toks;
+    private final Lexer toks;
     private final Deque<ExprNode> opStack = new ArrayDeque<>();
     private final IntStack paramCountStack = new IntStack();
     private final ObjectPool<ExprNode> exprNodePool = new ObjectPool<>(ExprNode.FACTORY, 128);
 
-    public ExprParser(TokenStream toks) {
+    public ExprParser(Lexer toks) {
         this.toks = toks;
         toks.defineSymbol(" ");
         toks.defineSymbol("(");
         toks.defineSymbol(")");
         toks.defineSymbol(",");
-        for (int i = 0, k = Operator.operators.size(); i < k; i++) {
-            Operator op = Operator.operators.getQuick(i);
+        for (int i = 0, k = ExprOperator.operators.size(); i < k; i++) {
+            ExprOperator op = ExprOperator.operators.getQuick(i);
             if (op.symbol) {
                 toks.defineSymbol(op.token);
             }
@@ -55,7 +56,7 @@ public class ExprParser {
 
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public ExprParser() {
-        this(new TokenStream());
+        this(new Lexer());
     }
 
     public void parseExpr(CharSequence in, ExprListener listener) throws ParserException {
@@ -181,8 +182,8 @@ public class ExprParser {
                         break;
                     }
                 default:
-                    Operator op;
-                    if ((op = Operator.opMap.get(tok)) != null) {
+                    ExprOperator op;
+                    if ((op = ExprOperator.opMap.get(tok)) != null) {
 
                         thisBranch = Branch.OPERATOR;
 
@@ -193,7 +194,7 @@ public class ExprParser {
                         //        then pop o2 off the operator stack, onto the output queue;
                         // push o1 onto the operator stack.
 
-                        Operator.OperatorType type = op.type;
+                        ExprOperator.OperatorType type = op.type;
 
 
                         switch (thisChar) {
@@ -203,7 +204,7 @@ public class ExprParser {
                                     case COMMA:
                                     case NONE:
                                         // we have unary minus
-                                        type = Operator.OperatorType.UNARY;
+                                        type = ExprOperator.OperatorType.UNARY;
                                 }
                         }
 
@@ -213,7 +214,7 @@ public class ExprParser {
                         while ((other = opStack.peek()) != null) {
                             boolean greaterPrecedence = (op.leftAssociative && op.precedence >= other.precedence) || (!op.leftAssociative && op.precedence > other.precedence);
                             if (greaterPrecedence &&
-                                    (type != Operator.OperatorType.UNARY || (type == Operator.OperatorType.UNARY && other.paramCount == 1))) {
+                                    (type != ExprOperator.OperatorType.UNARY || (type == ExprOperator.OperatorType.UNARY && other.paramCount == 1))) {
                                 listener.onNode(other);
                                 opStack.poll();
                             } else {
@@ -221,7 +222,7 @@ public class ExprParser {
                             }
                         }
                         node = exprNodePool.next().init(
-                                op.type == Operator.OperatorType.SET ? ExprNode.NodeType.SET_OPERATION : ExprNode.NodeType.OPERATION,
+                                op.type == ExprOperator.OperatorType.SET ? ExprNode.NodeType.SET_OPERATION : ExprNode.NodeType.OPERATION,
                                 op.token,
                                 op.precedence,
                                 toks.position()

@@ -27,7 +27,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.ArrayDeque;
 import java.util.Deque;
 
-public class AstBuilder implements ExprListener {
+final class ExprAstBuilder implements ExprListener {
 
     private final Deque<ExprNode> stack = new ArrayDeque<>();
 
