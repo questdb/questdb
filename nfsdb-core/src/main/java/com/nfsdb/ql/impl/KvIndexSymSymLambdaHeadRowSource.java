@@ -22,34 +22,34 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.Partition;
-import com.nfsdb.collections.CharSequenceHashSet;
-import com.nfsdb.collections.IntList;
+import com.nfsdb.collections.IntHashSet;
 import com.nfsdb.collections.LongList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.ql.PartitionSlice;
-import com.nfsdb.ql.RowCursor;
-import com.nfsdb.ql.StorageFacade;
+import com.nfsdb.ql.*;
 import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
 import com.nfsdb.storage.SymbolTable;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class KvIndexSymListHeadRowSource extends AbstractRowSource {
+public class KvIndexSymSymLambdaHeadRowSource extends AbstractRowSource {
 
+    public static final LatestByLambdaRowSourceFactory FACTORY = new Factory();
     private final String column;
     private final VirtualColumn filter;
-    private final CharSequenceHashSet values;
-    private final IntList keys = new IntList();
+    private final RecordSource<? extends Record> recordSource;
+    private final int recordSourceColumn;
+    private final IntHashSet keys = new IntHashSet();
     private final LongList rows = new LongList();
     private JournalRecord rec;
     private int keyIndex;
 
-    public KvIndexSymListHeadRowSource(String column, CharSequenceHashSet values, VirtualColumn filter) {
+    private KvIndexSymSymLambdaHeadRowSource(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
         this.column = column;
-        this.values = values;
+        this.recordSource = recordSource;
+        this.recordSourceColumn = recordSourceColumn;
         this.filter = filter;
     }
 
@@ -69,18 +69,13 @@ public class KvIndexSymListHeadRowSource extends AbstractRowSource {
             rows.clear();
 
             for (int i = 0, n = keys.size(); i < n; i++) {
-                IndexCursor c = index.cursor(keys.getQuick(i));
-                long r = -1;
-                boolean found = false;
+                IndexCursor c = index.cursor(keys.get(i));
                 while (c.hasNext()) {
-                    r = rec.rowid = c.next();
+                    long r = rec.rowid = c.next();
                     if (r > lo && r < hi && (filter == null || filter.getBool(rec))) {
-                        found = true;
+                        rows.add(r);
                         break;
                     }
-                }
-                if (found) {
-                    rows.add(r);
                 }
             }
             rows.sort();
@@ -114,12 +109,22 @@ public class KvIndexSymListHeadRowSource extends AbstractRowSource {
 
         SymbolTable tab = fa.getSymbolTable(column);
         keys.clear();
-
-        for (int i = 0, n = values.size(); i < n; i++) {
-            int k = tab.getQuick(values.get(i));
-            if (k > -1) {
-                keys.add(k);
+        try {
+            for (Record r : recordSource.prepareCursor(fa.getFactory())) {
+                int k = tab.getQuick(r.getSym(recordSourceColumn));
+                if (k > -1) {
+                    keys.add(k);
+                }
             }
+        } catch (JournalException e) {
+            throw new JournalRuntimeException(e);
+        }
+    }
+
+    public static class Factory implements LatestByLambdaRowSourceFactory {
+        @Override
+        public RowSource newInstance(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
+            return new KvIndexSymSymLambdaHeadRowSource(column, recordSource, recordSourceColumn, filter);
         }
     }
 

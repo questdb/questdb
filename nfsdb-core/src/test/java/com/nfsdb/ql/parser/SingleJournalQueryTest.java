@@ -42,7 +42,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     private final StringSink sink = new StringSink();
     private final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-    private final Compiler compiler = new Compiler(factory);
+    private final QueryCompiler compiler = new QueryCompiler(factory);
 
     @Test
     public void testAddDoubleAndIntConst() throws Exception {

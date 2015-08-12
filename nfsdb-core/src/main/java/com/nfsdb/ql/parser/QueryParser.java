@@ -85,15 +85,8 @@ final class QueryParser {
     }
 
     Statement parse(CharSequence query) throws ParserException {
-        toks.setContent(query);
         queryModelPool.reset();
-        CharSequence tok = tok();
-        if (Chars.equals(tok, "create")) {
-            return parseCreateStatement();
-        }
-
-        toks.unparse();
-        return new Statement(StatementType.QUERY_JOURNAL, parseQuery(false));
+        return parseInternal(query);
     }
 
     private Statement parseCreateJournal() throws ParserException {
@@ -141,6 +134,17 @@ final class QueryParser {
         }
 
         return null;
+    }
+
+    Statement parseInternal(CharSequence query) throws ParserException {
+        toks.setContent(query);
+        CharSequence tok = tok();
+        if (Chars.equals(tok, "create")) {
+            return parseCreateStatement();
+        }
+
+        toks.unparse();
+        return new Statement(StatementType.QUERY_JOURNAL, parseQuery(false));
     }
 
     private QueryModel parseJoin(CharSequence tok, QueryModel.JoinType type) throws ParserException {

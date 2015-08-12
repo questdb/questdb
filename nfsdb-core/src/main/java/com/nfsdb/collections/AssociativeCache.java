@@ -99,7 +99,7 @@ public class AssociativeCache<V> {
     }
 
     private void free(int lo) {
-        V ov = Unsafe.arrayGet(values, lo + bmask);
+        V ov = Unsafe.arrayGet(values, lo);
         if (ov instanceof Closeable) {
             try {
                 ((Closeable) ov).close();

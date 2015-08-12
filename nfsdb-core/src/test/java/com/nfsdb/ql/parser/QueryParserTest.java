@@ -287,6 +287,26 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
+    public void testMixedFieldsSubQuery() throws Exception {
+        Statement statement = parser.parse("select x, y from (select z from tab t2 latest by x where x > 100) t1 " +
+                "where y > 0");
+        Assert.assertNotNull(statement.getQueryModel());
+        Assert.assertNotNull(statement.getQueryModel().getNestedModel());
+        Assert.assertNull(statement.getQueryModel().getJournalName());
+        Assert.assertEquals("t1", statement.getQueryModel().getAlias().token);
+
+        Assert.assertEquals("tab", TestUtils.toRpn(statement.getQueryModel().getNestedModel().getJournalName()));
+        Assert.assertEquals("t2", statement.getQueryModel().getNestedModel().getAlias().token);
+        Assert.assertEquals("x100>", TestUtils.toRpn(statement.getQueryModel().getNestedModel().getWhereClause()));
+        Assert.assertEquals("x", TestUtils.toRpn(statement.getQueryModel().getNestedModel().getLatestBy()));
+        Assert.assertEquals(2, statement.getQueryModel().getColumns().size());
+        Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getAst().token);
+        Assert.assertEquals("y", statement.getQueryModel().getColumns().get(1).getAst().token);
+        Assert.assertEquals(1, statement.getQueryModel().getNestedModel().getColumns().size());
+        Assert.assertEquals("z", statement.getQueryModel().getNestedModel().getColumns().get(0).getAst().token);
+    }
+
+    @Test
     public void testMostRecentWhereClause() throws Exception {
         Statement statement = parser.parse("select a+b*c x, sum(z)+25 ohoh from zyzy latest by x where a in (x,y) and b = 10");
         Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());

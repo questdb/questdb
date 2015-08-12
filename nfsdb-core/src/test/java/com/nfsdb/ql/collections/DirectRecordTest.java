@@ -30,7 +30,7 @@ import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordSource;
-import com.nfsdb.ql.parser.Compiler;
+import com.nfsdb.ql.parser.QueryCompiler;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.utils.Files;
 import org.junit.Rule;
@@ -47,7 +47,7 @@ import static org.junit.Assert.assertEquals;
 public class DirectRecordTest {
     @Rule
     public final JournalTestFactory factory;
-    public final Compiler compiler;
+    public final QueryCompiler compiler;
 
     public DirectRecordTest() {
         try {
@@ -55,7 +55,7 @@ public class DirectRecordTest {
                     new JournalConfigurationBuilder() {{
                     }}.build(Files.makeTempDir())
             );
-            this.compiler = new Compiler(factory);
+            this.compiler = new QueryCompiler(factory);
         } catch (JournalConfigurationException e) {
             throw new JournalRuntimeException(e);
         }

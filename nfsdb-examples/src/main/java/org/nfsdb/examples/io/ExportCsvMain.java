@@ -26,7 +26,7 @@ import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.io.ExportManager;
 import com.nfsdb.io.TextFileFormat;
-import com.nfsdb.ql.parser.Compiler;
+import com.nfsdb.ql.parser.QueryCompiler;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
@@ -37,7 +37,7 @@ public class ExportCsvMain {
     public static void main(String[] args) throws JournalException, IOException, ParserException {
 
         JournalFactory factory = new JournalFactory(args[0]);
-        Compiler compiler = new Compiler(factory);
+        QueryCompiler compiler = new QueryCompiler(factory);
         String from = args[1];
         String toDir = args[2];
         TextFileFormat format = TextFileFormat.valueOf(args[3]);

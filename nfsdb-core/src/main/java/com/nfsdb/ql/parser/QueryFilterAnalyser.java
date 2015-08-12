@@ -21,10 +21,7 @@
 
 package com.nfsdb.ql.parser;
 
-import com.nfsdb.collections.CharSequenceHashSet;
-import com.nfsdb.collections.FlyweightCharSequence;
-import com.nfsdb.collections.IntList;
-import com.nfsdb.collections.ObjList;
+import com.nfsdb.collections.*;
 import com.nfsdb.exceptions.InvalidColumnException;
 import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
@@ -43,13 +40,13 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;
 
-final class IntrinsicExtractor {
+final class QueryFilterAnalyser {
 
     private final ArrayDeque<ExprNode> stack = new ArrayDeque<>();
     private final FlyweightCharSequence quoteEraser = new FlyweightCharSequence();
     private final ObjList<ExprNode> keyNodes = new ObjList<>();
     private final ObjList<ExprNode> timestampNodes = new ObjList<>();
-    private final IntrinsicModel model = new IntrinsicModel();
+    private final ObjectPool<IntrinsicModel> models = new ObjectPool<>(IntrinsicModel.FACTORY, 8);
     private final CharSequenceHashSet tempKeys = new CharSequenceHashSet();
     private final IntList tempPos = new IntList();
     private final CharSequenceHashSet tempK = new CharSequenceHashSet();
@@ -57,18 +54,18 @@ final class IntrinsicExtractor {
     private RecordColumnMetadata timestamp;
     private String preferredKeyColumn;
 
-    private boolean analyzeEquals(ExprNode node, RecordMetadata m) throws ParserException {
-        return node.paramCount == 2 && (analyzeEquals0(node, node.lhs, node.rhs, m) || analyzeEquals0(node, node.rhs, node.lhs, m));
+    private boolean analyzeEquals(IntrinsicModel model, ExprNode node, RecordMetadata m) throws ParserException {
+        return node.paramCount == 2 && (analyzeEquals0(model, node, node.lhs, node.rhs, m) || analyzeEquals0(model, node, node.rhs, node.lhs, m));
     }
 
-    private boolean analyzeEquals0(ExprNode node, ExprNode a, ExprNode b, RecordMetadata m) throws ParserException {
+    private boolean analyzeEquals0(IntrinsicModel model, ExprNode node, ExprNode a, ExprNode b, RecordMetadata m) throws ParserException {
         if (a == null || b == null) {
             throw new ParserException(node.position, "Argument expected");
         }
 
         if (a.type == ExprNode.NodeType.LITERAL && b.type == ExprNode.NodeType.CONSTANT) {
             if (timestamp != null && timestamp.getName().equals(a.token)) {
-                boolean reversible = parseInterval(quoteEraser.of(b.token), b.position);
+                boolean reversible = parseInterval(model, quoteEraser.of(b.token), b.position);
                 node.intrinsicValue = IntrinsicValue.TRUE;
                 // exact timestamp matches will be returning FALSE
                 // which means that they are irreversible and won't be added to timestampNodes.
@@ -142,7 +139,7 @@ final class IntrinsicExtractor {
         return false;
     }
 
-    private boolean analyzeGreater(ExprNode node, int inc) {
+    private boolean analyzeGreater(IntrinsicModel model, ExprNode node, int inc) {
 
         if (timestamp == null) {
             return false;
@@ -168,7 +165,7 @@ final class IntrinsicExtractor {
         return false;
     }
 
-    private boolean analyzeIn(ExprNode node, RecordMetadata metadata) throws ParserException {
+    private boolean analyzeIn(IntrinsicModel model, ExprNode node, RecordMetadata metadata) throws ParserException {
 
         if (node.paramCount < 2) {
             throw new ParserException(node.position, "Too few arguments for 'in'");
@@ -183,13 +180,13 @@ final class IntrinsicExtractor {
         if (metadata.invalidColumn(col.token)) {
             throw new InvalidColumnException(col.position);
         }
-        return analyzeInInterval(col, node)
-                || analyzeListOfValues(col.token, metadata, node)
-                || analyzeInLambda(col.token, metadata, node);
+        return analyzeInInterval(model, col, node)
+                || analyzeListOfValues(model, col.token, metadata, node)
+                || analyzeInLambda(model, col.token, metadata, node);
     }
 
     @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE", "LEST_LOST_EXCEPTION_STACK_TRACE"})
-    private boolean analyzeInInterval(ExprNode col, ExprNode in) throws ParserException {
+    private boolean analyzeInInterval(IntrinsicModel model, ExprNode col, ExprNode in) throws ParserException {
         if (timestamp == null || !Chars.equals(timestamp.getName(), col.token)) {
             return false;
         }
@@ -230,7 +227,7 @@ final class IntrinsicExtractor {
         return false;
     }
 
-    private boolean analyzeInLambda(String col, RecordMetadata meta, ExprNode node) throws ParserException {
+    private boolean analyzeInLambda(IntrinsicModel model, String col, RecordMetadata meta, ExprNode node) throws ParserException {
         RecordColumnMetadata colMeta = meta.getColumn(col);
         if (colMeta.isIndexed()) {
             if (preferredKeyColumn != null && !col.equals(preferredKeyColumn)) {
@@ -272,7 +269,7 @@ final class IntrinsicExtractor {
         return false;
     }
 
-    private boolean analyzeLess(ExprNode node, int inc) {
+    private boolean analyzeLess(IntrinsicModel model, ExprNode node, int inc) {
         if (timestamp == null) {
             return false;
         }
@@ -299,7 +296,7 @@ final class IntrinsicExtractor {
         return false;
     }
 
-    private boolean analyzeListOfValues(String col, RecordMetadata meta, ExprNode node) {
+    private boolean analyzeListOfValues(IntrinsicModel model, String col, RecordMetadata meta, ExprNode node) {
         RecordColumnMetadata colMeta = meta.getColumn(col);
         if (colMeta.isIndexed()) {
             boolean newColumn = true;
@@ -360,7 +357,7 @@ final class IntrinsicExtractor {
 
             } else if (!model.keyValuesIsLambda) {
                 // calculate overlap of values
-                replaceAllWithOverlap();
+                replaceAllWithOverlap(model);
 
                 keyNodes.add(node);
                 node.intrinsicValue = IntrinsicValue.TRUE;
@@ -396,16 +393,17 @@ final class IntrinsicExtractor {
 
     IntrinsicModel extract(ExprNode node, RecordMetadata m, String preferredKeyColumn) throws ParserException {
         this.stack.clear();
-        this.model.reset();
         this.keyNodes.clear();
         this.timestampNodes.clear();
         this.timestamp = m.getTimestampMetadata();
         this.preferredKeyColumn = preferredKeyColumn;
 
+        IntrinsicModel model = models.next();
+
         // pre-order iterative tree traversal
         // see: http://en.wikipedia.org/wiki/Tree_traversal
 
-        if (removeAndIntrinsics(node, m)) {
+        if (removeAndIntrinsics(model, node, m)) {
             return model;
         }
         ExprNode root = node;
@@ -414,10 +412,10 @@ final class IntrinsicExtractor {
             if (node != null) {
                 switch (node.token) {
                     case "and":
-                        if (!removeAndIntrinsics(node.rhs, m)) {
+                        if (!removeAndIntrinsics(model, node.rhs, m)) {
                             stack.push(node.rhs);
                         }
-                        node = removeAndIntrinsics(node.lhs, m) ? null : node.lhs;
+                        node = removeAndIntrinsics(model, node.lhs, m) ? null : node.lhs;
                         break;
                     default:
                         node = stack.poll();
@@ -431,12 +429,12 @@ final class IntrinsicExtractor {
         return model;
     }
 
-    private boolean parseInterval(CharSequence seq, int position) throws ParserException {
-        return parseInterval(seq, 0, seq.length(), position);
+    private boolean parseInterval(IntrinsicModel model, CharSequence seq, int position) throws ParserException {
+        return parseInterval(model, seq, 0, seq.length(), position);
     }
 
     @SuppressFBWarnings({"CLI_CONSTANT_LIST_INDEX", "EXS_EXCEPTION_SOFTENING_RETURN_FALSE"})
-    private boolean parseInterval(CharSequence seq, int lo, int lim, int position) throws ParserException {
+    private boolean parseInterval(IntrinsicModel model, CharSequence seq, int lo, int lim, int position) throws ParserException {
         int pos[] = new int[3];
         int p = -1;
         for (int i = lo; i < lim; i++) {
@@ -531,30 +529,30 @@ final class IntrinsicExtractor {
         return new Interval(loMillis, hiMillis);
     }
 
-    private boolean removeAndIntrinsics(ExprNode node, RecordMetadata m) throws ParserException {
+    private boolean removeAndIntrinsics(IntrinsicModel model, ExprNode node, RecordMetadata m) throws ParserException {
         if (node == null) {
             return true;
         }
 
         switch (node.token) {
             case "in":
-                return analyzeIn(node, m);
+                return analyzeIn(model, node, m);
             case ">":
-                return analyzeGreater(node, 1);
+                return analyzeGreater(model, node, 1);
             case ">=":
-                return analyzeGreater(node, 0);
+                return analyzeGreater(model, node, 0);
             case "<":
-                return analyzeLess(node, 1);
+                return analyzeLess(model, node, 1);
             case "<=":
-                return analyzeLess(node, 0);
+                return analyzeLess(model, node, 0);
             case "=":
-                return analyzeEquals(node, m);
+                return analyzeEquals(model, node, m);
             default:
                 return false;
         }
     }
 
-    private void replaceAllWithOverlap() {
+    private void replaceAllWithOverlap(IntrinsicModel model) {
         tempK.clear();
         tempP.clear();
         for (int i = 0, k = tempKeys.size(); i < k; i++) {
@@ -573,5 +571,9 @@ final class IntrinsicExtractor {
         } else {
             model.intrinsicValue = IntrinsicValue.FALSE;
         }
+    }
+
+    void reset() {
+        this.models.reset();
     }
 }

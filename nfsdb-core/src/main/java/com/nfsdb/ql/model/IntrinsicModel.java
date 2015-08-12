@@ -23,10 +23,13 @@ package com.nfsdb.ql.model;
 
 import com.nfsdb.collections.CharSequenceHashSet;
 import com.nfsdb.collections.IntList;
+import com.nfsdb.collections.Mutable;
+import com.nfsdb.collections.ObjectPoolFactory;
 import com.nfsdb.ql.impl.IntervalSource;
 import com.nfsdb.utils.Dates;
 
-public class IntrinsicModel {
+public class IntrinsicModel implements Mutable {
+    public static final IntrinsicModelFactory FACTORY = new IntrinsicModelFactory();
     public final CharSequenceHashSet keyValues = new CharSequenceHashSet();
     public final IntList keyValuePositions = new IntList();
     public String keyColumn;
@@ -37,6 +40,22 @@ public class IntrinsicModel {
     public IntervalSource intervalSource;
     public IntrinsicValue intrinsicValue = IntrinsicValue.UNDEFINED;
     public boolean keyValuesIsLambda = false;
+
+    private IntrinsicModel() {
+    }
+
+    @Override
+    public void clear() {
+        keyColumn = null;
+        keyValues.clear();
+        keyValuePositions.clear();
+        clearInterval();
+        filter = null;
+        millis = Long.MIN_VALUE;
+        intervalSource = null;
+        intrinsicValue = IntrinsicValue.UNDEFINED;
+        keyValuesIsLambda = false;
+    }
 
     public void clearInterval() {
         this.intervalLo = Long.MIN_VALUE;
@@ -57,18 +76,6 @@ public class IntrinsicModel {
         }
     }
 
-    public void reset() {
-        keyColumn = null;
-        keyValues.clear();
-        keyValuePositions.clear();
-        clearInterval();
-        filter = null;
-        millis = Long.MIN_VALUE;
-        intervalSource = null;
-        intrinsicValue = IntrinsicValue.UNDEFINED;
-        keyValuesIsLambda = false;
-    }
-
     @Override
     public String toString() {
         return "IntrinsicModel{" +
@@ -80,4 +87,12 @@ public class IntrinsicModel {
                 ", millis=" + millis +
                 '}';
     }
+
+    public static final class IntrinsicModelFactory implements ObjectPoolFactory<IntrinsicModel> {
+        @Override
+        public IntrinsicModel newInstance() {
+            return new IntrinsicModel();
+        }
+    }
+
 }

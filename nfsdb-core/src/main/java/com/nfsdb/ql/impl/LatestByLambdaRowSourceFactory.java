@@ -19,16 +19,13 @@
  * limitations under the License.
  */
 
-package com.nfsdb.test.tools;
+package com.nfsdb.ql.impl;
 
-import com.nfsdb.model.configuration.ModelConfiguration;
-import com.nfsdb.ql.parser.QueryCompiler;
-import com.nfsdb.utils.Files;
-import org.junit.Rule;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordSource;
+import com.nfsdb.ql.RowSource;
+import com.nfsdb.ql.ops.VirtualColumn;
 
-public abstract class AbstractTest {
-    @Rule
-    public final JournalTestFactory factory = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
-
-    public final QueryCompiler compiler = new QueryCompiler(factory);
+public interface LatestByLambdaRowSourceFactory {
+    RowSource newInstance(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter);
 }

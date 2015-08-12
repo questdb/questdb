@@ -36,7 +36,7 @@ import com.nfsdb.ql.collections.MultiMap;
 import com.nfsdb.ql.impl.*;
 import com.nfsdb.ql.ops.SymGlue;
 import com.nfsdb.ql.ops.SymRecordSourceColumn;
-import com.nfsdb.ql.parser.Compiler;
+import com.nfsdb.ql.parser.QueryCompiler;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.test.tools.TestData;
@@ -73,7 +73,7 @@ public class CstTest {
             }}.build(Files.makeTempDir())
     );
 
-    private final Compiler compiler = new Compiler(factory);
+    private final QueryCompiler compiler = new QueryCompiler(factory);
 
     @BeforeClass
     public static void setUp() throws Exception {

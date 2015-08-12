@@ -35,7 +35,7 @@ public abstract class AbstractOptimiserTest {
 
     @ClassRule
     public static final JournalTestFactory factory = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
-    protected static final Compiler compiler = new Compiler(factory);
+    protected static final QueryCompiler compiler = new QueryCompiler(factory);
     private static final StringSink sink = new StringSink();
     private static final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
 

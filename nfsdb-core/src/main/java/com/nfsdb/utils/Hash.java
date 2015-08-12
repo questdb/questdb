@@ -33,7 +33,7 @@ public final class Hash {
      * @return power of 2 integer
      */
     public static int boundedHash(CharSequence s, int max) {
-        return s == null ? -1 : (s.hashCode() & 0xFFFFFFF) & max;
+        return s == null ? -1 : (Chars.hashCode(s) & 0xFFFFFFF) & max;
     }
 
     /**

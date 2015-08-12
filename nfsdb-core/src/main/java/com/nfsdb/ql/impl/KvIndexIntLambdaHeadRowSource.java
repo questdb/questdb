@@ -22,40 +22,44 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.Partition;
-import com.nfsdb.collections.CharSequenceHashSet;
-import com.nfsdb.collections.IntList;
+import com.nfsdb.collections.IntHashSet;
 import com.nfsdb.collections.LongList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.ql.PartitionSlice;
-import com.nfsdb.ql.RowCursor;
-import com.nfsdb.ql.StorageFacade;
+import com.nfsdb.ql.*;
 import com.nfsdb.ql.ops.VirtualColumn;
+import com.nfsdb.storage.FixedColumn;
 import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
-import com.nfsdb.storage.SymbolTable;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class KvIndexSymListHeadRowSource extends AbstractRowSource {
+public class KvIndexIntLambdaHeadRowSource extends AbstractRowSource {
 
+    public static final LatestByLambdaRowSourceFactory FACTORY = new Factory();
     private final String column;
     private final VirtualColumn filter;
-    private final CharSequenceHashSet values;
-    private final IntList keys = new IntList();
+    private final RecordSource<? extends Record> recordSource;
+    private final int recordSourceColumn;
     private final LongList rows = new LongList();
+    private final IntHashSet keys = new IntHashSet();
     private JournalRecord rec;
-    private int keyIndex;
+    private int cursor;
+    private int buckets;
+    private int columnIndex;
 
-    public KvIndexSymListHeadRowSource(String column, CharSequenceHashSet values, VirtualColumn filter) {
+    private KvIndexIntLambdaHeadRowSource(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
         this.column = column;
-        this.values = values;
+        this.recordSource = recordSource;
+        this.recordSourceColumn = recordSourceColumn;
         this.filter = filter;
     }
 
     @Override
     public void configure(JournalMetadata metadata) {
         this.rec = new JournalRecord(metadata);
+        this.columnIndex = metadata.getColumnIndex(column);
+        this.buckets = metadata.getColumn(columnIndex).distinctCountHint;
     }
 
     @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
@@ -63,28 +67,25 @@ public class KvIndexSymListHeadRowSource extends AbstractRowSource {
     public RowCursor prepareCursor(PartitionSlice slice) {
         try {
             Partition partition = rec.partition = slice.partition.open();
-            KVIndex index = partition.getIndexForColumn(column);
+            KVIndex index = partition.getIndexForColumn(columnIndex);
+            FixedColumn col = partition.fixCol(columnIndex);
+
             long lo = slice.lo - 1;
             long hi = slice.calcHi ? partition.size() : slice.hi + 1;
             rows.clear();
 
             for (int i = 0, n = keys.size(); i < n; i++) {
-                IndexCursor c = index.cursor(keys.getQuick(i));
-                long r = -1;
-                boolean found = false;
+                IndexCursor c = index.cursor(keys.get(i) & buckets);
                 while (c.hasNext()) {
-                    r = rec.rowid = c.next();
-                    if (r > lo && r < hi && (filter == null || filter.getBool(rec))) {
-                        found = true;
+                    long r = rec.rowid = c.next();
+                    if (r > lo && r < hi && col.getInt(r) == keys.get(i) && (filter == null || filter.getBool(rec))) {
+                        rows.add(r);
                         break;
                     }
                 }
-                if (found) {
-                    rows.add(r);
-                }
             }
             rows.sort();
-            keyIndex = 0;
+            cursor = 0;
             return this;
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
@@ -97,30 +98,35 @@ public class KvIndexSymListHeadRowSource extends AbstractRowSource {
 
     @Override
     public boolean hasNext() {
-        return keyIndex < rows.size();
+        return cursor < rows.size();
     }
 
     @Override
     public long next() {
-        return rec.rowid = rows.getQuick(keyIndex++);
+        return rec.rowid = rows.getQuick(cursor++);
     }
 
     @Override
     public void prepare(StorageFacade fa) {
-
         if (filter != null) {
             filter.prepare(fa);
         }
 
-        SymbolTable tab = fa.getSymbolTable(column);
         keys.clear();
-
-        for (int i = 0, n = values.size(); i < n; i++) {
-            int k = tab.getQuick(values.get(i));
-            if (k > -1) {
-                keys.add(k);
+        try {
+            for (Record r : recordSource.prepareCursor(fa.getFactory())) {
+                keys.add(r.getInt(recordSourceColumn) & buckets);
             }
+        } catch (JournalException e) {
+            throw new JournalRuntimeException(e);
         }
+
     }
 
+    public static class Factory implements LatestByLambdaRowSourceFactory {
+        @Override
+        public RowSource newInstance(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
+            return new KvIndexIntLambdaHeadRowSource(column, recordSource, recordSourceColumn, filter);
+        }
+    }
 }

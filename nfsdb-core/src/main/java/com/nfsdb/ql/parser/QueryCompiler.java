@@ -48,12 +48,16 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;
 
-final class QueryCompiler {
+public class QueryCompiler {
 
     private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
     private final static NullConstant nullConstant = new NullConstant();
+    private final static ObjObjHashMap<Signature, LatestByLambdaRowSourceFactory> LAMBDA_ROW_SOURCE_FACTORIES = new ObjObjHashMap<>();
+    private final QueryParser parser = new QueryParser();
+    private final JournalReaderFactory factory;
+    private final AssociativeCache<RecordSource<? extends Record>> cache = new AssociativeCache<>(8, 1024);
     private final ArrayDeque<VirtualColumn> stack = new ArrayDeque<>();
-    private final IntrinsicExtractor intrinsicExtractor = new IntrinsicExtractor();
+    private final QueryFilterAnalyser queryFilterAnalyser = new QueryFilterAnalyser();
     private final VirtualColumnBuilder virtualColumnBuilderVisitor = new VirtualColumnBuilder();
     private final Signature mutableSig = new Signature();
     private final ObjList<VirtualColumn> mutableArgs = new ObjList<>();
@@ -89,10 +93,41 @@ final class QueryCompiler {
     private final IntList nullCounts = new IntList();
     private ObjList<JoinContext> emittedJoinClauses;
 
-    QueryCompiler() {
+    public QueryCompiler(JournalReaderFactory factory) {
+        this.factory = factory;
+
         // seed column name assembly with default column prefix, which we will reuse
         columnNameAssembly.put("col");
         columnNamePrefixLen = 3;
+    }
+
+    public RecordCursor<? extends Record> compile(CharSequence query) throws ParserException, JournalException {
+        return compileSource(query).prepareCursor(factory);
+    }
+
+    public <T> RecordCursor<? extends Record> compile(Class<T> clazz) throws JournalException, ParserException {
+        return compile(clazz.getName());
+    }
+
+    public RecordSource<? extends Record> compileSource(CharSequence query) throws ParserException, JournalException {
+        RecordSource<? extends Record> rs = cache.get(query);
+        if (rs == null) {
+            rs = resetAndCompile(parser.parse(query).getQueryModel(), factory);
+            cache.put(query, rs);
+        } else {
+            rs.reset();
+        }
+        return rs;
+    }
+
+    public CharSequence plan(CharSequence query) throws ParserException, JournalException {
+        QueryModel model = parser.parse(query).getQueryModel();
+        resetAndOptimise(model, factory);
+        return model.plan();
+    }
+
+    private static Signature lbs(ColumnType master, boolean indexed, ColumnType lambda) {
+        return new Signature().setName("").setParamCount(2).paramType(0, master, indexed).paramType(1, lambda, false);
     }
 
     private void addFilterOrEmitJoin(QueryModel parent, int idx, int ai, CharSequence an, ExprNode ao, int bi, CharSequence bn, ExprNode bo) {
@@ -305,6 +340,7 @@ final class QueryCompiler {
         intListPool.reset();
         joinClausesSwap1.clear();
         joinClausesSwap2.clear();
+        queryFilterAnalyser.reset();
     }
 
     private JournalMetadata collectJournalMetadata(QueryModel model, JournalReaderFactory factory) throws ParserException, JournalException {
@@ -331,7 +367,7 @@ final class QueryCompiler {
         return selectColumns(
                 model.getJoinModels().size() > 1 ?
                         optimise(model, factory).compileJoins(model, factory) :
-                        optimise(model, factory).compileSingleOrSubquery(model, factory), model.getColumns()
+                        optimise(model, factory).compileSingleOrSubQuery(model, factory), model.getColumns()
         );
     }
 
@@ -348,7 +384,7 @@ final class QueryCompiler {
             // compile
             RecordSource<? extends Record> rs = m.getRecordSource();
             if (rs == null) {
-                rs = compileSingleOrSubquery(m, factory);
+                rs = compileSingleOrSubQuery(m, factory);
             }
 
             // check if this is the root of joins
@@ -451,7 +487,7 @@ final class QueryCompiler {
 
         ExprNode where = model.getWhereClause();
         if (where != null) {
-            IntrinsicModel im = intrinsicExtractor.extract(where, journalMetadata, latestByCol);
+            IntrinsicModel im = queryFilterAnalyser.extract(where, journalMetadata, latestByCol);
 
             VirtualColumn filter = im.filter != null ? createVirtualColumn(im.filter, journalMetadata) : null;
 
@@ -506,30 +542,57 @@ final class QueryCompiler {
                         rs = new FilteredRowSource(rs == null ? new AllRowSource() : rs, filter);
                     }
                 } else {
-                    switch (latestByMetadata.getType()) {
-                        case SYMBOL:
-                            if (im.keyColumn != null) {
-                                // todo: check for lambda
-                                rs = new KvIndexSymListHeadRowSource(latestByCol, new CharSequenceHashSet(im.keyValues), filter);
-                            } else {
-                                rs = new KvIndexSymAllHeadRowSource(latestByCol, filter);
-                            }
-                            break;
-                        case STRING:
-                            if (im.keyColumn != null) {
-                                // todo: check for lambda
-                                rs = new KvIndexStrListHeadRowSource(latestByCol, new CharSequenceHashSet(im.keyValues), filter);
-                            } else {
-                                throw new ParserException(latestByNode.position, "Filter on string column expected");
-                            }
-                            break;
-                        case INT:
-                            if (im.keyColumn != null) {
-                                // todo: check of lambda
-                                rs = new KvIndexIntListHeadRowSource(latestByCol, toIntHashSet(im), filter);
-                            } else {
-                                throw new ParserException(latestByNode.position, "Filter on int column expected");
-                            }
+                    if (im.keyColumn != null && im.keyValuesIsLambda) {
+                        int lambdaColIndex;
+                        RecordSource<? extends Record> lambda = compileSourceInternal(im.keyValues.get(0));
+                        RecordMetadata m = lambda.getMetadata();
+
+                        switch (m.getColumnCount()) {
+                            case 0:
+                                throw new ParserException(im.keyValuePositions.getQuick(0), "Query must select at least one column");
+                            case 1:
+                                lambdaColIndex = 0;
+                                break;
+                            default:
+                                if (m.invalidColumn(latestByCol)) {
+                                    throw new ParserException(im.keyValuePositions.getQuick(0), "Ambiguous column names in lambda query");
+                                }
+                                lambdaColIndex = m.getColumnIndex(latestByCol);
+                                break;
+                        }
+
+                        ColumnType lambdaColType = m.getColumn(lambdaColIndex).getType();
+                        mutableSig.setParamCount(2).setName("").paramType(0, latestByMetadata.getType(), true).paramType(1, lambdaColType, false);
+                        LatestByLambdaRowSourceFactory fact = LAMBDA_ROW_SOURCE_FACTORIES.get(mutableSig);
+                        if (fact != null) {
+                            rs = fact.newInstance(latestByCol, lambda, lambdaColIndex, filter);
+                        } else {
+                            throw new ParserException(im.keyValuePositions.getQuick(0), "Mismatched types");
+                        }
+                    } else {
+
+                        switch (latestByMetadata.getType()) {
+                            case SYMBOL:
+                                if (im.keyColumn != null) {
+                                    rs = new KvIndexSymListHeadRowSource(latestByCol, new CharSequenceHashSet(im.keyValues), filter);
+                                } else {
+                                    rs = new KvIndexSymAllHeadRowSource(latestByCol, filter);
+                                }
+                                break;
+                            case STRING:
+                                if (im.keyColumn != null) {
+                                    rs = new KvIndexStrListHeadRowSource(latestByCol, new CharSequenceHashSet(im.keyValues), filter);
+                                } else {
+                                    throw new ParserException(latestByNode.position, "Filter on string column expected");
+                                }
+                                break;
+                            case INT:
+                                if (im.keyColumn != null) {
+                                    rs = new KvIndexIntListHeadRowSource(latestByCol, toIntHashSet(im), filter);
+                                } else {
+                                    throw new ParserException(latestByNode.position, "Filter on int column expected");
+                                }
+                        }
                     }
                 }
             }
@@ -546,8 +609,19 @@ final class QueryCompiler {
         return new JournalSource(ps, rs == null ? new AllRowSource() : rs);
     }
 
-    private RecordSource<? extends Record> compileSingleOrSubquery(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private RecordSource<? extends Record> compileSingleOrSubQuery(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         return model.getJournalName() != null ? compileSingleJournal(model, factory) : compileSubQuery(model, factory);
+    }
+
+    private RecordSource<? extends Record> compileSourceInternal(CharSequence query) throws ParserException, JournalException {
+        RecordSource<? extends Record> rs = cache.get(query);
+        if (rs == null) {
+            rs = compile(parser.parseInternal(query).getQueryModel(), factory);
+            cache.put(query, rs);
+        } else {
+            rs.reset();
+        }
+        return rs;
     }
 
     private RecordSource<? extends Record> compileSubQuery(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
@@ -558,7 +632,7 @@ final class QueryCompiler {
         }
 
         RecordMetadata m = rs.getMetadata();
-        IntrinsicModel im = intrinsicExtractor.extract(model.getWhereClause(), m, null);
+        IntrinsicModel im = queryFilterAnalyser.extract(model.getWhereClause(), m, null);
 
         switch (im.intrinsicValue) {
             case FALSE:
@@ -1485,6 +1559,12 @@ final class QueryCompiler {
                     break;
             }
         }
+    }
+
+    static {
+        LAMBDA_ROW_SOURCE_FACTORIES.put(lbs(ColumnType.SYMBOL, true, ColumnType.SYMBOL), KvIndexSymSymLambdaHeadRowSource.FACTORY);
+        LAMBDA_ROW_SOURCE_FACTORIES.put(lbs(ColumnType.SYMBOL, true, ColumnType.STRING), KvIndexSymStrLambdaHeadRowSource.FACTORY);
+        LAMBDA_ROW_SOURCE_FACTORIES.put(lbs(ColumnType.INT, true, ColumnType.INT), KvIndexIntLambdaHeadRowSource.FACTORY);
     }
 
     static {

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl;
 
@@ -75,17 +75,12 @@ public class KvIndexStrListHeadRowSource extends AbstractRowSource {
 
             for (int i = 0, n = values.size(); i < n; i++) {
                 IndexCursor c = index.cursor(Hash.boundedHash(values.get(i), buckets));
-                long r = -1;
-                boolean found = false;
                 while (c.hasNext()) {
-                    r = rec.rowid = c.next();
+                    long r = rec.rowid = c.next();
                     if (r > lo && r < hi && col.cmpStr(r, values.get(i)) && (filter == null || filter.getBool(rec))) {
-                        found = true;
+                        rows.add(r);
                         break;
                     }
-                }
-                if (found) {
-                    rows.add(r);
                 }
             }
             rows.sort();

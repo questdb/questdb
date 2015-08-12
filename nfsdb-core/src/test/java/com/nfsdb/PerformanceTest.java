@@ -29,7 +29,7 @@ import com.nfsdb.logging.Logger;
 import com.nfsdb.model.Quote;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
-import com.nfsdb.ql.parser.Compiler;
+import com.nfsdb.ql.parser.QueryCompiler;
 import com.nfsdb.query.api.QueryAllBuilder;
 import com.nfsdb.query.api.QueryHeadBuilder;
 import com.nfsdb.storage.KVIndex;
@@ -87,7 +87,7 @@ public class PerformanceTest extends AbstractTest {
         w.commit();
 
         JournalCachingFactory cf = new JournalCachingFactory(factory.getConfiguration());
-        Compiler compiler = new Compiler(cf);
+        QueryCompiler compiler = new QueryCompiler(cf);
 
         int count = 1000;
         long t = 0;

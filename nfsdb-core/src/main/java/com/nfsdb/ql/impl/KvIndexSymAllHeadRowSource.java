@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl;
 
@@ -40,7 +40,7 @@ public class KvIndexSymAllHeadRowSource extends AbstractRowSource {
     private final VirtualColumn filter;
     private final LongList rows = new LongList();
     private JournalRecord rec;
-    private int keyIndex;
+    private int cursor;
     private int valueCount;
     private int columnIndex;
 
@@ -67,21 +67,16 @@ public class KvIndexSymAllHeadRowSource extends AbstractRowSource {
 
             for (int i = 0, n = valueCount; i < n; i++) {
                 IndexCursor c = index.cursor(i);
-                long r = -1;
-                boolean found = false;
                 while (c.hasNext()) {
-                    r = rec.rowid = c.next();
+                    long r = rec.rowid = c.next();
                     if (r > lo && r < hi && (filter == null || filter.getBool(rec))) {
-                        found = true;
+                        rows.add(r);
                         break;
                     }
                 }
-                if (found) {
-                    rows.add(r);
-                }
             }
             rows.sort();
-            keyIndex = 0;
+            cursor = 0;
             return this;
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
@@ -94,12 +89,12 @@ public class KvIndexSymAllHeadRowSource extends AbstractRowSource {
 
     @Override
     public boolean hasNext() {
-        return keyIndex < rows.size();
+        return cursor < rows.size();
     }
 
     @Override
     public long next() {
-        return rec.rowid = rows.get(keyIndex++);
+        return rec.rowid = rows.get(cursor++);
     }
 
     @Override

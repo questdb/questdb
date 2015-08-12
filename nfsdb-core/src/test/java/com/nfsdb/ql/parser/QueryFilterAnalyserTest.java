@@ -35,12 +35,12 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-public class IntrinsicExtractorTest extends AbstractTest {
+public class QueryFilterAnalyserTest extends AbstractTest {
 
     private final RpnBuilder rpn = new RpnBuilder();
     private final ExprParser p = new ExprParser();
     private final ExprAstBuilder ast = new ExprAstBuilder();
-    private final IntrinsicExtractor e = new IntrinsicExtractor();
+    private final QueryFilterAnalyser e = new QueryFilterAnalyser();
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
     private final PostOrderTreeTraversalAlgo.Visitor rpnBuilderVisitor = new PostOrderTreeTraversalAlgo.Visitor() {
         @Override
