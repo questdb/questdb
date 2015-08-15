@@ -23,10 +23,7 @@ package com.nfsdb.ql.parser;
 
 import com.nfsdb.JournalKey;
 import com.nfsdb.collections.*;
-import com.nfsdb.exceptions.InvalidColumnException;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.NoSuchColumnException;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.exceptions.*;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
@@ -1072,19 +1069,19 @@ public class QueryCompiler {
 
         try {
             return new IntConstant(Numbers.parseInt(node.token));
-        } catch (NumberFormatException ignore) {
+        } catch (NumericException ignore) {
 
         }
 
         try {
             return new LongConstant(Numbers.parseLong(node.token));
-        } catch (NumberFormatException ignore) {
+        } catch (NumericException ignore) {
 
         }
 
         try {
             return new DoubleConstant(Numbers.parseDouble(node.token));
-        } catch (NumberFormatException ignore) {
+        } catch (NumericException ignore) {
 
         }
 
@@ -1377,7 +1374,7 @@ public class QueryCompiler {
     private int toInt(CharSequence cs, int pos) throws ParserException {
         try {
             return Numbers.parseInt(cs);
-        } catch (NumberFormatException e) {
+        } catch (NumericException e) {
             throw new ParserException(pos, "int value expected");
         }
     }
@@ -1391,7 +1388,7 @@ public class QueryCompiler {
                     set = new IntHashSet(im.keyValues.size());
                 }
                 set.add(v);
-            } catch (NumberFormatException e) {
+            } catch (NumericException e) {
                 throw new ParserException(im.keyValuePositions.get(i), "int value expected");
             }
         }

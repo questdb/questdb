@@ -22,6 +22,7 @@
 package com.nfsdb.ha.config;
 
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.utils.Numbers;
 import org.jetbrains.annotations.NotNull;
 
@@ -35,30 +36,34 @@ public class ServerNode {
         this.id = id;
         this.address = address;
 
-        int ob = address.indexOf('[');
-        if (ob > -1) {
-            int cb = address.indexOf(']');
-            // IPv6
-            this.hostname = address.substring(ob + 1, cb);
-            if (address.length() > cb + 1) {
-                this.port = Numbers.parseInt(address.subSequence(cb + 2, address.length()));
-            } else {
-                this.port = NetworkConfig.DEFAULT_DATA_PORT;
-            }
-        } else {
-            String parts[] = address.split(":");
-            switch (parts.length) {
-                case 1:
-                    this.hostname = address;
+        try {
+            int ob = address.indexOf('[');
+            if (ob > -1) {
+                int cb = address.indexOf(']');
+                // IPv6
+                this.hostname = address.substring(ob + 1, cb);
+                if (address.length() > cb + 1) {
+                    this.port = Numbers.parseInt(address.subSequence(cb + 2, address.length()));
+                } else {
                     this.port = NetworkConfig.DEFAULT_DATA_PORT;
-                    break;
-                case 2:
-                    this.hostname = parts[0];
-                    port = Numbers.parseInt(parts[1]);
-                    break;
-                default:
-                    throw new JournalRuntimeException("Unknown host name format: " + address);
+                }
+            } else {
+                String parts[] = address.split(":");
+                switch (parts.length) {
+                    case 1:
+                        this.hostname = address;
+                        this.port = NetworkConfig.DEFAULT_DATA_PORT;
+                        break;
+                    case 2:
+                        this.hostname = parts[0];
+                        port = Numbers.parseInt(parts[1]);
+                        break;
+                    default:
+                        throw NumericException.INSTANCE;
+                }
             }
+        } catch (NumericException e) {
+            throw new JournalRuntimeException("Unknown host name format: " + address);
         }
     }
 

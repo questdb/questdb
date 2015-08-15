@@ -41,7 +41,7 @@ import org.junit.Test;
 
 public class PartitionTest extends AbstractTest {
 
-    private static final long timestamp = Dates.parseDateTime("2013-12-12T00:00:00.000Z");
+    private static final long timestamp = Dates.parseDateTimeQuiet("2013-12-12T00:00:00.000Z");
     private JournalWriter<Quote> origin;
     private JournalWriter<Quote> master;
     private JournalWriter<Quote> slave;

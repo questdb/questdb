@@ -21,6 +21,7 @@
 
 package com.nfsdb;
 
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.utils.Dates;
 import org.junit.Assert;
@@ -163,7 +164,7 @@ public class DatesTest {
         Assert.assertEquals("Interval{lo=2013-08-06T08:25:30.000Z, hi=2013-08-06T08:25:30.999Z}", Dates.parseInterval("2013-08-06T08:25:30").toString());
     }
 
-    @Test(expected = NumberFormatException.class)
+    @Test(expected = NumericException.class)
     public void testIntervalParseBadValue() throws Exception {
         Dates.parseInterval("2014-31");
 
@@ -204,37 +205,37 @@ public class DatesTest {
         Assert.assertEquals(date, sink.toString());
     }
 
-    @Test(expected = NumberFormatException.class)
+    @Test(expected = NumericException.class)
     public void testParseWrongDay() throws Exception {
         Dates.parseDateTime("2013-09-31T00:00:00.000Z");
     }
 
-    @Test(expected = NumberFormatException.class)
+    @Test(expected = NumericException.class)
     public void testParseWrongHour() throws Exception {
         Dates.parseDateTime("2013-09-30T24:00:00.000Z");
     }
 
-    @Test(expected = NumberFormatException.class)
+    @Test(expected = NumericException.class)
     public void testParseWrongMillis() throws Exception {
         Dates.parseDateTime("2013-09-30T22:04:34.1024Z");
     }
 
-    @Test(expected = NumberFormatException.class)
+    @Test(expected = NumericException.class)
     public void testParseWrongMinute() throws Exception {
         Dates.parseDateTime("2013-09-30T22:61:00.000Z");
     }
 
-    @Test(expected = NumberFormatException.class)
+    @Test(expected = NumericException.class)
     public void testParseWrongMonth() throws Exception {
         Dates.parseDateTime("2013-00-12T00:00:00.000Z");
     }
 
-    @Test(expected = NumberFormatException.class)
+    @Test(expected = NumericException.class)
     public void testParseWrongSecond() throws Exception {
         Dates.parseDateTime("2013-09-30T22:04:60.000Z");
     }
 
-    private void assertTrue(String date) {
+    private void assertTrue(String date) throws NumericException {
         Dates.appendDateTime(sink, Dates.parseDateTime(date));
         Assert.assertEquals(date, sink.toString());
         sink.clear();
@@ -244,8 +245,7 @@ public class DatesTest {
         try {
             Dates.parseDateTime(s);
             Assert.fail("Expected exception");
-        } catch (NumberFormatException e) {
-            Assert.assertTrue("Received: " + e.getMessage(), e.getMessage().contains("xpected"));
+        } catch (NumericException ignore) {
         }
     }
 }

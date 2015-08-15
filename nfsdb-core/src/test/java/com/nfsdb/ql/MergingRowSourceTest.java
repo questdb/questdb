@@ -23,6 +23,7 @@ package com.nfsdb.ql;
 
 import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.model.Quote;
 import com.nfsdb.ql.impl.*;
 import com.nfsdb.test.tools.AbstractTest;
@@ -33,7 +34,7 @@ import org.junit.Test;
 
 public class MergingRowSourceTest extends AbstractTest {
     @Test
-    public void testHeapMerge() throws JournalException {
+    public void testHeapMerge() throws JournalException, NumericException {
         JournalWriter<Quote> w = factory.writer(Quote.class);
         TestUtils.generateQuoteData(w, 100000, Dates.parseDateTime("2014-02-11T00:00:00.000Z"), 10);
 
@@ -53,7 +54,7 @@ public class MergingRowSourceTest extends AbstractTest {
     }
 
     @Test
-    public void testMerge() throws JournalException {
+    public void testMerge() throws JournalException, NumericException {
         JournalWriter<Quote> w = factory.writer(Quote.class);
         TestUtils.generateQuoteData(w, 100000, Dates.parseDateTime("2014-02-11T00:00:00.000Z"), 10);
 

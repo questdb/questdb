@@ -23,6 +23,7 @@ package com.nfsdb.ha;
 
 import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.ha.config.ClientConfig;
 import com.nfsdb.ha.config.ServerConfig;
@@ -102,7 +103,7 @@ public class ClusterControllerTest extends AbstractTest {
                             writer1.commit();
                             expected.set(writer1.size());
                             active1.countDown();
-                        } catch (JournalException e) {
+                        } catch (JournalException | NumericException e) {
                             e.printStackTrace();
                         }
                     }

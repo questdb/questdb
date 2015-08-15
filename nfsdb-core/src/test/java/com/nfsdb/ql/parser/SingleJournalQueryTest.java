@@ -26,6 +26,7 @@ import com.nfsdb.JournalWriter;
 import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.exceptions.InvalidColumnException;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.RecordSourcePrinter;
@@ -3035,7 +3036,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         assertThat(expected, query, false);
     }
 
-    private void createIndexedTab() throws JournalException {
+    private void createIndexedTab() throws JournalException, NumericException {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").
                         $str("id").index().buckets(16).
@@ -3062,7 +3063,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         w.commit();
     }
 
-    private void createTab() throws JournalException {
+    private void createTab() throws JournalException, NumericException {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").
                         $str("id").
@@ -3089,7 +3090,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         w.commit();
     }
 
-    private void createTabNoNaNs() throws JournalException {
+    private void createTabNoNaNs() throws JournalException, NumericException {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").
                         $str("id").
@@ -3121,7 +3122,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         w.commit();
     }
 
-    private void createTabWithNaNs() throws JournalException {
+    private void createTabWithNaNs() throws JournalException, NumericException {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").
                         $str("id").
@@ -3161,7 +3162,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         w.commit();
     }
 
-    private void createTabWithNaNs2() throws JournalException {
+    private void createTabWithNaNs2() throws JournalException, NumericException {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").
                         $str("id").

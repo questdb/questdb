@@ -22,6 +22,7 @@
 package com.nfsdb;
 
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.model.Quote;
 import com.nfsdb.query.iterator.*;
@@ -123,7 +124,7 @@ public class IteratorTest extends AbstractTest {
     }
 
     @Test
-    public void testJournalIterator() throws JournalException {
+    public void testJournalIterator() throws JournalException, NumericException {
 
         JournalWriter<Quote> w = factory.writer(Quote.class);
         TestUtils.generateQuoteData(w, 1000);

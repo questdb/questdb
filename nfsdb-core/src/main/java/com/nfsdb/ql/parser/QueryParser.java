@@ -25,6 +25,7 @@ import com.nfsdb.PartitionType;
 import com.nfsdb.collections.CharSequenceHashSet;
 import com.nfsdb.collections.CharSequenceObjHashMap;
 import com.nfsdb.collections.ObjectPool;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.GenericIntBuilder;
 import com.nfsdb.factory.configuration.JournalStructure;
@@ -129,7 +130,7 @@ final class QueryParser {
 
         try {
             genericIntBuilder.buckets(Numbers.parseInt(tok()));
-        } catch (NumberFormatException e) {
+        } catch (NumericException e) {
             throw err("expected number of buckets (int)");
         }
 

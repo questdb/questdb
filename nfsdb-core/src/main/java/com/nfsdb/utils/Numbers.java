@@ -21,6 +21,7 @@
 
 package com.nfsdb.utils;
 
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.io.sink.CharSink;
 
 public final class Numbers {
@@ -312,14 +313,14 @@ public final class Numbers {
         return value;
     }
 
-    public static double parseDouble(CharSequence sequence) {
+    public static double parseDouble(CharSequence sequence) throws NumericException {
         return parseDouble(sequence, 0, sequence.length());
     }
 
-    public static double parseDouble(CharSequence sequence, int p, int lim) {
+    public static double parseDouble(CharSequence sequence, int p, int lim) throws NumericException {
 
         if (lim == p) {
-            throw new NumberFormatException("empty string");
+            throw NumericException.INSTANCE;
         }
 
         boolean negative = sequence.charAt(p) == '-';
@@ -328,7 +329,7 @@ public final class Numbers {
         }
 
         if (p >= lim) {
-            throw new NumberFormatException("Expect some numbers after sign");
+            throw NumericException.INSTANCE;
         }
 
 
@@ -359,7 +360,7 @@ public final class Numbers {
                     break out;
                 default:
                     if (c < '0' || c > '9') {
-                        throw new NumberFormatException("Illegal character at " + i + " for " + sequence);
+                        throw NumericException.INSTANCE;
                     }
 
                     if (val <= LONG_OVERFLOW_MAX) {
@@ -389,19 +390,19 @@ public final class Numbers {
     public static double parseDoubleQuiet(CharSequence sequence) {
         try {
             return parseDouble(sequence, 0, sequence.length());
-        } catch (NumberFormatException e) {
+        } catch (NumericException e) {
             return Double.NaN;
         }
     }
 
-    public static float parseFloat(CharSequence sequence) {
+    public static float parseFloat(CharSequence sequence) throws NumericException {
         return parseFloat(sequence, 0, sequence.length());
     }
 
-    public static float parseFloat(CharSequence sequence, int p, int lim) {
+    public static float parseFloat(CharSequence sequence, int p, int lim) throws NumericException {
 
         if (lim == p) {
-            throw new NumberFormatException("empty string");
+            throw NumericException.INSTANCE;
         }
 
         boolean negative = sequence.charAt(p) == '-';
@@ -410,7 +411,7 @@ public final class Numbers {
         }
 
         if (p >= lim) {
-            throw new NumberFormatException("Expect some numbers after sign");
+            throw NumericException.INSTANCE;
         }
 
 
@@ -441,7 +442,7 @@ public final class Numbers {
                     break out;
                 default:
                     if (c < '0' || c > '9') {
-                        throw new NumberFormatException("Illegal character at " + i + " for " + sequence);
+                        throw NumericException.INSTANCE;
                     }
 
                     if (val <= INT_OVERFLOW_MAX) {
@@ -476,17 +477,17 @@ public final class Numbers {
         }
     }
 
-    public static int parseInt(CharSequence sequence) {
+    public static int parseInt(CharSequence sequence) throws NumericException {
         if (sequence == null) {
-            throw new NumberFormatException("null");
+            throw NumericException.INSTANCE;
         }
 
         return parseInt0(sequence, 0, sequence.length());
     }
 
-    public static int parseInt(CharSequence sequence, int p, int lim) {
+    public static int parseInt(CharSequence sequence, int p, int lim) throws NumericException {
         if (sequence == null) {
-            throw new NumberFormatException("null");
+            throw NumericException.INSTANCE;
         }
         return parseInt0(sequence, p, lim);
     }
@@ -497,22 +498,22 @@ public final class Numbers {
                 return Integer.MIN_VALUE;
             }
             return parseInt0(sequence, 0, sequence.length());
-        } catch (NumberFormatException e) {
+        } catch (NumericException e) {
             return Integer.MIN_VALUE;
         }
 
     }
 
-    public static long parseLong(CharSequence sequence) {
+    public static long parseLong(CharSequence sequence) throws NumericException {
         if (sequence == null) {
-            throw new NumberFormatException("null");
+            throw NumericException.INSTANCE;
         }
         return parseLong0(sequence, 0, sequence.length());
     }
 
-    public static long parseLong(CharSequence sequence, int p, int lim) {
+    public static long parseLong(CharSequence sequence, int p, int lim) throws NumericException {
         if (sequence == null) {
-            throw new NumberFormatException("null");
+            throw NumericException.INSTANCE;
         }
         return parseLong0(sequence, p, lim);
     }
@@ -523,7 +524,7 @@ public final class Numbers {
         }
         try {
             return parseLong0(sequence, 0, sequence.length());
-        } catch (NumberFormatException e) {
+        } catch (NumericException e) {
             return Long.MIN_VALUE;
         }
     }
@@ -702,47 +703,47 @@ public final class Numbers {
         sink.put((char) ('0' + (c % 10)));
     }
 
-    private static double parseConst(CharSequence sequence, int p, int lim, String target, double value) {
+    private static double parseConst(CharSequence sequence, int p, int lim, String target, double value) throws NumericException {
 
         if (lim - p > target.length()) {
-            throw new NumberFormatException("String is too long for NaN");
+            throw NumericException.INSTANCE;
         }
 
         for (int i = 0; i < target.length(); i++) {
             if (p + i >= lim) {
-                throw new NumberFormatException("Unexpected end of string at " + p);
+                throw NumericException.INSTANCE;
             }
 
             if (sequence.charAt(p + i) != target.charAt(i)) {
-                throw new NumberFormatException();
+                throw NumericException.INSTANCE;
             }
         }
         return value;
     }
 
-    private static float parseFloatConst(CharSequence sequence, int p, int lim, String target, float value) {
+    private static float parseFloatConst(CharSequence sequence, int p, int lim, String target, float value) throws NumericException {
 
         if (lim - p > target.length()) {
-            throw new NumberFormatException("String is too long for");
+            throw NumericException.INSTANCE;
         }
 
         for (int i = 0; i < target.length(); i++) {
             if (p + i >= lim) {
-                throw new NumberFormatException("Unexpected end of string at " + p);
+                throw NumericException.INSTANCE;
             }
 
             if (sequence.charAt(p + i) != target.charAt(i)) {
-                throw new NumberFormatException();
+                throw NumericException.INSTANCE;
             }
         }
         return value;
     }
 
-    private static int parseInt0(CharSequence sequence, int p, int lim) {
+    private static int parseInt0(CharSequence sequence, int p, int lim) throws NumericException {
 
 
         if (lim == p) {
-            throw new NumberFormatException("empty string");
+            throw NumericException.INSTANCE;
         }
 
         boolean negative = sequence.charAt(p) == '-';
@@ -751,33 +752,33 @@ public final class Numbers {
         }
 
         if (p >= lim) {
-            throw new NumberFormatException("Expect some numbers after sign");
+            throw NumericException.INSTANCE;
         }
 
         int val = 0;
         for (; p < lim; p++) {
             int c = sequence.charAt(p);
             if (c < '0' || c > '9') {
-                throw new NumberFormatException("Illegal character at " + p + " for " + sequence);
+                throw NumericException.INSTANCE;
             }
             // val * 10 + (c - '0')
             int r = (val << 3) + (val << 1) - (c - '0');
             if (r > val) {
-                throw new NumberFormatException("Number overflow: " + sequence);
+                throw NumericException.INSTANCE;
             }
             val = r;
         }
 
         if (val == Integer.MIN_VALUE && !negative) {
-            throw new NumberFormatException("Number overflow: " + sequence);
+            throw NumericException.INSTANCE;
         }
         return negative ? val : -val;
     }
 
-    private static long parseLong0(CharSequence sequence, int p, int lim) {
+    private static long parseLong0(CharSequence sequence, int p, int lim) throws NumericException {
 
         if (lim == p) {
-            throw new NumberFormatException("empty string");
+            throw NumericException.INSTANCE;
         }
 
         boolean negative = sequence.charAt(p) == '-';
@@ -786,25 +787,25 @@ public final class Numbers {
         }
 
         if (p >= lim) {
-            throw new NumberFormatException("Expect some numbers after sign");
+            throw NumericException.INSTANCE;
         }
 
         long val = 0;
         for (; p < lim; p++) {
             int c = sequence.charAt(p);
             if (c < '0' || c > '9') {
-                throw new NumberFormatException("Illegal character at " + p);
+                throw NumericException.INSTANCE;
             }
             // val * 10 + (c - '0')
             long r = (val << 3) + (val << 1) - (c - '0');
             if (r > val) {
-                throw new NumberFormatException("Number overflow: " + sequence);
+                throw NumericException.INSTANCE;
             }
             val = r;
         }
 
         if (val == Long.MIN_VALUE && !negative) {
-            throw new NumberFormatException("Number overflow: " + sequence);
+            throw NumericException.INSTANCE;
         }
         return negative ? val : -val;
     }

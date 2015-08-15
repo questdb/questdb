@@ -23,6 +23,7 @@ package com.nfsdb.utils;
 
 import com.nfsdb.PartitionType;
 import com.nfsdb.exceptions.JournalUnsupportedTypeException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.io.sink.StringSink;
 
 public class Interval {
@@ -39,7 +40,7 @@ public class Interval {
         }
     }
 
-    public Interval(CharSequence lo, CharSequence hi) {
+    public Interval(CharSequence lo, CharSequence hi) throws NumericException {
         this(Dates.parseDateTime(lo), Dates.parseDateTime(hi));
     }
 
@@ -63,7 +64,7 @@ public class Interval {
         }
     }
 
-    public Interval(String dir, PartitionType t) {
+    public Interval(String dir, PartitionType t) throws NumericException {
         long millis;
         switch (t) {
             case YEAR:

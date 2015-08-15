@@ -26,10 +26,12 @@ import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.ObjObjHashMap;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.factory.JournalClosingListener;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.Constants;
 import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.logging.Logger;
 import com.nfsdb.query.AbstractResultSetBuilder;
 import com.nfsdb.query.api.Query;
 import com.nfsdb.query.iterator.ConcurrentIterator;
@@ -53,6 +55,8 @@ import java.util.Iterator;
 
 @SuppressFBWarnings({"PATH_TRAVERSAL_IN", "LII_LIST_INDEXED_ITERATING", "CD_CIRCULAR_DEPENDENCY"})
 public class Journal<T> implements Iterable<T>, Closeable {
+
+    private static final Logger LOGGER = Logger.getLogger(Journal.class);
 
     public static final long TX_LIMIT_EVAL = -1L;
     final ObjList<Partition<T>> partitions = new ObjList<>();
@@ -613,19 +617,23 @@ public class Journal<T> implements Iterable<T>, Closeable {
                     indexTxAddresses = tx.indexPointers;
                 }
 
-                Interval interval = new Interval(f.getName(), getMetadata().getPartitionType());
-                if (partitionIndex < partitions.size()) {
-                    Partition<T> partition = partitions.getQuick(partitionIndex);
-                    Interval that = partition.getInterval();
-                    if (that == null || that.equals(interval)) {
-                        partition.applyTx(txLimit, indexTxAddresses);
-                        partitionIndex++;
+                try {
+                    Interval interval = new Interval(f.getName(), getMetadata().getPartitionType());
+                    if (partitionIndex < partitions.size()) {
+                        Partition<T> partition = partitions.getQuick(partitionIndex);
+                        Interval that = partition.getInterval();
+                        if (that == null || that.equals(interval)) {
+                            partition.applyTx(txLimit, indexTxAddresses);
+                            partitionIndex++;
+                        } else {
+                            partition.close();
+                            partitions.remove(partitionIndex);
+                        }
                     } else {
-                        partition.close();
-                        partitions.remove(partitionIndex);
+                        partitions.add(new Partition<>(this, interval, partitionIndex++, txLimit, indexTxAddresses));
                     }
-                } else {
-                    partitions.add(new Partition<>(this, interval, partitionIndex++, txLimit, indexTxAddresses));
+                } catch (NumericException e) {
+                    LOGGER.warn("Foreign directory: %s", f.getName());
                 }
             }
         }

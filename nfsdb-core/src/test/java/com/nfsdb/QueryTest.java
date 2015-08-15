@@ -22,6 +22,7 @@
 package com.nfsdb;
 
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.model.Quote;
 import com.nfsdb.query.ResultSet;
 import com.nfsdb.query.UnorderedResultSet;
@@ -41,8 +42,8 @@ import org.junit.Test;
 
 public class QueryTest extends AbstractTest {
 
-    private final long ts1 = Dates.parseDateTime("2013-04-28T17:20:00.000Z");
-    private final long ts2 = Dates.parseDateTime("2013-05-03T23:43:20.000Z");
+    private final long ts1 = Dates.parseDateTimeQuiet("2013-04-28T17:20:00.000Z");
+    private final long ts2 = Dates.parseDateTimeQuiet("2013-05-03T23:43:20.000Z");
     private Query<Quote> q;
     private JournalWriter<Quote> w;
 
@@ -1232,7 +1233,7 @@ public class QueryTest extends AbstractTest {
         return w2.query();
     }
 
-    private Query<Quote> buildQuery2() throws JournalException {
+    private Query<Quote> buildQuery2() throws JournalException, NumericException {
         JournalWriter<Quote> w2 = factory.writer(Quote.class, "W2");
         TestData.appendQuoteData1(w2);
         TestData.appendQuoteData2(w2);

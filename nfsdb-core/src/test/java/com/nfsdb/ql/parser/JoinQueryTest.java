@@ -26,6 +26,7 @@ import com.nfsdb.JournalWriter;
 import com.nfsdb.collections.IntHashSet;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.storage.SymbolTable;
@@ -724,7 +725,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                 "products latest by supplier where supplier in (`suppliers where contactName = 'PHT'`)");
     }
 
-    private static void generateJoinData() throws JournalException {
+    private static void generateJoinData() throws JournalException, NumericException {
         JournalWriter customers = factory.writer(
                 new JournalStructure("customers").
                         $int("customerId").

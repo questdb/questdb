@@ -25,6 +25,7 @@ import com.nfsdb.JournalKey;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.ha.ClusterController;
@@ -44,7 +45,7 @@ import java.util.concurrent.TimeUnit;
 @SuppressFBWarnings({"SE_BAD_FIELD"})
 public class ClusteredProducerMain {
 
-    public static void main(String[] args) throws JournalException, IOException, JournalNetworkException {
+    public static void main(String[] args) throws JournalException, IOException, JournalNetworkException, NumericException {
 
         final String pathToDatabase = args[0];
         final int instance = Numbers.parseInt(args[1]);

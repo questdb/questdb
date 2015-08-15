@@ -22,6 +22,7 @@
 package com.nfsdb;
 
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.model.Quote;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestData;
@@ -173,7 +174,7 @@ public class LagTest extends AbstractTest {
     }
 
     @Test
-    public void testLagWorkflow() throws JournalException {
+    public void testLagWorkflow() throws JournalException, NumericException {
 
         Quote v1 = new Quote().setSym("1").setTimestamp(Dates.parseDateTime("2012-06-10T00:00:00Z"));
         Quote v2 = new Quote().setSym("2").setTimestamp(Dates.parseDateTime("2012-06-10T10:00:00Z"));
@@ -207,7 +208,7 @@ public class LagTest extends AbstractTest {
     }
 
     @Test
-    public void testOpenWithLag() throws JournalException {
+    public void testOpenWithLag() throws JournalException, NumericException {
 
         Partition<Quote> partition = rw.openOrCreateLagPartition();
         Quote v1 = new Quote().setSym("1").setTimestamp(Dates.parseDateTime("2012-06-11T00:00:00Z"));

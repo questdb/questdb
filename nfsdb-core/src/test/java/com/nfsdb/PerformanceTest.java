@@ -23,6 +23,7 @@ package com.nfsdb;
 
 import com.nfsdb.collections.LongList;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.JournalCachingFactory;
 import com.nfsdb.logging.Logger;
@@ -57,7 +58,7 @@ public class PerformanceTest extends AbstractTest {
     }
 
     @Test
-    public void testAllBySymbolValueOverInterval() throws JournalException {
+    public void testAllBySymbolValueOverInterval() throws JournalException, NumericException {
 
         JournalWriter<Quote> w = factory.writer(Quote.class, "quote", TEST_DATA_SIZE);
         TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
@@ -80,7 +81,7 @@ public class PerformanceTest extends AbstractTest {
 
     @SuppressWarnings("StatementWithEmptyBody")
     @Test
-    public void testAllBySymbolValueOverIntervalNew() throws JournalException, ParserException, InterruptedException {
+    public void testAllBySymbolValueOverIntervalNew() throws JournalException, ParserException, InterruptedException, NumericException {
 
         JournalWriter<Quote> w = factory.writer(Quote.class, "quote", TEST_DATA_SIZE);
         TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
@@ -156,11 +157,11 @@ public class PerformanceTest extends AbstractTest {
     }
 
     @Test
-    public void testJournalAppendAndReadSpeed() throws JournalException, ParserException {
+    public void testJournalAppendAndReadSpeed() throws JournalException, ParserException, NumericException {
         JournalWriter<Quote> w = factory.writer(Quote.class, "quote", TEST_DATA_SIZE);
         long t = 0;
         int count = 10;
-        for (int i = -10; i < count; i++) {
+        for (int i = -count; i < count; i++) {
             w.truncate();
             if (i == 0) {
                 t = System.nanoTime();
@@ -176,7 +177,7 @@ public class PerformanceTest extends AbstractTest {
             Assert.assertTrue("Append speed must be under 400ms (" + TimeUnit.NANOSECONDS.toMillis(result) + ")", TimeUnit.NANOSECONDS.toMillis(result) < 400);
         }
 
-        for (int i = -10; i < count; i++) {
+        for (int i = -count; i < count; i++) {
             if (i == 0) {
                 t = System.nanoTime();
             }
@@ -194,7 +195,7 @@ public class PerformanceTest extends AbstractTest {
             Assert.assertTrue("Read speed must be under 120ms (" + TimeUnit.NANOSECONDS.toMillis(result) + ")", TimeUnit.NANOSECONDS.toMillis(result) < 120);
         }
 
-        for (int i = -10; i < count; i++) {
+        for (int i = -count; i < count; i++) {
             if (i == 0) {
                 t = System.nanoTime();
             }
@@ -221,7 +222,7 @@ public class PerformanceTest extends AbstractTest {
     }
 
     @Test
-    public void testLatestBySymbol() throws JournalException {
+    public void testLatestBySymbol() throws JournalException, NumericException {
 
         JournalWriter<Quote> w = factory.writer(Quote.class, "quote", TEST_DATA_SIZE);
         TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);

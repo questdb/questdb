@@ -23,6 +23,7 @@ package com.nfsdb.ql.parser;
 
 import com.nfsdb.collections.*;
 import com.nfsdb.exceptions.InvalidColumnException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.RecordMetadata;
@@ -139,28 +140,36 @@ final class QueryFilterAnalyser {
         return false;
     }
 
-    private boolean analyzeGreater(IntrinsicModel model, ExprNode node, int inc) {
+    private boolean analyzeGreater(IntrinsicModel model, ExprNode node, int inc) throws ParserException {
 
         if (timestamp == null) {
             return false;
         }
 
         if (node.lhs.type == ExprNode.NodeType.LITERAL && node.lhs.token.equals(timestamp.getName())) {
-            long lo = Dates.tryParse(quoteEraser.of(node.rhs.token)) + inc;
-            if (lo > model.intervalLo) {
-                model.intervalLo = lo;
+            try {
+                long lo = Dates.tryParse(quoteEraser.of(node.rhs.token)) + inc;
+                if (lo > model.intervalLo) {
+                    model.intervalLo = lo;
+                }
+                node.intrinsicValue = IntrinsicValue.TRUE;
+                return true;
+            } catch (NumericException e) {
+                throw new ParserException(node.rhs.position, "Not a date");
             }
-            node.intrinsicValue = IntrinsicValue.TRUE;
-            return true;
         }
 
         if (node.rhs.type == ExprNode.NodeType.LITERAL && node.rhs.token.equals(timestamp.getName())) {
-            long hi = Dates.tryParse(quoteEraser.of(node.lhs.token)) - inc;
-            if (hi < model.intervalHi) {
-                model.intervalHi = hi;
+            try {
+                long hi = Dates.tryParse(quoteEraser.of(node.lhs.token)) - inc;
+                if (hi < model.intervalHi) {
+                    model.intervalHi = hi;
+                }
+                node.intrinsicValue = IntrinsicValue.TRUE;
+                return true;
+            } catch (NumericException e) {
+                throw new ParserException(node.lhs.position, "Not a date");
             }
-            node.intrinsicValue = IntrinsicValue.TRUE;
-            return true;
         }
         return false;
     }
@@ -209,13 +218,13 @@ final class QueryFilterAnalyser {
 
             try {
                 loMillis = Dates.tryParse(quoteEraser.of(lo.token));
-            } catch (NumberFormatException ignore) {
+            } catch (NumericException ignore) {
                 throw new ParserException(lo.position, "Unknown date format");
             }
 
             try {
                 hiMillis = Dates.tryParse(quoteEraser.of(hi.token));
-            } catch (NumberFormatException ignore) {
+            } catch (NumericException ignore) {
                 throw new ParserException(hi.position, "Unknown date format");
             }
 
@@ -269,29 +278,37 @@ final class QueryFilterAnalyser {
         return false;
     }
 
-    private boolean analyzeLess(IntrinsicModel model, ExprNode node, int inc) {
+    private boolean analyzeLess(IntrinsicModel model, ExprNode node, int inc) throws ParserException {
         if (timestamp == null) {
             return false;
         }
 
         if (node.lhs.type == ExprNode.NodeType.LITERAL && node.lhs.token.equals(timestamp.getName())) {
-            long hi = Dates.tryParse(quoteEraser.of(node.rhs.token)) - inc;
-            if (hi < model.intervalHi) {
-                model.intervalHi = hi;
+            try {
+                long hi = Dates.tryParse(quoteEraser.of(node.rhs.token)) - inc;
+                if (hi < model.intervalHi) {
+                    model.intervalHi = hi;
+                }
+                node.intrinsicValue = IntrinsicValue.TRUE;
+                timestampNodes.add(node);
+                return true;
+            } catch (NumericException e) {
+                throw new ParserException(node.rhs.position, "Not a date");
             }
-            node.intrinsicValue = IntrinsicValue.TRUE;
-            timestampNodes.add(node);
-            return true;
         }
 
         if (node.rhs.type == ExprNode.NodeType.LITERAL && node.rhs.token.equals(timestamp.getName())) {
-            long lo = Dates.tryParse(quoteEraser.of(node.lhs.token)) + inc;
-            if (lo > model.intervalLo) {
-                model.intervalLo = lo;
+            try {
+                long lo = Dates.tryParse(quoteEraser.of(node.lhs.token)) + inc;
+                if (lo > model.intervalLo) {
+                    model.intervalLo = lo;
+                }
+                node.intrinsicValue = IntrinsicValue.TRUE;
+                timestampNodes.add(node);
+                return true;
+            } catch (NumericException e) {
+                throw new ParserException(node.lhs.position, "Not a date");
             }
-            node.intrinsicValue = IntrinsicValue.TRUE;
-            timestampNodes.add(node);
-            return true;
         }
         return false;
     }
@@ -453,7 +470,7 @@ final class QueryFilterAnalyser {
                     Interval interval = Dates.parseInterval(seq, lo, lim);
                     model.overlapInterval(interval.getLo(), interval.getHi());
                     return true;
-                } catch (NumberFormatException ignore) {
+                } catch (NumericException ignore) {
                     // this must be a date then?
                 }
 
@@ -463,28 +480,42 @@ final class QueryFilterAnalyser {
                 }
                 timestampNodes.clear();
 
-                long millis = Dates.tryParse(seq, lo, lim);
+                try {
+                    long millis = Dates.tryParse(seq, lo, lim);
 
-                if (model.millis != Long.MIN_VALUE && model.millis != millis) {
-                    model.intrinsicValue = IntrinsicValue.FALSE;
+                    if (model.millis != Long.MIN_VALUE && model.millis != millis) {
+                        model.intrinsicValue = IntrinsicValue.FALSE;
+                    }
+
+                    model.millis = millis;
+                    model.clearInterval();
+                    return false;
+                } catch (NumericException e) {
+                    throw new ParserException(position, "Not a date");
                 }
-
-                model.millis = millis;
-                model.clearInterval();
-                return false;
             case 0:
                 // single semicolon, expect period format after date
-                Interval interval0 = parseInterval0(seq, lo, pos[0], lim);
+                Interval interval0 = parseInterval0(seq, lo, pos[0], lim, position);
                 model.overlapInterval(interval0.getLo(), interval0.getHi());
                 break;
             case 2:
                 if (model.intervalSource != null) {
                     throw new ParserException(position, "Duplicate interval filter is not supported");
                 }
-                Interval interval2 = parseInterval0(seq, lo, pos[0], pos[1]);
-                int period = Numbers.parseInt(seq, pos[1] + 1, pos[2] - 1);
+                Interval interval2 = parseInterval0(seq, lo, pos[0], pos[1], position);
+                int period;
+                try {
+                    period = Numbers.parseInt(seq, pos[1] + 1, pos[2] - 1);
+                } catch (NumericException e) {
+                    throw new ParserException(position, "Period not a number");
+                }
                 char type = seq.charAt(pos[2] - 1);
-                int count = Numbers.parseInt(seq, pos[2] + 1, seq.length());
+                int count;
+                try {
+                    count = Numbers.parseInt(seq, pos[2] + 1, seq.length());
+                } catch (NumericException e) {
+                    throw new ParserException(position, "Count not a number");
+                }
                 switch (type) {
                     case 'y':
                         model.intervalSource = new YearIntervalSource(interval2, period, count);
@@ -515,18 +546,27 @@ final class QueryFilterAnalyser {
         return true;
     }
 
-    private Interval parseInterval0(CharSequence seq, int lo, int p, int lim) {
+    private Interval parseInterval0(CharSequence seq, int lo, int p, int lim, int position) throws ParserException {
         char type = seq.charAt(lim - 1);
-        int period = Numbers.parseInt(seq, p + 1, lim - 1);
+        int period;
+        try {
+            period = Numbers.parseInt(seq, p + 1, lim - 1);
+        } catch (NumericException e) {
+            throw new ParserException(position, "Period not a number");
+        }
         try {
             Interval interval = Dates.parseInterval(seq, lo, p);
             return new Interval(interval.getLo(), Dates.addPeriod(interval.getHi(), type, period));
-        } catch (NumberFormatException ignore) {
+        } catch (NumericException ignore) {
             // try date instead
         }
-        long loMillis = Dates.tryParse(seq, lo, p - 1);
-        long hiMillis = Dates.addPeriod(loMillis, type, period);
-        return new Interval(loMillis, hiMillis);
+        try {
+            long loMillis = Dates.tryParse(seq, lo, p - 1);
+            long hiMillis = Dates.addPeriod(loMillis, type, period);
+            return new Interval(loMillis, hiMillis);
+        } catch (NumericException e) {
+            throw new ParserException(position, "Neither interval nor date");
+        }
     }
 
     private boolean removeAndIntrinsics(IntrinsicModel model, ExprNode node, RecordMetadata m) throws ParserException {

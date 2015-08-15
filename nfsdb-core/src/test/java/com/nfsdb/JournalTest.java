@@ -22,6 +22,7 @@
 package com.nfsdb;
 
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.model.Quote;
@@ -101,7 +102,7 @@ public class JournalTest extends AbstractTest {
     }
 
     @Test
-    public void testMaxRowID() throws JournalException {
+    public void testMaxRowID() throws JournalException, NumericException {
         JournalWriter<Quote> w = factory.writer(Quote.class);
         TestUtils.generateQuoteData(w, 100);
 
@@ -215,7 +216,7 @@ public class JournalTest extends AbstractTest {
     }
 
     @Test
-    public void testReindex() throws JournalException {
+    public void testReindex() throws JournalException, NumericException {
         File path;
         try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
             TestData.appendQuoteData1(w);
@@ -289,7 +290,7 @@ public class JournalTest extends AbstractTest {
     }
 
     @Test
-    public void testSizeAfterCompaction() throws JournalException {
+    public void testSizeAfterCompaction() throws JournalException, NumericException {
         long sizeAfterCompaction;
         try (JournalWriter<Quote> w = factory.writer(Quote.class, "quote", 1000000)) {
             TestData.appendQuoteData2(w);
@@ -377,7 +378,7 @@ public class JournalTest extends AbstractTest {
     }
 
     @Test
-    public void testTxRollbackLag() throws JournalException {
+    public void testTxRollbackLag() throws JournalException, NumericException {
         int SIZE = 150000;
         JournalWriter<Quote> origin = factory.writer(Quote.class, "origin", SIZE);
         TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);

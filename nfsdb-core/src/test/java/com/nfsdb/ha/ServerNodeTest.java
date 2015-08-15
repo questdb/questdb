@@ -21,6 +21,7 @@
 
 package com.nfsdb.ha;
 
+import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.ha.config.ServerNode;
 import org.junit.Assert;
 import org.junit.Test;
@@ -60,4 +61,8 @@ public class ServerNodeTest {
         Assert.assertEquals(7090, node.getPort());
     }
 
+    @Test(expected = JournalRuntimeException.class)
+    public void testAddressValidation() throws Exception {
+        new ServerNode(0, "192.168:x");
+    }
 }

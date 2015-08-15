@@ -27,6 +27,7 @@ import com.nfsdb.JournalWriter;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.ha.auth.AuthorizationHandler;
 import com.nfsdb.ha.auth.CredentialProvider;
 import com.nfsdb.ha.config.ClientConfig;
@@ -193,7 +194,7 @@ public class AuthorizationTest extends AbstractTest {
         }
     }
 
-    private void beginSync(JournalServer server, JournalClient client) throws JournalException, JournalNetworkException, InterruptedException {
+    private void beginSync(JournalServer server, JournalClient client) throws JournalException, JournalNetworkException, InterruptedException, NumericException {
         int size = 100000;
         JournalWriter<Quote> remote = factory.writer(Quote.class, "remote", 2 * size);
         server.publish(remote);

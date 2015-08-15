@@ -25,6 +25,7 @@ import com.nfsdb.Journal;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.PartitionType;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.utils.Dates;
@@ -49,7 +50,7 @@ public class SearchByKeysTest {
     private long timestamp;
 
     @Before
-    public void setUp() {
+    public void setUp() throws NumericException {
         timestamp = Dates.parseDateTime("2013-01-01T00:00:00.000Z");
         // total 1500 rows to append
         // over 3 days

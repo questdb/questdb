@@ -21,6 +21,7 @@
 
 package com.nfsdb.io.parser.listener.probe;
 
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.io.ImportedColumnMetadata;
 import com.nfsdb.io.ImportedColumnType;
 import com.nfsdb.storage.ColumnType;
@@ -44,7 +45,7 @@ public class LongProbe implements TypeProbe {
         try {
             Numbers.parseLong(seq);
             return true;
-        } catch (NumberFormatException e) {
+        } catch (NumericException e) {
             return false;
         }
     }

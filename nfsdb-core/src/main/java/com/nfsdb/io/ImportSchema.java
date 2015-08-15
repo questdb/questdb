@@ -23,6 +23,7 @@ package com.nfsdb.io;
 
 import com.nfsdb.collections.CharSequenceObjHashMap;
 import com.nfsdb.collections.ObjList;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.io.parser.CsvParser;
 import com.nfsdb.io.parser.listener.Listener;
 import com.nfsdb.logging.Logger;
@@ -127,7 +128,7 @@ public class ImportSchema {
                         }
 
                         metadata.add(meta);
-                    } catch (NumberFormatException e) {
+                    } catch (NumericException e) {
                         LOGGER.error("Ignoring schema line " + line);
                     }
 

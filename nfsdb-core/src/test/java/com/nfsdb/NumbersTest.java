@@ -21,6 +21,7 @@
 
 package com.nfsdb;
 
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Rnd;
@@ -280,74 +281,74 @@ public class NumbersTest {
         Assert.assertEquals(-23346346, Numbers.parseInt("-23346346"));
     }
 
-    @Test(expected = NumberFormatException.class)
+    @Test(expected = NumericException.class)
     public void testParseIntEmpty() throws Exception {
         Numbers.parseInt("");
     }
 
-    @Test(expected = NumberFormatException.class)
+    @Test(expected = NumericException.class)
     public void testParseIntNull() throws Exception {
         Numbers.parseInt(null);
     }
 
-    @Test(expected = NumberFormatException.class)
+    @Test(expected = NumericException.class)
     public void testParseIntOverflow1() throws Exception {
         String i1 = "12345566787";
         Numbers.parseInt(i1);
     }
 
-    @Test(expected = NumberFormatException.class)
+    @Test(expected = NumericException.class)
     public void testParseIntOverflow2() throws Exception {
         Numbers.parseInt("2147483648");
     }
 
-    @Test(expected = NumberFormatException.class)
+    @Test(expected = NumericException.class)
     public void testParseIntSignOnly() throws Exception {
         Numbers.parseInt("-");
     }
 
-    @Test(expected = NumberFormatException.class)
+    @Test(expected = NumericException.class)
     public void testParseIntWrongChars() throws Exception {
         Numbers.parseInt("123ab");
     }
 
-    @Test(expected = NumberFormatException.class)
+    @Test(expected = NumericException.class)
     public void testParseLongEmpty() throws Exception {
         Numbers.parseLong("");
     }
 
-    @Test(expected = NumberFormatException.class)
+    @Test(expected = NumericException.class)
     public void testParseLongNull() throws Exception {
         Numbers.parseLong(null);
     }
 
-    @Test(expected = NumberFormatException.class)
+    @Test(expected = NumericException.class)
     public void testParseLongNull2() throws Exception {
         Numbers.parseLong(null, 0, 10);
     }
 
-    @Test(expected = NumberFormatException.class)
+    @Test(expected = NumericException.class)
     public void testParseLongOverflow1() throws Exception {
         String i1 = "1234556678723234234234234234234";
         Numbers.parseLong(i1);
     }
 
-    @Test(expected = NumberFormatException.class)
+    @Test(expected = NumericException.class)
     public void testParseLongOverflow2() throws Exception {
         Numbers.parseLong("9223372036854775808");
     }
 
-    @Test(expected = NumberFormatException.class)
+    @Test(expected = NumericException.class)
     public void testParseLongSignOnly() throws Exception {
         Numbers.parseLong("-");
     }
 
-    @Test(expected = NumberFormatException.class)
+    @Test(expected = NumericException.class)
     public void testParseLongWrongChars() throws Exception {
         Numbers.parseLong("123ab");
     }
 
-    @Test(expected = NumberFormatException.class)
+    @Test(expected = NumericException.class)
     public void testParseWrongNan() throws Exception {
         Numbers.parseDouble("NaN1");
     }

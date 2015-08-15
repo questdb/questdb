@@ -23,6 +23,7 @@ package com.nfsdb;
 
 
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.model.Quote;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.utils.Dates;
@@ -32,7 +33,7 @@ import org.junit.Test;
 public class NullTest extends AbstractTest {
 
     @Test
-    public void tumbleTryNullTest() throws JournalException {
+    public void tumbleTryNullTest() throws JournalException, NumericException {
         final int TEST_DATA_SIZE = (int) 1E3;
         JournalWriter<Quote> w = factory.writer(Quote.class, "quote", 1000);
         long timestamp = Dates.parseDateTime("2013-10-05T10:00:00.000Z");

@@ -23,6 +23,7 @@ package com.nfsdb.test.tools;
 
 import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.model.Quote;
 import com.nfsdb.utils.Dates;
 
@@ -31,7 +32,7 @@ public final class TestData {
     private TestData() {
     }
 
-    public static void appendQuoteData1(JournalWriter<Quote> w) throws JournalException {
+    public static void appendQuoteData1(JournalWriter<Quote> w) throws JournalException, NumericException {
         w.append(new Quote().setSym("ALDW").setAsk(0.5389717509811089).setBid(0.930070594409995).setAskSize(183283569).setBidSize(1227648924).setEx("SK").setMode("Fast trading").setTimestamp(Dates.parseDateTime("2013-02-10T10:00:00.000Z")));
         w.append(new Quote().setSym("ALDW").setAsk(0.603205071865896).setBid(0.11991876341706109).setAskSize(1532245584).setBidSize(1204384180).setEx("LN").setMode("Fast trading").setTimestamp(Dates.parseDateTime("2013-02-10T10:00:50.000Z")));
         w.append(new Quote().setSym("AMD").setAsk(0.29806332618438247).setBid(0.8858296239281588).setAskSize(448335884).setBidSize(1612760935).setEx("SK").setMode("Fast trading").setTimestamp(Dates.parseDateTime("2013-02-10T10:01:40.000Z")));
@@ -135,7 +136,7 @@ public final class TestData {
         w.commit();
     }
 
-    public static void appendQuoteData2(JournalWriter<Quote> w) throws JournalException {
+    public static void appendQuoteData2(JournalWriter<Quote> w) throws JournalException, NumericException {
         //        generateQuoteData(1000, Dates.toMillis("2013-03-10T10:00:00.000Z"), 100000000);
         w.append(new Quote().setSym("ADM.L").setAsk(0.2813225171839).setBid(0.21156328806051572).setAskSize(913537312).setBidSize(50311594).setEx("LXE").setMode("Fast trading").setTimestamp(Dates.parseDateTime("2013-03-10T10:00:00.000Z")));
         w.append(new Quote().setSym("BT-A.L").setAsk(0.8027576197368236).setBid(0.0946990619318967).setAskSize(1004815595).setBidSize(267704199).setEx("LXE").setMode("Fast trading").setTimestamp(Dates.parseDateTime("2013-03-10T11:23:20.000Z")));

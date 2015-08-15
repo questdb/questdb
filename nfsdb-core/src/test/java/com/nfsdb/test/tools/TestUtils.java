@@ -28,6 +28,7 @@ import com.nfsdb.Partition;
 import com.nfsdb.collections.IntList;
 import com.nfsdb.collections.LongList;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.model.Quote;
@@ -284,7 +285,7 @@ public final class TestUtils {
         }
     }
 
-    public static void generateQuoteData(JournalWriter<Quote> w, int count) throws JournalException {
+    public static void generateQuoteData(JournalWriter<Quote> w, int count) throws JournalException, NumericException {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
         long timestamps[] = {Dates.parseDateTime("2013-09-04T10:00:00.000Z"), Dates.parseDateTime("2013-10-04T10:00:00.000Z"), Dates.parseDateTime("2013-11-04T10:00:00.000Z")};
         Quote q = new Quote();
@@ -396,7 +397,7 @@ public final class TestUtils {
         w.commit();
     }
 
-    public static void generateTestEntityData(JournalWriter<TestEntity> w, int count) throws JournalException {
+    public static void generateTestEntityData(JournalWriter<TestEntity> w, int count) throws JournalException, NumericException {
         generateTestEntityData(w, count, Dates.parseDateTime("2012-05-15T10:55:00.000Z"), count * 100);
     }
 

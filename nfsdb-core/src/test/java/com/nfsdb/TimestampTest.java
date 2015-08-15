@@ -23,6 +23,7 @@ package com.nfsdb;
 
 
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.model.Quote;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.utils.Dates;
@@ -35,7 +36,7 @@ import java.util.List;
 public class TimestampTest extends AbstractTest {
 
     @Test
-    public void testHardAndSoftTimestamps() throws JournalException {
+    public void testHardAndSoftTimestamps() throws JournalException, NumericException {
         try (JournalWriter<Quote> journal = factory.writer(Quote.class)) {
             // make sure initial timestamp is zero
             // also, prime cache with values if there is caching going on
@@ -106,7 +107,7 @@ public class TimestampTest extends AbstractTest {
     }
 
     @Test
-    public void testLagOnEmptyJournal() throws JournalException {
+    public void testLagOnEmptyJournal() throws JournalException, NumericException {
         Quote quote21 = new Quote().setSym("123").setTimestamp(Dates.parseDateTime("2011-09-10T10:00:00Z"));
         Quote quote22 = new Quote().setSym("345").setTimestamp(Dates.parseDateTime("2011-09-11T10:00:00Z"));
         List<Quote> data = new ArrayList<>();

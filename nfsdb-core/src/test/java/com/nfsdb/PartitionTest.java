@@ -22,6 +22,7 @@
 package com.nfsdb;
 
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.model.Quote;
 import com.nfsdb.storage.BSearchType;
 import com.nfsdb.test.tools.AbstractTest;
@@ -50,7 +51,7 @@ public class PartitionTest extends AbstractTest {
     }
 
     @Test
-    public void testIndexOf() throws JournalException {
+    public void testIndexOf() throws JournalException, NumericException {
         JournalWriter<Quote> journal = factory.writer(Quote.class);
 
         long ts1 = Dates.parseDateTime("2012-06-05T00:00:00.000");
