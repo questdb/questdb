@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.factory.configuration;
 
@@ -70,8 +70,8 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
         this.keyColumn = model.getKeyQuiet();
         this.openFileTTL = model.getOpenFileTTL();
         this.lag = model.getLag();
-        for (int i = 0; i < model.getColumnCount(); i++) {
-            ColumnMetadata from = model.getColumn(i);
+        for (int i = 0, n = model.getColumnCount(); i < n; i++) {
+            ColumnMetadata from = model.getColumnQuick(i);
             columnMetadata.get(from.name).copy(from);
         }
     }

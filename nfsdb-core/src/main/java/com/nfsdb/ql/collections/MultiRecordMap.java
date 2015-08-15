@@ -109,9 +109,8 @@ public class MultiRecordMap implements Closeable, Mutable {
 
         public int getAvgRecordSize(RecordMetadata metadata) {
             int size = 0;
-            for (int i = 0; i < metadata.getColumnCount(); i++) {
-                ColumnType type = metadata.getColumn(i).getType();
-                int colSize = type.size();
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                int colSize = metadata.getColumnQuick(i).getType().size();
                 if (colSize == 0) {
                     colSize = 64 * 1024;
                 }

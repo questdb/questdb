@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.factory.configuration;
 
@@ -29,6 +29,7 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.exceptions.NoSuchColumnException;
 import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.storage.HugeBuffer;
+import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.lang.StringBuilder;
@@ -143,8 +144,13 @@ public class JournalMetadata<T> implements RecordMetadata {
     }
 
     @Override
+    public ColumnMetadata getColumnQuick(int index) {
+        return Unsafe.arrayGet(columnMetadata, index);
+    }
+
+    @Override
     public ColumnMetadata getColumn(CharSequence name) {
-        return getColumn(getColumnIndex(name));
+        return Unsafe.arrayGet(columnMetadata, getColumnIndex(name));
     }
 
     public int getColumnCount() {
@@ -228,8 +234,8 @@ public class JournalMetadata<T> implements RecordMetadata {
         }
 
         for (int i = 0, k = getColumnCount(); i < k; i++) {
-            ColumnMetadata thisM = this.getColumn(i);
-            ColumnMetadata thatM = that.getColumn(i);
+            ColumnMetadata thisM = this.getColumnQuick(i);
+            ColumnMetadata thatM = that.getColumnQuick(i);
 
             if (!thisM.name.equals(thatM.name)
                     || thisM.type != thatM.type

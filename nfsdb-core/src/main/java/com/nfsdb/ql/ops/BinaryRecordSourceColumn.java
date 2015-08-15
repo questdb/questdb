@@ -19,29 +19,39 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.ql;
+package com.nfsdb.ql.ops;
 
-import com.nfsdb.factory.configuration.RecordColumnMetadata;
+import com.nfsdb.collections.DirectInputStream;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.StorageFacade;
+import com.nfsdb.storage.ColumnType;
 
-public interface RecordMetadata {
+import java.io.OutputStream;
 
-    RecordColumnMetadata getColumn(int index);
+public class BinaryRecordSourceColumn extends AbstractVirtualColumn {
+    private final int index;
 
-    RecordColumnMetadata getColumn(CharSequence name);
+    public BinaryRecordSourceColumn(int index) {
+        super(ColumnType.DOUBLE);
+        this.index = index;
+    }
 
-    int getColumnCount();
+    @Override
+    public void getBin(Record rec, OutputStream s) {
+        rec.getBin(index, s);
+    }
 
-    /**
-     * Finds index of column by given name. If name is invalid a JournalRuntimeException is thrown.
-     *
-     * @param name column name
-     * @return column index between 0 and getColumnCount()-1
-     */
-    int getColumnIndex(CharSequence name);
+    @Override
+    public DirectInputStream getBin(Record rec) {
+        return rec.getBin(index);
+    }
 
-    RecordColumnMetadata getColumnQuick(int index);
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 
-    RecordColumnMetadata getTimestampMetadata();
-
-    boolean invalidColumn(CharSequence name);
+    @Override
+    public void prepare(StorageFacade facade) {
+    }
 }

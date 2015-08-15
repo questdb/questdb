@@ -22,6 +22,7 @@
 package com.nfsdb.ql;
 
 import com.nfsdb.JournalWriter;
+import com.nfsdb.collections.CharSequenceObjHashMap;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalRuntimeException;
@@ -38,6 +39,7 @@ import com.nfsdb.utils.Files;
 import org.junit.*;
 
 public class HashJoinRecordSourceTest {
+    private final static CharSequenceObjHashMap<String> EMPTY = new CharSequenceObjHashMap<>();
     @Rule
     public final JournalTestFactory factory;
     private JournalWriter<Band> bw;
@@ -92,9 +94,10 @@ public class HashJoinRecordSourceTest {
                         }},
                         false
                 ),
-                new ObjList<String>() {{
+                new ObjList<CharSequence>() {{
                     add("genre");
-                }}
+                }},
+                EMPTY
         );
         p.printCursor(joinResult.prepareCursor(factory));
         Assert.assertEquals("pop\n" +
@@ -171,9 +174,10 @@ public class HashJoinRecordSourceTest {
                         }},
                         false
                 ),
-                new ObjList<String>() {{
+                new ObjList<CharSequence>() {{
                     add("genre");
                 }}
+                , EMPTY
         );
         p.printCursor(joinResult.prepareCursor(factory));
         Assert.assertEquals("pop\n" +
@@ -213,10 +217,11 @@ public class HashJoinRecordSourceTest {
                         }},
                         true
                 ),
-                new ObjList<String>() {{
+                new ObjList<CharSequence>() {{
                     add("genre");
                     add("url");
-                }}
+                }},
+                EMPTY
         );
         p.printCursor(joinResult.prepareCursor(factory));
         Assert.assertEquals("pop\thttp://band1.com\n" +

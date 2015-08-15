@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.collections;
 
@@ -63,7 +63,7 @@ public class DirectRecord extends AbstractRecord {
 
         // Init order of var len fields
         for (int i = 0; i < offsets.length; i++) {
-            if (metadata.getColumn(i).getType().size() == 0) {
+            if (metadata.getColumnQuick(i).getType().size() == 0) {
                 offsets[i] = -(varColIndex++);
             }
         }
@@ -198,8 +198,7 @@ public class DirectRecord extends AbstractRecord {
         long writeAddress = headerAddress + headerSize;
 
         for (int i = 0; i < offsets.length; i++) {
-            ColumnType columnType = metadata.getColumn(i).getType();
-            switch (columnType) {
+            switch (metadata.getColumnQuick(i).getType()) {
                 case BOOLEAN:
                     Unsafe.getUnsafe().putByte(writeAddress, (byte) (record.getBool(i) ? 1 : 0));
                     writeAddress += 1;
@@ -245,7 +244,7 @@ public class DirectRecord extends AbstractRecord {
                     headerAddress += 8;
                     break;
                 default:
-                    throw new JournalRuntimeException("Unsupported type: " + columnType);
+                    throw new JournalRuntimeException("Unsupported type: " + metadata.getColumnQuick(i).getType());
             }
         }
         return recordStartOffset;

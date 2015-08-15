@@ -25,6 +25,7 @@ import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.RecordMetadata;
+import com.nfsdb.utils.Unsafe;
 
 public class SplitRecordMetadata implements RecordMetadata {
     private final int columnCount;
@@ -41,7 +42,7 @@ public class SplitRecordMetadata implements RecordMetadata {
         this.columns = new RecordColumnMetadata[columnCount];
 
         for (int i = 0; i < split; i++) {
-            RecordColumnMetadata rc = a.getColumn(i);
+            RecordColumnMetadata rc = a.getColumnQuick(i);
             columns[i] = rc;
             columnIndices.put(columns[i].getName(), i);
         }
@@ -55,6 +56,11 @@ public class SplitRecordMetadata implements RecordMetadata {
     @Override
     public RecordColumnMetadata getColumn(int index) {
         return columns[index];
+    }
+
+    @Override
+    public RecordColumnMetadata getColumnQuick(int index) {
+        return Unsafe.arrayGet(columns, index);
     }
 
     @Override

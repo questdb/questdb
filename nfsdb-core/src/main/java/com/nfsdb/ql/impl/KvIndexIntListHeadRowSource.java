@@ -57,7 +57,7 @@ public class KvIndexIntListHeadRowSource extends AbstractRowSource {
     public void configure(JournalMetadata metadata) {
         this.rec = new JournalRecord(metadata);
         this.columnIndex = metadata.getColumnIndex(column);
-        this.buckets = metadata.getColumn(columnIndex).distinctCountHint;
+        this.buckets = metadata.getColumnQuick(columnIndex).distinctCountHint;
     }
 
     @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})

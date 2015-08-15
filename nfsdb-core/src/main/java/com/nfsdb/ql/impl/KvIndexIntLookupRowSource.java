@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl;
 
@@ -59,7 +59,7 @@ public class KvIndexIntLookupRowSource extends AbstractRowSource {
     @Override
     public void configure(JournalMetadata metadata) {
         this.columnIndex = metadata.getColumnIndex(columnName);
-        this.key = value & metadata.getColumn(columnIndex).distinctCountHint;
+        this.key = value & metadata.getColumnQuick(columnIndex).distinctCountHint;
     }
 
     @Override

@@ -22,42 +22,67 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.CharSequenceIntHashMap;
+import com.nfsdb.collections.CharSequenceObjHashMap;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.RecordMetadata;
+import com.nfsdb.storage.ColumnType;
+import com.nfsdb.utils.Unsafe;
 
 import java.util.Arrays;
 
 public class SelectedColumnsMetadata implements RecordMetadata {
     private final RecordMetadata delegate;
-    private final int reindex[];
+    private final RecordColumnMetadata columnMetadata[];
     private final CharSequenceIntHashMap nameIndex;
 
-    public SelectedColumnsMetadata(RecordMetadata delegate, ObjList<String> names) {
+    /**
+     * Metadata that contains only selected columns from delegate metadata. There is also
+     * a possibility to rename column via renameMap. Columns that are not renamed do
+     * not have to be present in rename map.
+     * <p/>
+     * Both names and renameMap are read only and this metadata instances will not hold on
+     * to their references, so these data structured do not have to be allocated new each time
+     * constructing metadata.
+     *
+     * @param delegate  the delegate metadata
+     * @param names     list of column names to select
+     * @param renameMap map of rename operations, original column name has to be key and new name is the value.
+     */
+    public SelectedColumnsMetadata(RecordMetadata delegate, ObjList<CharSequence> names, CharSequenceObjHashMap<String> renameMap) {
         this.delegate = delegate;
         int k = names.size();
         this.nameIndex = new CharSequenceIntHashMap(k);
-        this.reindex = new int[k];
+        this.columnMetadata = new RecordColumnMetadata[k];
         for (int i = 0; i < k; i++) {
-            reindex[i] = delegate.getColumnIndex(names.getQuick(i));
-            nameIndex.put(names.getQuick(i), i);
+            CharSequence name = names.getQuick(i);
+            String rename = renameMap.get(name);
+            String newName = rename != null ? rename : name.toString();
+            columnMetadata[i] = meta(delegate.getColumn(name), newName);
+            nameIndex.put(newName, i);
         }
     }
 
     @Override
     public RecordColumnMetadata getColumn(int index) {
-        return delegate.getColumn(reindex[index]);
+        return columnMetadata[index];
+    }
+
+    @Override
+    public RecordColumnMetadata getColumnQuick(int index) {
+        return Unsafe.arrayGet(columnMetadata, index);
     }
 
     @Override
     public RecordColumnMetadata getColumn(CharSequence name) {
-        return getColumn(getColumnIndex(name));
+        return getColumnQuick(getColumnIndex(name));
     }
 
     @Override
     public int getColumnCount() {
-        return reindex.length;
+        return columnMetadata.length;
     }
 
     @Override
@@ -83,7 +108,18 @@ public class SelectedColumnsMetadata implements RecordMetadata {
     public String toString() {
         return "SelectedColumnsMetadata{" +
                 "delegate=" + delegate +
-                ", reindex=" + Arrays.toString(reindex) +
+                ", columnMetadata=" + Arrays.toString(columnMetadata) +
                 '}';
+    }
+
+    private RecordColumnMetadata meta(RecordColumnMetadata from, String newName) {
+        ColumnMetadata m = new ColumnMetadata();
+        m.name = newName;
+        m.distinctCountHint = from.getBucketCount();
+        if ((m.type = from.getType()) == ColumnType.SYMBOL) {
+            m.symbolTable = from.getSymbolTable();
+        }
+        m.indexed = from.isIndexed();
+        return m;
     }
 }

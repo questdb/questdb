@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl;
 
@@ -33,7 +33,7 @@ public class SelectedColumnsRecord extends AbstractRecord {
     private final int reindex[];
     private Record base;
 
-    public SelectedColumnsRecord(RecordMetadata metadata, ObjList<String> names) {
+    public SelectedColumnsRecord(RecordMetadata metadata, ObjList<CharSequence> names) {
         super(metadata);
         int k = names.size();
         this.reindex = new int[k];

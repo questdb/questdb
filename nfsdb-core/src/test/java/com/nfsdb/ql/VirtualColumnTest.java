@@ -23,6 +23,7 @@ package com.nfsdb.ql;
 
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
+import com.nfsdb.collections.CharSequenceObjHashMap;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.RecordSourcePrinter;
@@ -209,10 +210,10 @@ public class VirtualColumnTest extends AbstractTest {
                             }});
                         }}
                 ),
-                new ObjList<String>() {{
+                new ObjList<CharSequence>() {{
                     add("ccy");
                     add("plus");
-                }});
+                }}, new CharSequenceObjHashMap<String>());
 
         p.printCursor(src.prepareCursor(factory));
 

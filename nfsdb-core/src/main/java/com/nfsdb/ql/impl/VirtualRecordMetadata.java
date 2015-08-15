@@ -49,8 +49,13 @@ public class VirtualRecordMetadata implements RecordMetadata {
     }
 
     @Override
+    public RecordColumnMetadata getColumnQuick(int index) {
+        return index < split ? base.getColumnQuick(index) : virtualColumns.getQuick(index - split);
+    }
+
+    @Override
     public RecordColumnMetadata getColumn(CharSequence name) {
-        return getColumn(getColumnIndex(name));
+        return getColumnQuick(getColumnIndex(name));
     }
 
     @Override

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
@@ -291,6 +291,18 @@ public class SingleJournalQueryTest extends AbstractTest {
                 "BROMNXKUIZULIGY\t43.634443283081\t-23\t56.634443283081\n";
 
         assertThat(expected2, "select id, (z + 10) + x, z, x from tab where id ~ 'ULIGY'");
+    }
+
+    @Test
+    public void testColumnAliases() throws Exception {
+        createTabWithNaNs2();
+
+        assertThat("a\tb\n" +
+                        "1014.000000000000\tNaN\n" +
+                        "1008.553894042969\tNaN\n" +
+                        "1017.000000000000\tNaN\n",
+                "select x a, y b from tab where y = NaN and x > 1000", true);
+
     }
 
     @Test

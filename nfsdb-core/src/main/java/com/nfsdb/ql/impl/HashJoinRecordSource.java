@@ -153,7 +153,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
         for (int i = 0, k = masterColumns.size(); i < k; i++) {
             int index = mm.getColumnIndex(masterColumns.getQuick(i));
             this.masterColIndex.add(index);
-            this.masterColumns.add(mm.getColumn(index));
+            this.masterColumns.add(mm.getColumnQuick(index));
         }
 
         MultiRecordMap.Builder builder = new MultiRecordMap.Builder();
@@ -161,8 +161,8 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
         for (int i = 0, k = slaveColumns.size(); i < k; i++) {
             int index = sm.getColumnIndex(slaveColumns.getQuick(i));
             this.slaveColIndex.add(index);
-            this.slaveColumns.add(sm.getColumn(index));
-            builder.keyColumn(sm.getColumn(index));
+            this.slaveColumns.add(sm.getColumnQuick(index));
+            builder.keyColumn(sm.getColumnQuick(index));
         }
         if (byRowId) {
             builder.setRecordMetadata(rowIdRecord.getMetadata());

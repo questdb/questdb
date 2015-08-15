@@ -25,6 +25,7 @@ import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.RecordMetadata;
+import com.nfsdb.utils.Unsafe;
 
 import java.util.List;
 
@@ -57,8 +58,13 @@ public final class MapMetadata implements RecordMetadata {
     }
 
     @Override
+    public RecordColumnMetadata getColumnQuick(int index) {
+        return Unsafe.arrayGet(columns, index);
+    }
+
+    @Override
     public RecordColumnMetadata getColumn(CharSequence name) {
-        return columns[getColumnIndex(name)];
+        return getColumnQuick(getColumnIndex(name));
     }
 
     @Override

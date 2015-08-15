@@ -190,7 +190,7 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
             MultiMap.KeyWriter keyWriter = map.keyWriter();
             keyWriter.putLong(sample);
             for (int i = 0; i < keyIndices.length; i++) {
-                switch (recordSource.getMetadata().getColumn(i + 1).getType()) {
+                switch (recordSource.getMetadata().getColumnQuick(i + 1).getType()) {
                     case LONG:
                         keyWriter.putLong(rec.getLong(keyIndices[i]));
                         break;

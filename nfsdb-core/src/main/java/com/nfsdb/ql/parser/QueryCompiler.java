@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
@@ -759,6 +759,19 @@ public class QueryCompiler {
                     return new StrRecordSourceColumn(index);
                 case SYMBOL:
                     return new SymRecordSourceColumn(index);
+                case BYTE:
+                    return new ByteRecordSourceColumn(index);
+                case FLOAT:
+                    return new FloatRecordSourceColumn(index);
+                case BOOLEAN:
+                    return new BoolRecordSourceColumn(index);
+                case SHORT:
+                    return new ShortRecordSourceColumn(index);
+                case BINARY:
+                    return new BinaryRecordSourceColumn(index);
+                case DATE:
+                    return new DateRecordSourceColumn(index);
+
                 default:
                     throw new ParserException(node.position, "Not yet supported type");
             }
@@ -1155,19 +1168,19 @@ public class QueryCompiler {
      * if (rows == null) {
      * rows = HashTable.get(b.y);
      * }
-     * <p>
+     * <p/>
      * in this case tables can be reordered as long as "b" is processed
      * before "a"
-     * <p>
+     * <p/>
      * - second possibility is where all "or" conditions are random
      * in which case query like this:
-     * <p>
+     * <p/>
      * from a
      * join c on a.x = c.x
      * join b on a.x = b.x or c.y = b.y
-     * <p>
+     * <p/>
      * can be rewritten to:
-     * <p>
+     * <p/>
      * from a
      * join c on a.x = c.x
      * join b on a.x = b.x
@@ -1272,7 +1285,9 @@ public class QueryCompiler {
         }
 
         ObjList<VirtualColumn> virtualColumns = null;
-        ObjList<String> selectedColumns = new ObjList<>();
+        ObjList<CharSequence> selectedColumns = new ObjList<>();
+        CharSequenceObjHashMap<String> renameMap = new CharSequenceObjHashMap<>();
+
         int columnSequence = 0;
         final RecordMetadata meta = rs.getMetadata();
 
@@ -1280,6 +1295,7 @@ public class QueryCompiler {
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
             ExprNode node = qc.getAst();
+            String colName = qc.getName();
 
             switch (node.type) {
                 case LITERAL:
@@ -1287,10 +1303,11 @@ public class QueryCompiler {
                         throw new InvalidColumnException(node.position);
                     }
                     selectedColumns.add(node.token);
+                    if (colName != null) {
+                        renameMap.put(node.token, colName);
+                    }
                     break;
                 default:
-
-                    String colName = qc.getName();
                     if (colName == null) {
                         columnNameAssembly.clear(columnNamePrefixLen);
                         Numbers.append(columnNameAssembly, columnSequence++);
@@ -1309,7 +1326,7 @@ public class QueryCompiler {
         if (virtualColumns != null) {
             rs = new VirtualColumnRecordSource(rs, virtualColumns);
         }
-        return new SelectedColumnsRecordSource(rs, selectedColumns);
+        return new SelectedColumnsRecordSource(rs, selectedColumns, renameMap);
     }
 
     /**
@@ -1444,11 +1461,11 @@ public class QueryCompiler {
     /**
      * Identify joined journals without join clause and try to find other reversible join clauses
      * that may be applied to it. For example when these journals joined"
-     * <p>
+     * <p/>
      * from a
      * join b on c.x = b.x
      * join c on c.y = a.y
-     * <p>
+     * <p/>
      * the system that prefers child table with lowest index will attribute c.x = b.x clause to
      * journal "c" leaving "b" without clauses.
      */

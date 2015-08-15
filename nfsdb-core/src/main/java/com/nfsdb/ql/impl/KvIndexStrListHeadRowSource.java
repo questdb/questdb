@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl;
 
@@ -58,7 +58,7 @@ public class KvIndexStrListHeadRowSource extends AbstractRowSource {
     public void configure(JournalMetadata metadata) {
         this.rec = new JournalRecord(metadata);
         this.columnIndex = metadata.getColumnIndex(column);
-        this.buckets = metadata.getColumn(columnIndex).distinctCountHint;
+        this.buckets = metadata.getColumnQuick(columnIndex).distinctCountHint;
     }
 
     @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})

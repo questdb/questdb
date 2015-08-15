@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl;
 
@@ -77,8 +77,13 @@ public class RowIdHolderRecord extends AbstractRecord {
             }
 
             @Override
+            public RecordColumnMetadata getColumnQuick(int index) {
+                return columnMetadata;
+            }
+
+            @Override
             public RecordColumnMetadata getColumn(CharSequence name) {
-                return getColumn(getColumnIndex(name));
+                return getColumnQuick(getColumnIndex(name));
             }
 
             @Override

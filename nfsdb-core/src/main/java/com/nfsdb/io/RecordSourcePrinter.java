@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.io;
 
@@ -98,13 +98,13 @@ public class RecordSourcePrinter {
             if (i > 0) {
                 sink.put(delimiter);
             }
-            sink.put(metadata.getColumn(i).getName());
+            sink.put(metadata.getColumnQuick(i).getName());
         }
         sink.put('\n');
     }
 
     private void printRecord(Record r, RecordMetadata m, int i) {
-        switch (m.getColumn(i).getType()) {
+        switch (m.getColumnQuick(i).getType()) {
             case DATE:
                 Dates.appendDateTime(sink, r.getLong(i));
                 break;
