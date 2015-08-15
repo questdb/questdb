@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ha;
 
@@ -50,6 +50,7 @@ import com.nfsdb.ha.protocol.Version;
 import com.nfsdb.ha.protocol.commands.*;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.storage.TxListener;
+import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Files;
 import com.nfsdb.utils.NamedDaemonThreadFactory;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -78,7 +79,7 @@ public class JournalClient {
     private final CommandProducer commandProducer = new CommandProducer();
     private final CommandConsumer commandConsumer = new CommandConsumer();
     private final SetKeyRequestProducer setKeyRequestProducer = new SetKeyRequestProducer();
-    private final StringResponseConsumer stringResponseConsumer = new StringResponseConsumer();
+    private final CharSequenceResponseConsumer charSequenceResponseConsumer = new CharSequenceResponseConsumer();
     private final JournalClientStateProducer journalClientStateProducer = new JournalClientStateProducer();
     private final IntResponseConsumer intResponseConsumer = new IntResponseConsumer();
     private final IntResponseProducer intResponseProducer = new IntResponseProducer();
@@ -203,28 +204,25 @@ public class JournalClient {
     }
 
     private void checkAck() throws JournalNetworkException {
-        stringResponseConsumer.read(channel);
-        fail("OK".equals(stringResponseConsumer.getValue()), stringResponseConsumer.getValue());
+        charSequenceResponseConsumer.read(channel);
+        fail(Chars.equals("OK", charSequenceResponseConsumer.getValue()), charSequenceResponseConsumer.getValue().toString());
     }
 
     private void checkAuthAndSendCredential() throws JournalNetworkException {
         commandProducer.write(channel, Command.HANDSHAKE_COMPLETE);
-        switch (readString()) {
-            case "AUTH":
-                if (credentialProvider == null) {
-                    throw new AuthConfigurationException();
-                }
-                commandProducer.write(channel, Command.AUTHORIZATION);
-                byteArrayResponseProducer.write(channel, getToken());
-                String response = readString();
-                if (!"OK".equals(response)) {
-                    throw new AuthFailureException(response);
-                }
-                break;
-            case "OK":
-                break;
-            default:
-                fail(true, "Unknown server response");
+        CharSequence cs = readString();
+        if (Chars.equals("AUTH", cs)) {
+            if (credentialProvider == null) {
+                throw new AuthConfigurationException();
+            }
+            commandProducer.write(channel, Command.AUTHORIZATION);
+            byteArrayResponseProducer.write(channel, getToken());
+            CharSequence response = readString();
+            if (!Chars.equals("OK", response)) {
+                throw new AuthFailureException(response.toString());
+            }
+        } else if (!Chars.equals("OK", cs)) {
+            fail(true, "Unknown server response");
         }
     }
 
@@ -263,7 +261,7 @@ public class JournalClient {
             deltaConsumers.getQuick(i).free();
         }
         commandConsumer.free();
-        stringResponseConsumer.free();
+        charSequenceResponseConsumer.free();
         intResponseConsumer.free();
     }
 
@@ -306,9 +304,9 @@ public class JournalClient {
         }
     }
 
-    private String readString() throws JournalNetworkException {
-        stringResponseConsumer.read(channel);
-        return stringResponseConsumer.getValue();
+    private CharSequence readString() throws JournalNetworkException {
+        charSequenceResponseConsumer.read(channel);
+        return charSequenceResponseConsumer.getValue();
     }
 
     private void sendDisconnect() throws JournalNetworkException {

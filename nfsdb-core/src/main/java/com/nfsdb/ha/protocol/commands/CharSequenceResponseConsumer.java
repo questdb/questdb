@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,21 +17,23 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ha.protocol.commands;
 
+import com.nfsdb.collections.DirectCharSequence;
 import com.nfsdb.ha.AbstractImmutableObjectConsumer;
+import com.nfsdb.utils.ByteBuffers;
 
 import java.nio.ByteBuffer;
 
-public class StringResponseConsumer extends AbstractImmutableObjectConsumer<String> {
+public class CharSequenceResponseConsumer extends AbstractImmutableObjectConsumer<CharSequence> {
+    private final DirectCharSequence charSequence = new DirectCharSequence();
+
     @Override
-    protected String read(ByteBuffer buffer) {
-        char[] chars = new char[buffer.remaining() / 2];
-        for (int i = 0; i < chars.length; i++) {
-            chars[i] = buffer.getChar();
-        }
-        return new String(chars);
+    protected CharSequence read(ByteBuffer buffer) {
+        long address = ByteBuffers.getAddress(buffer);
+        charSequence.init(address, address + buffer.remaining());
+        return charSequence;
     }
 }
