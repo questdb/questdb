@@ -22,33 +22,35 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.Partition;
-import com.nfsdb.collections.IntHashSet;
+import com.nfsdb.collections.CharSequenceHashSet;
+import com.nfsdb.collections.IntList;
 import com.nfsdb.collections.LongList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.*;
 import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.storage.FixedColumn;
 import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
+import com.nfsdb.storage.VariableColumn;
+import com.nfsdb.utils.Chars;
+import com.nfsdb.utils.Hash;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class KvIndexIntLambdaHeadRowSource extends AbstractRowSource {
-
-    public static final LatestByLambdaRowSourceFactory FACTORY = new Factory();
+public abstract class KvIndexStrLambdaHeadRowSource extends AbstractRowSource {
     private final String column;
     private final VirtualColumn filter;
     private final RecordSource<? extends Record> recordSource;
     private final int recordSourceColumn;
     private final LongList rows = new LongList();
-    private final IntHashSet keys = new IntHashSet();
+    private final CharSequenceHashSet keys = new CharSequenceHashSet();
+    private final IntList hashes = new IntList();
     private JournalRecord rec;
     private int cursor;
     private int buckets;
     private int columnIndex;
 
-    private KvIndexIntLambdaHeadRowSource(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
+    protected KvIndexStrLambdaHeadRowSource(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
         this.column = column;
         this.recordSource = recordSource;
         this.recordSourceColumn = recordSourceColumn;
@@ -68,17 +70,17 @@ public class KvIndexIntLambdaHeadRowSource extends AbstractRowSource {
         try {
             Partition partition = rec.partition = slice.partition.open();
             KVIndex index = partition.getIndexForColumn(columnIndex);
-            FixedColumn col = partition.fixCol(columnIndex);
+            VariableColumn col = partition.varCol(columnIndex);
 
             long lo = slice.lo - 1;
             long hi = slice.calcHi ? partition.size() : slice.hi + 1;
             rows.clear();
 
-            for (int i = 0, n = keys.size(); i < n; i++) {
-                IndexCursor c = index.cursor(keys.get(i) & buckets);
+            for (int i = 0, n = hashes.size(); i < n; i++) {
+                IndexCursor c = index.cursor(hashes.getQuick(i));
                 while (c.hasNext()) {
                     long r = rec.rowid = c.next();
-                    if (r > lo && r < hi && col.getInt(r) == keys.get(i) && (filter == null || filter.getBool(rec))) {
+                    if (r > lo && r < hi && Chars.equals(col.getFlyweightStr(r), keys.get(i)) && (filter == null || filter.getBool(rec))) {
                         rows.add(r);
                         break;
                     }
@@ -113,20 +115,18 @@ public class KvIndexIntLambdaHeadRowSource extends AbstractRowSource {
         }
 
         keys.clear();
+        hashes.clear();
         try {
             for (Record r : recordSource.prepareCursor(fa.getFactory())) {
-                keys.add(r.getInt(recordSourceColumn));
+                CharSequence s = getKey(r, recordSourceColumn);
+                if (keys.add(s)) {
+                    hashes.add(Hash.boundedHash(s, buckets));
+                }
             }
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
-
     }
 
-    public static class Factory implements LatestByLambdaRowSourceFactory {
-        @Override
-        public RowSource newInstance(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
-            return new KvIndexIntLambdaHeadRowSource(column, recordSource, recordSourceColumn, filter);
-        }
-    }
+    protected abstract CharSequence getKey(Record r, int col);
 }

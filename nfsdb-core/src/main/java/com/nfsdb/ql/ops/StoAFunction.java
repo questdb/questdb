@@ -19,31 +19,30 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.ql.impl;
+package com.nfsdb.ql.ops;
 
+import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordSource;
-import com.nfsdb.ql.RowSource;
-import com.nfsdb.ql.ops.VirtualColumn;
+import com.nfsdb.storage.ColumnType;
 
-public class KvIndexSymSymLambdaHeadRowSource extends KvIndexSymLambdaHeadRowSource {
+public class StoAFunction extends AbstractUnaryOperator {
 
-    public static final LatestByLambdaRowSourceFactory FACTORY = new Factory();
-
-    private KvIndexSymSymLambdaHeadRowSource(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
-        super(column, recordSource, recordSourceColumn, filter);
+    public StoAFunction() {
+        super(ColumnType.STRING);
     }
 
     @Override
-    protected CharSequence getKey(Record r, int col) {
-        return r.getSym(col);
+    public CharSequence getFlyweightStr(Record rec) {
+        return value.getSym(rec);
     }
 
-    public static class Factory implements LatestByLambdaRowSourceFactory {
-        @Override
-        public RowSource newInstance(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
-            return new KvIndexSymSymLambdaHeadRowSource(column, recordSource, recordSourceColumn, filter);
-        }
+    @Override
+    public CharSequence getStr(Record rec) {
+        return value.getSym(rec);
     }
 
+    @Override
+    public void getStr(Record rec, CharSink sink) {
+        sink.put(value.getSym(rec));
+    }
 }

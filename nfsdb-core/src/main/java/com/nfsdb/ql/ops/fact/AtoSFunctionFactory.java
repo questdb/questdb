@@ -19,31 +19,18 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.ql.impl;
+package com.nfsdb.ql.ops.fact;
 
-import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordSource;
-import com.nfsdb.ql.RowSource;
+import com.nfsdb.collections.ObjList;
+import com.nfsdb.ql.ops.AtoSFunction;
+import com.nfsdb.ql.ops.Function;
 import com.nfsdb.ql.ops.VirtualColumn;
 
-public class KvIndexSymSymLambdaHeadRowSource extends KvIndexSymLambdaHeadRowSource {
-
-    public static final LatestByLambdaRowSourceFactory FACTORY = new Factory();
-
-    private KvIndexSymSymLambdaHeadRowSource(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
-        super(column, recordSource, recordSourceColumn, filter);
-    }
+public class AtoSFunctionFactory implements FunctionFactory {
+    public static final AtoSFunctionFactory INSTANCE = new AtoSFunctionFactory();
 
     @Override
-    protected CharSequence getKey(Record r, int col) {
-        return r.getSym(col);
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new AtoSFunction();
     }
-
-    public static class Factory implements LatestByLambdaRowSourceFactory {
-        @Override
-        public RowSource newInstance(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
-            return new KvIndexSymSymLambdaHeadRowSource(column, recordSource, recordSourceColumn, filter);
-        }
-    }
-
 }

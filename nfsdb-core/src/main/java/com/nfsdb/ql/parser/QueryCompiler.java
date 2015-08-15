@@ -91,7 +91,10 @@ public class QueryCompiler {
     }, 16);
     private final ArrayDeque<ExprNode> andConditionStack = new ArrayDeque<>();
     private final IntList nullCounts = new IntList();
+    private final ObjList<CharSequence> selectedColumns = new ObjList<>();
+    private final CharSequenceObjHashMap<String> renameMap = new CharSequenceObjHashMap<>();
     private ObjList<JoinContext> emittedJoinClauses;
+
 
     public QueryCompiler(JournalReaderFactory factory) {
         this.factory = factory;
@@ -441,6 +444,7 @@ public class QueryCompiler {
         return current;
     }
 
+    @SuppressWarnings("ConstantConditions")
     @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT", "CC_CYCLOMATIC_COMPLEXITY"})
     private RecordSource<? extends Record> compileSingleJournal(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         RecordMetadata metadata = model.getMetadata();
@@ -570,7 +574,6 @@ public class QueryCompiler {
                             throw new ParserException(im.keyValuePositions.getQuick(0), "Mismatched types");
                         }
                     } else {
-
                         switch (latestByMetadata.getType()) {
                             case SYMBOL:
                                 if (im.keyColumn != null) {
@@ -1285,8 +1288,8 @@ public class QueryCompiler {
         }
 
         ObjList<VirtualColumn> virtualColumns = null;
-        ObjList<CharSequence> selectedColumns = new ObjList<>();
-        CharSequenceObjHashMap<String> renameMap = new CharSequenceObjHashMap<>();
+        this.selectedColumns.clear();
+        this.renameMap.clear();
 
         int columnSequence = 0;
         final RecordMetadata meta = rs.getMetadata();
@@ -1582,6 +1585,8 @@ public class QueryCompiler {
         LAMBDA_ROW_SOURCE_FACTORIES.put(lbs(ColumnType.SYMBOL, true, ColumnType.SYMBOL), KvIndexSymSymLambdaHeadRowSource.FACTORY);
         LAMBDA_ROW_SOURCE_FACTORIES.put(lbs(ColumnType.SYMBOL, true, ColumnType.STRING), KvIndexSymStrLambdaHeadRowSource.FACTORY);
         LAMBDA_ROW_SOURCE_FACTORIES.put(lbs(ColumnType.INT, true, ColumnType.INT), KvIndexIntLambdaHeadRowSource.FACTORY);
+        LAMBDA_ROW_SOURCE_FACTORIES.put(lbs(ColumnType.STRING, true, ColumnType.STRING), KvIndexStrStrLambdaHeadRowSource.FACTORY);
+        LAMBDA_ROW_SOURCE_FACTORIES.put(lbs(ColumnType.STRING, true, ColumnType.SYMBOL), KvIndexStrSymLambdaHeadRowSource.FACTORY);
     }
 
     static {

@@ -19,31 +19,25 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.ql.impl;
+package com.nfsdb.ql.ops;
 
 import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordSource;
-import com.nfsdb.ql.RowSource;
-import com.nfsdb.ql.ops.VirtualColumn;
+import com.nfsdb.storage.ColumnType;
+import com.nfsdb.storage.SymbolTable;
 
-public class KvIndexSymSymLambdaHeadRowSource extends KvIndexSymLambdaHeadRowSource {
+public class AtoSFunction extends AbstractUnaryOperator {
 
-    public static final LatestByLambdaRowSourceFactory FACTORY = new Factory();
-
-    private KvIndexSymSymLambdaHeadRowSource(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
-        super(column, recordSource, recordSourceColumn, filter);
+    public AtoSFunction() {
+        super(ColumnType.SYMBOL);
     }
 
     @Override
-    protected CharSequence getKey(Record r, int col) {
-        return r.getSym(col);
+    public String getSym(Record rec) {
+        return value.getStr(rec).toString();
     }
 
-    public static class Factory implements LatestByLambdaRowSourceFactory {
-        @Override
-        public RowSource newInstance(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
-            return new KvIndexSymSymLambdaHeadRowSource(column, recordSource, recordSourceColumn, filter);
-        }
+    @Override
+    public SymbolTable getSymbolTable() {
+        return null;
     }
-
 }

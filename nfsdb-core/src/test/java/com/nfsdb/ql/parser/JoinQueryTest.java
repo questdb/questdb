@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
@@ -701,7 +701,25 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testSimpleSymLambda() throws Exception {
+    public void testSimpleStrToStrLambda() throws Exception {
+        assertThat("751505590\t9029\t1516\tFQP\t2015-07-10T00:01:52.290Z\tYGFSMEVDSIYC\n",
+                "orders latest by employeeId where employeeId in (`employees where firstName = 'DU'`)");
+    }
+
+    @Test
+    public void testSimpleStrToSymLambda() throws Exception {
+        assertThat("751505590\t9029\t1516\tFQP\t2015-07-10T00:01:52.290Z\tYGFSMEVDSIYC\n",
+                "orders latest by employeeId where employeeId in (`select _atos(employeeId) from employees where firstName = 'DU'`)");
+    }
+
+    @Test
+    public void testSimpleSymToStrLambda() throws Exception {
+        assertThat("1946\tEOVGVPEHSZQJGNI\tGROTGCLGILNCXPT\tCOHPFXH\t0.175451457500\t2015-07-10T00:00:14.146Z\n",
+                "products latest by supplier where supplier in (`select _stoa(supplier) from suppliers where contactName = 'PHT'`)");
+    }
+
+    @Test
+    public void testSimpleSymToSymLambda() throws Exception {
         assertThat("1946\tEOVGVPEHSZQJGNI\tGROTGCLGILNCXPT\tCOHPFXH\t0.175451457500\t2015-07-10T00:00:14.146Z\n",
                 "products latest by supplier where supplier in (`suppliers where contactName = 'PHT'`)");
     }

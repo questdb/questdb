@@ -26,24 +26,23 @@ import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.RowSource;
 import com.nfsdb.ql.ops.VirtualColumn;
 
-public class KvIndexSymSymLambdaHeadRowSource extends KvIndexSymLambdaHeadRowSource {
+public class KvIndexStrStrLambdaHeadRowSource extends KvIndexStrLambdaHeadRowSource {
 
     public static final LatestByLambdaRowSourceFactory FACTORY = new Factory();
 
-    private KvIndexSymSymLambdaHeadRowSource(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
+    private KvIndexStrStrLambdaHeadRowSource(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
         super(column, recordSource, recordSourceColumn, filter);
     }
 
     @Override
     protected CharSequence getKey(Record r, int col) {
-        return r.getSym(col);
+        return r.getStr(col);
     }
 
     public static class Factory implements LatestByLambdaRowSourceFactory {
         @Override
         public RowSource newInstance(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
-            return new KvIndexSymSymLambdaHeadRowSource(column, recordSource, recordSourceColumn, filter);
+            return new KvIndexStrStrLambdaHeadRowSource(column, recordSource, recordSourceColumn, filter);
         }
     }
-
 }

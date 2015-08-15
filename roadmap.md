@@ -1,6 +1,7 @@
 __lang__
 
 - ~~subqueries~~
+- ~~support for NULL and NaN values in filters~~
 - simple aggregation (sum, count, avg etc)
 - simple resampling (where aggregation function produces single row of values)
 - multi-row aggregation

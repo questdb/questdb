@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.ops.fact;
 
@@ -202,6 +202,8 @@ public final class FunctionFactories {
         unSig("-", ColumnType.LONG, LongNegativeOperatorFactory.INSTANCE);
 
         unSig("not", ColumnType.BOOLEAN, NotOperatorFactory.INSTANCE);
+        unSig("_stoa", ColumnType.SYMBOL, StoAFunctionFactory.INSTANCE);
+        unSig("_atos", ColumnType.STRING, AtoSFunctionFactory.INSTANCE);
 
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, false), new StrEqualsOperatorFactory());
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, true), new SymEqualsOperatorFactory());

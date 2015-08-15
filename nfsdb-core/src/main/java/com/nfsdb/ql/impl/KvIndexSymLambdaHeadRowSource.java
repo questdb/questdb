@@ -29,26 +29,22 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.*;
 import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.storage.FixedColumn;
 import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
+import com.nfsdb.storage.SymbolTable;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class KvIndexIntLambdaHeadRowSource extends AbstractRowSource {
-
-    public static final LatestByLambdaRowSourceFactory FACTORY = new Factory();
+public abstract class KvIndexSymLambdaHeadRowSource extends AbstractRowSource {
     private final String column;
     private final VirtualColumn filter;
     private final RecordSource<? extends Record> recordSource;
     private final int recordSourceColumn;
-    private final LongList rows = new LongList();
     private final IntHashSet keys = new IntHashSet();
+    private final LongList rows = new LongList();
     private JournalRecord rec;
     private int cursor;
-    private int buckets;
-    private int columnIndex;
 
-    private KvIndexIntLambdaHeadRowSource(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
+    protected KvIndexSymLambdaHeadRowSource(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
         this.column = column;
         this.recordSource = recordSource;
         this.recordSourceColumn = recordSourceColumn;
@@ -58,8 +54,6 @@ public class KvIndexIntLambdaHeadRowSource extends AbstractRowSource {
     @Override
     public void configure(JournalMetadata metadata) {
         this.rec = new JournalRecord(metadata);
-        this.columnIndex = metadata.getColumnIndex(column);
-        this.buckets = metadata.getColumnQuick(columnIndex).distinctCountHint;
     }
 
     @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
@@ -67,18 +61,16 @@ public class KvIndexIntLambdaHeadRowSource extends AbstractRowSource {
     public RowCursor prepareCursor(PartitionSlice slice) {
         try {
             Partition partition = rec.partition = slice.partition.open();
-            KVIndex index = partition.getIndexForColumn(columnIndex);
-            FixedColumn col = partition.fixCol(columnIndex);
-
+            KVIndex index = partition.getIndexForColumn(column);
             long lo = slice.lo - 1;
             long hi = slice.calcHi ? partition.size() : slice.hi + 1;
             rows.clear();
 
             for (int i = 0, n = keys.size(); i < n; i++) {
-                IndexCursor c = index.cursor(keys.get(i) & buckets);
+                IndexCursor c = index.cursor(keys.get(i));
                 while (c.hasNext()) {
                     long r = rec.rowid = c.next();
-                    if (r > lo && r < hi && col.getInt(r) == keys.get(i) && (filter == null || filter.getBool(rec))) {
+                    if (r > lo && r < hi && (filter == null || filter.getBool(rec))) {
                         rows.add(r);
                         break;
                     }
@@ -108,25 +100,24 @@ public class KvIndexIntLambdaHeadRowSource extends AbstractRowSource {
 
     @Override
     public void prepare(StorageFacade fa) {
+
         if (filter != null) {
             filter.prepare(fa);
         }
 
+        SymbolTable tab = fa.getSymbolTable(column);
         keys.clear();
         try {
             for (Record r : recordSource.prepareCursor(fa.getFactory())) {
-                keys.add(r.getInt(recordSourceColumn));
+                int k = tab.getQuick(getKey(r, recordSourceColumn));
+                if (k > -1) {
+                    keys.add(k);
+                }
             }
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
-
     }
 
-    public static class Factory implements LatestByLambdaRowSourceFactory {
-        @Override
-        public RowSource newInstance(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
-            return new KvIndexIntLambdaHeadRowSource(column, recordSource, recordSourceColumn, filter);
-        }
-    }
+    protected abstract CharSequence getKey(Record r, int col);
 }
