@@ -45,4 +45,4 @@ __clients__
 __core__
 
 - ORM for query results
-- cache for compiled queries
+- ~~cache for compiled queries~~
