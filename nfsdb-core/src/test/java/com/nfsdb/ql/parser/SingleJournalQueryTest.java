@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.parser;
 
@@ -35,6 +35,7 @@ import com.nfsdb.model.Quote;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Dates;
+import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
@@ -83,7 +84,6 @@ public class SingleJournalQueryTest extends AbstractTest {
                 "KIWIHBROKZKUTIQ\t10.220758058131\t0.220758058131\n";
 
         assertThat(expected, "select id, x + 10, x from tab where x >= 0 and x <= 1 and id ~ 'HBRO'");
-
     }
 
     @Test
@@ -292,6 +292,58 @@ public class SingleJournalQueryTest extends AbstractTest {
                 "BROMNXKUIZULIGY\t43.634443283081\t-23\t56.634443283081\n";
 
         assertThat(expected2, "select id, (z + 10) + x, z, x from tab where id ~ 'ULIGY'");
+    }
+
+    @Test
+    public void testAtoI() throws Exception {
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").$str("intC").$()
+        );
+
+        StringSink sink = new StringSink();
+        Rnd rnd = new Rnd();
+        for (int i = 0; i < 30; i++) {
+            sink.clear();
+            Numbers.append(sink, rnd.nextInt());
+            CharSequence cs = rnd.nextChars(4);
+            JournalEntryWriter ew = w.entryWriter();
+            ew.putStr(0, rnd.nextBoolean() ? cs : sink);
+            ew.append();
+        }
+        w.commit();
+
+
+        final String expected = "-1148479920\t-1148479920\n" +
+                "1326447242\t1326447242\n" +
+                "-1436881714\t-1436881714\n" +
+                "-409854405\t-409854405\n" +
+                "1125579207\t1125579207\n" +
+                "-1844391305\t-1844391305\n" +
+                "-1125169127\t-1125169127\n" +
+                "-2119387831\t-2119387831\n" +
+                "-422941535\t-422941535\n" +
+                "-2132716300\t-2132716300\n" +
+                "-483853667\t-483853667\n" +
+                "NaN\tQQUL\n" +
+                "-1418341054\t-1418341054\n" +
+                "936627841\t936627841\n" +
+                "NaN\tFBVT\n" +
+                "-1515787781\t-1515787781\n" +
+                "-1538602195\t-1538602195\n" +
+                "-10505757\t-10505757\n" +
+                "NaN\tICWE\n" +
+                "1876812930\t1876812930\n" +
+                "NaN\tOTSE\n" +
+                "-916132123\t-916132123\n" +
+                "NaN\tLYXW\n" +
+                "NaN\tYLSU\n" +
+                "-1768335227\t-1768335227\n" +
+                "-876466531\t-876466531\n" +
+                "NaN\tQBZX\n" +
+                "NaN\tVIKJ\n" +
+                "-2088317486\t-2088317486\n" +
+                "614536941\t614536941\n";
+        assertThat(expected, "select atoi(intC), intC from tab");
     }
 
     @Test
@@ -803,6 +855,17 @@ public class SingleJournalQueryTest extends AbstractTest {
         TestUtils.generateQuoteData(w, 3600 * 24 * 10, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
         w.commit();
         assertThat("", "select sym, bid, ask, timestamp from q where timestamp = '2015-02-12T10:00:00' and timestamp = '2015-02-12T12:00:00'");
+    }
+
+    @Test
+    public void testInvalidInterval() throws Exception {
+        createTabWithNaNs2();
+        try {
+            assertThat("", "select id, z from (tab where not(id in 'GMPLUCFTLNKYTSZ') and timestamp = '2015-12T10:00:00;5m;30m;10') where timestamp = '2015-03-12T10:00:00' and timestamp = '2015-03-12T14:00:00'");
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(74, e.getPosition());
+        }
     }
 
     @Test
@@ -2789,17 +2852,6 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testSubQueryFalseModel() throws Exception {
         createTabWithNaNs2();
         assertThat("", "select id, z from (tab where not(id in 'GMPLUCFTLNKYTSZ') and timestamp = '2015-03-12T10:00:00;5m;30m;10') where timestamp = '2015-03-12T10:00:00' and timestamp = '2015-03-12T14:00:00'");
-    }
-
-    @Test
-    public void testInvalidInterval() throws Exception {
-        createTabWithNaNs2();
-        try {
-            assertThat("", "select id, z from (tab where not(id in 'GMPLUCFTLNKYTSZ') and timestamp = '2015-12T10:00:00;5m;30m;10') where timestamp = '2015-03-12T10:00:00' and timestamp = '2015-03-12T14:00:00'");
-            Assert.fail("Exception expected");
-        } catch (ParserException e) {
-            Assert.assertEquals(74, e.getPosition());
-        }
     }
 
     @Test

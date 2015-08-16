@@ -203,6 +203,7 @@ public final class FunctionFactories {
         unSig("not", ColumnType.BOOLEAN, NotOperator.FACTORY);
         unSig("_stoa", ColumnType.SYMBOL, StoAFunction.FACTORY);
         unSig("_atos", ColumnType.STRING, AtoSFunction.FACTORY);
+        unSig("atoi", ColumnType.STRING, AtoIFunction.FACTORY);
 
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, false), StrEqualsOperator.FACTORY);
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, true), SymEqualsOperator.FACTORY);
