@@ -362,6 +362,19 @@ final class QueryParser {
             } while (tok != null && Chars.equals(tok, ","));
         }
 
+        // expect [limit]
+        if (tok != null && Chars.equals(tok, "limit")) {
+            ExprNode lo = expr();
+            ExprNode hi = null;
+
+            tok = optionTok();
+            if (tok != null && Chars.equals(",", tok)) {
+                hi = expr();
+                tok = optionTok();
+            }
+            model.setLimit(lo, hi);
+        }
+
         if (subQuery) {
             toks.unparse();
         } else if (tok != null) {

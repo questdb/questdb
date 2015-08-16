@@ -389,6 +389,48 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
+    public void testSingleJournalLimit() throws Exception {
+        Statement statement = parser.parse("select x x, y y from tab where x > z limit 100");
+        Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
+        // journal name
+        Assert.assertEquals("tab", statement.getQueryModel().getJournalName().token);
+        // columns
+        Assert.assertEquals(2, statement.getQueryModel().getColumns().size());
+        Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getName());
+        Assert.assertEquals("y", statement.getQueryModel().getColumns().get(1).getName());
+        // where
+        Assert.assertEquals("xz>", TestUtils.toRpn(statement.getQueryModel().getWhereClause()));
+        // limit
+        Assert.assertEquals("100", TestUtils.toRpn(statement.getQueryModel().getLimitLo()));
+    }
+
+    @Test
+    public void testSingleJournalLimitLoHi() throws Exception {
+        Statement statement = parser.parse("select x x, y y from tab where x > z limit 100,200");
+        Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
+        // journal name
+        Assert.assertEquals("tab", statement.getQueryModel().getJournalName().token);
+        // columns
+        Assert.assertEquals(2, statement.getQueryModel().getColumns().size());
+        Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getName());
+        Assert.assertEquals("y", statement.getQueryModel().getColumns().get(1).getName());
+        // where
+        Assert.assertEquals("xz>", TestUtils.toRpn(statement.getQueryModel().getWhereClause()));
+        // limit
+        Assert.assertEquals("100", TestUtils.toRpn(statement.getQueryModel().getLimitLo()));
+        Assert.assertEquals("200", TestUtils.toRpn(statement.getQueryModel().getLimitHi()));
+    }
+
+    @Test
+    public void testSingleJournalLimitLoHiExtraToken() throws Exception {
+        try {
+            parser.parse("select x x, y y from tab where x > z limit 100,200 b");
+        } catch (ParserException e) {
+            Assert.assertEquals(51, e.getPosition());
+        }
+    }
+
+    @Test
     public void testSubQuery() throws Exception {
         Statement statement = parser.parse("select x, y from (select x from tab t2 latest by x where x > 100) t1 " +
                 "where y > 0");
@@ -401,6 +443,26 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertEquals("t2", statement.getQueryModel().getNestedModel().getAlias().token);
         Assert.assertEquals("x100>", TestUtils.toRpn(statement.getQueryModel().getNestedModel().getWhereClause()));
         Assert.assertEquals("x", TestUtils.toRpn(statement.getQueryModel().getNestedModel().getLatestBy()));
+    }
+
+    @Test
+    public void testSubqueryLimitLoHi() throws Exception {
+        Statement statement = parser.parse("(select x x, y y from tab where x > z limit 100,200) where x = y limit 150");
+        Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
+        // journal name
+        Assert.assertEquals("tab", statement.getQueryModel().getNestedModel().getJournalName().token);
+        // columns
+        Assert.assertEquals(2, statement.getQueryModel().getNestedModel().getColumns().size());
+        Assert.assertEquals("x", statement.getQueryModel().getNestedModel().getColumns().get(0).getName());
+        Assert.assertEquals("y", statement.getQueryModel().getNestedModel().getColumns().get(1).getName());
+        // where
+        Assert.assertEquals("xz>", TestUtils.toRpn(statement.getQueryModel().getNestedModel().getWhereClause()));
+        // limit
+        Assert.assertEquals("100", TestUtils.toRpn(statement.getQueryModel().getNestedModel().getLimitLo()));
+        Assert.assertEquals("200", TestUtils.toRpn(statement.getQueryModel().getNestedModel().getLimitHi()));
+
+        Assert.assertEquals("150", TestUtils.toRpn(statement.getQueryModel().getLimitLo()));
+        Assert.assertNull(statement.getQueryModel().getLimitHi());
     }
 
     @Test

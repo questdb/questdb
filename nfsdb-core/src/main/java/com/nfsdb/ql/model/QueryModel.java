@@ -55,6 +55,8 @@ public class QueryModel implements Mutable {
     private ExprNode joinCriteria;
     private JoinType joinType;
     private IntList orderedJoinModels = orderedJoinModels2;
+    private ExprNode limitLo;
+    private ExprNode limitHi;
 
     private QueryModel() {
         joinModels.add(this);
@@ -186,6 +188,14 @@ public class QueryModel implements Mutable {
         this.latestBy = latestBy;
     }
 
+    public ExprNode getLimitHi() {
+        return limitHi;
+    }
+
+    public ExprNode getLimitLo() {
+        return limitLo;
+    }
+
     public RecordMetadata getMetadata() {
         return metadata;
     }
@@ -277,6 +287,11 @@ public class QueryModel implements Mutable {
 
     public void removeDependency(int index) {
         dependencies.remove(index);
+    }
+
+    public void setLimit(ExprNode lo, ExprNode hi) {
+        this.limitLo = lo;
+        this.limitHi = hi;
     }
 
     @Override
