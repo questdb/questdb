@@ -741,7 +741,6 @@ public final class Numbers {
 
     private static int parseInt0(CharSequence sequence, int p, int lim) throws NumericException {
 
-
         if (lim == p) {
             throw NumericException.INSTANCE;
         }

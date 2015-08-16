@@ -2792,6 +2792,17 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
+    public void testInvalidInterval() throws Exception {
+        createTabWithNaNs2();
+        try {
+            assertThat("", "select id, z from (tab where not(id in 'GMPLUCFTLNKYTSZ') and timestamp = '2015-12T10:00:00;5m;30m;10') where timestamp = '2015-03-12T10:00:00' and timestamp = '2015-03-12T14:00:00'");
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(74, e.getPosition());
+        }
+    }
+
+    @Test
     public void testSymRegex() throws Exception {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").
