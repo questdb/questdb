@@ -21,17 +21,25 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 
 public class AddDoubleOperator extends AbstractBinaryOperator {
 
-    public AddDoubleOperator() {
+    public static final AddDoubleOperator FACTORY = new AddDoubleOperator();
+
+    private AddDoubleOperator() {
         super(ColumnType.DOUBLE);
     }
 
     @Override
     public double getDouble(Record rec) {
         return lhs.getDouble(rec) + rhs.getDouble(rec);
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new AddDoubleOperator();
     }
 }

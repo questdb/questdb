@@ -21,16 +21,18 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.SplitCharSequence;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 
 public class StrConcatOperator extends AbstractBinaryOperator {
+    public final static StrConcatOperator FACTORY = new StrConcatOperator();
 
     private final SplitCharSequence cs = new SplitCharSequence();
 
-    public StrConcatOperator() {
+    private StrConcatOperator() {
         super(ColumnType.STRING);
     }
 
@@ -50,5 +52,10 @@ public class StrConcatOperator extends AbstractBinaryOperator {
     public void getStr(Record rec, CharSink sink) {
         lhs.getStr(rec, sink);
         rhs.getStr(rec, sink);
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new StrConcatOperator();
     }
 }

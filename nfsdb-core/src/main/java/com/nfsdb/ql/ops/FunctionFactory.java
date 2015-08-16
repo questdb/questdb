@@ -19,18 +19,10 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ql.ops.fact;
+package com.nfsdb.ql.ops;
 
 import com.nfsdb.collections.ObjList;
-import com.nfsdb.ql.ops.Function;
-import com.nfsdb.ql.ops.IntEqualsOperator;
-import com.nfsdb.ql.ops.VirtualColumn;
 
-public class IntEqualsOperatorFactory implements FunctionFactory {
-    public static final IntEqualsOperatorFactory INSTANCE = new IntEqualsOperatorFactory();
-
-    @Override
-    public Function newInstance(ObjList<VirtualColumn> args) {
-        return new IntEqualsOperator();
-    }
+public interface FunctionFactory {
+    Function newInstance(ObjList<VirtualColumn> args);
 }

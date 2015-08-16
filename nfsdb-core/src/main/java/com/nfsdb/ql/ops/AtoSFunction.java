@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,17 +17,20 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
 
 public class AtoSFunction extends AbstractUnaryOperator {
 
-    public AtoSFunction() {
+    public static final AtoSFunction FACTORY = new AtoSFunction();
+
+    private AtoSFunction() {
         super(ColumnType.SYMBOL);
     }
 
@@ -39,5 +42,10 @@ public class AtoSFunction extends AbstractUnaryOperator {
     @Override
     public SymbolTable getSymbolTable() {
         return null;
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new AtoSFunction();
     }
 }

@@ -21,18 +21,30 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Chars;
 
 public class StrEqualsOperator extends AbstractBinaryOperator {
 
-    public StrEqualsOperator() {
+    public final static StrEqualsOperator FACTORY = new StrEqualsOperator();
+
+    private StrEqualsOperator() {
         super(ColumnType.BOOLEAN);
     }
 
     @Override
     public boolean getBool(Record rec) {
         return Chars.equals(lhs.getFlyweightStr(rec), rhs.getFlyweightStr(rec));
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        VirtualColumn vc = args.getQuick(1);
+        if (vc.isConstant() && vc.getFlyweightStr(null) == null) {
+            return new StrEqualsNullOperator();
+        }
+        return new StrEqualsOperator();
     }
 }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,17 +17,20 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 
 public class StoAFunction extends AbstractUnaryOperator {
 
-    public StoAFunction() {
+    public final static StoAFunction FACTORY = new StoAFunction();
+
+    private StoAFunction() {
         super(ColumnType.STRING);
     }
 
@@ -44,5 +47,10 @@ public class StoAFunction extends AbstractUnaryOperator {
     @Override
     public void getStr(Record rec, CharSink sink) {
         sink.put(value.getSym(rec));
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new StoAFunction();
     }
 }

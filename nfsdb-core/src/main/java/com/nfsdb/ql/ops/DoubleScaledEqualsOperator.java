@@ -21,6 +21,7 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
@@ -28,11 +29,12 @@ import com.nfsdb.storage.ColumnType;
 
 public class DoubleScaledEqualsOperator extends AbstractVirtualColumn implements Function {
 
+    public final static DoubleScaledEqualsOperator FACTORY = new DoubleScaledEqualsOperator();
     private VirtualColumn lhs;
     private VirtualColumn rhs;
     private VirtualColumn scale;
 
-    public DoubleScaledEqualsOperator() {
+    private DoubleScaledEqualsOperator() {
         super(ColumnType.BOOLEAN);
     }
 
@@ -52,6 +54,11 @@ public class DoubleScaledEqualsOperator extends AbstractVirtualColumn implements
         lhs.prepare(facade);
         rhs.prepare(facade);
         scale.prepare(facade);
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new DoubleScaledEqualsOperator();
     }
 
     @Override

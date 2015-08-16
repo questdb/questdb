@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.parser;
 
@@ -33,9 +33,6 @@ import com.nfsdb.ql.*;
 import com.nfsdb.ql.impl.*;
 import com.nfsdb.ql.model.*;
 import com.nfsdb.ql.ops.*;
-import com.nfsdb.ql.ops.fact.FunctionFactories;
-import com.nfsdb.ql.ops.fact.FunctionFactory;
-import com.nfsdb.ql.ops.fact.Signature;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Interval;

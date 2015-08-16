@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql;
 
@@ -61,14 +61,14 @@ public class VirtualColumnTest extends AbstractTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
+        final AddDoubleOperator plus = (AddDoubleOperator) AddDoubleOperator.FACTORY.newInstance(null);
+        plus.setName("plus");
+        plus.setLhs(new DoubleRecordSourceColumn(w.getMetadata().getColumnIndex("bid")));
+        plus.setRhs(new DoubleConstant(12.5));
 
         // select ccy, bid, bid+12.5 plus from xyz
         VirtualColumnRecordSource src = new VirtualColumnRecordSource(compiler.compileSource("xyz"), new ObjList<VirtualColumn>() {{
-            add(new AddDoubleOperator() {{
-                setName("plus");
-                setLhs(new DoubleRecordSourceColumn(w.getMetadata().getColumnIndex("bid")));
-                setRhs(new DoubleConstant(12.5));
-            }});
+            add(plus);
         }});
 
         p.printCursor(src.prepareCursor(factory));
@@ -197,17 +197,17 @@ public class VirtualColumnTest extends AbstractTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
+        final AddDoubleOperator plus = (AddDoubleOperator) AddDoubleOperator.FACTORY.newInstance(null);
+        plus.setName("plus");
+        plus.setLhs(new DoubleRecordSourceColumn(w.getMetadata().getColumnIndex("bid")));
+        plus.setRhs(new DoubleConstant(12.5));
 
         // select ccy, bid+12.5 plus from xyz
         RecordSource<? extends Record> src = new SelectedColumnsRecordSource(
                 new VirtualColumnRecordSource(
                         compiler.compileSource("xyz"),
                         new ObjList<VirtualColumn>() {{
-                            add(new AddDoubleOperator() {{
-                                setName("plus");
-                                setLhs(new DoubleRecordSourceColumn(w.getMetadata().getColumnIndex("bid")));
-                                setRhs(new DoubleConstant(12.5));
-                            }});
+                            add(plus);
                         }}
                 ),
                 new ObjList<CharSequence>() {{

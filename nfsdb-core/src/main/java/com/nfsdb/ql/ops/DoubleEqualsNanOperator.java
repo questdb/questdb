@@ -21,10 +21,13 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 
 public class DoubleEqualsNanOperator extends AbstractBinaryOperator {
+
+    public final static DoubleEqualsNanOperator FACTORY = new DoubleEqualsNanOperator();
 
     public DoubleEqualsNanOperator() {
         super(ColumnType.BOOLEAN);
@@ -34,5 +37,10 @@ public class DoubleEqualsNanOperator extends AbstractBinaryOperator {
     public boolean getBool(Record rec) {
         double l = lhs.getDouble(rec);
         return l != l;
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new DoubleEqualsNanOperator();
     }
 }

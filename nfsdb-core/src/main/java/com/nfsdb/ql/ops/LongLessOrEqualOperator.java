@@ -21,12 +21,14 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 
 public class LongLessOrEqualOperator extends AbstractBinaryOperator {
+    public static final LongLessOrEqualOperator FACTORY = new LongLessOrEqualOperator();
 
-    public LongLessOrEqualOperator() {
+    private LongLessOrEqualOperator() {
         super(ColumnType.BOOLEAN);
     }
 
@@ -34,5 +36,10 @@ public class LongLessOrEqualOperator extends AbstractBinaryOperator {
     public boolean getBool(Record rec) {
         long l = lhs.getLong(rec);
         return l <= rhs.getLong(rec) && l > Long.MIN_VALUE;
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new LongLessOrEqualOperator();
     }
 }

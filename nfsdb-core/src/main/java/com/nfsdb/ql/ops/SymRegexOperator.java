@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,11 +17,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.ops;
 
 import com.nfsdb.collections.IntHashSet;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.storage.ColumnType;
@@ -32,16 +33,23 @@ import java.util.regex.Pattern;
 
 public class SymRegexOperator extends AbstractBinaryOperator {
 
+    public final static SymRegexOperator FACTORY = new SymRegexOperator();
+
     private final IntHashSet set = new IntHashSet();
     private Matcher matcher;
 
-    public SymRegexOperator() {
+    private SymRegexOperator() {
         super(ColumnType.BOOLEAN);
     }
 
     @Override
     public boolean getBool(Record rec) {
         return set.contains(lhs.getInt(rec));
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new SymRegexOperator();
     }
 
     @Override

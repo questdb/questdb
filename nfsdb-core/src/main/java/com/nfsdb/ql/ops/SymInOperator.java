@@ -23,6 +23,7 @@ package com.nfsdb.ql.ops;
 
 import com.nfsdb.collections.CharSequenceHashSet;
 import com.nfsdb.collections.IntHashSet;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
@@ -31,11 +32,13 @@ import com.nfsdb.storage.SymbolTable;
 
 public class SymInOperator extends AbstractVirtualColumn implements Function {
 
+    public final static SymInOperator FACTORY = new SymInOperator();
+
     private final IntHashSet set = new IntHashSet();
     private final CharSequenceHashSet values = new CharSequenceHashSet();
     private VirtualColumn lhs;
 
-    public SymInOperator() {
+    private SymInOperator() {
         super(ColumnType.BOOLEAN);
     }
 
@@ -59,6 +62,11 @@ public class SymInOperator extends AbstractVirtualColumn implements Function {
                 set.add(k);
             }
         }
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new SymInOperator();
     }
 
     @Override

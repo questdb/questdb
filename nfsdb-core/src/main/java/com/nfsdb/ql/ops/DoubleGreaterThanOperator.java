@@ -21,17 +21,25 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 
 public class DoubleGreaterThanOperator extends AbstractBinaryOperator {
 
-    public DoubleGreaterThanOperator() {
+    public final static DoubleGreaterThanOperator FACTORY = new DoubleGreaterThanOperator();
+
+    private DoubleGreaterThanOperator() {
         super(ColumnType.BOOLEAN);
     }
 
     @Override
     public boolean getBool(Record rec) {
         return lhs.getDouble(rec) > rhs.getDouble(rec);
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new DoubleGreaterThanOperator();
     }
 }

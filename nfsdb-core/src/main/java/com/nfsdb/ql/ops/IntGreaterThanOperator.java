@@ -21,12 +21,15 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 
 public class IntGreaterThanOperator extends AbstractBinaryOperator {
 
-    public IntGreaterThanOperator() {
+    public final static IntGreaterThanOperator FACTORY = new IntGreaterThanOperator();
+
+    private IntGreaterThanOperator() {
         super(ColumnType.BOOLEAN);
     }
 
@@ -34,5 +37,10 @@ public class IntGreaterThanOperator extends AbstractBinaryOperator {
     public boolean getBool(Record rec) {
         int r = rhs.getInt(rec);
         return lhs.getInt(rec) > r && r > Integer.MIN_VALUE;
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new IntGreaterThanOperator();
     }
 }

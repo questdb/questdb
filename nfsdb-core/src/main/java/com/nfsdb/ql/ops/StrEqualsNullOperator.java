@@ -21,17 +21,25 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 
 public class StrEqualsNullOperator extends AbstractBinaryOperator {
 
-    public StrEqualsNullOperator() {
+    public final static StrEqualsNullOperator FACTORY = new StrEqualsNullOperator();
+
+    StrEqualsNullOperator() {
         super(ColumnType.BOOLEAN);
     }
 
     @Override
     public boolean getBool(Record rec) {
         return lhs.getFlyweightStr(rec) == null;
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new StrEqualsNullOperator();
     }
 }

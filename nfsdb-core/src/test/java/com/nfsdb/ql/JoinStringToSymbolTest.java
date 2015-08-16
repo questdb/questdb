@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,11 +17,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql;
 
 import com.nfsdb.JournalWriter;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
@@ -194,9 +195,13 @@ public class JoinStringToSymbolTest {
 
         StrGlue glue = new StrGlue(master, new StrRecordSourceColumn(master.getMetadata().getColumnIndex("band")));
 
-        StrEqualsOperator filter = new StrEqualsOperator();
-        filter.setLhs(new SymRecordSourceColumn(bw.getMetadata().getColumnIndex("type")));
-        filter.setRhs(new StrConstant("rock"));
+        ObjList<VirtualColumn> cols = new ObjList<>();
+        cols.add(new SymRecordSourceColumn(bw.getMetadata().getColumnIndex("type")));
+        cols.add(new StrConstant("rock"));
+
+        StrEqualsOperator filter = (StrEqualsOperator) StrEqualsOperator.FACTORY.newInstance(cols);
+        filter.setLhs(cols.get(0));
+        filter.setRhs(cols.get(1));
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);

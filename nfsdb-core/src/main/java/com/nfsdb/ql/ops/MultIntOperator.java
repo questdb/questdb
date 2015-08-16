@@ -21,12 +21,15 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 
 public class MultIntOperator extends AbstractBinaryOperator {
 
-    public MultIntOperator() {
+    public final static MultIntOperator FACTORY = new MultIntOperator();
+
+    private MultIntOperator() {
         super(ColumnType.INT);
     }
 
@@ -56,5 +59,10 @@ public class MultIntOperator extends AbstractBinaryOperator {
         int l = lhs.getInt(rec);
         int r = rhs.getInt(rec);
         return l > Integer.MIN_VALUE && r > Integer.MIN_VALUE ? l * r : Long.MIN_VALUE;
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new MultIntOperator();
     }
 }

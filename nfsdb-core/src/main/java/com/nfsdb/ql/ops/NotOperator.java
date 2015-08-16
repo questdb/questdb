@@ -21,17 +21,25 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 
 public class NotOperator extends AbstractUnaryOperator {
 
-    public NotOperator() {
+    public final static NotOperator FACTORY = new NotOperator();
+
+    private NotOperator() {
         super(ColumnType.BOOLEAN);
     }
 
     @Override
     public boolean getBool(Record rec) {
         return !value.getBool(rec);
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new NotOperator();
     }
 }

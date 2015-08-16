@@ -21,12 +21,15 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 
 public class AddLongOperator extends AbstractBinaryOperator {
 
-    public AddLongOperator() {
+    public static final AddLongOperator FACTORY = new AddLongOperator();
+
+    private AddLongOperator() {
         super(ColumnType.LONG);
     }
 
@@ -42,5 +45,10 @@ public class AddLongOperator extends AbstractBinaryOperator {
         long l = lhs.getLong(rec);
         long r = rhs.getLong(rec);
         return l == Long.MIN_VALUE || r == Long.MIN_VALUE ? Long.MIN_VALUE : l + r;
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new AddLongOperator();
     }
 }

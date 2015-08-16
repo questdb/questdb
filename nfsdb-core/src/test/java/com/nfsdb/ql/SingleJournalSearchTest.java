@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql;
 
@@ -115,7 +115,7 @@ public class SingleJournalSearchTest {
                 "2013-03-14T22:20:00.000Z\tADM.L\t0.222782760571\t0.713311797139\t273855268\t1241896809\tFast trading\tSK\n" +
                 "2013-03-14T23:43:20.000Z\tABF.L\t0.353620839777\t0.303265005916\t1628633600\t812948041\tFast trading\tSK\n";
 
-        IntEqualsOperator filter = new IntEqualsOperator();
+        IntEqualsOperator filter = (IntEqualsOperator) IntEqualsOperator.FACTORY.newInstance(null);
         filter.setLhs(new SymRecordSourceColumn(journal.getMetadata().getColumnIndex("ex")));
         filter.setRhs(new IntConstant(journal.getSymbolTable("ex").getQuick("SK")));
 

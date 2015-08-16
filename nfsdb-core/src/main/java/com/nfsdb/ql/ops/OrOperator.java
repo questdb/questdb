@@ -21,12 +21,15 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 
 public class OrOperator extends AbstractBinaryOperator {
 
-    public OrOperator() {
+    public final static OrOperator FACTORY = new OrOperator();
+
+    private OrOperator() {
         super(ColumnType.BOOLEAN);
     }
 
@@ -41,5 +44,10 @@ public class OrOperator extends AbstractBinaryOperator {
             lhs = new BooleanConstant(true);
         }
         return (lhs.isConstant() && lhs.getBool(null)) || (lhs.isConstant() && rhs.isConstant());
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new OrOperator();
     }
 }

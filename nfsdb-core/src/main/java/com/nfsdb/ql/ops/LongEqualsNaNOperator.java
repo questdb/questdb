@@ -21,18 +21,26 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Numbers;
 
 public class LongEqualsNaNOperator extends AbstractBinaryOperator {
 
-    public LongEqualsNaNOperator() {
+    public final static LongEqualsNaNOperator FACTORY = new LongEqualsNaNOperator();
+
+    private LongEqualsNaNOperator() {
         super(ColumnType.BOOLEAN);
     }
 
     @Override
     public boolean getBool(Record rec) {
         return lhs.getLong(rec) == Numbers.LONG_NaN;
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new LongEqualsNaNOperator();
     }
 }

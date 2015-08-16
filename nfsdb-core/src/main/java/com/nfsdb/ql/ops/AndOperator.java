@@ -21,12 +21,15 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 
 public class AndOperator extends AbstractBinaryOperator {
 
-    public AndOperator() {
+    public static final AndOperator FACTORY = new AndOperator();
+
+    private AndOperator() {
         super(ColumnType.BOOLEAN);
     }
 
@@ -42,5 +45,10 @@ public class AndOperator extends AbstractBinaryOperator {
             return true;
         }
         return (lhs.isConstant() && !lhs.getBool(null)) || (lhs.isConstant() && rhs.isConstant());
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new AndOperator();
     }
 }

@@ -21,12 +21,15 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.storage.ColumnType;
 
 public class IntNegativeOperator extends AbstractUnaryOperator {
 
-    public IntNegativeOperator() {
+    public final static IntNegativeOperator FACTORY = new IntNegativeOperator();
+
+    private IntNegativeOperator() {
         super(ColumnType.INT);
     }
 
@@ -46,6 +49,11 @@ public class IntNegativeOperator extends AbstractUnaryOperator {
     public long getLong(Record rec) {
         int v = value.getInt(rec);
         return v == Integer.MIN_VALUE ? Long.MIN_VALUE : -v;
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new IntNegativeOperator();
     }
 
 }

@@ -22,6 +22,7 @@
 package com.nfsdb.ql.ops;
 
 import com.nfsdb.collections.CharSequenceHashSet;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
@@ -29,10 +30,12 @@ import com.nfsdb.storage.ColumnType;
 
 public class StrInOperator extends AbstractVirtualColumn implements Function {
 
+    public final static StrInOperator FACTORY = new StrInOperator();
+
     private final CharSequenceHashSet set = new CharSequenceHashSet();
     private VirtualColumn lhs;
 
-    public StrInOperator() {
+    private StrInOperator() {
         super(ColumnType.BOOLEAN);
     }
 
@@ -49,6 +52,11 @@ public class StrInOperator extends AbstractVirtualColumn implements Function {
     @Override
     public void prepare(StorageFacade facade) {
         lhs.prepare(facade);
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new StrInOperator();
     }
 
     @Override

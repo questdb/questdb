@@ -21,6 +21,7 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
@@ -28,6 +29,7 @@ import com.nfsdb.storage.ColumnType;
 
 public class DoubleNegativeOperator extends AbstractVirtualColumn implements Function {
 
+    public static final DoubleNegativeOperator FACTORY = new DoubleNegativeOperator();
     private VirtualColumn value;
 
     public DoubleNegativeOperator() {
@@ -47,6 +49,11 @@ public class DoubleNegativeOperator extends AbstractVirtualColumn implements Fun
     @Override
     public void prepare(StorageFacade facade) {
 
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new DoubleNegativeOperator();
     }
 
     @Override
