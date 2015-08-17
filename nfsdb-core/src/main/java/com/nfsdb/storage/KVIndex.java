@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.storage;
 
@@ -94,7 +94,7 @@ public class KVIndex implements Closeable {
         // x & mask = x % rowBlockLen
         this.mask = rowBlockLen - 1;
         // x >>> bits = x / rowBlockLen
-        this.bits = 31 - Integer.numberOfLeadingZeros(rowBlockLen);
+        this.bits = Numbers.msb(rowBlockLen);
         this.firstEntryOffset = keyBlockSizeOffset + 16;
         this.rowBlockSize = rowBlockLen * 8 + 16;
         this.rData = new MemoryFile(new File(baseName.getParentFile(), baseName.getName() + ".r"), ByteBuffers.getBitHint(rowBlockSize, keyCount), mode);

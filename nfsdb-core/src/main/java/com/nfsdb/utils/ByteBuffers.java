@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.utils;
 
@@ -124,7 +124,8 @@ public final class ByteBuffers {
         int resultBits = 0;
         for (int i = 0; i < multipliers.length; i++) {
             int m = multipliers[i];
-            int bits = Math.min(30, 32 - Integer.numberOfLeadingZeros(recSize * recCount / m));
+            int bits = Math.min(30, Numbers.msb(recSize * recCount / m));
+//            int bits = Math.min(30, 32 - Integer.numberOfLeadingZeros(recSize * recCount / m));
             long actual = (1 << bits) * m;
 
             long deviation;

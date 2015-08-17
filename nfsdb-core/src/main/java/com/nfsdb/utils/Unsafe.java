@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.utils;
 
@@ -29,13 +29,13 @@ public final class Unsafe {
     public static final long CHAR_OFFSET;
     public static final long BYTE_OFFSET;
     public final static int CACHE_LINE_SIZE = 64;
+    public static final long INT_OFFSET;
+    public static final long INT_SCALE;
+    public static final long LONG_OFFSET;
+    public static final long LONG_SCALE;
     private static final sun.misc.Unsafe UNSAFE;
     private static final long OBJ_OFFSET;
     private static final long OBJ_SCALE;
-    private static final long INT_OFFSET;
-    private static final long INT_SCALE;
-    private static final long LONG_OFFSET;
-    private static final long LONG_SCALE;
     private static final long BOOL_OFFSET;
     private static final long BOOL_SCALE;
 

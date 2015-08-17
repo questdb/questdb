@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.collections;
 
@@ -42,7 +42,7 @@ class DirectPagedBuffer implements Closeable, Mutable {
 
     public DirectPagedBuffer(int pageCapacity) {
         this.pageCapacity = Numbers.ceilPow2(pageCapacity);
-        this.bits = 31 - Integer.numberOfLeadingZeros(this.pageCapacity);
+        this.bits = Numbers.msb(this.pageCapacity);
         this.mask = this.pageCapacity - 1;
         pages = new LongList();
         allocateAddress(0);
