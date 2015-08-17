@@ -549,6 +549,21 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testLimit() throws Exception {
+        assertThat("1406\tVQHYIIQL\tKJE\tnull\tDYQFLMPNGEJKKJCRCKNPUTHTVNYXM\tDFDISBFBRCCQDV\tXTGNJ\t2015-07-10T00:00:01.406Z\tNaN\tNaN\tNaN\t\t\tnull\n" +
+                        "1414\tDHMTF\tRTGV\tnull\tHMDJSBGPXQTKPGGWFSTJSKSZSBEPDVNMFEVEMQCOHDBK\tJKBVDSERXZ\tOEENNEBQQEMXD\t2015-07-10T00:00:01.414Z\tNaN\tNaN\tNaN\t\t\tnull\n" +
+                        "1422\tEKVFCZGGCKCHK\tEEGCRISJP\tnull\tILWBREVXDHHWPREIFCMLRXSWMFWEKIOTXUPRNGEPIJVNKTXHNKYITYG\tYYBJER\tCNSFFLTRY\t2015-07-10T00:00:01.422Z\tNaN\tNaN\tNaN\t\t\tnull\n" +
+                        "1523\tV\tODSBTX\tnull\tECUZSRJCTRJLH\tVBNHX\tZHEI\t2015-07-10T00:00:01.523Z\tNaN\tNaN\tNaN\t\t\tnull\n" +
+                        "1567\tBWPEIFNITZK\tBIJXCYTOHOQT\tnull\tYZMMSEZIPCOCZZUFYIVELTS\tFVPDDGSEK\tUN\t2015-07-10T00:00:01.567Z\tNaN\tNaN\tNaN\t\t\tnull\n",
+                "customers c" +
+                        " outer join orders o on c.customerId = o.customerId " +
+                        " where orderId = NaN" +
+                        " limit 10,15");
+
+
+    }
+
+    @Test
     public void testOuterData() throws Exception {
         final String expected = "162\tGMRIFLMITGDYEV\t\tnull\tSPEKZKSGOBNGGYCMQDTJB\tBL\tVFZF\t2015-07-10T00:00:00.162Z\tNaN\tNaN\tNaN\t\t\tnull\n" +
                 "209\tFBWP\tYENLEZTSMCKFERVG\tnull\tDZDUV\tCYYVYQ\tJSMK\t2015-07-10T00:00:00.209Z\tNaN\tNaN\tNaN\t\t\tnull\n" +

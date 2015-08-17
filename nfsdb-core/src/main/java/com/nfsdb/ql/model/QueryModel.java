@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.model;
 
@@ -27,6 +27,7 @@ import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.ql.RecordSource;
+import com.nfsdb.ql.ops.VirtualColumn;
 
 public class QueryModel implements Mutable {
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
@@ -57,6 +58,8 @@ public class QueryModel implements Mutable {
     private IntList orderedJoinModels = orderedJoinModels2;
     private ExprNode limitLo;
     private ExprNode limitHi;
+    private VirtualColumn limitLoVc;
+    private VirtualColumn limitHiVc;
 
     private QueryModel() {
         joinModels.add(this);
@@ -118,6 +121,10 @@ public class QueryModel implements Mutable {
         postJoinWhereClause = null;
         context = null;
         orderedJoinModels = orderedJoinModels2;
+        limitHi = null;
+        limitLo = null;
+        limitHiVc = null;
+        limitLoVc = null;
     }
 
     public ExprNode getAlias() {
@@ -192,8 +199,16 @@ public class QueryModel implements Mutable {
         return limitHi;
     }
 
+    public VirtualColumn getLimitHiVc() {
+        return limitHiVc;
+    }
+
     public ExprNode getLimitLo() {
         return limitLo;
+    }
+
+    public VirtualColumn getLimitLoVc() {
+        return limitLoVc;
     }
 
     public RecordMetadata getMetadata() {
@@ -292,6 +307,11 @@ public class QueryModel implements Mutable {
     public void setLimit(ExprNode lo, ExprNode hi) {
         this.limitLo = lo;
         this.limitHi = hi;
+    }
+
+    public void setLimitVc(VirtualColumn lo, VirtualColumn hi) {
+        this.limitLoVc = lo;
+        this.limitHiVc = hi;
     }
 
     @Override

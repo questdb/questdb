@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
@@ -47,6 +47,7 @@ public class QueryCompiler {
     private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
     private final static NullConstant nullConstant = new NullConstant();
     private final static ObjObjHashMap<Signature, LatestByLambdaRowSourceFactory> LAMBDA_ROW_SOURCE_FACTORIES = new ObjObjHashMap<>();
+    private final static LongConstant LONG_ZERO_CONST = new LongConstant(0L);
     private final QueryParser parser = new QueryParser();
     private final JournalReaderFactory factory;
     private final AssociativeCache<RecordSource<? extends Record>> cache = new AssociativeCache<>(8, 1024);
@@ -273,6 +274,16 @@ public class QueryCompiler {
         }
     }
 
+    private void analyseLimit(QueryModel model) throws ParserException {
+        ExprNode lo = model.getLimitLo();
+        ExprNode hi = model.getLimitHi();
+        if (hi == null) {
+            model.setLimitVc(LONG_ZERO_CONST, toVirtualColumn(lo));
+        } else {
+            model.setLimitVc(toVirtualColumn(lo), toVirtualColumn(hi));
+        }
+    }
+
     private RowSource buildRowSourceForInt(IntrinsicModel im) throws ParserException {
         int nSrc = im.keyValues.size();
         switch (nSrc) {
@@ -361,10 +372,12 @@ public class QueryCompiler {
     }
 
     private RecordSource<? extends Record> compile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-        return selectColumns(
-                model.getJoinModels().size() > 1 ?
-                        optimise(model, factory).compileJoins(model, factory) :
-                        optimise(model, factory).compileSingleOrSubQuery(model, factory), model.getColumns()
+        return limit(
+                selectColumns(
+                        model.getJoinModels().size() > 1 ?
+                                optimise(model, factory).compileJoins(model, factory) :
+                                optimise(model, factory).compileSingleOrSubQuery(model, factory), model.getColumns()
+                ), model
         );
     }
 
@@ -441,6 +454,12 @@ public class QueryCompiler {
     @SuppressWarnings("ConstantConditions")
     @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT", "CC_CYCLOMATIC_COMPLEXITY"})
     private RecordSource<? extends Record> compileSingleJournal(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+
+        // analyse limit first as it is easy win
+        if (model.getLimitLo() != null || model.getLimitHi() != null) {
+            analyseLimit(model);
+        }
+
         RecordMetadata metadata = model.getMetadata();
         JournalMetadata journalMetadata;
 
@@ -734,6 +753,14 @@ public class QueryCompiler {
             return !col.getBool(null);
         } else {
             throw new ParserException(0, "Internal error: expected constant");
+        }
+    }
+
+    private RecordSource<? extends Record> limit(RecordSource<? extends Record> rs, QueryModel model) {
+        if (model.getLimitLoVc() == null || model.getLimitHiVc() == null) {
+            return rs;
+        } else {
+            return new TopRecordSource(rs, model.getLimitLoVc(), model.getLimitHiVc());
         }
     }
 
@@ -1390,6 +1417,18 @@ public class QueryCompiler {
             }
         }
         return set;
+    }
+
+    private VirtualColumn toVirtualColumn(ExprNode node) throws ParserException {
+        if (node.type == ExprNode.NodeType.CONSTANT) {
+            try {
+                return new LongConstant(Numbers.parseLong(node.token));
+            } catch (NumericException e) {
+                throw new ParserException(node.position, "Long number expected");
+            }
+        } else {
+            throw new ParserException(node.position, "Constant expected");
+        }
     }
 
     private void tryAssignPostJoinFilters(QueryModel parent) throws ParserException {

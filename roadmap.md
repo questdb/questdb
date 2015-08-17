@@ -13,7 +13,7 @@ __lang__
 - time joins (merge)
 - as of joins
 - ordering
-- top x rows
+- ~~top x rows~~ (select ... limit low,high can be used for paging)
 - bottom x rows
 
 __server__

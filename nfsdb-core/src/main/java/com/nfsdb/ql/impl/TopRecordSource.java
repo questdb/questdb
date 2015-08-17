@@ -25,18 +25,23 @@ import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.ql.*;
+import com.nfsdb.ql.ops.VirtualColumn;
 
 public class TopRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record> {
 
     private final RecordSource<? extends Record> recordSource;
-    private final int count;
+    private final VirtualColumn lo;
+    private final VirtualColumn hi;
+    private long _top;
+    private long _count;
     private RecordCursor<? extends Record> recordCursor;
-    private int remaining;
 
-    public TopRecordSource(int count, RecordSource<? extends Record> recordSource) {
+    public TopRecordSource(RecordSource<? extends Record> recordSource, VirtualColumn lo, VirtualColumn hi) {
         this.recordSource = recordSource;
-        this.count = count;
-        this.remaining = count;
+        this.lo = lo;
+        this.hi = hi;
+        this._top = lo.getLong(null);
+        this._count = hi.getLong(null) - this._top;
     }
 
     @Override
@@ -63,7 +68,8 @@ public class TopRecordSource extends AbstractImmutableIterator<Record> implement
     @Override
     public void reset() {
         recordSource.reset();
-        this.remaining = count;
+        this._top = lo.getLong(null);
+        this._count = hi.getLong(null) - this._top;
     }
 
     @Override
@@ -73,12 +79,28 @@ public class TopRecordSource extends AbstractImmutableIterator<Record> implement
 
     @Override
     public boolean hasNext() {
-        return remaining > 0 && recordCursor.hasNext();
+        if (_top > 0) {
+            return scrollToStart();
+        } else {
+            return _count > 0 && recordCursor.hasNext();
+        }
     }
 
     @Override
     public Record next() {
-        remaining--;
+        _count--;
         return recordCursor.next();
+    }
+
+    private boolean scrollToStart() {
+        if (_count > 0) {
+            long top = this._top;
+            while (top > 0 && recordCursor.hasNext()) {
+                recordCursor.next();
+                top--;
+            }
+            return (_top = top) == 0 && recordCursor.hasNext();
+        }
+        return false;
     }
 }
