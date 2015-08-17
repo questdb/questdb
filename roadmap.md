@@ -7,13 +7,13 @@ __lang__
 - multi-row aggregation
 - multi-row resampling
 - ~~classic sql joins (hash, nested loops)~~
-- ~~latest record by secondary entity attribute attribute~~
+- ~~latest record by secondary entity attribute attribute
     (e.g. select latest order for all customers in group X, where
-    orders is a time series and customers is dimension and "group" is a field of customer)
+    orders is a time series and customers is dimension and "group" is a field of customer)~~
 - time joins (merge)
 - as of joins
 - ordering
-- ~~top x rows~~ (select ... limit low,high can be used for paging)
+- ~~top x rows (select ... limit low,high can be used for paging)~~
 - bottom x rows
 
 __server__
