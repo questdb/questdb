@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,13 +17,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ha.config;
 
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.utils.Numbers;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
 
 public class ServerNode {
@@ -32,6 +33,7 @@ public class ServerNode {
     private final String hostname;
     private final int port;
 
+    @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
     public ServerNode(int id, @NotNull String address) {
         this.id = id;
         this.address = address;

@@ -28,6 +28,7 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.ops.VirtualColumn;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class QueryModel implements Mutable {
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
@@ -314,9 +315,10 @@ public class QueryModel implements Mutable {
         this.limitHiVc = hi;
     }
 
+    @SuppressFBWarnings("ISB_TOSTRING_APPENDING")
     @Override
     public String toString() {
-        return alias != null ? alias.token : (journalName != null ? journalName.token : "{" + nestedModel.toString() + "}");
+        return alias != null ? alias.token : (journalName != null ? journalName.token : '{' + nestedModel.toString() + '}');
     }
 
     private void plan(StringSink sink, int pad) {

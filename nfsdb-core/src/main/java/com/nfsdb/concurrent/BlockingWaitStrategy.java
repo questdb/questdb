@@ -21,6 +21,8 @@
 
 package com.nfsdb.concurrent;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -29,13 +31,12 @@ public class BlockingWaitStrategy implements WaitStrategy {
     private final Lock lock = new ReentrantLock();
     private final Condition condition = lock.newCondition();
 
+    @SuppressFBWarnings("WA_AWAIT_NOT_IN_LOOP")
     @Override
     public void await(int code) {
         lock.lock();
         try {
-            condition.await();
-        } catch (InterruptedException e) {
-            e.printStackTrace();
+            condition.awaitUninterruptibly();
         } finally {
             lock.unlock();
         }
@@ -45,7 +46,7 @@ public class BlockingWaitStrategy implements WaitStrategy {
     public void signal() {
         lock.lock();
         try {
-            condition.signal();
+            condition.signalAll();
         } finally {
             lock.unlock();
         }

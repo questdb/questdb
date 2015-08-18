@@ -106,6 +106,7 @@ public class KvIndexIntLambdaHeadRowSource extends AbstractRowSource {
         return rec.rowid = rows.getQuick(cursor++);
     }
 
+    @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_NO_CHECKED")
     @Override
     public void prepare(StorageFacade fa) {
         if (filter != null) {

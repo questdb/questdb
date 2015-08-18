@@ -94,6 +94,7 @@ public abstract class KvIndexStrLambdaHeadRowSource extends AbstractRowSource {
         }
     }
 
+    @SuppressFBWarnings("ACEM_ABSTRACT_CLASS_EMPTY_METHODS")
     @Override
     public void reset() {
     }
@@ -108,6 +109,7 @@ public abstract class KvIndexStrLambdaHeadRowSource extends AbstractRowSource {
         return rec.rowid = rows.getQuick(cursor++);
     }
 
+    @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_NO_CHECKED")
     @Override
     public void prepare(StorageFacade fa) {
         if (filter != null) {
