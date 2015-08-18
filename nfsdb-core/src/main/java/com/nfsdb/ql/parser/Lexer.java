@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
@@ -32,7 +32,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 
-public class Lexer extends AbstractImmutableIterator<CharSequence> {
+class Lexer extends AbstractImmutableIterator<CharSequence> {
     private final IntObjHashMap<List<CharSequence>> symbols = new IntObjHashMap<>();
     private final CharSequence floatingSequence = new FloatingSequence();
     private final LenComparator comparator = new LenComparator();
@@ -54,33 +54,6 @@ public class Lexer extends AbstractImmutableIterator<CharSequence> {
         }
         l.add(token);
         Collections.sort(l, comparator);
-    }
-
-    @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
-    public CharSequence getSymbol(char c) {
-
-        List<CharSequence> l = symbols.get(c);
-        if (l == null) {
-            return null;
-        }
-
-        for (int i = 0, sz = l.size(); i < sz; i++) {
-            CharSequence txt = l.get(i);
-            boolean match = (txt.length() - 2) < (_len - _pos);
-            if (match) {
-                for (int k = 1; k < txt.length(); k++) {
-                    if (content.charAt(_pos + (k - 1)) != txt.charAt(k)) {
-                        match = false;
-                        break;
-                    }
-                }
-            }
-
-            if (match) {
-                return txt;
-            }
-        }
-        return null;
     }
 
     @Override
@@ -199,6 +172,33 @@ public class Lexer extends AbstractImmutableIterator<CharSequence> {
         unparsed = last;
     }
 
+    @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
+    private CharSequence getSymbol(char c) {
+
+        List<CharSequence> l = symbols.get(c);
+        if (l == null) {
+            return null;
+        }
+
+        for (int i = 0, sz = l.size(); i < sz; i++) {
+            CharSequence txt = l.get(i);
+            boolean match = (txt.length() - 2) < (_len - _pos);
+            if (match) {
+                for (int k = 1; k < txt.length(); k++) {
+                    if (content.charAt(_pos + (k - 1)) != txt.charAt(k)) {
+                        match = false;
+                        break;
+                    }
+                }
+            }
+
+            if (match) {
+                return txt;
+            }
+        }
+        return null;
+    }
+
     private CharSequence token(char c) {
         CharSequence t = getSymbol(c);
         if (t != null) {
@@ -222,7 +222,7 @@ public class Lexer extends AbstractImmutableIterator<CharSequence> {
         }
     }
 
-    public class FloatingSequence extends AbstractCharSequence {
+    private class FloatingSequence extends AbstractCharSequence {
         @Override
         public int length() {
             return _hi - _lo;

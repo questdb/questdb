@@ -276,10 +276,15 @@ public class GenericInteropTest extends AbstractTest {
         writer.commit();
 
         Journal<Data> reader = factory.reader(Data.class, "test");
-        String expected = "GBPUSD\t1970-01-01T00:00:30.000Z\t0.65\t0.66\t1000\t1100\t1\tOK\tsystem\tGBPUSD:GLOBAL\ttrue\tnull\t12345678\t425\n" +
-                "EURUSD\t1970-01-01T00:00:19.999Z\t1.24\t1.25\t10000\t12000\t2\tOK\tsystem\tEURUSD:GLOBAL\ttrue\tnull\t1234567\t11000\n" +
-                "HKDUSD\t1970-01-01T00:00:40.000Z\t2.88\t2.89\t1000\t1100\t3\tOK\tsystem\tHKDUSD:GLOBAL\ttrue\tnull\t989931\t398\n";
-        TestUtils.assertEquals(expected, reader.bufferedIterator());
+        String expected = "Data{sym='GBPUSD', created=30000, bid=0.65, ask=0.66, bidSize=1000, askSize=1100, id=1, status='OK', user='system', rateId='GBPUSD:GLOBAL', active=true, nullable='null', ticks=12345678, modulo=425}\n" +
+                "Data{sym='EURUSD', created=19999, bid=1.24, ask=1.25, bidSize=10000, askSize=12000, id=2, status='OK', user='system', rateId='EURUSD:GLOBAL', active=true, nullable='null', ticks=1234567, modulo=11000}\n" +
+                "Data{sym='HKDUSD', created=40000, bid=2.88, ask=2.89, bidSize=1000, askSize=1100, id=3, status='OK', user='system', rateId='HKDUSD:GLOBAL', active=true, nullable='null', ticks=989931, modulo=398}\n";
+
+        StringBuilder builder = new StringBuilder();
+        for (Data data : reader.bufferedIterator()) {
+            builder.append(data).append('\n');
+        }
+        TestUtils.assertEquals(expected, builder);
     }
 
     @Test
@@ -362,9 +367,13 @@ public class GenericInteropTest extends AbstractTest {
 
         Journal<Partial> reader = factory.reader(Partial.class, "test");
 
-        String expected = "EURUSD\t1970-01-01T00:00:19.999Z\t1.24\t1.25\t10000\t12000";
+        String expected = "Partial{sym='EURUSD', created=19999, bid=1.24, ask=1.25, bidSize=10000, askSize=12000}";
 
-        TestUtils.assertEquals(expected, reader.bufferedIterator());
+        StringBuilder builder = new StringBuilder();
+        for (Partial p : reader.bufferedIterator()) {
+            builder.append(p);
+        }
+        TestUtils.assertEquals(expected, builder);
     }
 
     @Test
@@ -414,6 +423,26 @@ public class GenericInteropTest extends AbstractTest {
         private String nullable;
         private long ticks;
         private short modulo;
+
+        @Override
+        public String toString() {
+            return "Data{" +
+                    "sym='" + sym + '\'' +
+                    ", created=" + created +
+                    ", bid=" + bid +
+                    ", ask=" + ask +
+                    ", bidSize=" + bidSize +
+                    ", askSize=" + askSize +
+                    ", id=" + id +
+                    ", status='" + status + '\'' +
+                    ", user='" + user + '\'' +
+                    ", rateId='" + rateId + '\'' +
+                    ", active=" + active +
+                    ", nullable='" + nullable + '\'' +
+                    ", ticks=" + ticks +
+                    ", modulo=" + modulo +
+                    '}';
+        }
     }
 
     public static class Partial {
@@ -423,6 +452,18 @@ public class GenericInteropTest extends AbstractTest {
         private double ask;
         private int bidSize;
         private int askSize;
+
+        @Override
+        public String toString() {
+            return "Partial{" +
+                    "sym='" + sym + '\'' +
+                    ", created=" + created +
+                    ", bid=" + bid +
+                    ", ask=" + ask +
+                    ", bidSize=" + bidSize +
+                    ", askSize=" + askSize +
+                    '}';
+        }
     }
 
     public static class WrongType {

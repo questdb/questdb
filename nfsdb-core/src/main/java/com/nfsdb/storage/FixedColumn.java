@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.storage;
 
@@ -29,30 +29,6 @@ public class FixedColumn extends AbstractColumn {
     public FixedColumn(MemoryFile mappedFile, int width) {
         super(mappedFile);
         this.width = width;
-    }
-
-    public long bsearchAny(long val, BSearchType type, long lo, long hi) {
-        long _lo = lo;
-        long _hi = hi;
-        while (_lo < _hi) {
-            long mid = _lo + (_hi - _lo) / 2;
-            long res = val - getLong(mid);
-
-            if (res < 0) {
-                _hi = mid;
-            } else if (res > 0) {
-                _lo = mid + 1;
-            } else {
-                return mid;
-            }
-        }
-
-        switch (type) {
-            case NEWER_OR_SAME:
-                return val < getLong(_lo) ? _lo : -2;
-            default:
-                return val > getLong(_hi) ? _hi : -1;
-        }
     }
 
     public long bsearchEdge(long val, BSearchType type) {
@@ -166,6 +142,30 @@ public class FixedColumn extends AbstractColumn {
 
     public void putShort(short value) {
         Unsafe.getUnsafe().putShort(getAddress(), value);
+    }
+
+    private long bsearchAny(long val, BSearchType type, long lo, long hi) {
+        long _lo = lo;
+        long _hi = hi;
+        while (_lo < _hi) {
+            long mid = _lo + (_hi - _lo) / 2;
+            long res = val - getLong(mid);
+
+            if (res < 0) {
+                _hi = mid;
+            } else if (res > 0) {
+                _lo = mid + 1;
+            } else {
+                return mid;
+            }
+        }
+
+        switch (type) {
+            case NEWER_OR_SAME:
+                return val < getLong(_lo) ? _lo : -2;
+            default:
+                return val > getLong(_hi) ? _hi : -1;
+        }
     }
 
     private long getAddress() {

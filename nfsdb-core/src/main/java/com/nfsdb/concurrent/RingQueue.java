@@ -23,12 +23,12 @@ package com.nfsdb.concurrent;
 
 import com.nfsdb.utils.Unsafe;
 
-public class RingQ<T> {
+public class RingQueue<T> {
     private final int mask;
     private final T[] buf;
 
     @SuppressWarnings("unchecked")
-    public RingQ(RingEntryFactory<T> factory, int cycle) {
+    public RingQueue(RingEntryFactory<T> factory, int cycle) {
         this.mask = cycle - 1;
         this.buf = (T[]) new Object[cycle];
 

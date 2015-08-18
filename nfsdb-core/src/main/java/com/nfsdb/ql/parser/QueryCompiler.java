@@ -1218,12 +1218,12 @@ public class QueryCompiler {
         parent.addParsedWhereNode(node);
     }
 
-    RecordSource<? extends Record> resetAndCompile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private RecordSource<? extends Record> resetAndCompile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         clearState();
         return compile(model, factory);
     }
 
-    void resetAndOptimise(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private void resetAndOptimise(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         clearState();
         optimise(model, factory);
     }

@@ -23,13 +23,13 @@ package com.nfsdb.concurrent;
 
 public abstract class AbstractSSequence implements Sequence {
     private final WaitStrategy waitStrategy;
-    protected Barrier barrier = OpenBarrier.INSTANCE;
+    Barrier barrier = OpenBarrier.INSTANCE;
 
-    public AbstractSSequence(WaitStrategy waitStrategy) {
+    AbstractSSequence(WaitStrategy waitStrategy) {
         this.waitStrategy = waitStrategy;
     }
 
-    public AbstractSSequence() {
+    AbstractSSequence() {
         this(null);
     }
 

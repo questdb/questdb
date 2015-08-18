@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.query;
 
@@ -26,9 +26,7 @@ import com.nfsdb.Partition;
 import com.nfsdb.collections.LongList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
-import com.nfsdb.query.iterator.ConcurrentIterator;
 import com.nfsdb.query.iterator.ResultSetBufferedIterator;
-import com.nfsdb.query.iterator.ResultSetConcurrentIterator;
 import com.nfsdb.query.iterator.ResultSetIterator;
 import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.utils.Rnd;
@@ -85,14 +83,6 @@ public class ResultSet<T> implements Iterable<T> {
     @Override
     public Iterator<T> iterator() {
         return new ResultSetIterator<>(this);
-    }
-
-    public ConcurrentIterator<T> parallelIterator() {
-        return parallelIterator(1024);
-    }
-
-    public ConcurrentIterator<T> parallelIterator(int bufferSize) {
-        return new ResultSetConcurrentIterator<>(this, bufferSize);
     }
 
     public T[] read() throws JournalException {

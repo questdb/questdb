@@ -211,15 +211,6 @@ public class LongList implements Mutable {
         return toStringBuilder.toString();
     }
 
-    public int indexOf(int o) {
-        for (int i = 0, n = pos; i < n; i++) {
-            if (o == getQuick(i)) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
     public boolean remove(int v) {
         int index = indexOf(v);
         if (index > -1) {
@@ -287,6 +278,15 @@ public class LongList implements Mutable {
             }
         }
         return false;
+    }
+
+    private int indexOf(int o) {
+        for (int i = 0, n = pos; i < n; i++) {
+            if (o == getQuick(i)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private void let(int a, int b) {

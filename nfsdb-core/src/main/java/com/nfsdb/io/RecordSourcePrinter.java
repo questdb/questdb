@@ -48,17 +48,6 @@ public class RecordSourcePrinter {
         this.delimiter = delimiter;
     }
 
-    public void print(Record r, RecordMetadata m) {
-        for (int i = 0, sz = m.getColumnCount(); i < sz; i++) {
-            if (i > 0) {
-                sink.put(delimiter);
-            }
-            printRecord(r, m, i);
-        }
-        sink.put("\n");
-        sink.flush();
-    }
-
     @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
     public void print(RecordSource<? extends Record> src) {
         try {
@@ -67,7 +56,6 @@ public class RecordSourcePrinter {
             throw new JournalRuntimeException(e);
         }
     }
-
 
     @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
     public void print(RecordSource<? extends Record> src, JournalReaderFactory factory) {
@@ -93,7 +81,18 @@ public class RecordSourcePrinter {
         }
     }
 
-    public void printHeader(RecordMetadata metadata) {
+    private void print(Record r, RecordMetadata m) {
+        for (int i = 0, sz = m.getColumnCount(); i < sz; i++) {
+            if (i > 0) {
+                sink.put(delimiter);
+            }
+            printRecord(r, m, i);
+        }
+        sink.put("\n");
+        sink.flush();
+    }
+
+    private void printHeader(RecordMetadata metadata) {
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             if (i > 0) {
                 sink.put(delimiter);

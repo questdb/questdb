@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.ops;
 
@@ -29,7 +29,7 @@ public abstract class AbstractBinaryOperator extends AbstractVirtualColumn imple
     protected VirtualColumn lhs;
     protected VirtualColumn rhs;
 
-    public AbstractBinaryOperator(ColumnType type) {
+    protected AbstractBinaryOperator(ColumnType type) {
         super(type);
     }
 

@@ -33,7 +33,7 @@ public class SequenceTest {
     @Test
     public void testOneToOneSpin() throws Exception {
         // setup
-        RingQ<Event> ring = new RingQ<>(Event.FACTORY, 1024);
+        RingQueue<Event> ring = new RingQueue<>(Event.FACTORY, 1024);
         SPSequence pseq = new SPSequence(ring.getCycle());
         SCSequence cseq = new SCSequence();
         pseq.followedBy(cseq);
@@ -89,14 +89,14 @@ public class SequenceTest {
         private final CyclicBarrier barrier;
         private final CountDownLatch breakLatch;
         private final long[] capture;
-        private final RingQ<Event> ringQ;
+        private final RingQueue<Event> ringQueue;
 
-        public BusyConsumer(CyclicBarrier barrier, CountDownLatch latch, Sequence sequence, int pubSize, RingQ<Event> ringQ) {
+        public BusyConsumer(CyclicBarrier barrier, CountDownLatch latch, Sequence sequence, int pubSize, RingQueue<Event> ringQ) {
             this.barrier = barrier;
             this.sequence = sequence;
             this.breakLatch = latch;
             this.capture = new long[pubSize];
-            this.ringQ = ringQ;
+            this.ringQueue = ringQ;
         }
 
         @Override
@@ -109,7 +109,7 @@ public class SequenceTest {
                     if (cursor < 0) {
                         continue;
                     }
-                    long l = ringQ.get(cursor).value;
+                    long l = ringQueue.get(cursor).value;
                     sequence.done(cursor);
                     if (l == Long.MIN_VALUE) {
                         break;

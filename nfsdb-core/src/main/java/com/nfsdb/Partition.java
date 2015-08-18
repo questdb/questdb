@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
@@ -29,10 +29,7 @@ import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.logging.Logger;
-import com.nfsdb.query.iterator.ConcurrentIterator;
 import com.nfsdb.query.iterator.PartitionBufferedIterator;
-import com.nfsdb.query.iterator.PartitionConcurrentIterator;
-import com.nfsdb.query.iterator.PartitionIterator;
 import com.nfsdb.storage.*;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Hash;
@@ -48,7 +45,7 @@ import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 
 @SuppressFBWarnings({"PL_PARALLEL_LISTS", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
-public class Partition<T> implements Iterable<T>, Closeable {
+public class Partition<T> implements Closeable {
     private static final Logger LOGGER = Logger.getLogger(Partition.class);
     private final Journal<T> journal;
     private final ObjList<SymbolIndexProxy<T>> indexProxies = new ObjList<>();
@@ -265,20 +262,12 @@ public class Partition<T> implements Iterable<T>, Closeable {
         return columns != null;
     }
 
-    public Iterator<T> iterator() {
-        return iterator(0, size() - 1);
-    }
-
     public Partition<T> open() throws JournalException {
         access();
         if (columns == null) {
             open0();
         }
         return this;
-    }
-
-    public ConcurrentIterator<T> parallelIterator() {
-        return parallelIterator(0, size() - 1);
     }
 
     public T read(long localRowID) {
@@ -537,10 +526,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
         }
     }
 
-    private Iterator<T> iterator(long start, long end) {
-        return new PartitionIterator<>(this, start, end);
-    }
-
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     private void open0() throws JournalException {
         columns = new AbstractColumn[journal.getMetadata().getColumnCount()];
@@ -581,14 +566,6 @@ public class Partition<T> implements Iterable<T>, Closeable {
         if (tsIndex > -1) {
             timestampColumn = fixCol(tsIndex);
         }
-    }
-
-    private ConcurrentIterator<T> parallelIterator(long lo, long hi) {
-        return parallelIterator(lo, hi, 1024);
-    }
-
-    private ConcurrentIterator<T> parallelIterator(long lo, long hi, int bufferSize) {
-        return new PartitionConcurrentIterator<>(this, lo, hi, bufferSize);
     }
 
     private void readBin(long localRowID, T obj, int i, ColumnMetadata m) {

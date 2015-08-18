@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
@@ -272,22 +272,6 @@ public class IteratorTest extends AbstractTest {
         int i = 0;
         for (int a : iterator) {
             Assert.assertEquals(expected[i++], a);
-        }
-    }
-
-    @Test
-    public void testPartitionParallelIterator() throws Exception {
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-        TestUtils.generateQuoteData(w, 100000, new Interval("2014-01-01T00:00:00.000Z", "2014-02-10T00:00:00.000Z"));
-
-        Journal<Quote> r1 = factory.reader(Quote.class);
-        Journal<Quote> r2 = factory.reader(Quote.class);
-
-        Partition<Quote> p1 = r1.getPartition(0, true);
-        Partition<Quote> p2 = r2.getPartition(0, true);
-
-        try (ConcurrentIterator<Quote> it = p1.parallelIterator()) {
-            TestUtils.assertEquals(p2.bufferedIterator(), it);
         }
     }
 

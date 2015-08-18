@@ -27,13 +27,13 @@ import com.nfsdb.utils.Unsafe;
 import java.util.Arrays;
 
 public abstract class AbstractCSequence extends AbstractSSequence {
-    protected final PLong index = new PLong();
-    protected final PLong cache = new PLong();
+    final PLong index = new PLong();
+    final PLong cache = new PLong();
     private final int flags[];
     private final int mask;
     private final int shift;
 
-    public AbstractCSequence(int cycle, WaitStrategy waitStrategy) {
+    AbstractCSequence(int cycle, WaitStrategy waitStrategy) {
         super(waitStrategy);
         this.flags = new int[cycle];
         Arrays.fill(flags, -1);

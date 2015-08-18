@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.query.iterator;
 
@@ -83,7 +83,7 @@ public class JournalIteratorImpl<T> extends AbstractImmutableIterator<T> impleme
         try {
             return journal.read(Rows.toRowID(w.partitionID, w.lo));
         } catch (JournalException e) {
-            throw new JournalRuntimeException("Error in iterator at last element", e);
+            throw new JournalRuntimeException("Error in iterator at first element", e);
         }
     }
 

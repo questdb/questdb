@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
@@ -1209,15 +1209,6 @@ public class QueryTest extends AbstractTest {
         try (ConcurrentIterator<Quote> iterator = q2.all().concurrentIterator(35184372088930L)) {
             TestUtils.assertEquals(expected, iterator);
 
-        }
-    }
-
-    @Test
-    public void testResultSetParallelIterator() throws Exception {
-        JournalIterator<Quote> expected = q.all().bufferedIterator();
-        Query<Quote> q2 = factory.reader(Quote.class).query();
-        try (ConcurrentIterator<Quote> actual = q2.all().asResultSet().parallelIterator()) {
-            TestUtils.assertEquals(expected, actual);
         }
     }
 

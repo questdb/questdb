@@ -681,11 +681,11 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
-    Partition<T> createTempPartition() throws JournalException {
+    private Partition<T> createTempPartition() throws JournalException {
         return createTempPartition(Constants.TEMP_DIRECTORY_PREFIX + '.' + System.currentTimeMillis() + '.' + UUID.randomUUID());
     }
 
-    Partition<T> getAppendPartition() throws JournalException {
+    private Partition<T> getAppendPartition() throws JournalException {
         if (this.appendPartition != null) {
             return appendPartition;
         }
