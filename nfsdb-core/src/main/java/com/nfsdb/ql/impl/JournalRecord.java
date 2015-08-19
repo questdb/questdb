@@ -53,7 +53,7 @@ public class JournalRecord extends AbstractRecord {
 
     @Override
     public boolean getBool(int col) {
-        return partition.getBoolean(rowid, col);
+        return partition.getBool(rowid, col);
     }
 
     @Override

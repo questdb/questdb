@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,18 +17,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.io;
 
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordMetadata;
-import com.nfsdb.ql.RecordSource;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Numbers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -46,24 +42,6 @@ public class RecordSourcePrinter {
     public RecordSourcePrinter(CharSink sink, char delimiter) {
         this.sink = sink;
         this.delimiter = delimiter;
-    }
-
-    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
-    public void print(RecordSource<? extends Record> src) {
-        try {
-            printCursor(src.prepareCursor(null));
-        } catch (JournalException e) {
-            throw new JournalRuntimeException(e);
-        }
-    }
-
-    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
-    public void print(RecordSource<? extends Record> src, JournalReaderFactory factory) {
-        try {
-            printCursor(src.prepareCursor(factory));
-        } catch (JournalException e) {
-            throw new JournalRuntimeException(e);
-        }
     }
 
     public void printCursor(RecordCursor<? extends Record> src) {

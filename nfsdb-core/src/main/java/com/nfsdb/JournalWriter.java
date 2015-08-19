@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb;
 
@@ -28,30 +28,20 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.Constants;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.FlexBufferSink;
 import com.nfsdb.logging.Logger;
-import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordSource;
-import com.nfsdb.ql.impl.AllRowSource;
-import com.nfsdb.ql.impl.JournalSource;
-import com.nfsdb.ql.impl.JournalTailPartitionSource;
 import com.nfsdb.query.ResultSet;
 import com.nfsdb.query.iterator.ConcurrentIterator;
 import com.nfsdb.query.iterator.MergingIterator;
 import com.nfsdb.query.iterator.PeekingIterator;
 import com.nfsdb.storage.*;
-import com.nfsdb.utils.Dates;
-import com.nfsdb.utils.Files;
-import com.nfsdb.utils.Interval;
-import com.nfsdb.utils.Rows;
+import com.nfsdb.utils.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.io.FileFilter;
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.nio.channels.FileChannel;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
@@ -67,6 +57,8 @@ public class JournalWriter<T> extends Journal<T> {
     private final PeekingListIterator<T> peekingListIterator = new PeekingListIterator<>();
     private final MergingIterator<T> mergingIterator = new MergingIterator<>();
     private final JournalEntryWriterImpl journalEntryWriter;
+    // discard.txt related
+    private final File discardTxt;
     private Lock writeLock;
     private TxListener txListener;
     private boolean txActive = false;
@@ -79,6 +71,8 @@ public class JournalWriter<T> extends Journal<T> {
     private boolean doJournal = true;
     private Partition<T> appendPartition;
     private long appendTimestampHi = -1;
+    private RandomAccessFile discardTxtRaf;
+    private FlexBufferSink discardSink;
 
     public JournalWriter(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
         super(metadata, key);
@@ -90,6 +84,7 @@ public class JournalWriter<T> extends Journal<T> {
         this.lagSwellMillis = lagMillis * 3;
         this.checkOrder = key.isOrdered() && getTimestampOffset() != -1;
         this.journalEntryWriter = new JournalEntryWriterImpl(this);
+        this.discardTxt = new File(metadata.getLocation(), "discard.txt");
     }
 
     /**
@@ -187,6 +182,15 @@ public class JournalWriter<T> extends Journal<T> {
                 if (writeLock != null) {
                     LockManager.release(writeLock);
                     writeLock = null;
+                }
+
+                if (discardTxtRaf != null) {
+                    try {
+                        discardSink.close();
+                        discardTxtRaf.close();
+                    } catch (IOException e) {
+                        LOGGER.warn("Failed to close discard file");
+                    }
                 }
             } catch (JournalException e) {
                 throw new JournalRuntimeException(e);
@@ -852,26 +856,72 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
-    // todo: rewrite using raw columns, dont try to shoehorn RecordSource here
     private void writeDiscardFile(long rowid) throws JournalException {
 
-        File f = new File(metadata.getLocation(), "discard.txt");
-        RecordSource<? extends Record> rs = new JournalSource(
-                new JournalTailPartitionSource(this, false, rowid)
-                , new AllRowSource()
-        );
+        if (discardTxtRaf == null) {
+            try {
+                discardTxtRaf = new RandomAccessFile(discardTxt, "rw");
+                discardTxtRaf.getChannel();
+                discardSink = new FlexBufferSink(discardTxtRaf.getChannel().position(discardTxtRaf.getChannel().size()), 1024 * 1024);
+            } catch (IOException e) {
+                throw new JournalException(e);
+            }
+        }
 
+        JournalMetadata m = getMetadata();
+        int p = Rows.toPartitionIndex(rowid);
+        long row = Rows.toLocalRowID(rowid);
+        long rowCount = 0;
 
-        try (RandomAccessFile raf = new RandomAccessFile(f, "rw")) {
-            try (FileChannel channel = raf.getChannel()) {
-                try (FlexBufferSink sink = new FlexBufferSink(channel.position(channel.size()), 1024 * 1024)) {
-                    RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-                    printer.print(rs);
-                    LOGGER.info("Discarded records are appended to %s", f);
+        try {
+            // partitions
+            for (int n = getPartitionCount() - 1; p < n; p++) {
+                final Partition partition = getPartition(n, true);
+                // partition rows
+                for (long r = row, psz = partition.size(); r < psz; r++) {
+                    // partition columns
+                    for (int c = 0, cc = m.getColumnCount(); c < cc; c++) {
+                        switch (m.getColumnQuick(c).type) {
+                            case DATE:
+                                Dates.appendDateTime(discardSink, partition.getLong(r, c));
+                                break;
+                            case DOUBLE:
+                                Numbers.append(discardSink, partition.getDouble(r, c), 12);
+                                break;
+                            case FLOAT:
+                                Numbers.append(discardSink, partition.getFloat(r, c), 4);
+                                break;
+                            case INT:
+                                Numbers.append(discardSink, partition.getInt(r, c));
+                                break;
+                            case STRING:
+                                partition.getStr(r, c, discardSink);
+                                break;
+                            case SYMBOL:
+                                discardSink.put(partition.getSym(r, c));
+                                break;
+                            case SHORT:
+                                Numbers.append(discardSink, partition.getShort(r, c));
+                                break;
+                            case LONG:
+                                Numbers.append(discardSink, partition.getLong(r, c));
+                                break;
+                            case BYTE:
+                                Numbers.append(discardSink, partition.getByte(r, c));
+                                break;
+                            case BOOLEAN:
+                                discardSink.put(partition.getBool(r, c) ? "true" : "false");
+                                break;
+                        }
+
+                        if (((++rowCount) & 7) == 0) {
+                            discardSink.flush();
+                        }
+                    }
                 }
             }
-        } catch (IOException e) {
-            throw new JournalException(e);
+        } finally {
+            discardSink.flush();
         }
     }
 }

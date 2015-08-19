@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb;
 
@@ -153,8 +153,12 @@ public class Partition<T> implements Closeable {
         return varCol(columnIndex).getBin(localRowID);
     }
 
-    public boolean getBoolean(long localRowID, int columnIndex) {
+    public boolean getBool(long localRowID, int columnIndex) {
         return fixCol(columnIndex).getBool(localRowID);
+    }
+
+    public byte getByte(long localRowID, int columnIndex) {
+        return fixCol(columnIndex).getByte(localRowID);
     }
 
     public double getDouble(long localRowID, int columnIndex) {
