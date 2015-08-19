@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.collections;
 
@@ -30,7 +30,6 @@ import com.nfsdb.utils.Unsafe;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.io.OutputStream;
 
 class DirectPagedBuffer implements Closeable, Mutable {
     private final int pageCapacity;
@@ -48,9 +47,13 @@ class DirectPagedBuffer implements Closeable, Mutable {
         allocateAddress(0);
     }
 
+    public long address(long offset) {
+        return pages.get((int) (offset >>> bits)) + (offset & mask);
+    }
+
     public void append(DirectInputStream value) {
         long writeOffset = cachePageLo;
-        long size = value.getLength();
+        long size = value.size();
         if (size < 0 || writeOffset < 0) {
             throw new OutOfMemoryError();
         }
@@ -84,6 +87,20 @@ class DirectPagedBuffer implements Closeable, Mutable {
         }
     }
 
+    public long calcOffset(long length) {
+        if (cachePageLo + length > cachePageHi) {
+            allocateAddress((cachePageLo + length) >>> bits);
+        }
+        return (cachePageLo += length) - length;
+    }
+
+    public long calcOffsetChecked(long length) {
+        if (cachePageLo + length > cachePageHi) {
+            allocateAddressChecked((cachePageLo + length) >>> bits, length);
+        }
+        return (cachePageLo += length) - length;
+    }
+
     public void clear() {
         cachePageLo = 0;
         cachePageHi = cachePageLo + pageCapacity;
@@ -100,72 +117,8 @@ class DirectPagedBuffer implements Closeable, Mutable {
         pages.clear();
     }
 
-    public long getBlockLen(long offset) {
-        return pageCapacity - (offset & mask);
-    }
-
-    public long getWriteOffsetQuick(long length) {
-        if (cachePageLo + length > cachePageHi) {
-            allocateAddress((cachePageLo + length) >>> bits);
-        }
-        return (cachePageLo += length) - length;
-    }
-
-    public long getWriteOffsetWithChecks(long length) {
-        if (cachePageLo + length > cachePageHi) {
-            allocateAddressChecked((cachePageLo + length) >>> bits, length);
-        }
-        return (cachePageLo += length) - length;
-    }
-
-    public long toAddress(long offset) {
-        return pages.get((int) (offset >>> bits)) + (offset & mask);
-    }
-
-    public long write(long writeTo, long readOffset, long size) {
-        if (size < 0 || readOffset < 0) {
-            throw new IndexOutOfBoundsException();
-        }
-
-        int pageIndex = (int) (readOffset >>> bits);
-        long pageOffset = readOffset & mask;
-        long readLen = 0;
-
-        if (pageIndex >= pages.size()) {
-            return readLen;
-        }
-
-        do {
-            long readAddress = pages.getQuick(pageIndex);
-            if (readAddress == 0) {
-                return readLen;
-            }
-
-            long toRead = Math.min(size, pageCapacity - pageOffset);
-            Unsafe.getUnsafe().copyMemory(readAddress + pageOffset, writeTo, toRead);
-            writeTo += toRead;
-            readLen += toRead;
-            size -= toRead;
-            pageOffset = 0;
-            pageIndex++;
-        }
-        while (size > 0);
-        return readLen;
-    }
-
-    public void write(OutputStream stream, long offset, long len) throws IOException {
-        long position = offset;
-        long copied = 0;
-        while (copied < len) {
-            long address = toAddress(offset);
-            long blockEndOffset = getBlockLen(offset);
-            long copyEndOffset = Math.min(blockEndOffset, len - copied);
-            len += copyEndOffset - position;
-
-            while (position < copyEndOffset) {
-                stream.write(Unsafe.getUnsafe().getByte(address + position++));
-            }
-        }
+    public int pageRemaining(long offset) {
+        return pageCapacity - (int) (offset & mask);
     }
 
     private void allocateAddress(long index) {

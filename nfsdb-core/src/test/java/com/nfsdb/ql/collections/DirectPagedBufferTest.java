@@ -22,7 +22,6 @@
 package com.nfsdb.ql.collections;
 
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.utils.Unsafe;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -37,9 +36,9 @@ public class DirectPagedBufferTest {
         int pageLen = 128;
 
         try (DirectPagedBuffer pb = new DirectPagedBuffer(127)) {
-            Assert.assertEquals(0, pb.getWriteOffsetQuick(pageLen - 4));
-            Assert.assertEquals(pageLen, pb.getWriteOffsetQuick(5));
-            Assert.assertEquals(pageLen + 5, pb.getWriteOffsetQuick(8));
+            Assert.assertEquals(0, pb.calcOffset(pageLen - 4));
+            Assert.assertEquals(pageLen, pb.calcOffset(5));
+            Assert.assertEquals(pageLen + 5, pb.calcOffset(8));
         }
     }
 
@@ -48,43 +47,7 @@ public class DirectPagedBufferTest {
         int pageLen = 127;
         try (DirectPagedBuffer pb = new DirectPagedBuffer(pageLen)) {
             exception.expect(JournalRuntimeException.class);
-            pb.getWriteOffsetWithChecks(129);
-        }
-    }
-
-    @Test
-    public void testWriteBigBuffersBuffer() throws Exception {
-        testWriteToZeroBuffer(128, 271);
-    }
-
-    @Test
-    public void testWriteSmallBuffersBuffer() throws Exception {
-        testWriteToZeroBuffer(128, 33);
-    }
-
-    private void testWriteToZeroBuffer(int pageCapacity, int bufferLen) throws Exception {
-        try (DirectPagedBuffer buffer = new DirectPagedBuffer(128)) {
-            try (DirectPagedBuffer testPage = new DirectPagedBuffer(bufferLen)) {
-                // append.
-                long address = testPage.toAddress(0);
-                for (int i = 0; i < bufferLen; i++) {
-                    Unsafe.getUnsafe().putByte(address + i, (byte) (i % 255));
-                }
-
-                for (int j = 0; j < (long) pageCapacity / bufferLen + 1; j++) {
-                    buffer.append(new DirectPagedBufferStream(testPage, 0, bufferLen));
-                }
-            }
-
-            // read.
-            long readBuffer = Unsafe.getUnsafe().allocateMemory(bufferLen);
-            for (int j = 0; j < (long) pageCapacity / bufferLen + 1; j++) {
-                buffer.write(readBuffer, j * bufferLen, bufferLen);
-
-                for (int i = 0; i < bufferLen; i++) {
-                    Assert.assertEquals((byte) (i % 255), Unsafe.getUnsafe().getByte(readBuffer + i), j);
-                }
-            }
+            pb.calcOffsetChecked(129);
         }
     }
 }

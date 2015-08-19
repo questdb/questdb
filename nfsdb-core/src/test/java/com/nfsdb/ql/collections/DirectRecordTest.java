@@ -23,25 +23,24 @@ package com.nfsdb.ql.collections;
 
 import com.nfsdb.JournalWriter;
 import com.nfsdb.collections.DirectInputStream;
+import com.nfsdb.collections.LongList;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.parser.QueryCompiler;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.utils.Files;
+import com.nfsdb.utils.Unsafe;
+import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.List;
 
-import static org.junit.Assert.assertEquals;
 
 
 public class DirectRecordTest {
@@ -61,6 +60,18 @@ public class DirectRecordTest {
         }
     }
 
+    public static void assertEquals(ByteBuffer expected, DirectInputStream actual) {
+        int sz = (int) actual.size();
+        long address = Unsafe.getUnsafe().allocateMemory(sz);
+        long p = address;
+        actual.copyTo(address, 0, sz);
+        for (long i = 0; i < sz; i++) {
+//            System.out.println(Unsafe.getUnsafe().getByte(p++));
+            Assert.assertEquals(expected.get(), Unsafe.getUnsafe().getByte(p++));
+        }
+        Unsafe.getUnsafe().freeMemory(address);
+    }
+
     @Test
     public void testAllFieldTypesField() throws JournalException, IOException, ParserException {
         writeAndReadRecords(factory.writer(AllFieldTypes.class), 1000, 64 * 1024,
@@ -71,20 +82,20 @@ public class DirectRecordTest {
                         AllFieldTypes expected = generate(i);
                         int col = 0;
                         String failedMsg = "Record " + i;
-                        assertEquals(failedMsg, expected.aBool, value.getBool(col++));
-                        assertEquals(failedMsg, expected.aString, value.getStr(col++).toString());
-                        assertEquals(failedMsg, expected.aByte, value.get(col++));
-                        assertEquals(failedMsg, expected.aShort, value.getShort(col++));
-                        assertEquals(failedMsg, expected.anInt, value.getInt(col++));
+                        Assert.assertEquals(failedMsg, expected.aBool, value.getBool(col++));
+                        Assert.assertEquals(failedMsg, expected.aString, value.getStr(col++).toString());
+                        Assert.assertEquals(failedMsg, expected.aByte, value.get(col++));
+                        Assert.assertEquals(failedMsg, expected.aShort, value.getShort(col++));
+                        Assert.assertEquals(failedMsg, expected.anInt, value.getInt(col++));
                         DirectInputStream binCol = value.getBin(col++);
                         byte[] expectedBin = expected.aBinary.array();
-                        assertEquals(failedMsg, expectedBin.length, binCol.getLength());
+                        Assert.assertEquals(failedMsg, expectedBin.length, binCol.size());
                         for (int j = 0; j < expectedBin.length; j++) {
-                            assertEquals(failedMsg + " byte " + j, expectedBin[j], (byte) binCol.read());
+                            Assert.assertEquals(failedMsg + " byte " + j, expectedBin[j], (byte) binCol.read());
                         }
-                        assertEquals(failedMsg, expected.aLong, value.getLong(col++));
-                        assertEquals(failedMsg, expected.aDouble, value.getDouble(col++), 0.0001);
-                        assertEquals(failedMsg, expected.aFloat, value.getFloat(col), 0.0001);
+                        Assert.assertEquals(failedMsg, expected.aLong, value.getLong(col++));
+                        Assert.assertEquals(failedMsg, expected.aDouble, value.getDouble(col++), 0.0001);
+                        Assert.assertEquals(failedMsg, expected.aFloat, value.getFloat(col), 0.0001);
                     }
 
                     @Override
@@ -113,6 +124,33 @@ public class DirectRecordTest {
     }
 
     @Test
+    public void testCopyBinToAddress() throws JournalException, IOException, ParserException {
+        final int pageLen = 1024 * 1024;
+        writeAndReadRecords(factory.writer(Binary.class), 1, pageLen,
+                new RecordGenerator<Binary>() {
+
+                    @Override
+                    public void assertRecord(Record value, int i) throws IOException {
+                        DirectInputStream binCol = value.getBin(0);
+                        Binary expected = generate(i);
+                        Assert.assertEquals(expected.aBinary.remaining(), binCol.size());
+                        assertEquals(expected.aBinary, binCol);
+                    }
+
+                    @Override
+                    public Binary generate(int i) {
+                        Binary af = new Binary();
+                        byte[] bin = new byte[1024 * 1024];
+                        for (int j = 0; j < bin.length; j++) {
+                            bin[j] = (byte) (j % 255);
+                        }
+                        af.aBinary = ByteBuffer.wrap(bin);
+                        return af;
+                    }
+                });
+    }
+
+    @Test
     public void testSaveBinOverPageEdge() throws JournalException, IOException, ParserException {
         final int pageLen = 100;
         writeAndReadRecords(factory.writer(Binary.class), 1, pageLen,
@@ -123,9 +161,9 @@ public class DirectRecordTest {
                         DirectInputStream binCol = value.getBin(0);
                         Binary expected = generate(i);
                         byte[] expectedBin = expected.aBinary.array();
-                        assertEquals(expectedBin.length, binCol.getLength());
+                        Assert.assertEquals(expected.aBinary.remaining(), binCol.size());
                         for (int j = 0; j < expectedBin.length; j++) {
-                            assertEquals(expectedBin[j], (byte) binCol.read());
+                            Assert.assertEquals(expectedBin[j], (byte) binCol.read());
                         }
                     }
 
@@ -149,7 +187,7 @@ public class DirectRecordTest {
 
                     @Override
                     public void assertRecord(Record value, int i) {
-                        assertEquals((long) i, value.getLong(0));
+                        Assert.assertEquals((long) i, value.getLong(0));
                     }
 
                     @Override
@@ -171,15 +209,15 @@ public class DirectRecordTest {
 
                         CharSequence str = value.getStr(0);
                         if (expected.aString != null || str != null) {
-                            assertEquals(expected.aString, str.toString());
+                            Assert.assertEquals(expected.aString, str.toString());
                         }
 
-                        assertEquals(expected.aLong, value.getLong(1));
+                        Assert.assertEquals(expected.aLong, value.getLong(1));
 
                         DirectInputStream binCol = value.getBin(2);
                         if (expected.aBinary != null && binCol != null) {
                             byte[] expectedBin = expected.aBinary.array();
-                            assertEquals(expectedBin.length, binCol.getLength());
+                            Assert.assertEquals(expectedBin.length, binCol.size());
                         }
                     }
 
@@ -194,23 +232,22 @@ public class DirectRecordTest {
                 });
     }
 
-    public <T> void writeAndReadRecords(JournalWriter<T> longJournal, int count, int pageSize, RecordGenerator<T> generator) throws IOException, JournalException, ParserException {
+    public <T> void writeAndReadRecords(JournalWriter<T> journal, int count, int pageSize, RecordGenerator<T> generator) throws IOException, JournalException, ParserException {
         for (int i = 0; i < count; i++) {
-            longJournal.append(generator.generate(i));
+            journal.append(generator.generate(i));
         }
-        longJournal.commit();
+        journal.commit();
 
-        RecordSource<? extends Record> rows = compiler.compileSource(longJournal.getLocation().getName());
         try (DirectPagedBuffer buffer = new DirectPagedBuffer(pageSize)) {
-            DirectRecord dr = new DirectRecord(longJournal.getMetadata(), buffer);
-            List<Long> offsets = new ArrayList<>();
-            for (Record rec : rows.prepareCursor(factory)) {
-                offsets.add(dr.write(rec));
+            DirectRecord dr = new DirectRecord(journal.getMetadata(), buffer);
+            LongList offsets = new LongList();
+
+            for (Record rec : compiler.compile(journal.getLocation().getName())) {
+                offsets.add(dr.append(rec));
             }
 
             for (int i = 0; i < count; i++) {
-                Long ost = offsets.get(i);
-                dr.init(ost);
+                dr.init(offsets.getQuick(i));
                 generator.assertRecord(dr, i);
             }
         }

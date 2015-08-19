@@ -108,7 +108,6 @@ public final class FunctionFactories {
         binSig("+", ColumnType.LONG, ColumnType.LONG, AddLongOperator.FACTORY);
         binSig("+", ColumnType.STRING, ColumnType.STRING, StrConcatOperator.FACTORY);
 
-        //todo: itoa functions
         binSig("/", ColumnType.DOUBLE, ColumnType.DOUBLE, DivDoubleOperator.FACTORY);
         binSig("/", ColumnType.DOUBLE, ColumnType.INT, DivDoubleOperator.FACTORY);
         binSig("/", ColumnType.INT, ColumnType.DOUBLE, DivDoubleOperator.FACTORY);

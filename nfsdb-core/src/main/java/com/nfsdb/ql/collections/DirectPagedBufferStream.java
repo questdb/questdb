@@ -38,20 +38,36 @@ public class DirectPagedBufferStream extends DirectInputStream {
     public DirectPagedBufferStream(DirectPagedBuffer buffer, long offset, long length) {
         this.buffer = buffer;
         this.offset = offset;
-        this.blockStartAddress = buffer.toAddress(offset);
+        this.blockStartAddress = buffer.address(offset);
         this.blockStartOffset = 0;
         this.length = length;
     }
 
     @Override
-    public long copyTo(long address, long start, long length) {
-        long read = buffer.write(address, offset + position + start, Math.min(length, this.length));
-        position += read + start;
-        return read;
+    public long copyTo(long address, long start, long len) {
+        if (start < 0 || len < 0) {
+            throw new IndexOutOfBoundsException();
+        }
+
+        long res;
+        long rem = this.length - start;
+        long size = res = len > rem ? rem : len;
+        long offset = this.offset + start;
+
+        do {
+            int remaining = buffer.pageRemaining(offset);
+            int sz = size > remaining ? remaining : (int) size;
+            Unsafe.getUnsafe().copyMemory(buffer.address(offset), address, sz);
+            address += sz;
+            offset += sz;
+            size -= sz;
+        } while (size > 0);
+
+        return res;
     }
 
     @Override
-    public long getLength() {
+    public long size() {
         return (int) length - position;
     }
 
@@ -68,8 +84,8 @@ public class DirectPagedBufferStream extends DirectInputStream {
 
     private int readFromNextBlock() {
         blockStartOffset = offset + position;
-        blockStartAddress = buffer.toAddress(blockStartOffset);
-        long blockLen = buffer.getBlockLen(blockStartOffset);
+        blockStartAddress = buffer.address(blockStartOffset);
+        long blockLen = buffer.pageRemaining(blockStartOffset);
         if (blockLen < 0) {
             return -1;
         }
@@ -78,4 +94,5 @@ public class DirectPagedBufferStream extends DirectInputStream {
         assert position < blockEndOffset;
         return Unsafe.getUnsafe().getByte(blockStartAddress + offset + position++ - blockStartOffset);
     }
+
 }

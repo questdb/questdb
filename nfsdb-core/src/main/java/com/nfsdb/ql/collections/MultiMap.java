@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.collections;
 
@@ -332,7 +332,7 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
         }
 
         public KeyWriter putBin(DirectInputStream stream) {
-            long length = stream.getLength();
+            long length = stream.size();
             checkSize((int) length);
             length = stream.copyTo(appendAddr, 0, length);
             appendAddr += length;

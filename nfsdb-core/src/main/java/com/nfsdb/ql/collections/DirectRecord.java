@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.collections;
 
@@ -31,6 +31,7 @@ import com.nfsdb.ql.impl.AbstractRecord;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -73,6 +74,68 @@ public class DirectRecord extends AbstractRecord {
         fixedBlockLen = fixedSize + headerSize;
     }
 
+    public long append(@NotNull Record record) {
+        long offset = buffer.calcOffset(headerSize + fixedSize);
+        append(record, offset);
+        return offset;
+    }
+
+    public void append(Record record, long offset) {
+        long headerAddress = buffer.address(offset);
+        long writeAddress = headerAddress + headerSize;
+
+        for (int i = 0, n = offsets.length; i < n; i++) {
+            switch (metadata.getColumnQuick(i).getType()) {
+                case BOOLEAN:
+                    Unsafe.getUnsafe().putByte(writeAddress, (byte) (record.getBool(i) ? 1 : 0));
+                    writeAddress += 1;
+                    break;
+                case BYTE:
+                    Unsafe.getUnsafe().putByte(writeAddress, record.get(i));
+                    writeAddress += 1;
+                    break;
+                case DOUBLE:
+                    Unsafe.getUnsafe().putDouble(writeAddress, record.getDouble(i));
+                    writeAddress += 8;
+                    break;
+                case INT:
+                    Unsafe.getUnsafe().putInt(writeAddress, record.getInt(i));
+                    writeAddress += 4;
+                    break;
+                case LONG:
+                    Unsafe.getUnsafe().putLong(writeAddress, record.getLong(i));
+                    writeAddress += 8;
+                    break;
+                case SHORT:
+                    Unsafe.getUnsafe().putShort(writeAddress, record.getShort(i));
+                    writeAddress += 2;
+                    break;
+                case SYMBOL:
+                    Unsafe.getUnsafe().putInt(writeAddress, record.getInt(i));
+                    writeAddress += 4;
+                    break;
+                case DATE:
+                    Unsafe.getUnsafe().putLong(writeAddress, record.getDate(i));
+                    writeAddress += 8;
+                    break;
+                case FLOAT:
+                    Unsafe.getUnsafe().putFloat(writeAddress, record.getFloat(i));
+                    writeAddress += 4;
+                    break;
+                case STRING:
+                    writeString(headerAddress, record.getFlyweightStr(i));
+                    headerAddress += 8;
+                    break;
+                case BINARY:
+                    writeBin(headerAddress, record.getBin(i));
+                    headerAddress += 8;
+                    break;
+                default:
+                    throw new JournalRuntimeException("Unsupported type: " + metadata.getColumnQuick(i).getType());
+            }
+        }
+    }
+
     @Override
     public byte get(int col) {
         assert offsets[col] >= 0;
@@ -83,11 +146,11 @@ public class DirectRecord extends AbstractRecord {
     @Override
     public void getBin(int col, OutputStream s) {
         final long readOffset = findOffset(col);
-        final long readAddress = buffer.toAddress(readOffset);
+        final long readAddress = buffer.address(readOffset);
         try {
             long len = Unsafe.getUnsafe().getLong(readAddress);
             if (len > 0) {
-                buffer.write(s, readAddress + 8, Unsafe.getUnsafe().getLong(readAddress));
+                writeBin(s, readAddress + 8, len);
             }
         } catch (IOException ex) {
             throw new JournalRuntimeException("Reading binary column failed", ex);
@@ -96,11 +159,11 @@ public class DirectRecord extends AbstractRecord {
 
     @Override
     public DirectInputStream getBin(int col) {
-        final long readOffset = findOffset(col);
-        final long readAddress = buffer.toAddress(readOffset);
-        final long len = Unsafe.getUnsafe().getLong(readAddress);
+        final long offset = findOffset(col);
+        final long address = buffer.address(offset);
+        final long len = Unsafe.getUnsafe().getLong(address);
         if (len < 0) return null;
-        return new DirectPagedBufferStream(buffer, readOffset + 8, len);
+        return new DirectPagedBufferStream(buffer, offset + 8, len);
     }
 
     @Override
@@ -185,73 +248,11 @@ public class DirectRecord extends AbstractRecord {
     }
 
     public void init(long offset) {
-        this.address = buffer.toAddress(offset) + headerSize;
-    }
-
-    public long write(Record record) {
-        // Append to the end.
-        return write(record, buffer.getWriteOffsetQuick(headerSize + fixedSize));
-    }
-
-    public long write(Record record, long recordStartOffset) {
-        long headerAddress = buffer.toAddress(recordStartOffset);
-        long writeAddress = headerAddress + headerSize;
-
-        for (int i = 0; i < offsets.length; i++) {
-            switch (metadata.getColumnQuick(i).getType()) {
-                case BOOLEAN:
-                    Unsafe.getUnsafe().putByte(writeAddress, (byte) (record.getBool(i) ? 1 : 0));
-                    writeAddress += 1;
-                    break;
-                case BYTE:
-                    Unsafe.getUnsafe().putByte(writeAddress, record.get(i));
-                    writeAddress += 1;
-                    break;
-                case DOUBLE:
-                    Unsafe.getUnsafe().putDouble(writeAddress, record.getDouble(i));
-                    writeAddress += 8;
-                    break;
-                case INT:
-                    Unsafe.getUnsafe().putInt(writeAddress, record.getInt(i));
-                    writeAddress += 4;
-                    break;
-                case LONG:
-                    Unsafe.getUnsafe().putLong(writeAddress, record.getLong(i));
-                    writeAddress += 8;
-                    break;
-                case SHORT:
-                    Unsafe.getUnsafe().putShort(writeAddress, record.getShort(i));
-                    writeAddress += 2;
-                    break;
-                case SYMBOL:
-                    Unsafe.getUnsafe().putInt(writeAddress, record.getInt(i));
-                    writeAddress += 4;
-                    break;
-                case DATE:
-                    Unsafe.getUnsafe().putLong(writeAddress, record.getDate(i));
-                    writeAddress += 8;
-                    break;
-                case FLOAT:
-                    Unsafe.getUnsafe().putFloat(writeAddress, record.getFloat(i));
-                    writeAddress += 4;
-                    break;
-                case STRING:
-                    writeString(headerAddress, record.getFlyweightStr(i));
-                    headerAddress += 8;
-                    break;
-                case BINARY:
-                    writeBinary(headerAddress, record.getBin(i));
-                    headerAddress += 8;
-                    break;
-                default:
-                    throw new JournalRuntimeException("Unsupported type: " + metadata.getColumnQuick(i).getType());
-            }
-        }
-        return recordStartOffset;
+        this.address = buffer.address(offset) + headerSize;
     }
 
     private long findAddress(int index) {
-        return buffer.toAddress(findOffset(index));
+        return buffer.address(findOffset(index));
     }
 
     private long findOffset(int index) {
@@ -260,15 +261,28 @@ public class DirectRecord extends AbstractRecord {
         return Unsafe.getUnsafe().getLong(address - headerSize + (-offsets[index]) * 8);
     }
 
-    private void writeBinary(long headerAddress, DirectInputStream value) {
-        long initialOffset = buffer.getWriteOffsetQuick(8);
-        long len = value.getLength();
+    private void writeBin(OutputStream stream, long offset, long len) throws IOException {
+        long position = offset;
+        long copied = 0;
+        while (copied < len) {
+            long blockEndOffset = buffer.pageRemaining(offset);
+            long copyEndOffset = Math.min(blockEndOffset, len - copied);
+            len += copyEndOffset - position;
+            while (position < copyEndOffset) {
+                stream.write(Unsafe.getUnsafe().getByte(buffer.address(offset) + position++));
+            }
+        }
+    }
+
+    private void writeBin(long headerAddress, DirectInputStream value) {
+        long initialOffset = buffer.calcOffset(8);
+        long len = value.size();
 
         // Write header offset.
         Unsafe.getUnsafe().putLong(headerAddress, initialOffset);
 
         // Write length.
-        Unsafe.getUnsafe().putLong(buffer.toAddress(initialOffset), len);
+        Unsafe.getUnsafe().putLong(buffer.address(initialOffset), len);
 
         if (len < 1) {
             return;
@@ -281,8 +295,8 @@ public class DirectRecord extends AbstractRecord {
         if (item != null) {
             // Allocate.
             int k = item.length();
-            long offset = buffer.getWriteOffsetWithChecks(k * 2 + 4);
-            long address = buffer.toAddress(offset);
+            long offset = buffer.calcOffsetChecked(k * 2 + 4);
+            long address = buffer.address(offset);
             // Save the address in the header.
             Unsafe.getUnsafe().putLong(headerAddress, offset);
             // Write length at the beginning of the field data.
@@ -294,9 +308,9 @@ public class DirectRecord extends AbstractRecord {
                 Unsafe.getUnsafe().putChar(address += 2, item.charAt(i));
             }
         } else {
-            long offset = buffer.getWriteOffsetQuick(4);
+            long offset = buffer.calcOffset(4);
             Unsafe.getUnsafe().putLong(headerAddress, offset);
-            Unsafe.getUnsafe().putInt(buffer.toAddress(offset), -1);
+            Unsafe.getUnsafe().putInt(buffer.address(offset), -1);
         }
     }
 }

@@ -413,7 +413,7 @@ public class VariableColumn extends AbstractColumn {
         }
 
         @Override
-        public long getLength() {
+        public long size() {
             return remaining;
         }
 

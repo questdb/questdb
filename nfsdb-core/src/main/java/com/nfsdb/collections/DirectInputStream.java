@@ -24,7 +24,8 @@ package com.nfsdb.collections;
 import java.io.InputStream;
 
 public abstract class DirectInputStream extends InputStream {
+
     public abstract long copyTo(long address, long start, long length);
 
-    public abstract long getLength();
+    public abstract long size();
 }

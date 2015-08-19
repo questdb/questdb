@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.collections;
 
@@ -45,12 +45,12 @@ public class DirectRecordLinkedList extends AbstractImmutableIterator<Record> im
     }
 
     public long append(Record record, long prevOffset) {
-        long offset = buffer.getWriteOffsetQuick(8 + bufferRecord.getFixedBlockLength());
+        long offset = buffer.calcOffset(8 + bufferRecord.getFixedBlockLength());
         if (prevOffset != -1) {
-            Unsafe.getUnsafe().putLong(buffer.toAddress(prevOffset), offset);
+            Unsafe.getUnsafe().putLong(buffer.address(prevOffset), offset);
         }
-        Unsafe.getUnsafe().putLong(buffer.toAddress(offset), -1L);
-        bufferRecord.write(record, offset + 8);
+        Unsafe.getUnsafe().putLong(buffer.address(offset), -1L);
+        bufferRecord.append(record, offset + 8);
         return offset;
     }
 
@@ -87,7 +87,7 @@ public class DirectRecordLinkedList extends AbstractImmutableIterator<Record> im
     @Override
     public Record next() {
         bufferRecord.init(readOffset + 8);
-        readOffset = Unsafe.getUnsafe().getLong(buffer.toAddress(readOffset));
+        readOffset = Unsafe.getUnsafe().getLong(buffer.address(readOffset));
         return bufferRecord;
     }
 
