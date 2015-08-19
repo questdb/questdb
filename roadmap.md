@@ -38,7 +38,10 @@ __clients__
 
 - [ ] client for python
 - [ ] client for R
-- [ ] client for java
+- [ ] client for Ruby
+- [ ] client for JVM
+- [ ] client for .Net
+- [ ] client for C (link to other lnaguges like D, Julia, Rust, Nim)
 - [ ] build fail-over in all clients
 - [ ] grafana integration
 - [ ] web query UI (ipython style)
