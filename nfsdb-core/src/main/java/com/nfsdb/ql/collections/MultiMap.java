@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,25 +17,19 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.collections;
 
-import com.nfsdb.collections.DirectInputStream;
-import com.nfsdb.collections.DirectMemoryStructure;
-import com.nfsdb.collections.LongList;
-import com.nfsdb.collections.Mutable;
+import com.nfsdb.collections.*;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
+import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
-import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.utils.Hash;
 import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Unsafe;
-
-import java.util.ArrayList;
-import java.util.List;
 
 public class MultiMap extends DirectMemoryStructure implements Mutable {
 
@@ -56,7 +50,18 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
     private int size = 0;
     private int mask;
 
-    private MultiMap(int capacity, long dataSize, float loadFactor, List<RecordColumnMetadata> valueColumns, List<RecordColumnMetadata> keyColumns, List<MapRecordValueInterceptor> interceptors) {
+
+    public MultiMap(ObjList<RecordColumnMetadata> valueColumns, ObjList<RecordColumnMetadata> keyColumns, ObjList<MapRecordValueInterceptor> interceptors) {
+        //todo: extract config
+        this(1024 * 1024, 4 * 1024 * 1024, 0.5f, valueColumns, keyColumns, interceptors);
+    }
+
+    public MultiMap(int capacity,
+                    long dataSize,
+                    float loadFactor,
+                    ObjList<RecordColumnMetadata> valueColumns,
+                    ObjList<RecordColumnMetadata> keyColumns,
+                    ObjList<MapRecordValueInterceptor> interceptors) {
         this.loadFactor = loadFactor;
         this.address = Unsafe.getUnsafe().allocateMemory(dataSize + Unsafe.CACHE_LINE_SIZE);
         this.kStart = kPos = this.address + (this.address & (Unsafe.CACHE_LINE_SIZE - 1));
@@ -259,49 +264,6 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
         this.address = kAddress;
         this.kStart = kStart;
         this.kLimit = kStart + kCapacity;
-    }
-
-    public static class Builder {
-        private final List<RecordColumnMetadata> valueColumns = new ArrayList<>();
-        private final List<RecordColumnMetadata> keyColumns = new ArrayList<>();
-        private final List<MapRecordValueInterceptor> interceptors = new ArrayList<>();
-        private int capacity = 67;
-        private long dataSize = 4096;
-        private float loadFactor = 0.5f;
-
-        public MultiMap build() {
-            return new MultiMap(capacity, dataSize, loadFactor, valueColumns, keyColumns, interceptors);
-        }
-
-        public Builder interceptor(MapRecordValueInterceptor interceptor) {
-            interceptors.add(interceptor);
-            return this;
-        }
-
-        public Builder keyColumn(RecordColumnMetadata metadata) {
-            keyColumns.add(metadata);
-            return this;
-        }
-
-        public Builder setCapacity(int capacity) {
-            this.capacity = capacity;
-            return this;
-        }
-
-        public Builder setDataSize(long dataSize) {
-            this.dataSize = dataSize;
-            return this;
-        }
-
-        public Builder setLoadFactor(float loadFactor) {
-            this.loadFactor = loadFactor;
-            return this;
-        }
-
-        public Builder valueColumn(RecordColumnMetadata metadata) {
-            valueColumns.add(metadata);
-            return this;
-        }
     }
 
     public class KeyWriter {

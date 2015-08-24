@@ -27,7 +27,7 @@ import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.ql.RecordMetadata;
+import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Unsafe;
 
@@ -71,11 +71,6 @@ public class SelectedColumnsMetadata implements RecordMetadata {
     }
 
     @Override
-    public RecordColumnMetadata getColumnQuick(int index) {
-        return Unsafe.arrayGet(columnMetadata, index);
-    }
-
-    @Override
     public RecordColumnMetadata getColumn(CharSequence name) {
         return getColumnQuick(getColumnIndex(name));
     }
@@ -92,6 +87,11 @@ public class SelectedColumnsMetadata implements RecordMetadata {
             throw new JournalRuntimeException("Invalid column name %s", name);
         }
         return index;
+    }
+
+    @Override
+    public RecordColumnMetadata getColumnQuick(int index) {
+        return Unsafe.arrayGet(columnMetadata, index);
     }
 
     @Override

@@ -24,7 +24,7 @@ package com.nfsdb.ql.impl;
 import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.ql.RecordMetadata;
+import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.ops.VirtualColumn;
 
 public class VirtualRecordMetadata implements RecordMetadata {
@@ -49,11 +49,6 @@ public class VirtualRecordMetadata implements RecordMetadata {
     }
 
     @Override
-    public RecordColumnMetadata getColumnQuick(int index) {
-        return index < split ? base.getColumnQuick(index) : virtualColumns.getQuick(index - split);
-    }
-
-    @Override
     public RecordColumnMetadata getColumn(CharSequence name) {
         return getColumnQuick(getColumnIndex(name));
     }
@@ -67,6 +62,11 @@ public class VirtualRecordMetadata implements RecordMetadata {
     public int getColumnIndex(CharSequence name) {
         int index = nameToIndexMap.get(name);
         return index == -1 ? base.getColumnIndex(name) : index;
+    }
+
+    @Override
+    public RecordColumnMetadata getColumnQuick(int index) {
+        return index < split ? base.getColumnQuick(index) : virtualColumns.getQuick(index - split);
     }
 
     @Override

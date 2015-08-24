@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,15 +17,17 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.experimental;
 
 import com.nfsdb.Journal;
 import com.nfsdb.JournalWriter;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.model.Album;
 import com.nfsdb.model.Band;
 import com.nfsdb.model.Quote;
@@ -239,10 +241,10 @@ public class CstTest {
     public void testResamplingPerformance() throws Exception {
 
         JournalFactory factory = new JournalFactory("d:/data");
-        Journal w = factory.reader("quote");
+        final Journal w = factory.reader("quote");
 
-        int tsIndex = w.getMetadata().getColumnIndex("timestamp");
-        int symIndex = w.getMetadata().getColumnIndex("sym");
+        final int tsIndex = w.getMetadata().getColumnIndex("timestamp");
+        final int symIndex = w.getMetadata().getColumnIndex("sym");
 
         long t = 0;
         for (int i = -10; i < 10; i++) {
@@ -250,17 +252,18 @@ public class CstTest {
                 t = System.nanoTime();
             }
 
-            MultiMap map = new MultiMap.Builder()
-                    .keyColumn(w.getMetadata().getColumn(tsIndex))
-                    .keyColumn(w.getMetadata().getColumn(symIndex))
-                    .valueColumn(new ColumnMetadata() {{
-                        name = "count";
-                        type = ColumnType.INT;
-                    }})
-                    .setCapacity(50)
-                    .setDataSize(500 * 1024)
-                    .setLoadFactor(0.5f)
-                    .build();
+            MultiMap map = new MultiMap(
+                    new ObjList<RecordColumnMetadata>() {{
+                        add(new ColumnMetadata() {{
+                            name = "count";
+                            type = ColumnType.INT;
+                        }});
+                    }},
+                    new ObjList<RecordColumnMetadata>() {{
+                        add(w.getMetadata().getColumn(tsIndex));
+                        add(w.getMetadata().getColumn(symIndex));
+                    }},
+                    null);
 
             long prev = -1;
             for (Record e : compiler.compile("quote")) {

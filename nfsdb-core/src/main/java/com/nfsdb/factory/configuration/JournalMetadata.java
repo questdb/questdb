@@ -27,8 +27,7 @@ import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.exceptions.NoSuchColumnException;
-import com.nfsdb.ql.RecordMetadata;
-import com.nfsdb.storage.HugeBuffer;
+import com.nfsdb.storage.UnstructuredFile;
 import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -100,7 +99,7 @@ public class JournalMetadata<T> implements RecordMetadata {
     }
 
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
-    public JournalMetadata(HugeBuffer buf) {
+    public JournalMetadata(UnstructuredFile buf) {
         buf.setPos(0);
         id = buf.getStr();
         modelClass = null;
@@ -144,11 +143,6 @@ public class JournalMetadata<T> implements RecordMetadata {
     }
 
     @Override
-    public ColumnMetadata getColumnQuick(int index) {
-        return Unsafe.arrayGet(columnMetadata, index);
-    }
-
-    @Override
     public ColumnMetadata getColumn(CharSequence name) {
         return Unsafe.arrayGet(columnMetadata, getColumnIndex(name));
     }
@@ -163,6 +157,11 @@ public class JournalMetadata<T> implements RecordMetadata {
             throw new NoSuchColumnException("Invalid column name: %s", columnName);
         }
         return result;
+    }
+
+    @Override
+    public ColumnMetadata getColumnQuick(int index) {
+        return Unsafe.arrayGet(columnMetadata, index);
     }
 
     public ColumnMetadata getTimestampMetadata() {
@@ -296,7 +295,7 @@ public class JournalMetadata<T> implements RecordMetadata {
         return b.toString();
     }
 
-    public void write(HugeBuffer buf) {
+    public void write(UnstructuredFile buf) {
         buf.setPos(0);
         buf.put(id);
         buf.put(location);

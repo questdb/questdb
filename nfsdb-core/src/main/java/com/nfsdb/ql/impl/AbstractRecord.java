@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,13 +17,13 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.DirectInputStream;
+import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordMetadata;
 
 import java.io.OutputStream;
 

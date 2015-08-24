@@ -28,6 +28,7 @@ import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
+import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.ql.*;
 import com.nfsdb.ql.impl.*;

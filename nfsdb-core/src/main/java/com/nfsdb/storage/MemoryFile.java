@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.storage;
 
@@ -68,6 +68,14 @@ public class MemoryFile implements Closeable {
         open();
         this.buffers = new ObjList<>((int) (size() >>> bitHint) + 1);
         this.stitches = new ObjList<>(buffers.size());
+    }
+
+    public long addressOf(long offset, int size) {
+        if (offset > cachedBufferLo && offset + size < cachedBufferHi) {
+            return cachedAddress + offset - cachedBufferLo - 1;
+        } else {
+            return allocateAddress(offset, size);
+        }
     }
 
     @Override
@@ -125,22 +133,6 @@ public class MemoryFile implements Closeable {
         }
     }
 
-    public long getAddress(long offset, int size) {
-        if (offset > cachedBufferLo && offset + size < cachedBufferHi) {
-            return cachedAddress + offset - cachedBufferLo - 1;
-        } else {
-            return allocateAddress(offset, size);
-        }
-    }
-
-    public int getAddressSize(long offset) {
-        if (offset > cachedBufferLo && offset < cachedBufferHi) {
-            return (int) (cachedBufferHi - offset - 1);
-        } else {
-            return 0;
-        }
-    }
-
     public long getAppendOffset() {
         if (cachedAppendOffset != -1 && (mode == JournalMode.APPEND || mode == JournalMode.BULK_APPEND)) {
             return cachedAppendOffset;
@@ -166,6 +158,14 @@ public class MemoryFile implements Closeable {
             cachedAddress = ByteBuffers.getAddress(cachedBuffer);
         }
         return cachedBuffer;
+    }
+
+    public int pageRemaining(long offset) {
+        if (offset > cachedBufferLo && offset < cachedBufferHi) {
+            return (int) (cachedBufferHi - offset - 1);
+        } else {
+            return 0;
+        }
     }
 
     @Override

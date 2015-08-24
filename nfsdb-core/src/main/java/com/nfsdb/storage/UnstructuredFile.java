@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.storage;
 
@@ -27,10 +27,10 @@ import com.nfsdb.utils.Unsafe;
 
 import java.io.File;
 
-public class HugeBuffer extends MemoryFile {
+public class UnstructuredFile extends MemoryFile {
     private long pos = 0;
 
-    public HugeBuffer(File file, int bitHint, JournalMode mode) throws JournalException {
+    public UnstructuredFile(File file, int bitHint, JournalMode mode) throws JournalException {
         super(file, bitHint, mode);
     }
 
@@ -167,7 +167,7 @@ public class HugeBuffer extends MemoryFile {
     }
 
     private long nextAddress(int len) {
-        long a = getAddress(pos, len);
+        long a = addressOf(pos, len);
         pos += len;
         return a;
     }

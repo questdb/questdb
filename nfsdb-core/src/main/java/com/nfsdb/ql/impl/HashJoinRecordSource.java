@@ -27,7 +27,11 @@ import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.ql.*;
+import com.nfsdb.factory.configuration.RecordMetadata;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordCursor;
+import com.nfsdb.ql.RecordSource;
+import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.collections.MultiMap;
 import com.nfsdb.ql.collections.MultiRecordMap;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -156,20 +160,15 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
             this.masterColumns.add(mm.getColumnQuick(index));
         }
 
-        MultiRecordMap.Builder builder = new MultiRecordMap.Builder();
         RecordMetadata sm = slaveSource.getMetadata();
+        ObjList<RecordColumnMetadata> keyCols = new ObjList<>();
         for (int i = 0, k = slaveColumns.size(); i < k; i++) {
             int index = sm.getColumnIndex(slaveColumns.getQuick(i));
             this.slaveColIndex.add(index);
             this.slaveColumns.add(sm.getColumnQuick(index));
-            builder.keyColumn(sm.getColumnQuick(index));
+            keyCols.add(sm.getColumnQuick(index));
         }
-        if (byRowId) {
-            builder.setRecordMetadata(rowIdRecord.getMetadata());
-        } else {
-            builder.setRecordMetadata(slaveSource.getMetadata());
-        }
-        return builder.build();
+        return byRowId ? new MultiRecordMap(keyCols, rowIdRecord.getMetadata()) : new MultiRecordMap(keyCols, slaveSource.getMetadata());
     }
 
     private boolean hasNext0() {

@@ -19,9 +19,7 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.ql;
-
-import com.nfsdb.factory.configuration.RecordColumnMetadata;
+package com.nfsdb.factory.configuration;
 
 public interface RecordMetadata {
 

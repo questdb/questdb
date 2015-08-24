@@ -21,7 +21,9 @@
 
 package com.nfsdb;
 
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.io.sink.StringSink;
@@ -106,24 +108,25 @@ public class MultiMapTest extends AbstractTest {
                 "3\t2014-12-30T03:13:00.000Z\tBT-A.L\n";
 
 
-        JournalWriter<Quote> w = factory.writer(Quote.class);
+        final JournalWriter<Quote> w = factory.writer(Quote.class);
         TestUtils.generateQuoteData(w, 10000, 1419908881558L, 30);
         w.commit();
 
-        int tsIndex = w.getMetadata().getColumnIndex("timestamp");
-        int symIndex = w.getMetadata().getColumnIndex("sym");
+        final int tsIndex = w.getMetadata().getColumnIndex("timestamp");
+        final int symIndex = w.getMetadata().getColumnIndex("sym");
 
-        MultiMap map = new MultiMap.Builder()
-                .keyColumn(w.getMetadata().getColumn(tsIndex))
-                .keyColumn(w.getMetadata().getColumn(symIndex))
-                .valueColumn(new ColumnMetadata() {{
-                    name = "count";
-                    type = ColumnType.INT;
-                }})
-                .setCapacity(150)
-                .setDataSize(1024 * 1024)
-                .setLoadFactor(0.5f)
-                .build();
+        MultiMap map = new MultiMap(
+                new ObjList<RecordColumnMetadata>() {{
+                    add(new ColumnMetadata() {{
+                        name = "count";
+                        type = ColumnType.INT;
+                    }});
+                }},
+                new ObjList<RecordColumnMetadata>() {{
+                    add(w.getMetadata().getColumn(tsIndex));
+                    add(w.getMetadata().getColumn(symIndex));
+                }},
+                null);
 
         for (Record e : compiler.compile("quote")) {
             long ts = e.getLong(tsIndex);

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
@@ -26,7 +26,7 @@ import com.nfsdb.exceptions.InvalidColumnException;
 import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.ql.RecordMetadata;
+import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.impl.MillisIntervalSource;
 import com.nfsdb.ql.impl.MonthsIntervalSource;
 import com.nfsdb.ql.impl.YearIntervalSource;

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.storage;
 
@@ -33,7 +33,7 @@ import java.io.File;
 public class TxLog {
 
     public static final String FILE_NAME = "_tx";
-    private final HugeBuffer hb;
+    private final UnstructuredFile hb;
     private final Rnd rnd;
     private long headAddress = 0;
     private long currentAddress = 0;
@@ -41,7 +41,7 @@ public class TxLog {
 
     public TxLog(File baseLocation, JournalMode mode) throws JournalException {
         // todo: calculate hint
-        this.hb = new HugeBuffer(new File(baseLocation, FILE_NAME), Constants.HB_HINT, mode);
+        this.hb = new UnstructuredFile(new File(baseLocation, FILE_NAME), Constants.HB_HINT, mode);
         this.rnd = new Rnd(System.currentTimeMillis(), System.nanoTime());
         this.txn = getCurrentTxn() + 1;
     }
@@ -139,7 +139,7 @@ public class TxLog {
     }
 
     public long readCurrentTxAddress() {
-        long a = hb.getAddress(0, 9);
+        long a = hb.addressOf(0, 9);
 
         long address;
         while (true) {

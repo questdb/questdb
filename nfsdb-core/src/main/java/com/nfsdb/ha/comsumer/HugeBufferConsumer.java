@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ha.comsumer;
 
@@ -26,7 +26,7 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.factory.configuration.Constants;
 import com.nfsdb.ha.ChannelConsumer;
-import com.nfsdb.storage.HugeBuffer;
+import com.nfsdb.storage.UnstructuredFile;
 import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Unsafe;
 
@@ -40,10 +40,10 @@ import java.nio.channels.ReadableByteChannel;
 public class HugeBufferConsumer implements ChannelConsumer, Closeable {
     private final ByteBuffer header = ByteBuffer.allocateDirect(8).order(ByteOrder.LITTLE_ENDIAN);
     private final long headerAddress = ByteBuffers.getAddress(header);
-    private final HugeBuffer hb;
+    private final UnstructuredFile hb;
 
     public HugeBufferConsumer(File file) throws JournalException {
-        hb = new HugeBuffer(file, Constants.HB_HINT, JournalMode.APPEND);
+        hb = new UnstructuredFile(file, Constants.HB_HINT, JournalMode.APPEND);
     }
 
     @Override
@@ -71,7 +71,7 @@ public class HugeBufferConsumer implements ChannelConsumer, Closeable {
         }
     }
 
-    public HugeBuffer getHb() {
+    public UnstructuredFile getHb() {
         return hb;
     }
 }

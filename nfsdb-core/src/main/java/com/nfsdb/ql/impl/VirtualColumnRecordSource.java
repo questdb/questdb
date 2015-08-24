@@ -25,7 +25,11 @@ import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
-import com.nfsdb.ql.*;
+import com.nfsdb.factory.configuration.RecordMetadata;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordCursor;
+import com.nfsdb.ql.RecordSource;
+import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.ops.VirtualColumn;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 

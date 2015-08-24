@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,12 +17,13 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.io.parser.listener;
 
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.io.ImportManager;
 import com.nfsdb.io.ImportSchema;
 import com.nfsdb.io.ImportedColumnMetadata;
@@ -41,6 +42,8 @@ public class MetadataExtractorListener implements Listener, Closeable {
     // order of probes in array is critical
     private static final TypeProbe probes[] = new TypeProbe[]{new IntProbe(), new LongProbe(), new DoubleProbe(), new BooleanProbe(), new DateIsoProbe(), new DateFmt1Probe(), new DateFmt2Probe()};
     private static final int probeLen = probes.length;
+    private static final ObjList<RecordColumnMetadata> keyMeta = new ObjList<>(1);
+    private static final ObjList<RecordColumnMetadata> counterMeta = new ObjList<>(1);
     public final int frequencyMapAreaSize;
     private final StringSink tempSink = new StringSink();
     private final ImportSchema importSchema;
@@ -91,18 +94,7 @@ public class MetadataExtractorListener implements Listener, Closeable {
         this.headers = new String[count];
         this.frequencyMaps = new MultiMap[count];
         for (int i = 0; i < count; i++) {
-            frequencyMaps[i] = new MultiMap.Builder() {{
-                setCapacity(ImportManager.SAMPLE_SIZE);
-                setDataSize(frequencyMapAreaSize);
-                keyColumn(new ColumnMetadata() {{
-                    setType(ColumnType.STRING);
-                    setName("Key");
-                }});
-                valueColumn(new ColumnMetadata() {{
-                    setType(ColumnType.INT);
-                    setName("Counter");
-                }});
-            }}.build();
+            frequencyMaps[i] = new MultiMap(counterMeta, keyMeta, null);
         }
     }
 
@@ -257,5 +249,17 @@ public class MetadataExtractorListener implements Listener, Closeable {
         for (int i = 0; i < hi; i++) {
             headers[i] = normalise(values[i]);
         }
+    }
+
+    static {
+        ColumnMetadata keyMeta = new ColumnMetadata();
+        keyMeta.setName("Key");
+        keyMeta.setType(ColumnType.STRING);
+        MetadataExtractorListener.keyMeta.add(keyMeta);
+
+        ColumnMetadata counterMeta = new ColumnMetadata();
+        counterMeta.setName("Counter");
+        counterMeta.setType(ColumnType.INT);
+        MetadataExtractorListener.counterMeta.add(counterMeta);
     }
 }

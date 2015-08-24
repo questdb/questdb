@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,14 +17,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.factory.configuration.JournalMetadataBuilder;
 import com.nfsdb.model.Quote;
-import com.nfsdb.storage.HugeBuffer;
+import com.nfsdb.storage.UnstructuredFile;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -39,7 +39,7 @@ public class JournalMetadataTest {
     public void testMetadataWrite() throws Exception {
         JournalMetadataBuilder<Quote> b = new JournalMetadataBuilder<>(Quote.class);
 
-        HugeBuffer hb = new HugeBuffer(temp.newFile(), 10, JournalMode.APPEND);
+        UnstructuredFile hb = new UnstructuredFile(temp.newFile(), 10, JournalMode.APPEND);
         JournalMetadata m = (JournalMetadata) b.build();
         m.write(hb);
         JournalMetadata metadata = new JournalMetadata(hb);

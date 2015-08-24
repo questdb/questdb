@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,18 +17,19 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
-package com.nfsdb.ql.collections;
+package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.DirectCharSequence;
 import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordMetadata;
-import com.nfsdb.ql.impl.AbstractRecord;
+import com.nfsdb.ql.collections.DirectPagedBufferStream;
 import com.nfsdb.storage.ColumnType;
+import com.nfsdb.storage.SequentialMemory;
 import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
@@ -36,18 +37,18 @@ import org.jetbrains.annotations.NotNull;
 import java.io.IOException;
 import java.io.OutputStream;
 
-public class DirectRecord extends AbstractRecord {
+public class MemoryRecordAccessor extends AbstractRecord {
     private final DirectCharSequence charSequence = new DirectCharSequence();
-    private final DirectPagedBuffer buffer;
+    private final SequentialMemory mem;
     private final int headerSize;
     private final int[] offsets;
     private final int fixedBlockLen;
     private int fixedSize;
     private long address;
 
-    public DirectRecord(RecordMetadata metadata, DirectPagedBuffer buffer) {
+    public MemoryRecordAccessor(RecordMetadata metadata, SequentialMemory mem) {
         super(metadata);
-        this.buffer = buffer;
+        this.mem = mem;
         offsets = new int[metadata.getColumnCount()];
         int lastOffset = 0;
 
@@ -75,13 +76,13 @@ public class DirectRecord extends AbstractRecord {
     }
 
     public long append(@NotNull Record record) {
-        long offset = buffer.calcOffset(headerSize + fixedSize);
+        long offset = mem.allocate(headerSize + fixedSize);
         append(record, offset);
         return offset;
     }
 
     public void append(Record record, long offset) {
-        long headerAddress = buffer.address(offset);
+        long headerAddress = mem.addressOf(offset);
         long writeAddress = headerAddress + headerSize;
 
         for (int i = 0, n = offsets.length; i < n; i++) {
@@ -145,8 +146,8 @@ public class DirectRecord extends AbstractRecord {
     @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
     @Override
     public void getBin(int col, OutputStream s) {
-        final long readOffset = findOffset(col);
-        final long readAddress = buffer.address(readOffset);
+        final long readOffset = offsetOf(col);
+        final long readAddress = mem.addressOf(readOffset);
         try {
             long len = Unsafe.getUnsafe().getLong(readAddress);
             if (len > 0) {
@@ -159,11 +160,11 @@ public class DirectRecord extends AbstractRecord {
 
     @Override
     public DirectInputStream getBin(int col) {
-        final long offset = findOffset(col);
-        final long address = buffer.address(offset);
+        final long offset = offsetOf(col);
+        final long address = mem.addressOf(offset);
         final long len = Unsafe.getUnsafe().getLong(address);
         if (len < 0) return null;
-        return new DirectPagedBufferStream(buffer, offset + 8, len);
+        return new DirectPagedBufferStream(mem, offset + 8, len);
     }
 
     @Override
@@ -191,7 +192,7 @@ public class DirectRecord extends AbstractRecord {
 
     @Override
     public CharSequence getFlyweightStr(int col) {
-        long readAddress = findAddress(col);
+        long readAddress = addressOf(col);
         final int len = Unsafe.getUnsafe().getInt(readAddress);
         if (len < 0) return null;
         return charSequence.init(readAddress + 4, readAddress + 4 + len * 2);
@@ -222,7 +223,7 @@ public class DirectRecord extends AbstractRecord {
 
     @Override
     public CharSequence getStr(int col) {
-        long readAddress = findAddress(col);
+        long readAddress = addressOf(col);
         final int len = Unsafe.getUnsafe().getInt(readAddress);
         if (len < 0) return null;
         return new DirectCharSequence().init(readAddress + 4, readAddress + 4 + len * 2);
@@ -230,7 +231,7 @@ public class DirectRecord extends AbstractRecord {
 
     @Override
     public void getStr(int col, CharSink sink) {
-        long readAddress = findAddress(col);
+        long readAddress = addressOf(col);
         final int len = Unsafe.getUnsafe().getInt(readAddress);
         readAddress += 2;
         for (int i = 0; i < len; i++) {
@@ -248,14 +249,14 @@ public class DirectRecord extends AbstractRecord {
     }
 
     public void init(long offset) {
-        this.address = buffer.address(offset) + headerSize;
+        this.address = mem.addressOf(offset) + headerSize;
     }
 
-    private long findAddress(int index) {
-        return buffer.address(findOffset(index));
+    private long addressOf(int index) {
+        return mem.addressOf(offsetOf(index));
     }
 
-    private long findOffset(int index) {
+    private long offsetOf(int index) {
         // Not fixed len.
         assert offsets[index] <= 0;
         return Unsafe.getUnsafe().getLong(address - headerSize + (-offsets[index]) * 8);
@@ -265,38 +266,51 @@ public class DirectRecord extends AbstractRecord {
         long position = offset;
         long copied = 0;
         while (copied < len) {
-            long blockEndOffset = buffer.pageRemaining(offset);
+            long blockEndOffset = mem.pageRemaining(offset);
             long copyEndOffset = Math.min(blockEndOffset, len - copied);
             len += copyEndOffset - position;
             while (position < copyEndOffset) {
-                stream.write(Unsafe.getUnsafe().getByte(buffer.address(offset) + position++));
+                stream.write(Unsafe.getUnsafe().getByte(mem.addressOf(offset) + position++));
             }
         }
     }
 
     private void writeBin(long headerAddress, DirectInputStream value) {
-        long initialOffset = buffer.calcOffset(8);
+        long offset = mem.allocate(8);
         long len = value.size();
 
         // Write header offset.
-        Unsafe.getUnsafe().putLong(headerAddress, initialOffset);
+        Unsafe.getUnsafe().putLong(headerAddress, offset);
 
         // Write length.
-        Unsafe.getUnsafe().putLong(buffer.address(initialOffset), len);
+        Unsafe.getUnsafe().putLong(mem.addressOf(offset), len);
 
         if (len < 1) {
             return;
         }
 
-        buffer.append(value);
+        offset = mem.allocate(1);
+        long p = 0;
+        do {
+            int remaining = mem.pageRemaining(offset);
+            int sz = remaining < len ? remaining : (int) len;
+            value.copyTo(mem.addressOf(offset), p, sz);
+            p += sz;
+            mem.allocate(sz);
+            offset += sz;
+            len -= sz;
+        } while (len > 0);
     }
 
     private void writeString(long headerAddress, CharSequence item) {
         if (item != null) {
             // Allocate.
             int k = item.length();
-            long offset = buffer.calcOffsetChecked(k * 2 + 4);
-            long address = buffer.address(offset);
+            if (k > mem.pageSize()) {
+                throw new JournalRuntimeException("String larger than pageSize");
+            }
+            long offset = mem.allocate(k * 2 + 4);
+            long address = mem.addressOf(offset);
             // Save the address in the header.
             Unsafe.getUnsafe().putLong(headerAddress, offset);
             // Write length at the beginning of the field data.
@@ -308,9 +322,9 @@ public class DirectRecord extends AbstractRecord {
                 Unsafe.getUnsafe().putChar(address += 2, item.charAt(i));
             }
         } else {
-            long offset = buffer.calcOffset(4);
+            long offset = mem.allocate(4);
             Unsafe.getUnsafe().putLong(headerAddress, offset);
-            Unsafe.getUnsafe().putInt(buffer.address(offset), -1);
+            Unsafe.getUnsafe().putInt(mem.addressOf(offset), -1);
         }
     }
 }

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,9 +17,9 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
-package com.nfsdb.ql.collections;
+package com.nfsdb.ql.impl;
 
 import com.nfsdb.JournalWriter;
 import com.nfsdb.collections.DirectInputStream;
@@ -31,6 +31,7 @@ import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.parser.QueryCompiler;
+import com.nfsdb.storage.SequentialMemory;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.utils.Files;
 import com.nfsdb.utils.Unsafe;
@@ -42,13 +43,12 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 
 
-
-public class DirectRecordTest {
+public class MemoryRecordAccessorTest {
     @Rule
     public final JournalTestFactory factory;
     public final QueryCompiler compiler;
 
-    public DirectRecordTest() {
+    public MemoryRecordAccessorTest() {
         try {
             this.factory = new JournalTestFactory(
                     new JournalConfigurationBuilder() {{
@@ -66,7 +66,6 @@ public class DirectRecordTest {
         long p = address;
         actual.copyTo(address, 0, sz);
         for (long i = 0; i < sz; i++) {
-//            System.out.println(Unsafe.getUnsafe().getByte(p++));
             Assert.assertEquals(expected.get(), Unsafe.getUnsafe().getByte(p++));
         }
         Unsafe.getUnsafe().freeMemory(address);
@@ -140,9 +139,9 @@ public class DirectRecordTest {
                     @Override
                     public Binary generate(int i) {
                         Binary af = new Binary();
-                        byte[] bin = new byte[1024 * 1024];
+                        byte[] bin = new byte[1024 * 1024 - 15];
                         for (int j = 0; j < bin.length; j++) {
-                            bin[j] = (byte) (j % 255);
+                            bin[j] = (byte) 'A';
                         }
                         af.aBinary = ByteBuffer.wrap(bin);
                         return af;
@@ -238,17 +237,17 @@ public class DirectRecordTest {
         }
         journal.commit();
 
-        try (DirectPagedBuffer buffer = new DirectPagedBuffer(pageSize)) {
-            DirectRecord dr = new DirectRecord(journal.getMetadata(), buffer);
+        try (SequentialMemory buffer = new SequentialMemory(pageSize)) {
+            MemoryRecordAccessor a = new MemoryRecordAccessor(journal.getMetadata(), buffer);
             LongList offsets = new LongList();
 
             for (Record rec : compiler.compile(journal.getLocation().getName())) {
-                offsets.add(dr.append(rec));
+                offsets.add(a.append(rec));
             }
 
             for (int i = 0; i < count; i++) {
-                dr.init(offsets.getQuick(i));
-                generator.assertRecord(dr, i);
+                a.init(offsets.getQuick(i));
+                generator.assertRecord(a, i);
             }
         }
     }

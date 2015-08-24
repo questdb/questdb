@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,14 +17,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
-package com.nfsdb;
+package com.nfsdb.storage;
 
+import com.nfsdb.JournalMode;
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.storage.FixedColumn;
-import com.nfsdb.storage.MemoryFile;
-import com.nfsdb.storage.VariableColumn;
 import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Files;
 import com.nfsdb.utils.Rnd;

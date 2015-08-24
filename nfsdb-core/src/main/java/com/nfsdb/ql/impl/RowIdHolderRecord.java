@@ -24,8 +24,8 @@ package com.nfsdb.ql.impl;
 import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
+import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
-import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.utils.Chars;
@@ -77,11 +77,6 @@ public class RowIdHolderRecord extends AbstractRecord {
             }
 
             @Override
-            public RecordColumnMetadata getColumnQuick(int index) {
-                return columnMetadata;
-            }
-
-            @Override
             public RecordColumnMetadata getColumn(CharSequence name) {
                 return getColumnQuick(getColumnIndex(name));
             }
@@ -97,6 +92,11 @@ public class RowIdHolderRecord extends AbstractRecord {
                     return 0;
                 }
                 throw new JournalRuntimeException("Invalid column name: %s", name);
+            }
+
+            @Override
+            public RecordColumnMetadata getColumnQuick(int index) {
+                return columnMetadata;
             }
 
             @Override

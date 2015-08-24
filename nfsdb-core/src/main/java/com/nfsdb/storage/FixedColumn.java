@@ -64,27 +64,27 @@ public class FixedColumn extends AbstractColumn {
     }
 
     public boolean getBool(long localRowID) {
-        return Unsafe.getUnsafe().getByte(mappedFile.getAddress(getOffset(localRowID), 1)) == 1;
+        return Unsafe.getUnsafe().getByte(mappedFile.addressOf(getOffset(localRowID), 1)) == 1;
     }
 
     public byte getByte(long localRowID) {
-        return Unsafe.getUnsafe().getByte(mappedFile.getAddress(getOffset(localRowID), 1));
+        return Unsafe.getUnsafe().getByte(mappedFile.addressOf(getOffset(localRowID), 1));
     }
 
     public double getDouble(long localRowID) {
-        return Unsafe.getUnsafe().getDouble(mappedFile.getAddress(getOffset(localRowID), 8));
+        return Unsafe.getUnsafe().getDouble(mappedFile.addressOf(getOffset(localRowID), 8));
     }
 
     public float getFloat(long localRowID) {
-        return Unsafe.getUnsafe().getFloat(mappedFile.getAddress(getOffset(localRowID), 4));
+        return Unsafe.getUnsafe().getFloat(mappedFile.addressOf(getOffset(localRowID), 4));
     }
 
     public int getInt(long localRowID) {
-        return Unsafe.getUnsafe().getInt(mappedFile.getAddress(getOffset(localRowID), 4));
+        return Unsafe.getUnsafe().getInt(mappedFile.addressOf(getOffset(localRowID), 4));
     }
 
     public long getLong(long localRowID) {
-        return Unsafe.getUnsafe().getLong(mappedFile.getAddress(getOffset(localRowID), 8));
+        return Unsafe.getUnsafe().getLong(mappedFile.addressOf(getOffset(localRowID), 8));
     }
 
     @Override
@@ -106,7 +106,7 @@ public class FixedColumn extends AbstractColumn {
     }
 
     public short getShort(long localRowID) {
-        return Unsafe.getUnsafe().getShort(mappedFile.getAddress(getOffset(localRowID), 2));
+        return Unsafe.getUnsafe().getShort(mappedFile.addressOf(getOffset(localRowID), 2));
     }
 
     public void putBool(boolean value) {
@@ -137,7 +137,7 @@ public class FixedColumn extends AbstractColumn {
 
     public void putNull() {
         getAddress();
-//        Unsafe.getUnsafe().setMemory(getAddress(), width, (byte) 0);
+//        Unsafe.getUnsafe().setMemory(addressOf(), width, (byte) 0);
     }
 
     public void putShort(short value) {
@@ -171,7 +171,7 @@ public class FixedColumn extends AbstractColumn {
     private long getAddress() {
         long appendOffset = mappedFile.getAppendOffset();
         preCommit(appendOffset + width);
-        return mappedFile.getAddress(appendOffset, width);
+        return mappedFile.addressOf(appendOffset, width);
     }
 
 }

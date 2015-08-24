@@ -22,23 +22,22 @@
 package com.nfsdb.ql.collections;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
+import com.nfsdb.collections.ObjList;
+import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
-import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.utils.Unsafe;
-
-import java.util.List;
 
 public final class MapRecordSource extends AbstractImmutableIterator<Record> implements RecordCursor<Record> {
     private final MapRecord record;
     private final MapValues values;
-    private final List<MapRecordValueInterceptor> interceptors;
+    private final ObjList<MapRecordValueInterceptor> interceptors;
     private final int interceptorsLen;
     private int count;
     private long address;
 
-    MapRecordSource(MapRecord record, MapValues values, List<MapRecordValueInterceptor> interceptors) {
+    MapRecordSource(MapRecord record, MapValues values, ObjList<MapRecordValueInterceptor> interceptors) {
         this.record = record;
         this.values = values;
         this.interceptors = interceptors;
@@ -84,7 +83,7 @@ public final class MapRecordSource extends AbstractImmutableIterator<Record> imp
 
     private void notifyInterceptors(long address) {
         for (int i = 0; i < interceptorsLen; i++) {
-            interceptors.get(i).beforeRecord(values.init(address, false));
+            interceptors.getQuick(i).beforeRecord(values.init(address, false));
         }
     }
 }

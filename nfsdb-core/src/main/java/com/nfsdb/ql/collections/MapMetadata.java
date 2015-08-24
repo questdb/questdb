@@ -22,12 +22,11 @@
 package com.nfsdb.ql.collections;
 
 import com.nfsdb.collections.CharSequenceIntHashMap;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.ql.RecordMetadata;
+import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.utils.Unsafe;
-
-import java.util.List;
 
 public final class MapMetadata implements RecordMetadata {
 
@@ -35,7 +34,7 @@ public final class MapMetadata implements RecordMetadata {
     private final int columnCount;
     private final RecordColumnMetadata[] columns;
 
-    public MapMetadata(List<RecordColumnMetadata> valueColumns, List<RecordColumnMetadata> keyColumns) {
+    public MapMetadata(ObjList<RecordColumnMetadata> valueColumns, ObjList<RecordColumnMetadata> keyColumns) {
         this.columnCount = valueColumns.size() + keyColumns.size();
         this.nameCache = new CharSequenceIntHashMap(columnCount);
         this.columns = new RecordColumnMetadata[columnCount];
@@ -58,11 +57,6 @@ public final class MapMetadata implements RecordMetadata {
     }
 
     @Override
-    public RecordColumnMetadata getColumnQuick(int index) {
-        return Unsafe.arrayGet(columns, index);
-    }
-
-    @Override
     public RecordColumnMetadata getColumn(CharSequence name) {
         return getColumnQuick(getColumnIndex(name));
     }
@@ -79,6 +73,11 @@ public final class MapMetadata implements RecordMetadata {
             throw new JournalRuntimeException("No such column: " + name);
         }
         return index;
+    }
+
+    @Override
+    public RecordColumnMetadata getColumnQuick(int index) {
+        return Unsafe.arrayGet(columns, index);
     }
 
     @Override

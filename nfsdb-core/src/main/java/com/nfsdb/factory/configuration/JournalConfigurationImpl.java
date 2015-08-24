@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.factory.configuration;
 
@@ -26,8 +26,8 @@ import com.nfsdb.JournalMode;
 import com.nfsdb.collections.ObjObjHashMap;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalMetadataException;
-import com.nfsdb.storage.HugeBuffer;
 import com.nfsdb.storage.TxLog;
+import com.nfsdb.storage.UnstructuredFile;
 
 import javax.annotation.concurrent.Immutable;
 import java.io.File;
@@ -156,7 +156,7 @@ public class JournalConfigurationImpl implements JournalConfiguration {
                 throw new JournalException(location + " is not a recognised journal");
             }
 
-            try (HugeBuffer hb = new HugeBuffer(metaFile, 12, JournalMode.READ)) {
+            try (UnstructuredFile hb = new UnstructuredFile(metaFile, 12, JournalMode.READ)) {
                 return new JournalMetadata<>(hb);
             }
         }

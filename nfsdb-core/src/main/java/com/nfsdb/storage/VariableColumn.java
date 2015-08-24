@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.storage;
 
@@ -106,13 +106,13 @@ public class VariableColumn extends AbstractColumn {
         }
 
         long offset = indexColumn.getLong(localRowID);
-        int len = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
+        int len = Unsafe.getUnsafe().getInt(mappedFile.addressOf(offset, 4));
 
         if (len != value.length()) {
             return false;
         }
 
-        long address = mappedFile.getAddress(offset + 4, len * 2);
+        long address = mappedFile.addressOf(offset + 4, len * 2);
         for (int i = 0; i < len; i++) {
             if (Unsafe.getUnsafe().getChar(address) != value.charAt(i)) {
                 return false;
@@ -127,8 +127,8 @@ public class VariableColumn extends AbstractColumn {
         long offset = getOffset(localRowID) + 4; // skip size
 
         while (target.hasRemaining()) {
-            long address = mappedFile.getAddress(offset, 1);
-            int len = mappedFile.getAddressSize(offset);
+            long address = mappedFile.addressOf(offset, 1);
+            int len = mappedFile.pageRemaining(offset);
             int min = len < target.remaining() ? len : target.remaining();
 
             for (int i = 0; i < min; i++) {
@@ -153,8 +153,8 @@ public class VariableColumn extends AbstractColumn {
         try {
             while (len > 0) {
                 if (blockRemaining == 0) {
-                    blockAddress = mappedFile.getAddress(offset, 1);
-                    blockRemaining = mappedFile.getAddressSize(offset);
+                    blockAddress = mappedFile.addressOf(offset, 1);
+                    blockRemaining = mappedFile.pageRemaining(offset);
                 }
 
                 int l = len > blockRemaining ? blockRemaining : len;
@@ -176,16 +176,16 @@ public class VariableColumn extends AbstractColumn {
     }
 
     public int getBinSize(long localRowID) {
-        return Unsafe.getUnsafe().getInt(mappedFile.getAddress(getOffset(localRowID), 4));
+        return Unsafe.getUnsafe().getInt(mappedFile.addressOf(getOffset(localRowID), 4));
     }
 
     public CharSequence getFlyweightStr(long localRowID) {
         long offset = indexColumn.getLong(localRowID);
-        int len = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
+        int len = Unsafe.getUnsafe().getInt(mappedFile.addressOf(offset, 4));
         if (len == -1) {
             return null;
         }
-        long lo = mappedFile.getAddress(offset + 4, len * 2);
+        long lo = mappedFile.addressOf(offset + 4, len * 2);
         return charSequence.init(lo, lo + len * 2);
     }
 
@@ -195,24 +195,24 @@ public class VariableColumn extends AbstractColumn {
 
     public String getStr(long localRowID) {
         long offset = indexColumn.getLong(localRowID);
-        int len = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
+        int len = Unsafe.getUnsafe().getInt(mappedFile.addressOf(offset, 4));
 
         if (len == -1) {
             return null;
         }
-        return getStr0(mappedFile.getAddress(offset + 4, len * 2), len);
+        return getStr0(mappedFile.addressOf(offset + 4, len * 2), len);
     }
 
     public void getStr(long localRowID, CharSink sink) {
         long offset = indexColumn.getLong(localRowID);
-        int len = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
+        int len = Unsafe.getUnsafe().getInt(mappedFile.addressOf(offset, 4));
 
         if (len == -1) {
             sink.put("null");
             return;
         }
 
-        long address = mappedFile.getAddress(offset + 4, len * 2);
+        long address = mappedFile.addressOf(offset + 4, len * 2);
         for (int i = 0; i < len; i++) {
             sink.put(Unsafe.getUnsafe().getChar(address));
             address += 2;
@@ -224,17 +224,17 @@ public class VariableColumn extends AbstractColumn {
         final long targetOffset = rowOffset + value.remaining() + 4;
         long appendOffset = rowOffset;
 
-        long address = mappedFile.getAddress(rowOffset, 4);
+        long address = mappedFile.addressOf(rowOffset, 4);
         Unsafe.getUnsafe().putInt(address, value.remaining());
         appendOffset += 4;
         address += 4;
-        int len = mappedFile.getAddressSize(appendOffset);
+        int len = mappedFile.pageRemaining(appendOffset);
 
         while (appendOffset < targetOffset) {
 
             if (len == 0) {
-                address = mappedFile.getAddress(appendOffset, 1);
-                len = mappedFile.getAddressSize(appendOffset);
+                address = mappedFile.addressOf(appendOffset, 1);
+                len = mappedFile.pageRemaining(appendOffset);
             }
             int min = len < value.remaining() ? len : value.remaining();
 
@@ -268,8 +268,8 @@ public class VariableColumn extends AbstractColumn {
                 while (bufRemaining > 0) {
 
                     if (blockRemaining == 0) {
-                        blockAddress = mappedFile.getAddress(off, 1);
-                        blockRemaining = mappedFile.getAddressSize(off);
+                        blockAddress = mappedFile.addressOf(off, 1);
+                        blockRemaining = mappedFile.pageRemaining(off);
                     }
 
                     if (blockRemaining < 1) {
@@ -284,7 +284,7 @@ public class VariableColumn extends AbstractColumn {
                     blockAddress += len;
                 }
             }
-            long a = mappedFile.getAddress(rowOffset, 4);
+            long a = mappedFile.addressOf(rowOffset, 4);
             Unsafe.getUnsafe().putInt(a, sz);
             commitAppend(rowOffset, sz + 4);
         } catch (IOException e) {
@@ -299,7 +299,7 @@ public class VariableColumn extends AbstractColumn {
 
     public long putNull() {
         long offset = getOffset();
-        Unsafe.getUnsafe().putInt(mappedFile.getAddress(offset, 4), -1);
+        Unsafe.getUnsafe().putInt(mappedFile.addressOf(offset, 4), -1);
         return commitAppend(offset, 4);
     }
 
@@ -310,7 +310,7 @@ public class VariableColumn extends AbstractColumn {
             int l;
             int len = (l = value.length()) * 2 + 4;
             long offset = getOffset();
-            long address = mappedFile.getAddress(offset, len);
+            long address = mappedFile.addressOf(offset, len);
             Unsafe.getUnsafe().putInt(address, l);
             address += 4;
             for (int i = 0; i < l; i++) {
@@ -341,7 +341,7 @@ public class VariableColumn extends AbstractColumn {
     }
 
     private boolean isNull(long localRowID) {
-        return Unsafe.getUnsafe().getInt(mappedFile.getAddress(indexColumn.getLong(localRowID), 4)) == -1;
+        return Unsafe.getUnsafe().getInt(mappedFile.addressOf(indexColumn.getLong(localRowID), 4)) == -1;
     }
 
     private class BinaryOutputStream extends OutputStream {
@@ -363,15 +363,15 @@ public class VariableColumn extends AbstractColumn {
 
         @Override
         public void close() {
-            long a = mappedFile.getAddress(offset, 4);
+            long a = mappedFile.addressOf(offset, 4);
             Unsafe.getUnsafe().putInt(a, (int) (workOffset - offset - 4));
             commitAppend(offset, (int) (workOffset - offset));
             offset = -1;
         }
 
         private void renew() {
-            blockAddress = mappedFile.getAddress(workOffset, 1);
-            blockRemaining = mappedFile.getAddressSize(workOffset);
+            blockAddress = mappedFile.addressOf(workOffset, 1);
+            blockRemaining = mappedFile.pageRemaining(workOffset);
         }
 
         private void reset(long offset) {
@@ -388,28 +388,25 @@ public class VariableColumn extends AbstractColumn {
         private long workOffset;
         private long blockAddress;
         private int remaining;
-        private int blockRemaining;
+        private int pageRemaining;
 
         @Override
         public long copyTo(long address, long start, long length) {
-            skipOffset(start);
-            long totalLen = Math.min(remaining, length);
-            long targetAddress = address + totalLen;
+            long res;
+            long rem = remaining - start;
+            long size = res = length > rem ? rem : length;
+            long offset = workOffset + start;
 
-            while (address < targetAddress) {
-                // copy to the block end.
-                long readBlockLen = Math.min(targetAddress - address, blockRemaining);
-                Unsafe.getUnsafe().copyMemory(blockAddress, address, readBlockLen);
+            do {
+                int remaining = mappedFile.pageRemaining(offset);
+                int sz = size > remaining ? remaining : (int) size;
+                Unsafe.getUnsafe().copyMemory(mappedFile.addressOf(offset, 1), address, sz);
+                address += sz;
+                offset += sz;
+                size -= sz;
+            } while (size > 0);
 
-                address += readBlockLen;
-                workOffset += readBlockLen;
-                blockAddress += readBlockLen;
-                if (targetAddress - address > 0) {
-                    renew();
-                }
-            }
-            remaining -= totalLen;
-            return totalLen;
+            return res;
         }
 
         @Override
@@ -423,42 +420,42 @@ public class VariableColumn extends AbstractColumn {
                 return -1;
             }
 
-            if (blockRemaining == 0) {
+            if (pageRemaining == 0) {
                 renew();
             }
 
-            blockRemaining--;
+            pageRemaining--;
             workOffset++;
             remaining--;
             return Unsafe.getUnsafe().getByte(blockAddress++);
         }
 
         private void renew() {
-            blockAddress = mappedFile.getAddress(workOffset, 1);
-            blockRemaining = mappedFile.getAddressSize(workOffset);
+            blockAddress = mappedFile.addressOf(workOffset, 1);
+            pageRemaining = mappedFile.pageRemaining(workOffset);
         }
 
         private void reset(long offset) {
             this.workOffset = offset + 4;
-            this.blockRemaining = 0;
-            this.remaining = Unsafe.getUnsafe().getInt(mappedFile.getAddress(offset, 4));
+            this.pageRemaining = 0;
+            this.remaining = Unsafe.getUnsafe().getInt(mappedFile.addressOf(offset, 4));
         }
 
         private void skipOffset(long offset) {
             if (offset > remaining) {
                 throw new IndexOutOfBoundsException(String.format("Offset %d is greater than remaining length %d", offset, remaining));
             }
-            remaining -= offset;
+//            remaining -= offset;
             long targetWorkOffset = workOffset + offset;
 
             while (workOffset < targetWorkOffset) {
-                if (blockRemaining == 0) {
+                if (pageRemaining == 0) {
                     renew();
                 }
 
-                long blockSkip = Math.min(targetWorkOffset - workOffset, blockRemaining);
+                long blockSkip = Math.min(targetWorkOffset - workOffset, pageRemaining);
                 workOffset += blockSkip;
-                blockRemaining -= blockSkip;
+                pageRemaining -= blockSkip;
                 blockAddress += blockSkip;
             }
         }

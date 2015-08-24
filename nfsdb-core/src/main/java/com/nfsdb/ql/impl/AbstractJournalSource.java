@@ -24,8 +24,8 @@ package com.nfsdb.ql.impl;
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
+import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordMetadata;
 
 abstract class AbstractJournalSource<T extends Record> extends AbstractImmutableIterator<T> implements RecordMetadata {
     private final JournalMetadata metadata;
@@ -37,11 +37,6 @@ abstract class AbstractJournalSource<T extends Record> extends AbstractImmutable
     @Override
     public RecordColumnMetadata getColumn(int index) {
         return metadata.getColumn(index);
-    }
-
-    @Override
-    public RecordColumnMetadata getColumnQuick(int index) {
-        return metadata.getColumnQuick(index);
     }
 
     @Override
@@ -57,6 +52,11 @@ abstract class AbstractJournalSource<T extends Record> extends AbstractImmutable
     @Override
     public int getColumnIndex(CharSequence name) {
         return metadata.getColumnIndex(name);
+    }
+
+    @Override
+    public RecordColumnMetadata getColumnQuick(int index) {
+        return metadata.getColumnQuick(index);
     }
 
     @Override

@@ -127,7 +127,7 @@ public class KVIndex implements Closeable {
             // fill created gap with zeroes.
             if (keyBlockSize - oldSize > ENTRY_SIZE) {
                 Unsafe.getUnsafe().setMemory(
-                        kData.getAddress(
+                        kData.addressOf(
                                 firstEntryOffset + oldSize
                                 , (int) (keyBlockSize - oldSize - ENTRY_SIZE)
                         )
@@ -137,7 +137,7 @@ public class KVIndex implements Closeable {
             }
         }
 
-        long address = kData.getAddress(keyOffset, ENTRY_SIZE);
+        long address = kData.addressOf(keyOffset, ENTRY_SIZE);
         long rowBlockOffset = Unsafe.getUnsafe().getLong(address);
         long rowCount = Unsafe.getUnsafe().getLong(address + 8);
 
@@ -145,7 +145,7 @@ public class KVIndex implements Closeable {
         if (rowBlockOffset == 0 || cellIndex == 0) {
             rowBlockOffset = allocateRowBlock(address, rowBlockOffset);
         }
-        Unsafe.getUnsafe().putLong(rData.getAddress(rowBlockOffset - rowBlockSize + 8 * cellIndex, 8), value);
+        Unsafe.getUnsafe().putLong(rData.addressOf(rowBlockOffset - rowBlockSize + 8 * cellIndex, 8), value);
         Unsafe.getUnsafe().putLong(address + 8, rowCount + 1);
 
         if (maxValue <= value) {
@@ -314,7 +314,7 @@ public class KVIndex implements Closeable {
         if (keyOffset >= firstEntryOffset + keyBlockSize) {
             return;
         }
-        long address = kData.getAddress(keyOffset, ENTRY_SIZE);
+        long address = kData.addressOf(keyOffset, ENTRY_SIZE);
         long rowBlockOffset = Unsafe.getUnsafe().getLong(address);
         long rowCount = Unsafe.getUnsafe().getLong(address + 8);
 
@@ -329,7 +329,7 @@ public class KVIndex implements Closeable {
         }
 
         for (int i = rowBlockCount - 1; i >= 0; i--) {
-            address = rData.getAddress(rowBlockOffset - rowBlockSize, rowBlockSize);
+            address = rData.addressOf(rowBlockOffset - rowBlockSize, rowBlockSize);
             int z = i << bits;
             for (int k = 0; k < len; k++) {
                 values.set(z + k, Unsafe.getUnsafe().getLong(address));
@@ -379,7 +379,7 @@ public class KVIndex implements Closeable {
         long offset = firstEntryOffset;
         long sz = 0;
         while (offset < firstEntryOffset + keyBlockSize) {
-            long keyBlockAddress = kData.getAddress(offset, ENTRY_SIZE);
+            long keyBlockAddress = kData.addressOf(offset, ENTRY_SIZE);
             long rowBlockOffset = Unsafe.getUnsafe().getLong(keyBlockAddress);
             long rowCount = Unsafe.getUnsafe().getLong(keyBlockAddress + 8);
             int len = (int) (rowCount & mask);
@@ -388,7 +388,7 @@ public class KVIndex implements Closeable {
                 len = rowBlockLen;
             }
             while (rowBlockOffset > 0) {
-                long rowAddress = rData.getAddress(rowBlockOffset - rowBlockSize, rowBlockSize);
+                long rowAddress = rData.addressOf(rowBlockOffset - rowBlockSize, rowBlockSize);
                 long addr = rowAddress;
                 int pos = 0;
                 long max = -1;
@@ -429,12 +429,12 @@ public class KVIndex implements Closeable {
         long prevBlockOffset = rowBlockOffset;
         rowBlockOffset = rData.getAppendOffset() + rowBlockSize;
         rData.setAppendOffset(rowBlockOffset);
-        Unsafe.getUnsafe().putLong(rData.getAddress(rowBlockOffset - 8, 8), prevBlockOffset);
+        Unsafe.getUnsafe().putLong(rData.addressOf(rowBlockOffset - 8, 8), prevBlockOffset);
         Unsafe.getUnsafe().putLong(address, rowBlockOffset);
         if (prevBlockOffset == 0) {
             Unsafe.getUnsafe().putLong(address + 16, rowBlockOffset);
         } else {
-            Unsafe.getUnsafe().putLong(rData.getAddress(prevBlockOffset - 16, 8), rowBlockOffset);
+            Unsafe.getUnsafe().putLong(rData.addressOf(prevBlockOffset - 16, 8), rowBlockOffset);
         }
         return rowBlockOffset;
     }
@@ -444,7 +444,7 @@ public class KVIndex implements Closeable {
     }
 
     private long getLong(MemoryFile storage, long offset) {
-        return Unsafe.getUnsafe().getLong(storage.getAddress(offset, 8));
+        return Unsafe.getUnsafe().getLong(storage.addressOf(offset, 8));
     }
 
     private long keyAddressOrError(int key) {
@@ -452,11 +452,11 @@ public class KVIndex implements Closeable {
         if (keyOffset >= firstEntryOffset + keyBlockSize) {
             throw new JournalRuntimeException("Key doesn't exist: %d", key);
         }
-        return kData.getAddress(keyOffset, ENTRY_SIZE);
+        return kData.addressOf(keyOffset, ENTRY_SIZE);
     }
 
     private void putLong(MemoryFile storage, long offset, long value) {
-        Unsafe.getUnsafe().putLong(storage.getAddress(offset, 8), value);
+        Unsafe.getUnsafe().putLong(storage.addressOf(offset, 8), value);
     }
 
     private void refresh() {
@@ -477,11 +477,11 @@ public class KVIndex implements Closeable {
             int size = (int) (this.keyBlockSize + 8 + 8);
 
             while (size > 0) {
-                long src = kData.getAddress(srcOffset, 1);
-                int srcLen = kData.getAddressSize(srcOffset);
+                long src = kData.addressOf(srcOffset, 1);
+                int srcLen = kData.pageRemaining(srcOffset);
 
-                long dst = kData.getAddress(dstOffset, 1);
-                int dstLen = kData.getAddressSize(dstOffset);
+                long dst = kData.addressOf(dstOffset, 1);
+                int dstLen = kData.pageRemaining(dstOffset);
 
                 int len = size < (srcLen < dstLen ? srcLen : dstLen) ? size : (srcLen < dstLen ? srcLen : dstLen);
 
@@ -515,7 +515,7 @@ public class KVIndex implements Closeable {
 
             long keyOffset = getKeyOffset(key);
             if (keyOffset < firstEntryOffset + keyBlockSize) {
-                long addr = kData.getAddress(keyOffset, ENTRY_SIZE);
+                long addr = kData.addressOf(keyOffset, ENTRY_SIZE);
                 this.size = Unsafe.getUnsafe().getLong(addr + 8);
 
                 if (size == 0) {
@@ -530,7 +530,7 @@ public class KVIndex implements Closeable {
                     remainingBlockCount = (int) (this.size >>> bits);
                     remainingRowCount = k;
                 }
-                this.address = rData.getAddress(Unsafe.getUnsafe().getLong(addr) - rowBlockSize, rowBlockSize);
+                this.address = rData.addressOf(Unsafe.getUnsafe().getLong(addr) - rowBlockSize, rowBlockSize);
             }
 
             return this;
@@ -541,7 +541,7 @@ public class KVIndex implements Closeable {
                 return Unsafe.getUnsafe().getLong(address + ((--this.remainingRowCount) << 3));
             } else {
                 remainingBlockCount--;
-                this.address = rData.getAddress(Unsafe.getUnsafe().getLong(address + (rowBlockLen << 3) + 8) - rowBlockSize, rowBlockSize);
+                this.address = rData.addressOf(Unsafe.getUnsafe().getLong(address + (rowBlockLen << 3) + 8) - rowBlockSize, rowBlockSize);
                 this.remainingRowCount = mask;
                 return Unsafe.getUnsafe().getLong(address + (this.remainingRowCount << 3));
             }
@@ -571,7 +571,7 @@ public class KVIndex implements Closeable {
                 return this;
             }
 
-            long addr = kData.getAddress(keyOffset, ENTRY_SIZE);
+            long addr = kData.addressOf(keyOffset, ENTRY_SIZE);
             this.size = Unsafe.getUnsafe().getLong(addr + 8);
 
             if (size == 0) {
@@ -579,7 +579,7 @@ public class KVIndex implements Closeable {
             }
 
             this.rowCount = 0;
-            this.address = rData.getAddress(Unsafe.getUnsafe().getLong(addr + 16) - rowBlockSize, rowBlockSize);
+            this.address = rData.addressOf(Unsafe.getUnsafe().getLong(addr + 16) - rowBlockSize, rowBlockSize);
             return this;
         }
 
@@ -591,7 +591,7 @@ public class KVIndex implements Closeable {
             int r = (int) (rowCount++ & mask);
             long v = Unsafe.getUnsafe().getLong(address + (r << 3));
             if (r == mask && rowCount < size) {
-                this.address = rData.getAddress(Unsafe.getUnsafe().getLong(address + (rowBlockLen << 3)) - rowBlockSize, rowBlockSize);
+                this.address = rData.addressOf(Unsafe.getUnsafe().getLong(address + (rowBlockLen << 3)) - rowBlockSize, rowBlockSize);
             }
             return v;
         }

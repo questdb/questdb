@@ -28,6 +28,8 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
+import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.*;
 import com.nfsdb.ql.collections.MapRecordValueInterceptor;
 import com.nfsdb.ql.collections.MapValues;
@@ -57,22 +59,25 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
             SampleBy sampleBy
     ) {
 
-        MultiMap.Builder builder = new MultiMap.Builder();
         int keyColumnsSize = keyColumns.size();
         this.keyIndices = new int[keyColumnsSize];
         // define key columns
 
+        ObjList<RecordColumnMetadata> keyCols = new ObjList<>();
+
         RecordMetadata rm = recordSource.getMetadata();
         this.tsIndex = rm.getColumnIndex(timestampMetadata.name);
-        builder.keyColumn(timestampMetadata);
+        keyCols.add(timestampMetadata);
         for (int i = 0; i < keyColumnsSize; i++) {
             ColumnMetadata cm = keyColumns.getQuick(i);
-            builder.keyColumn(cm);
+            keyCols.add(cm);
             keyIndices[i] = rm.getColumnIndex(cm.name);
         }
 
         this.aggregators = aggregators;
 
+        ObjList<RecordColumnMetadata> valueCols = new ObjList<>();
+        ObjList<MapRecordValueInterceptor> interceptors = new ObjList<>();
         // take value columns from aggregator function
         int index = 0;
         for (int i = 0, sz = aggregators.size(); i < sz; i++) {
@@ -82,16 +87,16 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
 
             ColumnMetadata[] columns = func.getColumns();
             for (int k = 0, len = columns.length; k < len; k++) {
-                builder.valueColumn(columns[k]);
+                valueCols.add(columns[k]);
                 func.mapColumn(k, index++);
             }
 
             if (func instanceof MapRecordValueInterceptor) {
-                builder.interceptor((MapRecordValueInterceptor) func);
+                interceptors.add((MapRecordValueInterceptor) func);
             }
         }
 
-        this.map = builder.build();
+        this.map = new MultiMap(valueCols, keyCols, interceptors);
         this.recordSource = recordSource;
         this.sampleBy = sampleBy;
     }

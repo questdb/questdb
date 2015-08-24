@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,13 +17,13 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.factory.configuration;
 
 import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.HugeBuffer;
 import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.storage.UnstructuredFile;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
@@ -142,7 +142,7 @@ public class ColumnMetadata implements RecordColumnMetadata {
                 '}';
     }
 
-    public void read(HugeBuffer buf) {
+    public void read(UnstructuredFile buf) {
         name = buf.getStr();
         type = ColumnType.valueOf(buf.getStr());
         size = buf.getInt();
@@ -155,7 +155,7 @@ public class ColumnMetadata implements RecordColumnMetadata {
         noCache = buf.getBool();
     }
 
-    public void write(HugeBuffer buf) {
+    public void write(UnstructuredFile buf) {
         buf.put(name);
         buf.put(type.name());
         buf.put(size);

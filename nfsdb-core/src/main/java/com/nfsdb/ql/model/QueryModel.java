@@ -23,9 +23,9 @@ package com.nfsdb.ql.model;
 
 import com.nfsdb.collections.*;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.ops.VirtualColumn;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;

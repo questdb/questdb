@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,18 +17,18 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
-import com.nfsdb.storage.HugeBuffer;
+import com.nfsdb.storage.UnstructuredFile;
 import com.nfsdb.utils.Rnd;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
-public class HugeBufferTest {
+public class UnstructuredFileTest {
 
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
@@ -36,7 +36,7 @@ public class HugeBufferTest {
     @Test
     public void testIntArrays() throws Exception {
         Rnd rnd = new Rnd();
-        HugeBuffer hb = new HugeBuffer(temp.newFile(), 16, JournalMode.APPEND);
+        UnstructuredFile hb = new UnstructuredFile(temp.newFile(), 16, JournalMode.APPEND);
 
         int vals[] = new int[100];
 
@@ -64,7 +64,7 @@ public class HugeBufferTest {
     @Test
     public void testLongArrays() throws Exception {
         Rnd rnd = new Rnd();
-        HugeBuffer hb = new HugeBuffer(temp.newFile(), 16, JournalMode.APPEND);
+        UnstructuredFile hb = new UnstructuredFile(temp.newFile(), 16, JournalMode.APPEND);
 
         long vals[] = new long[100];
 

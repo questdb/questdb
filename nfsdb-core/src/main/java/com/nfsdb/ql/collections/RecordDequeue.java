@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,51 +17,53 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.collections;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.collections.Mutable;
+import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
-import com.nfsdb.ql.RecordMetadata;
 import com.nfsdb.ql.StorageFacade;
+import com.nfsdb.ql.impl.MemoryRecordAccessor;
+import com.nfsdb.storage.SequentialMemory;
 import com.nfsdb.utils.Unsafe;
 
 import java.io.Closeable;
 import java.io.IOException;
 
-public class DirectRecordLinkedList extends AbstractImmutableIterator<Record> implements Closeable, RecordCursor<Record>, Mutable {
-    private final DirectPagedBuffer buffer;
-    private final DirectRecord bufferRecord;
+public class RecordDequeue extends AbstractImmutableIterator<Record> implements Closeable, RecordCursor<Record>, Mutable {
+    private final SequentialMemory mem;
+    private final MemoryRecordAccessor accessor;
     private final RecordMetadata metadata;
     private long readOffset = -1;
 
-    public DirectRecordLinkedList(RecordMetadata recordMetadata, long recordCount, long avgRecSize) {
+    public RecordDequeue(RecordMetadata recordMetadata, int pageSize) {
         this.metadata = recordMetadata;
-        this.buffer = new DirectPagedBuffer((recordCount * avgRecSize > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) (recordCount * avgRecSize)) / 2);
-        bufferRecord = new DirectRecord(recordMetadata, buffer);
+        this.mem = new SequentialMemory(pageSize);
+        accessor = new MemoryRecordAccessor(recordMetadata, mem);
     }
 
     public long append(Record record, long prevOffset) {
-        long offset = buffer.calcOffset(8 + bufferRecord.getFixedBlockLength());
+        long offset = mem.allocate(8 + accessor.getFixedBlockLength());
         if (prevOffset != -1) {
-            Unsafe.getUnsafe().putLong(buffer.address(prevOffset), offset);
+            Unsafe.getUnsafe().putLong(mem.addressOf(prevOffset), offset);
         }
-        Unsafe.getUnsafe().putLong(buffer.address(offset), -1L);
-        bufferRecord.append(record, offset + 8);
+        Unsafe.getUnsafe().putLong(mem.addressOf(offset), -1L);
+        accessor.append(record, offset + 8);
         return offset;
     }
 
     public void clear() {
-        buffer.clear();
+        mem.clear();
         readOffset = -1;
     }
 
     @Override
     public void close() throws IOException {
-        buffer.close();
+        mem.close();
     }
 
     @Override
@@ -86,9 +88,9 @@ public class DirectRecordLinkedList extends AbstractImmutableIterator<Record> im
 
     @Override
     public Record next() {
-        bufferRecord.init(readOffset + 8);
-        readOffset = Unsafe.getUnsafe().getLong(buffer.address(readOffset));
-        return bufferRecord;
+        accessor.init(readOffset + 8);
+        readOffset = Unsafe.getUnsafe().getLong(mem.addressOf(readOffset));
+        return accessor;
     }
 
     public void init(long offset) {

@@ -23,6 +23,7 @@ package com.nfsdb.ql.impl;
 
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
+import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 

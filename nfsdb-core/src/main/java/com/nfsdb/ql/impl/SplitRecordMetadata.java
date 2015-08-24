@@ -24,7 +24,7 @@ package com.nfsdb.ql.impl;
 import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.ql.RecordMetadata;
+import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.utils.Unsafe;
 
 public class SplitRecordMetadata implements RecordMetadata {
@@ -59,11 +59,6 @@ public class SplitRecordMetadata implements RecordMetadata {
     }
 
     @Override
-    public RecordColumnMetadata getColumnQuick(int index) {
-        return Unsafe.arrayGet(columns, index);
-    }
-
-    @Override
     public RecordColumnMetadata getColumn(CharSequence name) {
         return columns[getColumnIndex(name)];
     }
@@ -80,6 +75,11 @@ public class SplitRecordMetadata implements RecordMetadata {
             throw new JournalRuntimeException("Invalid column: %s", name);
         }
         return index;
+    }
+
+    @Override
+    public RecordColumnMetadata getColumnQuick(int index) {
+        return Unsafe.arrayGet(columns, index);
     }
 
     @Override
