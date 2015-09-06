@@ -50,7 +50,7 @@ public class SymBySymCachingLookupKeySource implements KeySource, KeyCursor {
         int m;
         int key = map.get(m = glue.getInt());
         if (key == -1) {
-            map.put(m, key = slave.getQuick(glue.getSym()));
+            map.put(m, key = slave.getQuick(glue.getFlyweightStr()));
         }
         return key;
     }

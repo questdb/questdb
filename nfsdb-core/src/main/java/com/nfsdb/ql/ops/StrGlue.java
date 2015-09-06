@@ -23,7 +23,7 @@ package com.nfsdb.ql.ops;
 
 import com.nfsdb.ql.impl.StatefulJournalSourceImpl;
 
-public class StrGlue {
+public class StrGlue implements NLGlue {
     private final StatefulJournalSourceImpl js;
     private final VirtualColumn column;
 
@@ -32,7 +32,7 @@ public class StrGlue {
         this.column = column;
     }
 
-    public CharSequence getStr() {
+    public CharSequence getFlyweightStr() {
         return column.getFlyweightStr(js.last());
     }
 }

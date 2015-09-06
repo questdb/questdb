@@ -21,22 +21,6 @@
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.ql.impl.StatefulJournalSourceImpl;
-
-public class SymGlue implements NLGlue {
-    private final StatefulJournalSourceImpl js;
-    private final VirtualColumn column;
-
-    public SymGlue(StatefulJournalSourceImpl js, VirtualColumn column) {
-        this.js = js;
-        this.column = column;
-    }
-
-    public CharSequence getFlyweightStr() {
-        return column.getSym(js.last());
-    }
-
-    public int getInt() {
-        return column.getInt(js.last());
-    }
+public interface NLGlue {
+    CharSequence getFlyweightStr();
 }

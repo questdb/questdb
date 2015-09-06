@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl;
 
@@ -56,7 +56,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
     private final NullRecord nullRecord;
     private RecordCursor<? extends Record> slaveCursor;
     private RecordCursor<? extends Record> masterCursor;
-    private MultiRecordMap hashTable;
+    private MultiRecordMap recordMap;
     private RecordCursor<? extends Record> hashTableCursor;
 
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
@@ -71,16 +71,16 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
         this.metadata = new SplitRecordMetadata(masterSource.getMetadata(), slaveSource.getMetadata());
         this.currentRecord = new SplitRecord(metadata, masterSource.getMetadata().getColumnCount());
         this.byRowId = slaveSource.supportsRowIdAccess();
-        this.hashTable = createRecordMap(masterSource, masterColumns, slaveSource, slaveColumns);
+        this.recordMap = createRecordMap(masterSource, masterColumns, slaveSource, slaveColumns);
         this.outer = outer;
         this.nullRecord = new NullRecord(slaveSource.getMetadata());
     }
 
     @Override
     public void close() throws IOException {
-        if (hashTable != null) {
-            hashTable.close();
-            hashTable = null;
+        if (recordMap != null) {
+            recordMap.close();
+            recordMap = null;
         }
     }
 
@@ -111,7 +111,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
     public void reset() {
         hashTableCursor = null;
         masterSource.reset();
-        hashTable.clear();
+        recordMap.clear();
     }
 
     @Override
@@ -137,14 +137,14 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
 
     private void buildHashTable() {
         for (Record r : slaveCursor) {
-            MultiMap.KeyWriter key = hashTable.claimKey();
+            MultiMap.KeyWriter key = recordMap.claimKey();
             for (int i = 0, k = slaveColumns.size(); i < k; i++) {
                 setKey(key, r, slaveColumns.getQuick(i).getType(), slaveColIndex.getQuick(i));
             }
             if (byRowId) {
-                hashTable.add(key, rowIdRecord.init(r.getRowId()));
+                recordMap.add(key, rowIdRecord.init(r.getRowId()));
             } else {
-                hashTable.add(key, r);
+                recordMap.add(key, r);
             }
         }
     }
@@ -176,13 +176,13 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
             Record r = masterCursor.next();
             currentRecord.setA(r);
 
-            MultiMap.KeyWriter key = hashTable.claimKey();
+            MultiMap.KeyWriter key = recordMap.claimKey();
 
             for (int i = 0, k = masterColumns.size(); i < k; i++) {
                 setKey(key, r, masterColumns.getQuick(i).getType(), masterColIndex.getQuick(i));
             }
 
-            hashTableCursor = hashTable.get(key);
+            hashTableCursor = recordMap.get(key);
 
             if (hashTableCursor.hasNext()) {
                 if (byRowId) {

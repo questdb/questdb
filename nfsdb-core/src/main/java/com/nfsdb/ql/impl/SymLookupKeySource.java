@@ -23,16 +23,16 @@ package com.nfsdb.ql.impl;
 
 import com.nfsdb.ql.KeyCursor;
 import com.nfsdb.ql.KeySource;
-import com.nfsdb.ql.ops.StrGlue;
+import com.nfsdb.ql.ops.NLGlue;
 import com.nfsdb.storage.SymbolTable;
 
-public class SymByStrLookupKeySource implements KeySource, KeyCursor {
+public class SymLookupKeySource implements KeySource, KeyCursor {
 
-    private final StrGlue glue;
+    private final NLGlue glue;
     private final SymbolTable slave;
     private boolean hasNext = true;
 
-    public SymByStrLookupKeySource(SymbolTable slave, StrGlue glue) {
+    public SymLookupKeySource(SymbolTable slave, NLGlue glue) {
         this.glue = glue;
         this.slave = slave;
     }
@@ -45,7 +45,7 @@ public class SymByStrLookupKeySource implements KeySource, KeyCursor {
     @Override
     public int next() {
         hasNext = false;
-        return slave.getQuick(glue.getStr());
+        return slave.getQuick(glue.getFlyweightStr());
     }
 
     @Override

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql;
 
@@ -117,7 +117,7 @@ public class JoinSymbolOnSymbolTest {
                                         new DistinctSymbolRowSource(
                                                 new KvIndexRowSource(
                                                         "band"
-                                                        , new SymBySymLookupKeySource(aw.getSymbolTable("band"), glue)
+                                                        , new SymLookupKeySource(aw.getSymbolTable("band"), glue)
                                                 )
                                                 , "name"
                                         )
@@ -163,7 +163,7 @@ public class JoinSymbolOnSymbolTest {
                                 new JournalSource(new JournalPartitionSource(aw.getMetadata(), false),
                                         new KvIndexRowSource(
                                                 "band"
-                                                , new SymBySymLookupKeySource(aw.getSymbolTable("band"), glue)
+                                                , new SymLookupKeySource(aw.getSymbolTable("band"), glue)
                                         ))
                         )
                 ).prepareCursor(factory)
@@ -245,7 +245,7 @@ public class JoinSymbolOnSymbolTest {
                                 new DistinctSymbolRowSource(
                                         new KvIndexRowSource(
                                                 "band",
-                                                new SymBySymLookupKeySource(aw.getSymbolTable("band"), glue)
+                                                new SymLookupKeySource(aw.getSymbolTable("band"), glue)
                                         )
                                         , "name"
                                 ))
@@ -310,7 +310,7 @@ public class JoinSymbolOnSymbolTest {
                                 new JournalPartitionSource(bw.getMetadata(), false),
                                 new KvIndexTopRowSource(
                                         "name"
-                                        , new SymBySymLookupKeySource(bw.getSymbolTable("name"), glue)
+                                        , new SymLookupKeySource(bw.getSymbolTable("name"), glue)
                                         , null
                                 )
                         )
@@ -333,7 +333,7 @@ public class JoinSymbolOnSymbolTest {
                 new JournalSource(
                         new JournalPartitionSource(aw.getMetadata(), false),
                         new KvIndexRowSource("band"
-                                , new SymBySymLookupKeySource(aw.getSymbolTable("band"), glue)
+                                , new SymLookupKeySource(aw.getSymbolTable("band"), glue)
                         )
                 )
         );

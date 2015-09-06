@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.collections;
 
@@ -38,10 +38,10 @@ public class MultiRecordMap implements Closeable, Mutable {
     private final MultiMap map;
     private final RecordDequeue records;
 
-    public MultiRecordMap(ObjList<RecordColumnMetadata> keyColumns, RecordMetadata valueMetadata) {
-        map = new MultiMap(valueCols, keyColumns, null);
+    public MultiRecordMap(ObjList<RecordColumnMetadata> keys, RecordMetadata value) {
+        map = new MultiMap(valueCols, keys, null);
         //todo: extract config
-        records = new RecordDequeue(valueMetadata, 4 * 1024 * 1024);
+        records = new RecordDequeue(value, 4 * 1024 * 1024);
     }
 
     public void add(MultiMap.KeyWriter key, Record record) {

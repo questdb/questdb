@@ -157,7 +157,7 @@ public class JoinStringToSymbolTest {
                                 new JournalPartitionSource(bw.getMetadata(), false),
                                 new KvIndexTopRowSource(
                                         "name"
-                                        , new SymByStrLookupKeySource(bw.getSymbolTable("name"), glue)
+                                        , new SymLookupKeySource(bw.getSymbolTable("name"), glue)
                                         , null
                                 ))
                 ).prepareCursor(factory)
@@ -212,7 +212,7 @@ public class JoinStringToSymbolTest {
                                 new JournalPartitionSource(bw.getMetadata(), false),
                                 new KvIndexTopRowSource(
                                         "name"
-                                        , new SymByStrLookupKeySource(bw.getSymbolTable("name"), glue)
+                                        , new SymLookupKeySource(bw.getSymbolTable("name"), glue)
                                         , filter
                                 ))
                 ).prepareCursor(factory)

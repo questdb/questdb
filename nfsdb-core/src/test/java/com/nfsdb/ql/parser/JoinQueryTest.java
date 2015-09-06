@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.parser;
 
@@ -35,6 +35,7 @@ import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Rnd;
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class JoinQueryTest extends AbstractOptimiserTest {
@@ -98,6 +99,15 @@ public class JoinQueryTest extends AbstractOptimiserTest {
             Assert.assertEquals(17, e.getPosition());
             Assert.assertTrue(e.getMessage().contains("Only SYM columns"));
         }
+    }
+
+    @Test
+    @Ignore
+    public void testFilterPropagation() throws Exception {
+        assertPlan("",
+                "customers c" +
+                        " outer join orders o on c.customerId = o.customerId" +
+                        " where c.customerId = 100");
     }
 
     @Test
