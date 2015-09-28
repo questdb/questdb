@@ -59,6 +59,11 @@ public class SelectedColumnsRecord extends AbstractRecord {
     }
 
     @Override
+    public long getBinLen(int col) {
+        return base.getBinLen(reindex[col]);
+    }
+
+    @Override
     public boolean getBool(int col) {
         return base.getBool(reindex[col]);
     }
@@ -111,6 +116,11 @@ public class SelectedColumnsRecord extends AbstractRecord {
     @Override
     public void getStr(int col, CharSink sink) {
         base.getStr(reindex[col], sink);
+    }
+
+    @Override
+    public int getStrLen(int col) {
+        return base.getStrLen(reindex[col]);
     }
 
     @Override

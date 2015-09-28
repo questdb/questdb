@@ -50,25 +50,19 @@ public class MemoryRecordAccessor extends AbstractRecord {
         super(metadata);
         this.mem = mem;
         offsets = new int[metadata.getColumnCount()];
-        int lastOffset = 0;
 
         int varColIndex = 0;
         for (int i = 0; i < offsets.length; i++) {
             ColumnType ct = metadata.getColumn(i).getType();
             if (ct.size() != 0) {
                 // Fixed columns.
+                offsets[i] = fixedSize;
                 fixedSize += ct.size();
-                offsets[i] = lastOffset;
-                lastOffset += ct.size();
-            }
-        }
-
-        // Init order of var len fields
-        for (int i = 0; i < offsets.length; i++) {
-            if (metadata.getColumnQuick(i).getType().size() == 0) {
+            } else {
                 offsets[i] = -(varColIndex++);
             }
         }
+
         // Pad header size to 8 bytes.
         fixedSize = ((fixedSize + 7) >> 3) << 3;
         headerSize = varColIndex * 8;
@@ -161,10 +155,14 @@ public class MemoryRecordAccessor extends AbstractRecord {
     @Override
     public DirectInputStream getBin(int col) {
         final long offset = offsetOf(col);
-        final long address = mem.addressOf(offset);
-        final long len = Unsafe.getUnsafe().getLong(address);
+        final long len = Unsafe.getUnsafe().getLong(mem.addressOf(offset));
         if (len < 0) return null;
         return new DirectPagedBufferStream(mem, offset + 8, len);
+    }
+
+    @Override
+    public long getBinLen(int col) {
+        return Unsafe.getUnsafe().getLong(mem.addressOf(offsetOf(col)));
     }
 
     @Override
@@ -237,6 +235,11 @@ public class MemoryRecordAccessor extends AbstractRecord {
         for (int i = 0; i < len; i++) {
             sink.put(Unsafe.getUnsafe().getChar(readAddress += 2));
         }
+    }
+
+    @Override
+    public int getStrLen(int col) {
+        return Unsafe.getUnsafe().getInt(addressOf(col));
     }
 
     @Override

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.collections;
 
@@ -47,11 +47,40 @@ public class IntList implements Mutable {
         Unsafe.arrayPut(buffer, pos++, value);
     }
 
+    public void add(int index, int element) {
+        ensureCapacity(++pos);
+        System.arraycopy(buffer, index, buffer, index + 1, pos - index - 1);
+        Unsafe.arrayPut(buffer, index, element);
+    }
+
     public void addAll(IntList that) {
         int p = pos;
         int s = that.size();
         ensureCapacity(p + s);
         System.arraycopy(that.buffer, 0, this.buffer, p, s);
+    }
+
+    public int binarySearch(int v) {
+        int low = 0;
+        int high = pos;
+
+        while (low < high) {
+
+            if (high - low < 65) {
+                return scanSearch(v);
+            }
+
+            int mid = (low + high - 1) >>> 1;
+            long midVal = Unsafe.arrayGet(buffer, mid);
+
+            if (midVal < v)
+                low = mid + 1;
+            else if (midVal > v)
+                high = mid - 1;
+            else
+                return mid;
+        }
+        return -(low + 1);
     }
 
     public void clear() {
@@ -165,11 +194,25 @@ public class IntList implements Mutable {
     public boolean remove(int key) {
         for (int i = 0, n = size(); i < n; i++) {
             if (key == getQuick(i)) {
-                removeIdx(i);
+                removeIndex(i);
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public void removeIndex(int index) {
+        if (pos < 1 || index >= pos) {
+            return;
+        }
+        int move = pos - index - 1;
+        if (move > 0) {
+            System.arraycopy(buffer, index + 1, buffer, index, move);
+        }
+        Unsafe.arrayPut(buffer, --pos, noEntryValue);
     }
 
     public void set(int index, int element) {
@@ -217,18 +260,18 @@ public class IntList implements Mutable {
         return false;
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    private void removeIdx(int index) {
-        if (pos < 1 || index >= pos) {
-            return;
+    private int scanSearch(int v) {
+        int sz = size();
+        for (int i = 0; i < sz; i++) {
+            long f = getQuick(i);
+            if (f == v) {
+                return i;
+            }
+            if (f > v) {
+                return -(i + 1);
+            }
         }
-        int move = pos - index - 1;
-        if (move > 0) {
-            System.arraycopy(buffer, index + 1, buffer, index, move);
-        }
-        Unsafe.arrayPut(buffer, --pos, noEntryValue);
+        return -(sz + 1);
     }
 
 }

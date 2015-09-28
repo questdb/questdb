@@ -83,7 +83,7 @@ public class LongList implements Mutable {
 
     public void add(int index, long element) {
         ensureCapacity(++pos);
-        System.arraycopy(buffer, index, buffer, index + 1, pos - index - 2);
+        System.arraycopy(buffer, index, buffer, index + 1, pos - index - 1);
         Unsafe.arrayPut(buffer, index, element);
     }
 
@@ -220,6 +220,17 @@ public class LongList implements Mutable {
         return false;
     }
 
+    public void removeIndex(int index) {
+        if (pos < 1 || index >= pos) {
+            return;
+        }
+        int move = pos - index - 1;
+        if (move > 0) {
+            System.arraycopy(buffer, index + 1, buffer, index, move);
+        }
+        Unsafe.arrayPut(buffer, --pos, noEntryValue);
+    }
+
     public void set(int index, long element) {
         if (index < pos) {
             Unsafe.arrayPut(buffer, index, element);
@@ -291,17 +302,6 @@ public class LongList implements Mutable {
 
     private void let(int a, int b) {
         Unsafe.arrayPut(buffer, a, Unsafe.arrayGet(buffer, b));
-    }
-
-    private void removeIndex(int index) {
-        if (pos < 1 || index >= pos) {
-            return;
-        }
-        int move = pos - index - 1;
-        if (move > 0) {
-            System.arraycopy(buffer, index + 1, buffer, index, move);
-        }
-        Unsafe.arrayPut(buffer, --pos, noEntryValue);
     }
 
     private int scanSearch(long v) {

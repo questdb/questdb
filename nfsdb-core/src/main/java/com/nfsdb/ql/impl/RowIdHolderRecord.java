@@ -26,8 +26,7 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
-import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.ql.collections.LongMetadata;
 import com.nfsdb.utils.Chars;
 
 import java.io.OutputStream;
@@ -41,37 +40,10 @@ public class RowIdHolderRecord extends AbstractRecord {
     public RowIdHolderRecord() {
         super(new RecordMetadata() {
 
-            private final RecordColumnMetadata columnMetadata = new RecordColumnMetadata() {
-                @Override
-                public int getBucketCount() {
-                    return 0;
-                }
-
-                @Override
-                public String getName() {
-                    return name;
-                }
-
-                @Override
-                public SymbolTable getSymbolTable() {
-                    return null;
-                }
-
-                @Override
-                public ColumnType getType() {
-                    return ColumnType.LONG;
-                }
-
-                @Override
-                public boolean isIndexed() {
-                    return false;
-                }
-            };
-
             @Override
             public RecordColumnMetadata getColumn(int index) {
                 if (index == 0) {
-                    return columnMetadata;
+                    return LongMetadata.INSTANCE;
                 }
                 throw new JournalRuntimeException("Invalid column index: %d", index);
             }
@@ -96,7 +68,7 @@ public class RowIdHolderRecord extends AbstractRecord {
 
             @Override
             public RecordColumnMetadata getColumnQuick(int index) {
-                return columnMetadata;
+                return LongMetadata.INSTANCE;
             }
 
             @Override
@@ -123,6 +95,11 @@ public class RowIdHolderRecord extends AbstractRecord {
 
     @Override
     public DirectInputStream getBin(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getBinLen(int col) {
         throw new UnsupportedOperationException();
     }
 
@@ -178,6 +155,11 @@ public class RowIdHolderRecord extends AbstractRecord {
 
     @Override
     public void getStr(int col, CharSink sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getStrLen(int col) {
         throw new UnsupportedOperationException();
     }
 

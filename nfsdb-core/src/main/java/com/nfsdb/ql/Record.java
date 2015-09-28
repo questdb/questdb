@@ -41,6 +41,8 @@ public interface Record {
 
     DirectInputStream getBin(int col);
 
+    long getBinLen(int col);
+
     boolean getBool(String column);
 
     boolean getBool(int col);
@@ -78,6 +80,8 @@ public interface Record {
     CharSequence getStr(int col);
 
     void getStr(int col, CharSink sink);
+
+    int getStrLen(int col);
 
     String getSym(String column);
 

@@ -62,6 +62,11 @@ public class VirtualRecord extends AbstractRecord {
     }
 
     @Override
+    public long getBinLen(int col) {
+        return col < split ? base.getBinLen(col) : virtualColumns.get(col - split).getBinLen(base);
+    }
+
+    @Override
     public boolean getBool(int col) {
         return col < split ? base.getBool(col) : virtualColumns.get(col - split).getBool(base);
     }
@@ -118,6 +123,11 @@ public class VirtualRecord extends AbstractRecord {
         } else {
             virtualColumns.get(col - split).getStr(base, sink);
         }
+    }
+
+    @Override
+    public int getStrLen(int col) {
+        return col < split ? base.getStrLen(col) : virtualColumns.get(col - split).getStrLen(base);
     }
 
     @Override

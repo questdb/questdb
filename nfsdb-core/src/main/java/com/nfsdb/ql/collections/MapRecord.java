@@ -23,7 +23,6 @@ package com.nfsdb.ql.collections;
 
 import com.nfsdb.collections.DirectCharSequence;
 import com.nfsdb.collections.DirectInputStream;
-import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.impl.AbstractRecord;
@@ -57,12 +56,17 @@ public final class MapRecord extends AbstractRecord {
 
     @Override
     public void getBin(int col, OutputStream s) {
-        throw new JournalRuntimeException("Not implemented");
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public DirectInputStream getBin(int col) {
-        throw new JournalRuntimeException("Not implemented");
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getBinLen(int col) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -129,6 +133,11 @@ public final class MapRecord extends AbstractRecord {
             sink.put(Unsafe.getUnsafe().getChar(address));
             address += 2;
         }
+    }
+
+    @Override
+    public int getStrLen(int index) {
+        return (int) (address0(index + 1) - address0(index)) >> 1;
     }
 
     @Override

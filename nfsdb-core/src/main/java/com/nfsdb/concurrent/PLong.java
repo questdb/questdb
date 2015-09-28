@@ -52,10 +52,6 @@ public class PLong {
         return Unsafe.getUnsafe().getLong(value, VALUE_OFFSET);
     }
 
-    public void lazySet(final long value) {
-        Unsafe.getUnsafe().putOrderedLong(this.value, VALUE_OFFSET, value);
-    }
-
     public void set(final long value) {
         Unsafe.getUnsafe().putLong(this.value, VALUE_OFFSET, value);
     }

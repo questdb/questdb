@@ -52,6 +52,11 @@ public class JournalRecord extends AbstractRecord {
     }
 
     @Override
+    public long getBinLen(int col) {
+        return partition.getBinLen(rowid, col);
+    }
+
+    @Override
     public boolean getBool(int col) {
         return partition.getBool(rowid, col);
     }
@@ -104,6 +109,11 @@ public class JournalRecord extends AbstractRecord {
     @Override
     public void getStr(int col, CharSink sink) {
         partition.getStr(rowid, col, sink);
+    }
+
+    @Override
+    public int getStrLen(int col) {
+        return partition.getStrLen(rowid, col);
     }
 
     @Override

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.ops;
 
@@ -49,6 +49,11 @@ abstract class AbstractVirtualColumn implements VirtualColumn {
 
     @Override
     public DirectInputStream getBin(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getBinLen(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -99,6 +104,11 @@ abstract class AbstractVirtualColumn implements VirtualColumn {
 
     @Override
     public void getStr(Record rec, CharSink sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getStrLen(Record rec) {
         throw new UnsupportedOperationException();
     }
 

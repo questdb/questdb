@@ -25,6 +25,7 @@ import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
+import com.nfsdb.utils.Numbers;
 
 import java.io.OutputStream;
 
@@ -66,6 +67,17 @@ public class SplitRecord extends AbstractRecord {
     }
 
     @Override
+    public long getBinLen(int col) {
+        if (col < split) {
+            return a.getBinLen(col);
+        } else if (b != null) {
+            return b.getBinLen(col - split);
+        } else {
+            return -1;
+        }
+    }
+
+    @Override
     public boolean getBool(int col) {
         if (col < split) {
             return a.getBool(col);
@@ -79,7 +91,7 @@ public class SplitRecord extends AbstractRecord {
         if (col < split) {
             return a.getDate(col);
         } else {
-            return b == null ? 0L : b.getDate(col - split);
+            return b == null ? 0l : b.getDate(col - split);
         }
     }
 
@@ -88,7 +100,7 @@ public class SplitRecord extends AbstractRecord {
         if (col < split) {
             return a.getDouble(col);
         } else {
-            return b == null ? 0d : b.getDouble(col - split);
+            return b == null ? Double.NaN : b.getDouble(col - split);
         }
     }
 
@@ -97,7 +109,7 @@ public class SplitRecord extends AbstractRecord {
         if (col < split) {
             return a.getFloat(col);
         } else {
-            return b == null ? 0f : b.getFloat(col - split);
+            return b == null ? Float.NaN : b.getFloat(col - split);
         }
     }
 
@@ -115,7 +127,7 @@ public class SplitRecord extends AbstractRecord {
         if (col < split) {
             return a.getInt(col);
         } else {
-            return b == null ? 0 : b.getInt(col - split);
+            return b == null ? Numbers.INT_NaN : b.getInt(col - split);
         }
     }
 
@@ -124,13 +136,13 @@ public class SplitRecord extends AbstractRecord {
         if (col < split) {
             return a.getLong(col);
         } else {
-            return b == null ? 0L : b.getLong(col - split);
+            return b == null ? Numbers.LONG_NaN : b.getLong(col - split);
         }
     }
 
     @Override
     public long getRowId() {
-        return 0;
+        return -1;
     }
 
     @Override
@@ -157,6 +169,15 @@ public class SplitRecord extends AbstractRecord {
             a.getStr(col, sink);
         } else if (b != null) {
             b.getStr(col - split, sink);
+        }
+    }
+
+    @Override
+    public int getStrLen(int col) {
+        if (col < split) {
+            return a.getStrLen(col);
+        } else {
+            return b == null ? -1 : b.getStrLen(col - split);
         }
     }
 

@@ -49,6 +49,11 @@ public class NullRecord extends AbstractRecord {
     }
 
     @Override
+    public long getBinLen(int col) {
+        return -1L;
+    }
+
+    @Override
     public boolean getBool(int col) {
         return false;
     }
@@ -101,6 +106,11 @@ public class NullRecord extends AbstractRecord {
     @Override
     public void getStr(int col, CharSink sink) {
 
+    }
+
+    @Override
+    public int getStrLen(int col) {
+        return -1;
     }
 
     @Override

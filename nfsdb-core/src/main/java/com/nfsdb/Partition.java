@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
@@ -153,6 +153,10 @@ public class Partition<T> implements Closeable {
         return varCol(columnIndex).getBin(localRowID);
     }
 
+    public long getBinLen(long localRowID, int columnIndex) {
+        return varCol(columnIndex).getBinLen(localRowID);
+    }
+
     public boolean getBool(long localRowID, int columnIndex) {
         return fixCol(columnIndex).getBool(localRowID);
     }
@@ -226,18 +230,19 @@ public class Partition<T> implements Closeable {
     }
 
     public String getStr(long localRowID, int columnIndex) {
-        checkColumnIndex(columnIndex);
-        return ((VariableColumn) columns[columnIndex]).getStr(localRowID);
+        return varCol(columnIndex).getStr(localRowID);
     }
 
     public void getStr(long localRowID, int columnIndex, CharSink sink) {
-        checkColumnIndex(columnIndex);
-        ((VariableColumn) columns[columnIndex]).getStr(localRowID, sink);
+        varCol(columnIndex).getStr(localRowID, sink);
+    }
+
+    public int getStrLen(long localRowID, int columnIndex) {
+        return varCol(columnIndex).getStrLen(localRowID);
     }
 
     public String getSym(long localRowID, int columnIndex) {
-        checkColumnIndex(columnIndex);
-        int symbolIndex = ((FixedColumn) columns[columnIndex]).getInt(localRowID);
+        int symbolIndex = fixCol(columnIndex).getInt(localRowID);
         switch (symbolIndex) {
             case SymbolTable.VALUE_IS_NULL:
             case SymbolTable.VALUE_NOT_FOUND:
@@ -573,7 +578,7 @@ public class Partition<T> implements Closeable {
     }
 
     private void readBin(long localRowID, T obj, int i, ColumnMetadata m) {
-        int size = ((VariableColumn) Unsafe.arrayGet(columns, i)).getBinSize(localRowID);
+        int size = ((VariableColumn) Unsafe.arrayGet(columns, i)).getBinLen(localRowID);
         ByteBuffer buf = (ByteBuffer) Unsafe.getUnsafe().getObject(obj, m.offset);
         if (size == -1) {
             if (buf != null) {

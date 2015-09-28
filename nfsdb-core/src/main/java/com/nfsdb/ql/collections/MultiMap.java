@@ -50,7 +50,6 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
     private int size = 0;
     private int mask;
 
-
     public MultiMap(ObjList<RecordColumnMetadata> valueColumns, ObjList<RecordColumnMetadata> keyColumns, ObjList<MapRecordValueInterceptor> interceptors) {
         //todo: extract config
         this(1024 * 1024, 4 * 1024 * 1024, 0.5f, valueColumns, keyColumns, interceptors);

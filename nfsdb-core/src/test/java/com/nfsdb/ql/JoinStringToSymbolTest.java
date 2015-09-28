@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql;
 
@@ -171,7 +171,7 @@ public class JoinStringToSymbolTest {
 
         final String expected = "band1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband1\thttp://old.band1.com\trock\t\n" +
                 "band1\talbum BZ\trock\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband1\thttp://old.band1.com\trock\t\n" +
-                "band3\talbum Y\tmetal\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tnull\t\tnull\t\n";
+                "band3\talbum Y\tmetal\t1970-01-01T00:00:00.000Z\t\tnull\t\tnull\t\n";
 
         bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
         bw.append(new Band().setName("band1").setType("rock").setUrl("http://old.band1.com"));

@@ -139,7 +139,7 @@ public class VariableColumn extends AbstractColumn {
     }
 
     public void getBin(long localRowID, OutputStream s) {
-        getBin(localRowID, s, getBinSize(localRowID));
+        getBin(localRowID, s, getBinLen(localRowID));
     }
 
     public void getBin(long localRowID, OutputStream s, int len) {
@@ -175,7 +175,8 @@ public class VariableColumn extends AbstractColumn {
         return binIn;
     }
 
-    public int getBinSize(long localRowID) {
+    // todo: support long
+    public int getBinLen(long localRowID) {
         return Unsafe.getUnsafe().getInt(mappedFile.addressOf(getOffset(localRowID), 4));
     }
 
@@ -217,6 +218,10 @@ public class VariableColumn extends AbstractColumn {
             sink.put(Unsafe.getUnsafe().getChar(address));
             address += 2;
         }
+    }
+
+    public int getStrLen(long localRowID) {
+        return Unsafe.getUnsafe().getInt(mappedFile.addressOf(indexColumn.getLong(localRowID), 4));
     }
 
     public void putBin(ByteBuffer value) {

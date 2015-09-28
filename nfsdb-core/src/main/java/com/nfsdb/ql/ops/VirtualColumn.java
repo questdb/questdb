@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.ops;
 
@@ -36,6 +36,8 @@ public interface VirtualColumn extends RecordColumnMetadata {
     void getBin(Record rec, OutputStream s);
 
     DirectInputStream getBin(Record rec);
+
+    long getBinLen(Record rec);
 
     boolean getBool(Record rec);
 
@@ -56,6 +58,8 @@ public interface VirtualColumn extends RecordColumnMetadata {
     CharSequence getStr(Record rec);
 
     void getStr(Record rec, CharSink sink);
+
+    int getStrLen(Record rec);
 
     String getSym(Record rec);
 

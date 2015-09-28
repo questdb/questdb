@@ -177,7 +177,7 @@ public class ColumnTest {
             col.putBin(buf);
             col.commit();
 
-            ByteBuffer bb = ByteBuffer.allocate(col.getBinSize(0));
+            ByteBuffer bb = ByteBuffer.allocate(col.getBinLen(0));
             col.getBin(0, bb);
             bb.flip();
             char chars[] = new char[bb.remaining() / 2];
