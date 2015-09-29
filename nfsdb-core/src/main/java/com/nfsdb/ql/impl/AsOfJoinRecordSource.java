@@ -50,13 +50,14 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
             int masterTimestampIndex,
             RecordSource<? extends Record> slave,
             int slaveTimestampIndex,
-            ObjList<CharSequence> keyColumns
+            ObjList<CharSequence> keyColumns,
+            int pageSize
     ) {
         this.master = master;
         this.masterTimestampIndex = masterTimestampIndex;
         this.slave = slave;
         this.slaveTimestampIndex = slaveTimestampIndex;
-        this.map = new LastVarRecordMap(master.getMetadata(), slave.getMetadata(), keyColumns, 4 * 1024 * 1024);
+        this.map = new LastVarRecordMap(master.getMetadata(), slave.getMetadata(), keyColumns, pageSize);
         this.metadata = new SplitRecordMetadata(master.getMetadata(), map.getMetadata());
         this.record = new SplitRecord(this.metadata, master.getMetadata().getColumnCount());
     }
@@ -108,9 +109,15 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
         long ts = master.getDate(masterTimestampIndex);
 
         if (delayedSlave != null) {
-            map.put(delayedSlave);
-            delayedSlave = null;
+            if (ts > delayedSlave.getDate(slaveTimestampIndex)) {
+                map.put(delayedSlave);
+                delayedSlave = null;
+            } else {
+                record.setB(null);
+                return record;
+            }
         }
+
         while (slaveCursor.hasNext()) {
             Record slave = slaveCursor.next();
             if (ts > slave.getDate(slaveTimestampIndex)) {

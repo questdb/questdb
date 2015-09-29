@@ -110,6 +110,7 @@ public class AsOfJoinRecordSourceTest extends AbstractOptimiserTest {
                 new ObjList<CharSequence>() {{
                     add("ccy");
                 }}
+                , 512
         );
 
         printer.printCursor(source.prepareCursor(factory));

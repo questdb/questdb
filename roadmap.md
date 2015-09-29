@@ -20,7 +20,7 @@ __server__
 
 - [ ] file upload handling (multipart form parsing)
 - [ ] file upload handling from curl (100-continue recognition)
-- [ ] query execution
+- [x] query execution
 - [ ] result set serialization (binary, json? - for javascript grid or chart)
 - [ ] flow control on file upload (park upload if client is not sending file)
 - [ ] flow control on query executions (do not execute until client is ready to read, park streaming if client is not ready to read)

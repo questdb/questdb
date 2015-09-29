@@ -58,6 +58,8 @@ public class LastVarRecordMap implements Closeable {
     private final IntIntHashMap symTableRemap = new IntIntHashMap();
     private final SelectedColumnsMetadata metadata;
     private final MapRecord record;
+    private final int bits;
+    private final int mask;
     private long appendOffset;
     private StorageFacade storageFacade;
 
@@ -66,6 +68,8 @@ public class LastVarRecordMap implements Closeable {
     public LastVarRecordMap(RecordMetadata masterMetadata, RecordMetadata slaveMetadata, ObjList<CharSequence> keyColumns, int pageSize) {
         this.pageSize = Numbers.ceilPow2(pageSize);
         this.maxRecordSize = pageSize - 4;
+        this.bits = Numbers.msb(this.pageSize);
+        this.mask = this.pageSize - 1;
 
         final int ksz = keyColumns.size();
         this.masterKeyTypes = new ObjList<>(ksz);
@@ -165,7 +169,6 @@ public class LastVarRecordMap implements Closeable {
 
     public void put(Record record) {
         final MapValues values = getBySlave(record);
-
         // calculate record size
         int size = varOffset;
         for (int i = 0, n = varColumns.size(); i < n; i++) {
@@ -180,8 +183,7 @@ public class LastVarRecordMap implements Closeable {
 
         // new record, append right away
         if (values.isNew()) {
-            values.putLong(0, appendOffset);
-            appendOffset += appendRec(record, size);
+            appendRec(record, size, values);
         } else {
             // old record, attempt to overwrite
             long offset = values.getLong(0);
@@ -197,14 +199,13 @@ public class LastVarRecordMap implements Closeable {
 
                 if (freeList.getTotalSize() < maxRecordSize) {
                     // if free list is too small, keep appending
-                    values.putLong(0, appendOffset);
-                    appendOffset += appendRec(record, size);
+                    appendRec(record, size, values);
                 } else {
                     // free list is large enough, we need to start reusing
                     long _offset = freeList.findAndRemove(size);
                     if (_offset == -1) {
                         // could not find suitable free block, append
-                        appendOffset += appendRec(record, size);
+                        appendRec(record, size, values);
                     } else {
                         writeRec(record, _offset);
                     }
@@ -270,14 +271,23 @@ public class LastVarRecordMap implements Closeable {
         return kw;
     }
 
-    private int appendRec(Record record, int size) {
+    private void appendRec(Record record, int size, MapValues values) {
         int pgInx = pageIndex(appendOffset);
         int pgOfs = pageOffset(appendOffset);
+
+        // input is net size of payload
+        // add 4 byte prefix + 10%
+        size = size + 4 + size / 10;
 
         if (pgOfs + size > pageSize) {
             pgInx++;
             pgOfs = 0;
+            values.putLong(0, appendOffset = (pgInx * pageSize));
+        } else {
+            values.putLong(0, appendOffset);
         }
+
+        appendOffset += size;
 
         // allocate if necessary
         if (pgInx == pages.size()) {
@@ -287,8 +297,8 @@ public class LastVarRecordMap implements Closeable {
         long addr = pages.getQuick(pgInx) + pgOfs;
         // write out record size + 10%
         // and actual size
-        Unsafe.getUnsafe().putInt(addr, size + size / 10);
-        return writeRec0(addr + 4, record) + 4;
+        Unsafe.getUnsafe().putInt(addr, size - 4);
+        writeRec0(addr + 4, record);
     }
 
     private MapValues getByMaster(Record record) {
@@ -300,20 +310,19 @@ public class LastVarRecordMap implements Closeable {
     }
 
     private int pageIndex(long offset) {
-        return (int) (offset / pageSize);
+        return (int) (offset >> bits);
     }
 
     private int pageOffset(long offset) {
-        return (int) (offset % pageSize);
+        return (int) (offset & mask);
     }
 
-    private int writeRec(Record record, long offset) {
-        return writeRec0(pages.getQuick(pageIndex(offset)) + pageOffset(offset) + 4, record) + 4;
+    private void writeRec(Record record, long offset) {
+        writeRec0(pages.getQuick(pageIndex(offset)) + pageOffset(offset) + 4, record);
     }
 
-    private int writeRec0(long addr, Record record) {
+    private void writeRec0(long addr, Record record) {
         int varOffset = this.varOffset;
-
         for (int i = 0, n = slaveValueIndexes.size(); i < n; i++) {
             int idx = slaveValueIndexes.getQuick(i);
             long address = addr + fixedOffsets.getQuick(i);
@@ -349,7 +358,6 @@ public class LastVarRecordMap implements Closeable {
                     break;
             }
         }
-        return varOffset;
     }
 
     private int writeStr(long addr, CharSequence value) {
