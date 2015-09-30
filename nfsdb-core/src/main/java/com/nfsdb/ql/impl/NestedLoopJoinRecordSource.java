@@ -54,7 +54,7 @@ public class NestedLoopJoinRecordSource extends AbstractImmutableIterator<SplitR
     }
 
     @Override
-    public StorageFacade getSymFacade() {
+    public StorageFacade getStorageFacade() {
         return null;
     }
 

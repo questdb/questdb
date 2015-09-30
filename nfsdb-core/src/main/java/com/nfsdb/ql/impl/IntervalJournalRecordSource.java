@@ -56,8 +56,8 @@ public class IntervalJournalRecordSource extends AbstractImmutableIterator<Recor
     }
 
     @Override
-    public StorageFacade getSymFacade() {
-        return cursor.getSymFacade();
+    public StorageFacade getStorageFacade() {
+        return cursor.getStorageFacade();
     }
 
     @Override

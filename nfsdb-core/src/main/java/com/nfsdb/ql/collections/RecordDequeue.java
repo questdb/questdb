@@ -77,7 +77,7 @@ public class RecordDequeue extends AbstractImmutableIterator<Record> implements 
     }
 
     @Override
-    public StorageFacade getSymFacade() {
+    public StorageFacade getStorageFacade() {
         return null;
     }
 

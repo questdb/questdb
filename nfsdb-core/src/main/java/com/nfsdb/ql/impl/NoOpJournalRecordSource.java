@@ -46,8 +46,8 @@ public class NoOpJournalRecordSource extends AbstractImmutableIterator<Record> i
     }
 
     @Override
-    public StorageFacade getSymFacade() {
-        return cursor.getSymFacade();
+    public StorageFacade getStorageFacade() {
+        return cursor.getStorageFacade();
     }
 
     @Override

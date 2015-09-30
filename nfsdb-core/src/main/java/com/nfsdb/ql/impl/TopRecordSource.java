@@ -54,8 +54,8 @@ public class TopRecordSource extends AbstractImmutableIterator<Record> implement
     }
 
     @Override
-    public StorageFacade getSymFacade() {
-        return recordCursor.getSymFacade();
+    public StorageFacade getStorageFacade() {
+        return recordCursor.getStorageFacade();
     }
 
     @Override

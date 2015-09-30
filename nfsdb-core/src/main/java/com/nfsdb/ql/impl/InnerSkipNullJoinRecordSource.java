@@ -48,8 +48,8 @@ public class InnerSkipNullJoinRecordSource extends AbstractImmutableIterator<Rec
     }
 
     @Override
-    public StorageFacade getSymFacade() {
-        return recordCursor.getSymFacade();
+    public StorageFacade getStorageFacade() {
+        return recordCursor.getStorageFacade();
     }
 
     @Override

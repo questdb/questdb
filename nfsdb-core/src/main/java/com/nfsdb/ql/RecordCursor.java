@@ -29,5 +29,5 @@ public interface RecordCursor<T extends Record> extends ImmutableIterator<T> {
 
     RecordMetadata getMetadata();
 
-    StorageFacade getSymFacade();
+    StorageFacade getStorageFacade();
 }

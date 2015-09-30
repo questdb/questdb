@@ -38,7 +38,7 @@ import com.nfsdb.ql.collections.LastVarRecordMap;
 
 import java.io.Closeable;
 
-public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record>, Closeable {
+public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record>, Closeable {
     private final LastRecordMap map;
     private final RecordSource<? extends Record> master;
     private final RecordSource<? extends Record> slave;
@@ -51,7 +51,7 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
     private Record delayedSlave;
 
     // todo: extract config
-    public AsOfJoinRecordSource(
+    public AsOfPartitionedJoinRecordSource(
             RecordSource<? extends Record> master,
             int masterTimestampIndex,
             RecordSource<? extends Record> slave,
@@ -101,7 +101,7 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
     }
 
     @Override
-    public StorageFacade getSymFacade() {
+    public StorageFacade getStorageFacade() {
         return null;
     }
 

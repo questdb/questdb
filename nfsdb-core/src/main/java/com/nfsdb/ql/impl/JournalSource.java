@@ -49,7 +49,7 @@ public class JournalSource extends AbstractJournalSource<JournalRecord> implemen
     }
 
     @Override
-    public StorageFacade getSymFacade() {
+    public StorageFacade getStorageFacade() {
         return partitionCursor.getStorageFacade();
     }
 

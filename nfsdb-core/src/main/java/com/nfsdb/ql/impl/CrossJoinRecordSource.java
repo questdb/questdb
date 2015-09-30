@@ -52,7 +52,7 @@ public class CrossJoinRecordSource extends AbstractImmutableIterator<Record> imp
     }
 
     @Override
-    public StorageFacade getSymFacade() {
+    public StorageFacade getStorageFacade() {
         return null;
     }
 

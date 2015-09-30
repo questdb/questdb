@@ -29,7 +29,7 @@ import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.StringSink;
-import com.nfsdb.ql.impl.AsOfJoinRecordSource;
+import com.nfsdb.ql.impl.AsOfPartitionedJoinRecordSource;
 import com.nfsdb.ql.parser.AbstractOptimiserTest;
 import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Dates;
@@ -38,7 +38,7 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-public class AsOfJoinRecordSourceTest extends AbstractOptimiserTest {
+public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
 
     @BeforeClass
     public static void setUpClass() throws Exception {
@@ -121,7 +121,7 @@ public class AsOfJoinRecordSourceTest extends AbstractOptimiserTest {
                 "2015-03-10T00:09:00.000Z\tSWHYRX\t-384.000000000000\tZGUJBKNTPYXUBYXGDDULXVVSCNJINCQSDOQILSLXZEMDBLNXHYUUTVSXURFLRJLIUC\t2015-03-10T00:07:30.000Z\t28.844047546387\t329.886169433594\tPEHNRX\t3041632938449863492\t0.4069\t13732\tfalse\n" +
                 "2015-03-10T00:10:00.000Z\tVTJWCP\t384.000000000000\tPGKJRQGKHQHXYUVDUZQTICMPWFZEINPQOGHUGZGDCFLNGCEFBTDNSYQTIGUTKIESOSYYLIBUFGPWTQJQWTGERXRSYZCKPFWECEH\t2015-03-10T00:09:50.000Z\t0.062803771347\t896.000000000000\tPEHNRX\t-5743731661904518905\t0.9202\t-15664\ttrue\n";
 
-        try (AsOfJoinRecordSource source = new AsOfJoinRecordSource(
+        try (AsOfPartitionedJoinRecordSource source = new AsOfPartitionedJoinRecordSource(
                 compiler.compileSource("y")
                 , 0
                 , new NoRowidSource().of(compiler.compileSource("select timestamp, ccy, rate, amount, contra, ln, fl, sh, b from x"))
@@ -150,7 +150,7 @@ public class AsOfJoinRecordSourceTest extends AbstractOptimiserTest {
                 "2015-03-10T00:09:00.000Z\tSWHYRX\t-384.000000000000\tZGUJBKNTPYXUBYXGDDULXVVSCNJINCQSDOQILSLXZEMDBLNXHYUUTVSXURFLRJLIUC\t2015-03-10T00:07:30.000Z\t28.844047546387\t329.886169433594\tYOPOQHKIZCCIQFUQYLJKPTDPZFOMEFUVYSMIYXIPGTDBCYCEJFPBYNORYJVMWNFXMVWRODBYSMBTZISISRZBSRBOXYTQXNZKTVOPKBXOHXYMMIFMMSWIBSLSVJ\tPEHNRX\t0.4069\t13732\t3041632938449863492\tfalse\n" +
                 "2015-03-10T00:10:00.000Z\tVTJWCP\t384.000000000000\tPGKJRQGKHQHXYUVDUZQTICMPWFZEINPQOGHUGZGDCFLNGCEFBTDNSYQTIGUTKIESOSYYLIBUFGPWTQJQWTGERXRSYZCKPFWECEH\t2015-03-10T00:09:50.000Z\t0.062803771347\t896.000000000000\tYVJISIQFNSEUHOSVSIKJFJLNEKTSLZFPGDVCLMZTXOYEPKECCJZJOSDCIWCZECJGNWQNKCYVZJRRZYDBL\tPEHNRX\t0.9202\t-15664\t-5743731661904518905\ttrue\n";
 
-        try (AsOfJoinRecordSource source = new AsOfJoinRecordSource(
+        try (AsOfPartitionedJoinRecordSource source = new AsOfPartitionedJoinRecordSource(
                 compiler.compileSource("y")
                 , 0
                 , compiler.compileSource("x")
@@ -168,7 +168,7 @@ public class AsOfJoinRecordSourceTest extends AbstractOptimiserTest {
 
     @Test
     public void testStrings() throws Exception {
-        try (AsOfJoinRecordSource source = new AsOfJoinRecordSource(
+        try (AsOfPartitionedJoinRecordSource source = new AsOfPartitionedJoinRecordSource(
                 compiler.compileSource("y")
                 , 0
                 , new NoRowidSource().of(compiler.compileSource("x"))
@@ -203,7 +203,7 @@ public class AsOfJoinRecordSourceTest extends AbstractOptimiserTest {
                 "2015-03-10T00:09:00.000Z\tSWHYRX\t-384.000000000000\tZGUJBKNTPYXUBYXGDDULXVVSCNJINCQSDOQILSLXZEMDBLNXHYUUTVSXURFLRJLIUC\t2015-03-10T00:07:30.000Z\t28.844047546387\t329.886169433594\tYOPOQHKIZCCIQFUQYLJKPTDPZFOMEFUVYSMIYXIPGTDBCYCEJFPBYNORYJVMWNFXMVWRODBYSMBTZISISRZBSRBOXYTQXNZKTVOPKBXOHXYMMIFMMSWIBSLSVJ\tPEHNRX\t0.4069\t13732\t3041632938449863492\tfalse\n" +
                 "2015-03-10T00:10:00.000Z\tVTJWCP\t384.000000000000\tPGKJRQGKHQHXYUVDUZQTICMPWFZEINPQOGHUGZGDCFLNGCEFBTDNSYQTIGUTKIESOSYYLIBUFGPWTQJQWTGERXRSYZCKPFWECEH\t2015-03-10T00:09:50.000Z\t0.062803771347\t896.000000000000\tYVJISIQFNSEUHOSVSIKJFJLNEKTSLZFPGDVCLMZTXOYEPKECCJZJOSDCIWCZECJGNWQNKCYVZJRRZYDBL\tPEHNRX\t0.9202\t-15664\t-5743731661904518905\ttrue\n";
 
-        try (AsOfJoinRecordSource source = new AsOfJoinRecordSource(
+        try (AsOfPartitionedJoinRecordSource source = new AsOfPartitionedJoinRecordSource(
                 compiler.compileSource("y")
                 , 0
                 , new NoRowidSource().of(compiler.compileSource("x"))

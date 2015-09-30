@@ -50,8 +50,8 @@ public class FilteredJournalRecordSource extends AbstractImmutableIterator<Recor
     }
 
     @Override
-    public StorageFacade getSymFacade() {
-        return cursor.getSymFacade();
+    public StorageFacade getStorageFacade() {
+        return cursor.getStorageFacade();
     }
 
     @Override
@@ -62,7 +62,7 @@ public class FilteredJournalRecordSource extends AbstractImmutableIterator<Recor
     @Override
     public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
         this.cursor = delegate.prepareCursor(factory);
-        filter.prepare(cursor.getSymFacade());
+        filter.prepare(cursor.getStorageFacade());
         return this;
     }
 

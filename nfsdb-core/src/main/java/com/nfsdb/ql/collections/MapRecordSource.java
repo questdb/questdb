@@ -55,7 +55,7 @@ public final class MapRecordSource extends AbstractImmutableIterator<Record> imp
     }
 
     @Override
-    public StorageFacade getSymFacade() {
+    public StorageFacade getStorageFacade() {
         return null;
     }
 

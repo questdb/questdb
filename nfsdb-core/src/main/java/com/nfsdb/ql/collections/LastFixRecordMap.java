@@ -171,7 +171,7 @@ public class LastFixRecordMap implements LastRecordMap {
     public void setSlaveCursor(RecordCursor<? extends Record> cursor) {
         // hold on to storage facade an remap foreign indexes as
         // queries to symbols will be made using our indexes
-        this.storageFacade = cursor.getSymFacade();
+        this.storageFacade = cursor.getStorageFacade();
         for (int i = 0, n = slaveValueTypes.size(); i < n; i++) {
             if (slaveValueTypes.getQuick(i) == ColumnType.SYMBOL) {
                 symTableRemap.put(i, slaveValueIndexes.getQuick(i));

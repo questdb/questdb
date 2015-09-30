@@ -53,7 +53,7 @@ public class SelectedColumnsRecordSource extends AbstractImmutableIterator<Recor
     }
 
     @Override
-    public StorageFacade getSymFacade() {
+    public StorageFacade getStorageFacade() {
         return storageFacade;
     }
 
@@ -65,7 +65,7 @@ public class SelectedColumnsRecordSource extends AbstractImmutableIterator<Recor
     @Override
     public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
         this.recordCursor = recordSource.prepareCursor(factory);
-        this.storageFacade.setDelegate(recordCursor.getSymFacade());
+        this.storageFacade.setDelegate(recordCursor.getStorageFacade());
         return this;
     }
 

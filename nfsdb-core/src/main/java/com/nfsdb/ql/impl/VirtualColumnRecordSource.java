@@ -55,8 +55,8 @@ public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record>
     }
 
     @Override
-    public StorageFacade getSymFacade() {
-        return recordCursor.getSymFacade();
+    public StorageFacade getStorageFacade() {
+        return recordCursor.getStorageFacade();
     }
 
     @Override
@@ -67,7 +67,7 @@ public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record>
     @Override
     public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
         this.recordCursor = recordSource.prepareCursor(factory);
-        current.prepare(recordCursor.getSymFacade());
+        current.prepare(recordCursor.getStorageFacade());
         return this;
     }
 
