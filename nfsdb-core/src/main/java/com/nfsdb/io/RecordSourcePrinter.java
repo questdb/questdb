@@ -83,7 +83,7 @@ public class RecordSourcePrinter {
     private void printRecord(Record r, RecordMetadata m, int i) {
         switch (m.getColumnQuick(i).getType()) {
             case DATE:
-                Dates.appendDateTime(sink, r.getLong(i));
+                Dates.appendDateTime(sink, r.getDate(i));
                 break;
             case DOUBLE:
                 Numbers.append(sink, r.getDouble(i), 12);

@@ -128,7 +128,8 @@ public class SelectedColumnsRecord extends AbstractRecord {
         return base.getSym(reindex[col]);
     }
 
-    public void setBase(Record base) {
+    public SelectedColumnsRecord of(Record base) {
         this.base = base;
+        return this;
     }
 }

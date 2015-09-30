@@ -36,6 +36,7 @@ public class SelectedColumnsRecordSource extends AbstractImmutableIterator<Recor
     private final RecordSource<? extends Record> recordSource;
     private final RecordMetadata metadata;
     private final SelectedColumnsRecord record;
+    private final SelectedColumnsStorageFacade storageFacade;
     private RecordCursor<? extends Record> recordCursor;
 
     public SelectedColumnsRecordSource(RecordSource<? extends Record> recordSource, ObjList<CharSequence> names, CharSequenceObjHashMap<String> renameMap) {
@@ -43,17 +44,17 @@ public class SelectedColumnsRecordSource extends AbstractImmutableIterator<Recor
         RecordMetadata dm = recordSource.getMetadata();
         this.metadata = new SelectedColumnsMetadata(dm, names, renameMap);
         this.record = new SelectedColumnsRecord(dm, names);
+        this.storageFacade = new SelectedColumnsStorageFacade(dm, metadata, names);
     }
 
     @Override
     public Record getByRowId(long rowId) {
-        record.setBase(recordCursor.getByRowId(rowId));
-        return record;
+        return record.of(recordCursor.getByRowId(rowId));
     }
 
     @Override
     public StorageFacade getSymFacade() {
-        return recordCursor.getSymFacade();
+        return storageFacade;
     }
 
     @Override
@@ -64,6 +65,7 @@ public class SelectedColumnsRecordSource extends AbstractImmutableIterator<Recor
     @Override
     public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
         this.recordCursor = recordSource.prepareCursor(factory);
+        this.storageFacade.setDelegate(recordCursor.getSymFacade());
         return this;
     }
 
@@ -84,8 +86,7 @@ public class SelectedColumnsRecordSource extends AbstractImmutableIterator<Recor
 
     @Override
     public Record next() {
-        record.setBase(recordCursor.next());
-        return record;
+        return record.of(recordCursor.next());
     }
 
     @Override

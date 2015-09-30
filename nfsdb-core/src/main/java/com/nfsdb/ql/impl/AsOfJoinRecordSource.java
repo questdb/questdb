@@ -22,18 +22,24 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.collections.ObjList;
+import com.nfsdb.collections.CharSequenceHashSet;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
+import com.nfsdb.ql.collections.LastFixRecordMap;
+import com.nfsdb.ql.collections.LastRecordMap;
+import com.nfsdb.ql.collections.LastRowIdRecordMap;
 import com.nfsdb.ql.collections.LastVarRecordMap;
 
-public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record> {
-    private final LastVarRecordMap map;
+import java.io.Closeable;
+
+public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record>, Closeable {
+    private final LastRecordMap map;
     private final RecordSource<? extends Record> master;
     private final RecordSource<? extends Record> slave;
     private final SplitRecordMetadata metadata;
@@ -50,16 +56,43 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
             int masterTimestampIndex,
             RecordSource<? extends Record> slave,
             int slaveTimestampIndex,
-            ObjList<CharSequence> keyColumns,
+            CharSequenceHashSet keyColumns,
             int pageSize
     ) {
         this.master = master;
         this.masterTimestampIndex = masterTimestampIndex;
         this.slave = slave;
         this.slaveTimestampIndex = slaveTimestampIndex;
-        this.map = new LastVarRecordMap(master.getMetadata(), slave.getMetadata(), keyColumns, pageSize);
+        if (slave.supportsRowIdAccess()) {
+            map = new LastRowIdRecordMap(master.getMetadata(), slave.getMetadata(), keyColumns);
+        } else {
+            // check if slave has variable length columns
+            boolean var = false;
+            OUT:
+            for (int i = 0, n = slave.getMetadata().getColumnCount(); i < n; i++) {
+                switch (slave.getMetadata().getColumnQuick(i).getType()) {
+                    case BINARY:
+                        throw new JournalRuntimeException("Binary columns are not supported");
+                    case STRING:
+                        if (!keyColumns.contains(slave.getMetadata().getColumnQuick(i).getName())) {
+                            var = true;
+                        }
+                        break OUT;
+                }
+            }
+            if (var) {
+                this.map = new LastVarRecordMap(master.getMetadata(), slave.getMetadata(), keyColumns, pageSize);
+            } else {
+                this.map = new LastFixRecordMap(master.getMetadata(), slave.getMetadata(), keyColumns, pageSize);
+            }
+        }
         this.metadata = new SplitRecordMetadata(master.getMetadata(), map.getMetadata());
         this.record = new SplitRecord(this.metadata, master.getMetadata().getColumnCount());
+    }
+
+    @Override
+    public void close() {
+        map.close();
     }
 
     @Override
@@ -81,7 +114,7 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
     public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
         this.masterCursor = master.prepareCursor(factory);
         this.slaveCursor = slave.prepareCursor(factory);
-        map.setStorageFacade(slaveCursor.getSymFacade());
+        map.setSlaveCursor(slaveCursor);
         return this;
     }
 

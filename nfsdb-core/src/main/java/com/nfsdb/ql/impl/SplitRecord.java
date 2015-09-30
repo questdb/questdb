@@ -91,7 +91,7 @@ public class SplitRecord extends AbstractRecord {
         if (col < split) {
             return a.getDate(col);
         } else {
-            return b == null ? 0l : b.getDate(col - split);
+            return b == null ? Numbers.LONG_NaN : b.getDate(col - split);
         }
     }
 

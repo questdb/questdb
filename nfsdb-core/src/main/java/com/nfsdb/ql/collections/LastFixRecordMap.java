@@ -37,23 +37,20 @@ import com.nfsdb.utils.Unsafe;
 
 import java.io.OutputStream;
 
-public class LastVarRecordMap implements LastRecordMap {
+public class LastFixRecordMap implements LastRecordMap {
     private static final ObjList<RecordColumnMetadata> valueMetadata = new ObjList<>();
     private final static CharSequenceObjHashMap<String> EMPTY_MAP = new CharSequenceObjHashMap<>();
     private final MultiMap map;
     private final LongList pages = new LongList();
     private final int pageSize;
-    private final int maxRecordSize;
     private final IntHashSet slaveKeyIndexes;
     private final IntHashSet masterKeyIndexes;
     private final IntList slaveValueIndexes;
-    private final IntList varColumns = new IntList();
-    private final FreeList freeList = new FreeList();
     private final ObjList<ColumnType> slaveKeyTypes;
     private final ObjList<ColumnType> masterKeyTypes;
     private final ObjList<ColumnType> slaveValueTypes;
     private final IntList fixedOffsets;
-    private final int varOffset;
+    private final int recordLen;
     private final IntIntHashMap symTableRemap = new IntIntHashMap();
     private final SelectedColumnsMetadata metadata;
     private final MapRecord record;
@@ -62,11 +59,8 @@ public class LastVarRecordMap implements LastRecordMap {
     private long appendOffset;
     private StorageFacade storageFacade;
 
-    // todo: extract config
-    // todo: make sure blobs are not supported and not provided
-    public LastVarRecordMap(RecordMetadata masterMetadata, RecordMetadata slaveMetadata, CharSequenceHashSet keyColumns, int pageSize) {
+    public LastFixRecordMap(RecordMetadata masterMetadata, RecordMetadata slaveMetadata, CharSequenceHashSet keyColumns, int pageSize) {
         this.pageSize = Numbers.ceilPow2(pageSize);
-        this.maxRecordSize = pageSize - 4;
         this.bits = Numbers.msb(this.pageSize);
         this.mask = this.pageSize - 1;
 
@@ -128,18 +122,14 @@ public class LastVarRecordMap implements LastRecordMap {
                 case SHORT:
                     varOffset += 2;
                     break;
-                default:
-                    varColumns.add(i);
-                    varOffset += 4;
-                    break;
             }
         }
 
-        if (varOffset > maxRecordSize) {
+        if (varOffset > pageSize) {
             throw new JournalRuntimeException("Record size is too large");
         }
 
-        this.varOffset = varOffset;
+        this.recordLen = varOffset;
         this.map = new MultiMap(valueMetadata, keyCols, null);
         this.metadata = new SelectedColumnsMetadata(slaveMetadata, slaveColumnNames, EMPTY_MAP);
         this.record = new MapRecord(this.metadata);
@@ -153,7 +143,6 @@ public class LastVarRecordMap implements LastRecordMap {
         pages.clear();
     }
 
-    @Override
     public Record get(Record master) {
         MapValues values = getByMaster(master);
         if (values == null) {
@@ -164,63 +153,21 @@ public class LastVarRecordMap implements LastRecordMap {
         return record.of(pages.getQuick(pageIndex(offset)) + pageOffset(offset));
     }
 
-    @Override
     public RecordMetadata getMetadata() {
         return metadata;
     }
 
-    @Override
     public void put(Record record) {
         final MapValues values = getBySlave(record);
-        // calculate record size
-        int size = varOffset;
-        for (int i = 0, n = varColumns.size(); i < n; i++) {
-            size += record.getStrLen(varColumns.getQuick(i)) * 2 + 4;
-        }
-
-        // record is larger than page size
-        // won't handle that as we don't write one record across multiple pages
-        if (size > maxRecordSize) {
-            throw new JournalRuntimeException("Record size is too large");
-        }
-
         // new record, append right away
         if (values.isNew()) {
-            appendRec(record, size, values);
+            appendRec(record, values);
         } else {
             // old record, attempt to overwrite
-            long offset = values.getLong(0);
-            int pgInx = pageIndex(offset);
-            int pgOfs = pageOffset(offset);
-
-            int oldSize = Unsafe.getUnsafe().getInt(pages.getQuick(pgInx) + pgOfs);
-
-            if (size > oldSize) {
-                // new record is larger than previous, must write to new location
-                // in the mean time free old location
-                freeList.add(offset, oldSize);
-
-                if (freeList.getTotalSize() < maxRecordSize) {
-                    // if free list is too small, keep appending
-                    appendRec(record, size, values);
-                } else {
-                    // free list is large enough, we need to start reusing
-                    long _offset = freeList.findAndRemove(size);
-                    if (_offset == -1) {
-                        // could not find suitable free block, append
-                        appendRec(record, size, values);
-                    } else {
-                        writeRec(record, _offset);
-                    }
-                }
-            } else {
-                // new record is smaller or equal in size to previous one, overwrite safely
-                writeRec(record, offset);
-            }
+            writeRec(record, values.getLong(0));
         }
     }
 
-    @Override
     public void setSlaveCursor(RecordCursor<? extends Record> cursor) {
         // hold on to storage facade an remap foreign indexes as
         // queries to symbols will be made using our indexes
@@ -275,34 +222,23 @@ public class LastVarRecordMap implements LastRecordMap {
         return kw;
     }
 
-    private void appendRec(Record record, int size, MapValues values) {
+    private void appendRec(Record record, MapValues values) {
         int pgInx = pageIndex(appendOffset);
         int pgOfs = pageOffset(appendOffset);
 
-        // input is net size of payload
-        // add 4 byte prefix + 10%
-        size = size + 4 + size / 10;
-
-        if (pgOfs + size > pageSize) {
+        if (pgOfs + recordLen > pageSize) {
             pgInx++;
             pgOfs = 0;
             values.putLong(0, appendOffset = (pgInx * pageSize));
         } else {
             values.putLong(0, appendOffset);
         }
-
-        appendOffset += size;
-
+        appendOffset += recordLen;
         // allocate if necessary
         if (pgInx == pages.size()) {
             pages.add(Unsafe.getUnsafe().allocateMemory(pageSize));
         }
-
-        long addr = pages.getQuick(pgInx) + pgOfs;
-        // write out record size + 10%
-        // and actual size
-        Unsafe.getUnsafe().putInt(addr, size - 4);
-        writeRec0(addr + 4, record);
+        writeRec0(pages.getQuick(pgInx) + pgOfs, record);
     }
 
     private MapValues getByMaster(Record record) {
@@ -322,11 +258,10 @@ public class LastVarRecordMap implements LastRecordMap {
     }
 
     private void writeRec(Record record, long offset) {
-        writeRec0(pages.getQuick(pageIndex(offset)) + pageOffset(offset) + 4, record);
+        writeRec0(pages.getQuick(pageIndex(offset)) + pageOffset(offset), record);
     }
 
     private void writeRec0(long addr, Record record) {
-        int varOffset = this.varOffset;
         for (int i = 0, n = slaveValueIndexes.size(); i < n; i++) {
             int idx = slaveValueIndexes.getQuick(i);
             long address = addr + fixedOffsets.getQuick(i);
@@ -356,28 +291,12 @@ public class LastVarRecordMap implements LastRecordMap {
                 case DATE:
                     Unsafe.getUnsafe().putLong(address, record.getDate(idx));
                     break;
-                case STRING:
-                    Unsafe.getUnsafe().putInt(address, varOffset);
-                    varOffset += writeStr(addr + varOffset, record.getFlyweightStr(idx));
-                    break;
             }
         }
     }
 
-    private int writeStr(long addr, CharSequence value) {
-        int len = value.length();
-        Unsafe.getUnsafe().putInt(addr, len);
-        addr += 4;
-        for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putChar(addr + (i << 1), value.charAt(i));
-        }
-        return (len << 1) + 4;
-    }
-
     public class MapRecord extends AbstractRecord {
-        private final DirectCharSequence cs = new DirectCharSequence();
         private long address;
-        private char[] strBuf;
 
         public MapRecord(RecordMetadata metadata) {
             super(metadata);
@@ -425,9 +344,7 @@ public class LastVarRecordMap implements LastRecordMap {
 
         @Override
         public CharSequence getFlyweightStr(int col) {
-            int offset = Unsafe.getUnsafe().getInt(address + fixedOffsets.getQuick(col));
-            int len = Unsafe.getUnsafe().getInt(address + offset);
-            return cs.init(address + offset + 4, address + offset + 4 + len * 2);
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -452,37 +369,17 @@ public class LastVarRecordMap implements LastRecordMap {
 
         @Override
         public CharSequence getStr(int col) {
-            int offset = Unsafe.getUnsafe().getInt(address + fixedOffsets.getQuick(col));
-            int len = Unsafe.getUnsafe().getInt(address + offset);
-
-            if (strBuf == null || strBuf.length < len) {
-                strBuf = new char[len];
-            }
-
-            long lim = address + offset + 4 + len * 2;
-            int i = 0;
-            for (long p = address + offset + 4; p < lim; p += 2) {
-                strBuf[i++] = Unsafe.getUnsafe().getChar(p);
-            }
-
-            return new String(strBuf, 0, len);
+            throw new UnsupportedOperationException();
         }
 
         @Override
         public void getStr(int col, CharSink sink) {
-            int offset = Unsafe.getUnsafe().getInt(address + fixedOffsets.getQuick(col));
-            int len = Unsafe.getUnsafe().getInt(address + offset);
-
-            long lim = address + offset + 4 + len * 2;
-            for (long p = address + offset + 4; p < lim; p += 2) {
-                sink.put(Unsafe.getUnsafe().getChar(p));
-            }
+            throw new UnsupportedOperationException();
         }
 
         @Override
         public int getStrLen(int col) {
-            int offset = Unsafe.getUnsafe().getInt(address + fixedOffsets.getQuick(col));
-            return Unsafe.getUnsafe().getInt(address + offset);
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -491,7 +388,7 @@ public class LastVarRecordMap implements LastRecordMap {
         }
 
         private MapRecord of(long address) {
-            this.address = address + 4;
+            this.address = address;
             return this;
         }
     }
