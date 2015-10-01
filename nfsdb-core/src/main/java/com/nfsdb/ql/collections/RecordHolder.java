@@ -19,21 +19,15 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.ha.protocol.commands;
+package com.nfsdb.ql.collections;
 
-import com.nfsdb.collections.DirectCharSequence;
-import com.nfsdb.ha.AbstractImmutableObjectConsumer;
-import com.nfsdb.utils.ByteBuffers;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.StorageFacade;
 
-import java.nio.ByteBuffer;
+import java.io.Closeable;
 
-public class CharSequenceResponseConsumer extends AbstractImmutableObjectConsumer<CharSequence> {
-    private final DirectCharSequence charSequence = new DirectCharSequence();
+public interface RecordHolder extends Record, Closeable {
+    void setStorageFacade(StorageFacade facade);
 
-    @Override
-    protected CharSequence read(ByteBuffer buffer) {
-        long address = ByteBuffers.getAddress(buffer);
-        charSequence.of(address, address + buffer.remaining());
-        return charSequence;
-    }
+    void write(Record record);
 }

@@ -25,7 +25,7 @@ import com.nfsdb.collections.DirectCharSequence;
 import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
-import com.nfsdb.ql.impl.AbstractRecord;
+import com.nfsdb.ql.AbstractRecord;
 import com.nfsdb.utils.Unsafe;
 
 import java.io.OutputStream;
@@ -71,7 +71,7 @@ public final class MapRecord extends AbstractRecord {
 
     @Override
     public boolean getBool(int index) {
-        return Unsafe.getUnsafe().getByte(address0(index)) == 1;
+        return Unsafe.getBool(address0(index));
     }
 
     @Override
@@ -91,7 +91,7 @@ public final class MapRecord extends AbstractRecord {
 
     @Override
     public CharSequence getFlyweightStr(int index) {
-        return charSequence.init(address0(index), address0(index + 1));
+        return charSequence.of(address0(index), address0(index + 1));
     }
 
     @Override

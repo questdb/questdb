@@ -25,17 +25,14 @@ import com.nfsdb.collections.*;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
-import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.StorageFacade;
-import com.nfsdb.ql.impl.AbstractRecord;
 import com.nfsdb.ql.impl.SelectedColumnsMetadata;
 import com.nfsdb.storage.ColumnType;
+import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Unsafe;
-
-import java.io.OutputStream;
 
 public class LastFixRecordMap implements LastRecordMap {
     private static final ObjList<RecordColumnMetadata> valueMetadata = new ObjList<>();
@@ -295,7 +292,7 @@ public class LastFixRecordMap implements LastRecordMap {
         }
     }
 
-    public class MapRecord extends AbstractRecord {
+    public class MapRecord extends AbstractMemRecord {
         private long address;
 
         public MapRecord(RecordMetadata metadata) {
@@ -303,88 +300,13 @@ public class LastFixRecordMap implements LastRecordMap {
         }
 
         @Override
-        public byte get(int col) {
-            return Unsafe.getUnsafe().getByte(address + fixedOffsets.getQuick(col));
+        protected long address(int col) {
+            return address + fixedOffsets.getQuick(col);
         }
 
         @Override
-        public void getBin(int col, OutputStream s) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public DirectInputStream getBin(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getBinLen(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public boolean getBool(int col) {
-            return Unsafe.getUnsafe().getByte(address + fixedOffsets.getQuick(col)) == 1;
-        }
-
-        @Override
-        public long getDate(int col) {
-            return Unsafe.getUnsafe().getLong(address + fixedOffsets.getQuick(col));
-        }
-
-        @Override
-        public double getDouble(int col) {
-            return Unsafe.getUnsafe().getDouble(address + fixedOffsets.getQuick(col));
-        }
-
-        @Override
-        public float getFloat(int col) {
-            return Unsafe.getUnsafe().getFloat(address + fixedOffsets.getQuick(col));
-        }
-
-        @Override
-        public CharSequence getFlyweightStr(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public int getInt(int col) {
-            return Unsafe.getUnsafe().getInt(address + fixedOffsets.getQuick(col));
-        }
-
-        @Override
-        public long getLong(int col) {
-            return Unsafe.getUnsafe().getLong(address + fixedOffsets.getQuick(col));
-        }
-
-        @Override
-        public long getRowId() {
-            return -1;
-        }
-
-        @Override
-        public short getShort(int col) {
-            return Unsafe.getUnsafe().getShort(address + fixedOffsets.getQuick(col));
-        }
-
-        @Override
-        public CharSequence getStr(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void getStr(int col, CharSink sink) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public int getStrLen(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public String getSym(int col) {
-            return storageFacade.getSymbolTable(symTableRemap.get(col)).value(Unsafe.getUnsafe().getInt(address + fixedOffsets.getQuick(col)));
+        protected SymbolTable getSymbolTable(int col) {
+            return storageFacade.getSymbolTable(symTableRemap.get(col));
         }
 
         private MapRecord of(long address) {

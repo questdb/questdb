@@ -25,6 +25,7 @@ import com.nfsdb.Partition;
 import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.ql.AbstractRecord;
 
 import java.io.OutputStream;
 

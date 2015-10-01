@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.collections;
 
@@ -47,13 +47,6 @@ public class DirectCharSequence extends AbstractCharSequence {
         return this == obj || obj instanceof CharSequence && Chars.equals(this, (CharSequence) obj);
     }
 
-    public DirectCharSequence init(long lo, long hi) {
-        this.lo = lo;
-        this.hi = hi;
-        this.len = (int) ((hi - lo) / 2);
-        return this;
-    }
-
     @Override
     public int length() {
         return len;
@@ -70,6 +63,13 @@ public class DirectCharSequence extends AbstractCharSequence {
         seq.lo = this.lo + start;
         seq.hi = this.lo + end;
         return seq;
+    }
+
+    public DirectCharSequence of(long lo, long hi) {
+        this.lo = lo;
+        this.hi = hi;
+        this.len = (int) ((hi - lo) / 2);
+        return this;
     }
 
 }

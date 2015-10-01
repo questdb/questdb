@@ -64,7 +64,7 @@ public class FixedColumn extends AbstractColumn {
     }
 
     public boolean getBool(long localRowID) {
-        return Unsafe.getUnsafe().getByte(mappedFile.addressOf(getOffset(localRowID), 1)) == 1;
+        return Unsafe.getBool(mappedFile.addressOf(getOffset(localRowID), 1));
     }
 
     public byte getByte(long localRowID) {

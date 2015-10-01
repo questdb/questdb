@@ -25,17 +25,15 @@ import com.nfsdb.collections.*;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
-import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.StorageFacade;
-import com.nfsdb.ql.impl.AbstractRecord;
 import com.nfsdb.ql.impl.SelectedColumnsMetadata;
 import com.nfsdb.storage.ColumnType;
+import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Unsafe;
-
-import java.io.OutputStream;
 
 public class LastVarRecordMap implements LastRecordMap {
     private static final ObjList<RecordColumnMetadata> valueMetadata = new ObjList<>();
@@ -358,136 +356,32 @@ public class LastVarRecordMap implements LastRecordMap {
                     break;
                 case STRING:
                     Unsafe.getUnsafe().putInt(address, varOffset);
-                    varOffset += writeStr(addr + varOffset, record.getFlyweightStr(idx));
+                    varOffset += Chars.put(addr + varOffset, record.getFlyweightStr(idx));
                     break;
             }
         }
     }
 
-    private int writeStr(long addr, CharSequence value) {
-        int len = value.length();
-        Unsafe.getUnsafe().putInt(addr, len);
-        addr += 4;
-        for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putChar(addr + (i << 1), value.charAt(i));
-        }
-        return (len << 1) + 4;
-    }
-
-    public class MapRecord extends AbstractRecord {
-        private final DirectCharSequence cs = new DirectCharSequence();
+    public class MapRecord extends AbstractVarMemRecord {
         private long address;
-        private char[] strBuf;
 
         public MapRecord(RecordMetadata metadata) {
             super(metadata);
         }
 
         @Override
-        public byte get(int col) {
-            return Unsafe.getUnsafe().getByte(address + fixedOffsets.getQuick(col));
+        protected long address(int col) {
+            return address + fixedOffsets.getQuick(col);
         }
 
         @Override
-        public void getBin(int col, OutputStream s) {
-            throw new UnsupportedOperationException();
+        protected SymbolTable getSymbolTable(int col) {
+            return storageFacade.getSymbolTable(symTableRemap.get(col));
         }
 
         @Override
-        public DirectInputStream getBin(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getBinLen(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public boolean getBool(int col) {
-            return Unsafe.getUnsafe().getByte(address + fixedOffsets.getQuick(col)) == 1;
-        }
-
-        @Override
-        public long getDate(int col) {
-            return Unsafe.getUnsafe().getLong(address + fixedOffsets.getQuick(col));
-        }
-
-        @Override
-        public double getDouble(int col) {
-            return Unsafe.getUnsafe().getDouble(address + fixedOffsets.getQuick(col));
-        }
-
-        @Override
-        public float getFloat(int col) {
-            return Unsafe.getUnsafe().getFloat(address + fixedOffsets.getQuick(col));
-        }
-
-        @Override
-        public CharSequence getFlyweightStr(int col) {
-            int offset = Unsafe.getUnsafe().getInt(address + fixedOffsets.getQuick(col));
-            int len = Unsafe.getUnsafe().getInt(address + offset);
-            return cs.init(address + offset + 4, address + offset + 4 + len * 2);
-        }
-
-        @Override
-        public int getInt(int col) {
-            return Unsafe.getUnsafe().getInt(address + fixedOffsets.getQuick(col));
-        }
-
-        @Override
-        public long getLong(int col) {
-            return Unsafe.getUnsafe().getLong(address + fixedOffsets.getQuick(col));
-        }
-
-        @Override
-        public long getRowId() {
-            return -1;
-        }
-
-        @Override
-        public short getShort(int col) {
-            return Unsafe.getUnsafe().getShort(address + fixedOffsets.getQuick(col));
-        }
-
-        @Override
-        public CharSequence getStr(int col) {
-            int offset = Unsafe.getUnsafe().getInt(address + fixedOffsets.getQuick(col));
-            int len = Unsafe.getUnsafe().getInt(address + offset);
-
-            if (strBuf == null || strBuf.length < len) {
-                strBuf = new char[len];
-            }
-
-            long lim = address + offset + 4 + len * 2;
-            int i = 0;
-            for (long p = address + offset + 4; p < lim; p += 2) {
-                strBuf[i++] = Unsafe.getUnsafe().getChar(p);
-            }
-
-            return new String(strBuf, 0, len);
-        }
-
-        @Override
-        public void getStr(int col, CharSink sink) {
-            int offset = Unsafe.getUnsafe().getInt(address + fixedOffsets.getQuick(col));
-            int len = Unsafe.getUnsafe().getInt(address + offset);
-
-            long lim = address + offset + 4 + len * 2;
-            for (long p = address + offset + 4; p < lim; p += 2) {
-                sink.put(Unsafe.getUnsafe().getChar(p));
-            }
-        }
-
-        @Override
-        public int getStrLen(int col) {
-            int offset = Unsafe.getUnsafe().getInt(address + fixedOffsets.getQuick(col));
-            return Unsafe.getUnsafe().getInt(address + offset);
-        }
-
-        @Override
-        public String getSym(int col) {
-            return storageFacade.getSymbolTable(symTableRemap.get(col)).value(Unsafe.getUnsafe().getInt(address + fixedOffsets.getQuick(col)));
+        protected long address() {
+            return address;
         }
 
         private MapRecord of(long address) {

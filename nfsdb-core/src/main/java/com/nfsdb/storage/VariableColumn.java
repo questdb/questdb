@@ -26,6 +26,7 @@ import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -187,7 +188,7 @@ public class VariableColumn extends AbstractColumn {
             return null;
         }
         long lo = mappedFile.addressOf(offset + 4, len * 2);
-        return charSequence.init(lo, lo + len * 2);
+        return charSequence.of(lo, lo + len * 2);
     }
 
     public FixedColumn getIndexColumn() {
@@ -312,16 +313,9 @@ public class VariableColumn extends AbstractColumn {
         if (value == null) {
             return putNull();
         } else {
-            int l;
-            int len = (l = value.length()) * 2 + 4;
+            int len = value.length() * 2 + 4;
             long offset = getOffset();
-            long address = mappedFile.addressOf(offset, len);
-            Unsafe.getUnsafe().putInt(address, l);
-            address += 4;
-            for (int i = 0; i < l; i++) {
-                Unsafe.getUnsafe().putChar(address, value.charAt(i));
-                address += 2;
-            }
+            Chars.put(mappedFile.addressOf(offset, len), value);
             return commitAppend(offset, len);
         }
     }
@@ -444,25 +438,6 @@ public class VariableColumn extends AbstractColumn {
             this.workOffset = offset + 4;
             this.pageRemaining = 0;
             this.remaining = Unsafe.getUnsafe().getInt(mappedFile.addressOf(offset, 4));
-        }
-
-        private void skipOffset(long offset) {
-            if (offset > remaining) {
-                throw new IndexOutOfBoundsException(String.format("Offset %d is greater than remaining length %d", offset, remaining));
-            }
-//            remaining -= offset;
-            long targetWorkOffset = workOffset + offset;
-
-            while (workOffset < targetWorkOffset) {
-                if (pageRemaining == 0) {
-                    renew();
-                }
-
-                long blockSkip = Math.min(targetWorkOffset - workOffset, pageRemaining);
-                workOffset += blockSkip;
-                pageRemaining -= blockSkip;
-                blockAddress += blockSkip;
-            }
         }
     }
 }

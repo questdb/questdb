@@ -26,10 +26,12 @@ import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.ql.AbstractRecord;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.collections.DirectPagedBufferStream;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SequentialMemory;
+import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
@@ -167,7 +169,8 @@ public class MemoryRecordAccessor extends AbstractRecord {
 
     @Override
     public boolean getBool(int col) {
-        return get(col) != 0;
+        assert offsets[col] >= 0;
+        return Unsafe.getBool(address + offsets[col]);
     }
 
     @Override
@@ -193,7 +196,7 @@ public class MemoryRecordAccessor extends AbstractRecord {
         long readAddress = addressOf(col);
         final int len = Unsafe.getUnsafe().getInt(readAddress);
         if (len < 0) return null;
-        return charSequence.init(readAddress + 4, readAddress + 4 + len * 2);
+        return charSequence.of(readAddress + 4, readAddress + 4 + len * 2);
     }
 
     @Override
@@ -224,7 +227,7 @@ public class MemoryRecordAccessor extends AbstractRecord {
         long readAddress = addressOf(col);
         final int len = Unsafe.getUnsafe().getInt(readAddress);
         if (len < 0) return null;
-        return new DirectCharSequence().init(readAddress + 4, readAddress + 4 + len * 2);
+        return new DirectCharSequence().of(readAddress + 4, readAddress + 4 + len * 2);
     }
 
     @Override
@@ -313,17 +316,9 @@ public class MemoryRecordAccessor extends AbstractRecord {
                 throw new JournalRuntimeException("String larger than pageSize");
             }
             long offset = mem.allocate(k * 2 + 4);
-            long address = mem.addressOf(offset);
             // Save the address in the header.
             Unsafe.getUnsafe().putLong(headerAddress, offset);
-            // Write length at the beginning of the field data.
-            Unsafe.getUnsafe().putInt(address, k);
-            address += 2;
-
-            // Write body.
-            for (int i = 0; i < k; i++) {
-                Unsafe.getUnsafe().putChar(address += 2, item.charAt(i));
-            }
+            Chars.put(mem.addressOf(offset), item);
         } else {
             long offset = mem.allocate(4);
             Unsafe.getUnsafe().putLong(headerAddress, offset);

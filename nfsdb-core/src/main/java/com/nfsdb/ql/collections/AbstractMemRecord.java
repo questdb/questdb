@@ -19,118 +19,110 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.ql.impl;
+package com.nfsdb.ql.collections;
 
 import com.nfsdb.collections.DirectInputStream;
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.AbstractRecord;
-import com.nfsdb.ql.Record;
+import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.utils.Unsafe;
 
 import java.io.OutputStream;
 
-public class SelectedColumnsRecord extends AbstractRecord {
-    private final int reindex[];
-    private Record base;
+public abstract class AbstractMemRecord extends AbstractRecord {
 
-    public SelectedColumnsRecord(RecordMetadata metadata, ObjList<CharSequence> names) {
+    public AbstractMemRecord(RecordMetadata metadata) {
         super(metadata);
-        int k = names.size();
-        this.reindex = new int[k];
-
-        for (int i = 0; i < k; i++) {
-            reindex[i] = metadata.getColumnIndex(names.getQuick(i));
-        }
     }
 
     @Override
     public byte get(int col) {
-        return base.get(reindex[col]);
+        return Unsafe.getUnsafe().getByte(address(col));
     }
+
 
     @Override
     public void getBin(int col, OutputStream s) {
-        base.getBin(reindex[col], s);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public DirectInputStream getBin(int col) {
-        return base.getBin(reindex[col]);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getBinLen(int col) {
-        return base.getBinLen(reindex[col]);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public boolean getBool(int col) {
-        return base.getBool(reindex[col]);
+        return Unsafe.getBool(address(col));
     }
 
     @Override
     public long getDate(int col) {
-        return base.getDate(reindex[col]);
+        return Unsafe.getUnsafe().getLong(address(col));
     }
 
     @Override
     public double getDouble(int col) {
-        return base.getDouble(reindex[col]);
+        return Unsafe.getUnsafe().getDouble(address(col));
     }
 
     @Override
     public float getFloat(int col) {
-        return base.getFloat(reindex[col]);
+        return Unsafe.getUnsafe().getFloat(address(col));
     }
 
     @Override
     public CharSequence getFlyweightStr(int col) {
-        return base.getFlyweightStr(reindex[col]);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getInt(int col) {
-        return base.getInt(reindex[col]);
+        return Unsafe.getUnsafe().getInt(address(col));
     }
 
     @Override
     public long getLong(int col) {
-        return base.getLong(reindex[col]);
+        return Unsafe.getUnsafe().getLong(address(col));
     }
 
     @Override
     public long getRowId() {
-        return base.getRowId();
+        return -1;
     }
 
     @Override
     public short getShort(int col) {
-        return base.getShort(reindex[col]);
+        return Unsafe.getUnsafe().getShort(address(col));
     }
 
     @Override
     public CharSequence getStr(int col) {
-        return base.getStr(reindex[col]);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void getStr(int col, CharSink sink) {
-        base.getStr(reindex[col], sink);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getStrLen(int col) {
-        return base.getStrLen(reindex[col]);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public String getSym(int col) {
-        return base.getSym(reindex[col]);
+        return getSymbolTable(col).value(Unsafe.getUnsafe().getInt(address(col)));
     }
 
-    public SelectedColumnsRecord of(Record base) {
-        this.base = base;
-        return this;
-    }
+    protected abstract long address(int col);
+
+    protected abstract SymbolTable getSymbolTable(int col);
 }

@@ -24,6 +24,7 @@ package com.nfsdb.ql.impl;
 import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.ql.AbstractRecord;
 import com.nfsdb.utils.Numbers;
 
 import java.io.OutputStream;

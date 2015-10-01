@@ -76,6 +76,10 @@ public final class Unsafe {
         Unsafe.getUnsafe().putLong(array, LONG_OFFSET + index * LONG_SCALE, value);
     }
 
+    public static boolean getBool(long address) {
+        return UNSAFE.getByte(address) == 1;
+    }
+
     public static sun.misc.Unsafe getUnsafe() {
         return UNSAFE;
     }

@@ -19,11 +19,10 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.ql.impl;
+package com.nfsdb.ql;
 
 import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.factory.configuration.RecordMetadata;
-import com.nfsdb.ql.Record;
 
 import java.io.OutputStream;
 

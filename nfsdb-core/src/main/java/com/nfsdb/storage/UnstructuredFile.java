@@ -23,6 +23,7 @@ package com.nfsdb.storage;
 
 import com.nfsdb.JournalMode;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Unsafe;
 
 import java.io.File;
@@ -73,7 +74,7 @@ public class UnstructuredFile extends MemoryFile {
     }
 
     public boolean getBool() {
-        return get() == 1;
+        return Unsafe.getBool(nextAddress(1));
     }
 
     public int getInt() {
@@ -111,14 +112,7 @@ public class UnstructuredFile extends MemoryFile {
         if (value == null) {
             put(-1);
         } else {
-            int len;
-            long address = nextAddress((len = value.length()) * 2 + 4);
-            Unsafe.getUnsafe().putInt(address, len);
-            address += 2;
-            for (int i = 0; i < len; i++) {
-                address += 2;
-                Unsafe.getUnsafe().putChar(address, value.charAt(i));
-            }
+            Chars.put(nextAddress(value.length() * 2 + 4), value);
         }
     }
 

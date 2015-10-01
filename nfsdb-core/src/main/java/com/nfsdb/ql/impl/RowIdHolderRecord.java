@@ -26,6 +26,7 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.ql.AbstractRecord;
 import com.nfsdb.ql.collections.LongMetadata;
 import com.nfsdb.utils.Chars;
 
