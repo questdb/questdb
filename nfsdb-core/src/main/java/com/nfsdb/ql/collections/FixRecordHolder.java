@@ -29,29 +29,23 @@ import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
-import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Unsafe;
 
-public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolder {
+public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
     private final ObjList<ColumnType> types;
     private final IntList offsets;
-    private final IntList strCols;
-    private final int varOffset;
-    private long address = 0;
-    private int size = 0;
+    private final long address;
     private StorageFacade storageFacade;
 
-    public VarRecordHolder(RecordMetadata metadata) {
+    public FixRecordHolder(RecordMetadata metadata) {
         super(metadata);
 
         int cc = metadata.getColumnCount();
         this.types = new ObjList<>(cc);
         this.offsets = new IntList(cc);
-        this.strCols = new IntList(cc);
 
         int offset = 0;
         for (int i = 0; i < cc; i++) {
-
             ColumnType type = metadata.getColumn(i).getType();
             types.add(type);
             offsets.add(offset);
@@ -74,20 +68,19 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
                 case SHORT:
                     offset += 2;
                     break;
-                default:
-                    strCols.add(i);
-                    offset += 4;
-                    break;
             }
         }
-        this.varOffset = offset;
+        address = Unsafe.getUnsafe().allocateMemory(offset);
     }
 
     @Override
     public void close() {
-        if (address != 0) {
-            Unsafe.getUnsafe().freeMemory(address);
-        }
+        Unsafe.getUnsafe().freeMemory(address);
+    }
+
+    @Override
+    public Record get() {
+        return this;
     }
 
     @Override
@@ -96,18 +89,6 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
     }
 
     public void write(Record record) {
-        int sz = varOffset;
-
-        for (int i = 0, n = strCols.size(); i < n; i++) {
-            sz += record.getStrLen(strCols.getQuick(i)) * 2 + 4;
-        }
-
-        if (sz > size) {
-            alloc(sz);
-        }
-
-        int varOffset = this.varOffset;
-
         for (int i = 0, n = types.size(); i < n; i++) {
             long address = this.address + offsets.getQuick(i);
             switch (types.getQuick(i)) {
@@ -136,22 +117,8 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
                 case DATE:
                     Unsafe.getUnsafe().putLong(address, record.getDate(i));
                     break;
-                case STRING:
-                    Unsafe.getUnsafe().putInt(address, varOffset);
-                    varOffset += Chars.put(this.address + varOffset, record.getFlyweightStr(i));
-                    break;
             }
         }
-    }
-
-    @Override
-    public Record get() {
-        return this;
-    }
-
-    @Override
-    protected long address() {
-        return address;
     }
 
     protected long address(int col) {
@@ -163,12 +130,4 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
         return storageFacade.getSymbolTable(col);
     }
 
-    private void alloc(int size) {
-        if (address != 0) {
-            Unsafe.getUnsafe().freeMemory(address);
-        }
-
-        address = Unsafe.getUnsafe().allocateMemory(size);
-        this.size = size;
-    }
 }

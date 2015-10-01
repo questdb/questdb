@@ -24,12 +24,25 @@ package com.nfsdb.ql.collections;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 
-import java.io.Closeable;
+public class RowidRecordHolder implements RecordHolder {
+    private RecordCursor<? extends Record> cursor;
+    private long rowid;
 
-public interface RecordHolder extends Closeable {
-    Record get();
+    @Override
+    public void close() {
+    }
 
-    void setCursor(RecordCursor<? extends Record> cursor);
+    @Override
+    public Record get() {
+        return cursor.getByRowId(rowid);
+    }
 
-    void write(Record record);
+    @Override
+    public void setCursor(RecordCursor<? extends Record> cursor) {
+        this.cursor = cursor;
+    }
+
+    public void write(Record record) {
+        this.rowid = record.getRowId();
+    }
 }

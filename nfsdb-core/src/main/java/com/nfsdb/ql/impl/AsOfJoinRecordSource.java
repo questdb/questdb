@@ -23,13 +23,16 @@ package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
+import com.nfsdb.ql.collections.FixRecordHolder;
 import com.nfsdb.ql.collections.RecordHolder;
+import com.nfsdb.ql.collections.RowidRecordHolder;
 import com.nfsdb.ql.collections.VarRecordHolder;
 
 import java.io.Closeable;
@@ -59,7 +62,28 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
         this.slaveTimestampIndex = slaveTimestampIndex;
         this.metadata = new SplitRecordMetadata(master.getMetadata(), slave.getMetadata());
         this.record = new SplitRecord(this.metadata, master.getMetadata().getColumnCount());
-        this.recordHolder = new VarRecordHolder(slave.getMetadata());
+
+        if (slave.supportsRowIdAccess()) {
+            this.recordHolder = new RowidRecordHolder();
+        } else {
+            // check if slave has variable length columns
+            boolean var = false;
+            OUT:
+            for (int i = 0, n = slave.getMetadata().getColumnCount(); i < n; i++) {
+                switch (slave.getMetadata().getColumnQuick(i).getType()) {
+                    case BINARY:
+                        throw new JournalRuntimeException("Binary columns are not supported");
+                    case STRING:
+                        var = true;
+                        break OUT;
+                }
+            }
+            if (var) {
+                this.recordHolder = new VarRecordHolder(slave.getMetadata());
+            } else {
+                this.recordHolder = new FixRecordHolder(slave.getMetadata());
+            }
+        }
     }
 
     @Override
@@ -86,7 +110,7 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
     public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
         this.masterCursor = master.prepareCursor(factory);
         this.slaveCursor = slave.prepareCursor(factory);
-        this.recordHolder.setStorageFacade(slaveCursor.getStorageFacade());
+        this.recordHolder.setCursor(slaveCursor);
         return this;
     }
 
@@ -129,7 +153,7 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
             if (ts > slave.getDate(slaveTimestampIndex)) {
                 recordHolder.write(slave);
             } else {
-                record.setB(recordHolder);
+                record.setB(recordHolder.get());
                 delayedSlave = slave;
                 return record;
             }
