@@ -56,7 +56,8 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
             int masterTimestampIndex,
             RecordSource<? extends Record> slave,
             int slaveTimestampIndex,
-            CharSequenceHashSet keyColumns,
+            CharSequenceHashSet masterKeyColumns,
+            CharSequenceHashSet slaveKeyColumns,
             int pageSize
     ) {
         this.master = master;
@@ -64,7 +65,7 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
         this.slave = slave;
         this.slaveTimestampIndex = slaveTimestampIndex;
         if (slave.supportsRowIdAccess()) {
-            map = new LastRowIdRecordMap(master.getMetadata(), slave.getMetadata(), keyColumns);
+            map = new LastRowIdRecordMap(master.getMetadata(), slave.getMetadata(), masterKeyColumns, slaveKeyColumns);
         } else {
             // check if slave has variable length columns
             boolean var = false;
@@ -74,16 +75,16 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
                     case BINARY:
                         throw new JournalRuntimeException("Binary columns are not supported");
                     case STRING:
-                        if (!keyColumns.contains(slave.getMetadata().getColumnQuick(i).getName())) {
+                        if (!masterKeyColumns.contains(slave.getMetadata().getColumnQuick(i).getName())) {
                             var = true;
                         }
                         break OUT;
                 }
             }
             if (var) {
-                this.map = new LastVarRecordMap(master.getMetadata(), slave.getMetadata(), keyColumns, pageSize);
+                this.map = new LastVarRecordMap(master.getMetadata(), slave.getMetadata(), masterKeyColumns, slaveKeyColumns, pageSize);
             } else {
-                this.map = new LastFixRecordMap(master.getMetadata(), slave.getMetadata(), keyColumns, pageSize);
+                this.map = new LastFixRecordMap(master.getMetadata(), slave.getMetadata(), masterKeyColumns, slaveKeyColumns, pageSize);
             }
         }
         this.metadata = new SplitRecordMetadata(master.getMetadata(), map.getMetadata());
@@ -122,6 +123,8 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
     public void reset() {
         this.master.reset();
         this.slave.reset();
+        this.map.reset();
+        this.delayedSlave = null;
     }
 
     @Override

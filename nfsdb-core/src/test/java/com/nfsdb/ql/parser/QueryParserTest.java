@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
@@ -463,6 +463,22 @@ public class QueryParserTest extends AbstractTest {
 
         Assert.assertEquals("150", TestUtils.toRpn(statement.getQueryModel().getLimitLo()));
         Assert.assertNull(statement.getQueryModel().getLimitHi());
+    }
+
+    @Test
+    public void testTimestampOnJournal() throws Exception {
+        Statement statement = parser.parse("select x from a b timestamp(x) where x > y");
+        Assert.assertEquals("x", statement.getQueryModel().getTimestamp().token);
+        Assert.assertEquals("b", statement.getQueryModel().getAlias().token);
+        Assert.assertNotNull(statement.getQueryModel().getWhereClause());
+    }
+
+    @Test
+    public void testTimestampOnSubquery() throws Exception {
+        Statement statement = parser.parse("select x from (a b) timestamp(x) where x > y");
+        Assert.assertEquals("x", statement.getQueryModel().getTimestamp().token);
+        Assert.assertNotNull(statement.getQueryModel().getNestedModel());
+        Assert.assertNotNull(statement.getQueryModel().getWhereClause());
     }
 
     @Test

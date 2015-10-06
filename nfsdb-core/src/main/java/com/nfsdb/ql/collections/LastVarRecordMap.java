@@ -62,13 +62,21 @@ public class LastVarRecordMap implements LastRecordMap {
 
     // todo: extract config
     // todo: make sure blobs are not supported and not provided
-    public LastVarRecordMap(RecordMetadata masterMetadata, RecordMetadata slaveMetadata, CharSequenceHashSet keyColumns, int pageSize) {
+    public LastVarRecordMap(
+            RecordMetadata masterMetadata,
+            RecordMetadata slaveMetadata,
+            CharSequenceHashSet masterKeyColumns,
+            CharSequenceHashSet slaveKeyColumns,
+            int pageSize) {
         this.pageSize = Numbers.ceilPow2(pageSize);
         this.maxRecordSize = pageSize - 4;
         this.bits = Numbers.msb(this.pageSize);
         this.mask = this.pageSize - 1;
 
-        final int ksz = keyColumns.size();
+        final int ksz = masterKeyColumns.size();
+
+        assert slaveKeyColumns.size() == ksz;
+
         this.masterKeyTypes = new ObjList<>(ksz);
         this.slaveKeyTypes = new ObjList<>(ksz);
         this.masterKeyIndexes = new IntHashSet(ksz);
@@ -79,11 +87,11 @@ public class LastVarRecordMap implements LastRecordMap {
 
         for (int i = 0; i < ksz; i++) {
             int idx;
-            idx = masterMetadata.getColumnIndex(keyColumns.get(i));
+            idx = masterMetadata.getColumnIndex(masterKeyColumns.get(i));
             masterKeyTypes.add(masterMetadata.getColumn(idx).getType());
             masterKeyIndexes.add(idx);
 
-            idx = slaveMetadata.getColumnIndex(keyColumns.get(i));
+            idx = slaveMetadata.getColumnIndex(slaveKeyColumns.get(i));
             slaveKeyIndexes.add(idx);
             slaveKeyTypes.add(slaveMetadata.getColumn(idx).getType());
             keyCols.add(slaveMetadata.getColumn(idx));
@@ -149,6 +157,7 @@ public class LastVarRecordMap implements LastRecordMap {
             Unsafe.getUnsafe().freeMemory(pages.getQuick(i));
         }
         pages.clear();
+        map.close();
     }
 
     @Override
@@ -228,6 +237,13 @@ public class LastVarRecordMap implements LastRecordMap {
                 symTableRemap.put(i, slaveValueIndexes.getQuick(i));
             }
         }
+    }
+
+    @Override
+    public void reset() {
+        appendOffset = 0;
+        map.clear();
+        freeList.clear();
     }
 
     private static MultiMap.KeyWriter get(MultiMap map, Record record, IntHashSet indices, ObjList<ColumnType> types) {

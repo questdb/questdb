@@ -47,6 +47,13 @@ public class FreeList {
         totalSize += size;
     }
 
+    public void clear() {
+        this.totalSize = 0;
+        this.maxSize = -1;
+        sizes.clear();
+        offsets.clear();
+    }
+
     public long findAndRemove(int size) {
         if (size > maxSize) {
             return -1;

@@ -46,8 +46,13 @@ public class LastRowIdRecordMap implements LastRecordMap {
     private RecordCursor<? extends Record> slaveCursor;
 
     // todo: extract config
-    public LastRowIdRecordMap(RecordMetadata masterMetadata, RecordMetadata slaveMetadata, CharSequenceHashSet keyColumns) {
-        final int ksz = keyColumns.size();
+    public LastRowIdRecordMap(
+            RecordMetadata masterMetadata,
+            RecordMetadata slaveMetadata,
+            CharSequenceHashSet masterKeyColumns,
+            CharSequenceHashSet slaveKeyColumns
+    ) {
+        final int ksz = masterKeyColumns.size();
         this.masterKeyTypes = new ObjList<>(ksz);
         this.slaveKeyTypes = new ObjList<>(ksz);
         this.masterKeyIndexes = new IntHashSet(ksz);
@@ -58,11 +63,11 @@ public class LastRowIdRecordMap implements LastRecordMap {
 
         for (int i = 0; i < ksz; i++) {
             int idx;
-            idx = masterMetadata.getColumnIndex(keyColumns.get(i));
+            idx = masterMetadata.getColumnIndex(masterKeyColumns.get(i));
             masterKeyTypes.add(masterMetadata.getColumn(idx).getType());
             masterKeyIndexes.add(idx);
 
-            idx = slaveMetadata.getColumnIndex(keyColumns.get(i));
+            idx = slaveMetadata.getColumnIndex(slaveKeyColumns.get(i));
             slaveKeyIndexes.add(idx);
             slaveKeyTypes.add(slaveMetadata.getColumn(idx).getType());
             keyCols.add(slaveMetadata.getColumn(idx));
@@ -83,6 +88,7 @@ public class LastRowIdRecordMap implements LastRecordMap {
 
     @Override
     public void close() {
+        map.close();
     }
 
     public Record get(Record master) {
@@ -103,6 +109,11 @@ public class LastRowIdRecordMap implements LastRecordMap {
 
     public void setSlaveCursor(RecordCursor<? extends Record> cursor) {
         this.slaveCursor = cursor;
+    }
+
+    @Override
+    public void reset() {
+        map.clear();
     }
 
     private static MultiMap.KeyWriter get(MultiMap map, Record record, IntHashSet indices, ObjList<ColumnType> types) {

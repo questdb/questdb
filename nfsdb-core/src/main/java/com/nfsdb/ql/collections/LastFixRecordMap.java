@@ -56,12 +56,17 @@ public class LastFixRecordMap implements LastRecordMap {
     private long appendOffset;
     private StorageFacade storageFacade;
 
-    public LastFixRecordMap(RecordMetadata masterMetadata, RecordMetadata slaveMetadata, CharSequenceHashSet keyColumns, int pageSize) {
+    public LastFixRecordMap(
+            RecordMetadata masterMetadata,
+            RecordMetadata slaveMetadata,
+            CharSequenceHashSet masterKeyColumns,
+            CharSequenceHashSet slaveKeyColumns,
+            int pageSize) {
         this.pageSize = Numbers.ceilPow2(pageSize);
         this.bits = Numbers.msb(this.pageSize);
         this.mask = this.pageSize - 1;
 
-        final int ksz = keyColumns.size();
+        final int ksz = masterKeyColumns.size();
         this.masterKeyTypes = new ObjList<>(ksz);
         this.slaveKeyTypes = new ObjList<>(ksz);
         this.masterKeyIndexes = new IntHashSet(ksz);
@@ -72,11 +77,11 @@ public class LastFixRecordMap implements LastRecordMap {
 
         for (int i = 0; i < ksz; i++) {
             int idx;
-            idx = masterMetadata.getColumnIndex(keyColumns.get(i));
+            idx = masterMetadata.getColumnIndex(masterKeyColumns.get(i));
             masterKeyTypes.add(masterMetadata.getColumn(idx).getType());
             masterKeyIndexes.add(idx);
 
-            idx = slaveMetadata.getColumnIndex(keyColumns.get(i));
+            idx = slaveMetadata.getColumnIndex(slaveKeyColumns.get(i));
             slaveKeyIndexes.add(idx);
             slaveKeyTypes.add(slaveMetadata.getColumn(idx).getType());
             keyCols.add(slaveMetadata.getColumn(idx));
@@ -138,6 +143,7 @@ public class LastFixRecordMap implements LastRecordMap {
             Unsafe.getUnsafe().freeMemory(pages.getQuick(i));
         }
         pages.clear();
+        map.close();
     }
 
     public Record get(Record master) {
@@ -174,6 +180,12 @@ public class LastFixRecordMap implements LastRecordMap {
                 symTableRemap.put(i, slaveValueIndexes.getQuick(i));
             }
         }
+    }
+
+    @Override
+    public void reset() {
+        appendOffset = 0;
+        map.clear();
     }
 
     private static MultiMap.KeyWriter get(MultiMap map, Record record, IntHashSet indices, ObjList<ColumnType> types) {

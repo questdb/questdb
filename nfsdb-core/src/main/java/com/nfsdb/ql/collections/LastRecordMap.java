@@ -37,5 +37,7 @@ public interface LastRecordMap extends Closeable {
 
     void put(Record record);
 
+    void reset();
+
     void setSlaveCursor(RecordCursor<? extends Record> cursor);
 }

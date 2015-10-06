@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
@@ -262,8 +262,6 @@ final class QueryParser {
         CharSequence tok;
         QueryModel model = queryModelPool.next();
 
-//        model.setPosition(toks.position());
-
         tok = tok();
 
         // [select]
@@ -290,6 +288,9 @@ final class QueryParser {
                 tok = optionTok();
             }
 
+            // expect [timestamp(column)]
+
+            tok = parseTimestamp(tok, model);
         } else {
 
             toks.unparse();
@@ -305,6 +306,10 @@ final class QueryParser {
                 model.setAlias(expr());
                 tok = optionTok();
             }
+
+            // expect [timestamp(column)]
+
+            tok = parseTimestamp(tok, model);
 
             // expect [latest by]
 
@@ -417,6 +422,16 @@ final class QueryParser {
         }
     }
 
+    private CharSequence parseTimestamp(CharSequence tok, QueryModel model) throws ParserException {
+        if (tok != null && Chars.equals(tok, "timestamp")) {
+            expectTok(tok(), "(");
+            model.setTimestamp(expr());
+            expectTok(tok(), ")");
+            return optionTok();
+        }
+        return tok;
+    }
+
     private CharSequence tok() throws ParserException {
         CharSequence tok = toks.optionTok();
         if (tok == null) {
@@ -431,10 +446,12 @@ final class QueryParser {
         aliasStopSet.add("join");
         aliasStopSet.add("inner");
         aliasStopSet.add("outer");
+        aliasStopSet.add("asof");
         aliasStopSet.add("cross");
         aliasStopSet.add("group");
         aliasStopSet.add("order");
         aliasStopSet.add("on");
+        aliasStopSet.add("timestamp");
         //
         groupByStopSet.add("order");
         groupByStopSet.add(")");
@@ -444,5 +461,6 @@ final class QueryParser {
         joinStartSet.put("inner", QueryModel.JoinType.INNER);
         joinStartSet.put("outer", QueryModel.JoinType.OUTER);
         joinStartSet.put("cross", QueryModel.JoinType.CROSS);
+        joinStartSet.put("asof", QueryModel.JoinType.ASOF);
     }
 }

@@ -40,6 +40,7 @@ import com.nfsdb.utils.Interval;
 import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayDeque;
 
@@ -49,6 +50,7 @@ public class QueryCompiler {
     private final static NullConstant nullConstant = new NullConstant();
     private final static ObjObjHashMap<Signature, LatestByLambdaRowSourceFactory> LAMBDA_ROW_SOURCE_FACTORIES = new ObjObjHashMap<>();
     private final static LongConstant LONG_ZERO_CONST = new LongConstant(0L);
+    private final static IntHashSet joinBarriers;
     private final QueryParser parser = new QueryParser();
     private final JournalReaderFactory factory;
     private final AssociativeCache<RecordSource<? extends Record>> cache = new AssociativeCache<>(8, 1024);
@@ -90,7 +92,6 @@ public class QueryCompiler {
     private final ObjList<CharSequence> selectedColumns = new ObjList<>();
     private final CharSequenceObjHashMap<String> renameMap = new CharSequenceObjHashMap<>();
     private ObjList<JoinContext> emittedJoinClauses;
-
 
     public QueryCompiler(JournalReaderFactory factory) {
         this.factory = factory;
@@ -386,70 +387,49 @@ public class QueryCompiler {
 
         ObjList<QueryModel> joinModels = model.getJoinModels();
         IntList ordered = model.getOrderedJoinModels();
-        RecordSource<? extends Record> current = null;
+        RecordSource<? extends Record> master = null;
 
         for (int i = 0, n = ordered.size(); i < n; i++) {
             int index = ordered.getQuick(i);
             QueryModel m = joinModels.getQuick(index);
 
             // compile
-            RecordSource<? extends Record> rs = m.getRecordSource();
-            if (rs == null) {
-                rs = compileSingleOrSubQuery(m, factory);
+            RecordSource<? extends Record> slave = m.getRecordSource();
+            if (slave == null) {
+                slave = compileSingleOrSubQuery(m, factory);
             }
 
             // check if this is the root of joins
-            if (current == null) {
-                current = rs;
+            if (master == null) {
+                master = slave;
             } else {
-                // not the root, join to "current"
-                if (m.getJoinType() == QueryModel.JoinType.CROSS) {
-                    // there are fields to analyse
-                    current = new CrossJoinRecordSource(current, rs);
-                } else {
-                    JoinContext jc = m.getContext();
-                    RecordMetadata bm = current.getMetadata();
-                    RecordMetadata am = rs.getMetadata();
-
-                    ObjList<CharSequence> masterCols = null;
-                    ObjList<CharSequence> slaveCols = null;
-
-                    for (int k = 0, kn = jc.aIndexes.size(); k < kn; k++) {
-
-                        CharSequence ca = jc.aNames.getQuick(k);
-                        CharSequence cb = jc.bNames.getQuick(k);
-
-                        if (am.getColumn(ca).getType() != bm.getColumn(cb).getType()) {
-                            throw new ParserException(jc.aNodes.getQuick(k).position, "Column type mismatch");
-                        }
-
-                        if (masterCols == null) {
-                            masterCols = new ObjList<>();
-                        }
-
-                        if (slaveCols == null) {
-                            slaveCols = new ObjList<>();
-                        }
-
-                        masterCols.add(cb);
-                        slaveCols.add(ca);
-                    }
-                    current = new HashJoinRecordSource(current, masterCols, rs, slaveCols, m.getJoinType() == QueryModel.JoinType.OUTER);
+                // not the root, join to "master"
+                switch (m.getJoinType()) {
+                    case CROSS:
+                        // there are fields to analyse
+                        master = new CrossJoinRecordSource(master, slave);
+                        break;
+                    case ASOF:
+                        master = createAsOfJoin(model.getTimestamp(), m, master, slave);
+                        break;
+                    default:
+                        master = createHashJoin(m, master, slave);
+                        break;
                 }
             }
 
             // check if there are post-filters
             ExprNode filter = m.getPostJoinWhereClause();
             if (filter != null) {
-                current = new FilteredJournalRecordSource(current, createVirtualColumn(filter, current.getMetadata()));
+                master = new FilteredJournalRecordSource(master, createVirtualColumn(filter, master.getMetadata()));
             }
 
         }
 
         if (joinModelIsFalse(model)) {
-            return new NoOpJournalRecordSource(current);
+            return new NoOpJournalRecordSource(master);
         }
-        return current;
+        return master;
     }
 
     @SuppressWarnings("ConstantConditions")
@@ -691,6 +671,60 @@ public class QueryCompiler {
         }
     }
 
+    private RecordSource<? extends Record> createAsOfJoin(
+            ExprNode masterTimestampNode,
+            QueryModel model,
+            RecordSource<? extends Record> master,
+            RecordSource<? extends Record> slave) throws ParserException {
+        JoinContext jc = model.getContext();
+
+        ExprNode slaveTimestampNode = model.getTimestamp();
+        RecordMetadata masterMetadata = master.getMetadata();
+        RecordMetadata slaveMetadata = slave.getMetadata();
+        int slaveTimestampIndex;
+        int masterTimestampIndex;
+
+        // check for explicit timestamp definition
+        if (slaveTimestampNode != null) {
+            if (slaveMetadata.invalidColumn(slaveTimestampNode.token)) {
+                throw new ParserException(slaveTimestampNode.position, "Invalid column");
+            }
+            slaveTimestampIndex = slaveMetadata.getColumnIndex(slaveTimestampNode.token);
+        } else if (slaveMetadata.getTimestampMetadata() == null) {
+            throw new ParserException(0, "Result set timestamp column is undefined");
+        } else {
+            slaveTimestampIndex = slaveMetadata.getColumnIndex(slaveMetadata.getTimestampMetadata().getName());
+        }
+
+
+        if (masterTimestampNode != null) {
+            if (masterMetadata.invalidColumn(masterTimestampNode.token)) {
+                throw new ParserException(masterTimestampNode.position, "Invalid column");
+            }
+            masterTimestampIndex = masterMetadata.getColumnIndex(masterTimestampNode.token);
+        } else if (masterMetadata.getTimestampMetadata() == null) {
+            throw new ParserException(0, "Result set timestamp column is undefined");
+        } else {
+            masterTimestampIndex = masterMetadata.getColumnIndex(masterMetadata.getTimestampMetadata().getName());
+        }
+
+        int sz = jc.aNames.size();
+
+        if (sz == 0) {
+            return new AsOfJoinRecordSource(master, masterTimestampIndex, slave, slaveTimestampIndex);
+        } else {
+            CharSequenceHashSet slaveKeys = new CharSequenceHashSet();
+            CharSequenceHashSet masterKeys = new CharSequenceHashSet();
+
+            for (int i = 0; i < sz; i++) {
+                slaveKeys.add(jc.aNames.getQuick(i));
+                masterKeys.add(jc.bNames.getQuick(i));
+            }
+
+            return new AsOfPartitionedJoinRecordSource(master, masterTimestampIndex, slave, slaveTimestampIndex, masterKeys, slaveKeys, 4 * 1024 * 1024);
+        }
+    }
+
     private void createColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
         mutableArgs.clear();
         mutableSig.clear();
@@ -724,6 +758,40 @@ public class QueryCompiler {
                 }
                 stack.push(lookupFunction(node, mutableSig, mutableArgs));
         }
+    }
+
+    @NotNull
+    private RecordSource<? extends Record> createHashJoin(QueryModel model, RecordSource<? extends Record> master, RecordSource<? extends Record> slave) throws ParserException {
+        JoinContext jc = model.getContext();
+        RecordMetadata bm = master.getMetadata();
+        RecordMetadata am = slave.getMetadata();
+
+        ObjList<CharSequence> masterCols = null;
+        ObjList<CharSequence> slaveCols = null;
+
+        for (int k = 0, kn = jc.aIndexes.size(); k < kn; k++) {
+
+            CharSequence ca = jc.aNames.getQuick(k);
+            CharSequence cb = jc.bNames.getQuick(k);
+
+            if (am.getColumn(ca).getType() != bm.getColumn(cb).getType()) {
+                throw new ParserException(jc.aNodes.getQuick(k).position, "Column type mismatch");
+            }
+
+            if (masterCols == null) {
+                // todo: these lists do not need to be newly created because they used by constructor only
+                masterCols = new ObjList<>();
+            }
+
+            if (slaveCols == null) {
+                slaveCols = new ObjList<>();
+            }
+
+            masterCols.add(cb);
+            slaveCols.add(ca);
+        }
+        master = new HashJoinRecordSource(master, masterCols, slave, slaveCols, model.getJoinType() == QueryModel.JoinType.OUTER);
+        return master;
     }
 
     private VirtualColumn createVirtualColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
@@ -1365,7 +1433,7 @@ public class QueryCompiler {
     private boolean swapJoinOrder(QueryModel parent, int to, int from, JoinContext jc) {
         ObjList<QueryModel> joinModels = parent.getJoinModels();
         QueryModel jm = joinModels.getQuick(from);
-        if (jm.getJoinType() == QueryModel.JoinType.OUTER) {
+        if (joinBarriers.contains(jm.getJoinType().ordinal())) {
             return false;
         }
 
@@ -1613,6 +1681,12 @@ public class QueryCompiler {
                     break;
             }
         }
+    }
+
+    static {
+        joinBarriers = new IntHashSet();
+        joinBarriers.add(QueryModel.JoinType.OUTER.ordinal());
+        joinBarriers.add(QueryModel.JoinType.ASOF.ordinal());
     }
 
     static {

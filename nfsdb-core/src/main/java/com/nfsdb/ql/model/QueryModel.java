@@ -51,6 +51,7 @@ public class QueryModel implements Mutable {
     private ExprNode journalName;
     private ExprNode alias;
     private ExprNode latestBy;
+    private ExprNode timestamp;
     private RecordSource<? extends Record> recordSource;
     private RecordMetadata metadata;
     private JoinContext context;
@@ -267,6 +268,14 @@ public class QueryModel implements Mutable {
         this.recordSource = recordSource;
     }
 
+    public ExprNode getTimestamp() {
+        return timestamp;
+    }
+
+    public void setTimestamp(ExprNode timestamp) {
+        this.timestamp = timestamp;
+    }
+
     public ExprNode getWhereClause() {
         return whereClause;
     }
@@ -416,7 +425,7 @@ public class QueryModel implements Mutable {
     }
 
     public enum JoinType {
-        INNER, OUTER, CROSS
+        INNER, OUTER, CROSS, ASOF
     }
 
     public static final class QueryModelFactory implements ObjectPoolFactory<QueryModel> {
