@@ -80,6 +80,9 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
         for (int i = 0; i < valueOffsets.length; i++) {
             valueOffsets[i] = offset;
             switch (valueColumns.get(i).getType()) {
+                case BYTE:
+                case BOOLEAN:
+                    offset++;
                 case INT:
                 case FLOAT:
                     offset += 4;
@@ -130,11 +133,11 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
                 rehash();
             }
             size++;
-            return values.init(keyWriter.startAddr, true);
+            return values.of(keyWriter.startAddr, true);
         } else if (eq(keyWriter, offset)) {
             // rollback added key
             kPos = keyWriter.startAddr;
-            return values.init(kStart + offset, false);
+            return values.of(kStart + offset, false);
         } else {
             return probe0(keyWriter, index);
         }
@@ -150,7 +153,7 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
         if (offset == -1) {
             return null;
         } else if (eq(keyWriter, offset)) {
-            return values.init(kStart + offset, false);
+            return values.of(kStart + offset, false);
         } else {
             return probeReadOnly(keyWriter, index);
         }
@@ -200,7 +203,7 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
         while ((offset = offsets.get(index = (++index & mask))) != -1) {
             if (eq(keyWriter, offset)) {
                 kPos = keyWriter.startAddr;
-                return values.init(kStart + offset, false);
+                return values.of(kStart + offset, false);
             }
         }
         offsets.setQuick(index, keyWriter.startAddr - kStart);
@@ -210,14 +213,14 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
         }
 
         size++;
-        return values.init(keyWriter.startAddr, true);
+        return values.of(keyWriter.startAddr, true);
     }
 
     private MapValues probeReadOnly(KeyWriter keyWriter, int index) {
         long offset;
         while ((offset = offsets.get(index = (++index & mask))) != -1) {
             if (eq(keyWriter, offset)) {
-                return values.init(kStart + offset, false);
+                return values.of(kStart + offset, false);
             }
         }
         return null;

@@ -46,9 +46,9 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
     private final int slaveTimestampIndex;
     private final SplitRecord record;
     private final RecordHolder recordHolder;
+    private final RecordHolder delayedHolder;
     private RecordCursor<? extends Record> masterCursor;
     private RecordCursor<? extends Record> slaveCursor;
-    private Record delayedSlave;
 
     public AsOfJoinRecordSource(
             RecordSource<? extends Record> master,
@@ -65,6 +65,7 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
 
         if (slave.supportsRowIdAccess()) {
             this.recordHolder = new RowidRecordHolder();
+            this.delayedHolder = new RowidRecordHolder();
         } else {
             // check if slave has variable length columns
             boolean var = false;
@@ -80,8 +81,10 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
             }
             if (var) {
                 this.recordHolder = new VarRecordHolder(slave.getMetadata());
+                this.delayedHolder = new VarRecordHolder(slave.getMetadata());
             } else {
                 this.recordHolder = new FixRecordHolder(slave.getMetadata());
+                this.delayedHolder = new FixRecordHolder(slave.getMetadata());
             }
         }
     }
@@ -89,6 +92,15 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
     @Override
     public void close() throws IOException {
         recordHolder.close();
+        delayedHolder.close();
+
+        if (master instanceof Closeable) {
+            ((Closeable) master).close();
+        }
+
+        if (master instanceof Closeable) {
+            ((Closeable) slave).close();
+        }
     }
 
     @Override
@@ -111,6 +123,7 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
         this.masterCursor = master.prepareCursor(factory);
         this.slaveCursor = slave.prepareCursor(factory);
         this.recordHolder.setCursor(slaveCursor);
+        this.delayedHolder.setCursor(slaveCursor);
         return this;
     }
 
@@ -118,6 +131,8 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
     public void reset() {
         this.master.reset();
         this.slave.reset();
+        recordHolder.clear();
+        delayedHolder.clear();
     }
 
     @Override
@@ -136,12 +151,11 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
         record.setA(master);
 
         long ts = master.getDate(masterTimestampIndex);
-
-
-        if (delayedSlave != null) {
-            if (ts > delayedSlave.getDate(slaveTimestampIndex)) {
-                recordHolder.write(delayedSlave);
-                delayedSlave = null;
+        Record delayed = delayedHolder.peek();
+        if (delayed != null) {
+            if (ts > delayed.getDate(slaveTimestampIndex)) {
+                recordHolder.write(delayed);
+                delayedHolder.clear();
             } else {
                 record.setB(null);
                 return record;
@@ -153,12 +167,13 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
             if (ts > slave.getDate(slaveTimestampIndex)) {
                 recordHolder.write(slave);
             } else {
-                record.setB(recordHolder.get());
-                delayedSlave = slave;
+                record.setB(recordHolder.peek());
+                recordHolder.clear();
+                delayedHolder.write(slave);
                 return record;
             }
         }
-        record.setB(null);
+        record.setB(recordHolder.peek());
         return record;
     }
 }

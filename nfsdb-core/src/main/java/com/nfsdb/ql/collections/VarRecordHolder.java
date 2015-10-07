@@ -40,6 +40,7 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
     private long address = 0;
     private int size = 0;
     private StorageFacade storageFacade;
+    private boolean held = false;
 
     public VarRecordHolder(RecordMetadata metadata) {
         super(metadata);
@@ -84,10 +85,13 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
     }
 
     @Override
-    public void close() {
-        if (address != 0) {
-            Unsafe.getUnsafe().freeMemory(address);
-        }
+    public void clear() {
+        held = false;
+    }
+
+    @Override
+    public Record peek() {
+        return held ? this : null;
     }
 
     @Override
@@ -96,6 +100,7 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
     }
 
     public void write(Record record) {
+        this.held = true;
         int sz = varOffset;
 
         for (int i = 0, n = strCols.size(); i < n; i++) {
@@ -145,8 +150,10 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
     }
 
     @Override
-    public Record get() {
-        return this;
+    public void close() {
+        if (address != 0) {
+            Unsafe.getUnsafe().freeMemory(address);
+        }
     }
 
     @Override

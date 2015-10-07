@@ -21,33 +21,15 @@
 
 package com.nfsdb.ql.collections;
 
-import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordCursor;
+import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.storage.ColumnType;
 
-public class RowidRecordHolder implements RecordHolder {
-    private RecordCursor<? extends Record> cursor;
-    private long rowid = -1;
+public final class ByteMetadata extends ColumnMetadata {
 
-    @Override
-    public void close() {
-    }
+    public static final ByteMetadata INSTANCE = new ByteMetadata();
 
-    @Override
-    public Record peek() {
-        return rowid == -1 ? null : cursor.getByRowId(this.rowid);
-    }
-
-    @Override
-    public void setCursor(RecordCursor<? extends Record> cursor) {
-        this.cursor = cursor;
-    }
-
-    public void write(Record record) {
-        this.rowid = record.getRowId();
-    }
-
-    @Override
-    public void clear() {
-        this.rowid = -1;
+    private ByteMetadata() {
+        this.name = "KY_0C82_";
+        this.type = ColumnType.BYTE;
     }
 }

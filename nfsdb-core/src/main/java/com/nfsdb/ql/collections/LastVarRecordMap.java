@@ -162,12 +162,12 @@ public class LastVarRecordMap implements LastRecordMap {
 
     @Override
     public Record get(Record master) {
+        long offset;
         MapValues values = getByMaster(master);
-        if (values == null) {
+        if (values == null || (((offset = values.getLong(0)) & SET_BIT) == SET_BIT)) {
             return null;
         }
-
-        long offset = values.getLong(0);
+        values.putLong(0, offset | SET_BIT);
         return record.of(pages.getQuick(pageIndex(offset)) + pageOffset(offset));
     }
 
@@ -196,7 +196,7 @@ public class LastVarRecordMap implements LastRecordMap {
             appendRec(record, size, values);
         } else {
             // old record, attempt to overwrite
-            long offset = values.getLong(0);
+            long offset = values.getLong(0) & CLR_BIT;
             int pgInx = pageIndex(offset);
             int pgOfs = pageOffset(offset);
 
@@ -217,14 +217,21 @@ public class LastVarRecordMap implements LastRecordMap {
                         // could not find suitable free block, append
                         appendRec(record, size, values);
                     } else {
-                        writeRec(record, _offset);
+                        writeRec(record, _offset, values);
                     }
                 }
             } else {
                 // new record is smaller or equal in size to previous one, overwrite safely
-                writeRec(record, offset);
+                writeRec(record, offset, values);
             }
         }
+    }
+
+    @Override
+    public void reset() {
+        appendOffset = 0;
+        map.clear();
+        freeList.clear();
     }
 
     @Override
@@ -237,13 +244,6 @@ public class LastVarRecordMap implements LastRecordMap {
                 symTableRemap.put(i, slaveValueIndexes.getQuick(i));
             }
         }
-    }
-
-    @Override
-    public void reset() {
-        appendOffset = 0;
-        map.clear();
-        freeList.clear();
     }
 
     private static MultiMap.KeyWriter get(MultiMap map, Record record, IntHashSet indices, ObjList<ColumnType> types) {
@@ -335,7 +335,8 @@ public class LastVarRecordMap implements LastRecordMap {
         return (int) (offset & mask);
     }
 
-    private void writeRec(Record record, long offset) {
+    private void writeRec(Record record, long offset, MapValues values) {
+        values.putLong(0, offset);
         writeRec0(pages.getQuick(pageIndex(offset)) + pageOffset(offset) + 4, record);
     }
 

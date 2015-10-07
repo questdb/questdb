@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.collections;
 
@@ -32,6 +32,10 @@ public final class MapValues {
 
     public MapValues(int[] valueOffsets) {
         this.valueOffsets = valueOffsets;
+    }
+
+    public byte getByte(int index) {
+        return Unsafe.getUnsafe().getByte(address0(index));
     }
 
     public double getDouble(int index) {
@@ -50,6 +54,10 @@ public final class MapValues {
         return _new;
     }
 
+    public void putByte(int index, byte value) {
+        Unsafe.getUnsafe().putByte(address0(index), value);
+    }
+
     public void putDouble(int index, double value) {
         Unsafe.getUnsafe().putDouble(address0(index), value);
     }
@@ -66,7 +74,7 @@ public final class MapValues {
         return address + valueOffsets[index];
     }
 
-    MapValues init(long address, boolean _new) {
+    MapValues of(long address, boolean _new) {
         this.address = address;
         this._new = _new;
         return this;

@@ -93,9 +93,10 @@ public class LastRowIdRecordMap implements LastRecordMap {
 
     public Record get(Record master) {
         MapValues values = getByMaster(master);
-        if (values == null) {
+        if (values == null || values.getByte(1) == 1) {
             return null;
         }
+        values.putByte(1, (byte) 1);
         return record.of(slaveCursor.getByRowId(values.getLong(0)));
     }
 
@@ -104,16 +105,18 @@ public class LastRowIdRecordMap implements LastRecordMap {
     }
 
     public void put(Record record) {
-        getBySlave(record).putLong(0, record.getRowId());
-    }
-
-    public void setSlaveCursor(RecordCursor<? extends Record> cursor) {
-        this.slaveCursor = cursor;
+        MapValues values = getBySlave(record);
+        values.putLong(0, record.getRowId());
+        values.putByte(1, (byte) 0);
     }
 
     @Override
     public void reset() {
         map.clear();
+    }
+
+    public void setSlaveCursor(RecordCursor<? extends Record> cursor) {
+        this.slaveCursor = cursor;
     }
 
     private static MultiMap.KeyWriter get(MultiMap map, Record record, IntHashSet indices, ObjList<ColumnType> types) {
@@ -169,5 +172,6 @@ public class LastRowIdRecordMap implements LastRecordMap {
 
     static {
         valueMetadata.add(LongMetadata.INSTANCE);
+        valueMetadata.add(ByteMetadata.INSTANCE);
     }
 }

@@ -147,12 +147,12 @@ public class LastFixRecordMap implements LastRecordMap {
     }
 
     public Record get(Record master) {
+        long offset;
         MapValues values = getByMaster(master);
-        if (values == null) {
+        if (values == null || (((offset = values.getLong(0)) & SET_BIT) == SET_BIT)) {
             return null;
         }
-
-        long offset = values.getLong(0);
+        values.putLong(0, offset | SET_BIT);
         return record.of(pages.getQuick(pageIndex(offset)) + pageOffset(offset));
     }
 
@@ -167,8 +167,14 @@ public class LastFixRecordMap implements LastRecordMap {
             appendRec(record, values);
         } else {
             // old record, attempt to overwrite
-            writeRec(record, values.getLong(0));
+            writeRec(record, values.getLong(0) & CLR_BIT, values);
         }
+    }
+
+    @Override
+    public void reset() {
+        appendOffset = 0;
+        map.clear();
     }
 
     public void setSlaveCursor(RecordCursor<? extends Record> cursor) {
@@ -180,12 +186,6 @@ public class LastFixRecordMap implements LastRecordMap {
                 symTableRemap.put(i, slaveValueIndexes.getQuick(i));
             }
         }
-    }
-
-    @Override
-    public void reset() {
-        appendOffset = 0;
-        map.clear();
     }
 
     private static MultiMap.KeyWriter get(MultiMap map, Record record, IntHashSet indices, ObjList<ColumnType> types) {
@@ -266,7 +266,8 @@ public class LastFixRecordMap implements LastRecordMap {
         return (int) (offset & mask);
     }
 
-    private void writeRec(Record record, long offset) {
+    private void writeRec(Record record, long offset, MapValues values) {
+        values.putLong(0, offset);
         writeRec0(pages.getQuick(pageIndex(offset)) + pageOffset(offset), record);
     }
 

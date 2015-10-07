@@ -83,7 +83,7 @@ public final class MapRecordSource extends AbstractImmutableIterator<Record> imp
 
     private void notifyInterceptors(long address) {
         for (int i = 0; i < interceptorsLen; i++) {
-            interceptors.getQuick(i).beforeRecord(values.init(address, false));
+            interceptors.getQuick(i).beforeRecord(values.of(address, false));
         }
     }
 }

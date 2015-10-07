@@ -31,15 +31,14 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
-import com.nfsdb.ql.collections.LastFixRecordMap;
-import com.nfsdb.ql.collections.LastRecordMap;
-import com.nfsdb.ql.collections.LastRowIdRecordMap;
-import com.nfsdb.ql.collections.LastVarRecordMap;
+import com.nfsdb.ql.collections.*;
 
 import java.io.Closeable;
+import java.io.IOException;
 
 public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record>, Closeable {
     private final LastRecordMap map;
+    private final RecordHolder holder;
     private final RecordSource<? extends Record> master;
     private final RecordSource<? extends Record> slave;
     private final SplitRecordMetadata metadata;
@@ -48,7 +47,6 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
     private final SplitRecord record;
     private RecordCursor<? extends Record> masterCursor;
     private RecordCursor<? extends Record> slaveCursor;
-    private Record delayedSlave;
 
     // todo: extract config
     public AsOfPartitionedJoinRecordSource(
@@ -66,6 +64,7 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
         this.slaveTimestampIndex = slaveTimestampIndex;
         if (slave.supportsRowIdAccess()) {
             map = new LastRowIdRecordMap(master.getMetadata(), slave.getMetadata(), masterKeyColumns, slaveKeyColumns);
+            holder = new RowidRecordHolder();
         } else {
             // check if slave has variable length columns
             boolean var = false;
@@ -83,8 +82,10 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
             }
             if (var) {
                 this.map = new LastVarRecordMap(master.getMetadata(), slave.getMetadata(), masterKeyColumns, slaveKeyColumns, pageSize);
+                this.holder = new VarRecordHolder(slave.getMetadata());
             } else {
                 this.map = new LastFixRecordMap(master.getMetadata(), slave.getMetadata(), masterKeyColumns, slaveKeyColumns, pageSize);
+                this.holder = new FixRecordHolder(slave.getMetadata());
             }
         }
         this.metadata = new SplitRecordMetadata(master.getMetadata(), map.getMetadata());
@@ -92,8 +93,13 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
     }
 
     @Override
-    public void close() {
+    public void close() throws IOException {
         map.close();
+        holder.close();
+
+        if (master instanceof Closeable) {
+            ((Closeable) master).close();
+        }
     }
 
     @Override
@@ -116,6 +122,7 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
         this.masterCursor = master.prepareCursor(factory);
         this.slaveCursor = slave.prepareCursor(factory);
         map.setSlaveCursor(slaveCursor);
+        holder.setCursor(slaveCursor);
         return this;
     }
 
@@ -124,7 +131,7 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
         this.master.reset();
         this.slave.reset();
         this.map.reset();
-        this.delayedSlave = null;
+        this.holder.clear();
     }
 
     @Override
@@ -144,10 +151,11 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
 
         long ts = master.getDate(masterTimestampIndex);
 
-        if (delayedSlave != null) {
-            if (ts > delayedSlave.getDate(slaveTimestampIndex)) {
-                map.put(delayedSlave);
-                delayedSlave = null;
+        Record delayed = holder.peek();
+        if (delayed != null) {
+            if (ts > delayed.getDate(slaveTimestampIndex)) {
+                map.put(delayed);
+                holder.clear();
             } else {
                 record.setB(null);
                 return record;
@@ -159,12 +167,12 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
             if (ts > slave.getDate(slaveTimestampIndex)) {
                 map.put(slave);
             } else {
+                holder.write(slave);
                 record.setB(map.get(master));
-                delayedSlave = slave;
                 return record;
             }
         }
-        record.setB(null);
+        record.setB(map.get(master));
         return record;
     }
 }

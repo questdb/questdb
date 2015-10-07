@@ -28,6 +28,10 @@ import com.nfsdb.ql.RecordCursor;
 import java.io.Closeable;
 
 public interface LastRecordMap extends Closeable {
+
+    long SET_BIT = 1L << 63;
+    long CLR_BIT = ~SET_BIT;
+
     @Override
     void close();
 

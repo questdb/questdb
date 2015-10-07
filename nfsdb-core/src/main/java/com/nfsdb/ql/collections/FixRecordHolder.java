@@ -36,6 +36,7 @@ public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
     private final IntList offsets;
     private final long address;
     private StorageFacade storageFacade;
+    private boolean held = false;
 
     public FixRecordHolder(RecordMetadata metadata) {
         super(metadata);
@@ -79,8 +80,8 @@ public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
     }
 
     @Override
-    public Record get() {
-        return this;
+    public Record peek() {
+        return held ? this : null;
     }
 
     @Override
@@ -89,6 +90,7 @@ public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
     }
 
     public void write(Record record) {
+        this.held = true;
         for (int i = 0, n = types.size(); i < n; i++) {
             long address = this.address + offsets.getQuick(i);
             switch (types.getQuick(i)) {
@@ -119,6 +121,11 @@ public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
                     break;
             }
         }
+    }
+
+    @Override
+    public void clear() {
+        held = false;
     }
 
     protected long address(int col) {

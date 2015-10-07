@@ -27,7 +27,9 @@ import com.nfsdb.ql.RecordCursor;
 import java.io.Closeable;
 
 public interface RecordHolder extends Closeable {
-    Record get();
+    void clear();
+
+    Record peek();
 
     void setCursor(RecordCursor<? extends Record> cursor);
 

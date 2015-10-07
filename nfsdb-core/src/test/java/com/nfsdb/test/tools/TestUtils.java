@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.test.tools;
 
@@ -224,6 +224,18 @@ public final class TestUtils {
     }
 
     public static void assertEquals(CharSequence expected, CharSequence actual) {
+        if (expected == null && actual == null) {
+            return;
+        }
+
+        if (expected != null && actual == null) {
+            Assert.fail("Expected: \n`" + expected + "`but have NULL");
+        }
+
+        if (expected == null) {
+            Assert.fail("Expected: NULL but have \n`" + actual + "`\n");
+        }
+
         if (expected.length() != actual.length()) {
             Assert.fail("Expected: \n`" + expected + "`\n but have \n`" + actual + "`\n (length: " + expected.length() + " vs " + actual.length() + ")");
         }
