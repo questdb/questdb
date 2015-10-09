@@ -4,6 +4,9 @@ jdk:
   - openjdk7
   - oraclejdk8
   
+env:
+  - MAVEN_OPTS=Xmx1024m
+  
 os:
   - linux
 
