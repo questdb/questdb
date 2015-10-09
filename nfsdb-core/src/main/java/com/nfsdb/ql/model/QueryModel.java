@@ -284,10 +284,6 @@ public class QueryModel implements Mutable {
         this.whereClause = whereClause;
     }
 
-    public boolean isCrossJoin() {
-        return joinType == JoinType.CROSS || context == null || context.parents.size() == 0;
-    }
-
     /**
      * Optimiser may be attempting to order join clauses several times.
      * Every time ordering takes place optimiser will keep at most two lists:
@@ -339,17 +335,26 @@ public class QueryModel implements Mutable {
                 final QueryModel m = joinModels.getQuick(index);
                 final JoinContext jc = m.getContext();
 
-                final boolean cross = jc == null || jc.parents.size() == 0;
+//                final boolean cross = jc == null || jc.parents.size() == 0;
                 sink.put(' ', pad).put('+').put(' ').put(index);
 
                 // join type
                 sink.put('[').put(' ');
-                if (m.getJoinType() == QueryModel.JoinType.CROSS || cross) {
-                    sink.put("cross");
-                } else if (m.getJoinType() == QueryModel.JoinType.INNER) {
-                    sink.put("inner");
-                } else {
-                    sink.put("outer");
+                switch (m.getJoinType()) {
+                    case CROSS:
+                        sink.put("cross");
+                        break;
+                    case INNER:
+                        sink.put("inner");
+                        break;
+                    case OUTER:
+                        sink.put("outer");
+                        break;
+                    case ASOF:
+                        sink.put("asof");
+                        break;
+                    default:
+                        sink.put("unknown");
                 }
                 sink.put(' ').put(']').put(' ');
 
@@ -373,7 +378,7 @@ public class QueryModel implements Mutable {
                 }
 
                 // join clause
-                if (!cross && jc.aIndexes.size() > 0) {
+                if (jc != null && jc.aIndexes.size() > 0) {
                     sink.put(" ON ");
                     for (int k = 0, z = jc.aIndexes.size(); k < z; k++) {
                         if (k > 0) {

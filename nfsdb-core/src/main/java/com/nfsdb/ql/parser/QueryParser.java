@@ -181,16 +181,36 @@ final class QueryParser {
             throw new ParserException(toks.position(), "Cross joins cannot have join clauses");
         }
 
-        if (type != QueryModel.JoinType.CROSS) {
-            expectTok(tok, "on");
-            ExprNode expr = expr();
-            if (expr == null) {
-                throw new ParserException(toks.position(), "Expression expected");
-            }
-            joinModel.setJoinCriteria(expr);
-        } else {
-            toks.unparse();
+        switch (type) {
+            case ASOF:
+                if (tok == null || !Chars.equals("on", tok)) {
+                    toks.unparse();
+                    break;
+                }
+                // intentional fall through
+            case INNER:
+            case OUTER:
+                expectTok(tok, "on");
+                ExprNode expr = expr();
+                if (expr == null) {
+                    throw new ParserException(toks.position(), "Expression expected");
+                }
+                joinModel.setJoinCriteria(expr);
+                break;
+            default:
+                toks.unparse();
         }
+//
+//        if (type != QueryModel.JoinType.INNER) {
+//            expectTok(tok, "on");
+//            ExprNode expr = expr();
+//            if (expr == null) {
+//                throw new ParserException(toks.position(), "Expression expected");
+//            }
+//            joinModel.setJoinCriteria(expr);
+//        } else {
+//            toks.unparse();
+//        }
 
         return joinModel;
     }

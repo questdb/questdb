@@ -51,6 +51,11 @@ public class StrConstant extends AbstractVirtualColumn {
     }
 
     @Override
+    public int getStrLen(Record rec) {
+        return value == null ? 0 : value.length();
+    }
+
+    @Override
     public boolean isConstant() {
         return true;
     }

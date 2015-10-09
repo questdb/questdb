@@ -48,6 +48,11 @@ public class NullConstant extends AbstractVirtualColumn {
     }
 
     @Override
+    public int getStrLen(Record rec) {
+        return 0;
+    }
+
+    @Override
     public boolean isConstant() {
         return true;
     }

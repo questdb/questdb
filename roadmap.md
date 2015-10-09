@@ -11,7 +11,7 @@ __lang__
     (e.g. select latest order for all customers in group X, where
     orders is a time series and customers is dimension and "group" is a field of customer)
 - [ ] time joins (merge)
-- [ ] as of joins
+- [x] as of joins
 - [ ] ordering
 - [x] top x rows (select ... limit low,high can be used for paging)
 - [ ] bottom x rows

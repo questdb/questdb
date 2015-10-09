@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,11 +17,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
-import com.nfsdb.collections.MinHeap;
+import com.nfsdb.collections.IntLongPriorityQueue;
 import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
 import com.nfsdb.test.tools.AbstractTest;
@@ -33,7 +33,7 @@ import org.junit.Test;
 import java.io.File;
 import java.util.Arrays;
 
-public class MinHeapTest extends AbstractTest {
+public class IntLongPriorityQueueTest extends AbstractTest {
     private static final int totalKeys = 10;
     private static final int totalValues = 100;
     private File indexFile;
@@ -78,7 +78,7 @@ public class MinHeapTest extends AbstractTest {
 
             Arrays.sort(expected);
 
-            MinHeap heap = new MinHeap(nStreams);
+            IntLongPriorityQueue heap = new IntLongPriorityQueue(nStreams);
             IndexCursor cursors[] = new IndexCursor[nStreams];
 
             for (int i = 0; i < nStreams; i++) {

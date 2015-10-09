@@ -21,7 +21,7 @@
 
 package com.nfsdb.ql.impl;
 
-import com.nfsdb.collections.MinHeap;
+import com.nfsdb.collections.IntLongPriorityQueue;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.RowCursor;
@@ -32,12 +32,12 @@ import com.nfsdb.utils.Unsafe;
 public class HeapMergingRowSource implements RowSource, RowCursor {
     private final RowSource[] sources;
     private final RowCursor[] cursors;
-    private final MinHeap heap;
+    private final IntLongPriorityQueue heap;
 
     public HeapMergingRowSource(RowSource... sources) {
         this.sources = sources;
         this.cursors = new RowCursor[sources.length];
-        this.heap = new MinHeap(sources.length);
+        this.heap = new IntLongPriorityQueue(sources.length);
     }
 
     @Override

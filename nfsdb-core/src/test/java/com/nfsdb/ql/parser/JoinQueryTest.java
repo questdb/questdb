@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
@@ -67,6 +67,18 @@ public class JoinQueryTest extends AbstractOptimiserTest {
             Assert.assertEquals(25, e.getPosition());
             Assert.assertTrue(e.getMessage().contains("Ambiguous"));
         }
+    }
+
+    @Test
+    public void testAsOfJoinOrder() throws Exception {
+        assertPlan("+ 0[ cross ] c\n" +
+                        "+ 1[ asof ] e ON e.employeeId = c.customerId\n" +
+                        "+ 2[ inner ] o ON o.customerId = c.customerId\n" +
+                        "\n",
+                "customers c" +
+                        " asof join employees e on c.customerId = e.employeeId" +
+                        " join orders o on c.customerId = o.customerId");
+
     }
 
     @Test
@@ -200,16 +212,16 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     @Test
     public void testJoinCycle() throws Exception {
         assertPlan("+ 0[ cross ] orders\n" +
-                        "+ 3[ inner ] products (filter: products.productId = products.supplier) ON products.supplier = orders.orderId\n" +
-                        "+ 4[ inner ] suppliers ON suppliers.supplier = products.supplier\n" +
-                        "+ 2[ inner ] d (filter: d.orderId = d.productId) ON d.productId = orders.orderId\n" +
                         "+ 1[ inner ] customers ON customers.customerId = orders.customerId\n" +
+                        "+ 2[ inner ] d (filter: d.orderId = d.productId) ON d.productId = orders.orderId\n" +
+                        "+ 3[ inner ] suppliers ON suppliers.supplier = orders.orderId\n" +
+                        "+ 4[ inner ] products ON products.productId = orders.orderId and products.supplier = suppliers.supplier\n" +
                         "\n",
                 "orders" +
                         " join customers on orders.customerId = customers.customerId" +
                         " join orderDetails d on d.orderId = orders.orderId and orders.orderId = products.productId" +
-                        " join products on d.productId = products.productId and orders.orderId = products.productId" +
                         " join suppliers on products.supplier = suppliers.supplier" +
+                        " join products on d.productId = products.productId and orders.orderId = products.productId" +
                         " where orders.orderId = suppliers.supplier");
     }
 
@@ -279,10 +291,10 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     @Test
     public void testJoinOneFieldToTwoAcross2() throws Exception {
         assertPlan("+ 0[ cross ] orders (filter: orders.customerId = orders.orderId)\n" +
+                        "+ 1[ inner ] customers ON customers.customerId = orders.orderId\n" +
                         "+ 2[ inner ] d (filter: d.productId = d.orderId) ON d.orderId = orders.orderId\n" +
                         "+ 3[ inner ] products ON products.productId = d.productId\n" +
                         "+ 4[ inner ] suppliers ON suppliers.supplier = products.supplier\n" +
-                        "+ 1[ inner ] customers ON customers.customerId = orders.orderId\n" +
                         "\n",
                 "orders" +
                         " join customers on orders.customerId = customers.customerId" +
@@ -295,8 +307,8 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     @Test
     public void testJoinOneFieldToTwoReorder() throws Exception {
         assertPlan("+ 0[ cross ] orders (filter: orders.orderId = orders.customerId)\n" +
-                        "+ 2[ inner ] customers ON customers.customerId = orders.customerId\n" +
                         "+ 1[ inner ] d (filter: d.productId = d.orderId) ON d.orderId = orders.customerId\n" +
+                        "+ 2[ inner ] customers ON customers.customerId = orders.customerId\n" +
                         "+ 3[ inner ] products ON products.productId = d.productId\n" +
                         "+ 4[ inner ] suppliers ON suppliers.supplier = products.supplier\n" +
                         "\n",

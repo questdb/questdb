@@ -50,6 +50,11 @@ public class StrRecordSourceColumn extends AbstractVirtualColumn {
     }
 
     @Override
+    public int getStrLen(Record rec) {
+        return rec.getStrLen(index);
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.ops;
 
@@ -47,6 +47,12 @@ public class StoAFunction extends AbstractUnaryOperator {
     @Override
     public void getStr(Record rec, CharSink sink) {
         sink.put(value.getSym(rec));
+    }
+
+    @Override
+    public int getStrLen(Record rec) {
+        CharSequence cs = value.getSym(rec);
+        return cs == null ? 0 : cs.length();
     }
 
     @Override

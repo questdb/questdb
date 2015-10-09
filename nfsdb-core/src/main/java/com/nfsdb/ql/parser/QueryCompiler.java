@@ -74,7 +74,8 @@ public class QueryCompiler {
     private final IntList literalCollectorBIndexes = new IntList();
     private final ObjList<CharSequence> literalCollectorBNames = new ObjList<>();
     private final LiteralCollector literalCollector = new LiteralCollector();
-    private final IntStack orderingStack = new IntStack();
+    //    private final IntStack orderingStack = new IntStack();
+    private final IntPriorityQueue orderingStack = new IntPriorityQueue();
     private final IntList tempCrosses = new IntList();
     private final IntList tempCrossIndexes = new IntList();
     private final IntHashSet postFilterRemoved = new IntHashSet();
@@ -182,7 +183,7 @@ public class QueryCompiler {
      * Move fields that belong to slave journal to left and parent fields
      * to right of equals operator.
      */
-    private void alignJoinFields(QueryModel parent) {
+    private void alignJoinClauses(QueryModel parent) {
         ObjList<QueryModel> joinModels = parent.getJoinModels();
         IntList ordered = parent.getOrderedJoinModels();
         for (int i = 0, n = ordered.size(); i < n; i++) {
@@ -284,6 +285,69 @@ public class QueryCompiler {
         } else {
             model.setLimitVc(toVirtualColumn(lo), toVirtualColumn(hi));
         }
+    }
+
+    private void assignFilters(QueryModel parent) throws ParserException {
+
+        journalsSoFar.clear();
+        postFilterRemoved.clear();
+        postFilterJournalRefs.clear();
+        nullCounts.clear();
+
+        literalCollector.withParent(parent);
+        ObjList<ExprNode> filterNodes = parent.getParsedWhere();
+        // collect journal indexes from each part of global filter
+        int pc = filterNodes.size();
+        for (int i = 0; i < pc; i++) {
+            IntList indexes = intListPool.next();
+            literalCollector.resetNullCount();
+            traversalAlgo.traverse(filterNodes.getQuick(i), literalCollector.to(indexes, postFilterThrowawayNames));
+            postFilterJournalRefs.add(indexes);
+            nullCounts.add(literalCollector.nullCount);
+            postFilterThrowawayNames.clear();
+        }
+
+        IntList ordered = parent.getOrderedJoinModels();
+        // match journal references to set of journals in join order
+        for (int i = 0, n = ordered.size(); i < n; i++) {
+            int index = ordered.getQuick(i);
+            journalsSoFar.add(index);
+
+            for (int k = 0; k < pc; k++) {
+                if (postFilterRemoved.contains(k)) {
+                    continue;
+                }
+
+                IntList refs = postFilterJournalRefs.getQuick(k);
+                int rs = refs.size();
+                if (rs == 0) {
+                    // condition has no journal references
+                    // must evaluate as constant
+                    postFilterRemoved.add(k);
+                    parent.addParsedWhereConst(k);
+                } else if (rs == 1 && nullCounts.getQuick(k) == 0) {
+                    // get single journal reference out of the way right away
+                    // we don't have to wait until "our" journal comes along
+                    postFilterRemoved.add(k);
+                    addWhereClause(parent, refs.getQuick(0), filterNodes.getQuick(k));
+                } else {
+                    boolean qualifies = true;
+                    // check if filter references journals processed so far
+                    for (int y = 0; y < rs; y++) {
+                        if (!journalsSoFar.contains(refs.getQuick(y))) {
+                            qualifies = false;
+                            break;
+                        }
+                    }
+                    if (qualifies) {
+                        postFilterRemoved.add(k);
+                        parent.getJoinModels().getQuick(index).setPostJoinWhereClause(filterNodes.getQuick(k));
+                    }
+                }
+            }
+        }
+
+        assert postFilterRemoved.size() == pc;
     }
 
     private RowSource buildRowSourceForInt(IntrinsicModel im) throws ParserException {
@@ -708,11 +772,10 @@ public class QueryCompiler {
             masterTimestampIndex = masterMetadata.getColumnIndex(masterMetadata.getTimestampMetadata().getName());
         }
 
-        int sz = jc.aNames.size();
-
-        if (sz == 0) {
+        if (jc == null) {
             return new AsOfJoinRecordSource(master, masterTimestampIndex, slave, slaveTimestampIndex);
         } else {
+            int sz = jc.aNames.size();
             CharSequenceHashSet slaveKeys = new CharSequenceHashSet();
             CharSequenceHashSet masterKeys = new CharSequenceHashSet();
 
@@ -794,6 +857,22 @@ public class QueryCompiler {
         return master;
     }
 
+    private void createImpliedDependencies(QueryModel parent) {
+        ObjList<QueryModel> models = parent.getJoinModels();
+        JoinContext jc;
+        for (int i = 0, n = models.size(); i < n; i++) {
+            QueryModel m = models.getQuick(i);
+            if (m.getJoinType() == QueryModel.JoinType.ASOF) {
+                linkDependencies(parent, 0, i);
+                if (m.getContext() == null) {
+                    m.setContext(jc = contextPool.next());
+                    jc.parents.add(0);
+                    jc.slaveIndex = i;
+                }
+            }
+        }
+    }
+
     private VirtualColumn createVirtualColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
         virtualColumnBuilderVisitor.metadata = metadata;
         traversalAlgo.traverse(node, virtualColumnBuilderVisitor);
@@ -802,6 +881,24 @@ public class QueryCompiler {
 
     private CharSequence extractColumnName(CharSequence token, int dot) {
         return dot == -1 ? token : csPool.next().of(token, dot + 1, token.length() - dot - 1);
+    }
+
+    private void homogenizeCrossJoins(QueryModel parent) {
+        ObjList<QueryModel> joinModels = parent.getJoinModels();
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            QueryModel m = joinModels.getQuick(i);
+            JoinContext c = m.getContext();
+
+            if (m.getJoinType() == QueryModel.JoinType.CROSS) {
+                if (c != null && c.parents.size() > 0) {
+                    m.setJoinType(QueryModel.JoinType.INNER);
+                }
+            } else if (m.getJoinType() != QueryModel.JoinType.ASOF) {
+                if (c == null || c.parents.size() == 0) {
+                    m.setJoinType(QueryModel.JoinType.CROSS);
+                }
+            }
+        }
     }
 
     private boolean joinModelIsFalse(QueryModel model) throws ParserException {
@@ -1071,78 +1168,13 @@ public class QueryCompiler {
                 processEmittedJoinClauses(parent);
             }
 
-            trySwapJoinOrder(parent);
-            resetJoinTypes(parent);
-            tryAssignPostJoinFilters(parent);
-            alignJoinFields(parent);
+            createImpliedDependencies(parent);
+            reorderJournals(parent);
+            homogenizeCrossJoins(parent);
+            assignFilters(parent);
+            alignJoinClauses(parent);
         }
         return this;
-    }
-
-    private int orderJournals(QueryModel parent, IntList ordered) {
-        tempCrossIndexes.clear();
-        ordered.clear();
-        this.orderingStack.clear();
-        ObjList<QueryModel> joinModels = parent.getJoinModels();
-
-        int cost = 0;
-
-        for (int i = 0, n = joinModels.size(); i < n; i++) {
-            QueryModel q = joinModels.getQuick(i);
-            if (q.isCrossJoin()) {
-                if (q.getDependencies().size() > 0) {
-                    orderingStack.push(i);
-                } else {
-                    tempCrossIndexes.add(i);
-                }
-            } else {
-                q.getContext().inCount = q.getContext().parents.size();
-            }
-        }
-
-        while (orderingStack.notEmpty()) {
-            //remove a node n from orderingStack
-            int index = orderingStack.pop();
-
-            //insert n into orderedJournals
-            ordered.add(index);
-
-            QueryModel m = joinModels.getQuick(index);
-
-            switch (m.getJoinType()) {
-                case CROSS:
-                    cost += 10;
-                    break;
-                default:
-                    cost += 5;
-            }
-
-            IntHashSet dependencies = m.getDependencies();
-
-            //for each node m with an edge e from n to m do
-            for (int i = 0, k = dependencies.size(); i < k; i++) {
-                int depIndex = dependencies.get(i);
-                JoinContext jc = joinModels.getQuick(depIndex).getContext();
-                if (--jc.inCount == 0) {
-                    orderingStack.push(depIndex);
-                }
-            }
-        }
-
-        //Check to see if all edges are removed
-        for (int i = 0, n = joinModels.size(); i < n; i++) {
-            QueryModel m = joinModels.getQuick(i);
-            if (!m.isCrossJoin() && m.getContext().inCount > 0) {
-                return Integer.MAX_VALUE;
-            }
-        }
-
-        // add pure crosses at end of ordered journal list
-        for (int i = 0, n = tempCrossIndexes.size(); i < n; i++) {
-            ordered.add(tempCrossIndexes.getQuick(i));
-        }
-
-        return cost;
     }
 
     @SuppressFBWarnings({"ES_COMPARING_STRINGS_WITH_EQ"})
@@ -1287,6 +1319,127 @@ public class QueryCompiler {
         parent.addParsedWhereNode(node);
     }
 
+    /**
+     * Identify joined journals without join clause and try to find other reversible join clauses
+     * that may be applied to it. For example when these journals joined"
+     * <p/>
+     * from a
+     * join b on c.x = b.x
+     * join c on c.y = a.y
+     * <p/>
+     * the system that prefers child table with lowest index will attribute c.x = b.x clause to
+     * journal "c" leaving "b" without clauses.
+     */
+    @SuppressWarnings({"StatementWithEmptyBody", "ConstantConditions"})
+    private void reorderJournals(QueryModel parent) throws ParserException {
+        ObjList<QueryModel> joinModels = parent.getJoinModels();
+        int n = joinModels.size();
+
+        tempCrosses.clear();
+        // collect crosses
+        for (int i = 0; i < n; i++) {
+            QueryModel q = joinModels.getQuick(i);
+            if (q.getContext() == null || q.getContext().parents.size() == 0) {
+                tempCrosses.add(i);
+            }
+        }
+
+        int cost = Integer.MAX_VALUE;
+        int root = -1;
+
+        // analyse state of tree for each set of n-1 crosses
+        for (int z = 0, zc = tempCrosses.size(); z < zc; z++) {
+            for (int i = 0; i < zc; i++) {
+                if (z != i) {
+                    int to = tempCrosses.getQuick(i);
+                    JoinContext jc = joinModels.getQuick(to).getContext();
+                    // look above i up to OUTER join
+                    for (int k = i - 1; k > -1 && swapJoinOrder(parent, to, k, jc); k--) ;
+                    // look below i for up to OUTER join
+                    for (int k = i + 1; k < n && swapJoinOrder(parent, to, k, jc); k++) ;
+                }
+            }
+
+            IntList ordered = parent.nextOrderedJoinModels();
+            int thisCost = reorderJournals0(parent, ordered);
+            if (thisCost < cost) {
+                root = z;
+                cost = thisCost;
+                parent.setOrderedJoinModels(ordered);
+            }
+        }
+
+        if (root == -1) {
+            throw new ParserException(0, "Cycle");
+        }
+    }
+
+    private int reorderJournals0(QueryModel parent, IntList ordered) {
+        tempCrossIndexes.clear();
+        ordered.clear();
+        this.orderingStack.clear();
+        ObjList<QueryModel> joinModels = parent.getJoinModels();
+
+        int cost = 0;
+
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            QueryModel q = joinModels.getQuick(i);
+            if (q.getJoinType() == QueryModel.JoinType.CROSS || q.getContext() == null || q.getContext().parents.size() == 0) {
+                if (q.getDependencies().size() > 0) {
+                    orderingStack.push(i);
+                } else {
+                    tempCrossIndexes.add(i);
+                }
+            } else {
+                q.getContext().inCount = q.getContext().parents.size();
+            }
+        }
+
+        while (orderingStack.notEmpty()) {
+            //remove a node n from orderingStack
+            int index = orderingStack.pop();
+
+            //insert n into orderedJournals
+            ordered.add(index);
+
+            QueryModel m = joinModels.getQuick(index);
+
+            switch (m.getJoinType()) {
+                case CROSS:
+                    cost += 10;
+                    break;
+                default:
+                    cost += 5;
+            }
+
+            IntHashSet dependencies = m.getDependencies();
+
+            //for each node m with an edge e from n to m do
+            for (int i = 0, k = dependencies.size(); i < k; i++) {
+                int depIndex = dependencies.get(i);
+                JoinContext jc = joinModels.getQuick(depIndex).getContext();
+                if (--jc.inCount == 0) {
+                    orderingStack.push(depIndex);
+                }
+            }
+        }
+
+        //Check to see if all edges are removed
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            QueryModel m = joinModels.getQuick(i);
+            if (m.getContext() != null && m.getContext().inCount > 0) {
+                return Integer.MAX_VALUE;
+            }
+        }
+
+        // add pure crosses at end of ordered journal list
+        for (int i = 0, n = tempCrossIndexes.size(); i < n; i++) {
+            ordered.add(tempCrossIndexes.getQuick(i));
+        }
+
+        return cost;
+    }
+
     private RecordSource<? extends Record> resetAndCompile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         clearState();
         return compile(model, factory);
@@ -1295,24 +1448,6 @@ public class QueryCompiler {
     private void resetAndOptimise(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         clearState();
         optimise(model, factory);
-    }
-
-    private void resetJoinTypes(QueryModel parent) {
-        ObjList<QueryModel> joinModels = parent.getJoinModels();
-        for (int i = 0, n = joinModels.size(); i < n; i++) {
-            QueryModel m = joinModels.getQuick(i);
-            JoinContext c = m.getContext();
-
-            if (m.getJoinType() == QueryModel.JoinType.CROSS) {
-                if (c != null && c.parents.size() > 0) {
-                    m.setJoinType(QueryModel.JoinType.INNER);
-                }
-            } else {
-                if (c == null || c.parents.size() == 0) {
-                    m.setJoinType(QueryModel.JoinType.CROSS);
-                }
-            }
-        }
     }
 
     private void resolveJoinMetadata(QueryModel parent, int index, JournalReaderFactory factory) throws JournalException, ParserException {
@@ -1497,124 +1632,6 @@ public class QueryCompiler {
             }
         } else {
             throw new ParserException(node.position, "Constant expected");
-        }
-    }
-
-    private void tryAssignPostJoinFilters(QueryModel parent) throws ParserException {
-
-        journalsSoFar.clear();
-        postFilterRemoved.clear();
-        postFilterJournalRefs.clear();
-        nullCounts.clear();
-
-        literalCollector.withParent(parent);
-        ObjList<ExprNode> filterNodes = parent.getParsedWhere();
-        // collect journal indexes from each part of global filter
-        int pc = filterNodes.size();
-        for (int i = 0; i < pc; i++) {
-            IntList indexes = intListPool.next();
-            literalCollector.resetNullCount();
-            traversalAlgo.traverse(filterNodes.getQuick(i), literalCollector.to(indexes, postFilterThrowawayNames));
-            postFilterJournalRefs.add(indexes);
-            nullCounts.add(literalCollector.nullCount);
-            postFilterThrowawayNames.clear();
-        }
-
-        IntList ordered = parent.getOrderedJoinModels();
-        // match journal references to set of journals in join order
-        for (int i = 0, n = ordered.size(); i < n; i++) {
-            int index = ordered.getQuick(i);
-            journalsSoFar.add(index);
-
-            for (int k = 0; k < pc; k++) {
-                if (postFilterRemoved.contains(k)) {
-                    continue;
-                }
-
-                IntList refs = postFilterJournalRefs.getQuick(k);
-                int rs = refs.size();
-                if (rs == 0) {
-                    // condition has no journal references
-                    // must evaluate as constant
-                    postFilterRemoved.add(k);
-                    parent.addParsedWhereConst(k);
-                } else if (rs == 1 && nullCounts.getQuick(k) == 0) {
-                    // get single journal reference out of the way right away
-                    // we don't have to wait until "our" journal comes along
-                    postFilterRemoved.add(k);
-                    addWhereClause(parent, refs.getQuick(0), filterNodes.getQuick(k));
-                } else {
-                    boolean qualifies = true;
-                    // check if filter references journals processed so far
-                    for (int y = 0; y < rs; y++) {
-                        if (!journalsSoFar.contains(refs.getQuick(y))) {
-                            qualifies = false;
-                            break;
-                        }
-                    }
-                    if (qualifies) {
-                        postFilterRemoved.add(k);
-                        parent.getJoinModels().getQuick(index).setPostJoinWhereClause(filterNodes.getQuick(k));
-                    }
-                }
-            }
-        }
-
-        assert postFilterRemoved.size() == pc;
-    }
-
-    /**
-     * Identify joined journals without join clause and try to find other reversible join clauses
-     * that may be applied to it. For example when these journals joined"
-     * <p/>
-     * from a
-     * join b on c.x = b.x
-     * join c on c.y = a.y
-     * <p/>
-     * the system that prefers child table with lowest index will attribute c.x = b.x clause to
-     * journal "c" leaving "b" without clauses.
-     */
-    @SuppressWarnings({"StatementWithEmptyBody", "ConstantConditions"})
-    private void trySwapJoinOrder(QueryModel parent) throws ParserException {
-        ObjList<QueryModel> joinModels = parent.getJoinModels();
-        int n = joinModels.size();
-
-        tempCrosses.clear();
-        // collect crosses
-        for (int i = 0; i < n; i++) {
-            QueryModel q = joinModels.getQuick(i);
-            if (q.isCrossJoin()) {
-                tempCrosses.add(i);
-            }
-        }
-
-        int cost = Integer.MAX_VALUE;
-        int root = -1;
-
-        // analyse state of tree for each set of n-1 crosses
-        for (int z = 0, zc = tempCrosses.size(); z < zc; z++) {
-            for (int i = 0; i < zc; i++) {
-                if (z != i) {
-                    int to = tempCrosses.getQuick(i);
-                    JoinContext jc = joinModels.getQuick(to).getContext();
-                    // look above i up to OUTER join
-                    for (int k = i - 1; k > -1 && swapJoinOrder(parent, to, k, jc); k--) ;
-                    // look below i for up to OUTER join
-                    for (int k = i + 1; k < n && swapJoinOrder(parent, to, k, jc); k++) ;
-                }
-            }
-
-            IntList ordered = parent.nextOrderedJoinModels();
-            int thisCost = orderJournals(parent, ordered);
-            if (thisCost < cost) {
-                root = z;
-                cost = thisCost;
-                parent.setOrderedJoinModels(ordered);
-            }
-        }
-
-        if (root == -1) {
-            throw new ParserException(0, "Cycle");
         }
     }
 
