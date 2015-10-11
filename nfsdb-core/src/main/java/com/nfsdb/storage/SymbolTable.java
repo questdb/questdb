@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.storage;
 
@@ -30,6 +30,7 @@ import com.nfsdb.exceptions.JournalInvalidSymbolValueException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Hash;
+import com.nfsdb.utils.Misc;
 import com.nfsdb.utils.Numbers;
 
 import java.io.Closeable;
@@ -93,14 +94,8 @@ public class SymbolTable implements Closeable {
     }
 
     public void close() {
-        if (data != null) {
-            data.close();
-        }
-        if (index != null) {
-            index.close();
-        }
-        index = null;
-        data = null;
+        data = Misc.free(data);
+        index = Misc.free(index);
     }
 
     public void commit() {

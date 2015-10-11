@@ -34,6 +34,7 @@ import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.collections.MultiMap;
 import com.nfsdb.ql.collections.MultiRecordMap;
+import com.nfsdb.utils.Misc;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
@@ -42,8 +43,8 @@ import java.io.IOException;
 import static com.nfsdb.ql.impl.KeyWriterHelper.setKey;
 
 public class HashJoinRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, Closeable, RecordCursor<Record> {
-    private final RecordSource<? extends Record> masterSource;
-    private final RecordSource<? extends Record> slaveSource;
+    private final RecordSource<? extends Record> master;
+    private final RecordSource<? extends Record> slave;
     private final SplitRecordMetadata metadata;
     private final SplitRecord currentRecord;
     private final ObjList<RecordColumnMetadata> masterColumns = new ObjList<>();
@@ -61,27 +62,26 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
 
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     public HashJoinRecordSource(
-            RecordSource<? extends Record> masterSource,
+            RecordSource<? extends Record> master,
             ObjList<CharSequence> masterColumns,
-            RecordSource<? extends Record> slaveSource,
+            RecordSource<? extends Record> slave,
             ObjList<CharSequence> slaveColumns,
             boolean outer) {
-        this.masterSource = masterSource;
-        this.slaveSource = slaveSource;
-        this.metadata = new SplitRecordMetadata(masterSource.getMetadata(), slaveSource.getMetadata());
-        this.currentRecord = new SplitRecord(metadata, masterSource.getMetadata().getColumnCount());
-        this.byRowId = slaveSource.supportsRowIdAccess();
-        this.recordMap = createRecordMap(masterSource, masterColumns, slaveSource, slaveColumns);
+        this.master = master;
+        this.slave = slave;
+        this.metadata = new SplitRecordMetadata(master.getMetadata(), slave.getMetadata());
+        this.currentRecord = new SplitRecord(metadata, master.getMetadata().getColumnCount());
+        this.byRowId = slave.supportsRowIdAccess();
+        this.recordMap = createRecordMap(master, masterColumns, slave, slaveColumns);
         this.outer = outer;
-        this.nullRecord = new NullRecord(slaveSource.getMetadata());
+        this.nullRecord = new NullRecord(slave.getMetadata());
     }
 
     @Override
     public void close() throws IOException {
-        if (recordMap != null) {
-            recordMap.close();
-            recordMap = null;
-        }
+        Misc.free(recordMap);
+        Misc.free(master);
+        Misc.free(slave);
     }
 
     @Override
@@ -101,8 +101,8 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
 
     @Override
     public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
-        this.slaveCursor = slaveSource.prepareCursor(factory);
-        this.masterCursor = masterSource.prepareCursor(factory);
+        this.slaveCursor = slave.prepareCursor(factory);
+        this.masterCursor = master.prepareCursor(factory);
         buildHashTable();
         return this;
     }
@@ -110,7 +110,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
     @Override
     public void reset() {
         hashTableCursor = null;
-        masterSource.reset();
+        master.reset();
         recordMap.clear();
     }
 

@@ -24,15 +24,14 @@ package com.nfsdb;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.logging.Logger;
 import com.nfsdb.storage.KVIndex;
+import com.nfsdb.utils.Misc;
 
 import java.io.Closeable;
 import java.io.File;
 
 class SymbolIndexProxy<T> implements Closeable {
 
-    private static final Logger LOGGER = Logger.getLogger(SymbolIndexProxy.class);
     private final Partition<T> partition;
     private final int columnIndex;
     private KVIndex index;
@@ -45,11 +44,7 @@ class SymbolIndexProxy<T> implements Closeable {
     }
 
     public void close() {
-        if (index != null) {
-            LOGGER.trace("Closing " + this);
-            index.close();
-            index = null;
-        }
+        index = Misc.free(index);
     }
 
     public int getColumnIndex() {

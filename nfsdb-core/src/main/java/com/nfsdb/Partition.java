@@ -31,10 +31,7 @@ import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.query.iterator.PartitionBufferedIterator;
 import com.nfsdb.storage.*;
-import com.nfsdb.utils.Dates;
-import com.nfsdb.utils.Hash;
-import com.nfsdb.utils.Interval;
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.utils.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
@@ -93,16 +90,14 @@ public class Partition<T> implements Closeable {
     public void close() {
         if (isOpen()) {
             for (int i = 0; i < columns.length; i++) {
-                if (Unsafe.arrayGet(columns, i) != null) {
-                    Unsafe.arrayGet(columns, i).close();
-                }
+                Misc.free(Unsafe.arrayGet(columns, i));
             }
             columns = null;
             LOGGER.trace("Partition %s closed", partitionDir);
         }
 
         for (int i = 0, k = indexProxies.size(); i < k; i++) {
-            indexProxies.getQuick(i).close();
+            Misc.free(indexProxies.getQuick(i));
         }
     }
 

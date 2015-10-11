@@ -21,18 +21,15 @@
 
 package com.nfsdb.collections;
 
-import com.nfsdb.logging.Logger;
 import com.nfsdb.utils.Chars;
+import com.nfsdb.utils.Misc;
 import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Unsafe;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.util.Arrays;
 
-public class AssociativeCache<V> {
-
-    private final static Logger LOGGER = Logger.getLogger(AssociativeCache.class);
+public class AssociativeCache<V> implements Closeable {
 
     private static final int MIN_BLOCKS = 2;
     private static final int MINROWS = 16;
@@ -60,6 +57,18 @@ public class AssociativeCache<V> {
         this.bmask = this.blocks - 1;
         this.bshift = Numbers.msb(this.blocks);
         Arrays.fill(keys, null);
+    }
+
+    public void clear() {
+        for (int i = 0, n = keys.length; i < n; i++) {
+            keys[i] = null;
+            free(i);
+        }
+    }
+
+    @Override
+    public void close() {
+        clear();
     }
 
     public V get(CharSequence key) {
@@ -99,13 +108,6 @@ public class AssociativeCache<V> {
     }
 
     private void free(int lo) {
-        V ov = Unsafe.arrayGet(values, lo);
-        if (ov instanceof Closeable) {
-            try {
-                ((Closeable) ov).close();
-            } catch (IOException e) {
-                LOGGER.warn("Caught exception: ", e);
-            }
-        }
+        Misc.free(Unsafe.arrayGet(values, lo));
     }
 }

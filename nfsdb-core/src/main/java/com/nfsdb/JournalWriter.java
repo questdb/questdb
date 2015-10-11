@@ -184,14 +184,8 @@ public class JournalWriter<T> extends Journal<T> {
                     writeLock = null;
                 }
 
-                if (discardTxtRaf != null) {
-                    try {
-                        discardSink.close();
-                        discardTxtRaf.close();
-                    } catch (IOException e) {
-                        LOGGER.warn("Failed to close discard file");
-                    }
-                }
+                Misc.free(discardSink);
+                Misc.free(discardTxtRaf);
             } catch (JournalException e) {
                 throw new JournalRuntimeException(e);
             }

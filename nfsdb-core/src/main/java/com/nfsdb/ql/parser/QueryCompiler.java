@@ -105,12 +105,16 @@ public class QueryCompiler {
         columnNamePrefixLen = 3;
     }
 
-    public RecordCursor<? extends Record> compile(CharSequence query) throws ParserException, JournalException {
-        return compileSource(query).prepareCursor(factory);
+    public void clearCache() {
+        cache.clear();
     }
 
     public <T> RecordCursor<? extends Record> compile(Class<T> clazz) throws JournalException, ParserException {
         return compile(clazz.getName());
+    }
+
+    public RecordCursor<? extends Record> compile(CharSequence query) throws ParserException, JournalException {
+        return compileSource(query).prepareCursor(factory);
     }
 
     public RecordSource<? extends Record> compileSource(CharSequence query) throws ParserException, JournalException {

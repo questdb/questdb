@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,9 +17,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.io.sink;
+
+import com.nfsdb.utils.Misc;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -39,9 +41,7 @@ public class DelimitedCharSink extends AbstractCharSink implements CharSink, Clo
 
     @Override
     public void close() throws IOException {
-        if (delegate instanceof Closeable) {
-            ((Closeable) delegate).close();
-        }
+        Misc.free(delegate);
     }
 
     public DelimitedCharSink eol() {

@@ -32,6 +32,7 @@ import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.collections.*;
+import com.nfsdb.utils.Misc;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -94,12 +95,10 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
 
     @Override
     public void close() throws IOException {
-        map.close();
-        holder.close();
-
-        if (master instanceof Closeable) {
-            ((Closeable) master).close();
-        }
+        Misc.free(map);
+        Misc.free(holder);
+        Misc.free(master);
+        Misc.free(slave);
     }
 
     @Override

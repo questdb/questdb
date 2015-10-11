@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.io.parser.listener;
 
@@ -31,6 +31,7 @@ import com.nfsdb.io.ImportedColumnMetadata;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Dates;
+import com.nfsdb.utils.Misc;
 import com.nfsdb.utils.Numbers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -51,9 +52,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
 
     @Override
     public void close() {
-        if (writer != null) {
-            writer.close();
-        }
+        Misc.free(writer);
     }
 
     @Override

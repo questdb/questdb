@@ -32,6 +32,7 @@ import com.nfsdb.io.parser.listener.probe.*;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.ql.collections.MultiMap;
 import com.nfsdb.storage.ColumnType;
+import com.nfsdb.utils.Misc;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
@@ -64,10 +65,7 @@ public class MetadataExtractorListener implements Listener, Closeable {
     public void close() {
         if (frequencyMaps != null) {
             for (int i = 0; i < frequencyMaps.length; i++) {
-                if (frequencyMaps[i] != null) {
-                    frequencyMaps[i].close();
-                    frequencyMaps[i] = null;
-                }
+                frequencyMaps[i] = Misc.free(frequencyMaps[i]);
             }
         }
     }

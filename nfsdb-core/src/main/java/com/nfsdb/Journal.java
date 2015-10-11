@@ -38,10 +38,7 @@ import com.nfsdb.query.iterator.ConcurrentIterator;
 import com.nfsdb.query.iterator.JournalPeekingIterator;
 import com.nfsdb.query.spi.QueryImpl;
 import com.nfsdb.storage.*;
-import com.nfsdb.utils.Dates;
-import com.nfsdb.utils.Interval;
-import com.nfsdb.utils.Rows;
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.utils.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
@@ -56,9 +53,8 @@ import java.util.Iterator;
 @SuppressFBWarnings({"PATH_TRAVERSAL_IN", "LII_LIST_INDEXED_ITERATING", "CD_CIRCULAR_DEPENDENCY"})
 public class Journal<T> implements Iterable<T>, Closeable {
 
-    private static final Logger LOGGER = Logger.getLogger(Journal.class);
-
     public static final long TX_LIMIT_EVAL = -1L;
+    private static final Logger LOGGER = Logger.getLogger(Journal.class);
     final ObjList<Partition<T>> partitions = new ObjList<>();
     // empty container for current transaction
     final Tx tx = new Tx();
@@ -116,7 +112,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
 
             closePartitions();
             for (int i = 0, sz = symbolTables.size(); i < sz; i++) {
-                symbolTables.getQuick(i).close();
+                Misc.free(symbolTables.getQuick(i));
             }
             txLog.close();
             open = false;

@@ -34,6 +34,7 @@ import com.nfsdb.ql.collections.FixRecordHolder;
 import com.nfsdb.ql.collections.RecordHolder;
 import com.nfsdb.ql.collections.RowidRecordHolder;
 import com.nfsdb.ql.collections.VarRecordHolder;
+import com.nfsdb.utils.Misc;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -91,16 +92,10 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
 
     @Override
     public void close() throws IOException {
-        recordHolder.close();
-        delayedHolder.close();
-
-        if (master instanceof Closeable) {
-            ((Closeable) master).close();
-        }
-
-        if (master instanceof Closeable) {
-            ((Closeable) slave).close();
-        }
+        Misc.free(recordHolder);
+        Misc.free(delayedHolder);
+        Misc.free(master);
+        Misc.free(slave);
     }
 
     @Override

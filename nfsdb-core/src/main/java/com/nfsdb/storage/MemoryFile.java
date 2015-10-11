@@ -29,6 +29,7 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Files;
+import com.nfsdb.utils.Misc;
 import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -80,15 +81,8 @@ public class MemoryFile implements Closeable {
 
     @Override
     public void close() {
-        try {
-            unmap();
-            if (channel != null) {
-                channel.close();
-                channel = null;
-            }
-        } catch (IOException e) {
-            throw new JournalRuntimeException("Cannot close file", e);
-        }
+        unmap();
+        this.channel = Misc.free(channel);
     }
 
     public void compact() throws JournalException {
