@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.model;
 
@@ -54,7 +54,7 @@ public class ExprNode implements Mutable {
         intrinsicValue = IntrinsicValue.UNDEFINED;
     }
 
-    public ExprNode init(NodeType type, String token, int precedence, int position) {
+    public ExprNode of(NodeType type, String token, int precedence, int position) {
         this.type = type;
         this.precedence = precedence;
         this.token = token;

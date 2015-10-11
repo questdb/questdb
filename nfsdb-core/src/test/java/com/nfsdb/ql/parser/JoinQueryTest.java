@@ -35,7 +35,6 @@ import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Rnd;
 import org.junit.Assert;
 import org.junit.BeforeClass;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class JoinQueryTest extends AbstractOptimiserTest {
@@ -103,6 +102,26 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testEqualsConstantTransitivityLhs() throws Exception {
+        assertPlan("+ 0[ cross ] c (filter: 100 = c.customerId)\n" +
+                        "+ 1[ outer ] o (filter: o.customerId = 100) ON o.customerId = c.customerId\n" +
+                        "\n",
+                "customers c" +
+                        " outer join orders o on c.customerId = o.customerId" +
+                        " where 100 = c.customerId");
+    }
+
+    @Test
+    public void testEqualsConstantTransitivityRhs() throws Exception {
+        assertPlan("+ 0[ cross ] c (filter: c.customerId = 100)\n" +
+                        "+ 1[ outer ] o (filter: o.customerId = 100) ON o.customerId = c.customerId\n" +
+                        "\n",
+                "customers c" +
+                        " outer join orders o on c.customerId = o.customerId" +
+                        " where c.customerId = 100");
+    }
+
+    @Test
     public void testExceptionOnIntLatestByWithoutFilter() throws Exception {
         try {
             assertThat("", "orders latest by customerId");
@@ -111,15 +130,6 @@ public class JoinQueryTest extends AbstractOptimiserTest {
             Assert.assertEquals(17, e.getPosition());
             Assert.assertTrue(e.getMessage().contains("Only SYM columns"));
         }
-    }
-
-    @Test
-    @Ignore
-    public void testFilterPropagation() throws Exception {
-        assertPlan("",
-                "customers c" +
-                        " outer join orders o on c.customerId = o.customerId" +
-                        " where c.customerId = 100");
     }
 
     @Test
@@ -142,6 +152,32 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                 "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t960875992\t9619\t960\t\t2015-07-10T00:01:29.735Z\tYJZPHQDJKOM\n";
 
         assertThat(expected, "customers join orders on customers.customerId = orders.customerId where customerName ~ 'WTBHZVPVZZ'");
+    }
+
+    @Test
+    public void testInnerJoinEqualsConstant() throws Exception {
+        final String expected = "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t1605271283\t9619\t486\t\t2015-07-10T00:00:29.443Z\tYM\n" +
+                "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t401073894\t9619\t1645\tDND\t2015-07-10T00:00:31.115Z\tFNMURHFGESODNWN\n" +
+                "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t921021073\t9619\t1860\tSR\t2015-07-10T00:00:41.263Z\tOJXJCNBLYTOIYI\n" +
+                "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t1986641415\t9619\t935\tUFUC\t2015-07-10T00:00:50.470Z\tFREQGOPJK\n" +
+                "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t1635896684\t9619\t228\tRQLVWE\t2015-07-10T00:00:51.036Z\tMZCMZMHGTIQ\n" +
+                "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t189633559\t9619\t830\tRQMR\t2015-07-10T00:01:20.166Z\tQPL\n" +
+                "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t960875992\t9619\t960\t\t2015-07-10T00:01:29.735Z\tYJZPHQDJKOM\n";
+
+        assertThat(expected, "customers join orders on customers.customerId = orders.customerId where customerName = 'WTBHZVPVZZ'");
+    }
+
+    @Test
+    public void testInnerJoinEqualsConstantLhs() throws Exception {
+        final String expected = "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t1605271283\t9619\t486\t\t2015-07-10T00:00:29.443Z\tYM\n" +
+                "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t401073894\t9619\t1645\tDND\t2015-07-10T00:00:31.115Z\tFNMURHFGESODNWN\n" +
+                "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t921021073\t9619\t1860\tSR\t2015-07-10T00:00:41.263Z\tOJXJCNBLYTOIYI\n" +
+                "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t1986641415\t9619\t935\tUFUC\t2015-07-10T00:00:50.470Z\tFREQGOPJK\n" +
+                "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t1635896684\t9619\t228\tRQLVWE\t2015-07-10T00:00:51.036Z\tMZCMZMHGTIQ\n" +
+                "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t189633559\t9619\t830\tRQMR\t2015-07-10T00:01:20.166Z\tQPL\n" +
+                "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t960875992\t9619\t960\t\t2015-07-10T00:01:29.735Z\tYJZPHQDJKOM\n";
+
+        assertThat(expected, "customers join orders on customers.customerId = orders.customerId where 'WTBHZVPVZZ' = customerName");
     }
 
     @Test
@@ -724,6 +760,16 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                 "customers c" +
                         " outer join orders o on c.customerId = o.customerId" +
                         " where orderId = NaN");
+    }
+
+    @Test
+    public void testRegexConstantTransitivityRhs() throws Exception {
+        assertPlan("+ 0[ cross ] c (filter: c.customerId ~ '100')\n" +
+                        "+ 1[ outer ] o (filter: o.customerId ~ '100') ON o.customerId = c.customerId\n" +
+                        "\n",
+                "customers c" +
+                        " outer join orders o on c.customerId = o.customerId" +
+                        " where c.customerId ~ '100'");
     }
 
     @Test

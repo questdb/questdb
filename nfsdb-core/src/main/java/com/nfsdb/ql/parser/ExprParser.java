@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
@@ -122,7 +122,7 @@ public class ExprParser {
                     // If the token is a left parenthesis, then push it onto the stack.
                     paramCountStack.push(paramCount);
                     paramCount = 0;
-                    opStack.push(exprNodePool.next().init(ExprNode.NodeType.CONTROL, "(", Integer.MAX_VALUE, toks.position()));
+                    opStack.push(exprNodePool.next().of(ExprNode.NodeType.CONTROL, "(", Integer.MAX_VALUE, toks.position()));
                     break;
 
                 case ')':
@@ -159,7 +159,7 @@ public class ExprParser {
                 case '`':
                     thisBranch = Branch.LAMBDA;
                     // If the token is a number, then add it to the output queue.
-                    listener.onNode(exprNodePool.next().init(ExprNode.NodeType.LAMBDA, tok.toString(), 0, toks.position()));
+                    listener.onNode(exprNodePool.next().of(ExprNode.NodeType.LAMBDA, tok.toString(), 0, toks.position()));
                     break;
                 case '0':
                 case '1':
@@ -178,7 +178,7 @@ public class ExprParser {
                     if ((thisChar != 'N' && thisChar != 'n') || Chars.equals("NaN", tok) || Chars.equals("null", tok)) {
                         thisBranch = Branch.CONSTANT;
                         // If the token is a number, then add it to the output queue.
-                        listener.onNode(exprNodePool.next().init(ExprNode.NodeType.CONSTANT, tok.toString(), 0, toks.position()));
+                        listener.onNode(exprNodePool.next().of(ExprNode.NodeType.CONSTANT, tok.toString(), 0, toks.position()));
                         break;
                     }
                 default:
@@ -221,7 +221,7 @@ public class ExprParser {
                                 break;
                             }
                         }
-                        node = exprNodePool.next().init(
+                        node = exprNodePool.next().of(
                                 op.type == ExprOperator.OperatorType.SET ? ExprNode.NodeType.SET_OPERATION : ExprNode.NodeType.OPERATION,
                                 op.token,
                                 op.precedence,
@@ -238,7 +238,7 @@ public class ExprParser {
                     } else if (!nonLiteralBranches.contains(thisBranch.ordinal())) {
                         thisBranch = Branch.LITERAL;
                         // If the token is a function token, then push it onto the stack.
-                        opStack.push(exprNodePool.next().init(ExprNode.NodeType.LITERAL, Chars.toString(tok), Integer.MIN_VALUE, toks.position()));
+                        opStack.push(exprNodePool.next().of(ExprNode.NodeType.LITERAL, Chars.toString(tok), Integer.MIN_VALUE, toks.position()));
                     } else {
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input

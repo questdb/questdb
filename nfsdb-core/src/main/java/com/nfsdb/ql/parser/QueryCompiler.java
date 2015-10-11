@@ -92,6 +92,9 @@ public class QueryCompiler {
     private final IntList nullCounts = new IntList();
     private final ObjList<CharSequence> selectedColumns = new ObjList<>();
     private final CharSequenceObjHashMap<String> renameMap = new CharSequenceObjHashMap<>();
+    private final CharSequenceIntHashMap constNameToIndex = new CharSequenceIntHashMap();
+    private final CharSequenceObjHashMap<ExprNode> constNameToNode = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<String> constNameToToken = new CharSequenceObjHashMap<>();
     private ObjList<JoinContext> emittedJoinClauses;
 
     public QueryCompiler(JournalReaderFactory factory) {
@@ -139,7 +142,7 @@ public class QueryCompiler {
 
         if (ai == bi) {
             // (same journal)
-            ExprNode node = exprNodePool.next().init(ExprNode.NodeType.OPERATION, "=", 0, 0);
+            ExprNode node = exprNodePool.next().of(ExprNode.NodeType.OPERATION, "=", 0, 0);
             node.paramCount = 2;
             node.lhs = ao;
             node.rhs = bo;
@@ -171,10 +174,39 @@ public class QueryCompiler {
         }
     }
 
-    private void addWhereClause(QueryModel parent, int index, ExprNode filter) {
-        if (filter == null) {
-            return;
+    /**
+     * Adds filters derived from transitivity of equals operation, for example
+     * if there is filter:
+     * <p/>
+     * a.x = b.x and b.x = 10
+     * <p/>
+     * derived filter would be:
+     * <p/>
+     * a.x = 10
+     * <p/>
+     * this filter is not explicitly mentioned but it might help pre-filtering record sources
+     * before hashing.
+     */
+    private void addTransitiveFilters(QueryModel parent) {
+        ObjList<QueryModel> joinModels = parent.getJoinModels();
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            JoinContext jc = joinModels.getQuick(i).getContext();
+            if (jc != null) {
+                for (int k = 0, kn = jc.bNames.size(); k < kn; k++) {
+                    CharSequence name = jc.bNames.getQuick(k);
+                    if (constNameToIndex.get(name) == jc.bIndexes.getQuick(k)) {
+                        ExprNode node = exprNodePool.next().of(ExprNode.NodeType.OPERATION, constNameToToken.get(name), 0, 0);
+                        node.lhs = jc.aNodes.getQuick(k);
+                        node.rhs = constNameToNode.get(name);
+                        node.paramCount = 2;
+                        addWhereClause(parent, jc.slaveIndex, node);
+                    }
+                }
+            }
         }
+    }
+
+    private void addWhereClause(QueryModel parent, int index, ExprNode filter) {
         QueryModel m = parent.getJoinModels().getQuick(index);
         m.setWhereClause(concatFilters(m.getWhereClause(), filter));
     }
@@ -185,9 +217,8 @@ public class QueryCompiler {
      */
     private void alignJoinClauses(QueryModel parent) {
         ObjList<QueryModel> joinModels = parent.getJoinModels();
-        IntList ordered = parent.getOrderedJoinModels();
-        for (int i = 0, n = ordered.size(); i < n; i++) {
-            JoinContext jc = joinModels.getQuick(ordered.getQuick(i)).getContext();
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            JoinContext jc = joinModels.getQuick(i).getContext();
             if (jc != null) {
                 int index = jc.slaveIndex;
                 for (int k = 0, kc = jc.aIndexes.size(); k < kc; k++) {
@@ -230,11 +261,17 @@ public class QueryCompiler {
         switch (aSize) {
             case 0:
                 if (bSize == 1 && literalCollector.nullCount == 0) {
-                    // single journal reference
+                    // single journal reference + constant
                     jc = contextPool.next();
                     jc.slaveIndex = literalCollectorBIndexes.getQuick(0);
+
                     addWhereClause(parent, jc.slaveIndex, node);
                     addJoinContext(parent, jc);
+
+                    CharSequence cs = literalCollectorBNames.getQuick(0);
+                    constNameToIndex.put(cs, jc.slaveIndex);
+                    constNameToNode.put(cs, node.lhs);
+                    constNameToToken.put(cs, node.token);
                 } else {
                     parent.addParsedWhereNode(node);
                 }
@@ -262,11 +299,16 @@ public class QueryCompiler {
                         linkDependencies(parent, min, max);
                     }
                     addJoinContext(parent, jc);
-                } else if (literalCollector.nullCount == 0) {
-                    // single journal reference
+                } else if (bSize == 0 && literalCollector.nullCount == 0) {
+                    // single journal reference + constant
                     jc.slaveIndex = lhi;
                     addWhereClause(parent, lhi, node);
                     addJoinContext(parent, jc);
+
+                    CharSequence cs = literalCollectorANames.getQuick(0);
+                    constNameToIndex.put(cs, lhi);
+                    constNameToNode.put(cs, node.rhs);
+                    constNameToToken.put(cs, node.token);
                 } else {
                     parent.addParsedWhereNode(node);
                 }
@@ -284,6 +326,30 @@ public class QueryCompiler {
             model.setLimitVc(LONG_ZERO_CONST, toVirtualColumn(lo));
         } else {
             model.setLimitVc(toVirtualColumn(lo), toVirtualColumn(hi));
+        }
+    }
+
+    private void analyseRegex(QueryModel parent, ExprNode node) throws ParserException {
+        literalCollectorAIndexes.clear();
+        literalCollectorBIndexes.clear();
+
+        literalCollectorANames.clear();
+        literalCollectorBNames.clear();
+
+        literalCollector.withParent(parent);
+        literalCollector.resetNullCount();
+        traversalAlgo.traverse(node.lhs, literalCollector.lhs());
+        traversalAlgo.traverse(node.rhs, literalCollector.rhs());
+
+        if (literalCollector.nullCount == 0) {
+            int aSize = literalCollectorAIndexes.size();
+            int bSize = literalCollectorBIndexes.size();
+            if (aSize == 1 && bSize == 0) {
+                CharSequence name = literalCollectorANames.getQuick(0);
+                constNameToIndex.put(name, literalCollectorAIndexes.getQuick(0));
+                constNameToNode.put(name, node.rhs);
+                constNameToToken.put(name, node.token);
+            }
         }
     }
 
@@ -415,6 +481,9 @@ public class QueryCompiler {
         joinClausesSwap1.clear();
         joinClausesSwap2.clear();
         queryFilterAnalyser.reset();
+        constNameToIndex.clear();
+        constNameToNode.clear();
+        constNameToToken.clear();
     }
 
     private JournalMetadata collectJournalMetadata(QueryModel model, JournalReaderFactory factory) throws ParserException, JournalException {
@@ -727,7 +796,7 @@ public class QueryCompiler {
         if (old == null) {
             return filter;
         } else {
-            ExprNode n = exprNodePool.next().init(ExprNode.NodeType.OPERATION, "and", 0, 0);
+            ExprNode n = exprNodePool.next().of(ExprNode.NodeType.OPERATION, "and", 0, 0);
             n.paramCount = 2;
             n.lhs = old;
             n.rhs = filter;
@@ -857,6 +926,15 @@ public class QueryCompiler {
         return master;
     }
 
+    /**
+     * Creates dependencies via implied columns, typically timestamp.
+     * Dependencies like that are no explicitly expressed in SQL query and
+     * therefore are not created by analyzing "where" clause.
+     * <p/>
+     * Explicit dependencies however are required for journal ordering.
+     *
+     * @param parent the parent model
+     */
     private void createImpliedDependencies(QueryModel parent) {
         ObjList<QueryModel> models = parent.getJoinModels();
         JoinContext jc;
@@ -1173,6 +1251,7 @@ public class QueryCompiler {
             homogenizeCrossJoins(parent);
             assignFilters(parent);
             alignJoinClauses(parent);
+            addTransitiveFilters(parent);
         }
         return this;
     }
@@ -1239,6 +1318,9 @@ public class QueryCompiler {
                         processOrConditions(parent, node);
                         node = null;
                         break;
+                    case "~":
+                        analyseRegex(parent, node);
+                        // intentional fallthrough
                     default:
                         parent.addParsedWhereNode(node);
                         node = null;
