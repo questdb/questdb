@@ -74,7 +74,6 @@ public class QueryCompiler {
     private final IntList literalCollectorBIndexes = new IntList();
     private final ObjList<CharSequence> literalCollectorBNames = new ObjList<>();
     private final LiteralCollector literalCollector = new LiteralCollector();
-    //    private final IntStack orderingStack = new IntStack();
     private final IntPriorityQueue orderingStack = new IntPriorityQueue();
     private final IntList tempCrosses = new IntList();
     private final IntList tempCrossIndexes = new IntList();
@@ -91,10 +90,11 @@ public class QueryCompiler {
     private final ArrayDeque<ExprNode> andConditionStack = new ArrayDeque<>();
     private final IntList nullCounts = new IntList();
     private final ObjList<CharSequence> selectedColumns = new ObjList<>();
-    private final CharSequenceObjHashMap<String> renameMap = new CharSequenceObjHashMap<>();
+    private final ObjList<CharSequence> selectedColumnAliases = new ObjList<>();
     private final CharSequenceIntHashMap constNameToIndex = new CharSequenceIntHashMap();
     private final CharSequenceObjHashMap<ExprNode> constNameToNode = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<String> constNameToToken = new CharSequenceObjHashMap<>();
+
     private ObjList<JoinContext> emittedJoinClauses;
 
     public QueryCompiler(JournalReaderFactory factory) {
@@ -490,6 +490,15 @@ public class QueryCompiler {
         constNameToToken.clear();
     }
 
+    private void collectColumnNameFrequency(QueryModel model, RecordSource<? extends Record> rs) {
+        CharSequenceIntHashMap map = model.getColumnNameHistogram();
+        RecordMetadata m = rs.getMetadata();
+        for (int i = 0, n = m.getColumnCount(); i < n; i++) {
+            CharSequence name = m.getColumnQuick(i).getName();
+            map.put(name, map.get(name) + 1);
+        }
+    }
+
     private JournalMetadata collectJournalMetadata(QueryModel model, JournalReaderFactory factory) throws ParserException, JournalException {
         ExprNode readerNode = model.getJournalName();
         if (readerNode.type != ExprNode.NodeType.LITERAL && readerNode.type != ExprNode.NodeType.CONSTANT) {
@@ -515,7 +524,8 @@ public class QueryCompiler {
                 selectColumns(
                         model.getJoinModels().size() > 1 ?
                                 optimise(model, factory).compileJoins(model, factory) :
-                                optimise(model, factory).compileSingleOrSubQuery(model, factory), model.getColumns()
+                                optimise(model, factory).compileSingleOrSubQuery(model, factory),
+                        model
                 ), model
         );
     }
@@ -526,14 +536,21 @@ public class QueryCompiler {
         IntList ordered = model.getOrderedJoinModels();
         RecordSource<? extends Record> master = null;
 
+        boolean collectColumnNameFrequency = model.getColumns().size() > 0;
+
         for (int i = 0, n = ordered.size(); i < n; i++) {
             int index = ordered.getQuick(i);
             QueryModel m = joinModels.getQuick(index);
 
             // compile
             RecordSource<? extends Record> slave = m.getRecordSource();
+
             if (slave == null) {
                 slave = compileSingleOrSubQuery(m, factory);
+            }
+
+            if (collectColumnNameFrequency) {
+                collectColumnNameFrequency(model, slave);
             }
 
             // check if this is the root of joins
@@ -560,7 +577,6 @@ public class QueryCompiler {
             if (filter != null) {
                 master = new FilteredJournalRecordSource(master, createVirtualColumn(filter, master.getMetadata()));
             }
-
         }
 
         if (joinModelIsFalse(model)) {
@@ -1020,7 +1036,7 @@ public class QueryCompiler {
     private VirtualColumn lookupColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
         try {
             int index = metadata.getColumnIndex(node.token);
-            switch (metadata.getColumn(index).getType()) {
+            switch (metadata.getColumnQuick(index).getType()) {
                 case DOUBLE:
                     return new DoubleRecordSourceColumn(index);
                 case INT:
@@ -1538,11 +1554,12 @@ public class QueryCompiler {
 
     private void resolveJoinMetadata(QueryModel parent, int index, JournalReaderFactory factory) throws JournalException, ParserException {
         QueryModel model = parent.getJoinModels().getQuick(index);
+        RecordMetadata metadata;
         if (model.getJournalName() != null) {
-            model.setMetadata(collectJournalMetadata(model, factory));
+            model.setMetadata(metadata = collectJournalMetadata(model, factory));
         } else {
             RecordSource<? extends Record> rs = compile(model.getNestedModel(), factory);
-            model.setMetadata(rs.getMetadata());
+            model.setMetadata(metadata = rs.getMetadata());
             model.setRecordSource(rs);
         }
 
@@ -1550,8 +1567,10 @@ public class QueryCompiler {
             if (!parent.addAliasIndex(model.getAlias(), index)) {
                 throw new ParserException(model.getAlias().position, "Duplicate alias");
             }
+            metadata.setAlias(model.getAlias().token);
         } else if (model.getJournalName() != null) {
             parent.addAliasIndex(model.getJournalName(), index);
+            metadata.setAlias(model.getJournalName().token);
         }
     }
 
@@ -1593,14 +1612,18 @@ public class QueryCompiler {
         }
     }
 
-    private RecordSource<? extends Record> selectColumns(RecordSource<? extends Record> rs, ObjList<QueryColumn> columns) throws ParserException {
-        if (columns.size() == 0) {
-            return rs;
-        }
+    private RecordSource<? extends Record> selectColumns(RecordSource<? extends Record> rs, QueryModel model) throws ParserException {
+        return model.getColumns().size() == 0 ? rs : selectColumns0(rs, model);
+    }
+
+    @NotNull
+    private RecordSource<? extends Record> selectColumns0(RecordSource<? extends Record> rs, QueryModel model) throws ParserException {
+        final ObjList<QueryColumn> columns = model.getColumns();
+        final CharSequenceIntHashMap columnNameHistogram = model.getColumnNameHistogram();
 
         ObjList<VirtualColumn> virtualColumns = null;
         this.selectedColumns.clear();
-        this.renameMap.clear();
+        this.selectedColumnAliases.clear();
 
         int columnSequence = 0;
         final RecordMetadata meta = rs.getMetadata();
@@ -1609,27 +1632,28 @@ public class QueryCompiler {
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
             ExprNode node = qc.getAst();
-            String colName = qc.getName();
+            String alias = qc.getAlias();
 
             switch (node.type) {
                 case LITERAL:
                     if (meta.invalidColumn(node.token)) {
                         throw new InvalidColumnException(node.position);
                     }
-                    selectedColumns.add(node.token);
-                    if (colName != null) {
-                        renameMap.put(node.token, colName);
+                    if (columnNameHistogram.get(node.token) > 0) {
+                        throw new ParserException(node.position, "Ambiguous column name");
                     }
+                    selectedColumns.add(node.token);
+                    selectedColumnAliases.add(alias);
                     break;
                 default:
-                    if (colName == null) {
+                    if (alias == null) {
                         columnNameAssembly.clear(columnNamePrefixLen);
                         Numbers.append(columnNameAssembly, columnSequence++);
-                        colName = columnNameAssembly.toString();
+                        alias = columnNameAssembly.toString();
                     }
                     VirtualColumn c = createVirtualColumn(qc.getAst(), rs.getMetadata());
-                    c.setName(colName);
-                    selectedColumns.add(colName);
+                    c.setName(alias);
+                    selectedColumns.add(alias);
                     if (virtualColumns == null) {
                         virtualColumns = new ObjList<>();
                     }
@@ -1640,7 +1664,7 @@ public class QueryCompiler {
         if (virtualColumns != null) {
             rs = new VirtualColumnRecordSource(rs, virtualColumns);
         }
-        return new SelectedColumnsRecordSource(rs, selectedColumns, renameMap);
+        return new SelectedColumnsRecordSource(rs, selectedColumns, selectedColumnAliases);
     }
 
     /**

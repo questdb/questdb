@@ -36,7 +36,6 @@ import com.nfsdb.utils.Unsafe;
 
 public class LastFixRecordMap implements LastRecordMap {
     private static final ObjList<RecordColumnMetadata> valueMetadata = new ObjList<>();
-    private final static CharSequenceObjHashMap<String> EMPTY_MAP = new CharSequenceObjHashMap<>();
     private final MultiMap map;
     private final LongList pages = new LongList();
     private final int pageSize;
@@ -78,13 +77,13 @@ public class LastFixRecordMap implements LastRecordMap {
         for (int i = 0; i < ksz; i++) {
             int idx;
             idx = masterMetadata.getColumnIndex(masterKeyColumns.get(i));
-            masterKeyTypes.add(masterMetadata.getColumn(idx).getType());
+            masterKeyTypes.add(masterMetadata.getColumnQuick(idx).getType());
             masterKeyIndexes.add(idx);
 
             idx = slaveMetadata.getColumnIndex(slaveKeyColumns.get(i));
             slaveKeyIndexes.add(idx);
-            slaveKeyTypes.add(slaveMetadata.getColumn(idx).getType());
-            keyCols.add(slaveMetadata.getColumn(idx));
+            slaveKeyTypes.add(slaveMetadata.getColumnQuick(idx).getType());
+            keyCols.add(slaveMetadata.getColumnQuick(idx));
         }
 
         this.fixedOffsets = new IntList(ksz - keyCols.size());
@@ -100,10 +99,10 @@ public class LastFixRecordMap implements LastRecordMap {
                 continue;
             }
 
-            slaveColumnNames.add(slaveMetadata.getColumn(i).getName());
+            slaveColumnNames.add(slaveMetadata.getColumnQuick(i).getName());
             fixedOffsets.add(varOffset);
             slaveValueIndexes.add(i);
-            ColumnType type = slaveMetadata.getColumn(i).getType();
+            ColumnType type = slaveMetadata.getColumnQuick(i).getType();
             slaveValueTypes.add(type);
 
             switch (type) {
@@ -133,7 +132,7 @@ public class LastFixRecordMap implements LastRecordMap {
 
         this.recordLen = varOffset;
         this.map = new MultiMap(valueMetadata, keyCols, null);
-        this.metadata = new SelectedColumnsMetadata(slaveMetadata, slaveColumnNames, EMPTY_MAP);
+        this.metadata = new SelectedColumnsMetadata(slaveMetadata, slaveColumnNames);
         this.record = new MapRecord(this.metadata);
     }
 

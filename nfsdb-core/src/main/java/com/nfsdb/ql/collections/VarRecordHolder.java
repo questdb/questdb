@@ -53,7 +53,7 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
         int offset = 0;
         for (int i = 0; i < cc; i++) {
 
-            ColumnType type = metadata.getColumn(i).getType();
+            ColumnType type = metadata.getColumnQuick(i).getType();
             types.add(type);
             offsets.add(offset);
 

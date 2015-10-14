@@ -34,7 +34,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.lang.StringBuilder;
 import java.lang.reflect.Constructor;
 
-public class JournalMetadata<T> implements RecordMetadata {
+public class JournalMetadata<T> extends AbstractRecordMetadata {
 
     private static final int TO_STRING_COL1_PAD = 20;
     private static final int TO_STRING_COL2_PAD = 55;
@@ -138,13 +138,13 @@ public class JournalMetadata<T> implements RecordMetadata {
     }
 
     @Override
-    public ColumnMetadata getColumn(int columnIndex) {
-        return columnMetadata[columnIndex];
+    public ColumnMetadata getColumn(CharSequence name) {
+        return Unsafe.arrayGet(columnMetadata, getColumnIndex(name));
     }
 
     @Override
-    public ColumnMetadata getColumn(CharSequence name) {
-        return Unsafe.arrayGet(columnMetadata, getColumnIndex(name));
+    public ColumnMetadata getColumn(int columnIndex) {
+        return columnMetadata[columnIndex];
     }
 
     public int getColumnCount() {

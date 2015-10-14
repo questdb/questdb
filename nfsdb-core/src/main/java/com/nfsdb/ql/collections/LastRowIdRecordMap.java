@@ -22,7 +22,6 @@
 package com.nfsdb.ql.collections;
 
 import com.nfsdb.collections.CharSequenceHashSet;
-import com.nfsdb.collections.CharSequenceObjHashMap;
 import com.nfsdb.collections.IntHashSet;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
@@ -35,7 +34,6 @@ import com.nfsdb.storage.ColumnType;
 
 public class LastRowIdRecordMap implements LastRecordMap {
     private static final ObjList<RecordColumnMetadata> valueMetadata = new ObjList<>();
-    private final static CharSequenceObjHashMap<String> EMPTY_MAP = new CharSequenceObjHashMap<>();
     private final MultiMap map;
     private final IntHashSet slaveKeyIndexes;
     private final IntHashSet masterKeyIndexes;
@@ -64,13 +62,13 @@ public class LastRowIdRecordMap implements LastRecordMap {
         for (int i = 0; i < ksz; i++) {
             int idx;
             idx = masterMetadata.getColumnIndex(masterKeyColumns.get(i));
-            masterKeyTypes.add(masterMetadata.getColumn(idx).getType());
+            masterKeyTypes.add(masterMetadata.getColumnQuick(idx).getType());
             masterKeyIndexes.add(idx);
 
             idx = slaveMetadata.getColumnIndex(slaveKeyColumns.get(i));
             slaveKeyIndexes.add(idx);
-            slaveKeyTypes.add(slaveMetadata.getColumn(idx).getType());
-            keyCols.add(slaveMetadata.getColumn(idx));
+            slaveKeyTypes.add(slaveMetadata.getColumnQuick(idx).getType());
+            keyCols.add(slaveMetadata.getColumnQuick(idx));
         }
 
         ObjList<CharSequence> slaveColumnNames = new ObjList<>();
@@ -78,11 +76,11 @@ public class LastRowIdRecordMap implements LastRecordMap {
             if (slaveKeyIndexes.contains(i)) {
                 continue;
             }
-            slaveColumnNames.add(slaveMetadata.getColumn(i).getName());
+            slaveColumnNames.add(slaveMetadata.getColumnQuick(i).getName());
         }
 
         this.map = new MultiMap(valueMetadata, keyCols, null);
-        this.metadata = new SelectedColumnsMetadata(slaveMetadata, slaveColumnNames, EMPTY_MAP);
+        this.metadata = new SelectedColumnsMetadata(slaveMetadata, slaveColumnNames);
         this.record = new SelectedColumnsRecord(slaveMetadata, slaveColumnNames);
     }
 

@@ -47,7 +47,7 @@ public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
 
         int offset = 0;
         for (int i = 0; i < cc; i++) {
-            ColumnType type = metadata.getColumn(i).getType();
+            ColumnType type = metadata.getColumnQuick(i).getType();
             types.add(type);
             offsets.add(offset);
 
@@ -75,8 +75,8 @@ public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
     }
 
     @Override
-    public void close() {
-        Unsafe.getUnsafe().freeMemory(address);
+    public void clear() {
+        held = false;
     }
 
     @Override
@@ -124,8 +124,8 @@ public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
     }
 
     @Override
-    public void clear() {
-        held = false;
+    public void close() {
+        Unsafe.getUnsafe().freeMemory(address);
     }
 
     protected long address(int col) {

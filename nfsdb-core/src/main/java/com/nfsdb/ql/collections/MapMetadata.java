@@ -24,11 +24,11 @@ package com.nfsdb.ql.collections;
 import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.factory.configuration.AbstractRecordMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.utils.Unsafe;
 
-public final class MapMetadata implements RecordMetadata {
+public final class MapMetadata extends AbstractRecordMetadata {
 
     private final CharSequenceIntHashMap nameCache;
     private final int columnCount;
@@ -52,13 +52,13 @@ public final class MapMetadata implements RecordMetadata {
     }
 
     @Override
-    public RecordColumnMetadata getColumn(int index) {
-        return columns[index];
+    public RecordColumnMetadata getColumn(CharSequence name) {
+        return getColumnQuick(getColumnIndex(name));
     }
 
     @Override
-    public RecordColumnMetadata getColumn(CharSequence name) {
-        return getColumnQuick(getColumnIndex(name));
+    public RecordColumnMetadata getColumn(int index) {
+        return columns[index];
     }
 
     @Override

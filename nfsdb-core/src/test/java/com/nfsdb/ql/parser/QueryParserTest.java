@@ -314,8 +314,8 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertEquals("zyzy", statement.getQueryModel().getJournalName().token);
         // columns
         Assert.assertEquals(2, statement.getQueryModel().getColumns().size());
-        Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getName());
-        Assert.assertEquals("ohoh", statement.getQueryModel().getColumns().get(1).getName());
+        Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getAlias());
+        Assert.assertEquals("ohoh", statement.getQueryModel().getColumns().get(1).getAlias());
         // where
         Assert.assertEquals("axyinb10=and", TestUtils.toRpn(statement.getQueryModel().getWhereClause()));
         // latest by
@@ -329,8 +329,8 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals("zyzy", statement.getQueryModel().getJournalName().token);
         Assert.assertEquals(2, statement.getQueryModel().getColumns().size());
-        Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getName());
-        Assert.assertEquals("ohoh", statement.getQueryModel().getColumns().get(1).getName());
+        Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getAlias());
+        Assert.assertEquals("ohoh", statement.getQueryModel().getColumns().get(1).getAlias());
     }
 
     @Test
@@ -383,7 +383,7 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals(1, statement.getQueryModel().getColumns().size());
-        Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getName());
+        Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getAlias());
         Assert.assertEquals("+", statement.getQueryModel().getColumns().get(0).getAst().token);
         Assert.assertEquals("t", statement.getQueryModel().getJournalName().token);
     }
@@ -396,8 +396,8 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertEquals("tab", statement.getQueryModel().getJournalName().token);
         // columns
         Assert.assertEquals(2, statement.getQueryModel().getColumns().size());
-        Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getName());
-        Assert.assertEquals("y", statement.getQueryModel().getColumns().get(1).getName());
+        Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getAlias());
+        Assert.assertEquals("y", statement.getQueryModel().getColumns().get(1).getAlias());
         // where
         Assert.assertEquals("xz>", TestUtils.toRpn(statement.getQueryModel().getWhereClause()));
         // limit
@@ -412,8 +412,8 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertEquals("tab", statement.getQueryModel().getJournalName().token);
         // columns
         Assert.assertEquals(2, statement.getQueryModel().getColumns().size());
-        Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getName());
-        Assert.assertEquals("y", statement.getQueryModel().getColumns().get(1).getName());
+        Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getAlias());
+        Assert.assertEquals("y", statement.getQueryModel().getColumns().get(1).getAlias());
         // where
         Assert.assertEquals("xz>", TestUtils.toRpn(statement.getQueryModel().getWhereClause()));
         // limit
@@ -453,8 +453,8 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertEquals("tab", statement.getQueryModel().getNestedModel().getJournalName().token);
         // columns
         Assert.assertEquals(2, statement.getQueryModel().getNestedModel().getColumns().size());
-        Assert.assertEquals("x", statement.getQueryModel().getNestedModel().getColumns().get(0).getName());
-        Assert.assertEquals("y", statement.getQueryModel().getNestedModel().getColumns().get(1).getName());
+        Assert.assertEquals("x", statement.getQueryModel().getNestedModel().getColumns().get(0).getAlias());
+        Assert.assertEquals("y", statement.getQueryModel().getNestedModel().getColumns().get(1).getAlias());
         // where
         Assert.assertEquals("xz>", TestUtils.toRpn(statement.getQueryModel().getNestedModel().getWhereClause()));
         // limit
@@ -500,8 +500,8 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertEquals("zyzy", statement.getQueryModel().getJournalName().token);
         // columns
         Assert.assertEquals(2, statement.getQueryModel().getColumns().size());
-        Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getName());
-        Assert.assertEquals("ohoh", statement.getQueryModel().getColumns().get(1).getName());
+        Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getAlias());
+        Assert.assertEquals("ohoh", statement.getQueryModel().getColumns().get(1).getAlias());
         // where
         Assert.assertEquals("axyinb10=and", TestUtils.toRpn(statement.getQueryModel().getWhereClause()));
     }

@@ -23,23 +23,71 @@ package com.nfsdb.ql.impl;
 
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
+import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class JournalSource extends AbstractJournalSource<JournalRecord> implements RecordSource<JournalRecord>, RecordCursor<JournalRecord> {
+public class JournalSource extends com.nfsdb.collections.AbstractImmutableIterator<JournalRecord> implements RecordSource<JournalRecord>, RecordCursor<JournalRecord>, RecordMetadata {
     private final PartitionSource partitionSource;
     private final RowSource rowSource;
     private final JournalRecord rec = new JournalRecord(this);
+    private final JournalMetadata metadata;
     private PartitionCursor partitionCursor;
     private RowCursor cursor;
 
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     public JournalSource(PartitionSource partitionSource, RowSource rowSource) {
-        super(partitionSource.getMetadata());
+        this.metadata = partitionSource.getMetadata();
         this.partitionSource = partitionSource;
         rowSource.configure(partitionSource.getMetadata());
         this.rowSource = rowSource;
+    }
+
+    @Override
+    public String getAlias() {
+        return metadata.getAlias();
+    }
+
+    @Override
+    public void setAlias(String alias) {
+        metadata.setAlias(alias);
+    }
+
+    @Override
+    public RecordColumnMetadata getColumn(CharSequence name) {
+        return metadata.getColumn(name);
+    }
+
+    @Override
+    public RecordColumnMetadata getColumn(int index) {
+        return metadata.getColumn(index);
+    }
+
+    @Override
+    public int getColumnCount() {
+        return metadata.getColumnCount();
+    }
+
+    @Override
+    public int getColumnIndex(CharSequence name) {
+        return metadata.getColumnIndex(name);
+    }
+
+    @Override
+    public RecordColumnMetadata getColumnQuick(int index) {
+        return metadata.getColumnQuick(index);
+    }
+
+    @Override
+    public RecordColumnMetadata getTimestampMetadata() {
+        return metadata.getTimestampMetadata();
+    }
+
+    @Override
+    public boolean invalidColumn(CharSequence name) {
+        return metadata.invalidColumn(name);
     }
 
     @Override

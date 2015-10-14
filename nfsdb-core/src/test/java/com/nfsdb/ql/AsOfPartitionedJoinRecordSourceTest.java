@@ -25,6 +25,7 @@ import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.collections.CharSequenceHashSet;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.factory.configuration.RecordMetadata;
@@ -220,6 +221,16 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testAmbiguousColumn() throws Exception {
+        try {
+            compiler.compile("select timestamp from y asof join x on x.ccy = y.ccy");
+        } catch (ParserException e) {
+            Assert.assertEquals(7, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("Ambiguous"));
+        }
+    }
+
+    @Test
     public void testFixJoin() throws Exception {
         final String expected = "2015-03-10T00:01:00.000Z\tSWHYRX\t0.937527447939\tIYMQGYIYHVZMXGRFXUIUNMOQUIHPNGNOTXDHUZFW\t2015-03-10T00:00:50.000Z\t0.000039573626\t0.000003805120\tVTJWCP\t-5106801657083469087\t0.2093\t-20638\ttrue\n" +
                 "2015-03-10T00:02:00.000Z\tSWHYRX\t-354.250000000000\tREQIELGOYUKUTNWDLEXTVTXMGNRSVIVWEDZMVQTSYCVPGQMEYLBGSLMIBQLXNLKYSPOEXUVJHZQ\t2015-03-10T00:01:50.000Z\t832.000000000000\t0.759080171585\tSWHYRX\t-6913510864836958686\t0.2185\t-24061\tfalse\n" +
@@ -310,7 +321,8 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
 
     @Test
     public void testRowidJoin() throws Exception {
-        final String expected = "2015-03-10T00:01:00.000Z\tSWHYRX\t0.937527447939\tIYMQGYIYHVZMXGRFXUIUNMOQUIHPNGNOTXDHUZFW\t2015-03-10T00:00:50.000Z\t0.000039573626\t0.000003805120\tSRGOONFCLTJCKFMQNTOGMXUKLGMXSLUQDYOPHNIMYFFDTNPHFLPBNHGZWWCCNGTNLEGPUHHIUGGLNYRZLCBDMIGQZVKHTLQZ\tVTJWCP\t0.2093\t-20638\t-5106801657083469087\ttrue\n" +
+        final String expected = "timestamp\tccy\tamount\ttrader\ttimestamp\trate\tamount\ttrader\tcontra\tfl\tsh\tln\tb\n" +
+                "2015-03-10T00:01:00.000Z\tSWHYRX\t0.937527447939\tIYMQGYIYHVZMXGRFXUIUNMOQUIHPNGNOTXDHUZFW\t2015-03-10T00:00:50.000Z\t0.000039573626\t0.000003805120\tSRGOONFCLTJCKFMQNTOGMXUKLGMXSLUQDYOPHNIMYFFDTNPHFLPBNHGZWWCCNGTNLEGPUHHIUGGLNYRZLCBDMIGQZVKHTLQZ\tVTJWCP\t0.2093\t-20638\t-5106801657083469087\ttrue\n" +
                 "2015-03-10T00:02:00.000Z\tSWHYRX\t-354.250000000000\tREQIELGOYUKUTNWDLEXTVTXMGNRSVIVWEDZMVQTSYCVPGQMEYLBGSLMIBQLXNLKYSPOEXUVJHZQ\t2015-03-10T00:01:50.000Z\t832.000000000000\t0.759080171585\tEYMIWTCWLFORGFIEVMKPYVGPYKKBMQMUDDCIHCNPUGJOPJEUKWMDNZZBBUKOJSOLDYRODIPUNRPSMIFDYPDKOEZBRQSQJGDIHHNSSTCRZUPVQFULMERTPIQ\tSWHYRX\t0.2185\t-24061\t-6913510864836958686\tfalse\n" +
                 "2015-03-10T00:03:00.000Z\tVTJWCP\t0.016129214317\tQBMDSVCBRNNDKHPDGPEGWYXIVMNRTOYZSBBJSQBCEIBVNGVPPMOEQHHTNCWVRYTTYNRSW\t2015-03-10T00:02:30.000Z\t0.000005960636\t0.000000006302\tKMEKPFOYMNWDSWLUVDRHFBCZIOLYLPGZHITQJLKTRDLVSYLMSRHGKRKKUSIMYDXUUSKCXNMUREIJUHCLQCMZCCYVBDMQEHDHQHKSNGIZRPFMDVVGSVCLLERSMK\tSWHYRX\t0.4355\t24525\t-6595197632099589183\tfalse\n" +
                 "2015-03-10T00:04:00.000Z\tSWHYRX\t-502.603027343750\tPRIWBBOOYOBEXRYNHRGGBDEWWROZTQQDOGUVJHQJHNYWCXWTBBMMDBBHLPGXIIDYSTGXRGUOXFHBLMYFVFFOB\t2015-03-10T00:03:40.000Z\t0.000355324199\t-602.687500000000\tTFBYHSHBXOWVYUVV\tVTJWCP\t0.4722\t26075\t-1359049242368089934\ttrue\n" +
@@ -330,11 +342,11 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 , keys
                 , 512
         )) {
-            printer.printCursor(source.prepareCursor(factory));
+            printer.printCursor(source.prepareCursor(factory), true);
             TestUtils.assertEquals(expected, sink);
             sink.clear();
             source.reset();
-            printer.printCursor(source.prepareCursor(factory));
+            printer.printCursor(source.prepareCursor(factory), true);
             TestUtils.assertEquals(expected, sink);
         }
     }
@@ -396,7 +408,8 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
 
     @Test
     public void testVarJoin() throws Exception {
-        final String expected = "2015-03-10T00:01:00.000Z\tSWHYRX\t0.937527447939\tIYMQGYIYHVZMXGRFXUIUNMOQUIHPNGNOTXDHUZFW\t2015-03-10T00:00:50.000Z\t0.000039573626\t0.000003805120\tSRGOONFCLTJCKFMQNTOGMXUKLGMXSLUQDYOPHNIMYFFDTNPHFLPBNHGZWWCCNGTNLEGPUHHIUGGLNYRZLCBDMIGQZVKHTLQZ\tVTJWCP\t0.2093\t-20638\t-5106801657083469087\ttrue\n" +
+        final String expected = "timestamp\tccy\tamount\ttrader\ttimestamp\trate\tamount\ttrader\tcontra\tfl\tsh\tln\tb\n" +
+                "2015-03-10T00:01:00.000Z\tSWHYRX\t0.937527447939\tIYMQGYIYHVZMXGRFXUIUNMOQUIHPNGNOTXDHUZFW\t2015-03-10T00:00:50.000Z\t0.000039573626\t0.000003805120\tSRGOONFCLTJCKFMQNTOGMXUKLGMXSLUQDYOPHNIMYFFDTNPHFLPBNHGZWWCCNGTNLEGPUHHIUGGLNYRZLCBDMIGQZVKHTLQZ\tVTJWCP\t0.2093\t-20638\t-5106801657083469087\ttrue\n" +
                 "2015-03-10T00:02:00.000Z\tSWHYRX\t-354.250000000000\tREQIELGOYUKUTNWDLEXTVTXMGNRSVIVWEDZMVQTSYCVPGQMEYLBGSLMIBQLXNLKYSPOEXUVJHZQ\t2015-03-10T00:01:50.000Z\t832.000000000000\t0.759080171585\tEYMIWTCWLFORGFIEVMKPYVGPYKKBMQMUDDCIHCNPUGJOPJEUKWMDNZZBBUKOJSOLDYRODIPUNRPSMIFDYPDKOEZBRQSQJGDIHHNSSTCRZUPVQFULMERTPIQ\tSWHYRX\t0.2185\t-24061\t-6913510864836958686\tfalse\n" +
                 "2015-03-10T00:03:00.000Z\tVTJWCP\t0.016129214317\tQBMDSVCBRNNDKHPDGPEGWYXIVMNRTOYZSBBJSQBCEIBVNGVPPMOEQHHTNCWVRYTTYNRSW\t2015-03-10T00:02:30.000Z\t0.000005960636\t0.000000006302\tKMEKPFOYMNWDSWLUVDRHFBCZIOLYLPGZHITQJLKTRDLVSYLMSRHGKRKKUSIMYDXUUSKCXNMUREIJUHCLQCMZCCYVBDMQEHDHQHKSNGIZRPFMDVVGSVCLLERSMK\tSWHYRX\t0.4355\t24525\t-6595197632099589183\tfalse\n" +
                 "2015-03-10T00:04:00.000Z\tSWHYRX\t-502.603027343750\tPRIWBBOOYOBEXRYNHRGGBDEWWROZTQQDOGUVJHQJHNYWCXWTBBMMDBBHLPGXIIDYSTGXRGUOXFHBLMYFVFFOB\t2015-03-10T00:03:40.000Z\t0.000355324199\t-602.687500000000\tTFBYHSHBXOWVYUVV\tVTJWCP\t0.4722\t26075\t-1359049242368089934\ttrue\n" +
@@ -416,11 +429,11 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 , keys
                 , 512
         )) {
-            printer.printCursor(source.prepareCursor(factory));
+            printer.printCursor(source.prepareCursor(factory), true);
             TestUtils.assertEquals(expected, sink);
             source.reset();
             sink.clear();
-            printer.printCursor(source.prepareCursor(factory));
+            printer.printCursor(source.prepareCursor(factory), true);
             TestUtils.assertEquals(expected, sink);
         }
     }

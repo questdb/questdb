@@ -55,7 +55,7 @@ public class MemoryRecordAccessor extends AbstractRecord {
 
         int varColIndex = 0;
         for (int i = 0; i < offsets.length; i++) {
-            ColumnType ct = metadata.getColumn(i).getType();
+            ColumnType ct = metadata.getColumnQuick(i).getType();
             if (ct.size() != 0) {
                 // Fixed columns.
                 offsets[i] = fixedSize;

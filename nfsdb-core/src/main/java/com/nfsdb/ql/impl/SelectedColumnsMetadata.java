@@ -22,9 +22,9 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.CharSequenceIntHashMap;
-import com.nfsdb.collections.CharSequenceObjHashMap;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.factory.configuration.AbstractRecordMetadata;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
@@ -33,7 +33,7 @@ import com.nfsdb.utils.Unsafe;
 
 import java.util.Arrays;
 
-public class SelectedColumnsMetadata implements RecordMetadata {
+public class SelectedColumnsMetadata extends AbstractRecordMetadata {
     private final RecordMetadata delegate;
     private final RecordColumnMetadata columnMetadata[];
     private final CharSequenceIntHashMap nameIndex;
@@ -49,30 +49,47 @@ public class SelectedColumnsMetadata implements RecordMetadata {
      *
      * @param delegate  the delegate metadata
      * @param names     list of column names to select
-     * @param renameMap map of rename operations, original column name has to be key and new name is the value.
+     * @param rename map of rename operations, original column name has to be key and new name is the value.
      */
-    public SelectedColumnsMetadata(RecordMetadata delegate, ObjList<CharSequence> names, CharSequenceObjHashMap<String> renameMap) {
+    public SelectedColumnsMetadata(RecordMetadata delegate, ObjList<CharSequence> names, ObjList<CharSequence> rename) {
         this.delegate = delegate;
         int k = names.size();
         this.nameIndex = new CharSequenceIntHashMap(k);
         this.columnMetadata = new RecordColumnMetadata[k];
         for (int i = 0; i < k; i++) {
             CharSequence name = names.getQuick(i);
-            String rename = renameMap.get(name);
-            String newName = rename != null ? rename : name.toString();
-            columnMetadata[i] = meta(delegate.getColumn(name), newName);
-            nameIndex.put(newName, i);
+            CharSequence _newName = rename.getQuick(i);
+            String result = (_newName != null ? _newName : name).toString();
+            columnMetadata[i] = meta(delegate.getColumn(name), result);
+            nameIndex.put(result, i);
+        }
+    }
+
+    public SelectedColumnsMetadata(RecordMetadata delegate, ObjList<CharSequence> names) {
+        this.delegate = delegate;
+        int k = names.size();
+        this.nameIndex = new CharSequenceIntHashMap(k);
+        this.columnMetadata = new RecordColumnMetadata[k];
+        for (int i = 0; i < k; i++) {
+            String name = names.getQuick(i).toString();
+            columnMetadata[i] = meta(delegate.getColumn(name), name);
+            nameIndex.put(name, i);
         }
     }
 
     @Override
-    public RecordColumnMetadata getColumn(int index) {
-        return columnMetadata[index];
+    public String getAlias() {
+        return delegate.getAlias();
     }
 
     @Override
     public RecordColumnMetadata getColumn(CharSequence name) {
         return getColumnQuick(getColumnIndex(name));
+    }
+
+    @Override
+    public RecordColumnMetadata getColumn(int index) {
+        return columnMetadata[index];
     }
 
     @Override

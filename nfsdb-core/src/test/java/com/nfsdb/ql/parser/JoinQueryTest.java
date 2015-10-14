@@ -235,6 +235,45 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testInvalidSelectColumn() throws Exception {
+        try {
+            compiler.compile("select c.customerId, orderIdx, o.productId from " +
+                    "customers c " +
+                    "join (" +
+                    "orders latest by customerId where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`)" +
+                    ") o on c.customerId = o.customerId");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(21, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("Invalid column"));
+        }
+
+        try {
+            compiler.compile("select c.customerId, orderId, o.productId2 from " +
+                    "customers c " +
+                    "join (" +
+                    "orders latest by customerId where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`)" +
+                    ") o on c.customerId = o.customerId");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(30, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("Invalid column"));
+        }
+
+        try {
+            compiler.compile("select c.customerId, orderId, o2.productId from " +
+                    "customers c " +
+                    "join (" +
+                    "orders latest by customerId where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`)" +
+                    ") o on c.customerId = o.customerId");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(30, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("Invalid column"));
+        }
+    }
+
+    @Test
     public void testInvalidTableName() throws Exception {
         try {
             assertPlan("", "orders join customer on customerId = customerId");
@@ -469,13 +508,13 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     @Test
     public void testLambdaJoin() throws Exception {
         final String expected = "100\t1935884354\t1503\n";
-        assertThat(expected, "select customerId, orderId, productId from " +
+        assertThat(expected, "select c.customerId, orderId, o.productId from " +
                 "customers c " +
                 "join (" +
                 "orders latest by customerId where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`)" +
                 ") o on c.customerId = o.customerId");
 
-        assertThat(expected, "select customerId, orderId, productId from " +
+        assertThat(expected, "select c.customerId, orderId, productId from " +
                 "(" +
                 "orders latest by customerId where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`)" +
                 ") o " +

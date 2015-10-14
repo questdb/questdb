@@ -167,7 +167,7 @@ public class ResultSet<T> implements Iterable<T> {
         Partition<T> rightPart = journal.getPartition(Rows.toPartitionIndex(rightRowID), true);
 
         for (int column : columns) {
-            ColumnMetadata meta = journal.getMetadata().getColumn(column);
+            ColumnMetadata meta = journal.getMetadata().getColumnQuick(column);
 
             String leftStr;
             String rightStr;

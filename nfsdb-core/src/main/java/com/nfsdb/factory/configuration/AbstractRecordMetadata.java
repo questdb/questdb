@@ -21,29 +21,16 @@
 
 package com.nfsdb.factory.configuration;
 
-public interface RecordMetadata {
+public abstract class AbstractRecordMetadata implements RecordMetadata {
+    private String alias;
 
-    String getAlias();
+    @Override
+    public String getAlias() {
+        return alias;
+    }
 
-    void setAlias(String alias);
-
-    RecordColumnMetadata getColumn(CharSequence name);
-
-    RecordColumnMetadata getColumn(int index);
-
-    int getColumnCount();
-
-    /**
-     * Finds index of column by given name. If name is invalid a JournalRuntimeException is thrown.
-     *
-     * @param name column name
-     * @return column index between 0 and getColumnCount()-1
-     */
-    int getColumnIndex(CharSequence name);
-
-    RecordColumnMetadata getColumnQuick(int index);
-
-    RecordColumnMetadata getTimestampMetadata();
-
-    boolean invalidColumn(CharSequence name);
+    @Override
+    public void setAlias(String alias) {
+        this.alias = alias;
+    }
 }

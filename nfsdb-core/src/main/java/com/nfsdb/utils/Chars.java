@@ -113,6 +113,15 @@ public final class Chars {
         return h;
     }
 
+    public static int indexOf(CharSequence s, char c) {
+        for (int i = 0, n = s.length(); i < n; i++) {
+            if (s.charAt(i) == c) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     public static int put(long address, CharSequence value) {
         int len = value.length();
         Unsafe.getUnsafe().putInt(address, len);

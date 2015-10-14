@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,24 +17,24 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.model;
 
 public class QueryColumn {
-    private final String name;
+    private final String alias;
     private final ExprNode ast;
 
-    public QueryColumn(String name, ExprNode ast) {
-        this.name = name;
+    public QueryColumn(String alias, ExprNode ast) {
+        this.alias = alias;
         this.ast = ast;
+    }
+
+    public String getAlias() {
+        return alias;
     }
 
     public ExprNode getAst() {
         return ast;
-    }
-
-    public String getName() {
-        return name;
     }
 }

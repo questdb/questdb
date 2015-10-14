@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,13 +17,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql;
 
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.collections.CharSequenceObjHashMap;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.RecordSourcePrinter;
@@ -213,7 +212,7 @@ public class VirtualColumnTest extends AbstractTest {
                 new ObjList<CharSequence>() {{
                     add("ccy");
                     add("plus");
-                }}, new CharSequenceObjHashMap<String>());
+                }});
 
         p.printCursor(src.prepareCursor(factory));
 

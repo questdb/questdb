@@ -23,8 +23,8 @@ package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.factory.configuration.AbstractRecordMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.AbstractRecord;
 import com.nfsdb.ql.collections.LongMetadata;
@@ -39,7 +39,11 @@ public class RowIdHolderRecord extends AbstractRecord {
     private long rowId;
 
     public RowIdHolderRecord() {
-        super(new RecordMetadata() {
+        super(new AbstractRecordMetadata() {
+            @Override
+            public RecordColumnMetadata getColumn(CharSequence name) {
+                return getColumnQuick(getColumnIndex(name));
+            }
 
             @Override
             public RecordColumnMetadata getColumn(int index) {
@@ -47,11 +51,6 @@ public class RowIdHolderRecord extends AbstractRecord {
                     return LongMetadata.INSTANCE;
                 }
                 throw new JournalRuntimeException("Invalid column index: %d", index);
-            }
-
-            @Override
-            public RecordColumnMetadata getColumn(CharSequence name) {
-                return getColumnQuick(getColumnIndex(name));
             }
 
             @Override

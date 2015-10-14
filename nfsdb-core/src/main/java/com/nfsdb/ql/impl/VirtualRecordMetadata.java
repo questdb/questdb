@@ -23,19 +23,20 @@ package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.collections.ObjList;
+import com.nfsdb.factory.configuration.AbstractRecordMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.ops.VirtualColumn;
 
-public class VirtualRecordMetadata implements RecordMetadata {
-    private final RecordMetadata base;
+public class VirtualRecordMetadata extends AbstractRecordMetadata {
+    private final RecordMetadata delegate;
     private final ObjList<VirtualColumn> virtualColumns;
     private final int split;
     private final CharSequenceIntHashMap nameToIndexMap = new CharSequenceIntHashMap();
 
-    public VirtualRecordMetadata(RecordMetadata base, ObjList<VirtualColumn> virtualColumns) {
-        this.base = base;
-        this.split = base.getColumnCount();
+    public VirtualRecordMetadata(RecordMetadata delegate, ObjList<VirtualColumn> virtualColumns) {
+        this.delegate = delegate;
+        this.split = delegate.getColumnCount();
         this.virtualColumns = virtualColumns;
 
         for (int i = 0, k = virtualColumns.size(); i < k; i++) {
@@ -44,8 +45,8 @@ public class VirtualRecordMetadata implements RecordMetadata {
     }
 
     @Override
-    public RecordColumnMetadata getColumn(int index) {
-        return index < split ? base.getColumn(index) : virtualColumns.get(index - split);
+    public String getAlias() {
+        return delegate.getAlias();
     }
 
     @Override
@@ -54,28 +55,35 @@ public class VirtualRecordMetadata implements RecordMetadata {
     }
 
     @Override
+    public RecordColumnMetadata getColumn(int index) {
+        return index < split ? delegate.getColumn(index) : virtualColumns.get(index - split);
+    }
+
+    @Override
     public int getColumnCount() {
-        return base.getColumnCount() + virtualColumns.size();
+        return delegate.getColumnCount() + virtualColumns.size();
     }
 
     @Override
     public int getColumnIndex(CharSequence name) {
         int index = nameToIndexMap.get(name);
-        return index == -1 ? base.getColumnIndex(name) : index;
+        return index == -1 ? delegate.getColumnIndex(name) : index;
     }
 
     @Override
     public RecordColumnMetadata getColumnQuick(int index) {
-        return index < split ? base.getColumnQuick(index) : virtualColumns.getQuick(index - split);
+        return index < split ? delegate.getColumnQuick(index) : virtualColumns.getQuick(index - split);
     }
 
     @Override
     public RecordColumnMetadata getTimestampMetadata() {
-        return base.getTimestampMetadata();
+        return delegate.getTimestampMetadata();
     }
 
     @Override
     public boolean invalidColumn(CharSequence name) {
-        return nameToIndexMap.get(name) == -1 && base.invalidColumn(name);
+        return nameToIndexMap.get(name) == -1 && delegate.invalidColumn(name);
     }
+
+
 }

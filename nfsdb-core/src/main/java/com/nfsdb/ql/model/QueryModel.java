@@ -42,6 +42,12 @@ public class QueryModel implements Mutable {
     private final IntList orderedJoinModels2 = new IntList();
     private final StringSink planSink = new StringSink();
     private final CharSequenceIntHashMap aliasIndexes = new CharSequenceIntHashMap();
+    // collect frequency of column names from each join model
+    // and check if any of columns with frequency > 0 are selected
+    // column name frequency of 1 corresponds to map value 0
+    // column name frequency of 0 corresponds to map value -1
+    private final CharSequenceIntHashMap columnNameFrequencyMap = new CharSequenceIntHashMap();
+
     // list of "and" concatenated expressions
     private final ObjList<ExprNode> parsedWhere = new ObjList<>();
     private final IntHashSet parsedWhereConsts = new IntHashSet();
@@ -127,6 +133,7 @@ public class QueryModel implements Mutable {
         limitLo = null;
         limitHiVc = null;
         limitLoVc = null;
+        columnNameFrequencyMap.clear();
     }
 
     public ExprNode getAlias() {
@@ -139,6 +146,10 @@ public class QueryModel implements Mutable {
 
     public int getAliasIndex(CharSequence alias) {
         return aliasIndexes.get(alias);
+    }
+
+    public CharSequenceIntHashMap getColumnNameHistogram() {
+        return columnNameFrequencyMap;
     }
 
     public ObjList<QueryColumn> getColumns() {

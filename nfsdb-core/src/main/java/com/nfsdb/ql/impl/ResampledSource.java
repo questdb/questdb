@@ -209,7 +209,7 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
                         keyWriter.putInt(rec.getInt(keyIndices[i]));
                         break;
                     default:
-                        throw new JournalRuntimeException("Unsupported type: " + recordSource.getMetadata().getColumn(i + 1).getType());
+                        throw new JournalRuntimeException("Unsupported type: " + recordSource.getMetadata().getColumnQuick(i + 1).getType());
                 }
             }
             MapValues values = map.getOrCreateValues(keyWriter);
