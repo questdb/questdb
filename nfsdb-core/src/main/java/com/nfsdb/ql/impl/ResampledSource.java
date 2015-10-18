@@ -53,7 +53,7 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public ResampledSource(
             RecordSource<? extends Record> recordSource,
-            ObjList<ColumnMetadata> keyColumns,
+            ObjList<RecordColumnMetadata> keyColumns,
             ObjList<AggregatorFunction> aggregators,
             ColumnMetadata timestampMetadata,
             SampleBy sampleBy
@@ -69,9 +69,9 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
         this.tsIndex = rm.getColumnIndex(timestampMetadata.name);
         keyCols.add(timestampMetadata);
         for (int i = 0; i < keyColumnsSize; i++) {
-            ColumnMetadata cm = keyColumns.getQuick(i);
+            RecordColumnMetadata cm = keyColumns.getQuick(i);
             keyCols.add(cm);
-            keyIndices[i] = rm.getColumnIndex(cm.name);
+            keyIndices[i] = rm.getColumnIndex(cm.getName());
         }
 
         this.aggregators = aggregators;
@@ -85,7 +85,7 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
 
             func.prepareSource(recordSource);
 
-            ColumnMetadata[] columns = func.getColumns();
+            RecordColumnMetadata[] columns = func.getColumns();
             for (int k = 0, len = columns.length; k < len; k++) {
                 valueCols.add(columns[k]);
                 func.mapColumn(k, index++);

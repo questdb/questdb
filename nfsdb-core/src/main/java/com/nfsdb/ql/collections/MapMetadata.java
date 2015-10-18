@@ -23,7 +23,6 @@ package com.nfsdb.ql.collections;
 
 import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.AbstractRecordMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.utils.Unsafe;
@@ -52,11 +51,6 @@ public final class MapMetadata extends AbstractRecordMetadata {
     }
 
     @Override
-    public RecordColumnMetadata getColumn(CharSequence name) {
-        return getColumnQuick(getColumnIndex(name));
-    }
-
-    @Override
     public RecordColumnMetadata getColumn(int index) {
         return columns[index];
     }
@@ -64,15 +58,6 @@ public final class MapMetadata extends AbstractRecordMetadata {
     @Override
     public int getColumnCount() {
         return columnCount;
-    }
-
-    @Override
-    public int getColumnIndex(CharSequence name) {
-        int index = nameCache.get(name);
-        if (index == -1) {
-            throw new JournalRuntimeException("No such column: " + name);
-        }
-        return index;
     }
 
     @Override
@@ -86,7 +71,7 @@ public final class MapMetadata extends AbstractRecordMetadata {
     }
 
     @Override
-    public boolean invalidColumn(CharSequence name) {
-        return nameCache.get(name) == -1;
+    public int getColumnIndexQuiet(CharSequence name) {
+        return nameCache.get(name);
     }
 }

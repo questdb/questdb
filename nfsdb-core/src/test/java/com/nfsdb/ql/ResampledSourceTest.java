@@ -24,7 +24,7 @@ package com.nfsdb.ql;
 import com.nfsdb.Journal;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.collections.ObjList;
-import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.model.Quote;
@@ -232,14 +232,14 @@ public class ResampledSourceTest extends AbstractTest {
                         , new AllRowSource()
                 )
                 ,
-                new ObjList<ColumnMetadata>() {{
-                        add(r.getMetadata().getColumn("sym"));
+                new ObjList<RecordColumnMetadata>() {{
+                    add(r.getMetadata().getColumn("sym"));
                 }}
                 ,
                 new ObjList<AggregatorFunction>() {{
                     add(new CountIntAggregatorFunction("count"));
-                        add(new FirstDoubleAggregationFunction(r.getMetadata().getColumn("ask")));
-                        add(new LastDoubleAggregationFunction(r.getMetadata().getColumn("ask")));
+                    add(new FirstDoubleAggregationFunction(r.getMetadata().getColumn("ask")));
+                    add(new LastDoubleAggregationFunction(r.getMetadata().getColumn("ask")));
                 }}
                 , r.getMetadata().getTimestampMetadata()
                 , ResampledSource.SampleBy.MINUTE
@@ -247,7 +247,7 @@ public class ResampledSourceTest extends AbstractTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter out = new RecordSourcePrinter(sink);
-            out.printCursor(resampledSource.prepareCursor(factory));
+        out.printCursor(resampledSource.prepareCursor(factory));
         Assert.assertEquals(expected, sink.toString());
     }
 }

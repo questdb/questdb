@@ -26,7 +26,6 @@ import com.nfsdb.PartitionType;
 import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.exceptions.NoSuchColumnException;
 import com.nfsdb.storage.UnstructuredFile;
 import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -138,11 +137,6 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
     }
 
     @Override
-    public ColumnMetadata getColumn(CharSequence name) {
-        return Unsafe.arrayGet(columnMetadata, getColumnIndex(name));
-    }
-
-    @Override
     public ColumnMetadata getColumn(int columnIndex) {
         return columnMetadata[columnIndex];
     }
@@ -151,12 +145,9 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         return columnCount;
     }
 
-    public int getColumnIndex(CharSequence columnName) {
-        int result = columnIndexLookup.get(columnName);
-        if (result == -1) {
-            throw new NoSuchColumnException("Invalid column name: %s", columnName);
-        }
-        return result;
+    @Override
+    public int getColumnIndexQuiet(CharSequence name) {
+        return columnIndexLookup.get(name);
     }
 
     @Override
@@ -166,11 +157,6 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
 
     public ColumnMetadata getTimestampMetadata() {
         return timestampMetadata;
-    }
-
-    @Override
-    public boolean invalidColumn(CharSequence name) {
-        return columnIndexLookup.get(name) == -1;
     }
 
     public String getId() {

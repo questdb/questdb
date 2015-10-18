@@ -618,11 +618,12 @@ public class QueryCompiler {
                 throw new ParserException(latestByNode.position, "Column name expected");
             }
 
-            if (journalMetadata.invalidColumn(latestByNode.token)) {
+            int colIndex = journalMetadata.getColumnIndexQuiet(latestByNode.token);
+            if (colIndex == -1) {
                 throw new InvalidColumnException(latestByNode.position);
             }
 
-            latestByMetadata = journalMetadata.getColumn(latestByNode.token);
+            latestByMetadata = journalMetadata.getColumnQuick(colIndex);
 
             ColumnType type = latestByMetadata.getType();
             if (type != ColumnType.SYMBOL && type != ColumnType.STRING && type != ColumnType.INT) {
@@ -705,10 +706,10 @@ public class QueryCompiler {
                                 lambdaColIndex = 0;
                                 break;
                             default:
-                                if (m.invalidColumn(latestByCol)) {
+                                lambdaColIndex = m.getColumnIndexQuiet(latestByCol);
+                                if (lambdaColIndex == -1) {
                                     throw new ParserException(im.keyValuePositions.getQuick(0), "Ambiguous column names in lambda query");
                                 }
-                                lambdaColIndex = m.getColumnIndex(latestByCol);
                                 break;
                         }
 
@@ -839,10 +840,10 @@ public class QueryCompiler {
 
         // check for explicit timestamp definition
         if (slaveTimestampNode != null) {
-            if (slaveMetadata.invalidColumn(slaveTimestampNode.token)) {
+            slaveTimestampIndex = slaveMetadata.getColumnIndexQuiet(slaveTimestampNode.token);
+            if (slaveTimestampIndex == -1) {
                 throw new ParserException(slaveTimestampNode.position, "Invalid column");
             }
-            slaveTimestampIndex = slaveMetadata.getColumnIndex(slaveTimestampNode.token);
         } else if (slaveMetadata.getTimestampMetadata() == null) {
             throw new ParserException(0, "Result set timestamp column is undefined");
         } else {
@@ -851,10 +852,10 @@ public class QueryCompiler {
 
 
         if (masterTimestampNode != null) {
-            if (masterMetadata.invalidColumn(masterTimestampNode.token)) {
+            masterTimestampIndex = masterMetadata.getColumnIndexQuiet(masterTimestampNode.token);
+            if (masterTimestampIndex == -1) {
                 throw new ParserException(masterTimestampNode.position, "Invalid column");
             }
-            masterTimestampIndex = masterMetadata.getColumnIndex(masterTimestampNode.token);
         } else if (masterMetadata.getTimestampMetadata() == null) {
             throw new ParserException(0, "Result set timestamp column is undefined");
         } else {
@@ -1580,7 +1581,7 @@ public class QueryCompiler {
         if (alias == null) {
             for (int i = 0, n = joinModels.size(); i < n; i++) {
                 RecordMetadata m = joinModels.getQuick(i).getMetadata();
-                if (m.invalidColumn(column)) {
+                if (m.getColumnIndexQuiet(column) == -1) {
                     continue;
                 }
 
@@ -1604,7 +1605,7 @@ public class QueryCompiler {
             }
             RecordMetadata m = joinModels.getQuick(index).getMetadata();
 
-            if (m.invalidColumn(column)) {
+            if (m.getColumnIndexQuiet(column) == -1) {
                 throw new InvalidColumnException(position);
             }
 
@@ -1636,7 +1637,7 @@ public class QueryCompiler {
 
             switch (node.type) {
                 case LITERAL:
-                    if (meta.invalidColumn(node.token)) {
+                    if (meta.getColumnIndexQuiet(node.token) == -1) {
                         throw new InvalidColumnException(node.position);
                     }
                     if (columnNameHistogram.get(node.token) > 0) {

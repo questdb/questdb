@@ -76,6 +76,11 @@ public class JournalSource extends com.nfsdb.collections.AbstractImmutableIterat
     }
 
     @Override
+    public int getColumnIndexQuiet(CharSequence name) {
+        return metadata.getColumnIndexQuiet(name);
+    }
+
+    @Override
     public RecordColumnMetadata getColumnQuick(int index) {
         return metadata.getColumnQuick(index);
     }
@@ -83,11 +88,6 @@ public class JournalSource extends com.nfsdb.collections.AbstractImmutableIterat
     @Override
     public RecordColumnMetadata getTimestampMetadata() {
         return metadata.getTimestampMetadata();
-    }
-
-    @Override
-    public boolean invalidColumn(CharSequence name) {
-        return metadata.invalidColumn(name);
     }
 
     @Override

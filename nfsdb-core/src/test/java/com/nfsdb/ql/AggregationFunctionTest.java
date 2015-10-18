@@ -25,7 +25,7 @@ import com.nfsdb.Journal;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.model.Quote;
@@ -342,7 +342,7 @@ public class AggregationFunctionTest extends AbstractTest {
                         , new AllRowSource()
                 )
                 ,
-                new ObjList<ColumnMetadata>() {{
+                new ObjList<RecordColumnMetadata>() {{
                     add(r.getMetadata().getColumn("sym"));
                 }}
                 ,

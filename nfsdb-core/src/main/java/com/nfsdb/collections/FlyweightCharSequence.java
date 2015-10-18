@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.collections;
 
@@ -60,7 +60,7 @@ public class FlyweightCharSequence extends AbstractCharSequence implements Mutab
         return this;
     }
 
-    public FlyweightCharSequence of(CharSequence delegate) {
+    public FlyweightCharSequence ofQuoted(CharSequence delegate) {
         return of(delegate, 1, delegate.length() - 2);
     }
 }

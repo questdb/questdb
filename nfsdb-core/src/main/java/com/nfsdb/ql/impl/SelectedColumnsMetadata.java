@@ -23,7 +23,6 @@ package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.AbstractRecordMetadata;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
@@ -83,11 +82,6 @@ public class SelectedColumnsMetadata extends AbstractRecordMetadata {
     }
 
     @Override
-    public RecordColumnMetadata getColumn(CharSequence name) {
-        return getColumnQuick(getColumnIndex(name));
-    }
-
-    @Override
     public RecordColumnMetadata getColumn(int index) {
         return columnMetadata[index];
     }
@@ -98,12 +92,8 @@ public class SelectedColumnsMetadata extends AbstractRecordMetadata {
     }
 
     @Override
-    public int getColumnIndex(CharSequence name) {
-        int index = nameIndex.get(name);
-        if (index == -1) {
-            throw new JournalRuntimeException("Invalid column name %s", name);
-        }
-        return index;
+    public int getColumnIndexQuiet(CharSequence name) {
+        return nameIndex.get(name);
     }
 
     @Override
@@ -114,11 +104,6 @@ public class SelectedColumnsMetadata extends AbstractRecordMetadata {
     @Override
     public RecordColumnMetadata getTimestampMetadata() {
         return delegate.getTimestampMetadata();
-    }
-
-    @Override
-    public boolean invalidColumn(CharSequence name) {
-        return nameIndex.get(name) == -1;
     }
 
     @Override

@@ -21,10 +21,8 @@
 
 package com.nfsdb.ql.impl;
 
-import com.nfsdb.collections.CharSequenceIntHashMap;
-import com.nfsdb.collections.FlyweightCharSequence;
-import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.AbstractRecordMetadata;
+import com.nfsdb.factory.configuration.ColumnName;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.utils.Chars;
@@ -34,12 +32,10 @@ public class SplitRecordMetadata extends AbstractRecordMetadata {
     private final int columnCount;
     private final RecordColumnMetadata[] columns;
     private final RecordColumnMetadata timestampMetadata;
-    private final FlyweightCharSequence temp = new FlyweightCharSequence();
     private final RecordMetadata a;
     private final RecordMetadata b;
-    private final CharSequenceIntHashMap aIndices = new CharSequenceIntHashMap();
-    private final CharSequenceIntHashMap bIndices = new CharSequenceIntHashMap();
     private final int split;
+    private final ColumnName columnName = new ColumnName();
 
     public SplitRecordMetadata(RecordMetadata a, RecordMetadata b) {
         this.a = a;
@@ -53,20 +49,13 @@ public class SplitRecordMetadata extends AbstractRecordMetadata {
         for (int i = 0; i < split; i++) {
             RecordColumnMetadata m = a.getColumnQuick(i);
             columns[i] = m;
-            aIndices.put(m.getName(), i);
         }
 
         for (int i = 0, c = columnCount - split; i < c; i++) {
             RecordColumnMetadata m = b.getColumnQuick(i);
             columns[i + split] = m;
-            bIndices.put(m.getName(), i);
         }
         this.split = split;
-    }
-
-    @Override
-    public RecordColumnMetadata getColumn(CharSequence name) {
-        return columns[getColumnIndex(name)];
     }
 
     @Override
@@ -80,15 +69,6 @@ public class SplitRecordMetadata extends AbstractRecordMetadata {
     }
 
     @Override
-    public int getColumnIndex(CharSequence name) {
-        int index = getColumnIndex0(name);
-        if (index == -1) {
-            throw new JournalRuntimeException("Invalid column: %s", name);
-        }
-        return index;
-    }
-
-    @Override
     public RecordColumnMetadata getColumnQuick(int index) {
         return Unsafe.arrayGet(columns, index);
     }
@@ -99,30 +79,46 @@ public class SplitRecordMetadata extends AbstractRecordMetadata {
     }
 
     @Override
-    public boolean invalidColumn(CharSequence name) {
-        return getColumnIndex0(name) == -1;
+    public int getColumnIndexQuiet(CharSequence name) {
+        return getColumnIndexQuiet(columnName.of(name));
     }
 
-    private int getColumnIndex0(CharSequence name) {
-        int dot = Chars.indexOf(name, '.');
-        if (dot == -1) {
-            int index = bIndices.get(name);
-            if (index > -1) {
-                return split + index;
+    public int getColumnIndexQuiet(ColumnName columnName) {
+        int index;
+        if (columnName.alias().length() == 0) {
+            index = a.getColumnIndexQuiet(columnName.name());
+            if (index == -1) {
+                index = b.getColumnIndexQuiet(columnName.name());
+                return index == -1 ? index : index + split;
             } else {
-                return aIndices.get(name);
+                return index;
             }
         } else {
-            temp.of(name, 0, dot);
-            if (a.getAlias() != null && Chars.equals(a.getAlias(), temp)) {
-                return aIndices.get(temp.of(name, dot + 1, name.length() - dot - 1));
+            if (a instanceof SplitRecordMetadata) {
+                index = ((SplitRecordMetadata) a).getColumnIndexQuiet(columnName);
+            } else {
+                if (a.getAlias() != null && Chars.equals(a.getAlias(), columnName.alias())) {
+                    index = a.getColumnIndexQuiet(columnName.name());
+                } else {
+                    index = -1;
+                }
             }
 
-            if (b.getAlias() != null && Chars.equals(b.getAlias(), temp)) {
-                int index = bIndices.get(temp.of(name, dot + 1, name.length() - dot - 1));
-                return index == -1 ? index : index + split;
+            if (index > -1) {
+                return index;
             }
-            return -1;
+
+            if (b instanceof SplitRecordMetadata) {
+                index = ((SplitRecordMetadata) b).getColumnIndexQuiet(columnName);
+            } else {
+                if (b.getAlias() != null && Chars.equals(b.getAlias(), columnName.alias())) {
+                    index = b.getColumnIndexQuiet(columnName.name());
+                } else {
+                    index = -1;
+                }
+            }
+
+            return index == -1 ? index : index + split;
         }
     }
 }

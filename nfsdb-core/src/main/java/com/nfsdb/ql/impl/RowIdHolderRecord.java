@@ -41,11 +41,6 @@ public class RowIdHolderRecord extends AbstractRecord {
     public RowIdHolderRecord() {
         super(new AbstractRecordMetadata() {
             @Override
-            public RecordColumnMetadata getColumn(CharSequence name) {
-                return getColumnQuick(getColumnIndex(name));
-            }
-
-            @Override
             public RecordColumnMetadata getColumn(int index) {
                 if (index == 0) {
                     return LongMetadata.INSTANCE;
@@ -59,11 +54,8 @@ public class RowIdHolderRecord extends AbstractRecord {
             }
 
             @Override
-            public int getColumnIndex(CharSequence name) {
-                if (Chars.equals(RowIdHolderRecord.name, name)) {
-                    return 0;
-                }
-                throw new JournalRuntimeException("Invalid column name: %s", name);
+            public int getColumnIndexQuiet(CharSequence columnName) {
+                return Chars.equals(RowIdHolderRecord.name, columnName) ? 0 : -1;
             }
 
             @Override
@@ -74,11 +66,6 @@ public class RowIdHolderRecord extends AbstractRecord {
             @Override
             public RecordColumnMetadata getTimestampMetadata() {
                 return null;
-            }
-
-            @Override
-            public boolean invalidColumn(CharSequence name) {
-                return !RowIdHolderRecord.name.equals(name);
             }
         });
     }

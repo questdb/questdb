@@ -19,22 +19,42 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.ql.ops;
+package com.nfsdb.factory.configuration;
 
-import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.ql.Record;
-import com.nfsdb.ql.collections.MapValues;
+import com.nfsdb.storage.ColumnType;
+import com.nfsdb.storage.SymbolTable;
 
-public class FirstDoubleAggregationFunction extends AbstractSingleColumnAggregatorFunction {
+public class RecordColumnMetadataFacade implements RecordColumnMetadata {
+    private final RecordColumnMetadata underlying;
+    private final ColumnType type;
 
-    public FirstDoubleAggregationFunction(RecordColumnMetadata meta) {
-        super(meta);
+    public RecordColumnMetadataFacade(RecordColumnMetadata underlying, ColumnType type) {
+        this.underlying = underlying;
+        this.type = type;
     }
 
     @Override
-    public void calculate(Record rec, MapValues values) {
-        if (values.isNew()) {
-            values.putDouble(valueIndex, rec.getDouble(recordIndex));
-        }
+    public int getBucketCount() {
+        return underlying.getBucketCount();
+    }
+
+    @Override
+    public String getName() {
+        return underlying.getName();
+    }
+
+    @Override
+    public SymbolTable getSymbolTable() {
+        return underlying.getSymbolTable();
+    }
+
+    @Override
+    public ColumnType getType() {
+        return type;
+    }
+
+    @Override
+    public boolean isIndexed() {
+        return underlying.isIndexed();
     }
 }

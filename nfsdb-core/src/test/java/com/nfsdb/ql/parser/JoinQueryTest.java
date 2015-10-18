@@ -656,8 +656,6 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                         " outer join orders o on c.customerId = o.customerId " +
                         " where orderId = NaN" +
                         " limit 10,15");
-
-
     }
 
     @Test
@@ -845,6 +843,21 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     public void testSimpleSymToSymLambda() throws Exception {
         assertThat("1946\tEOVGVPEHSZQJGNI\tGROTGCLGILNCXPT\tCOHPFXH\t0.175451457500\t2015-07-10T00:00:14.146Z\n",
                 "products latest by supplier where supplier in (`suppliers where contactName = 'PHT'`)");
+    }
+
+    @Test
+    public void testThreeWaySelectAlias() throws Exception {
+        assertThat("c.customerId\to.customerId\tp.productId\torderId\n" +
+                        "2\t2\t1923\t1575627983\n" +
+                        "2\t2\t1881\t1628627044\n" +
+                        "2\t2\t1216\t541627843\n" +
+                        "2\t2\t516\t1502016981\n" +
+                        "2\t2\t1242\t1370796605\n",
+                "select c.customerId, o.customerId, p.productId, orderId " +
+                        " from customers c" +
+                        " outer join orders o on c.customerId = o.customerId " +
+                        " join products p on o.productId = p.productId" +
+                        " limit 25,30", true);
     }
 
     private static void generateJoinData() throws JournalException, NumericException {

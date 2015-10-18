@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,11 +17,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.AggregatorFunction;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordSource;
@@ -29,16 +29,16 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"EI_EXPOSE_REP"})
 public abstract class AbstractSingleColumnAggregatorFunction implements AggregatorFunction {
-    private final ColumnMetadata[] meta = new ColumnMetadata[1];
+    private final RecordColumnMetadata[] meta = new RecordColumnMetadata[1];
     protected int recordIndex;
     protected int valueIndex;
 
-    public AbstractSingleColumnAggregatorFunction(ColumnMetadata meta) {
+    public AbstractSingleColumnAggregatorFunction(RecordColumnMetadata meta) {
         this.meta[0] = meta;
     }
 
     @Override
-    public ColumnMetadata[] getColumns() {
+    public RecordColumnMetadata[] getColumns() {
         return meta;
     }
 
@@ -49,6 +49,6 @@ public abstract class AbstractSingleColumnAggregatorFunction implements Aggregat
 
     @Override
     public void prepareSource(RecordSource<? extends Record> source) {
-        this.recordIndex = source.getMetadata().getColumnIndex(meta[0].name);
+        this.recordIndex = source.getMetadata().getColumnIndex(meta[0].getName());
     }
 }

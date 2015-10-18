@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,12 +17,13 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.ops;
 
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.AggregatorFunction;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordSource;
@@ -32,13 +33,13 @@ import com.nfsdb.storage.ColumnType;
 
 public class AvgDoubleAggregationFunction implements AggregatorFunction, MapRecordValueInterceptor {
 
-    private final ColumnMetadata sourceColumn;
+    private final RecordColumnMetadata sourceColumn;
     private int columnIndex;
     private int countIdx;
     private int sumIdx;
     private int avgIdx;
 
-    public AvgDoubleAggregationFunction(ColumnMetadata sourceColumn) {
+    public AvgDoubleAggregationFunction(RecordColumnMetadata sourceColumn) {
         this.sourceColumn = sourceColumn;
     }
 
@@ -86,6 +87,6 @@ public class AvgDoubleAggregationFunction implements AggregatorFunction, MapReco
 
     @Override
     public void prepareSource(RecordSource<? extends Record> source) {
-        this.columnIndex = source.getMetadata().getColumnIndex(sourceColumn.name);
+        this.columnIndex = source.getMetadata().getColumnIndex(sourceColumn.getName());
     }
 }

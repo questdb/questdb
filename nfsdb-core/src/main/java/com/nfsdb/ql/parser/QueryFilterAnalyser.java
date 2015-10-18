@@ -66,7 +66,7 @@ final class QueryFilterAnalyser {
 
         if (a.type == ExprNode.NodeType.LITERAL && b.type == ExprNode.NodeType.CONSTANT) {
             if (timestamp != null && timestamp.getName().equals(a.token)) {
-                boolean reversible = parseInterval(model, quoteEraser.of(b.token), b.position);
+                boolean reversible = parseInterval(model, quoteEraser.ofQuoted(b.token), b.position);
                 node.intrinsicValue = IntrinsicValue.TRUE;
                 // exact timestamp matches will be returning FALSE
                 // which means that they are irreversible and won't be added to timestampNodes.
@@ -75,7 +75,7 @@ final class QueryFilterAnalyser {
                 }
                 return true;
             } else {
-                if (m.invalidColumn(a.token)) {
+                if (m.getColumnIndexQuiet(a.token) == -1) {
                     throw new InvalidColumnException(a.position);
                 }
                 RecordColumnMetadata meta = m.getColumn(a.token);
@@ -148,7 +148,7 @@ final class QueryFilterAnalyser {
 
         if (node.lhs.type == ExprNode.NodeType.LITERAL && node.lhs.token.equals(timestamp.getName())) {
             try {
-                long lo = Dates.tryParse(quoteEraser.of(node.rhs.token)) + inc;
+                long lo = Dates.tryParse(quoteEraser.ofQuoted(node.rhs.token)) + inc;
                 if (lo > model.intervalLo) {
                     model.intervalLo = lo;
                 }
@@ -161,7 +161,7 @@ final class QueryFilterAnalyser {
 
         if (node.rhs.type == ExprNode.NodeType.LITERAL && node.rhs.token.equals(timestamp.getName())) {
             try {
-                long hi = Dates.tryParse(quoteEraser.of(node.lhs.token)) - inc;
+                long hi = Dates.tryParse(quoteEraser.ofQuoted(node.lhs.token)) - inc;
                 if (hi < model.intervalHi) {
                     model.intervalHi = hi;
                 }
@@ -186,7 +186,7 @@ final class QueryFilterAnalyser {
             throw new ParserException(col.position, "Column name expected");
         }
 
-        if (metadata.invalidColumn(col.token)) {
+        if (metadata.getColumnIndexQuiet(col.token) == -1) {
             throw new InvalidColumnException(col.position);
         }
         return analyzeInInterval(model, col, node)
@@ -217,13 +217,13 @@ final class QueryFilterAnalyser {
             long hiMillis;
 
             try {
-                loMillis = Dates.tryParse(quoteEraser.of(lo.token));
+                loMillis = Dates.tryParse(quoteEraser.ofQuoted(lo.token));
             } catch (NumericException ignore) {
                 throw new ParserException(lo.position, "Unknown date format");
             }
 
             try {
-                hiMillis = Dates.tryParse(quoteEraser.of(hi.token));
+                hiMillis = Dates.tryParse(quoteEraser.ofQuoted(hi.token));
             } catch (NumericException ignore) {
                 throw new ParserException(hi.position, "Unknown date format");
             }
@@ -285,7 +285,7 @@ final class QueryFilterAnalyser {
 
         if (node.lhs.type == ExprNode.NodeType.LITERAL && node.lhs.token.equals(timestamp.getName())) {
             try {
-                long hi = Dates.tryParse(quoteEraser.of(node.rhs.token)) - inc;
+                long hi = Dates.tryParse(quoteEraser.ofQuoted(node.rhs.token)) - inc;
                 if (hi < model.intervalHi) {
                     model.intervalHi = hi;
                 }
@@ -299,7 +299,7 @@ final class QueryFilterAnalyser {
 
         if (node.rhs.type == ExprNode.NodeType.LITERAL && node.rhs.token.equals(timestamp.getName())) {
             try {
-                long lo = Dates.tryParse(quoteEraser.of(node.lhs.token)) + inc;
+                long lo = Dates.tryParse(quoteEraser.ofQuoted(node.lhs.token)) + inc;
                 if (lo > model.intervalLo) {
                     model.intervalLo = lo;
                 }

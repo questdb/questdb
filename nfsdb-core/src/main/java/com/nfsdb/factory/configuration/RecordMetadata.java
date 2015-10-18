@@ -41,9 +41,9 @@ public interface RecordMetadata {
      */
     int getColumnIndex(CharSequence name);
 
+    int getColumnIndexQuiet(CharSequence name);
+
     RecordColumnMetadata getColumnQuick(int index);
 
     RecordColumnMetadata getTimestampMetadata();
-
-    boolean invalidColumn(CharSequence name);
 }
