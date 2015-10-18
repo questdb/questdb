@@ -927,6 +927,7 @@ public class QueryCompiler {
             CharSequence ca = jc.aNames.getQuick(k);
             CharSequence cb = jc.bNames.getQuick(k);
 
+            // todo: we are looking up column indices here already, consider not doing it again in constructors
             if (am.getColumn(ca).getType() != bm.getColumn(cb).getType()) {
                 throw new ParserException(jc.aNodes.getQuick(k).position, "Column type mismatch");
             }

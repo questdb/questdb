@@ -846,6 +846,20 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testThreeWayNoSelect() throws Exception {
+        assertThat("customerId\tcustomerName\tcontactName\taddress\tcity\tpostalCode\tcountry\ttimestamp\torderId\tcustomerId\tproductId\temployeeId\torderDate\tshipper\tproductId\tproductName\tsupplier\tcategory\tprice\ttimestamp\n" +
+                        "2\tQELQ\tWQGMZBPHETSLOIMSUFXYIWEODDBH\tnull\tVGXYHJUXBWYWRLHUHJECIDLRBIDSTDTFBY\tS\tDCQSCMONRC\t2015-07-10T00:00:00.002Z\t1575627983\t2\t1923\t\t2015-07-10T00:00:31.796Z\tFBLGGTZEN\t1923\tVXZESTU\tLFQNDNRHKUHE\tDDKZCNBOGWTL\t992.000000000000\t2015-07-10T00:00:14.123Z\n" +
+                        "2\tQELQ\tWQGMZBPHETSLOIMSUFXYIWEODDBH\tnull\tVGXYHJUXBWYWRLHUHJECIDLRBIDSTDTFBY\tS\tDCQSCMONRC\t2015-07-10T00:00:00.002Z\t1628627044\t2\t1881\tRIXTM\t2015-07-10T00:00:37.249Z\tYGFSMEVDSIYC\t1881\tDJHDQX\tFUXEJFTGSLMCBRD\tKFGXCKKLNVVIQ\t0.000000000000\t2015-07-10T00:00:14.081Z\n" +
+                        "2\tQELQ\tWQGMZBPHETSLOIMSUFXYIWEODDBH\tnull\tVGXYHJUXBWYWRLHUHJECIDLRBIDSTDTFBY\tS\tDCQSCMONRC\t2015-07-10T00:00:00.002Z\t541627843\t2\t1216\tUJ\t2015-07-10T00:00:43.578Z\tQPL\t1216\tHZBDMUQLOTHMCHO\tZZCPO\tKSEOSRN\t-234.332031250000\t2015-07-10T00:00:13.416Z\n" +
+                        "2\tQELQ\tWQGMZBPHETSLOIMSUFXYIWEODDBH\tnull\tVGXYHJUXBWYWRLHUHJECIDLRBIDSTDTFBY\tS\tDCQSCMONRC\t2015-07-10T00:00:00.002Z\t1502016981\t2\t516\tRK\t2015-07-10T00:00:48.192Z\tOJXJCNBLYTOIYI\t516\tBJUHPV\tUHSSLJ\tQR\t279.675109863281\t2015-07-10T00:00:12.716Z\n" +
+                        "2\tQELQ\tWQGMZBPHETSLOIMSUFXYIWEODDBH\tnull\tVGXYHJUXBWYWRLHUHJECIDLRBIDSTDTFBY\tS\tDCQSCMONRC\t2015-07-10T00:00:00.002Z\t1370796605\t2\t1242\t\t2015-07-10T00:00:55.216Z\tYJZPHQDJKOM\t1242\tFLTGLC\tF\tSQDBRUMST\t0.000001773577\t2015-07-10T00:00:13.442Z\n",
+                "customers" +
+                        " outer join orders o on customers.customerId = o.customerId " +
+                        " join products p on o.productId = p.productId" +
+                        " limit 25,30", true);
+    }
+
+    @Test
     public void testThreeWaySelectAlias() throws Exception {
         assertThat("c.customerId\to.customerId\tp.productId\torderId\n" +
                         "2\t2\t1923\t1575627983\n" +
@@ -856,6 +870,21 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                 "select c.customerId, o.customerId, p.productId, orderId " +
                         " from customers c" +
                         " outer join orders o on c.customerId = o.customerId " +
+                        " join products p on o.productId = p.productId" +
+                        " limit 25,30", true);
+    }
+
+    @Test
+    public void testThreeWaySelectNoAlias() throws Exception {
+        assertThat("customers.customerId\to.customerId\tp.productId\torderId\n" +
+                        "2\t2\t1923\t1575627983\n" +
+                        "2\t2\t1881\t1628627044\n" +
+                        "2\t2\t1216\t541627843\n" +
+                        "2\t2\t516\t1502016981\n" +
+                        "2\t2\t1242\t1370796605\n",
+                "select customers.customerId, o.customerId, p.productId, orderId " +
+                        " from customers" +
+                        " outer join orders o on customers.customerId = o.customerId " +
                         " join products p on o.productId = p.productId" +
                         " limit 25,30", true);
     }
