@@ -94,7 +94,6 @@ public class QueryCompiler {
     private final CharSequenceIntHashMap constNameToIndex = new CharSequenceIntHashMap();
     private final CharSequenceObjHashMap<ExprNode> constNameToNode = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<String> constNameToToken = new CharSequenceObjHashMap<>();
-
     private ObjList<JoinContext> emittedJoinClauses;
 
     public QueryCompiler(JournalReaderFactory factory) {
@@ -919,32 +918,31 @@ public class QueryCompiler {
         RecordMetadata bm = master.getMetadata();
         RecordMetadata am = slave.getMetadata();
 
-        ObjList<CharSequence> masterCols = null;
-        ObjList<CharSequence> slaveCols = null;
+        IntList masterColIndices = null;
+        IntList slaveColIndices = null;
 
         for (int k = 0, kn = jc.aIndexes.size(); k < kn; k++) {
 
             CharSequence ca = jc.aNames.getQuick(k);
             CharSequence cb = jc.bNames.getQuick(k);
 
-            // todo: we are looking up column indices here already, consider not doing it again in constructors
-            if (am.getColumn(ca).getType() != bm.getColumn(cb).getType()) {
+            int ia = am.getColumnIndex(ca);
+            int ib = bm.getColumnIndex(cb);
+
+            if (am.getColumnQuick(ia).getType() != bm.getColumnQuick(ib).getType()) {
                 throw new ParserException(jc.aNodes.getQuick(k).position, "Column type mismatch");
             }
 
-            if (masterCols == null) {
-                // todo: these lists do not need to be newly created because they used by constructor only
-                masterCols = new ObjList<>();
+            if (masterColIndices == null) {
+                // these go together, so checking one for null is enough
+                masterColIndices = new IntList();
+                slaveColIndices = new IntList();
             }
 
-            if (slaveCols == null) {
-                slaveCols = new ObjList<>();
-            }
-
-            masterCols.add(cb);
-            slaveCols.add(ca);
+            masterColIndices.add(ib);
+            slaveColIndices.add(ia);
         }
-        master = new HashJoinRecordSource(master, masterCols, slave, slaveCols, model.getJoinType() == QueryModel.JoinType.OUTER);
+        master = new HashJoinRecordSource(master, masterColIndices, slave, slaveColIndices, model.getJoinType() == QueryModel.JoinType.OUTER);
         return master;
     }
 

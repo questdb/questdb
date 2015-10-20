@@ -22,6 +22,7 @@
 package com.nfsdb.ql;
 
 import com.nfsdb.JournalWriter;
+import com.nfsdb.collections.IntList;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalRuntimeException;
@@ -83,12 +84,12 @@ public class HashJoinRecordSourceTest {
         RecordSource<? extends Record> joinResult = new SelectedColumnsRecordSource(
                 new HashJoinRecordSource(
                         new JournalSource(new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()),
-                        new ObjList<CharSequence>() {{
-                            add("name");
+                        new IntList() {{
+                            add(bw.getMetadata().getColumnIndex("name"));
                         }},
                         new JournalSource(new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()),
-                        new ObjList<CharSequence>() {{
-                            add("band");
+                        new IntList() {{
+                            add(aw.getMetadata().getColumnIndex("band"));
                         }},
                         false
                 ),
@@ -107,20 +108,20 @@ public class HashJoinRecordSourceTest {
     @Test
     @Ignore
     public void testHashJoinPerformance() throws Exception {
-        JournalWriter<Quote> w1 = factory.writer(Quote.class, "q1");
+        final JournalWriter<Quote> w1 = factory.writer(Quote.class, "q1");
         TestUtils.generateQuoteData(w1, 100000);
 
-        JournalWriter<Quote> w2 = factory.writer(Quote.class, "q2");
+        final JournalWriter<Quote> w2 = factory.writer(Quote.class, "q2");
         TestUtils.generateQuoteData(w2, 100000);
 
         RecordSource<Record> j = new HashJoinRecordSource(
                 new JournalSource(new JournalPartitionSource(w1.getMetadata(), false), new AllRowSource()),
-                new ObjList<CharSequence>() {{
-                    add("sym");
+                new IntList() {{
+                    w1.getMetadata().getColumnIndex("sym");
                 }},
                 new JournalSource(new JournalPartitionSource(w2.getMetadata(), false), new AllRowSource()),
-                new ObjList<CharSequence>() {{
-                    add("sym");
+                new IntList() {{
+                    w2.getMetadata().getColumnIndex("sym");
                 }},
                 false
         );
@@ -162,12 +163,12 @@ public class HashJoinRecordSourceTest {
         RecordSource<? extends Record> joinResult = new SelectedColumnsRecordSource(
                 new HashJoinRecordSource(
                         new JournalSource(new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()),
-                        new ObjList<CharSequence>() {{
-                            add("name");
+                        new IntList() {{
+                            add(bw.getMetadata().getColumnIndex("name"));
                         }},
                         new JournalSource(new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()),
-                        new ObjList<CharSequence>() {{
-                            add("band");
+                        new IntList() {{
+                            add(aw.getMetadata().getColumnIndex("band"));
                         }},
                         false
                 ),
@@ -204,12 +205,12 @@ public class HashJoinRecordSourceTest {
         RecordSource<? extends Record> joinResult = new SelectedColumnsRecordSource(
                 new HashJoinRecordSource(
                         new JournalSource(new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()),
-                        new ObjList<CharSequence>() {{
-                            add("name");
+                        new IntList() {{
+                            add(bw.getMetadata().getColumnIndex("name"));
                         }},
                         new JournalSource(new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()),
-                        new ObjList<CharSequence>() {{
-                            add("band");
+                        new IntList() {{
+                            add(aw.getMetadata().getColumnIndex("band"));
                         }},
                         true
                 ),

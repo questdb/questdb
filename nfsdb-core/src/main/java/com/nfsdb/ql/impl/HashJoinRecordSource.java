@@ -49,8 +49,8 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
     private final SplitRecord currentRecord;
     private final ObjList<RecordColumnMetadata> masterColumns = new ObjList<>();
     private final ObjList<RecordColumnMetadata> slaveColumns = new ObjList<>();
-    private final IntList masterColIndex = new IntList();
-    private final IntList slaveColIndex = new IntList();
+    private final IntList masterColIndex;
+    private final IntList slaveColIndex;
     private final RowIdHolderRecord rowIdRecord = new RowIdHolderRecord();
     private final boolean byRowId;
     private final boolean outer;
@@ -63,16 +63,18 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     public HashJoinRecordSource(
             RecordSource<? extends Record> master,
-            ObjList<CharSequence> masterColumns,
+            IntList masterColIndices,
             RecordSource<? extends Record> slave,
-            ObjList<CharSequence> slaveColumns,
+            IntList slaveColIndices,
             boolean outer) {
         this.master = master;
         this.slave = slave;
         this.metadata = new SplitRecordMetadata(master.getMetadata(), slave.getMetadata());
         this.currentRecord = new SplitRecord(metadata, master.getMetadata().getColumnCount());
         this.byRowId = slave.supportsRowIdAccess();
-        this.recordMap = createRecordMap(master, masterColumns, slave, slaveColumns);
+        this.masterColIndex = masterColIndices;
+        this.slaveColIndex = slaveColIndices;
+        this.recordMap = createRecordMap(master, slave);
         this.outer = outer;
         this.nullRecord = new NullRecord(slave.getMetadata());
     }
@@ -150,21 +152,16 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
     }
 
     private MultiRecordMap createRecordMap(RecordSource<? extends Record> masterSource,
-                                           ObjList<CharSequence> masterColumns,
-                                           RecordSource<? extends Record> slaveSource,
-                                           ObjList<CharSequence> slaveColumns) {
+                                           RecordSource<? extends Record> slaveSource) {
         RecordMetadata mm = masterSource.getMetadata();
-        for (int i = 0, k = masterColumns.size(); i < k; i++) {
-            int index = mm.getColumnIndex(masterColumns.getQuick(i));
-            this.masterColIndex.add(index);
-            this.masterColumns.add(mm.getColumnQuick(index));
+        for (int i = 0, k = masterColIndex.size(); i < k; i++) {
+            this.masterColumns.add(mm.getColumnQuick(masterColIndex.getQuick(i)));
         }
 
         RecordMetadata sm = slaveSource.getMetadata();
         ObjList<RecordColumnMetadata> keyCols = new ObjList<>();
-        for (int i = 0, k = slaveColumns.size(); i < k; i++) {
-            int index = sm.getColumnIndex(slaveColumns.getQuick(i));
-            this.slaveColIndex.add(index);
+        for (int i = 0, k = slaveColIndex.size(); i < k; i++) {
+            int index = slaveColIndex.getQuick(i);
             this.slaveColumns.add(sm.getColumnQuick(index));
             keyCols.add(sm.getColumnQuick(index));
         }
