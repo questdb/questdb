@@ -153,6 +153,8 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
     public void close() {
         if (address != 0) {
             Unsafe.getUnsafe().freeMemory(address);
+            address = 0;
+            size = 0;
         }
     }
 

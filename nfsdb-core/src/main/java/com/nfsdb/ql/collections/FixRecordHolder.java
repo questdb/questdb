@@ -34,7 +34,7 @@ import com.nfsdb.utils.Unsafe;
 public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
     private final ObjList<ColumnType> types;
     private final IntList offsets;
-    private final long address;
+    private long address;
     private StorageFacade storageFacade;
     private boolean held = false;
 
@@ -45,33 +45,33 @@ public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
         this.types = new ObjList<>(cc);
         this.offsets = new IntList(cc);
 
-        int offset = 0;
+        int size = 0;
         for (int i = 0; i < cc; i++) {
             ColumnType type = metadata.getColumnQuick(i).getType();
             types.add(type);
-            offsets.add(offset);
+            offsets.add(size);
 
             switch (type) {
                 case INT:
                 case FLOAT:
                 case SYMBOL:
-                    offset += 4;
+                    size += 4;
                     break;
                 case LONG:
                 case DOUBLE:
                 case DATE:
-                    offset += 8;
+                    size += 8;
                     break;
                 case BOOLEAN:
                 case BYTE:
-                    offset++;
+                    size++;
                     break;
                 case SHORT:
-                    offset += 2;
+                    size += 2;
                     break;
             }
         }
-        address = Unsafe.getUnsafe().allocateMemory(offset);
+        address = Unsafe.getUnsafe().allocateMemory(size);
     }
 
     @Override
@@ -125,7 +125,10 @@ public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
 
     @Override
     public void close() {
-        Unsafe.getUnsafe().freeMemory(address);
+        if (address != 0) {
+            Unsafe.getUnsafe().freeMemory(address);
+            address = 0;
+        }
     }
 
     protected long address(int col) {

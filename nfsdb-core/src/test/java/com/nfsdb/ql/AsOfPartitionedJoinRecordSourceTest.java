@@ -47,7 +47,9 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
 
     @BeforeClass
     public static void setUpClass() throws Exception {
-        JournalWriter jw = factory.writer(new JournalStructure("x")
+        int xcount = 100;
+        int ycount = 10;
+        JournalWriter xw = factory.writer(new JournalStructure("x")
                         .$ts()
                         .$sym("ccy")
                         .$double("rate")
@@ -58,14 +60,16 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                         .$short("sh")
                         .$long("ln")
                         .$bool("b")
+                        .recordCountHint(xcount)
                         .$()
         );
 
-        JournalWriter jwy = factory.writer(new JournalStructure("y")
+        JournalWriter yw = factory.writer(new JournalStructure("y")
                         .$ts()
                         .$sym("ccy")
                         .$double("amount")
                         .$str("trader")
+                        .recordCountHint(ycount)
                         .$()
         );
 
@@ -76,11 +80,10 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
             ccy[i] = rnd.nextChars(6).toString();
         }
 
-        int count = 100;
         long ts = Dates.parseDateTime("2015-03-10T00:00:00.000Z");
 
-        for (int i = 0; i < count; i++) {
-            JournalEntryWriter w = jw.entryWriter();
+        for (int i = 0; i < xcount; i++) {
+            JournalEntryWriter w = xw.entryWriter();
             w.putDate(0, ts += 10000);
             w.putSym(1, ccy[rnd.nextPositiveInt() % ccy.length]);
             w.putDouble(2, rnd.nextDouble());
@@ -93,19 +96,18 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
             w.putBool(9, rnd.nextBoolean());
             w.append();
         }
-        jw.commit();
+        xw.commit();
 
-        int county = 10;
         ts = Dates.parseDateTime("2015-03-10T00:00:00.000Z");
-        for (int i = 0; i < county; i++) {
-            JournalEntryWriter w = jwy.entryWriter();
+        for (int i = 0; i < ycount; i++) {
+            JournalEntryWriter w = yw.entryWriter();
             w.putDate(0, ts += 60000);
             w.putSym(1, ccy[rnd.nextPositiveInt() % ccy.length]);
             w.putDouble(2, rnd.nextDouble());
             w.putStr(3, rnd.nextChars(rnd.nextPositiveInt() % 128));
             w.append();
         }
-        jwy.commit();
+        yw.commit();
 
         // records for adjacent join test
 

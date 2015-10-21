@@ -48,6 +48,7 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
     private final SplitRecord record;
     private RecordCursor<? extends Record> masterCursor;
     private RecordCursor<? extends Record> slaveCursor;
+    private boolean closed = false;
 
     // todo: extract config
     public AsOfPartitionedJoinRecordSource(
@@ -95,10 +96,13 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
 
     @Override
     public void close() throws IOException {
-        Misc.free(map);
-        Misc.free(holder);
-        Misc.free(master);
-        Misc.free(slave);
+        if (!closed) {
+            Misc.free(map);
+            Misc.free(holder);
+            Misc.free(master);
+            Misc.free(slave);
+            closed = true;
+        }
     }
 
     @Override
