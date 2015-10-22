@@ -23,7 +23,10 @@ package com.nfsdb.ql.parser;
 
 import com.nfsdb.JournalKey;
 import com.nfsdb.collections.*;
-import com.nfsdb.exceptions.*;
+import com.nfsdb.exceptions.InvalidColumnException;
+import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
@@ -33,7 +36,9 @@ import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.ql.*;
 import com.nfsdb.ql.impl.*;
 import com.nfsdb.ql.model.*;
-import com.nfsdb.ql.ops.*;
+import com.nfsdb.ql.ops.LongConstant;
+import com.nfsdb.ql.ops.Signature;
+import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Interval;
@@ -47,18 +52,13 @@ import java.util.ArrayDeque;
 public class QueryCompiler {
 
     private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
-    private final static NullConstant nullConstant = new NullConstant();
     private final static ObjObjHashMap<Signature, LatestByLambdaRowSourceFactory> LAMBDA_ROW_SOURCE_FACTORIES = new ObjObjHashMap<>();
     private final static LongConstant LONG_ZERO_CONST = new LongConstant(0L);
     private final static IntHashSet joinBarriers;
     private final QueryParser parser = new QueryParser();
     private final JournalReaderFactory factory;
     private final AssociativeCache<RecordSource<? extends Record>> cache = new AssociativeCache<>(8, 1024);
-    private final ArrayDeque<VirtualColumn> stack = new ArrayDeque<>();
     private final QueryFilterAnalyser queryFilterAnalyser = new QueryFilterAnalyser();
-    private final VirtualColumnBuilder virtualColumnBuilderVisitor = new VirtualColumnBuilder();
-    private final Signature mutableSig = new Signature();
-    private final ObjList<VirtualColumn> mutableArgs = new ObjList<>();
     private final StringSink columnNameAssembly = new StringSink();
     private final int columnNamePrefixLen;
     private final ObjectPool<FlyweightCharSequence> csPool = new ObjectPool<>(FlyweightCharSequence.FACTORY, 64);
@@ -68,6 +68,7 @@ public class QueryCompiler {
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
     private final ObjectPool<JoinContext> contextPool = new ObjectPool<>(JoinContext.FACTORY, 16);
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
+    private final VirtualColumnBuilder virtualColumnBuilder = new VirtualColumnBuilder(traversalAlgo);
     private final IntList clausesToSteal = new IntList();
     private final IntList literalCollectorAIndexes = new IntList();
     private final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
@@ -94,7 +95,9 @@ public class QueryCompiler {
     private final CharSequenceIntHashMap constNameToIndex = new CharSequenceIntHashMap();
     private final CharSequenceObjHashMap<ExprNode> constNameToNode = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<String> constNameToToken = new CharSequenceObjHashMap<>();
+    private final Signature mutableSig = new Signature();
     private ObjList<JoinContext> emittedJoinClauses;
+
 
     public QueryCompiler(JournalReaderFactory factory) {
         this.factory = factory;
@@ -877,41 +880,6 @@ public class QueryCompiler {
         }
     }
 
-    private void createColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
-        mutableArgs.clear();
-        mutableSig.clear();
-
-        int argCount = node.paramCount;
-        switch (argCount) {
-            case 0:
-                switch (node.type) {
-                    case LITERAL:
-                        // lookup column
-                        stack.push(lookupColumn(node, metadata));
-                        break;
-                    case CONSTANT:
-                        stack.push(parseConstant(node));
-                        break;
-                    default:
-                        // lookup zero arg function from symbol table
-                        stack.push(lookupFunction(node, mutableSig.setName(node.token).setParamCount(0), null));
-                }
-                break;
-            default:
-                mutableArgs.ensureCapacity(argCount);
-                mutableSig.setName(node.token).setParamCount(argCount);
-                for (int n = 0; n < argCount; n++) {
-                    VirtualColumn c = stack.poll();
-                    if (c == null) {
-                        throw new ParserException(node.position, "Too few arguments");
-                    }
-                    mutableSig.paramType(n, c.getType(), c.isConstant());
-                    mutableArgs.setQuick(n, c);
-                }
-                stack.push(lookupFunction(node, mutableSig, mutableArgs));
-        }
-    }
-
     @NotNull
     private RecordSource<? extends Record> createHashJoin(QueryModel model, RecordSource<? extends Record> master, RecordSource<? extends Record> slave) throws ParserException {
         JoinContext jc = model.getContext();
@@ -972,9 +940,7 @@ public class QueryCompiler {
     }
 
     private VirtualColumn createVirtualColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
-        virtualColumnBuilderVisitor.metadata = metadata;
-        traversalAlgo.traverse(node, virtualColumnBuilderVisitor);
-        return stack.poll();
+        return virtualColumnBuilder.createVirtualColumn(node, metadata);
     }
 
     private CharSequence extractColumnName(CharSequence token, int dot) {
@@ -1030,58 +996,6 @@ public class QueryCompiler {
 
     private void linkDependencies(QueryModel model, int parent, int child) {
         model.getJoinModels().getQuick(parent).addDependency(child);
-    }
-
-    @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE"})
-    private VirtualColumn lookupColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
-        try {
-            int index = metadata.getColumnIndex(node.token);
-            switch (metadata.getColumnQuick(index).getType()) {
-                case DOUBLE:
-                    return new DoubleRecordSourceColumn(index);
-                case INT:
-                    return new IntRecordSourceColumn(index);
-                case LONG:
-                    return new LongRecordSourceColumn(index);
-                case STRING:
-                    return new StrRecordSourceColumn(index);
-                case SYMBOL:
-                    return new SymRecordSourceColumn(index);
-                case BYTE:
-                    return new ByteRecordSourceColumn(index);
-                case FLOAT:
-                    return new FloatRecordSourceColumn(index);
-                case BOOLEAN:
-                    return new BoolRecordSourceColumn(index);
-                case SHORT:
-                    return new ShortRecordSourceColumn(index);
-                case BINARY:
-                    return new BinaryRecordSourceColumn(index);
-                case DATE:
-                    return new DateRecordSourceColumn(index);
-
-                default:
-                    throw new ParserException(node.position, "Not yet supported type");
-            }
-        } catch (NoSuchColumnException e) {
-            throw new InvalidColumnException(node.position);
-        }
-    }
-
-    private VirtualColumn lookupFunction(ExprNode node, Signature sig, ObjList<VirtualColumn> args) throws ParserException {
-        FunctionFactory factory = FunctionFactories.find(sig, args);
-        if (factory == null) {
-            throw new ParserException(node.position, "No such function: " + sig.userReadable());
-        }
-
-        Function f = factory.newInstance(args);
-        if (args != null) {
-            int n = node.paramCount;
-            for (int i = 0; i < n; i++) {
-                f.setArg(i, args.getQuick(i));
-            }
-        }
-        return f.isConstant() ? processConstantExpression(f) : f;
     }
 
     private JoinContext mergeContexts(QueryModel parent, JoinContext a, JoinContext b) {
@@ -1276,42 +1190,6 @@ public class QueryCompiler {
         return this;
     }
 
-    @SuppressFBWarnings({"ES_COMPARING_STRINGS_WITH_EQ"})
-    private VirtualColumn parseConstant(ExprNode node) throws ParserException {
-
-        if ("null".equals(node.token)) {
-            return nullConstant;
-        }
-
-        String s = Chars.stripQuotes(node.token);
-
-        // by ref comparison
-        //noinspection StringEquality
-        if (s != node.token) {
-            return new StrConstant(s);
-        }
-
-        try {
-            return new IntConstant(Numbers.parseInt(node.token));
-        } catch (NumericException ignore) {
-
-        }
-
-        try {
-            return new LongConstant(Numbers.parseLong(node.token));
-        } catch (NumericException ignore) {
-
-        }
-
-        try {
-            return new DoubleConstant(Numbers.parseDouble(node.token));
-        } catch (NumericException ignore) {
-
-        }
-
-        throw new ParserException(node.position, "Unknown value type: " + node.token);
-    }
-
     /**
      * Splits "where" clauses into "and" concatenated list of boolean expressions.
      *
@@ -1349,19 +1227,6 @@ public class QueryCompiler {
             } else {
                 node = andConditionStack.poll();
             }
-        }
-    }
-
-    private VirtualColumn processConstantExpression(Function f) {
-        switch (f.getType()) {
-            case INT:
-                return new IntConstant(f.getInt(null));
-            case DOUBLE:
-                return new DoubleConstant(f.getDouble(null));
-            case BOOLEAN:
-                return new BooleanConstant(f.getBool(null));
-            default:
-                return f;
         }
     }
 
@@ -1749,20 +1614,30 @@ public class QueryCompiler {
         model.getJoinModels().getQuick(parent).removeDependency(child);
     }
 
-    private class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
-        private RecordMetadata metadata;
-
-        @Override
-        public void visit(ExprNode node) throws ParserException {
-            createColumn(node, metadata);
-        }
-    }
-
     private class LiteralCollector implements PostOrderTreeTraversalAlgo.Visitor {
         private IntList indexes;
         private ObjList<CharSequence> names;
         private int nullCount;
         private QueryModel parent;
+
+        @Override
+        public void visit(ExprNode node) throws ParserException {
+            switch (node.type) {
+                case LITERAL:
+                    int dot = node.token.indexOf('.');
+                    CharSequence name = extractColumnName(node.token, dot);
+                    indexes.add(resolveJournalIndex(parent, dot == -1 ? null : csPool.next().of(node.token, 0, dot), name, node.position));
+                    names.add(name);
+                    break;
+                case CONSTANT:
+                    if (nullConstants.contains(node.token)) {
+                        nullCount++;
+                    }
+                    break;
+                default:
+                    break;
+            }
+        }
 
         private PostOrderTreeTraversalAlgo.Visitor lhs() {
             indexes = literalCollectorAIndexes;
@@ -1788,25 +1663,6 @@ public class QueryCompiler {
 
         private void withParent(QueryModel parent) {
             this.parent = parent;
-        }
-
-        @Override
-        public void visit(ExprNode node) throws ParserException {
-            switch (node.type) {
-                case LITERAL:
-                    int dot = node.token.indexOf('.');
-                    CharSequence name = extractColumnName(node.token, dot);
-                    indexes.add(resolveJournalIndex(parent, dot == -1 ? null : csPool.next().of(node.token, 0, dot), name, node.position));
-                    names.add(name);
-                    break;
-                case CONSTANT:
-                    if (nullConstants.contains(node.token)) {
-                        nullCount++;
-                    }
-                    break;
-                default:
-                    break;
-            }
         }
     }
 

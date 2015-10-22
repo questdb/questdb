@@ -46,15 +46,6 @@ public class JournalTailPartitionSource extends AbstractImmutableIterator<Partit
     private long lo;
     private int partitionCount;
 
-    public JournalTailPartitionSource(Journal journal, boolean open, long rowid) {
-        this.journal = journal;
-        this.metadata = journal.getMetadata();
-        this.open = open;
-        this.rowid = rowid;
-        this.dynamicJournal = false;
-        this.symFacade.setJournal(journal);
-    }
-
     public JournalTailPartitionSource(JournalMetadata metadata, boolean open, long rowid) {
         this.open = open;
         this.rowid = rowid;

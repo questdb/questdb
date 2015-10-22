@@ -48,7 +48,7 @@ public class SelectedColumnSplitter {
 
 
         SelectedColumnSplitter splitter = new SelectedColumnSplitter();
-        splitter.detachAggregates(builder.root());
+        ExprNode n = splitter.detachAggregates(builder.root());
 
         System.out.println("ok");
     }

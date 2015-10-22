@@ -55,9 +55,9 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
     private final boolean byRowId;
     private final boolean outer;
     private final NullRecord nullRecord;
+    private final MultiRecordMap recordMap;
     private RecordCursor<? extends Record> slaveCursor;
     private RecordCursor<? extends Record> masterCursor;
-    private MultiRecordMap recordMap;
     private RecordCursor<? extends Record> hashTableCursor;
 
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
