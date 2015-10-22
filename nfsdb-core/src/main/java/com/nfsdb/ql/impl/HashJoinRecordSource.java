@@ -106,6 +106,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
         this.slaveCursor = slave.prepareCursor(factory);
         this.masterCursor = master.prepareCursor(factory);
         buildHashTable();
+        recordMap.setStorageFacade(slaveCursor.getStorageFacade());
         return this;
     }
 

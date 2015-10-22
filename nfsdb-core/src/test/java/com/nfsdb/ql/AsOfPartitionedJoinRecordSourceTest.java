@@ -24,14 +24,12 @@ package com.nfsdb.ql;
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.collections.CharSequenceHashSet;
-import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.ParserException;
-import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.JournalStructure;
-import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.ql.impl.AsOfJoinRecordSource;
 import com.nfsdb.ql.impl.AsOfPartitionedJoinRecordSource;
+import com.nfsdb.ql.impl.NoRowidSource;
 import com.nfsdb.ql.parser.AbstractOptimiserTest;
 import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Dates;
@@ -462,36 +460,6 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 "2015-03-10T00:10:00.000Z\tVTJWCP\t384.000000000000\tPGKJRQGKHQHXYUVDUZQTICMPWFZEINPQOGHUGZGDCFLNGCEFBTDNSYQTIGUTKIESOSYYLIBUFGPWTQJQWTGERXRSYZCKPFWECEH\t2015-03-10T00:09:50.000Z\tVTJWCP\t0.062803771347\t896.000000000000\tYVJISIQFNSEUHOSVSIKJFJLNEKTSLZFPGDVCLMZTXOYEPKECCJZJOSDCIWCZECJGNWQNKCYVZJRRZYDBL\tPEHNRX\t0.9202\t-15664\t-5743731661904518905\ttrue\n";
         printer.printCursor(source.prepareCursor(factory));
         TestUtils.assertEquals(expected, sink);
-    }
-
-    private static class NoRowidSource implements RecordSource<Record> {
-        private RecordSource<? extends Record> delegate;
-
-        @Override
-        public RecordMetadata getMetadata() {
-            return delegate.getMetadata();
-        }
-
-        @SuppressWarnings("unchecked")
-        @Override
-        public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
-            return (RecordCursor<Record>) delegate.prepareCursor(factory);
-        }
-
-        @Override
-        public void reset() {
-            delegate.reset();
-        }
-
-        @Override
-        public boolean supportsRowIdAccess() {
-            return false;
-        }
-
-        public NoRowidSource of(RecordSource<? extends Record> delegate) {
-            this.delegate = delegate;
-            return this;
-        }
     }
 
     static {

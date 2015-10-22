@@ -24,11 +24,16 @@ package com.nfsdb.ql.parser;
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.collections.IntHashSet;
+import com.nfsdb.collections.IntList;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.JournalStructure;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordSource;
+import com.nfsdb.ql.impl.HashJoinRecordSource;
+import com.nfsdb.ql.impl.NoRowidSource;
 import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Dates;
@@ -329,6 +334,39 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                         " join products on d.productId = products.productId" +
                         " join suppliers on products.supplier = suppliers.supplier" +
                         " where d.productId = d.orderId");
+    }
+
+    @Test
+    public void testJoinNoRowid() throws Exception {
+
+        final String expected = "100\tPJFSREKEUNMKWOF\tUVKWCCVTJSKMXVEGPIG\tnull\tVMY\tRT\tEYYPDVRGRQG\t2015-07-10T00:00:00.100Z\t104281903\t100\t1138\tKWK\t2015-07-10T00:00:14.518Z\tFBLGGTZEN\n" +
+                "100\tPJFSREKEUNMKWOF\tUVKWCCVTJSKMXVEGPIG\tnull\tVMY\tRT\tEYYPDVRGRQG\t2015-07-10T00:00:00.100Z\t1191623531\t100\t1210\tSR\t2015-07-10T00:00:18.175Z\tYM\n" +
+                "100\tPJFSREKEUNMKWOF\tUVKWCCVTJSKMXVEGPIG\tnull\tVMY\tRT\tEYYPDVRGRQG\t2015-07-10T00:00:00.100Z\t1662742408\t100\t1828\tQH\t2015-07-10T00:00:19.509Z\tEYBI\n" +
+                "100\tPJFSREKEUNMKWOF\tUVKWCCVTJSKMXVEGPIG\tnull\tVMY\tRT\tEYYPDVRGRQG\t2015-07-10T00:00:00.100Z\t220389\t100\t1293\tDGEEWB\t2015-07-10T00:00:56.196Z\tEYBI\n" +
+                "100\tPJFSREKEUNMKWOF\tUVKWCCVTJSKMXVEGPIG\tnull\tVMY\tRT\tEYYPDVRGRQG\t2015-07-10T00:00:00.100Z\t798408721\t100\t803\tZIHLGS\t2015-07-10T00:00:56.977Z\tVTNNKVOLHLLNN\n" +
+                "100\tPJFSREKEUNMKWOF\tUVKWCCVTJSKMXVEGPIG\tnull\tVMY\tRT\tEYYPDVRGRQG\t2015-07-10T00:00:00.100Z\t966974434\t100\t870\tJEOBQ\t2015-07-10T00:00:57.981Z\tW\n" +
+                "100\tPJFSREKEUNMKWOF\tUVKWCCVTJSKMXVEGPIG\tnull\tVMY\tRT\tEYYPDVRGRQG\t2015-07-10T00:00:00.100Z\t258318715\t100\t1036\tOPWOGS\t2015-07-10T00:01:00.608Z\tEYBI\n" +
+                "100\tPJFSREKEUNMKWOF\tUVKWCCVTJSKMXVEGPIG\tnull\tVMY\tRT\tEYYPDVRGRQG\t2015-07-10T00:00:00.100Z\t1528068156\t100\t400\tYBQE\t2015-07-10T00:01:20.643Z\tQXOLEEXZ\n" +
+                "100\tPJFSREKEUNMKWOF\tUVKWCCVTJSKMXVEGPIG\tnull\tVMY\tRT\tEYYPDVRGRQG\t2015-07-10T00:00:00.100Z\t1935884354\t100\t1503\tD\t2015-07-10T00:01:43.507Z\tRZVZJQRNYSRKZSJ\n";
+
+        final RecordSource<? extends Record> m = compiler.compileSource("customers where customerName ~ 'PJFSREKEUNMKWOF'");
+        final RecordSource<? extends Record> s = new NoRowidSource().of(compiler.compileSource("orders"));
+
+        RecordSource<? extends Record> r = new HashJoinRecordSource(
+                m,
+                new IntList() {{
+                    add(m.getMetadata().getColumnIndex("customerId"));
+                }},
+                s,
+                new IntList() {{
+                    add(s.getMetadata().getColumnIndex("customerId"));
+                }},
+                false
+        );
+        sink.clear();
+        printer.printCursor(r.prepareCursor(factory));
+        TestUtils.assertEquals(expected, sink);
+        assertThat(expected, "customers c join orders o on c.customerId = o.customerId where customerName ~ 'PJFSREKEUNMKWOF'");
     }
 
     @Test

@@ -81,6 +81,10 @@ public class RecordDequeue extends AbstractImmutableIterator<Record> implements 
         return null;
     }
 
+    public void setStorageFacade(StorageFacade storageFacade) {
+        accessor.setStorageFacade(storageFacade);
+    }
+
     @Override
     public boolean hasNext() {
         return readOffset > -1;

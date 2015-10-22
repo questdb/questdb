@@ -28,6 +28,7 @@ import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.AbstractRecord;
 import com.nfsdb.ql.Record;
+import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.collections.DirectPagedBufferStream;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SequentialMemory;
@@ -47,6 +48,7 @@ public class MemoryRecordAccessor extends AbstractRecord {
     private final int fixedBlockLen;
     private int fixedSize;
     private long address;
+    private StorageFacade storageFacade;
 
     public MemoryRecordAccessor(RecordMetadata metadata, SequentialMemory mem) {
         super(metadata);
@@ -247,7 +249,7 @@ public class MemoryRecordAccessor extends AbstractRecord {
 
     @Override
     public String getSym(int col) {
-        return getStr(col).toString();
+        return storageFacade.getSymbolTable(col).value(getInt(col));
     }
 
     public int getFixedBlockLength() {
@@ -256,6 +258,10 @@ public class MemoryRecordAccessor extends AbstractRecord {
 
     public void init(long offset) {
         this.address = mem.addressOf(offset) + headerSize;
+    }
+
+    public void setStorageFacade(StorageFacade storageFacade) {
+        this.storageFacade = storageFacade;
     }
 
     private long addressOf(int index) {

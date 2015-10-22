@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.collections;
 
@@ -28,6 +28,7 @@ import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
+import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.storage.ColumnType;
 
 import java.io.Closeable;
@@ -74,6 +75,10 @@ public class MultiRecordMap implements Closeable, Mutable {
         MapValues values = map.getValues(key);
         records.init(values == null ? -1 : values.getLong(0));
         return records;
+    }
+
+    public void setStorageFacade(StorageFacade storageFacade) {
+        records.setStorageFacade(storageFacade);
     }
 
     static {
