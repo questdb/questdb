@@ -61,8 +61,10 @@ public class AssociativeCache<V> implements Closeable {
 
     public void clear() {
         for (int i = 0, n = keys.length; i < n; i++) {
-            keys[i] = null;
-            free(i);
+            if (keys[i] != null) {
+                keys[i] = null;
+                free(i);
+            }
         }
     }
 
@@ -108,6 +110,6 @@ public class AssociativeCache<V> implements Closeable {
     }
 
     private void free(int lo) {
-        Misc.free(Unsafe.arrayGet(values, lo));
+        Unsafe.arrayPut(values, lo, Misc.free(Unsafe.arrayGet(values, lo)));
     }
 }

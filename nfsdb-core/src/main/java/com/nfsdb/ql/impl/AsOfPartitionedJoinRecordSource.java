@@ -96,13 +96,12 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
 
     @Override
     public void close() throws IOException {
-        if (!closed) {
-            Misc.free(map);
-            Misc.free(holder);
-            Misc.free(master);
-            Misc.free(slave);
-            closed = true;
-        }
+        assert !closed;
+        Misc.free(map);
+        Misc.free(holder);
+        Misc.free(master);
+        Misc.free(slave);
+        closed = true;
     }
 
     @Override
