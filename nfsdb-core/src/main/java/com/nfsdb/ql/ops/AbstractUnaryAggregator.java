@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.ops;
 
@@ -32,7 +32,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 public abstract class AbstractUnaryAggregator extends AbstractUnaryOperator implements AggregatorFunction {
 
     protected int valueIndex;
-    private RecordColumnMetadata[] metadata;
+    private RecordColumnMetadata[] metadata = {this};
 
     public AbstractUnaryAggregator(ColumnType type) {
         super(type);
@@ -50,11 +50,5 @@ public abstract class AbstractUnaryAggregator extends AbstractUnaryOperator impl
 
     @Override
     public void prepareSource(RecordSource<? extends Record> source) {
-    }
-
-    @Override
-    public void setValue(VirtualColumn value) {
-        super.setValue(value);
-        this.metadata = new RecordColumnMetadata[]{value};
     }
 }

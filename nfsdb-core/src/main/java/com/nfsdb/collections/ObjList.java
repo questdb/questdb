@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.collections;
 
@@ -50,6 +50,13 @@ public class ObjList<T> implements Mutable {
     public void add(T value) {
         ensureCapacity0(pos + 1);
         Unsafe.arrayPut(buffer, pos++, value);
+    }
+
+    public void addAll(ObjList<T> that) {
+        ensureCapacity0(pos + that.size());
+        for (int i = 0, n = that.size(); i < n; i++) {
+            Unsafe.arrayPut(buffer, pos++, that.getQuick(i));
+        }
     }
 
     /**

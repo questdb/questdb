@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
@@ -1636,26 +1636,31 @@ public class QueryCompiler {
             rs = new VirtualColumnRecordSource(rs, virtualColumns);
         }
 
-        if (selectedColumns.size() > 0) {
-            // wrap underlying record source into selected columns source.
-            rs = new SelectedColumnsRecordSource(rs, selectedColumns, selectedColumnAliases);
-        }
-
         // if aggregators present, wrap record source into group-by source
-        if (aggregators.size() > 0) {
+        int asz = aggregators.size();
+        if (asz > 0) {
+            ObjList<CharSequence> groupByKeyColumn = new ObjList<>();
+            groupByKeyColumn.addAll(selectedColumns);
             ObjList<AggregatorFunction> af = new ObjList<>(aggregators.size());
             // create virtual columns
-            for (int i = 0, n = aggregators.size(); i < n; i++) {
+            for (int i = 0; i < asz; i++) {
                 QueryColumn qc = aggregators.get(i);
                 VirtualColumn vc = createVirtualColumn(qc.getAst(), rs.getMetadata());
                 if (vc instanceof AggregatorFunction) {
                     vc.setName(qc.getAlias());
                     af.add((AggregatorFunction) vc);
+                    selectedColumns.add(qc.getAlias());
+                    selectedColumnAliases.add(qc.getAlias());
                 } else {
                     throw new ParserException(qc.getAst().position, "Internal configuration error. Not an aggregate");
                 }
             }
-            rs = new ResampledSource(rs, selectedColumns, af, ResampledSource.SampleBy.MINUTE);
+            rs = new GroupByRecordSource(rs, groupByKeyColumn, af);
+        }
+
+        if (selectedColumns.size() > 0) {
+            // wrap underlying record source into selected columns source.
+            rs = new SelectedColumnsRecordSource(rs, selectedColumns, selectedColumnAliases);
         }
         return rs;
     }

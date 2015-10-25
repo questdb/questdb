@@ -278,35 +278,6 @@ public class AggregationFunctionTest extends AbstractTest {
     }
 
     @Test
-    public void testSumInt() throws Exception {
-        assertFunc(
-                new SumIntAggregationFunction(r.getMetadata().getColumn("askSize"))
-                , "936298421\t2015-01-01T00:00:00.000Z\tAGK.L\n" +
-                        "1261867203\t2015-01-01T00:00:00.000Z\tBP.L\n" +
-                        "-1040054830\t2015-01-01T00:00:00.000Z\tRRS.L\n" +
-                        "601364085\t2015-01-01T00:00:00.000Z\tBT-A.L\n" +
-                        "1519408602\t2015-01-01T00:00:00.000Z\tGKN.L\n" +
-                        "-2134747749\t2015-01-01T00:00:00.000Z\tLLOY.L\n" +
-                        "-1868948525\t2015-01-01T00:00:00.000Z\tABF.L\n" +
-                        "-605662252\t2015-01-01T00:00:00.000Z\tWTB.L\n" +
-                        "-1257342025\t2015-01-01T00:00:00.000Z\tTLW.L\n" +
-                        "-955207476\t2015-01-01T00:00:00.000Z\tADM.L\n" +
-                        "2085278043\t2015-01-01T00:01:00.000Z\tBP.L\n" +
-                        "1108922740\t2015-01-01T00:01:00.000Z\tRRS.L\n" +
-                        "-657045748\t2015-01-01T00:01:00.000Z\tWTB.L\n" +
-                        "1173213594\t2015-01-01T00:01:00.000Z\tGKN.L\n" +
-                        "727741293\t2015-01-01T00:01:00.000Z\tAGK.L\n" +
-                        "1816141252\t2015-01-01T00:01:00.000Z\tBT-A.L\n" +
-                        "1796333725\t2015-01-01T00:01:00.000Z\tADM.L\n" +
-                        "1625426964\t2015-01-01T00:01:00.000Z\tTLW.L\n" +
-                        "1887002231\t2015-01-01T00:01:00.000Z\tABF.L\n" +
-                        "1314878562\t2015-01-01T00:01:00.000Z\tLLOY.L\n"
-                , false
-        );
-    }
-
-
-    @Test
     public void testSumIntToLong() throws Exception {
         assertFunc(
                 new SumIntToLongAggregationFunction(r.getMetadata().getColumn("askSize"))

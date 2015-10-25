@@ -21,21 +21,29 @@
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.factory.configuration.RecordColumnMetadata;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.collections.MapValues;
+import com.nfsdb.storage.ColumnType;
 
-public class SumIntAggregationFunction extends AbstractSingleColumnAggregatorFunction {
-    public SumIntAggregationFunction(RecordColumnMetadata meta) {
-        super(meta);
+public final class SumIntAggregator extends AbstractUnaryAggregator {
+    public static final SumIntAggregator FACTORY = new SumIntAggregator();
+
+    private SumIntAggregator() {
+        super(ColumnType.INT);
     }
 
     @Override
     public void calculate(Record rec, MapValues values) {
         if (values.isNew()) {
-            values.putInt(valueIndex, rec.getInt(recordIndex));
+            values.putInt(valueIndex, value.getInt(rec));
         } else {
-            values.putInt(valueIndex, values.getInt(valueIndex) + rec.getInt(recordIndex));
+            values.putInt(valueIndex, values.getInt(valueIndex) + value.getInt(rec));
         }
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new SumIntAggregator();
     }
 }

@@ -34,39 +34,36 @@ import com.nfsdb.ql.*;
 import com.nfsdb.ql.collections.MapRecordValueInterceptor;
 import com.nfsdb.ql.collections.MapValues;
 import com.nfsdb.ql.collections.MultiMap;
-import com.nfsdb.utils.Dates;
+import com.nfsdb.utils.Misc;
 import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+import java.io.Closeable;
+import java.io.IOException;
+
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
-public class ResampledSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record> {
+public class GroupByRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record>, Closeable {
 
     private final MultiMap map;
     private final RecordSource<? extends Record> recordSource;
     private final int[] keyIndices;
-    private final int tsIndex;
     private final ObjList<AggregatorFunction> aggregators;
-    private final SampleBy sampleBy;
     private RecordCursor<? extends Record> recordCursor;
     private RecordCursor<Record> mapRecordSource;
-    private Record nextRecord = null;
 
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
-    public ResampledSource(
+    public GroupByRecordSource(
             RecordSource<? extends Record> recordSource,
             @Transient ObjList<CharSequence> keyColumns,
-            ObjList<AggregatorFunction> aggregators,
-            SampleBy sampleBy
+            ObjList<AggregatorFunction> aggregators
     ) {
         int keyColumnsSize = keyColumns.size();
         this.keyIndices = new int[keyColumnsSize];
-        // define key columns
 
+        // define key columns
         ObjList<RecordColumnMetadata> keyCols = new ObjList<>();
 
         RecordMetadata rm = recordSource.getMetadata();
-        this.tsIndex = rm.getColumnIndex(rm.getTimestampMetadata().getName());
-        keyCols.add(rm.getTimestampMetadata());
         for (int i = 0; i < keyColumnsSize; i++) {
             RecordColumnMetadata cm = rm.getColumn(keyColumns.getQuick(i));
             keyCols.add(cm);
@@ -77,6 +74,7 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
 
         ObjList<RecordColumnMetadata> valueCols = new ObjList<>();
         ObjList<MapRecordValueInterceptor> interceptors = new ObjList<>();
+
         // take value columns from aggregator function
         int index = 0;
         for (int i = 0, sz = aggregators.size(); i < sz; i++) {
@@ -97,7 +95,12 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
 
         this.map = new MultiMap(valueCols, keyCols, interceptors);
         this.recordSource = recordSource;
-        this.sampleBy = sampleBy;
+    }
+
+    @Override
+    public void close() throws IOException {
+        Misc.free(this.map);
+        Misc.free(recordSource);
     }
 
     @Override
@@ -118,6 +121,7 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
     @Override
     public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
         this.recordCursor = recordSource.prepareCursor(factory);
+        buildMap();
         return this;
     }
 
@@ -134,7 +138,7 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
 
     @Override
     public boolean hasNext() {
-        return mapRecordSource != null && mapRecordSource.hasNext() || buildMap();
+        return mapRecordSource.hasNext();
     }
 
     @Override
@@ -142,57 +146,14 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
         return mapRecordSource.next();
     }
 
-    private boolean buildMap() {
+    private void buildMap() {
 
-        long current = 0;
-        long sample;
-        boolean first = true;
-        Record rec;
+        while (recordCursor.hasNext()) {
 
-
-        map.clear();
-
-        if (nextRecord != null) {
-            rec = nextRecord;
-        } else {
-            if (!recordCursor.hasNext()) {
-                return false;
-            }
-            rec = recordCursor.next();
-        }
-
-        do {
-            switch (sampleBy) {
-                case YEAR:
-                    sample = Dates.floorYYYY(rec.getLong(tsIndex));
-                    break;
-                case MONTH:
-                    sample = Dates.floorMM(rec.getLong(tsIndex));
-                    break;
-                case DAY:
-                    sample = Dates.floorDD(rec.getLong(tsIndex));
-                    break;
-                case HOUR:
-                    sample = Dates.floorHH(rec.getLong(tsIndex));
-                    break;
-                case MINUTE:
-                    sample = Dates.floorMI(rec.getLong(tsIndex));
-                    break;
-                default:
-                    sample = 0;
-            }
-
-            if (first) {
-                current = sample;
-                first = false;
-            } else if (sample != current) {
-                nextRecord = rec;
-                break;
-            }
+            Record rec = recordCursor.next();
 
             // we are inside of time window, compute aggregates
             MultiMap.KeyWriter keyWriter = map.keyWriter();
-            keyWriter.putLong(sample);
             for (int i = 0; i < keyIndices.length; i++) {
                 int index = Unsafe.arrayGet(keyIndices, i);
                 switch (recordSource.getMetadata().getColumnQuick(index).getType()) {
@@ -212,26 +173,13 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
                         throw new JournalRuntimeException("Unsupported type: " + recordSource.getMetadata().getColumnQuick(index).getType());
                 }
             }
+
             MapValues values = map.getOrCreateValues(keyWriter);
 
             for (int i = 0, sz = aggregators.size(); i < sz; i++) {
                 aggregators.getQuick(i).calculate(rec, values);
             }
-
-            if (!recordCursor.hasNext()) {
-                nextRecord = null;
-                break;
-            }
-
-            rec = recordCursor.next();
-
-        } while (true);
-
-        return (mapRecordSource = map.getCursor()).hasNext();
-    }
-
-
-    public enum SampleBy {
-        YEAR, MONTH, DAY, HOUR, MINUTE, SECOND
+        }
+        mapRecordSource = map.getCursor();
     }
 }
