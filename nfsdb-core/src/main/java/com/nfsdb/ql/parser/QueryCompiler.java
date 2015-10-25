@@ -36,6 +36,7 @@ import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.ql.*;
 import com.nfsdb.ql.impl.*;
 import com.nfsdb.ql.model.*;
+import com.nfsdb.ql.ops.FunctionFactories;
 import com.nfsdb.ql.ops.LongConstant;
 import com.nfsdb.ql.ops.Signature;
 import com.nfsdb.ql.ops.VirtualColumn;
@@ -91,13 +92,15 @@ public class QueryCompiler {
     private final ArrayDeque<ExprNode> andConditionStack = new ArrayDeque<>();
     private final IntList nullCounts = new IntList();
     private final ObjList<CharSequence> selectedColumns = new ObjList<>();
-    private final ObjList<CharSequence> selectedColumnAliases = new ObjList<>();
+    private final CharSequenceHashSet selectedColumnAliases = new CharSequenceHashSet();
     private final CharSequenceIntHashMap constNameToIndex = new CharSequenceIntHashMap();
     private final CharSequenceObjHashMap<ExprNode> constNameToNode = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<String> constNameToToken = new CharSequenceObjHashMap<>();
     private final Signature mutableSig = new Signature();
+    private final ObjectPool<QueryColumn> aggregateColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 8);
+    private final ObjHashSet<QueryColumn> aggregateColumns = new ObjHashSet<>();
     private ObjList<JoinContext> emittedJoinClauses;
-
+    private int aggregateColumnSequence;
 
     public QueryCompiler(JournalReaderFactory factory) {
         this.factory = factory;
@@ -138,6 +141,13 @@ public class QueryCompiler {
 
     private static Signature lbs(ColumnType master, boolean indexed, ColumnType lambda) {
         return new Signature().setName("").setParamCount(2).paramType(0, master, indexed).paramType(1, lambda, false);
+    }
+
+    private void addAlias(int position, String alias) throws ParserException {
+        if (selectedColumnAliases.add(alias)) {
+            return;
+        }
+        throw new ParserException(position, "Duplicate alias");
     }
 
     private void addFilterOrEmitJoin(QueryModel parent, int idx, int ai, CharSequence an, ExprNode ao, int bi, CharSequence bn, ExprNode bo) {
@@ -827,6 +837,12 @@ public class QueryCompiler {
         }
     }
 
+    private String createAlias(int index) {
+        columnNameAssembly.clear(columnNamePrefixLen);
+        Numbers.append(columnNameAssembly, index);
+        return columnNameAssembly.toString();
+    }
+
     private RecordSource<? extends Record> createAsOfJoin(
             ExprNode masterTimestampNode,
             QueryModel model,
@@ -1407,6 +1423,15 @@ public class QueryCompiler {
         return cost;
     }
 
+    private ExprNode replaceIfAggregate(@Transient ExprNode node, ObjHashSet<QueryColumn> aggregateColumns) throws ParserException {
+        if (node != null && FunctionFactories.isAggregate(node.token)) {
+            QueryColumn c = aggregateColumnPool.next().of(createAlias(aggregateColumnSequence), node);
+            aggregateColumns.add(c);
+            return exprNodePool.next().of(ExprNode.NodeType.LITERAL, c.getAlias(), 0, 0);
+        }
+        return node;
+    }
+
     private RecordSource<? extends Record> resetAndCompile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         clearState();
         return compile(model, factory);
@@ -1478,7 +1503,7 @@ public class QueryCompiler {
     }
 
     private RecordSource<? extends Record> selectColumns(RecordSource<? extends Record> rs, QueryModel model) throws ParserException {
-        return model.getColumns().size() == 0 ? rs : selectColumns0(rs, model);
+        return model.getColumns().size() == 0 ? rs : selectColumns01(rs, model);
     }
 
     @NotNull
@@ -1512,9 +1537,7 @@ public class QueryCompiler {
                     break;
                 default:
                     if (alias == null) {
-                        columnNameAssembly.clear(columnNamePrefixLen);
-                        Numbers.append(columnNameAssembly, columnSequence++);
-                        alias = columnNameAssembly.toString();
+                        alias = createAlias(columnSequence++);
                     }
                     VirtualColumn c = createVirtualColumn(qc.getAst(), rs.getMetadata());
                     c.setName(alias);
@@ -1530,6 +1553,132 @@ public class QueryCompiler {
             rs = new VirtualColumnRecordSource(rs, virtualColumns);
         }
         return new SelectedColumnsRecordSource(rs, selectedColumns, selectedColumnAliases);
+    }
+
+    @NotNull
+    private RecordSource<? extends Record> selectColumns01(RecordSource<? extends Record> rs, QueryModel model) throws ParserException {
+        final ObjList<QueryColumn> columns = model.getColumns();
+        final CharSequenceIntHashMap columnNameHistogram = model.getColumnNameHistogram();
+        final RecordMetadata meta = rs.getMetadata();
+
+        ObjHashSet<QueryColumn> outerVirtualColumns = null;
+        ObjHashSet<QueryColumn> virtualColumns = null;
+        this.aggregateColumns.clear();
+        this.selectedColumns.clear();
+        this.selectedColumnAliases.clear();
+
+        int columnSequence = 0;
+
+        // create virtual columns from select list
+        for (int i = 0, k = columns.size(); i < k; i++) {
+            final QueryColumn qc = columns.getQuick(i);
+            final ExprNode node = qc.getAst();
+
+
+            if (node.type == ExprNode.NodeType.LITERAL) {
+                // check literal column validity
+                if (meta.getColumnIndexQuiet(node.token) == -1) {
+                    throw new InvalidColumnException(node.position);
+                }
+
+                // check if this column is exists in more than one journal/result set
+                if (columnNameHistogram.get(node.token) > 0) {
+                    throw new ParserException(node.position, "Ambiguous column name");
+                }
+
+                // add to selected columns
+                selectedColumns.add(node.token);
+                addAlias(node.position, qc.getAlias() == null ? node.token : qc.getAlias());
+                continue;
+            }
+
+            // generate missing alias for everything else
+            if (qc.getAlias() == null) {
+                qc.of(createAlias(columnSequence++), node);
+            }
+
+            selectedColumns.add(qc.getAlias());
+            addAlias(node.position, qc.getAlias());
+
+            // outright aggregate
+            if (node.type == ExprNode.NodeType.FUNCTION && FunctionFactories.isAggregate(node.token)) {
+                aggregateColumns.add(qc);
+                continue;
+            }
+
+            // check if this expression references aggregate function
+            if (node.type == ExprNode.NodeType.OPERATION || node.type == ExprNode.NodeType.FUNCTION) {
+                int beforeSplit = aggregateColumns.size();
+                splitAggregates(node, aggregateColumns);
+                if (beforeSplit < aggregateColumns.size()) {
+                    if (outerVirtualColumns == null) {
+                        outerVirtualColumns = new ObjHashSet<>();
+                    }
+                    outerVirtualColumns.add(qc);
+                    continue;
+                }
+            }
+
+            // this is either a constant or non-aggregate expression
+            // either case is a virtual column
+            if (virtualColumns == null) {
+                virtualColumns = new ObjHashSet<>();
+            }
+            virtualColumns.add(qc);
+        }
+
+        if (aggregateColumns.size() == 0) {
+            // no aggregates
+
+            if (virtualColumns != null) {
+                ObjList<VirtualColumn> vcs = new ObjList<>();
+                for (int i = 0, n = virtualColumns.size(); i < n; i++) {
+                    QueryColumn qc = virtualColumns.get(i);
+                    VirtualColumn vc = createVirtualColumn(qc.getAst(), rs.getMetadata());
+                    vc.setName(qc.getAlias());
+                    vcs.add(vc);
+                }
+                rs = new VirtualColumnRecordSource(rs, vcs);
+            }
+
+            return new SelectedColumnsRecordSource(rs, selectedColumns, selectedColumnAliases);
+        } else {
+            throw new ParserException(0, "Aggregates are not supported yet");
+        }
+    }
+
+    private void splitAggregates(@Transient ExprNode node, ObjHashSet<QueryColumn> aggregateColumns) throws ParserException {
+
+        this.aggregateColumnSequence = 0;
+
+        // pre-order iterative tree traversal
+        // see: http://en.wikipedia.org/wiki/Tree_traversal
+
+        ArrayDeque<ExprNode> stack = new ArrayDeque<>();
+
+        while (!stack.isEmpty() || node != null) {
+            if (node != null) {
+
+                if (node.rhs != null) {
+                    ExprNode n = replaceIfAggregate(node.rhs, aggregateColumns);
+                    if (node.rhs == n) {
+                        stack.push(node.rhs);
+                    } else {
+                        node.rhs = n;
+                    }
+                }
+
+                ExprNode n = replaceIfAggregate(node.lhs, aggregateColumns);
+                if (n == node.lhs) {
+                    node = node.lhs;
+                } else {
+                    node.lhs = n;
+                    node = null;
+                }
+            } else {
+                node = stack.poll();
+            }
+        }
     }
 
     /**

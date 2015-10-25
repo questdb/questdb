@@ -24,10 +24,10 @@ package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.collections.ObjList;
+import com.nfsdb.collections.Transient;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.JournalReaderFactory;
-import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.*;
@@ -53,9 +53,8 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public ResampledSource(
             RecordSource<? extends Record> recordSource,
-            ObjList<RecordColumnMetadata> keyColumns,
+            @Transient ObjList<CharSequence> keyColumns,
             ObjList<AggregatorFunction> aggregators,
-            ColumnMetadata timestampMetadata,
             SampleBy sampleBy
     ) {
 
@@ -66,10 +65,10 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
         ObjList<RecordColumnMetadata> keyCols = new ObjList<>();
 
         RecordMetadata rm = recordSource.getMetadata();
-        this.tsIndex = rm.getColumnIndex(timestampMetadata.name);
-        keyCols.add(timestampMetadata);
+        this.tsIndex = rm.getColumnIndex(rm.getTimestampMetadata().getName());
+        keyCols.add(rm.getTimestampMetadata());
         for (int i = 0; i < keyColumnsSize; i++) {
-            RecordColumnMetadata cm = keyColumns.getQuick(i);
+            RecordColumnMetadata cm = rm.getColumn(keyColumns.getQuick(i));
             keyCols.add(cm);
             keyIndices[i] = rm.getColumnIndex(cm.getName());
         }

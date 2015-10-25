@@ -55,37 +55,35 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
 
     @Override
     public void visit(ExprNode node) throws ParserException {
-        mutableArgs.clear();
-        mutableSig.clear();
-
         int argCount = node.paramCount;
-        switch (argCount) {
-            case 0:
-                switch (node.type) {
-                    case LITERAL:
-                        // lookup column
-                        stack.push(lookupColumn(node));
-                        break;
-                    case CONSTANT:
-                        stack.push(parseConstant(node));
-                        break;
-                    default:
-                        // lookup zero arg function from symbol table
-                        stack.push(lookupFunction(node, mutableSig.setName(node.token).setParamCount(0), null));
+        if (argCount == 0) {
+            switch (node.type) {
+                case LITERAL:
+                    // lookup column
+                    stack.push(lookupColumn(node));
+                    break;
+                case CONSTANT:
+                    stack.push(parseConstant(node));
+                    break;
+                default:
+                    // lookup zero arg function from symbol table
+                    mutableSig.clear();
+                    stack.push(lookupFunction(node, mutableSig.setName(node.token).setParamCount(0), null));
+            }
+        } else {
+            mutableSig.clear();
+            mutableArgs.clear();
+            mutableArgs.ensureCapacity(argCount);
+            mutableSig.setName(node.token).setParamCount(argCount);
+            for (int n = 0; n < argCount; n++) {
+                VirtualColumn c = stack.poll();
+                if (c == null) {
+                    throw new ParserException(node.position, "Too few arguments");
                 }
-                break;
-            default:
-                mutableArgs.ensureCapacity(argCount);
-                mutableSig.setName(node.token).setParamCount(argCount);
-                for (int n = 0; n < argCount; n++) {
-                    VirtualColumn c = stack.poll();
-                    if (c == null) {
-                        throw new ParserException(node.position, "Too few arguments");
-                    }
-                    mutableSig.paramType(n, c.getType(), c.isConstant());
-                    mutableArgs.setQuick(n, c);
-                }
-                stack.push(lookupFunction(node, mutableSig, mutableArgs));
+                mutableSig.paramType(n, c.getType(), c.isConstant());
+                mutableArgs.setQuick(n, c);
+            }
+            stack.push(lookupFunction(node, mutableSig, mutableArgs));
         }
     }
 

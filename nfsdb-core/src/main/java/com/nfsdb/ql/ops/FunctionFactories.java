@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,10 +17,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.collections.CharSequenceHashSet;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.ObjObjHashMap;
 import com.nfsdb.storage.ColumnType;
@@ -30,6 +31,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 public final class FunctionFactories {
 
     private static final ObjObjHashMap<Signature, FunctionFactory> factories = new ObjObjHashMap<>();
+    private static final CharSequenceHashSet aggregateFunctionNames = new CharSequenceHashSet();
 
     private FunctionFactories() {
     }
@@ -72,6 +74,10 @@ public final class FunctionFactories {
         return null;
     }
 
+    public static boolean isAggregate(CharSequence name) {
+        return aggregateFunctionNames.contains(name);
+    }
+
     private static void binSig(String name, ColumnType lhst, ColumnType rhst, FunctionFactory f) {
         factories.put(new Signature().setName(name).setParamCount(2).paramType(0, lhst, false).paramType(1, rhst, false), f);
         factories.put(new Signature().setName(name).setParamCount(2).paramType(0, lhst, true).paramType(1, rhst, false), f);
@@ -94,6 +100,12 @@ public final class FunctionFactories {
         factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, true).paramType(1, rhst, false).paramType(2, scale, true), f);
         factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, true).paramType(1, rhst, true).paramType(2, scale, false), f);
         factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, true).paramType(1, rhst, true).paramType(2, scale, true), f);
+    }
+
+    static {
+        aggregateFunctionNames.add("sum");
+        aggregateFunctionNames.add("avg");
+        aggregateFunctionNames.add("count");
     }
 
     static {

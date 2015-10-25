@@ -22,6 +22,7 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
+import com.nfsdb.collections.CharSequenceHashSet;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
@@ -38,10 +39,10 @@ public class SelectedColumnsRecordSource extends AbstractImmutableIterator<Recor
     private final SelectedColumnsStorageFacade storageFacade;
     private RecordCursor<? extends Record> recordCursor;
 
-    public SelectedColumnsRecordSource(RecordSource<? extends Record> recordSource, ObjList<CharSequence> names, ObjList<CharSequence> rename) {
+    public SelectedColumnsRecordSource(RecordSource<? extends Record> recordSource, ObjList<CharSequence> names, CharSequenceHashSet aliases) {
         this.recordSource = recordSource;
         RecordMetadata dm = recordSource.getMetadata();
-        this.metadata = new SelectedColumnsMetadata(dm, names, rename);
+        this.metadata = new SelectedColumnsMetadata(dm, names, aliases);
         this.record = new SelectedColumnsRecord(dm, names);
         this.storageFacade = new SelectedColumnsStorageFacade(dm, metadata, names);
     }

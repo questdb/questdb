@@ -21,13 +21,26 @@
 
 package com.nfsdb.ql.model;
 
-public class QueryColumn {
-    private final String alias;
-    private final ExprNode ast;
+import com.nfsdb.collections.Mutable;
+import com.nfsdb.collections.ObjectPoolFactory;
 
-    public QueryColumn(String alias, ExprNode ast) {
-        this.alias = alias;
-        this.ast = ast;
+public final class QueryColumn implements Mutable {
+    public final static ObjectPoolFactory<QueryColumn> FACTORY = new ObjectPoolFactory<QueryColumn>() {
+        @Override
+        public QueryColumn newInstance() {
+            return new QueryColumn();
+        }
+    };
+    private String alias;
+    private ExprNode ast;
+
+    private QueryColumn() {
+    }
+
+    @Override
+    public void clear() {
+        alias = null;
+        ast = null;
     }
 
     public String getAlias() {
@@ -36,5 +49,27 @@ public class QueryColumn {
 
     public ExprNode getAst() {
         return ast;
+    }
+
+    @Override
+    public int hashCode() {
+        return alias.hashCode();
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+
+        QueryColumn that = (QueryColumn) o;
+
+        return alias.equals(that.alias);
+
+    }
+
+    public QueryColumn of(String alias, ExprNode ast) {
+        this.alias = alias;
+        this.ast = ast;
+        return this;
     }
 }

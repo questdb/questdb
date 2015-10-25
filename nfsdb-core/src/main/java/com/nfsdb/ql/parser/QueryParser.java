@@ -44,6 +44,7 @@ final class QueryParser {
     private final ExprParser exprParser = new ExprParser(toks);
     private final ExprAstBuilder astBuilder = new ExprAstBuilder();
     private final ObjectPool<QueryModel> queryModelPool = new ObjectPool<>(QueryModel.FACTORY, 8);
+    private final ObjectPool<QueryColumn> queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 64);
 
     private ParserException err(String msg) {
         return new ParserException(toks.position(), msg);
@@ -54,7 +55,6 @@ final class QueryParser {
         if (tok == null || !Chars.equals(tok, expected)) {
             throw err("\"" + expected + "\" expected");
         }
-
     }
 
     private ExprNode expr() throws ParserException {
@@ -87,6 +87,7 @@ final class QueryParser {
 
     Statement parse(CharSequence query) throws ParserException {
         queryModelPool.reset();
+        queryColumnPool.reset();
         return parseInternal(query);
     }
 
@@ -417,16 +418,16 @@ final class QueryParser {
             // expect (from | , | [column name])
 
             if (Chars.equals(tok, "from")) {
-                model.addColumn(new QueryColumn(null, expr));
+                model.addColumn(queryColumnPool.next().of(null, expr));
                 break;
             }
 
             if (Chars.equals(tok, ",")) {
-                model.addColumn(new QueryColumn(null, expr));
+                model.addColumn(queryColumnPool.next().of(null, expr));
                 continue;
             }
 
-            model.addColumn(new QueryColumn(tok.toString(), expr));
+            model.addColumn(queryColumnPool.next().of(tok.toString(), expr));
 
             tok = tok();
 

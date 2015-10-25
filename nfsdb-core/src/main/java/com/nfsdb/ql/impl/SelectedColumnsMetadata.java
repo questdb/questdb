@@ -21,6 +21,7 @@
 
 package com.nfsdb.ql.impl;
 
+import com.nfsdb.collections.CharSequenceHashSet;
 import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.AbstractRecordMetadata;
@@ -48,16 +49,16 @@ public class SelectedColumnsMetadata extends AbstractRecordMetadata {
      *
      * @param delegate  the delegate metadata
      * @param names     list of column names to select
-     * @param rename map of rename operations, original column name has to be key and new name is the value.
+     * @param aliases   set of column aliases
      */
-    public SelectedColumnsMetadata(RecordMetadata delegate, ObjList<CharSequence> names, ObjList<CharSequence> rename) {
+    public SelectedColumnsMetadata(RecordMetadata delegate, ObjList<CharSequence> names, CharSequenceHashSet aliases) {
         this.delegate = delegate;
         int k = names.size();
         this.nameIndex = new CharSequenceIntHashMap(k);
         this.columnMetadata = new RecordColumnMetadata[k];
         for (int i = 0; i < k; i++) {
             CharSequence name = names.getQuick(i);
-            CharSequence _newName = rename.getQuick(i);
+            CharSequence _newName = aliases.get(i);
             String result = (_newName != null ? _newName : name).toString();
             columnMetadata[i] = meta(delegate.getColumn(name), result);
             nameIndex.put(result, i);

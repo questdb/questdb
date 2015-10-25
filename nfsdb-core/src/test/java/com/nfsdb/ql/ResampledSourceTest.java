@@ -24,7 +24,6 @@ package com.nfsdb.ql;
 import com.nfsdb.Journal;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.collections.ObjList;
-import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.model.Quote;
@@ -232,8 +231,8 @@ public class ResampledSourceTest extends AbstractTest {
                         , new AllRowSource()
                 )
                 ,
-                new ObjList<RecordColumnMetadata>() {{
-                    add(r.getMetadata().getColumn("sym"));
+                new ObjList<CharSequence>() {{
+                        add("sym");
                 }}
                 ,
                 new ObjList<AggregatorFunction>() {{
@@ -241,7 +240,6 @@ public class ResampledSourceTest extends AbstractTest {
                     add(new FirstDoubleAggregationFunction(r.getMetadata().getColumn("ask")));
                     add(new LastDoubleAggregationFunction(r.getMetadata().getColumn("ask")));
                 }}
-                , r.getMetadata().getTimestampMetadata()
                 , ResampledSource.SampleBy.MINUTE
         );
 

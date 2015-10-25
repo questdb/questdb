@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.collections;
 
@@ -68,6 +68,12 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
         free = this.capacity = initialCapacity;
         this.list = new ObjList<>(free);
         clear();
+    }
+
+    public void addAll(ObjHashSet<T> that) {
+        for (int i = 0, n = that.size(); i < n; i++) {
+            add(that.get(i));
+        }
     }
 
     public T get(int index) {
