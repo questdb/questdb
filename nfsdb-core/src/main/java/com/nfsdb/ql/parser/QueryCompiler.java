@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.parser;
 
@@ -98,7 +98,7 @@ public class QueryCompiler {
     private final CharSequenceObjHashMap<String> constNameToToken = new CharSequenceObjHashMap<>();
     private final Signature mutableSig = new Signature();
     private final ObjectPool<QueryColumn> aggregateColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 8);
-    private final ObjHashSet<QueryColumn> aggregateColumns = new ObjHashSet<>();
+    private final ObjHashSet<QueryColumn> aggregators = new ObjHashSet<>();
     private ObjList<JoinContext> emittedJoinClauses;
     private int aggregateColumnSequence;
 
@@ -1562,8 +1562,8 @@ public class QueryCompiler {
         final RecordMetadata meta = rs.getMetadata();
 
         ObjHashSet<QueryColumn> outerVirtualColumns = null;
-        ObjHashSet<QueryColumn> virtualColumns = null;
-        this.aggregateColumns.clear();
+        ObjList<VirtualColumn> virtualColumns = null;
+        this.aggregators.clear();
         this.selectedColumns.clear();
         this.selectedColumnAliases.clear();
 
@@ -1597,20 +1597,20 @@ public class QueryCompiler {
                 qc.of(createAlias(columnSequence++), node);
             }
 
-            selectedColumns.add(qc.getAlias());
-            addAlias(node.position, qc.getAlias());
-
             // outright aggregate
             if (node.type == ExprNode.NodeType.FUNCTION && FunctionFactories.isAggregate(node.token)) {
-                aggregateColumns.add(qc);
+                aggregators.add(qc);
                 continue;
             }
 
+            selectedColumns.add(qc.getAlias());
+            addAlias(node.position, qc.getAlias());
+
             // check if this expression references aggregate function
             if (node.type == ExprNode.NodeType.OPERATION || node.type == ExprNode.NodeType.FUNCTION) {
-                int beforeSplit = aggregateColumns.size();
-                splitAggregates(node, aggregateColumns);
-                if (beforeSplit < aggregateColumns.size()) {
+                int beforeSplit = aggregators.size();
+                splitAggregates(node, aggregators);
+                if (beforeSplit < aggregators.size()) {
                     if (outerVirtualColumns == null) {
                         outerVirtualColumns = new ObjHashSet<>();
                     }
@@ -1622,29 +1622,42 @@ public class QueryCompiler {
             // this is either a constant or non-aggregate expression
             // either case is a virtual column
             if (virtualColumns == null) {
-                virtualColumns = new ObjHashSet<>();
+                virtualColumns = new ObjList<>();
             }
-            virtualColumns.add(qc);
+
+            VirtualColumn vc = createVirtualColumn(qc.getAst(), rs.getMetadata());
+            vc.setName(qc.getAlias());
+            virtualColumns.add(vc);
         }
 
-        if (aggregateColumns.size() == 0) {
-            // no aggregates
 
-            if (virtualColumns != null) {
-                ObjList<VirtualColumn> vcs = new ObjList<>();
-                for (int i = 0, n = virtualColumns.size(); i < n; i++) {
-                    QueryColumn qc = virtualColumns.get(i);
-                    VirtualColumn vc = createVirtualColumn(qc.getAst(), rs.getMetadata());
+        // if virtual columns are present, create record source to calculate them
+        if (virtualColumns != null) {
+            rs = new VirtualColumnRecordSource(rs, virtualColumns);
+        }
+
+        if (selectedColumns.size() > 0) {
+            // wrap underlying record source into selected columns source.
+            rs = new SelectedColumnsRecordSource(rs, selectedColumns, selectedColumnAliases);
+        }
+
+        // if aggregators present, wrap record source into group-by source
+        if (aggregators.size() > 0) {
+            ObjList<AggregatorFunction> af = new ObjList<>(aggregators.size());
+            // create virtual columns
+            for (int i = 0, n = aggregators.size(); i < n; i++) {
+                QueryColumn qc = aggregators.get(i);
+                VirtualColumn vc = createVirtualColumn(qc.getAst(), rs.getMetadata());
+                if (vc instanceof AggregatorFunction) {
                     vc.setName(qc.getAlias());
-                    vcs.add(vc);
+                    af.add((AggregatorFunction) vc);
+                } else {
+                    throw new ParserException(qc.getAst().position, "Internal configuration error. Not an aggregate");
                 }
-                rs = new VirtualColumnRecordSource(rs, vcs);
             }
-
-            return new SelectedColumnsRecordSource(rs, selectedColumns, selectedColumnAliases);
-        } else {
-            throw new ParserException(0, "Aggregates are not supported yet");
+            rs = new ResampledSource(rs, selectedColumns, af, ResampledSource.SampleBy.MINUTE);
         }
+        return rs;
     }
 
     private void splitAggregates(@Transient ExprNode node, ObjHashSet<QueryColumn> aggregateColumns) throws ParserException {
