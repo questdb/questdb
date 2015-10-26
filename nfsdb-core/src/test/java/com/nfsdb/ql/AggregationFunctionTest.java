@@ -249,62 +249,6 @@ public class AggregationFunctionTest extends AbstractTest {
         );
     }
 
-    @Test
-    public void testSumDouble() throws Exception {
-        assertFunc(
-                new SumDoubleAggregationFunction(r.getMetadata().getColumn("ask"))
-                , "7858.423721313780\t2015-01-01T00:00:00.000Z\tAGK.L\n" +
-                        "14082.423625444866\t2015-01-01T00:00:00.000Z\tBP.L\n" +
-                        "13335.940655007168\t2015-01-01T00:00:00.000Z\tRRS.L\n" +
-                        "12905.372450960738\t2015-01-01T00:00:00.000Z\tBT-A.L\n" +
-                        "13394.330843717370\t2015-01-01T00:00:00.000Z\tGKN.L\n" +
-                        "13244.428383611292\t2015-01-01T00:00:00.000Z\tLLOY.L\n" +
-                        "12696.789512222130\t2015-01-01T00:00:00.000Z\tABF.L\n" +
-                        "13559.914003834442\t2015-01-01T00:00:00.000Z\tWTB.L\n" +
-                        "15306.804920794536\t2015-01-01T00:00:00.000Z\tTLW.L\n" +
-                        "16913.363305688258\t2015-01-01T00:00:00.000Z\tADM.L\n" +
-                        "8486.959649701328\t2015-01-01T00:01:00.000Z\tBP.L\n" +
-                        "12391.404343216870\t2015-01-01T00:01:00.000Z\tRRS.L\n" +
-                        "9678.625432634026\t2015-01-01T00:01:00.000Z\tWTB.L\n" +
-                        "7938.831746992340\t2015-01-01T00:01:00.000Z\tGKN.L\n" +
-                        "10058.622072452964\t2015-01-01T00:01:00.000Z\tAGK.L\n" +
-                        "9570.444874542912\t2015-01-01T00:01:00.000Z\tBT-A.L\n" +
-                        "10483.859246590906\t2015-01-01T00:01:00.000Z\tADM.L\n" +
-                        "8542.161541170678\t2015-01-01T00:01:00.000Z\tTLW.L\n" +
-                        "9856.989801879358\t2015-01-01T00:01:00.000Z\tABF.L\n" +
-                        "9907.802508420520\t2015-01-01T00:01:00.000Z\tLLOY.L\n"
-                , false
-        );
-    }
-
-    @Test
-    public void testSumIntToLong() throws Exception {
-        assertFunc(
-                new SumIntToLongAggregationFunction(r.getMetadata().getColumn("askSize"))
-                , "56770873269\t2015-01-01T00:00:00.000Z\tAGK.L\n" +
-                        "65686376643\t2015-01-01T00:00:00.000Z\tBP.L\n" +
-                        "63384454610\t2015-01-01T00:00:00.000Z\tRRS.L\n" +
-                        "56435938933\t2015-01-01T00:00:00.000Z\tBT-A.L\n" +
-                        "74533852634\t2015-01-01T00:00:00.000Z\tGKN.L\n" +
-                        "53699827099\t2015-01-01T00:00:00.000Z\tLLOY.L\n" +
-                        "66850528211\t2015-01-01T00:00:00.000Z\tABF.L\n" +
-                        "68113814484\t2015-01-01T00:00:00.000Z\tWTB.L\n" +
-                        "54577232823\t2015-01-01T00:00:00.000Z\tTLW.L\n" +
-                        "72059236556\t2015-01-01T00:00:00.000Z\tADM.L\n" +
-                        "32150049115\t2015-01-01T00:01:00.000Z\tBP.L\n" +
-                        "56943497588\t2015-01-01T00:01:00.000Z\tRRS.L\n" +
-                        "46587594508\t2015-01-01T00:01:00.000Z\tWTB.L\n" +
-                        "44122886554\t2015-01-01T00:01:00.000Z\tGKN.L\n" +
-                        "47972381549\t2015-01-01T00:01:00.000Z\tAGK.L\n" +
-                        "36175879620\t2015-01-01T00:01:00.000Z\tBT-A.L\n" +
-                        "40451039389\t2015-01-01T00:01:00.000Z\tADM.L\n" +
-                        "44575099924\t2015-01-01T00:01:00.000Z\tTLW.L\n" +
-                        "40541707895\t2015-01-01T00:01:00.000Z\tABF.L\n" +
-                        "44264551522\t2015-01-01T00:01:00.000Z\tLLOY.L\n"
-                , false
-        );
-    }
-
     private void assertFunc(final AggregatorFunction func, String expected, boolean print) throws JournalException {
         ResampledSource resampledSource = new ResampledSource(
                 new JournalSource(

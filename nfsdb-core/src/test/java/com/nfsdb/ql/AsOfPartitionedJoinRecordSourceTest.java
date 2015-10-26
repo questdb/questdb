@@ -231,6 +231,16 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testAmbiguousColumnInFunc() throws Exception {
+        try {
+            compiler.compile("select sum(timestamp) from y asof join x on x.ccy = y.ccy");
+        } catch (ParserException e) {
+            Assert.assertEquals(11, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("Ambiguous"));
+        }
+    }
+
+    @Test
     public void testFixJoin() throws Exception {
         final String expected = "2015-03-10T00:01:00.000Z\tSWHYRX\t0.937527447939\tIYMQGYIYHVZMXGRFXUIUNMOQUIHPNGNOTXDHUZFW\t2015-03-10T00:00:50.000Z\t0.000039573626\t0.000003805120\tVTJWCP\t-5106801657083469087\t0.2093\t-20638\ttrue\n" +
                 "2015-03-10T00:02:00.000Z\tSWHYRX\t-354.250000000000\tREQIELGOYUKUTNWDLEXTVTXMGNRSVIVWEDZMVQTSYCVPGQMEYLBGSLMIBQLXNLKYSPOEXUVJHZQ\t2015-03-10T00:01:50.000Z\t832.000000000000\t0.759080171585\tSWHYRX\t-6913510864836958686\t0.2185\t-24061\tfalse\n" +

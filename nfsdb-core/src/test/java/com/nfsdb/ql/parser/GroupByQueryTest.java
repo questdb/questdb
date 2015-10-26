@@ -42,7 +42,7 @@ public class GroupByQueryTest extends AbstractOptimiserTest {
                         $int("productId").
                         $str("employeeId").
                         $ts("orderDate").
-                        $double("quantity").
+                        $int("quantity").
                         $double("price").
                         $float("rate").
                         recordCountHint(recordCount).
@@ -68,7 +68,7 @@ public class GroupByQueryTest extends AbstractOptimiserTest {
                 w.putInt(2, rnd.nextPositiveInt() % 200);
                 w.putStr(3, employees[rnd.nextPositiveInt() % employeeCount]);
                 w.putDate(4, timestamp += tsIncrement);
-                w.putDouble(5, rnd.nextDouble());
+                w.putInt(5, rnd.nextPositiveInt());
                 w.putDouble(6, rnd.nextDouble());
                 w.putFloat(7, rnd.nextFloat());
                 w.append();
@@ -78,34 +78,82 @@ public class GroupByQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testAggregateExpression() throws Exception {
+        assertThat("employeeId\tsum\tsum2\tx\n" +
+                        "TGPGWFFYU\t97328\t-21968.018329648252\t75359.981670351760\n" +
+                        "DEYYQEHBH\t95288\t-4394.647402081921\t90893.352597918080\n" +
+                        "SRYRFBVTM\t96798\t1945.437433247252\t98743.437433247248\n" +
+                        "GZSXUXIBB\t97026\t3710.011166965701\t100736.011166965712\n" +
+                        "UEDRQQULO\t104395\t-5341.399618807004\t99053.600381192992\n" +
+                        "FOWLPDXYS\t98350\t-25051.961159685804\t73298.038840314192\n" +
+                        "FJGETJRSZ\t103481\t-5023.046150211212\t98457.953849788784\n" +
+                        "BEOUOJSHR\t96459\t-7031.317012047984\t89427.682987952016\n" +
+                        "YRXPEHNRX\t96407\t-5897.650745672292\t90509.349254327712\n" +
+                        "VTJWCPSWH\t102802\t-15878.443493302174\t86923.556506697824\n",
+                "select employeeId, sum(productId) sum, sum(price) sum2, sum(price)+sum(productId) x from orders", true);
+    }
+
+    @Test
+    public void testLSumInt() throws Exception {
+        assertThat("TGPGWFFYU\t1039152863257\t-229222375\n" +
+                        "DEYYQEHBH\t1052562284318\t295296798\n" +
+                        "SRYRFBVTM\t1063416340387\t-1735549021\n" +
+                        "GZSXUXIBB\t1091735231209\t813538025\n" +
+                        "UEDRQQULO\t1149120836083\t-1930399245\n" +
+                        "FOWLPDXYS\t1085760619210\t-866106678\n" +
+                        "FJGETJRSZ\t1112236778603\t-159751061\n" +
+                        "BEOUOJSHR\t1046534829281\t-1437190943\n" +
+                        "YRXPEHNRX\t1070359446329\t912589625\n" +
+                        "VTJWCPSWH\t1121957229257\t970765001\n",
+                "select employeeId, lsum(quantity) s, sum(quantity) s2 from orders");
+
+    }
+
+    @Test
     public void testSumDouble() throws Exception {
         assertThat("employeeId\tsum\n" +
-                        "TGPGWFFYU\t146.715367621278\n" +
-                        "YRXPEHNRX\t7840.331858809368\n" +
-                        "SRYRFBVTM\t13477.542281401748\n" +
-                        "FOWLPDXYS\t-1370.880496708310\n" +
-                        "VTJWCPSWH\t12075.233063181322\n" +
-                        "GZSXUXIBB\t-9776.804545029104\n" +
-                        "FJGETJRSZ\t-13132.014957685670\n" +
-                        "BEOUOJSHR\t4947.305823288266\n" +
-                        "DEYYQEHBH\t13619.666196977540\n" +
-                        "UEDRQQULO\t-25999.561755591844\n",
+                        "TGPGWFFYU\t-21968.018329648252\n" +
+                        "DEYYQEHBH\t-4394.647402081921\n" +
+                        "SRYRFBVTM\t1945.437433247252\n" +
+                        "GZSXUXIBB\t3710.011166965701\n" +
+                        "UEDRQQULO\t-5341.399618807004\n" +
+                        "FOWLPDXYS\t-25051.961159685804\n" +
+                        "FJGETJRSZ\t-5023.046150211212\n" +
+                        "BEOUOJSHR\t-7031.317012047984\n" +
+                        "YRXPEHNRX\t-5897.650745672292\n" +
+                        "VTJWCPSWH\t-15878.443493302174\n",
                 "select employeeId, sum(price) sum from orders", true);
+    }
+
+    @Test
+    public void testSumFloat() throws Exception {
+        assertThat("TGPGWFFYU\t489.412259876728\n" +
+                        "DEYYQEHBH\t490.928304672241\n" +
+                        "SRYRFBVTM\t490.777038216591\n" +
+                        "GZSXUXIBB\t500.867759287357\n" +
+                        "UEDRQQULO\t516.323502302170\n" +
+                        "FOWLPDXYS\t497.242702662945\n" +
+                        "FJGETJRSZ\t507.531779348850\n" +
+                        "BEOUOJSHR\t490.108210325241\n" +
+                        "YRXPEHNRX\t506.545447528362\n" +
+                        "VTJWCPSWH\t508.323197126389\n",
+                "select employeeId, sum(rate) s from orders");
+
     }
 
     @Test
     public void testSumInt() throws Exception {
         assertThat("employeeId\tsum\n" +
-                        "TGPGWFFYU\t101526\n" +
-                        "YRXPEHNRX\t92787\n" +
-                        "SRYRFBVTM\t99794\n" +
-                        "FOWLPDXYS\t101835\n" +
-                        "VTJWCPSWH\t105804\n" +
-                        "GZSXUXIBB\t96551\n" +
-                        "FJGETJRSZ\t99962\n" +
-                        "BEOUOJSHR\t96631\n" +
-                        "DEYYQEHBH\t98242\n" +
-                        "UEDRQQULO\t100043\n",
+                        "TGPGWFFYU\t97328\n" +
+                        "DEYYQEHBH\t95288\n" +
+                        "SRYRFBVTM\t96798\n" +
+                        "GZSXUXIBB\t97026\n" +
+                        "UEDRQQULO\t104395\n" +
+                        "FOWLPDXYS\t98350\n" +
+                        "FJGETJRSZ\t103481\n" +
+                        "BEOUOJSHR\t96459\n" +
+                        "YRXPEHNRX\t96407\n" +
+                        "VTJWCPSWH\t102802\n",
                 "select employeeId, sum(productId) sum from orders", true);
     }
 }

@@ -90,6 +90,11 @@ public final class FunctionFactories {
         factories.put(new Signature().setName(name).setParamCount(1).paramType(0, type, true), f);
     }
 
+    private static void unSigAgg(String name, ColumnType type, FunctionFactory f) {
+        unSig(name, type, f);
+        aggregateFunctionNames.add(name);
+    }
+
     private static void triSig(String name, ColumnType lhst, ColumnType rhst, ColumnType scale, FunctionFactory f) {
         factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, false).paramType(1, rhst, false).paramType(2, scale, false), f);
         factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, false).paramType(1, rhst, false).paramType(2, scale, true), f);
@@ -100,12 +105,6 @@ public final class FunctionFactories {
         factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, true).paramType(1, rhst, false).paramType(2, scale, true), f);
         factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, true).paramType(1, rhst, true).paramType(2, scale, false), f);
         factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, true).paramType(1, rhst, true).paramType(2, scale, true), f);
-    }
-
-    static {
-        aggregateFunctionNames.add("sum");
-        aggregateFunctionNames.add("avg");
-        aggregateFunctionNames.add("count");
     }
 
     static {
@@ -225,7 +224,11 @@ public final class FunctionFactories {
         binSig("or", ColumnType.BOOLEAN, ColumnType.BOOLEAN, OrOperator.FACTORY);
 
         // aggregators
-        unSig("sum", ColumnType.DOUBLE, SumDoubleAggregator.FACTORY);
-        unSig("sum", ColumnType.INT, SumIntAggregator.FACTORY);
+        unSigAgg("sum", ColumnType.DOUBLE, SumDoubleAggregator.FACTORY);
+        unSigAgg("sum", ColumnType.FLOAT, SumDoubleAggregator.FACTORY);
+        unSigAgg("sum", ColumnType.INT, SumIntAggregator.FACTORY);
+        unSigAgg("lsum", ColumnType.INT, SumLongAggregator.FACTORY);
+        unSigAgg("sum", ColumnType.LONG, SumLongAggregator.FACTORY);
+        unSigAgg("sum", ColumnType.DATE, SumLongAggregator.FACTORY);
     }
 }

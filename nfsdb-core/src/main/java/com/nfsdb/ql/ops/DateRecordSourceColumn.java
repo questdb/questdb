@@ -29,7 +29,7 @@ public class DateRecordSourceColumn extends AbstractVirtualColumn {
     private final int index;
 
     public DateRecordSourceColumn(int index) {
-        super(ColumnType.DOUBLE);
+        super(ColumnType.DATE);
         this.index = index;
     }
 

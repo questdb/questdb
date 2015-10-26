@@ -21,6 +21,7 @@
 
 package com.nfsdb.ql.parser;
 
+import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.InvalidColumnException;
 import com.nfsdb.exceptions.NoSuchColumnException;
@@ -42,12 +43,17 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
     private final ArrayDeque<VirtualColumn> stack = new ArrayDeque<>();
     private final PostOrderTreeTraversalAlgo algo;
     private RecordMetadata metadata;
+    private CharSequenceIntHashMap columnNameHistogram;
 
     public VirtualColumnBuilder(PostOrderTreeTraversalAlgo algo) {
         this.algo = algo;
     }
 
-    public VirtualColumn createVirtualColumn(ExprNode node, RecordMetadata metadata) throws ParserException {
+    public VirtualColumn createVirtualColumn(
+            ExprNode node,
+            RecordMetadata metadata,
+            CharSequenceIntHashMap columnNameHistogram) throws ParserException {
+        this.columnNameHistogram = columnNameHistogram;
         this.metadata = metadata;
         algo.traverse(node, this);
         return stack.poll();
@@ -90,6 +96,9 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
     @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE"})
     private VirtualColumn lookupColumn(ExprNode node) throws ParserException {
         try {
+            if (columnNameHistogram.get(node.token) > 0) {
+                throw new ParserException(node.position, "Ambiguous column name");
+            }
             int index = metadata.getColumnIndex(node.token);
             switch (metadata.getColumnQuick(index).getType()) {
                 case DOUBLE:
