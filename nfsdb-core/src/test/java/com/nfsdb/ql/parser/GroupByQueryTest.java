@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.parser;
 
@@ -91,6 +91,66 @@ public class GroupByQueryTest extends AbstractOptimiserTest {
                         "YRXPEHNRX\t96407\t-5897.650745672292\t90509.349254327712\n" +
                         "VTJWCPSWH\t102802\t-15878.443493302174\t86923.556506697824\n",
                 "select employeeId, sum(productId) sum, sum(price) sum2, sum(price)+sum(productId) x from orders", true);
+    }
+
+    @Test
+    public void testFirstDouble() throws Exception {
+        assertThat("TGPGWFFYU\t172.796875000000\n" +
+                        "DEYYQEHBH\t424.828125000000\n" +
+                        "SRYRFBVTM\t153.473033905029\n" +
+                        "GZSXUXIBB\t632.921875000000\n" +
+                        "UEDRQQULO\t0.000000009901\n" +
+                        "FOWLPDXYS\t0.003103211522\n" +
+                        "FJGETJRSZ\t1.229880273342\n" +
+                        "BEOUOJSHR\t364.462486267090\n" +
+                        "YRXPEHNRX\t0.000000261681\n" +
+                        "VTJWCPSWH\t-144.421875000000\n",
+                "select employeeId, first(price) f from orders");
+    }
+
+    @Test
+    public void testFirstFloat() throws Exception {
+        assertThat("TGPGWFFYU\t0.5832\n" +
+                        "DEYYQEHBH\t0.2858\n" +
+                        "SRYRFBVTM\t0.3455\n" +
+                        "GZSXUXIBB\t0.5619\n" +
+                        "UEDRQQULO\t0.1498\n" +
+                        "FOWLPDXYS\t0.2931\n" +
+                        "FJGETJRSZ\t0.7276\n" +
+                        "BEOUOJSHR\t0.2870\n" +
+                        "YRXPEHNRX\t0.8434\n" +
+                        "VTJWCPSWH\t0.5373\n",
+                "select employeeId, first(rate) f from orders");
+    }
+
+    @Test
+    public void testFirstInt() throws Exception {
+        assertThat("TGPGWFFYU\t1920890138\n" +
+                        "DEYYQEHBH\t98924388\n" +
+                        "SRYRFBVTM\t1876812930\n" +
+                        "GZSXUXIBB\t572338288\n" +
+                        "UEDRQQULO\t712702244\n" +
+                        "FOWLPDXYS\t2060263242\n" +
+                        "FJGETJRSZ\t544695670\n" +
+                        "BEOUOJSHR\t923501161\n" +
+                        "YRXPEHNRX\t230430837\n" +
+                        "VTJWCPSWH\t1960168360\n",
+                "select employeeId, first(quantity) f from orders");
+    }
+
+    @Test
+    public void testFirstLong() throws Exception {
+        assertThat("TGPGWFFYU\t2014-05-04T10:30:10.000Z\n" +
+                        "DEYYQEHBH\t2014-05-04T10:30:30.000Z\n" +
+                        "SRYRFBVTM\t2014-05-04T10:30:40.000Z\n" +
+                        "GZSXUXIBB\t2014-05-04T10:30:50.000Z\n" +
+                        "UEDRQQULO\t2014-05-04T10:31:20.000Z\n" +
+                        "FOWLPDXYS\t2014-05-04T10:31:30.000Z\n" +
+                        "FJGETJRSZ\t2014-05-04T10:31:50.000Z\n" +
+                        "BEOUOJSHR\t2014-05-04T10:32:50.000Z\n" +
+                        "YRXPEHNRX\t2014-05-04T10:33:10.000Z\n" +
+                        "VTJWCPSWH\t2014-05-04T10:34:10.000Z\n",
+                "select employeeId, ltod(first(orderDate)) f from orders");
     }
 
     @Test

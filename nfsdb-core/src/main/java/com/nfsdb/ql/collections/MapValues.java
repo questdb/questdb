@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.collections;
 
@@ -42,6 +42,10 @@ public final class MapValues {
         return Unsafe.getUnsafe().getDouble(address0(index));
     }
 
+    public float getFloat(int index) {
+        return Unsafe.getUnsafe().getFloat(address0(index));
+    }
+
     public int getInt(int index) {
         return Unsafe.getUnsafe().getInt(address0(index));
     }
@@ -60,6 +64,10 @@ public final class MapValues {
 
     public void putDouble(int index, double value) {
         Unsafe.getUnsafe().putDouble(address0(index), value);
+    }
+
+    public void putFloat(int index, float value) {
+        Unsafe.getUnsafe().putFloat(address0(index), value);
     }
 
     public void putInt(int index, int value) {

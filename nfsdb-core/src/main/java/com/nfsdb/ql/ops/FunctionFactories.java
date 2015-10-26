@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.ops;
 
@@ -214,6 +214,7 @@ public final class FunctionFactories {
         unSig("_stoa", ColumnType.SYMBOL, StoAFunction.FACTORY);
         unSig("_atos", ColumnType.STRING, AtoSFunction.FACTORY);
         unSig("atoi", ColumnType.STRING, AtoIFunction.FACTORY);
+        unSig("ltod", ColumnType.LONG, LtoDFunction.FACTORY);
 
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, false), StrEqualsOperator.FACTORY);
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, true), SymEqualsOperator.FACTORY);
@@ -230,5 +231,11 @@ public final class FunctionFactories {
         unSigAgg("lsum", ColumnType.INT, SumLongAggregator.FACTORY);
         unSigAgg("sum", ColumnType.LONG, SumLongAggregator.FACTORY);
         unSigAgg("sum", ColumnType.DATE, SumLongAggregator.FACTORY);
+        unSigAgg("first", ColumnType.DOUBLE, FirstDoubleAggregator.FACTORY);
+
+        unSigAgg("first", ColumnType.FLOAT, FirstFloatAggregator.FACTORY);
+        unSigAgg("first", ColumnType.INT, FirstIntAggregator.FACTORY);
+        unSigAgg("first", ColumnType.LONG, FirstLongAggregator.FACTORY);
+        unSigAgg("first", ColumnType.DATE, FirstLongAggregator.FACTORY);
     }
 }
