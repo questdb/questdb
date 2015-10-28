@@ -46,6 +46,7 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
     private final int masterTimestampIndex;
     private final int slaveTimestampIndex;
     private final SplitRecord record;
+    private final SplitRecordStorageFacade storageFacade;
     private RecordCursor<? extends Record> masterCursor;
     private RecordCursor<? extends Record> slaveCursor;
     private boolean closed = false;
@@ -92,6 +93,7 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
         }
         this.metadata = new SplitRecordMetadata(master.getMetadata(), map.getMetadata());
         this.record = new SplitRecord(this.metadata, master.getMetadata().getColumnCount());
+        this.storageFacade = new SplitRecordStorageFacade(this.metadata, master.getMetadata().getColumnCount());
     }
 
     @Override
@@ -111,7 +113,7 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
 
     @Override
     public StorageFacade getStorageFacade() {
-        return null;
+        return storageFacade;
     }
 
     @Override
@@ -125,6 +127,7 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
         this.slaveCursor = slave.prepareCursor(factory);
         map.setSlaveCursor(slaveCursor);
         holder.setCursor(slaveCursor);
+        storageFacade.prepare(factory, masterCursor.getStorageFacade(), map.getStorageFacade());
         return this;
     }
 

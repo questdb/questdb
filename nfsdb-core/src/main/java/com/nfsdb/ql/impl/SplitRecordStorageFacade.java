@@ -19,38 +19,43 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.ql.ops;
+package com.nfsdb.ql.impl;
 
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.ql.Record;
+import com.nfsdb.factory.JournalReaderFactory;
+import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.StorageFacade;
-import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
-import com.nfsdb.utils.Numbers;
 
-public class SymEqualsROperator extends AbstractBinaryOperator {
+public class SplitRecordStorageFacade implements StorageFacade {
+    private final RecordMetadata metadata;
+    private final int split;
+    private JournalReaderFactory factory;
+    private StorageFacade a;
+    private StorageFacade b;
 
-    public final static SymEqualsROperator FACTORY = new SymEqualsROperator();
-    private int key;
-
-    private SymEqualsROperator() {
-        super(ColumnType.BOOLEAN);
+    public SplitRecordStorageFacade(RecordMetadata metadata, int split) {
+        this.metadata = metadata;
+        this.split = split;
     }
 
     @Override
-    public boolean getBool(Record rec) {
-        int k = rhs.getInt(rec);
-        return (k == key || (key == SymbolTable.VALUE_IS_NULL && k == Numbers.INT_NaN));
+    public JournalReaderFactory getFactory() {
+        return factory;
     }
 
     @Override
-    public Function newInstance(ObjList<VirtualColumn> args) {
-        return new SymEqualsROperator();
+    public SymbolTable getSymbolTable(int index) {
+        return index < split ? a.getSymbolTable(index) : b.getSymbolTable(index - split);
     }
 
     @Override
-    public void prepare(StorageFacade facade) {
-        super.prepare(facade);
-        this.key = rhs.getSymbolTable().getQuick(lhs.getFlyweightStr(null));
+    public SymbolTable getSymbolTable(String name) {
+        return getSymbolTable(metadata.getColumnIndex(name));
+    }
+
+    public void prepare(JournalReaderFactory factory, StorageFacade a, StorageFacade b) {
+        this.factory = factory;
+        this.a = a;
+        this.b = b;
     }
 }

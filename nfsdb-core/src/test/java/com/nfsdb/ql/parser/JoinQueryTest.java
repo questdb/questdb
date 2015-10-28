@@ -306,6 +306,29 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testJoinGroupBy() throws Exception {
+        assertThat("ZHCN\t2.541666666667\n" +
+                        "ZEQGMPLUCFTL\t2.549034175334\n" +
+                        "ZKX\t2.485995457986\n" +
+                        "ZRPFMDVVG\t2.508350730689\n" +
+                        "ZV\t2.485329103886\n" +
+                        "ZEPIHVLTOVLJUM\t2.485179407176\n" +
+                        "ZGKC\t2.525787965616\n" +
+                        "ZHEI\t2.464574898785\n" +
+                        "ZULIG\t2.471938775510\n" +
+                        "ZMZV\t2.470260223048\n" +
+                        "ZI\t2.508435582822\n" +
+                        "ZYNPPBX\t2.454467353952\n" +
+                        "ZEOCVFFKMEKPFOY\t2.414400000000\n",
+
+                "select country, avg(quantity) from orders o " +
+                        "join customers c on c.customerId = o.customerId " +
+                        "join orderDetails d on o.orderId = d.orderId" +
+                        " where country ~ '^Z'");
+
+    }
+
+    @Test
     public void testJoinImpliedCrosses() throws Exception {
         assertPlan("+ 3[ cross ] products\n" +
                         "+ 4[ inner ] suppliers ON suppliers.supplier = products.supplier\n" +
@@ -694,6 +717,15 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                         " outer join orders o on c.customerId = o.customerId " +
                         " where orderId = NaN" +
                         " limit 10,15");
+    }
+
+    @Test
+    public void testNullSymbol() throws Exception {
+        assertThat("",
+                "select country, avg(quantity) from orders o " +
+                        "join customers c on c.customerId = o.customerId " +
+                        "join orderDetails d on o.orderId = d.orderId" +
+                        " where country = null");
     }
 
     @Test
@@ -1136,9 +1168,5 @@ public class JoinQueryTest extends AbstractOptimiserTest {
         }
         orders.commit();
         orderDetails.commit();
-    }
-
-    private void assertPlan(String expected, String query) throws ParserException, JournalException {
-        TestUtils.assertEquals(expected, compiler.plan(query));
     }
 }

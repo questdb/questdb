@@ -28,9 +28,12 @@ import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
+import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.impl.SelectedColumnsMetadata;
 import com.nfsdb.ql.impl.SelectedColumnsRecord;
+import com.nfsdb.ql.impl.SelectedColumnsStorageFacade;
 import com.nfsdb.storage.ColumnType;
+import com.nfsdb.storage.SymbolTable;
 
 public class LastRowIdRecordMap implements LastRecordMap {
     private static final ObjList<RecordColumnMetadata> valueMetadata = new ObjList<>();
@@ -41,6 +44,7 @@ public class LastRowIdRecordMap implements LastRecordMap {
     private final ObjList<ColumnType> masterKeyTypes;
     private final RecordMetadata metadata;
     private final SelectedColumnsRecord record;
+    private final SelectedColumnsStorageFacade storageFacade;
     private RecordCursor<? extends Record> slaveCursor;
 
     // todo: extract config
@@ -82,6 +86,7 @@ public class LastRowIdRecordMap implements LastRecordMap {
         this.map = new MultiMap(valueMetadata, keyCols, null);
         this.metadata = new SelectedColumnsMetadata(slaveMetadata, slaveColumnNames);
         this.record = new SelectedColumnsRecord(slaveMetadata, slaveColumnNames);
+        this.storageFacade = new SelectedColumnsStorageFacade(slaveMetadata, this.metadata, slaveColumnNames);
     }
 
     @Override
@@ -102,6 +107,11 @@ public class LastRowIdRecordMap implements LastRecordMap {
         return metadata;
     }
 
+    @Override
+    public StorageFacade getStorageFacade() {
+        return storageFacade;
+    }
+
     public void put(Record record) {
         MapValues values = getBySlave(record);
         values.putLong(0, record.getRowId());
@@ -115,6 +125,11 @@ public class LastRowIdRecordMap implements LastRecordMap {
 
     public void setSlaveCursor(RecordCursor<? extends Record> cursor) {
         this.slaveCursor = cursor;
+        this.storageFacade.of(cursor.getStorageFacade());
+    }
+
+    public SymbolTable getSymbolTable(String name) {
+        return storageFacade.getSymbolTable(name);
     }
 
     private static MultiMap.KeyWriter get(MultiMap map, Record record, IntHashSet indices, ObjList<ColumnType> types) {

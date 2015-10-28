@@ -32,7 +32,10 @@ import com.nfsdb.ql.impl.AllRowSource;
 import com.nfsdb.ql.impl.JournalPartitionSource;
 import com.nfsdb.ql.impl.JournalSource;
 import com.nfsdb.ql.impl.ResampledSource;
-import com.nfsdb.ql.ops.*;
+import com.nfsdb.ql.ops.CountIntAggregatorFunction;
+import com.nfsdb.ql.ops.CountLongAggregatorFunction;
+import com.nfsdb.ql.ops.FirstDoubleAggregationFunction;
+import com.nfsdb.ql.ops.LastDoubleAggregationFunction;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Dates;
@@ -50,35 +53,6 @@ public class AggregationFunctionTest extends AbstractTest {
         TestUtils.generateQuoteData(w, 1000, Dates.toMillis(2015, 1, 1), 100);
         w.commit();
         r = factory.reader(Quote.class.getName());
-    }
-
-    @Test
-    public void testAvgDouble() throws Exception {
-        assertFunc(
-                new AvgDoubleAggregationFunction(r.getMetadata().getColumn("ask"))
-                , "52\t7858.423721313780\t151.123533102188\t2015-01-01T00:00:00.000Z\tAGK.L\n" +
-                        "66\t14082.423625444866\t213.370054930983\t2015-01-01T00:00:00.000Z\tBP.L\n" +
-                        "58\t13335.940655007168\t229.930011293227\t2015-01-01T00:00:00.000Z\tRRS.L\n" +
-                        "58\t12905.372450960738\t222.506421568289\t2015-01-01T00:00:00.000Z\tBT-A.L\n" +
-                        "65\t13394.330843717370\t206.066628364883\t2015-01-01T00:00:00.000Z\tGKN.L\n" +
-                        "54\t13244.428383611292\t245.267192289098\t2015-01-01T00:00:00.000Z\tLLOY.L\n" +
-                        "64\t12696.789512222130\t198.387336128471\t2015-01-01T00:00:00.000Z\tABF.L\n" +
-                        "66\t13559.914003834442\t205.453242482340\t2015-01-01T00:00:00.000Z\tWTB.L\n" +
-                        "51\t15306.804920794536\t300.133429819501\t2015-01-01T00:00:00.000Z\tTLW.L\n" +
-                        "66\t16913.363305688258\t256.263080389216\t2015-01-01T00:00:00.000Z\tADM.L\n" +
-                        "35\t8486.959649701328\t242.484561420038\t2015-01-01T00:01:00.000Z\tBP.L\n" +
-                        "49\t12391.404343216870\t252.885802922793\t2015-01-01T00:01:00.000Z\tRRS.L\n" +
-                        "44\t9678.625432634026\t219.968759832592\t2015-01-01T00:01:00.000Z\tWTB.L\n" +
-                        "41\t7938.831746992340\t193.630042609569\t2015-01-01T00:01:00.000Z\tGKN.L\n" +
-                        "48\t10058.622072452964\t209.554626509437\t2015-01-01T00:01:00.000Z\tAGK.L\n" +
-                        "34\t9570.444874542912\t281.483672780674\t2015-01-01T00:01:00.000Z\tBT-A.L\n" +
-                        "38\t10483.859246590906\t275.891032805024\t2015-01-01T00:01:00.000Z\tADM.L\n" +
-                        "42\t8542.161541170678\t203.384798599302\t2015-01-01T00:01:00.000Z\tTLW.L\n" +
-                        "32\t9856.989801879358\t308.030931308730\t2015-01-01T00:01:00.000Z\tABF.L\n" +
-                        "37\t9907.802508420520\t267.778446173528\t2015-01-01T00:01:00.000Z\tLLOY.L\n"
-                , false
-        );
-
     }
 
     @Test
@@ -166,34 +140,6 @@ public class AggregationFunctionTest extends AbstractTest {
     }
 
     @Test
-    public void testFirstLong() throws Exception {
-        assertFunc(
-                new FirstLongAggregationFunction(r.getMetadata().getTimestampMetadata())
-                , "2015-01-01T00:00:00.000Z\t2015-01-01T00:00:00.000Z\tAGK.L\n" +
-                        "2015-01-01T00:00:00.100Z\t2015-01-01T00:00:00.000Z\tBP.L\n" +
-                        "2015-01-01T00:00:00.300Z\t2015-01-01T00:00:00.000Z\tRRS.L\n" +
-                        "2015-01-01T00:00:00.400Z\t2015-01-01T00:00:00.000Z\tBT-A.L\n" +
-                        "2015-01-01T00:00:00.500Z\t2015-01-01T00:00:00.000Z\tGKN.L\n" +
-                        "2015-01-01T00:00:00.700Z\t2015-01-01T00:00:00.000Z\tLLOY.L\n" +
-                        "2015-01-01T00:00:00.800Z\t2015-01-01T00:00:00.000Z\tABF.L\n" +
-                        "2015-01-01T00:00:01.200Z\t2015-01-01T00:00:00.000Z\tWTB.L\n" +
-                        "2015-01-01T00:00:01.500Z\t2015-01-01T00:00:00.000Z\tTLW.L\n" +
-                        "2015-01-01T00:00:01.600Z\t2015-01-01T00:00:00.000Z\tADM.L\n" +
-                        "2015-01-01T00:01:00.000Z\t2015-01-01T00:01:00.000Z\tBP.L\n" +
-                        "2015-01-01T00:01:00.100Z\t2015-01-01T00:01:00.000Z\tRRS.L\n" +
-                        "2015-01-01T00:01:00.200Z\t2015-01-01T00:01:00.000Z\tWTB.L\n" +
-                        "2015-01-01T00:01:00.300Z\t2015-01-01T00:01:00.000Z\tGKN.L\n" +
-                        "2015-01-01T00:01:00.400Z\t2015-01-01T00:01:00.000Z\tAGK.L\n" +
-                        "2015-01-01T00:01:00.500Z\t2015-01-01T00:01:00.000Z\tBT-A.L\n" +
-                        "2015-01-01T00:01:00.600Z\t2015-01-01T00:01:00.000Z\tADM.L\n" +
-                        "2015-01-01T00:01:00.700Z\t2015-01-01T00:01:00.000Z\tTLW.L\n" +
-                        "2015-01-01T00:01:01.200Z\t2015-01-01T00:01:00.000Z\tABF.L\n" +
-                        "2015-01-01T00:01:01.700Z\t2015-01-01T00:01:00.000Z\tLLOY.L\n"
-                , false
-        );
-    }
-
-    @Test
     public void testLastDouble() throws Exception {
         assertFunc(
                 new LastDoubleAggregationFunction(r.getMetadata().getColumn("bid"))
@@ -217,34 +163,6 @@ public class AggregationFunctionTest extends AbstractTest {
                         "0.000000021643\t2015-01-01T00:01:00.000Z\tTLW.L\n" +
                         "732.000000000000\t2015-01-01T00:01:00.000Z\tABF.L\n" +
                         "4.727073431015\t2015-01-01T00:01:00.000Z\tLLOY.L\n"
-                , false
-        );
-    }
-
-    @Test
-    public void testLastLong() throws Exception {
-        assertFunc(
-                new LastLongAggregationFunction(r.getMetadata().getTimestampMetadata())
-                , "2015-01-01T00:00:58.300Z\t2015-01-01T00:00:00.000Z\tAGK.L\n" +
-                        "2015-01-01T00:00:59.900Z\t2015-01-01T00:00:00.000Z\tBP.L\n" +
-                        "2015-01-01T00:00:59.400Z\t2015-01-01T00:00:00.000Z\tRRS.L\n" +
-                        "2015-01-01T00:00:58.500Z\t2015-01-01T00:00:00.000Z\tBT-A.L\n" +
-                        "2015-01-01T00:00:56.800Z\t2015-01-01T00:00:00.000Z\tGKN.L\n" +
-                        "2015-01-01T00:00:59.800Z\t2015-01-01T00:00:00.000Z\tLLOY.L\n" +
-                        "2015-01-01T00:00:59.700Z\t2015-01-01T00:00:00.000Z\tABF.L\n" +
-                        "2015-01-01T00:00:58.800Z\t2015-01-01T00:00:00.000Z\tWTB.L\n" +
-                        "2015-01-01T00:00:59.600Z\t2015-01-01T00:00:00.000Z\tTLW.L\n" +
-                        "2015-01-01T00:00:59.300Z\t2015-01-01T00:00:00.000Z\tADM.L\n" +
-                        "2015-01-01T00:01:38.100Z\t2015-01-01T00:01:00.000Z\tBP.L\n" +
-                        "2015-01-01T00:01:39.800Z\t2015-01-01T00:01:00.000Z\tRRS.L\n" +
-                        "2015-01-01T00:01:39.700Z\t2015-01-01T00:01:00.000Z\tWTB.L\n" +
-                        "2015-01-01T00:01:37.800Z\t2015-01-01T00:01:00.000Z\tGKN.L\n" +
-                        "2015-01-01T00:01:38.900Z\t2015-01-01T00:01:00.000Z\tAGK.L\n" +
-                        "2015-01-01T00:01:39.900Z\t2015-01-01T00:01:00.000Z\tBT-A.L\n" +
-                        "2015-01-01T00:01:35.100Z\t2015-01-01T00:01:00.000Z\tADM.L\n" +
-                        "2015-01-01T00:01:38.200Z\t2015-01-01T00:01:00.000Z\tTLW.L\n" +
-                        "2015-01-01T00:01:37.600Z\t2015-01-01T00:01:00.000Z\tABF.L\n" +
-                        "2015-01-01T00:01:38.700Z\t2015-01-01T00:01:00.000Z\tLLOY.L\n"
                 , false
         );
     }

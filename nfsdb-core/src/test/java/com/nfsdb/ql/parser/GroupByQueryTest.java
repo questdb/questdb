@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
@@ -94,6 +94,22 @@ public class GroupByQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testAvg() throws Exception {
+        assertThat("employeeId\tcol0\tcol1\tcol2\n" +
+                        "TGPGWFFYU\t-22.347933193945\t1.0571239707599186E9\t0.497876154503\n" +
+                        "DEYYQEHBH\t-4.416731057369\t1.0578515420281407E9\t0.493395281078\n" +
+                        "SRYRFBVTM\t2.007675369708\t1.0974368837843137E9\t0.506477851617\n" +
+                        "GZSXUXIBB\t3.736164317186\t1.099431249958711E9\t0.504398549131\n" +
+                        "UEDRQQULO\t-5.160772578557\t1.1102616773748791E9\t0.498863287248\n" +
+                        "FOWLPDXYS\t-25.305011272410\t1.096727898191919E9\t0.502265356225\n" +
+                        "FJGETJRSZ\t-4.886231663630\t1.0819423916371596E9\t0.493707956565\n" +
+                        "BEOUOJSHR\t-7.182141993920\t1.0689834824116446E9\t0.500621256716\n" +
+                        "YRXPEHNRX\t-5.903554299972\t1.0714308772062062E9\t0.507052500028\n" +
+                        "VTJWCPSWH\t-15.430946057631\t1.0903374433984451E9\t0.493997276119\n",
+                "select employeeId, avg(price), avg(quantity), avg(rate) from orders", true);
+    }
+
+    @Test
     public void testFirstDouble() throws Exception {
         assertThat("TGPGWFFYU\t172.796875000000\n" +
                         "DEYYQEHBH\t424.828125000000\n" +
@@ -166,6 +182,24 @@ public class GroupByQueryTest extends AbstractOptimiserTest {
                         "YRXPEHNRX\t1070359446329\t912589625\n" +
                         "VTJWCPSWH\t1121957229257\t970765001\n",
                 "select employeeId, lsum(quantity) s, sum(quantity) s2 from orders");
+
+    }
+
+    @Test
+    public void testLastDouble() throws Exception {
+        assertThat("employeeId\tcol0\tcol1\tcol2\tcol3\n" +
+                        "TGPGWFFYU\t1399299250000\t0.4752\t1801096068\t2014-05-05T14:14:10.000Z\n" +
+                        "DEYYQEHBH\t1399299380000\t0.6052\t253116346\t2014-05-05T14:16:20.000Z\n" +
+                        "SRYRFBVTM\t1399299290000\t0.4888\t1518306371\t2014-05-05T14:14:50.000Z\n" +
+                        "GZSXUXIBB\t1399299390000\t0.5024\t1896175587\t2014-05-05T14:16:30.000Z\n" +
+                        "UEDRQQULO\t1399299400000\t0.4547\t260995870\t2014-05-05T14:16:40.000Z\n" +
+                        "FOWLPDXYS\t1399299370000\t0.4486\t2005631\t2014-05-05T14:16:10.000Z\n" +
+                        "FJGETJRSZ\t1399299200000\t0.6497\t987587702\t2014-05-05T14:13:20.000Z\n" +
+                        "BEOUOJSHR\t1399299270000\t0.2665\t1504681377\t2014-05-05T14:14:30.000Z\n" +
+                        "YRXPEHNRX\t1399299130000\t0.6637\t1081845029\t2014-05-05T14:12:10.000Z\n" +
+                        "VTJWCPSWH\t1399299310000\t0.5628\t414901203\t2014-05-05T14:15:10.000Z\n",
+                "select employeeId, last(price), last(rate), last(quantity), ltod(last(orderDate)) from orders",
+                true);
 
     }
 

@@ -48,6 +48,7 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
     private final SplitRecord record;
     private final RecordHolder recordHolder;
     private final RecordHolder delayedHolder;
+    private final SplitRecordStorageFacade storageFacade;
     private RecordCursor<? extends Record> masterCursor;
     private RecordCursor<? extends Record> slaveCursor;
 
@@ -88,6 +89,7 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
                 this.delayedHolder = new FixRecordHolder(slave.getMetadata());
             }
         }
+        this.storageFacade = new SplitRecordStorageFacade(this.metadata, master.getMetadata().getColumnCount());
     }
 
     @Override
@@ -119,6 +121,7 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
         this.slaveCursor = slave.prepareCursor(factory);
         this.recordHolder.setCursor(slaveCursor);
         this.delayedHolder.setCursor(slaveCursor);
+        this.storageFacade.prepare(factory, masterCursor.getStorageFacade(), slaveCursor.getStorageFacade());
         return this;
     }
 

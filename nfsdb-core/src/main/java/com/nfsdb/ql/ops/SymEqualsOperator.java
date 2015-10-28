@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.ops;
 
@@ -25,6 +25,8 @@ import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.storage.ColumnType;
+import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.utils.Numbers;
 
 public class SymEqualsOperator extends AbstractBinaryOperator {
 
@@ -38,7 +40,8 @@ public class SymEqualsOperator extends AbstractBinaryOperator {
 
     @Override
     public boolean getBool(Record rec) {
-        return key > -2 && lhs.getInt(rec) == key;
+        int k = lhs.getInt(rec);
+        return (k == key || (key == SymbolTable.VALUE_IS_NULL && k == Numbers.INT_NaN));
     }
 
     @Override

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,24 +17,30 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.collections.MapValues;
+import com.nfsdb.storage.ColumnType;
 
-public class FirstLongAggregationFunction extends AbstractSingleColumnAggregatorFunction {
+public final class LastFloatAggregator extends AbstractUnaryAggregator {
 
-    public FirstLongAggregationFunction(ColumnMetadata meta) {
-        super(meta);
+    public static final LastFloatAggregator FACTORY = new LastFloatAggregator();
+
+    private LastFloatAggregator() {
+        super(ColumnType.FLOAT);
     }
 
     @Override
     public void calculate(Record rec, MapValues values) {
-        if (values.isNew()) {
-            values.putLong(valueIndex, rec.getLong(recordIndex));
-        }
+        values.putFloat(valueIndex, value.getFloat(rec));
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new LastFloatAggregator();
     }
 }

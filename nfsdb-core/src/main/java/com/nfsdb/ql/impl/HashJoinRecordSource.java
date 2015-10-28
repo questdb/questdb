@@ -47,6 +47,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
     private final RecordSource<? extends Record> slave;
     private final SplitRecordMetadata metadata;
     private final SplitRecord currentRecord;
+    private final SplitRecordStorageFacade storageFacade;
     private final ObjList<RecordColumnMetadata> masterColumns = new ObjList<>();
     private final ObjList<RecordColumnMetadata> slaveColumns = new ObjList<>();
     private final IntList masterColIndex;
@@ -77,6 +78,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
         this.recordMap = createRecordMap(master, slave);
         this.outer = outer;
         this.nullRecord = new NullRecord(slave.getMetadata());
+        this.storageFacade = new SplitRecordStorageFacade(metadata, master.getMetadata().getColumnCount());
     }
 
     @Override
@@ -93,7 +95,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
 
     @Override
     public StorageFacade getStorageFacade() {
-        return null;
+        return storageFacade;
     }
 
     @Override
@@ -107,6 +109,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
         this.masterCursor = master.prepareCursor(factory);
         buildHashTable();
         recordMap.setStorageFacade(slaveCursor.getStorageFacade());
+        storageFacade.prepare(factory, masterCursor.getStorageFacade(), slaveCursor.getStorageFacade());
         return this;
     }
 

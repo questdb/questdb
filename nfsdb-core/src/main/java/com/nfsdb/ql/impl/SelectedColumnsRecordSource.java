@@ -73,7 +73,7 @@ public class SelectedColumnsRecordSource extends AbstractImmutableIterator<Recor
     @Override
     public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
         this.recordCursor = recordSource.prepareCursor(factory);
-        this.storageFacade.setDelegate(recordCursor.getStorageFacade());
+        this.storageFacade.of(recordCursor.getStorageFacade());
         return this;
     }
 

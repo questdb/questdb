@@ -24,6 +24,7 @@ package com.nfsdb.ql.collections;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
+import com.nfsdb.ql.StorageFacade;
 
 import java.io.Closeable;
 
@@ -38,6 +39,8 @@ public interface LastRecordMap extends Closeable {
     Record get(Record master);
 
     RecordMetadata getMetadata();
+
+    StorageFacade getStorageFacade();
 
     void put(Record record);
 

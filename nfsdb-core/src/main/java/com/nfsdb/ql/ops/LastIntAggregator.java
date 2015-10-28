@@ -23,34 +23,24 @@ package com.nfsdb.ql.ops;
 
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
-import com.nfsdb.ql.StorageFacade;
+import com.nfsdb.ql.collections.MapValues;
 import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.SymbolTable;
-import com.nfsdb.utils.Numbers;
 
-public class SymEqualsROperator extends AbstractBinaryOperator {
+public final class LastIntAggregator extends AbstractUnaryAggregator {
 
-    public final static SymEqualsROperator FACTORY = new SymEqualsROperator();
-    private int key;
+    public static final LastIntAggregator FACTORY = new LastIntAggregator();
 
-    private SymEqualsROperator() {
-        super(ColumnType.BOOLEAN);
+    private LastIntAggregator() {
+        super(ColumnType.INT);
     }
 
     @Override
-    public boolean getBool(Record rec) {
-        int k = rhs.getInt(rec);
-        return (k == key || (key == SymbolTable.VALUE_IS_NULL && k == Numbers.INT_NaN));
+    public void calculate(Record rec, MapValues values) {
+        values.putInt(valueIndex, value.getInt(rec));
     }
 
     @Override
     public Function newInstance(ObjList<VirtualColumn> args) {
-        return new SymEqualsROperator();
-    }
-
-    @Override
-    public void prepare(StorageFacade facade) {
-        super.prepare(facade);
-        this.key = rhs.getSymbolTable().getQuick(lhs.getFlyweightStr(null));
+        return new LastIntAggregator();
     }
 }

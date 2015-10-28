@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.ops;
 
@@ -231,11 +231,22 @@ public final class FunctionFactories {
         unSigAgg("lsum", ColumnType.INT, SumLongAggregator.FACTORY);
         unSigAgg("sum", ColumnType.LONG, SumLongAggregator.FACTORY);
         unSigAgg("sum", ColumnType.DATE, SumLongAggregator.FACTORY);
-        unSigAgg("first", ColumnType.DOUBLE, FirstDoubleAggregator.FACTORY);
 
+        unSigAgg("first", ColumnType.DOUBLE, FirstDoubleAggregator.FACTORY);
         unSigAgg("first", ColumnType.FLOAT, FirstFloatAggregator.FACTORY);
         unSigAgg("first", ColumnType.INT, FirstIntAggregator.FACTORY);
         unSigAgg("first", ColumnType.LONG, FirstLongAggregator.FACTORY);
         unSigAgg("first", ColumnType.DATE, FirstLongAggregator.FACTORY);
+
+        unSigAgg("last", ColumnType.DOUBLE, LastDoubleAggregator.FACTORY);
+        unSigAgg("last", ColumnType.FLOAT, LastFloatAggregator.FACTORY);
+        unSigAgg("last", ColumnType.INT, LastIntAggregator.FACTORY);
+        unSigAgg("last", ColumnType.LONG, LastLongAggregator.FACTORY);
+        unSigAgg("last", ColumnType.DATE, LastLongAggregator.FACTORY);
+
+        unSigAgg("avg", ColumnType.DOUBLE, AvgAggregator.FACTORY);
+        unSigAgg("avg", ColumnType.INT, AvgAggregator.FACTORY);
+        unSigAgg("avg", ColumnType.LONG, AvgAggregator.FACTORY);
+        unSigAgg("avg", ColumnType.FLOAT, AvgAggregator.FACTORY);
     }
 }

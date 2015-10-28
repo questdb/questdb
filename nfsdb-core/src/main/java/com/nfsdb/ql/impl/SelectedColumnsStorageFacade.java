@@ -58,7 +58,7 @@ public class SelectedColumnsStorageFacade implements StorageFacade {
         return getSymbolTable(metadata.getColumnIndex(name));
     }
 
-    public void setDelegate(StorageFacade delegate) {
+    public void of(StorageFacade delegate) {
         this.delegate = delegate;
     }
 }

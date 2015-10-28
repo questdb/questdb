@@ -29,6 +29,7 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.impl.SelectedColumnsMetadata;
+import com.nfsdb.ql.impl.SelectedColumnsStorageFacade;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.utils.Numbers;
@@ -47,13 +48,12 @@ public class LastFixRecordMap implements LastRecordMap {
     private final ObjList<ColumnType> slaveValueTypes;
     private final IntList fixedOffsets;
     private final int recordLen;
-    private final IntIntHashMap symTableRemap = new IntIntHashMap();
     private final SelectedColumnsMetadata metadata;
     private final MapRecord record;
     private final int bits;
     private final int mask;
+    private final SelectedColumnsStorageFacade storageFacade;
     private long appendOffset;
-    private StorageFacade storageFacade;
 
     public LastFixRecordMap(
             RecordMetadata masterMetadata,
@@ -134,6 +134,7 @@ public class LastFixRecordMap implements LastRecordMap {
         this.map = new MultiMap(valueMetadata, keyCols, null);
         this.metadata = new SelectedColumnsMetadata(slaveMetadata, slaveColumnNames);
         this.record = new MapRecord(this.metadata);
+        this.storageFacade = new SelectedColumnsStorageFacade(slaveMetadata, this.metadata, slaveColumnNames);
     }
 
     @Override
@@ -159,6 +160,11 @@ public class LastFixRecordMap implements LastRecordMap {
         return metadata;
     }
 
+    @Override
+    public StorageFacade getStorageFacade() {
+        return storageFacade;
+    }
+
     public void put(Record record) {
         final MapValues values = getBySlave(record);
         // new record, append right away
@@ -176,15 +182,9 @@ public class LastFixRecordMap implements LastRecordMap {
         map.clear();
     }
 
+    @Override
     public void setSlaveCursor(RecordCursor<? extends Record> cursor) {
-        // hold on to storage facade an remap foreign indexes as
-        // queries to symbols will be made using our indexes
-        this.storageFacade = cursor.getStorageFacade();
-        for (int i = 0, n = slaveValueTypes.size(); i < n; i++) {
-            if (slaveValueTypes.getQuick(i) == ColumnType.SYMBOL) {
-                symTableRemap.put(i, slaveValueIndexes.getQuick(i));
-            }
-        }
+        this.storageFacade.of(cursor.getStorageFacade());
     }
 
     private static MultiMap.KeyWriter get(MultiMap map, Record record, IntHashSet indices, ObjList<ColumnType> types) {
@@ -318,7 +318,7 @@ public class LastFixRecordMap implements LastRecordMap {
 
         @Override
         protected SymbolTable getSymbolTable(int col) {
-            return storageFacade.getSymbolTable(symTableRemap.get(col));
+            return storageFacade.getSymbolTable(col);
         }
 
         private MapRecord of(long address) {

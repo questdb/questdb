@@ -39,15 +39,19 @@ public abstract class AbstractOptimiserTest {
     protected static final StringSink sink = new StringSink();
     protected static final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
 
-    protected void assertThat(String expected, String query) throws JournalException, ParserException {
-        assertThat(expected, query, false);
-        assertThat(expected, query, false);
-        compiler.clearCache();
+    protected void assertPlan(String expected, String query) throws ParserException, JournalException {
+        TestUtils.assertEquals(expected, compiler.plan(query));
     }
 
     protected void assertThat(String expected, String query, boolean header) throws ParserException, JournalException {
         sink.clear();
         printer.printCursor(compiler.compile(query), header);
         TestUtils.assertEquals(expected, sink);
+    }
+
+    protected void assertThat(String expected, String query) throws JournalException, ParserException {
+        assertThat(expected, query, false);
+        assertThat(expected, query, false);
+        compiler.clearCache();
     }
 }

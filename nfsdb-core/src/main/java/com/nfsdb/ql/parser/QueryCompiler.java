@@ -279,7 +279,10 @@ public class QueryCompiler {
 
         switch (aSize) {
             case 0:
-                if (bSize == 1 && literalCollector.nullCount == 0) {
+                if (bSize == 1
+                        && literalCollector.nullCount == 0
+                        // journal must not be OUTER or ASOF joined
+                        && !joinBarriers.contains(parent.getJoinModels().get(literalCollectorBIndexes.getQuick(0)).getJoinType().ordinal())) {
                     // single journal reference + constant
                     jc = contextPool.next();
                     jc.slaveIndex = literalCollectorBIndexes.getQuick(0);
@@ -318,7 +321,9 @@ public class QueryCompiler {
                         linkDependencies(parent, min, max);
                     }
                     addJoinContext(parent, jc);
-                } else if (bSize == 0 && literalCollector.nullCount == 0) {
+                } else if (bSize == 0
+                        && literalCollector.nullCount == 0
+                        && !joinBarriers.contains(parent.getJoinModels().get(literalCollectorAIndexes.getQuick(0)).getJoinType().ordinal())) {
                     // single journal reference + constant
                     jc.slaveIndex = lhi;
                     addWhereClause(parent, lhi, node);
@@ -410,11 +415,14 @@ public class QueryCompiler {
                     // must evaluate as constant
                     postFilterRemoved.add(k);
                     parent.addParsedWhereConst(k);
-                } else if (rs == 1 && nullCounts.getQuick(k) == 0) {
+                } else if (rs == 1
+                        && nullCounts.getQuick(k) == 0
+                        // single journal reference and this journal is not joined via OUTER or ASOF
+                        && !joinBarriers.contains(parent.getJoinModels().getQuick(refs.getQuick(0)).getJoinType().ordinal())) {
                     // get single journal reference out of the way right away
                     // we don't have to wait until "our" journal comes along
-                    postFilterRemoved.add(k);
                     addWhereClause(parent, refs.getQuick(0), filterNodes.getQuick(k));
+                    postFilterRemoved.add(k);
                 } else {
                     boolean qualifies = true;
                     // check if filter references journals processed so far
