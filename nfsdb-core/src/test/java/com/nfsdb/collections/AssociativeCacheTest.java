@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.collections;
 
@@ -32,9 +32,9 @@ public class AssociativeCacheTest {
         cache.put("X", "1");
         cache.put("Y", "2");
         cache.put("Z", "3");
-        System.out.println(cache.get("X"));
-        System.out.println(cache.get("Y"));
-        System.out.println(cache.get("Z"));
+        Assert.assertEquals("1", cache.get("X"));
+        Assert.assertEquals("2", cache.get("Y"));
+        Assert.assertEquals("3", cache.get("Z"));
     }
 
     @Test

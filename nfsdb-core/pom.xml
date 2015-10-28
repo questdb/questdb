@@ -102,6 +102,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>2.19</version>
                 <configuration>
+                    <argLine>-Xmx1536m</argLine>
                     <systemPropertyVariables>
                         <java.util.logging.SimpleFormatter.format>
                             <![CDATA[%1$tY-%1$tm-%1$td %1$tH:%1$tM:%1$tS %4$s %2$s %5$s%6$s%n]]>
