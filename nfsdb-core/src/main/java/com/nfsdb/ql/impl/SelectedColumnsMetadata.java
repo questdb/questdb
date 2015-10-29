@@ -83,6 +83,11 @@ public class SelectedColumnsMetadata extends AbstractRecordMetadata {
     }
 
     @Override
+    protected int getLocalColumnIndex(CharSequence name) {
+        return nameIndex.get(name);
+    }
+
+    @Override
     public RecordColumnMetadata getColumn(int index) {
         return columnMetadata[index];
     }
@@ -90,11 +95,6 @@ public class SelectedColumnsMetadata extends AbstractRecordMetadata {
     @Override
     public int getColumnCount() {
         return columnMetadata.length;
-    }
-
-    @Override
-    public int getColumnIndexQuiet(CharSequence name) {
-        return nameIndex.get(name);
     }
 
     @Override

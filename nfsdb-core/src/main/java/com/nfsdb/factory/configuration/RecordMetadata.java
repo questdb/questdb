@@ -43,6 +43,8 @@ public interface RecordMetadata {
 
     int getColumnIndexQuiet(CharSequence name);
 
+    int getColumnIndexQuiet(ColumnName name);
+
     RecordColumnMetadata getColumnQuick(int index);
 
     RecordColumnMetadata getTimestampMetadata();

@@ -578,4 +578,11 @@ public class SymbolNullQueryTest extends AbstractOptimiserTest {
                 "279\tREIJ\t0.001741334971\t2015-03-23T00:02:02.280Z\t29\tBROMNXKUIZ\t0.000002532035\t2015-03-23T00:01:59.534Z\n";
         assertThat(expected, "trades t asof join quotes q where tag ~ 'BROMNXKUIZ'", true);
     }
+
+    @Test
+    public void testWhereColumnAlias() throws Exception {
+        assertThat("quoteId\ttag1\tamount\ttimestamp\ttag\trate\ttimestamp\n" +
+                        "50\tDNZNL\t-258.093750000000\t2015-03-23T00:04:46.445Z\tVUYGMBMKSCPWLZK\t0.000000011817\t2015-03-23T00:03:43.678Z\n",
+                "trades t asof join quotes q on q.quoteId = t.quoteId where q.tag ~ 'B' and t.quoteId = 50", true);
+    }
 }

@@ -22,8 +22,10 @@
 package com.nfsdb.factory.configuration;
 
 import com.nfsdb.exceptions.NoSuchColumnException;
+import com.nfsdb.utils.Chars;
 
 public abstract class AbstractRecordMetadata implements RecordMetadata {
+    protected final ColumnName columnName = new ColumnName();
     private String alias;
 
     @Override
@@ -37,17 +39,31 @@ public abstract class AbstractRecordMetadata implements RecordMetadata {
     }
 
     @Override
-    public RecordColumnMetadata getColumn(CharSequence name) {
+    public final RecordColumnMetadata getColumn(CharSequence name) {
         return getColumnQuick(getColumnIndex(name));
     }
 
     @Override
-    public int getColumnIndex(CharSequence columnName) {
+    public final int getColumnIndex(CharSequence columnName) {
         int index = getColumnIndexQuiet(columnName);
         if (index == -1) {
-            throw new NoSuchColumnException("Invalid column name: %s", columnName);
+            throw new NoSuchColumnException(columnName);
 
         }
         return index;
     }
+
+    @Override
+    public int getColumnIndexQuiet(CharSequence name) {
+        return getColumnIndexQuiet(columnName.of(name));
+    }
+
+    public int getColumnIndexQuiet(ColumnName columnName) {
+        if ((alias != null && Chars.equals(alias, columnName.alias())) || columnName.alias().length() == 0) {
+            return getLocalColumnIndex(columnName.name());
+        }
+        return -1;
+    }
+
+    protected abstract int getLocalColumnIndex(CharSequence name);
 }

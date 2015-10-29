@@ -91,6 +91,7 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
                 this.holder = new FixRecordHolder(slave.getMetadata());
             }
         }
+        map.getMetadata().setAlias(slave.getMetadata().getAlias());
         this.metadata = new SplitRecordMetadata(master.getMetadata(), map.getMetadata());
         this.record = new SplitRecord(this.metadata, master.getMetadata().getColumnCount());
         this.storageFacade = new SplitRecordStorageFacade(this.metadata, master.getMetadata().getColumnCount());

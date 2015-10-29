@@ -570,6 +570,9 @@ public class QueryCompiler {
 
             if (slave == null) {
                 slave = compileSingleOrSubQuery(m, factory);
+                if (m.getAlias() != null) {
+                    slave.getMetadata().setAlias(m.getAlias().token);
+                }
             }
 
             if (collectColumnNameFrequency) {
@@ -626,6 +629,12 @@ public class QueryCompiler {
             journalMetadata = (JournalMetadata) metadata;
         } else {
             throw new ParserException(0, "Internal error: invalid metadata");
+        }
+
+        if (model.getAlias() != null) {
+            journalMetadata.setAlias(model.getAlias().token);
+        } else {
+            journalMetadata.setAlias(model.getJournalName().token);
         }
 
         PartitionSource ps = new JournalPartitionSource(journalMetadata, true);
@@ -731,7 +740,7 @@ public class QueryCompiler {
                             default:
                                 lambdaColIndex = m.getColumnIndexQuiet(latestByCol);
                                 if (lambdaColIndex == -1) {
-                                    throw new ParserException(im.keyValuePositions.getQuick(0), "Ambiguous column names in lambda query");
+                                    throw new ParserException(im.keyValuePositions.getQuick(0), "Ambiguous column names in lambda query. Specify select clause");
                                 }
                                 break;
                         }
@@ -1475,7 +1484,7 @@ public class QueryCompiler {
         }
     }
 
-    private int resolveJournalIndex(QueryModel parent, CharSequence alias, CharSequence column, int position) throws ParserException {
+    private int resolveJournalIndex(QueryModel parent, @Transient CharSequence alias, CharSequence column, int position) throws ParserException {
         ObjList<QueryModel> joinModels = parent.getJoinModels();
         int index = -1;
         if (alias == null) {

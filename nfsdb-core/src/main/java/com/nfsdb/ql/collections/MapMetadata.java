@@ -71,7 +71,7 @@ public final class MapMetadata extends AbstractRecordMetadata {
     }
 
     @Override
-    public int getColumnIndexQuiet(CharSequence name) {
+    protected int getLocalColumnIndex(CharSequence name) {
         return nameCache.get(name);
     }
 }

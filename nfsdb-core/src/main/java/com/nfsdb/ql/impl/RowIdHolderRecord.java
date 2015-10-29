@@ -54,11 +54,6 @@ public class RowIdHolderRecord extends AbstractRecord {
             }
 
             @Override
-            public int getColumnIndexQuiet(CharSequence columnName) {
-                return Chars.equals(RowIdHolderRecord.name, columnName) ? 0 : -1;
-            }
-
-            @Override
             public RecordColumnMetadata getColumnQuick(int index) {
                 return LongMetadata.INSTANCE;
             }
@@ -66,6 +61,11 @@ public class RowIdHolderRecord extends AbstractRecord {
             @Override
             public RecordColumnMetadata getTimestampMetadata() {
                 return null;
+            }
+
+            @Override
+            protected int getLocalColumnIndex(CharSequence name) {
+                return Chars.equals(RowIdHolderRecord.name, name) ? 0 : -1;
             }
         });
     }

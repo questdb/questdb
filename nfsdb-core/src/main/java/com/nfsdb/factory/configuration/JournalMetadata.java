@@ -146,11 +146,6 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
     }
 
     @Override
-    public int getColumnIndexQuiet(CharSequence name) {
-        return columnIndexLookup.get(name);
-    }
-
-    @Override
     public ColumnMetadata getColumnQuick(int index) {
         return Unsafe.arrayGet(columnMetadata, index);
     }
@@ -301,6 +296,11 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
 
     private void col(StringBuilder b, ColumnMetadata m) {
         pad(b, TO_STRING_COL2_PAD, (m.distinctCountHint > 0 ? m.distinctCountHint + " ~ " : "") + (m.indexed ? '#' : "") + m.name + (m.sameAs != null ? " -> " + m.sameAs : "") + ' ' + m.type.name() + '(' + m.size + ')');
+    }
+
+    @Override
+    protected int getLocalColumnIndex(CharSequence name) {
+        return columnIndexLookup.get(name);
     }
 
     private StringBuilder pad(StringBuilder b, int w, String value) {

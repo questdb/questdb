@@ -50,6 +50,12 @@ public class VirtualRecordMetadata extends AbstractRecordMetadata {
     }
 
     @Override
+    protected int getLocalColumnIndex(CharSequence name) {
+        int index = nameToIndexMap.get(name);
+        return index == -1 ? delegate.getColumnIndexQuiet(name) : index;
+    }
+
+    @Override
     public RecordColumnMetadata getColumn(int index) {
         return index < split ? delegate.getColumn(index) : virtualColumns.get(index - split);
     }
@@ -57,12 +63,6 @@ public class VirtualRecordMetadata extends AbstractRecordMetadata {
     @Override
     public int getColumnCount() {
         return delegate.getColumnCount() + virtualColumns.size();
-    }
-
-    @Override
-    public int getColumnIndexQuiet(CharSequence name) {
-        int index = nameToIndexMap.get(name);
-        return index == -1 ? delegate.getColumnIndexQuiet(name) : index;
     }
 
     @Override

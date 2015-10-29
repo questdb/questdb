@@ -572,7 +572,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
         assertThat(expected, "select c.customerId, orderId, o.productId from " +
                 "customers c " +
                 "join (" +
-                "orders latest by customerId where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`)" +
+                "orders o latest by customerId where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`)" +
                 ") o on c.customerId = o.customerId");
 
         assertThat(expected, "select c.customerId, orderId, productId from " +
@@ -836,7 +836,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
 
         assertThat(expected, "customers c" +
                 " outer join orders o on c.customerId = o.customerId " +
-                " where orderId = NaN");
+                " where o.orderId = NaN");
     }
 
     @Test

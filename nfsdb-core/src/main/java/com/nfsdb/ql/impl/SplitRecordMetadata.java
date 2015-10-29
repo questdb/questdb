@@ -25,7 +25,6 @@ import com.nfsdb.factory.configuration.AbstractRecordMetadata;
 import com.nfsdb.factory.configuration.ColumnName;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
-import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Unsafe;
 
 public class SplitRecordMetadata extends AbstractRecordMetadata {
@@ -35,7 +34,6 @@ public class SplitRecordMetadata extends AbstractRecordMetadata {
     private final RecordMetadata a;
     private final RecordMetadata b;
     private final int split;
-    private final ColumnName columnName = new ColumnName();
 
     public SplitRecordMetadata(RecordMetadata a, RecordMetadata b) {
         this.a = a;
@@ -84,41 +82,21 @@ public class SplitRecordMetadata extends AbstractRecordMetadata {
     }
 
     public int getColumnIndexQuiet(ColumnName columnName) {
-        int index;
-        if (columnName.alias().length() == 0) {
-            index = a.getColumnIndexQuiet(columnName.name());
+        int index = a.getColumnIndexQuiet(columnName);
+        if (index == -1) {
+            index = b.getColumnIndexQuiet(columnName);
             if (index == -1) {
-                index = b.getColumnIndexQuiet(columnName.name());
-                return index == -1 ? index : index + split;
-            } else {
                 return index;
+            } else {
+                return index + split;
             }
         } else {
-            if (a instanceof SplitRecordMetadata) {
-                index = ((SplitRecordMetadata) a).getColumnIndexQuiet(columnName);
-            } else {
-                if (a.getAlias() != null && Chars.equals(a.getAlias(), columnName.alias())) {
-                    index = a.getColumnIndexQuiet(columnName.name());
-                } else {
-                    index = -1;
-                }
-            }
-
-            if (index > -1) {
-                return index;
-            }
-
-            if (b instanceof SplitRecordMetadata) {
-                index = ((SplitRecordMetadata) b).getColumnIndexQuiet(columnName);
-            } else {
-                if (b.getAlias() != null && Chars.equals(b.getAlias(), columnName.alias())) {
-                    index = b.getColumnIndexQuiet(columnName.name());
-                } else {
-                    index = -1;
-                }
-            }
-
-            return index == -1 ? index : index + split;
+            return index;
         }
+    }
+
+    @Override
+    protected int getLocalColumnIndex(CharSequence name) {
+        return -1;
     }
 }
