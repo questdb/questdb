@@ -89,7 +89,7 @@ public class QueryCompiler {
             return new IntList();
         }
     }, 16);
-    private final ArrayDeque<ExprNode> andConditionStack = new ArrayDeque<>();
+    private final ArrayDeque<ExprNode> exprNodeStack = new ArrayDeque<>();
     private final IntList nullCounts = new IntList();
     private final ObjList<CharSequence> selectedColumns = new ObjList<>();
     private final CharSequenceHashSet selectedColumnAliases = new CharSequenceHashSet();
@@ -101,7 +101,6 @@ public class QueryCompiler {
     private final ObjList<QueryColumn> aggregators = new ObjList<>();
     private final ObjList<QueryColumn> outerVirtualColumns = new ObjList<>();
     private final ObjList<CharSequence> groupKeyColumns = new ObjList<>();
-    private final ArrayDeque<ExprNode> splitAggregatorsStack = new ArrayDeque<>();
     private ObjList<JoinContext> emittedJoinClauses;
     private int aggregateColumnSequence;
 
@@ -1222,6 +1221,7 @@ public class QueryCompiler {
             assignFilters(parent);
             alignJoinClauses(parent);
             addTransitiveFilters(parent);
+            rewriteColumnsRemovedByJoins(parent);
         }
         return this;
     }
@@ -1234,13 +1234,13 @@ public class QueryCompiler {
      */
     private void processAndConditions(QueryModel parent, ExprNode node) throws ParserException {
         // pre-order traversal
-        andConditionStack.clear();
-        while (!andConditionStack.isEmpty() || node != null) {
+        exprNodeStack.clear();
+        while (!exprNodeStack.isEmpty() || node != null) {
             if (node != null) {
                 switch (node.token) {
                     case "and":
                         if (node.rhs != null) {
-                            andConditionStack.push(node.rhs);
+                            exprNodeStack.push(node.rhs);
                         }
                         node = node.lhs;
                         break;
@@ -1261,7 +1261,7 @@ public class QueryCompiler {
                         break;
                 }
             } else {
-                node = andConditionStack.poll();
+                node = exprNodeStack.poll();
             }
         }
     }
@@ -1522,12 +1522,52 @@ public class QueryCompiler {
         }
     }
 
+    private boolean rewriteColumnName(QueryModel model, ExprNode node) {
+        if (node == null || node.type != ExprNode.NodeType.LITERAL) {
+            return false;
+        }
+
+        ObjList<ExprNode> leftNodes = model.getContext().aNodes;
+        for (int i = 0, n = leftNodes.size(); i < n; i++) {
+            if (leftNodes.getQuick(i).token.equals(node.token)) {
+                node.token = model.getContext().bNodes.getQuick(i).token;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void rewriteColumnsRemovedByJoins(QueryModel model) {
+        final ObjList<QueryModel> joinModels = model.getJoinModels();
+
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            QueryModel m = joinModels.getQuick(i);
+            ExprNode node = m.getPostJoinWhereClause();
+            exprNodeStack.clear();
+            // only outer and asof joins need their filters analyzed.
+            // inner join filters are applied before join, so journal references
+            // remain valid.
+            if (node != null && joinBarriers.contains(m.getJoinType().ordinal())) {
+                while (!exprNodeStack.isEmpty() || node != null) {
+                    if (node != null) {
+                        if (node.rhs != null && !rewriteColumnName(m, node.rhs)) {
+                            exprNodeStack.push(node.rhs);
+                        }
+                        node = rewriteColumnName(m, node.lhs) ? null : node.lhs;
+                    } else {
+                        node = exprNodeStack.poll();
+                    }
+                }
+            }
+        }
+    }
+
     private RecordSource<? extends Record> selectColumns(RecordSource<? extends Record> rs, QueryModel model) throws ParserException {
-        return model.getColumns().size() == 0 ? rs : selectColumns01(rs, model);
+        return model.getColumns().size() == 0 ? rs : selectColumns0(rs, model);
     }
 
     @NotNull
-    private RecordSource<? extends Record> selectColumns01(RecordSource<? extends Record> rs, QueryModel model) throws ParserException {
+    private RecordSource<? extends Record> selectColumns0(RecordSource<? extends Record> rs, QueryModel model) throws ParserException {
         final ObjList<QueryColumn> columns = model.getColumns();
         final CharSequenceIntHashMap columnNameHistogram = model.getColumnNameHistogram();
         final RecordMetadata meta = rs.getMetadata();
@@ -1646,19 +1686,19 @@ public class QueryCompiler {
 
     private void splitAggregates(@Transient ExprNode node, ObjList<QueryColumn> aggregateColumns) throws ParserException {
 
-        this.splitAggregatorsStack.clear();
+        this.exprNodeStack.clear();
         this.aggregateColumnSequence = 0;
 
         // pre-order iterative tree traversal
         // see: http://en.wikipedia.org/wiki/Tree_traversal
 
-        while (!splitAggregatorsStack.isEmpty() || node != null) {
+        while (!this.exprNodeStack.isEmpty() || node != null) {
             if (node != null) {
 
                 if (node.rhs != null) {
                     ExprNode n = replaceIfAggregate(node.rhs, aggregateColumns);
                     if (node.rhs == n) {
-                        splitAggregatorsStack.push(node.rhs);
+                        this.exprNodeStack.push(node.rhs);
                     } else {
                         node.rhs = n;
                     }
@@ -1672,7 +1712,7 @@ public class QueryCompiler {
                     node = null;
                 }
             } else {
-                node = splitAggregatorsStack.poll();
+                node = this.exprNodeStack.poll();
             }
         }
     }

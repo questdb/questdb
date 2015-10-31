@@ -133,6 +133,9 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     private VirtualColumn lookupFunction(ExprNode node, Signature sig, ObjList<VirtualColumn> args) throws ParserException {
+        if (node.type == ExprNode.NodeType.LAMBDA) {
+            throw new ParserException(node.position, "Cannot use lambda in this context");
+        }
         FunctionFactory factory = FunctionFactories.find(sig, args);
         if (factory == null) {
             throw new ParserException(node.position, "No such function: " + sig.userReadable());

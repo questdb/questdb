@@ -24,10 +24,12 @@ package com.nfsdb.ql;
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.collections.ObjList;
+import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.ql.parser.AbstractOptimiserTest;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Rnd;
+import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -435,6 +437,16 @@ public class SymbolNullQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testInvalidLambdaContext() throws Exception {
+        try {
+            compiler.compile("trades where quoteId in (`quotes where tag ~ 'UM'`)");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(25, e.getPosition());
+        }
+    }
+
+    @Test
     public void testOuterJoinLeftNull() throws Exception {
         final String expected = "quoteId\ttag1\tamount\ttimestamp\tquoteId\ttag\trate\ttimestamp\n" +
                 "167\tnull\t0.000269699180\t2015-03-23T00:00:00.041Z\t167\tnull\t31.994654655457\t2015-03-23T00:12:48.728Z\n" +
@@ -585,4 +597,12 @@ public class SymbolNullQueryTest extends AbstractOptimiserTest {
                         "50\tDNZNL\t-258.093750000000\t2015-03-23T00:04:46.445Z\tVUYGMBMKSCPWLZK\t0.000000011817\t2015-03-23T00:03:43.678Z\n",
                 "trades t asof join quotes q on q.quoteId = t.quoteId where q.tag ~ 'B' and t.quoteId = 50", true);
     }
+
+    @Test
+    public void testWhereColumnAlias2() throws Exception {
+        assertThat("quoteId\ttag1\tamount\ttimestamp\ttag\trate\ttimestamp\n" +
+                        "50\tDNZNL\t-258.093750000000\t2015-03-23T00:04:46.445Z\tVUYGMBMKSCPWLZK\t0.000000011817\t2015-03-23T00:03:43.678Z\n",
+                "trades t asof join quotes q on q.quoteId = t.quoteId where q.tag ~ 'B' and q.quoteId = 50", true);
+    }
+
 }
