@@ -2,7 +2,7 @@ __lang__
 
 - [x] subqueries
 - [x] support for NULL and NaN values in filters
-- [ ] simple aggregation (sum, count, avg etc)
+- [x] simple aggregation (sum, count, avg etc)
         (aggregation does not require "group by" clause. Compiler works out
         key fields names automatically, e.g. 'select x, sum(y) from A' is
         equivalent to 'select x, sum(y) from A group by x')
