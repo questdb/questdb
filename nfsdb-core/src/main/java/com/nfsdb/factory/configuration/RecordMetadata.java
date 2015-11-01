@@ -29,6 +29,8 @@ public interface RecordMetadata {
 
     RecordColumnMetadata getColumn(CharSequence name);
 
+    RecordColumnMetadata getColumn(ColumnName name);
+
     RecordColumnMetadata getColumn(int index);
 
     int getColumnCount();
@@ -40,6 +42,8 @@ public interface RecordMetadata {
      * @return column index between 0 and getColumnCount()-1
      */
     int getColumnIndex(CharSequence name);
+
+    int getColumnIndex(ColumnName name);
 
     int getColumnIndexQuiet(CharSequence name);
 

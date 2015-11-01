@@ -44,10 +44,25 @@ public abstract class AbstractRecordMetadata implements RecordMetadata {
     }
 
     @Override
+    public RecordColumnMetadata getColumn(ColumnName name) {
+        return getColumn(getColumnIndex(name));
+    }
+
+    @Override
     public final int getColumnIndex(CharSequence columnName) {
         int index = getColumnIndexQuiet(columnName);
         if (index == -1) {
             throw new NoSuchColumnException(columnName);
+
+        }
+        return index;
+    }
+
+    @Override
+    public int getColumnIndex(ColumnName columnName) {
+        int index = getColumnIndexQuiet(columnName);
+        if (index == -1) {
+            throw new NoSuchColumnException(columnName.toString());
 
         }
         return index;

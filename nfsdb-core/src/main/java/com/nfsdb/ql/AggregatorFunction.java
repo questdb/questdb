@@ -61,11 +61,4 @@ public interface AggregatorFunction {
      * @param i column index in space of "record"
      */
     void mapColumn(int k, int i);
-
-    /**
-     * Callback to give implementation opportunity to resolve column names to their indexes.
-     *
-     * @param source record source
-     */
-    void prepareSource(RecordSource<? extends Record> source);
 }

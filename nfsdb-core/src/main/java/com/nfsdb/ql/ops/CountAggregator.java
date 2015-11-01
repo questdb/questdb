@@ -26,7 +26,6 @@ import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.AggregatorFunction;
 import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.collections.MapValues;
 import com.nfsdb.storage.ColumnType;
@@ -58,10 +57,6 @@ public final class CountAggregator extends AbstractVirtualColumn implements Aggr
     @Override
     public void mapColumn(int k, int i) {
         index = i;
-    }
-
-    @Override
-    public void prepareSource(RecordSource<? extends Record> source) {
     }
 
     @Override

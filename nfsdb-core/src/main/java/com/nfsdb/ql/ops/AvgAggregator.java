@@ -26,7 +26,6 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.ql.AggregatorFunction;
 import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.collections.MapRecordValueInterceptor;
 import com.nfsdb.ql.collections.MapValues;
 import com.nfsdb.storage.ColumnType;
@@ -83,10 +82,6 @@ public final class AvgAggregator extends AbstractUnaryOperator implements Aggreg
             default:
                 throw new JournalRuntimeException("Internal bug. Column mismatch");
         }
-    }
-
-    @Override
-    public void prepareSource(RecordSource<? extends Record> source) {
     }
 
     @Override

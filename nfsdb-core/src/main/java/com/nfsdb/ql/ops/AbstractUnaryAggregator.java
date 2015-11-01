@@ -23,8 +23,6 @@ package com.nfsdb.ql.ops;
 
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.AggregatorFunction;
-import com.nfsdb.ql.Record;
-import com.nfsdb.ql.RecordSource;
 import com.nfsdb.storage.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -46,9 +44,5 @@ public abstract class AbstractUnaryAggregator extends AbstractUnaryOperator impl
     @Override
     public void mapColumn(int k, int i) {
         valueIndex = i;
-    }
-
-    @Override
-    public void prepareSource(RecordSource<? extends Record> source) {
     }
 }

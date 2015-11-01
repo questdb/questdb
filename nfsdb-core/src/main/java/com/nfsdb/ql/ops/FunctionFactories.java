@@ -294,5 +294,7 @@ public final class FunctionFactories {
         unSigAgg("max", ColumnType.DATE, MaxDateAggregator.FACTORY);
 
         noargSigAgg("count", CountAggregator.FACTORY);
+        unSigAgg("count", ColumnType.DOUBLE, CountDoubleAggregator.FACTORY);
+        unSigAgg("count", ColumnType.DOUBLE, CountDoubleAggregator.FACTORY);
     }
 }

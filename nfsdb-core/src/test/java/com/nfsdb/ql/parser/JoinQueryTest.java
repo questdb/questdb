@@ -40,6 +40,7 @@ import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Rnd;
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class JoinQueryTest extends AbstractOptimiserTest {
@@ -83,6 +84,14 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                         " asof join employees e on c.customerId = e.employeeId" +
                         " join orders o on c.customerId = o.customerId");
 
+    }
+
+    @Test
+    @Ignore
+    public void testCount() throws Exception {
+        assertThat("", "select c.customerId, count() from customers c" +
+                " outer join orders o on c.customerId = o.customerId " +
+                " where o.orderId = NaN");
     }
 
     @Test

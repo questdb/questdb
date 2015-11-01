@@ -39,7 +39,7 @@ import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
-public class ResampledSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record> {
+public class ResampledRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record> {
 
     private final MultiMap map;
     private final RecordSource<? extends Record> recordSource;
@@ -52,7 +52,7 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
     private Record nextRecord = null;
 
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
-    public ResampledSource(
+    public ResampledRecordSource(
             RecordSource<? extends Record> recordSource,
             @Transient ObjList<CharSequence> keyColumns,
             ObjList<AggregatorFunction> aggregators,
@@ -81,9 +81,6 @@ public class ResampledSource extends AbstractImmutableIterator<Record> implement
         int index = 0;
         for (int i = 0, sz = aggregators.size(); i < sz; i++) {
             AggregatorFunction func = aggregators.getQuick(i);
-
-            func.prepareSource(recordSource);
-
             RecordColumnMetadata[] columns = func.getColumns();
             for (int k = 0, len = columns.length; k < len; k++) {
                 valueCols.add(columns[k]);

@@ -21,20 +21,31 @@
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.factory.configuration.RecordColumnMetadata;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.collections.MapValues;
+import com.nfsdb.storage.ColumnType;
 
-public class FirstDoubleAggregationFunction extends AbstractSingleColumnAggregatorFunction {
+public final class CountDoubleAggregator extends AbstractUnaryAggregator {
 
-    public FirstDoubleAggregationFunction(RecordColumnMetadata meta) {
-        super(meta);
+    public static final CountDoubleAggregator FACTORY = new CountDoubleAggregator();
+
+    private CountDoubleAggregator() {
+        super(ColumnType.LONG);
     }
 
     @Override
     public void calculate(Record rec, MapValues values) {
+        double d = value.getDouble(rec);
         if (values.isNew()) {
-            values.putDouble(valueIndex, rec.getDouble(recordIndex));
+            values.putLong(valueIndex, d != d ? 0 : 1);
+        } else if (d == d) {
+            values.putLong(valueIndex, values.getLong(valueIndex) + 1);
         }
+    }
+
+    @Override
+    public Function newInstance(ObjList<VirtualColumn> args) {
+        return new CountDoubleAggregator();
     }
 }
