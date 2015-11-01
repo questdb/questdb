@@ -110,6 +110,21 @@ public class GroupByQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testCount() throws Exception {
+        assertThat("TGPGWFFYU\t983\n" +
+                        "DEYYQEHBH\t995\n" +
+                        "SRYRFBVTM\t969\n" +
+                        "GZSXUXIBB\t993\n" +
+                        "UEDRQQULO\t1035\n" +
+                        "FOWLPDXYS\t990\n" +
+                        "FJGETJRSZ\t1028\n" +
+                        "BEOUOJSHR\t979\n" +
+                        "YRXPEHNRX\t999\n" +
+                        "VTJWCPSWH\t1029\n",
+                "select employeeId, count() from orders");
+    }
+
+    @Test
     public void testFirstDouble() throws Exception {
         assertThat("TGPGWFFYU\t172.796875000000\n" +
                         "DEYYQEHBH\t424.828125000000\n" +

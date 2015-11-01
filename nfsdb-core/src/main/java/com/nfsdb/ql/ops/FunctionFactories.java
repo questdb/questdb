@@ -90,6 +90,15 @@ public final class FunctionFactories {
         factories.put(new Signature().setName(name).setParamCount(1).paramType(0, type, true), f);
     }
 
+    private static void noargSig(String name, FunctionFactory f) {
+        factories.put(new Signature().setName(name).setParamCount(0), f);
+    }
+
+    private static void noargSigAgg(String name, FunctionFactory f) {
+        noargSig(name, f);
+        aggregateFunctionNames.add(name);
+    }
+
     private static void unSigAgg(String name, ColumnType type, FunctionFactory f) {
         unSig(name, type, f);
         aggregateFunctionNames.add(name);
@@ -284,5 +293,6 @@ public final class FunctionFactories {
         unSigAgg("max", ColumnType.LONG, MaxLongAggregator.FACTORY);
         unSigAgg("max", ColumnType.DATE, MaxDateAggregator.FACTORY);
 
+        noargSigAgg("count", CountAggregator.FACTORY);
     }
 }
