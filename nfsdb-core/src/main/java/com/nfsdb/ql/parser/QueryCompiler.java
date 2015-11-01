@@ -1577,10 +1577,9 @@ public class QueryCompiler {
         this.selectedColumns.clear();
         this.selectedColumnAliases.clear();
         this.groupKeyColumns.clear();
+        this.aggregateColumnSequence = 0;
 
         ObjList<VirtualColumn> virtualColumns = null;
-
-        int columnSequence = 0;
 
         // create virtual columns from select list
         for (int i = 0, k = columns.size(); i < k; i++) {
@@ -1608,7 +1607,7 @@ public class QueryCompiler {
 
             // generate missing alias for everything else
             if (qc.getAlias() == null) {
-                qc.of(createAlias(columnSequence++), node);
+                qc.of(createAlias(aggregateColumnSequence++), node);
             }
 
             selectedColumns.add(qc.getAlias());
@@ -1687,7 +1686,6 @@ public class QueryCompiler {
     private void splitAggregates(@Transient ExprNode node, ObjList<QueryColumn> aggregateColumns) throws ParserException {
 
         this.exprNodeStack.clear();
-        this.aggregateColumnSequence = 0;
 
         // pre-order iterative tree traversal
         // see: http://en.wikipedia.org/wiki/Tree_traversal

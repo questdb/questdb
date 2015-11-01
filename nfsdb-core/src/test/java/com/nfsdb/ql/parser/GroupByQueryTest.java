@@ -187,68 +187,68 @@ public class GroupByQueryTest extends AbstractOptimiserTest {
 
     @Test
     public void testLastDouble() throws Exception {
-        assertThat("employeeId\tcol0\tcol1\tcol2\tcol3\n" +
-                        "TGPGWFFYU\t1399299250000\t0.4752\t1801096068\t2014-05-05T14:14:10.000Z\n" +
-                        "DEYYQEHBH\t1399299380000\t0.6052\t253116346\t2014-05-05T14:16:20.000Z\n" +
-                        "SRYRFBVTM\t1399299290000\t0.4888\t1518306371\t2014-05-05T14:14:50.000Z\n" +
-                        "GZSXUXIBB\t1399299390000\t0.5024\t1896175587\t2014-05-05T14:16:30.000Z\n" +
-                        "UEDRQQULO\t1399299400000\t0.4547\t260995870\t2014-05-05T14:16:40.000Z\n" +
-                        "FOWLPDXYS\t1399299370000\t0.4486\t2005631\t2014-05-05T14:16:10.000Z\n" +
-                        "FJGETJRSZ\t1399299200000\t0.6497\t987587702\t2014-05-05T14:13:20.000Z\n" +
-                        "BEOUOJSHR\t1399299270000\t0.2665\t1504681377\t2014-05-05T14:14:30.000Z\n" +
-                        "YRXPEHNRX\t1399299130000\t0.6637\t1081845029\t2014-05-05T14:12:10.000Z\n" +
-                        "VTJWCPSWH\t1399299310000\t0.5628\t414901203\t2014-05-05T14:15:10.000Z\n",
-                "select employeeId, last(price), last(rate), last(quantity), ltod(last(orderDate)) from orders",
+        assertThat("employeeId\tcol0\tcol1\tcol2\tcol3\tcol5\tcol6\n" +
+                        "TGPGWFFYU\t0.005398272420\t0.4752\t1801096068\t2014-05-05T14:14:10.000Z\t2014-05-04T10:30:10.000Z\t2014-05-05T14:14:10.000Z\n" +
+                        "DEYYQEHBH\t858.651367187500\t0.6052\t253116346\t2014-05-05T14:16:20.000Z\t2014-05-04T10:30:30.000Z\t2014-05-05T14:16:20.000Z\n" +
+                        "SRYRFBVTM\t21.549713134766\t0.4888\t1518306371\t2014-05-05T14:14:50.000Z\t2014-05-04T10:30:40.000Z\t2014-05-05T14:14:50.000Z\n" +
+                        "GZSXUXIBB\t328.000000000000\t0.5024\t1896175587\t2014-05-05T14:16:30.000Z\t2014-05-04T10:30:50.000Z\t2014-05-05T14:16:30.000Z\n" +
+                        "UEDRQQULO\t-651.000000000000\t0.4547\t260995870\t2014-05-05T14:16:40.000Z\t2014-05-04T10:31:20.000Z\t2014-05-05T14:16:40.000Z\n" +
+                        "FOWLPDXYS\t-727.085937500000\t0.4486\t2005631\t2014-05-05T14:16:10.000Z\t2014-05-04T10:31:30.000Z\t2014-05-05T14:16:10.000Z\n" +
+                        "FJGETJRSZ\t116.035564422607\t0.6497\t987587702\t2014-05-05T14:13:20.000Z\t2014-05-04T10:31:50.000Z\t2014-05-05T14:13:20.000Z\n" +
+                        "BEOUOJSHR\t-233.000000000000\t0.2665\t1504681377\t2014-05-05T14:14:30.000Z\t2014-05-04T10:32:50.000Z\t2014-05-05T14:14:30.000Z\n" +
+                        "YRXPEHNRX\t0.000003891365\t0.6637\t1081845029\t2014-05-05T14:12:10.000Z\t2014-05-04T10:33:10.000Z\t2014-05-05T14:12:10.000Z\n" +
+                        "VTJWCPSWH\t124.287727355957\t0.5628\t414901203\t2014-05-05T14:15:10.000Z\t2014-05-04T10:34:10.000Z\t2014-05-05T14:15:10.000Z\n",
+                "select employeeId, last(price), last(rate), last(quantity), ltod(dtol(last(orderDate))), min(orderDate), max(orderDate) from orders",
                 true);
 
     }
 
     @Test
     public void testSumDouble() throws Exception {
-        assertThat("employeeId\tsum\n" +
-                        "TGPGWFFYU\t-21968.018329648252\n" +
-                        "DEYYQEHBH\t-4394.647402081921\n" +
-                        "SRYRFBVTM\t1945.437433247252\n" +
-                        "GZSXUXIBB\t3710.011166965701\n" +
-                        "UEDRQQULO\t-5341.399618807004\n" +
-                        "FOWLPDXYS\t-25051.961159685804\n" +
-                        "FJGETJRSZ\t-5023.046150211212\n" +
-                        "BEOUOJSHR\t-7031.317012047984\n" +
-                        "YRXPEHNRX\t-5897.650745672292\n" +
-                        "VTJWCPSWH\t-15878.443493302174\n",
-                "select employeeId, sum(price) sum from orders", true);
+        assertThat("employeeId\tsum\tcol0\tcol1\n" +
+                        "TGPGWFFYU\t-21968.018329648252\t-1024.000000000000\t1017.000000000000\n" +
+                        "DEYYQEHBH\t-4394.647402081921\t-1024.000000000000\t1014.750000000000\n" +
+                        "SRYRFBVTM\t1945.437433247252\t-1024.000000000000\t1014.000000000000\n" +
+                        "GZSXUXIBB\t3710.011166965701\t-1024.000000000000\t1000.750000000000\n" +
+                        "UEDRQQULO\t-5341.399618807004\t-1024.000000000000\t1023.335937500000\n" +
+                        "FOWLPDXYS\t-25051.961159685804\t-1024.000000000000\t1022.250000000000\n" +
+                        "FJGETJRSZ\t-5023.046150211212\t-1024.000000000000\t1016.937500000000\n" +
+                        "BEOUOJSHR\t-7031.317012047984\t-1024.000000000000\t1016.375000000000\n" +
+                        "YRXPEHNRX\t-5897.650745672292\t-1024.000000000000\t1020.442382812500\n" +
+                        "VTJWCPSWH\t-15878.443493302174\t-1024.000000000000\t1016.000000000000\n",
+                "select employeeId, sum(price) sum, min(price), max(price) from orders", true);
     }
 
     @Test
     public void testSumFloat() throws Exception {
-        assertThat("TGPGWFFYU\t489.412259876728\n" +
-                        "DEYYQEHBH\t490.928304672241\n" +
-                        "SRYRFBVTM\t490.777038216591\n" +
-                        "GZSXUXIBB\t500.867759287357\n" +
-                        "UEDRQQULO\t516.323502302170\n" +
-                        "FOWLPDXYS\t497.242702662945\n" +
-                        "FJGETJRSZ\t507.531779348850\n" +
-                        "BEOUOJSHR\t490.108210325241\n" +
-                        "YRXPEHNRX\t506.545447528362\n" +
-                        "VTJWCPSWH\t508.323197126389\n",
-                "select employeeId, sum(rate) s from orders");
+        assertThat("TGPGWFFYU\t489.412259876728\t0.017976403236\t0.994569778442\n" +
+                        "DEYYQEHBH\t490.928304672241\t0.002583622932\t0.990825176239\n" +
+                        "SRYRFBVTM\t490.777038216591\t0.015948891640\t0.996204674244\n" +
+                        "GZSXUXIBB\t500.867759287357\t0.023229062557\t0.984000325203\n" +
+                        "UEDRQQULO\t516.323502302170\t0.005706131458\t0.984908044338\n" +
+                        "FOWLPDXYS\t497.242702662945\t0.020444750786\t0.967337131500\n" +
+                        "FJGETJRSZ\t507.531779348850\t0.006864905357\t0.970933258533\n" +
+                        "BEOUOJSHR\t490.108210325241\t0.014558494091\t0.981236577034\n" +
+                        "YRXPEHNRX\t506.545447528362\t0.022396981716\t0.979304194450\n" +
+                        "VTJWCPSWH\t508.323197126389\t0.015372276306\t0.997526228428\n",
+                "select employeeId, sum(rate), min(rate), max(rate) s from orders");
 
     }
 
     @Test
     public void testSumInt() throws Exception {
-        assertThat("employeeId\tsum\n" +
-                        "TGPGWFFYU\t97328\n" +
-                        "DEYYQEHBH\t95288\n" +
-                        "SRYRFBVTM\t96798\n" +
-                        "GZSXUXIBB\t97026\n" +
-                        "UEDRQQULO\t104395\n" +
-                        "FOWLPDXYS\t98350\n" +
-                        "FJGETJRSZ\t103481\n" +
-                        "BEOUOJSHR\t96459\n" +
-                        "YRXPEHNRX\t96407\n" +
-                        "VTJWCPSWH\t102802\n",
-                "select employeeId, sum(productId) sum from orders", true);
+        assertThat("employeeId\tsum\tcol0\tcol1\n" +
+                        "TGPGWFFYU\t97328\t0\t199\n" +
+                        "DEYYQEHBH\t95288\t0\t199\n" +
+                        "SRYRFBVTM\t96798\t0\t199\n" +
+                        "GZSXUXIBB\t97026\t0\t199\n" +
+                        "UEDRQQULO\t104395\t0\t199\n" +
+                        "FOWLPDXYS\t98350\t0\t199\n" +
+                        "FJGETJRSZ\t103481\t0\t199\n" +
+                        "BEOUOJSHR\t96459\t0\t199\n" +
+                        "YRXPEHNRX\t96407\t0\t199\n" +
+                        "VTJWCPSWH\t102802\t0\t199\n",
+                "select employeeId, sum(productId) sum, min(productId), max(productId) from orders", true);
     }
 
     @Test

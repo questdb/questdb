@@ -220,6 +220,7 @@ public final class FunctionFactories {
         unSig("_atos", ColumnType.STRING, AtoSFunction.FACTORY);
         unSig("atoi", ColumnType.STRING, AtoIFunction.FACTORY);
         unSig("ltod", ColumnType.LONG, LtoDFunction.FACTORY);
+        unSig("dtol", ColumnType.DATE, DtoLFunction.FACTORY);
 
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, false), StrEqualsOperator.FACTORY);
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, true), SymEqualsOperator.FACTORY);
@@ -247,7 +248,7 @@ public final class FunctionFactories {
         unSigAgg("last", ColumnType.FLOAT, LastFloatAggregator.FACTORY);
         unSigAgg("last", ColumnType.INT, LastIntAggregator.FACTORY);
         unSigAgg("last", ColumnType.LONG, LastLongAggregator.FACTORY);
-        unSigAgg("last", ColumnType.DATE, LastLongAggregator.FACTORY);
+        unSigAgg("last", ColumnType.DATE, LastDateAggregator.FACTORY);
 
         unSigAgg("avg", ColumnType.DOUBLE, AvgAggregator.FACTORY);
         unSigAgg("avg", ColumnType.INT, AvgAggregator.FACTORY);
@@ -270,5 +271,18 @@ public final class FunctionFactories {
         binSigAgg("vwap", ColumnType.LONG, ColumnType.FLOAT, VwapAggregator.FACTORY);
         binSigAgg("vwap", ColumnType.LONG, ColumnType.INT, VwapAggregator.FACTORY);
         binSigAgg("vwap", ColumnType.LONG, ColumnType.LONG, VwapAggregator.FACTORY);
+
+        unSigAgg("min", ColumnType.DOUBLE, MinDoubleAggregator.FACTORY);
+        unSigAgg("min", ColumnType.FLOAT, MinDoubleAggregator.FACTORY);
+        unSigAgg("min", ColumnType.INT, MinIntAggregator.FACTORY);
+        unSigAgg("min", ColumnType.LONG, MinLongAggregator.FACTORY);
+        unSigAgg("min", ColumnType.DATE, MinDateAggregator.FACTORY);
+
+        unSigAgg("max", ColumnType.DOUBLE, MaxDoubleAggregator.FACTORY);
+        unSigAgg("max", ColumnType.FLOAT, MaxDoubleAggregator.FACTORY);
+        unSigAgg("max", ColumnType.INT, MaxIntAggregator.FACTORY);
+        unSigAgg("max", ColumnType.LONG, MaxLongAggregator.FACTORY);
+        unSigAgg("max", ColumnType.DATE, MaxDateAggregator.FACTORY);
+
     }
 }
