@@ -31,39 +31,41 @@ import com.nfsdb.ql.collections.MapRecordValueInterceptor;
 import com.nfsdb.ql.collections.MapValues;
 import com.nfsdb.storage.ColumnType;
 
-public final class AvgAggregator extends AbstractUnaryOperator implements AggregatorFunction, MapRecordValueInterceptor {
+public final class VwapAggregator extends AbstractBinaryOperator implements AggregatorFunction, MapRecordValueInterceptor {
 
-    public static final AvgAggregator FACTORY = new AvgAggregator();
+    public static final VwapAggregator FACTORY = new VwapAggregator();
 
-    private int countIdx;
-    private int sumIdx;
-    private int avgIdx;
+    private int sumAmtIdx;
+    private int sumQtyIdx;
+    private int vwap;
 
-    private AvgAggregator() {
+    private VwapAggregator() {
         super(ColumnType.DOUBLE);
     }
 
     @Override
     public void beforeRecord(MapValues values) {
-        values.putDouble(avgIdx, values.getDouble(sumIdx) / values.getLong(countIdx));
+        values.putDouble(vwap, values.getDouble(sumAmtIdx) / values.getDouble(sumQtyIdx));
     }
 
     @Override
     public void calculate(Record rec, MapValues values) {
+        double price = lhs.getDouble(rec);
+        double quantity = rhs.getDouble(rec);
         if (values.isNew()) {
-            values.putLong(countIdx, 1);
-            values.putDouble(sumIdx, value.getDouble(rec));
+            values.putDouble(sumAmtIdx, price * quantity);
+            values.putDouble(sumQtyIdx, quantity);
         } else {
-            values.putLong(countIdx, values.getLong(countIdx) + 1);
-            values.putDouble(sumIdx, values.getDouble(sumIdx) + value.getDouble(rec));
+            values.putDouble(sumAmtIdx, values.getDouble(sumAmtIdx) + price * quantity);
+            values.putDouble(sumQtyIdx, values.getDouble(sumQtyIdx) + quantity);
         }
     }
 
     @Override
     public ColumnMetadata[] getColumns() {
         return new ColumnMetadata[]{
-                new ColumnMetadata().setName("$count").setType(ColumnType.LONG)
-                , new ColumnMetadata().setName("$sum").setType(ColumnType.DOUBLE)
+                new ColumnMetadata().setName("$sumAmt").setType(ColumnType.DOUBLE)
+                , new ColumnMetadata().setName("$sumQty").setType(ColumnType.DOUBLE)
                 , new ColumnMetadata().setName(getName()).setType(ColumnType.DOUBLE)
         };
     }
@@ -72,13 +74,13 @@ public final class AvgAggregator extends AbstractUnaryOperator implements Aggreg
     public void mapColumn(int k, int i) {
         switch (k) {
             case 0:
-                countIdx = i;
+                sumAmtIdx = i;
                 break;
             case 1:
-                sumIdx = i;
+                sumQtyIdx = i;
                 break;
             case 2:
-                avgIdx = i;
+                vwap = i;
                 break;
             default:
                 throw new JournalRuntimeException("Internal bug. Column mismatch");
@@ -91,6 +93,6 @@ public final class AvgAggregator extends AbstractUnaryOperator implements Aggreg
 
     @Override
     public Function newInstance(ObjList<VirtualColumn> args) {
-        return new AvgAggregator();
+        return new VwapAggregator();
     }
 }

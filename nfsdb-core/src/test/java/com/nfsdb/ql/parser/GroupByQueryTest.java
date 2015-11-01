@@ -250,4 +250,19 @@ public class GroupByQueryTest extends AbstractOptimiserTest {
                         "VTJWCPSWH\t102802\n",
                 "select employeeId, sum(productId) sum from orders", true);
     }
+
+    @Test
+    public void testVWapDoubleDouble() throws Exception {
+        assertThat("TGPGWFFYU\t-21.643293565756\t-21.643293565756\n" +
+                        "DEYYQEHBH\t-6.467001028408\t-6.467001028408\n" +
+                        "SRYRFBVTM\t2.393438946531\t2.393438946531\n" +
+                        "GZSXUXIBB\t4.741280909223\t4.741280909223\n" +
+                        "UEDRQQULO\t-3.726755343047\t-3.726755343047\n" +
+                        "FOWLPDXYS\t-16.216304999514\t-16.216304999514\n" +
+                        "FJGETJRSZ\t-22.689574330892\t-22.689574330892\n" +
+                        "BEOUOJSHR\t-15.105882600563\t-15.105882600563\n" +
+                        "YRXPEHNRX\t-9.386559884214\t-9.386559884214\n" +
+                        "VTJWCPSWH\t-12.402215320133\t-12.402215320133\n",
+                "select employeeId, sum(price*quantity)/lsum(quantity), vwap(price, quantity) sum from orders");
+    }
 }

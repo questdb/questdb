@@ -95,6 +95,11 @@ public final class FunctionFactories {
         aggregateFunctionNames.add(name);
     }
 
+    private static void binSigAgg(String name, ColumnType lhst, ColumnType rhst, FunctionFactory f) {
+        binSig(name, lhst, rhst, f);
+        aggregateFunctionNames.add(name);
+    }
+
     private static void triSig(String name, ColumnType lhst, ColumnType rhst, ColumnType scale, FunctionFactory f) {
         factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, false).paramType(1, rhst, false).paramType(2, scale, false), f);
         factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, false).paramType(1, rhst, false).paramType(2, scale, true), f);
@@ -248,5 +253,22 @@ public final class FunctionFactories {
         unSigAgg("avg", ColumnType.INT, AvgAggregator.FACTORY);
         unSigAgg("avg", ColumnType.LONG, AvgAggregator.FACTORY);
         unSigAgg("avg", ColumnType.FLOAT, AvgAggregator.FACTORY);
+
+        binSigAgg("vwap", ColumnType.DOUBLE, ColumnType.DOUBLE, VwapAggregator.FACTORY);
+        binSigAgg("vwap", ColumnType.DOUBLE, ColumnType.FLOAT, VwapAggregator.FACTORY);
+        binSigAgg("vwap", ColumnType.DOUBLE, ColumnType.INT, VwapAggregator.FACTORY);
+        binSigAgg("vwap", ColumnType.DOUBLE, ColumnType.LONG, VwapAggregator.FACTORY);
+        binSigAgg("vwap", ColumnType.FLOAT, ColumnType.DOUBLE, VwapAggregator.FACTORY);
+        binSigAgg("vwap", ColumnType.FLOAT, ColumnType.FLOAT, VwapAggregator.FACTORY);
+        binSigAgg("vwap", ColumnType.FLOAT, ColumnType.INT, VwapAggregator.FACTORY);
+        binSigAgg("vwap", ColumnType.FLOAT, ColumnType.LONG, VwapAggregator.FACTORY);
+        binSigAgg("vwap", ColumnType.INT, ColumnType.DOUBLE, VwapAggregator.FACTORY);
+        binSigAgg("vwap", ColumnType.INT, ColumnType.FLOAT, VwapAggregator.FACTORY);
+        binSigAgg("vwap", ColumnType.INT, ColumnType.INT, VwapAggregator.FACTORY);
+        binSigAgg("vwap", ColumnType.INT, ColumnType.LONG, VwapAggregator.FACTORY);
+        binSigAgg("vwap", ColumnType.LONG, ColumnType.DOUBLE, VwapAggregator.FACTORY);
+        binSigAgg("vwap", ColumnType.LONG, ColumnType.FLOAT, VwapAggregator.FACTORY);
+        binSigAgg("vwap", ColumnType.LONG, ColumnType.INT, VwapAggregator.FACTORY);
+        binSigAgg("vwap", ColumnType.LONG, ColumnType.LONG, VwapAggregator.FACTORY);
     }
 }
