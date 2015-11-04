@@ -89,9 +89,9 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     @Test
     @Ignore
     public void testCount() throws Exception {
-        assertThat("", "select c.customerId, count() from customers c" +
+        assertThat("", "select count(), c.customerId from customers c" +
                 " outer join orders o on c.customerId = o.customerId " +
-                " where o.orderId = NaN");
+                " where o.customerId = NaN");
     }
 
     @Test

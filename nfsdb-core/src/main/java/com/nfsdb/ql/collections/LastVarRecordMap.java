@@ -104,11 +104,6 @@ public class LastVarRecordMap implements LastRecordMap {
         int varOffset = 0;
         // collect indexes of non-key fields in slave record
         for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
-
-            if (slaveKeyIndexes.contains(i)) {
-                continue;
-            }
-
             slaveColumnNames.add(slaveMetadata.getColumnQuick(i).getName());
             fixedOffsets.add(varOffset);
             slaveValueIndexes.add(i);

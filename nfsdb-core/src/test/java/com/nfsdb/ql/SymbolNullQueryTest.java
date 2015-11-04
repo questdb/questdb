@@ -164,68 +164,68 @@ public class SymbolNullQueryTest extends AbstractOptimiserTest {
 
     @Test
     public void testAsOfPartitionedJoinLeftNull() throws Exception {
-        final String expected = "quoteId\ttag1\tamount\ttimestamp\ttag\trate\ttimestamp\n" +
-                "167\tnull\t0.000269699180\t2015-03-23T00:00:00.041Z\tnull\tNaN\t\n" +
-                "185\tnull\t320.000000000000\t2015-03-23T00:00:03.905Z\tnull\tNaN\t\n" +
-                "208\tnull\t0.000283450820\t2015-03-23T00:00:09.777Z\tnull\tNaN\t\n" +
-                "253\tnull\t0.000006260114\t2015-03-23T00:00:14.319Z\tnull\tNaN\t\n" +
-                "280\tnull\t0.000001666620\t2015-03-23T00:00:21.324Z\tnull\tNaN\t\n" +
-                "250\tnull\t391.318801879883\t2015-03-23T00:00:38.605Z\tnull\tNaN\t\n" +
-                "189\tnull\t638.125000000000\t2015-03-23T00:00:54.293Z\tnull\tNaN\t\n" +
-                "79\tnull\t0.000000003843\t2015-03-23T00:01:00.686Z\tnull\tNaN\t\n" +
-                "160\tnull\t-804.000000000000\t2015-03-23T00:01:22.281Z\tnull\tNaN\t\n" +
-                "146\tnull\t114.411033630371\t2015-03-23T00:01:35.805Z\tnull\tNaN\t\n" +
-                "275\tnull\t0.000000135166\t2015-03-23T00:01:46.298Z\tnull\tNaN\t\n" +
-                "38\tnull\t0.000006406346\t2015-03-23T00:01:51.405Z\tnull\tNaN\t\n" +
-                "174\tnull\t0.003814977244\t2015-03-23T00:01:54.120Z\tnull\tNaN\t\n" +
-                "32\tnull\t0.000000000000\t2015-03-23T00:02:33.565Z\tFORGFIEVM\t0.000000013271\t2015-03-23T00:02:19.770Z\n" +
-                "25\tnull\t0.000000521190\t2015-03-23T00:02:38.743Z\tnull\t-1024.000000000000\t2015-03-23T00:01:41.578Z\n" +
-                "247\tnull\t1.480640053749\t2015-03-23T00:03:05.144Z\tnull\tNaN\t\n" +
-                "11\tnull\t0.000000837886\t2015-03-23T00:03:12.568Z\tnull\t109.844512939453\t2015-03-23T00:00:52.378Z\n" +
-                "242\tnull\t-448.687500000000\t2015-03-23T00:03:18.692Z\tnull\tNaN\t\n" +
-                "125\tnull\t384.000000000000\t2015-03-23T00:03:24.655Z\tnull\tNaN\t\n" +
-                "38\tnull\t0.000000042007\t2015-03-23T00:03:56.155Z\tnull\t88.440750122070\t2015-03-23T00:02:48.897Z\n" +
-                "61\tnull\t0.002688131004\t2015-03-23T00:03:59.991Z\tnull\tNaN\t\n" +
-                "135\tnull\t11.436011791229\t2015-03-23T00:04:15.031Z\tnull\tNaN\t\n" +
-                "67\tnull\t0.000000017864\t2015-03-23T00:04:25.683Z\tnull\tNaN\t\n" +
-                "5\tnull\t0.001699611719\t2015-03-23T00:04:32.638Z\tNEJRMDIKDISGQ\t0.000017155876\t2015-03-23T00:00:21.617Z\n" +
-                "197\tnull\t-639.687500000000\t2015-03-23T00:04:34.193Z\tnull\tNaN\t\n" +
-                "295\tnull\t3.262981295586\t2015-03-23T00:04:39.143Z\tnull\tNaN\t\n" +
-                "11\tnull\t1.727517306805\t2015-03-23T00:04:52.639Z\tnull\tNaN\t\n" +
-                "47\tnull\t673.375000000000\t2015-03-23T00:04:56.064Z\tRHHMGZJYYFLS\t0.005148356780\t2015-03-23T00:03:29.150Z\n" +
-                "97\tnull\t0.000031514332\t2015-03-23T00:05:04.467Z\tnull\tNaN\t\n" +
-                "52\tnull\t-982.250000000000\t2015-03-23T00:05:06.948Z\tX\t0.000004397260\t2015-03-23T00:03:52.621Z\n" +
-                "101\tnull\t0.085098911077\t2015-03-23T00:05:07.455Z\tnull\tNaN\t\n" +
-                "204\tnull\t-864.000000000000\t2015-03-23T00:05:14.905Z\tnull\tNaN\t\n" +
-                "157\tnull\t0.000000038206\t2015-03-23T00:05:24.607Z\tnull\tNaN\t\n" +
-                "27\tnull\t0.128199812025\t2015-03-23T00:05:30.349Z\tnull\tNaN\t\n" +
-                "294\tnull\t32.320184707642\t2015-03-23T00:05:35.452Z\tnull\tNaN\t\n" +
-                "175\tnull\t0.000000096432\t2015-03-23T00:05:37.064Z\tnull\tNaN\t\n" +
-                "140\tnull\t-384.000000000000\t2015-03-23T00:05:40.901Z\tnull\tNaN\t\n" +
-                "118\tnull\t-768.000000000000\t2015-03-23T00:05:50.089Z\tnull\tNaN\t\n" +
-                "88\tnull\t0.000019480709\t2015-03-23T00:05:50.803Z\tnull\tNaN\t\n" +
-                "221\tnull\t-308.000000000000\t2015-03-23T00:05:54.120Z\tnull\tNaN\t\n" +
-                "214\tnull\t-1024.000000000000\t2015-03-23T00:06:00.720Z\tnull\tNaN\t\n" +
-                "278\tnull\t100.157985687256\t2015-03-23T00:06:06.542Z\tnull\tNaN\t\n" +
-                "61\tnull\t-1024.000000000000\t2015-03-23T00:06:08.793Z\tnull\tNaN\t\n" +
-                "180\tnull\t0.223312780261\t2015-03-23T00:06:10.929Z\tnull\tNaN\t\n" +
-                "94\tnull\t0.000006785318\t2015-03-23T00:06:15.648Z\tnull\tNaN\t\n" +
-                "242\tnull\t-557.027343750000\t2015-03-23T00:06:24.968Z\tnull\tNaN\t\n" +
-                "68\tnull\t0.000000001771\t2015-03-23T00:06:26.396Z\tnull\tNaN\t\n" +
-                "64\tnull\t-512.546875000000\t2015-03-23T00:06:26.865Z\tnull\tNaN\t\n" +
-                "41\tnull\t0.000001296927\t2015-03-23T00:06:34.398Z\tNRXGZSXUX\t-429.100708007813\t2015-03-23T00:03:08.533Z\n" +
-                "40\tnull\t0.352436579764\t2015-03-23T00:06:44.446Z\tBJFRPX\t3.300331056118\t2015-03-23T00:03:01.677Z\n" +
-                "127\tnull\t0.000750448322\t2015-03-23T00:07:07.023Z\tnull\tNaN\t\n" +
-                "284\tnull\t0.000000056363\t2015-03-23T00:07:24.963Z\tnull\tNaN\t\n" +
-                "69\tnull\t-64.000000000000\t2015-03-23T00:07:32.794Z\tnull\t0.000000001976\t2015-03-23T00:05:12.110Z\n" +
-                "206\tnull\t0.000001646644\t2015-03-23T00:07:40.787Z\tnull\tNaN\t\n" +
-                "110\tnull\t882.590759277344\t2015-03-23T00:07:44.604Z\tnull\tNaN\t\n" +
-                "208\tnull\t0.000000045985\t2015-03-23T00:07:48.156Z\tnull\tNaN\t\n" +
-                "287\tnull\t-732.302734375000\t2015-03-23T00:07:54.893Z\tnull\tNaN\t\n" +
-                "208\tnull\t0.000000447563\t2015-03-23T00:08:04.779Z\tnull\tNaN\t\n" +
-                "190\tnull\t0.000000005669\t2015-03-23T00:08:10.452Z\tnull\tNaN\t\n" +
-                "266\tnull\t0.000002058839\t2015-03-23T00:08:14.465Z\tnull\tNaN\t\n" +
-                "15\tnull\t0.000000004841\t2015-03-23T00:08:23.335Z\tMYICCXZOUIC\t-504.062500000000\t2015-03-23T00:01:09.396Z\n";
+        final String expected = "quoteId\ttag1\tamount\ttimestamp\tquoteId\ttag\trate\ttimestamp\n" +
+                "167\tnull\t0.000269699180\t2015-03-23T00:00:00.041Z\tNaN\tnull\tNaN\t\n" +
+                "185\tnull\t320.000000000000\t2015-03-23T00:00:03.905Z\tNaN\tnull\tNaN\t\n" +
+                "208\tnull\t0.000283450820\t2015-03-23T00:00:09.777Z\tNaN\tnull\tNaN\t\n" +
+                "253\tnull\t0.000006260114\t2015-03-23T00:00:14.319Z\tNaN\tnull\tNaN\t\n" +
+                "280\tnull\t0.000001666620\t2015-03-23T00:00:21.324Z\tNaN\tnull\tNaN\t\n" +
+                "250\tnull\t391.318801879883\t2015-03-23T00:00:38.605Z\tNaN\tnull\tNaN\t\n" +
+                "189\tnull\t638.125000000000\t2015-03-23T00:00:54.293Z\tNaN\tnull\tNaN\t\n" +
+                "79\tnull\t0.000000003843\t2015-03-23T00:01:00.686Z\tNaN\tnull\tNaN\t\n" +
+                "160\tnull\t-804.000000000000\t2015-03-23T00:01:22.281Z\tNaN\tnull\tNaN\t\n" +
+                "146\tnull\t114.411033630371\t2015-03-23T00:01:35.805Z\tNaN\tnull\tNaN\t\n" +
+                "275\tnull\t0.000000135166\t2015-03-23T00:01:46.298Z\tNaN\tnull\tNaN\t\n" +
+                "38\tnull\t0.000006406346\t2015-03-23T00:01:51.405Z\tNaN\tnull\tNaN\t\n" +
+                "174\tnull\t0.003814977244\t2015-03-23T00:01:54.120Z\tNaN\tnull\tNaN\t\n" +
+                "32\tnull\t0.000000000000\t2015-03-23T00:02:33.565Z\t32\tFORGFIEVM\t0.000000013271\t2015-03-23T00:02:19.770Z\n" +
+                "25\tnull\t0.000000521190\t2015-03-23T00:02:38.743Z\t25\tnull\t-1024.000000000000\t2015-03-23T00:01:41.578Z\n" +
+                "247\tnull\t1.480640053749\t2015-03-23T00:03:05.144Z\tNaN\tnull\tNaN\t\n" +
+                "11\tnull\t0.000000837886\t2015-03-23T00:03:12.568Z\t11\tnull\t109.844512939453\t2015-03-23T00:00:52.378Z\n" +
+                "242\tnull\t-448.687500000000\t2015-03-23T00:03:18.692Z\tNaN\tnull\tNaN\t\n" +
+                "125\tnull\t384.000000000000\t2015-03-23T00:03:24.655Z\tNaN\tnull\tNaN\t\n" +
+                "38\tnull\t0.000000042007\t2015-03-23T00:03:56.155Z\t38\tnull\t88.440750122070\t2015-03-23T00:02:48.897Z\n" +
+                "61\tnull\t0.002688131004\t2015-03-23T00:03:59.991Z\tNaN\tnull\tNaN\t\n" +
+                "135\tnull\t11.436011791229\t2015-03-23T00:04:15.031Z\tNaN\tnull\tNaN\t\n" +
+                "67\tnull\t0.000000017864\t2015-03-23T00:04:25.683Z\tNaN\tnull\tNaN\t\n" +
+                "5\tnull\t0.001699611719\t2015-03-23T00:04:32.638Z\t5\tNEJRMDIKDISGQ\t0.000017155876\t2015-03-23T00:00:21.617Z\n" +
+                "197\tnull\t-639.687500000000\t2015-03-23T00:04:34.193Z\tNaN\tnull\tNaN\t\n" +
+                "295\tnull\t3.262981295586\t2015-03-23T00:04:39.143Z\tNaN\tnull\tNaN\t\n" +
+                "11\tnull\t1.727517306805\t2015-03-23T00:04:52.639Z\tNaN\tnull\tNaN\t\n" +
+                "47\tnull\t673.375000000000\t2015-03-23T00:04:56.064Z\t47\tRHHMGZJYYFLS\t0.005148356780\t2015-03-23T00:03:29.150Z\n" +
+                "97\tnull\t0.000031514332\t2015-03-23T00:05:04.467Z\tNaN\tnull\tNaN\t\n" +
+                "52\tnull\t-982.250000000000\t2015-03-23T00:05:06.948Z\t52\tX\t0.000004397260\t2015-03-23T00:03:52.621Z\n" +
+                "101\tnull\t0.085098911077\t2015-03-23T00:05:07.455Z\tNaN\tnull\tNaN\t\n" +
+                "204\tnull\t-864.000000000000\t2015-03-23T00:05:14.905Z\tNaN\tnull\tNaN\t\n" +
+                "157\tnull\t0.000000038206\t2015-03-23T00:05:24.607Z\tNaN\tnull\tNaN\t\n" +
+                "27\tnull\t0.128199812025\t2015-03-23T00:05:30.349Z\tNaN\tnull\tNaN\t\n" +
+                "294\tnull\t32.320184707642\t2015-03-23T00:05:35.452Z\tNaN\tnull\tNaN\t\n" +
+                "175\tnull\t0.000000096432\t2015-03-23T00:05:37.064Z\tNaN\tnull\tNaN\t\n" +
+                "140\tnull\t-384.000000000000\t2015-03-23T00:05:40.901Z\tNaN\tnull\tNaN\t\n" +
+                "118\tnull\t-768.000000000000\t2015-03-23T00:05:50.089Z\tNaN\tnull\tNaN\t\n" +
+                "88\tnull\t0.000019480709\t2015-03-23T00:05:50.803Z\tNaN\tnull\tNaN\t\n" +
+                "221\tnull\t-308.000000000000\t2015-03-23T00:05:54.120Z\tNaN\tnull\tNaN\t\n" +
+                "214\tnull\t-1024.000000000000\t2015-03-23T00:06:00.720Z\tNaN\tnull\tNaN\t\n" +
+                "278\tnull\t100.157985687256\t2015-03-23T00:06:06.542Z\tNaN\tnull\tNaN\t\n" +
+                "61\tnull\t-1024.000000000000\t2015-03-23T00:06:08.793Z\tNaN\tnull\tNaN\t\n" +
+                "180\tnull\t0.223312780261\t2015-03-23T00:06:10.929Z\tNaN\tnull\tNaN\t\n" +
+                "94\tnull\t0.000006785318\t2015-03-23T00:06:15.648Z\tNaN\tnull\tNaN\t\n" +
+                "242\tnull\t-557.027343750000\t2015-03-23T00:06:24.968Z\tNaN\tnull\tNaN\t\n" +
+                "68\tnull\t0.000000001771\t2015-03-23T00:06:26.396Z\tNaN\tnull\tNaN\t\n" +
+                "64\tnull\t-512.546875000000\t2015-03-23T00:06:26.865Z\tNaN\tnull\tNaN\t\n" +
+                "41\tnull\t0.000001296927\t2015-03-23T00:06:34.398Z\t41\tNRXGZSXUX\t-429.100708007813\t2015-03-23T00:03:08.533Z\n" +
+                "40\tnull\t0.352436579764\t2015-03-23T00:06:44.446Z\t40\tBJFRPX\t3.300331056118\t2015-03-23T00:03:01.677Z\n" +
+                "127\tnull\t0.000750448322\t2015-03-23T00:07:07.023Z\tNaN\tnull\tNaN\t\n" +
+                "284\tnull\t0.000000056363\t2015-03-23T00:07:24.963Z\tNaN\tnull\tNaN\t\n" +
+                "69\tnull\t-64.000000000000\t2015-03-23T00:07:32.794Z\t69\tnull\t0.000000001976\t2015-03-23T00:05:12.110Z\n" +
+                "206\tnull\t0.000001646644\t2015-03-23T00:07:40.787Z\tNaN\tnull\tNaN\t\n" +
+                "110\tnull\t882.590759277344\t2015-03-23T00:07:44.604Z\tNaN\tnull\tNaN\t\n" +
+                "208\tnull\t0.000000045985\t2015-03-23T00:07:48.156Z\tNaN\tnull\tNaN\t\n" +
+                "287\tnull\t-732.302734375000\t2015-03-23T00:07:54.893Z\tNaN\tnull\tNaN\t\n" +
+                "208\tnull\t0.000000447563\t2015-03-23T00:08:04.779Z\tNaN\tnull\tNaN\t\n" +
+                "190\tnull\t0.000000005669\t2015-03-23T00:08:10.452Z\tNaN\tnull\tNaN\t\n" +
+                "266\tnull\t0.000002058839\t2015-03-23T00:08:14.465Z\tNaN\tnull\tNaN\t\n" +
+                "15\tnull\t0.000000004841\t2015-03-23T00:08:23.335Z\t15\tMYICCXZOUIC\t-504.062500000000\t2015-03-23T00:01:09.396Z\n";
 
         assertThat(expected, "trades t asof join quotes q on t.quoteId = q.quoteId where tag1 = null", true);
         assertThat(expected, "trades t asof join quotes q on t.quoteId = q.quoteId where null = tag1", true);
@@ -233,100 +233,100 @@ public class SymbolNullQueryTest extends AbstractOptimiserTest {
 
     @Test
     public void testAsOfPartitionedJoinRightNull() throws Exception {
-        final String expected = "quoteId\ttag1\tamount\ttimestamp\ttag\trate\ttimestamp\n" +
-                "167\tnull\t0.000269699180\t2015-03-23T00:00:00.041Z\tnull\tNaN\t\n" +
-                "185\tnull\t320.000000000000\t2015-03-23T00:00:03.905Z\tnull\tNaN\t\n" +
-                "208\tnull\t0.000283450820\t2015-03-23T00:00:09.777Z\tnull\tNaN\t\n" +
-                "253\tnull\t0.000006260114\t2015-03-23T00:00:14.319Z\tnull\tNaN\t\n" +
-                "280\tnull\t0.000001666620\t2015-03-23T00:00:21.324Z\tnull\tNaN\t\n" +
-                "62\tUUQIDLVBVKH\t-655.093750000000\t2015-03-23T00:00:26.965Z\tnull\tNaN\t\n" +
-                "159\tOJIGFINKGQVZ\t52.300781250000\t2015-03-23T00:00:31.747Z\tnull\tNaN\t\n" +
-                "250\tnull\t391.318801879883\t2015-03-23T00:00:38.605Z\tnull\tNaN\t\n" +
-                "236\tQDSRDJWIMGPLRQU\t0.559725582600\t2015-03-23T00:00:46.696Z\tnull\tNaN\t\n" +
-                "189\tnull\t638.125000000000\t2015-03-23T00:00:54.293Z\tnull\tNaN\t\n" +
-                "206\tDDBHEVGXY\t0.000000983339\t2015-03-23T00:00:54.651Z\tnull\tNaN\t\n" +
-                "79\tnull\t0.000000003843\t2015-03-23T00:01:00.686Z\tnull\tNaN\t\n" +
-                "98\tI\t0.095442861319\t2015-03-23T00:01:08.481Z\tnull\tNaN\t\n" +
-                "160\tnull\t-804.000000000000\t2015-03-23T00:01:22.281Z\tnull\tNaN\t\n" +
-                "114\tFCKDHBQJPLXZGC\t295.336006164551\t2015-03-23T00:01:26.844Z\tnull\tNaN\t\n" +
-                "146\tnull\t114.411033630371\t2015-03-23T00:01:35.805Z\tnull\tNaN\t\n" +
-                "32\tUHNBCCPM\t28.844047546387\t2015-03-23T00:01:39.759Z\tnull\tNaN\t\n" +
-                "275\tnull\t0.000000135166\t2015-03-23T00:01:46.298Z\tnull\tNaN\t\n" +
-                "38\tnull\t0.000006406346\t2015-03-23T00:01:51.405Z\tnull\tNaN\t\n" +
-                "174\tnull\t0.003814977244\t2015-03-23T00:01:54.120Z\tnull\tNaN\t\n" +
-                "279\tREIJ\t0.001741334971\t2015-03-23T00:02:02.280Z\tnull\tNaN\t\n" +
-                "83\tTYLHXVPGHPSF\t-768.000000000000\t2015-03-23T00:02:10.007Z\tnull\tNaN\t\n" +
-                "164\tZWWCCNGTNLEGPUH\t0.000006020679\t2015-03-23T00:02:19.093Z\tnull\tNaN\t\n" +
-                "178\tQDSRDJWIMGPLRQU\t-482.000000000000\t2015-03-23T00:02:21.866Z\tnull\tNaN\t\n" +
-                "17\tIOVIKJS\t1.924843549728\t2015-03-23T00:02:24.538Z\tnull\tNaN\t\n" +
-                "25\tnull\t0.000000521190\t2015-03-23T00:02:38.743Z\tnull\t-1024.000000000000\t2015-03-23T00:01:41.578Z\n" +
-                "233\tV\t0.000000017818\t2015-03-23T00:02:43.116Z\tnull\tNaN\t\n" +
-                "112\tUVV\t979.898437500000\t2015-03-23T00:02:49.249Z\tnull\tNaN\t\n" +
-                "295\tJYED\t881.624389648438\t2015-03-23T00:02:58.778Z\tnull\tNaN\t\n" +
-                "247\tnull\t1.480640053749\t2015-03-23T00:03:05.144Z\tnull\tNaN\t\n" +
-                "188\tMDJTHMHZNV\t128.000000000000\t2015-03-23T00:03:11.761Z\tnull\tNaN\t\n" +
-                "11\tnull\t0.000000837886\t2015-03-23T00:03:12.568Z\tnull\tNaN\t\n" +
-                "242\tnull\t-448.687500000000\t2015-03-23T00:03:18.692Z\tnull\tNaN\t\n" +
-                "125\tnull\t384.000000000000\t2015-03-23T00:03:24.655Z\tnull\tNaN\t\n" +
-                "272\tOSBOS\t911.400665283203\t2015-03-23T00:03:34.502Z\tnull\tNaN\t\n" +
-                "13\tUMEUKVZI\t976.000000000000\t2015-03-23T00:03:48.769Z\tnull\t367.500000000000\t2015-03-23T00:00:53.663Z\n" +
-                "38\tnull\t0.000000042007\t2015-03-23T00:03:56.155Z\tnull\t88.440750122070\t2015-03-23T00:02:48.897Z\n" +
-                "61\tnull\t0.002688131004\t2015-03-23T00:03:59.991Z\tnull\tNaN\t\n" +
-                "217\tDWWLEVMLKCJBEVL\t-871.023925781250\t2015-03-23T00:04:05.708Z\tnull\tNaN\t\n" +
-                "135\tnull\t11.436011791229\t2015-03-23T00:04:15.031Z\tnull\tNaN\t\n" +
-                "230\tRZUPVQFULM\t10.552783966064\t2015-03-23T00:04:23.609Z\tnull\tNaN\t\n" +
-                "67\tnull\t0.000000017864\t2015-03-23T00:04:25.683Z\tnull\tNaN\t\n" +
-                "200\tCJOU\t0.000000498588\t2015-03-23T00:04:30.988Z\tnull\tNaN\t\n" +
-                "5\tnull\t0.001699611719\t2015-03-23T00:04:32.638Z\tnull\tNaN\t\n" +
-                "197\tnull\t-639.687500000000\t2015-03-23T00:04:34.193Z\tnull\tNaN\t\n" +
-                "295\tnull\t3.262981295586\t2015-03-23T00:04:39.143Z\tnull\tNaN\t\n" +
-                "11\tnull\t1.727517306805\t2015-03-23T00:04:52.639Z\tnull\t109.844512939453\t2015-03-23T00:00:52.378Z\n" +
-                "97\tnull\t0.000031514332\t2015-03-23T00:05:04.467Z\tnull\tNaN\t\n" +
-                "101\tnull\t0.085098911077\t2015-03-23T00:05:07.455Z\tnull\tNaN\t\n" +
-                "245\tUVDRHF\t152.633743286133\t2015-03-23T00:05:12.773Z\tnull\tNaN\t\n" +
-                "204\tnull\t-864.000000000000\t2015-03-23T00:05:14.905Z\tnull\tNaN\t\n" +
-                "157\tnull\t0.000000038206\t2015-03-23T00:05:24.607Z\tnull\tNaN\t\n" +
-                "27\tnull\t0.128199812025\t2015-03-23T00:05:30.349Z\tnull\tNaN\t\n" +
-                "294\tnull\t32.320184707642\t2015-03-23T00:05:35.452Z\tnull\tNaN\t\n" +
-                "145\tPHNIMYFFDTNP\t0.000007616574\t2015-03-23T00:05:36.249Z\tnull\tNaN\t\n" +
-                "175\tnull\t0.000000096432\t2015-03-23T00:05:37.064Z\tnull\tNaN\t\n" +
-                "140\tnull\t-384.000000000000\t2015-03-23T00:05:40.901Z\tnull\tNaN\t\n" +
-                "118\tnull\t-768.000000000000\t2015-03-23T00:05:50.089Z\tnull\tNaN\t\n" +
-                "88\tnull\t0.000019480709\t2015-03-23T00:05:50.803Z\tnull\tNaN\t\n" +
-                "209\tRIIYMHO\t0.036849732511\t2015-03-23T00:05:50.822Z\tnull\tNaN\t\n" +
-                "221\tnull\t-308.000000000000\t2015-03-23T00:05:54.120Z\tnull\tNaN\t\n" +
-                "214\tnull\t-1024.000000000000\t2015-03-23T00:06:00.720Z\tnull\tNaN\t\n" +
-                "278\tnull\t100.157985687256\t2015-03-23T00:06:06.542Z\tnull\tNaN\t\n" +
-                "219\tSBEOUOJSHRU\t0.007685951889\t2015-03-23T00:06:06.860Z\tnull\tNaN\t\n" +
-                "61\tnull\t-1024.000000000000\t2015-03-23T00:06:08.793Z\tnull\tNaN\t\n" +
-                "180\tnull\t0.223312780261\t2015-03-23T00:06:10.929Z\tnull\tNaN\t\n" +
-                "94\tnull\t0.000006785318\t2015-03-23T00:06:15.648Z\tnull\tNaN\t\n" +
-                "240\tPNHTDCEBYWXB\t0.000000007430\t2015-03-23T00:06:23.214Z\tnull\tNaN\t\n" +
-                "242\tnull\t-557.027343750000\t2015-03-23T00:06:24.968Z\tnull\tNaN\t\n" +
-                "68\tnull\t0.000000001771\t2015-03-23T00:06:26.396Z\tnull\tNaN\t\n" +
-                "64\tnull\t-512.546875000000\t2015-03-23T00:06:26.865Z\tnull\tNaN\t\n" +
-                "101\t\t0.003191990079\t2015-03-23T00:06:38.252Z\tnull\tNaN\t\n" +
-                "32\tSIMYDXUUSKCX\t0.091201189905\t2015-03-23T00:06:42.748Z\tnull\tNaN\t\n" +
-                "40\tnull\t0.352436579764\t2015-03-23T00:06:44.446Z\tnull\tNaN\t\n" +
-                "279\tNEJRMDIKDISGQ\t-186.680175781250\t2015-03-23T00:06:50.222Z\tnull\tNaN\t\n" +
-                "238\tSED\t0.000000019996\t2015-03-23T00:06:58.896Z\tnull\tNaN\t\n" +
-                "127\tnull\t0.000750448322\t2015-03-23T00:07:07.023Z\tnull\tNaN\t\n" +
-                "277\tIGENFELWWRSLBM\t-305.000000000000\t2015-03-23T00:07:16.365Z\tnull\tNaN\t\n" +
-                "284\tnull\t0.000000056363\t2015-03-23T00:07:24.963Z\tnull\tNaN\t\n" +
-                "69\tnull\t-64.000000000000\t2015-03-23T00:07:32.794Z\tnull\t0.000000001976\t2015-03-23T00:05:12.110Z\n" +
-                "206\tnull\t0.000001646644\t2015-03-23T00:07:40.787Z\tnull\tNaN\t\n" +
-                "2\tVQ\t0.000000002305\t2015-03-23T00:07:43.087Z\tnull\tNaN\t\n" +
-                "110\tnull\t882.590759277344\t2015-03-23T00:07:44.604Z\tnull\tNaN\t\n" +
-                "208\tnull\t0.000000045985\t2015-03-23T00:07:48.156Z\tnull\tNaN\t\n" +
-                "287\tnull\t-732.302734375000\t2015-03-23T00:07:54.893Z\tnull\tNaN\t\n" +
-                "81\tGK\t0.000279274151\t2015-03-23T00:07:54.905Z\tnull\tNaN\t\n" +
-                "208\tnull\t0.000000447563\t2015-03-23T00:08:04.779Z\tnull\tNaN\t\n" +
-                "190\tnull\t0.000000005669\t2015-03-23T00:08:10.452Z\tnull\tNaN\t\n" +
-                "266\tnull\t0.000002058839\t2015-03-23T00:08:14.465Z\tnull\tNaN\t\n" +
-                "270\tUDVIK\t0.000000391720\t2015-03-23T00:08:17.846Z\tnull\tNaN\t\n" +
-                "24\tSVTN\t123.810607910156\t2015-03-23T00:08:20.910Z\tnull\tNaN\t\n" +
-                "216\tZUFEV\t0.000000036476\t2015-03-23T00:08:23.335Z\tnull\tNaN\t\n" +
-                "15\tnull\t0.000000004841\t2015-03-23T00:08:23.335Z\tnull\tNaN\t\n";
+        final String expected = "quoteId\ttag1\tamount\ttimestamp\tquoteId\ttag\trate\ttimestamp\n" +
+                "167\tnull\t0.000269699180\t2015-03-23T00:00:00.041Z\tNaN\tnull\tNaN\t\n" +
+                "185\tnull\t320.000000000000\t2015-03-23T00:00:03.905Z\tNaN\tnull\tNaN\t\n" +
+                "208\tnull\t0.000283450820\t2015-03-23T00:00:09.777Z\tNaN\tnull\tNaN\t\n" +
+                "253\tnull\t0.000006260114\t2015-03-23T00:00:14.319Z\tNaN\tnull\tNaN\t\n" +
+                "280\tnull\t0.000001666620\t2015-03-23T00:00:21.324Z\tNaN\tnull\tNaN\t\n" +
+                "62\tUUQIDLVBVKH\t-655.093750000000\t2015-03-23T00:00:26.965Z\tNaN\tnull\tNaN\t\n" +
+                "159\tOJIGFINKGQVZ\t52.300781250000\t2015-03-23T00:00:31.747Z\tNaN\tnull\tNaN\t\n" +
+                "250\tnull\t391.318801879883\t2015-03-23T00:00:38.605Z\tNaN\tnull\tNaN\t\n" +
+                "236\tQDSRDJWIMGPLRQU\t0.559725582600\t2015-03-23T00:00:46.696Z\tNaN\tnull\tNaN\t\n" +
+                "189\tnull\t638.125000000000\t2015-03-23T00:00:54.293Z\tNaN\tnull\tNaN\t\n" +
+                "206\tDDBHEVGXY\t0.000000983339\t2015-03-23T00:00:54.651Z\tNaN\tnull\tNaN\t\n" +
+                "79\tnull\t0.000000003843\t2015-03-23T00:01:00.686Z\tNaN\tnull\tNaN\t\n" +
+                "98\tI\t0.095442861319\t2015-03-23T00:01:08.481Z\tNaN\tnull\tNaN\t\n" +
+                "160\tnull\t-804.000000000000\t2015-03-23T00:01:22.281Z\tNaN\tnull\tNaN\t\n" +
+                "114\tFCKDHBQJPLXZGC\t295.336006164551\t2015-03-23T00:01:26.844Z\tNaN\tnull\tNaN\t\n" +
+                "146\tnull\t114.411033630371\t2015-03-23T00:01:35.805Z\tNaN\tnull\tNaN\t\n" +
+                "32\tUHNBCCPM\t28.844047546387\t2015-03-23T00:01:39.759Z\tNaN\tnull\tNaN\t\n" +
+                "275\tnull\t0.000000135166\t2015-03-23T00:01:46.298Z\tNaN\tnull\tNaN\t\n" +
+                "38\tnull\t0.000006406346\t2015-03-23T00:01:51.405Z\tNaN\tnull\tNaN\t\n" +
+                "174\tnull\t0.003814977244\t2015-03-23T00:01:54.120Z\tNaN\tnull\tNaN\t\n" +
+                "279\tREIJ\t0.001741334971\t2015-03-23T00:02:02.280Z\tNaN\tnull\tNaN\t\n" +
+                "83\tTYLHXVPGHPSF\t-768.000000000000\t2015-03-23T00:02:10.007Z\tNaN\tnull\tNaN\t\n" +
+                "164\tZWWCCNGTNLEGPUH\t0.000006020679\t2015-03-23T00:02:19.093Z\tNaN\tnull\tNaN\t\n" +
+                "178\tQDSRDJWIMGPLRQU\t-482.000000000000\t2015-03-23T00:02:21.866Z\tNaN\tnull\tNaN\t\n" +
+                "17\tIOVIKJS\t1.924843549728\t2015-03-23T00:02:24.538Z\tNaN\tnull\tNaN\t\n" +
+                "25\tnull\t0.000000521190\t2015-03-23T00:02:38.743Z\t25\tnull\t-1024.000000000000\t2015-03-23T00:01:41.578Z\n" +
+                "233\tV\t0.000000017818\t2015-03-23T00:02:43.116Z\tNaN\tnull\tNaN\t\n" +
+                "112\tUVV\t979.898437500000\t2015-03-23T00:02:49.249Z\tNaN\tnull\tNaN\t\n" +
+                "295\tJYED\t881.624389648438\t2015-03-23T00:02:58.778Z\tNaN\tnull\tNaN\t\n" +
+                "247\tnull\t1.480640053749\t2015-03-23T00:03:05.144Z\tNaN\tnull\tNaN\t\n" +
+                "188\tMDJTHMHZNV\t128.000000000000\t2015-03-23T00:03:11.761Z\tNaN\tnull\tNaN\t\n" +
+                "11\tnull\t0.000000837886\t2015-03-23T00:03:12.568Z\tNaN\tnull\tNaN\t\n" +
+                "242\tnull\t-448.687500000000\t2015-03-23T00:03:18.692Z\tNaN\tnull\tNaN\t\n" +
+                "125\tnull\t384.000000000000\t2015-03-23T00:03:24.655Z\tNaN\tnull\tNaN\t\n" +
+                "272\tOSBOS\t911.400665283203\t2015-03-23T00:03:34.502Z\tNaN\tnull\tNaN\t\n" +
+                "13\tUMEUKVZI\t976.000000000000\t2015-03-23T00:03:48.769Z\t13\tnull\t367.500000000000\t2015-03-23T00:00:53.663Z\n" +
+                "38\tnull\t0.000000042007\t2015-03-23T00:03:56.155Z\t38\tnull\t88.440750122070\t2015-03-23T00:02:48.897Z\n" +
+                "61\tnull\t0.002688131004\t2015-03-23T00:03:59.991Z\tNaN\tnull\tNaN\t\n" +
+                "217\tDWWLEVMLKCJBEVL\t-871.023925781250\t2015-03-23T00:04:05.708Z\tNaN\tnull\tNaN\t\n" +
+                "135\tnull\t11.436011791229\t2015-03-23T00:04:15.031Z\tNaN\tnull\tNaN\t\n" +
+                "230\tRZUPVQFULM\t10.552783966064\t2015-03-23T00:04:23.609Z\tNaN\tnull\tNaN\t\n" +
+                "67\tnull\t0.000000017864\t2015-03-23T00:04:25.683Z\tNaN\tnull\tNaN\t\n" +
+                "200\tCJOU\t0.000000498588\t2015-03-23T00:04:30.988Z\tNaN\tnull\tNaN\t\n" +
+                "5\tnull\t0.001699611719\t2015-03-23T00:04:32.638Z\tNaN\tnull\tNaN\t\n" +
+                "197\tnull\t-639.687500000000\t2015-03-23T00:04:34.193Z\tNaN\tnull\tNaN\t\n" +
+                "295\tnull\t3.262981295586\t2015-03-23T00:04:39.143Z\tNaN\tnull\tNaN\t\n" +
+                "11\tnull\t1.727517306805\t2015-03-23T00:04:52.639Z\t11\tnull\t109.844512939453\t2015-03-23T00:00:52.378Z\n" +
+                "97\tnull\t0.000031514332\t2015-03-23T00:05:04.467Z\tNaN\tnull\tNaN\t\n" +
+                "101\tnull\t0.085098911077\t2015-03-23T00:05:07.455Z\tNaN\tnull\tNaN\t\n" +
+                "245\tUVDRHF\t152.633743286133\t2015-03-23T00:05:12.773Z\tNaN\tnull\tNaN\t\n" +
+                "204\tnull\t-864.000000000000\t2015-03-23T00:05:14.905Z\tNaN\tnull\tNaN\t\n" +
+                "157\tnull\t0.000000038206\t2015-03-23T00:05:24.607Z\tNaN\tnull\tNaN\t\n" +
+                "27\tnull\t0.128199812025\t2015-03-23T00:05:30.349Z\tNaN\tnull\tNaN\t\n" +
+                "294\tnull\t32.320184707642\t2015-03-23T00:05:35.452Z\tNaN\tnull\tNaN\t\n" +
+                "145\tPHNIMYFFDTNP\t0.000007616574\t2015-03-23T00:05:36.249Z\tNaN\tnull\tNaN\t\n" +
+                "175\tnull\t0.000000096432\t2015-03-23T00:05:37.064Z\tNaN\tnull\tNaN\t\n" +
+                "140\tnull\t-384.000000000000\t2015-03-23T00:05:40.901Z\tNaN\tnull\tNaN\t\n" +
+                "118\tnull\t-768.000000000000\t2015-03-23T00:05:50.089Z\tNaN\tnull\tNaN\t\n" +
+                "88\tnull\t0.000019480709\t2015-03-23T00:05:50.803Z\tNaN\tnull\tNaN\t\n" +
+                "209\tRIIYMHO\t0.036849732511\t2015-03-23T00:05:50.822Z\tNaN\tnull\tNaN\t\n" +
+                "221\tnull\t-308.000000000000\t2015-03-23T00:05:54.120Z\tNaN\tnull\tNaN\t\n" +
+                "214\tnull\t-1024.000000000000\t2015-03-23T00:06:00.720Z\tNaN\tnull\tNaN\t\n" +
+                "278\tnull\t100.157985687256\t2015-03-23T00:06:06.542Z\tNaN\tnull\tNaN\t\n" +
+                "219\tSBEOUOJSHRU\t0.007685951889\t2015-03-23T00:06:06.860Z\tNaN\tnull\tNaN\t\n" +
+                "61\tnull\t-1024.000000000000\t2015-03-23T00:06:08.793Z\tNaN\tnull\tNaN\t\n" +
+                "180\tnull\t0.223312780261\t2015-03-23T00:06:10.929Z\tNaN\tnull\tNaN\t\n" +
+                "94\tnull\t0.000006785318\t2015-03-23T00:06:15.648Z\tNaN\tnull\tNaN\t\n" +
+                "240\tPNHTDCEBYWXB\t0.000000007430\t2015-03-23T00:06:23.214Z\tNaN\tnull\tNaN\t\n" +
+                "242\tnull\t-557.027343750000\t2015-03-23T00:06:24.968Z\tNaN\tnull\tNaN\t\n" +
+                "68\tnull\t0.000000001771\t2015-03-23T00:06:26.396Z\tNaN\tnull\tNaN\t\n" +
+                "64\tnull\t-512.546875000000\t2015-03-23T00:06:26.865Z\tNaN\tnull\tNaN\t\n" +
+                "101\t\t0.003191990079\t2015-03-23T00:06:38.252Z\tNaN\tnull\tNaN\t\n" +
+                "32\tSIMYDXUUSKCX\t0.091201189905\t2015-03-23T00:06:42.748Z\tNaN\tnull\tNaN\t\n" +
+                "40\tnull\t0.352436579764\t2015-03-23T00:06:44.446Z\tNaN\tnull\tNaN\t\n" +
+                "279\tNEJRMDIKDISGQ\t-186.680175781250\t2015-03-23T00:06:50.222Z\tNaN\tnull\tNaN\t\n" +
+                "238\tSED\t0.000000019996\t2015-03-23T00:06:58.896Z\tNaN\tnull\tNaN\t\n" +
+                "127\tnull\t0.000750448322\t2015-03-23T00:07:07.023Z\tNaN\tnull\tNaN\t\n" +
+                "277\tIGENFELWWRSLBM\t-305.000000000000\t2015-03-23T00:07:16.365Z\tNaN\tnull\tNaN\t\n" +
+                "284\tnull\t0.000000056363\t2015-03-23T00:07:24.963Z\tNaN\tnull\tNaN\t\n" +
+                "69\tnull\t-64.000000000000\t2015-03-23T00:07:32.794Z\t69\tnull\t0.000000001976\t2015-03-23T00:05:12.110Z\n" +
+                "206\tnull\t0.000001646644\t2015-03-23T00:07:40.787Z\tNaN\tnull\tNaN\t\n" +
+                "2\tVQ\t0.000000002305\t2015-03-23T00:07:43.087Z\tNaN\tnull\tNaN\t\n" +
+                "110\tnull\t882.590759277344\t2015-03-23T00:07:44.604Z\tNaN\tnull\tNaN\t\n" +
+                "208\tnull\t0.000000045985\t2015-03-23T00:07:48.156Z\tNaN\tnull\tNaN\t\n" +
+                "287\tnull\t-732.302734375000\t2015-03-23T00:07:54.893Z\tNaN\tnull\tNaN\t\n" +
+                "81\tGK\t0.000279274151\t2015-03-23T00:07:54.905Z\tNaN\tnull\tNaN\t\n" +
+                "208\tnull\t0.000000447563\t2015-03-23T00:08:04.779Z\tNaN\tnull\tNaN\t\n" +
+                "190\tnull\t0.000000005669\t2015-03-23T00:08:10.452Z\tNaN\tnull\tNaN\t\n" +
+                "266\tnull\t0.000002058839\t2015-03-23T00:08:14.465Z\tNaN\tnull\tNaN\t\n" +
+                "270\tUDVIK\t0.000000391720\t2015-03-23T00:08:17.846Z\tNaN\tnull\tNaN\t\n" +
+                "24\tSVTN\t123.810607910156\t2015-03-23T00:08:20.910Z\tNaN\tnull\tNaN\t\n" +
+                "216\tZUFEV\t0.000000036476\t2015-03-23T00:08:23.335Z\tNaN\tnull\tNaN\t\n" +
+                "15\tnull\t0.000000004841\t2015-03-23T00:08:23.335Z\tNaN\tnull\tNaN\t\n";
         assertThat(expected, "trades t asof join quotes q on t.quoteId = q.quoteId where tag = null", true);
         assertThat(expected, "trades t asof join quotes q on t.quoteId = q.quoteId where null = tag", true);
     }
@@ -430,8 +430,8 @@ public class SymbolNullQueryTest extends AbstractOptimiserTest {
 
     @Test
     public void testFilterOnPartitionedAsOfJoinedColumn() throws Exception {
-        final String expected = "quoteId\ttag1\tamount\ttimestamp\ttag\trate\ttimestamp\n" +
-                "41\tnull\t0.000001296927\t2015-03-23T00:06:34.398Z\tNRXGZSXUX\t-429.100708007813\t2015-03-23T00:03:08.533Z\n";
+        final String expected = "quoteId\ttag1\tamount\ttimestamp\tquoteId\ttag\trate\ttimestamp\n" +
+                "41\tnull\t0.000001296927\t2015-03-23T00:06:34.398Z\t41\tNRXGZSXUX\t-429.100708007813\t2015-03-23T00:03:08.533Z\n";
         assertThat(expected, "trades t asof join quotes q on t.quoteId = q.quoteId where tag = 'NRXGZSXUX'", true);
         assertThat(expected, "trades t asof join quotes q on t.quoteId = q.quoteId where 'NRXGZSXUX' = tag", true);
     }
@@ -593,15 +593,15 @@ public class SymbolNullQueryTest extends AbstractOptimiserTest {
 
     @Test
     public void testWhereColumnAlias() throws Exception {
-        assertThat("quoteId\ttag1\tamount\ttimestamp\ttag\trate\ttimestamp\n" +
-                        "50\tDNZNL\t-258.093750000000\t2015-03-23T00:04:46.445Z\tVUYGMBMKSCPWLZK\t0.000000011817\t2015-03-23T00:03:43.678Z\n",
+        assertThat("quoteId\ttag1\tamount\ttimestamp\tquoteId\ttag\trate\ttimestamp\n" +
+                        "50\tDNZNL\t-258.093750000000\t2015-03-23T00:04:46.445Z\t50\tVUYGMBMKSCPWLZK\t0.000000011817\t2015-03-23T00:03:43.678Z\n",
                 "trades t asof join quotes q on q.quoteId = t.quoteId where q.tag ~ 'B' and t.quoteId = 50", true);
     }
 
     @Test
     public void testWhereColumnAlias2() throws Exception {
-        assertThat("quoteId\ttag1\tamount\ttimestamp\ttag\trate\ttimestamp\n" +
-                        "50\tDNZNL\t-258.093750000000\t2015-03-23T00:04:46.445Z\tVUYGMBMKSCPWLZK\t0.000000011817\t2015-03-23T00:03:43.678Z\n",
+        assertThat("quoteId\ttag1\tamount\ttimestamp\tquoteId\ttag\trate\ttimestamp\n" +
+                        "50\tDNZNL\t-258.093750000000\t2015-03-23T00:04:46.445Z\t50\tVUYGMBMKSCPWLZK\t0.000000011817\t2015-03-23T00:03:43.678Z\n",
                 "trades t asof join quotes q on q.quoteId = t.quoteId where q.tag ~ 'B' and q.quoteId = 50", true);
     }
 

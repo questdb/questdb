@@ -24,7 +24,10 @@ package com.nfsdb.ql.impl;
 import com.nfsdb.collections.CharSequenceHashSet;
 import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.collections.ObjList;
-import com.nfsdb.factory.configuration.*;
+import com.nfsdb.factory.configuration.AbstractRecordMetadata;
+import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
+import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Unsafe;
 
@@ -34,7 +37,6 @@ public class SelectedColumnsMetadata extends AbstractRecordMetadata {
     private final RecordMetadata delegate;
     private final RecordColumnMetadata columnMetadata[];
     private final CharSequenceIntHashMap nameIndex;
-    private final ColumnName columnName = new ColumnName();
 
     /**
      * Metadata that contains only selected columns from delegate metadata. There is also
@@ -58,7 +60,7 @@ public class SelectedColumnsMetadata extends AbstractRecordMetadata {
             CharSequence name = names.getQuick(i);
             CharSequence _newName = aliases.get(i);
             String result = (_newName != null ? _newName : name).toString();
-            columnMetadata[i] = meta(delegate.getColumn(columnName.of(name)), result);
+            columnMetadata[i] = meta(delegate.getColumn(name), result);
             nameIndex.put(result, i);
         }
     }

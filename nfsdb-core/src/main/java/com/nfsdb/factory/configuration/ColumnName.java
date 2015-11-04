@@ -23,8 +23,9 @@ package com.nfsdb.factory.configuration;
 
 import com.nfsdb.collections.FlyweightCharSequence;
 import com.nfsdb.utils.Chars;
+import org.jetbrains.annotations.NotNull;
 
-public class ColumnName {
+public class ColumnName implements CharSequence {
     private final FlyweightCharSequence alias = new FlyweightCharSequence();
     private final FlyweightCharSequence name = new FlyweightCharSequence();
     private CharSequence underlying;
@@ -48,12 +49,29 @@ public class ColumnName {
     }
 
     @Override
-    public String toString() {
+    public
+    @NotNull
+    String toString() {
         return underlying == null ? "null" : underlying.toString();
     }
 
     public boolean isNull() {
         return alias.length() == 0 && name.length() == 0;
+    }
+
+    @Override
+    public int length() {
+        return underlying.length();
+    }
+
+    @Override
+    public char charAt(int index) {
+        return underlying.charAt(index);
+    }
+
+    @Override
+    public CharSequence subSequence(int start, int end) {
+        throw new UnsupportedOperationException();
     }
 
     public CharSequence name() {

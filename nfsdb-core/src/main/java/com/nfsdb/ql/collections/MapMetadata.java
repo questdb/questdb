@@ -24,6 +24,7 @@ package com.nfsdb.ql.collections;
 import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.AbstractRecordMetadata;
+import com.nfsdb.factory.configuration.ColumnName;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.utils.Unsafe;
 
@@ -71,7 +72,13 @@ public final class MapMetadata extends AbstractRecordMetadata {
     }
 
     @Override
+    public int getColumnIndexQuiet(ColumnName columnName) {
+        return nameCache.get(columnName);
+    }
+
+    @Override
     protected int getLocalColumnIndex(CharSequence name) {
         return nameCache.get(name);
     }
+
 }

@@ -77,9 +77,6 @@ public class LastRowIdRecordMap implements LastRecordMap {
 
         ObjList<CharSequence> slaveColumnNames = new ObjList<>();
         for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
-            if (slaveKeyIndexes.contains(i)) {
-                continue;
-            }
             slaveColumnNames.add(slaveMetadata.getColumnQuick(i).getName());
         }
 

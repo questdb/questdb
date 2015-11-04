@@ -1221,7 +1221,7 @@ public class QueryCompiler {
             assignFilters(parent);
             alignJoinClauses(parent);
             addTransitiveFilters(parent);
-            rewriteColumnsRemovedByJoins(parent);
+//            rewriteColumnsRemovedByJoins(parent);
         }
         return this;
     }

@@ -65,9 +65,10 @@ public class GroupByRecordSource extends AbstractImmutableIterator<Record> imple
 
         RecordMetadata rm = recordSource.getMetadata();
         for (int i = 0; i < keyColumnsSize; i++) {
-            RecordColumnMetadata cm = rm.getColumn(keyColumns.getQuick(i));
+            CharSequence columnName = keyColumns.getQuick(i);
+            RecordColumnMetadata cm = rm.getColumn(columnName);
             keyCols.add(cm);
-            keyIndices[i] = rm.getColumnIndex(cm.getName());
+            keyIndices[i] = rm.getColumnIndex(columnName);
         }
 
         this.aggregators = aggregators;
