@@ -28,8 +28,6 @@ import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.StorageFacade;
-import com.nfsdb.ql.impl.SelectedColumnsMetadata;
-import com.nfsdb.ql.impl.SelectedColumnsStorageFacade;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
 import com.nfsdb.utils.Numbers;
@@ -48,11 +46,11 @@ public class LastFixRecordMap implements LastRecordMap {
     private final ObjList<ColumnType> slaveValueTypes;
     private final IntList fixedOffsets;
     private final int recordLen;
-    private final SelectedColumnsMetadata metadata;
+    private final RecordMetadata metadata;
     private final MapRecord record;
     private final int bits;
     private final int mask;
-    private final SelectedColumnsStorageFacade storageFacade;
+    private StorageFacade storageFacade;
     private long appendOffset;
 
     public LastFixRecordMap(
@@ -90,11 +88,9 @@ public class LastFixRecordMap implements LastRecordMap {
         this.slaveValueIndexes = new IntList(ksz - keyCols.size());
         this.slaveValueTypes = new ObjList<>(ksz - keyCols.size());
 
-        ObjList<CharSequence> slaveColumnNames = new ObjList<>();
         int varOffset = 0;
         // collect indexes of non-key fields in slave record
         for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
-            slaveColumnNames.add(slaveMetadata.getColumnName(i));
             fixedOffsets.add(varOffset);
             slaveValueIndexes.add(i);
             ColumnType type = slaveMetadata.getColumnQuick(i).getType();
@@ -127,9 +123,8 @@ public class LastFixRecordMap implements LastRecordMap {
 
         this.recordLen = varOffset;
         this.map = new MultiMap(slaveMetadata, keyCols, valueMetadata, null);
-        this.metadata = new SelectedColumnsMetadata(slaveMetadata, slaveColumnNames);
+        this.metadata = slaveMetadata;
         this.record = new MapRecord(this.metadata);
-        this.storageFacade = new SelectedColumnsStorageFacade(slaveMetadata, this.metadata, slaveColumnNames);
     }
 
     @Override
@@ -179,7 +174,7 @@ public class LastFixRecordMap implements LastRecordMap {
 
     @Override
     public void setSlaveCursor(RecordCursor<? extends Record> cursor) {
-        this.storageFacade.of(cursor.getStorageFacade());
+        this.storageFacade = cursor.getStorageFacade();
     }
 
     private static MultiMap.KeyWriter get(MultiMap map, Record record, IntHashSet indices, ObjList<ColumnType> types) {

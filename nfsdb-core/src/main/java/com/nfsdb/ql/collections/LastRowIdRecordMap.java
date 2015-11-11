@@ -30,9 +30,6 @@ import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.StorageFacade;
-import com.nfsdb.ql.impl.SelectedColumnsMetadata;
-import com.nfsdb.ql.impl.SelectedColumnsRecord;
-import com.nfsdb.ql.impl.SelectedColumnsStorageFacade;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
 
@@ -44,8 +41,6 @@ public class LastRowIdRecordMap implements LastRecordMap {
     private final ObjList<ColumnType> slaveKeyTypes;
     private final ObjList<ColumnType> masterKeyTypes;
     private final RecordMetadata metadata;
-    private final SelectedColumnsRecord record;
-    private final SelectedColumnsStorageFacade storageFacade;
     private RecordCursor<? extends Record> slaveCursor;
 
     // todo: extract config
@@ -75,16 +70,8 @@ public class LastRowIdRecordMap implements LastRecordMap {
             slaveKeyTypes.add(slaveMetadata.getColumnQuick(idx).getType());
             keyCols.add(slaveMetadata.getColumnName(idx));
         }
-
-        ObjList<CharSequence> slaveColumnNames = new ObjList<>();
-        for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
-            slaveColumnNames.add(slaveMetadata.getColumnName(i));
-        }
-
         this.map = new MultiMap(slaveMetadata, keyCols, valueMetadata, null);
-        this.metadata = new SelectedColumnsMetadata(slaveMetadata, slaveColumnNames);
-        this.record = new SelectedColumnsRecord(slaveMetadata, slaveColumnNames);
-        this.storageFacade = new SelectedColumnsStorageFacade(slaveMetadata, this.metadata, slaveColumnNames);
+        this.metadata = slaveMetadata;
     }
 
     @Override
@@ -98,7 +85,7 @@ public class LastRowIdRecordMap implements LastRecordMap {
             return null;
         }
         values.putByte(1, (byte) 1);
-        return record.of(slaveCursor.getByRowId(values.getLong(0)));
+        return slaveCursor.getByRowId(values.getLong(0));
     }
 
     public RecordMetadata getMetadata() {
@@ -107,7 +94,7 @@ public class LastRowIdRecordMap implements LastRecordMap {
 
     @Override
     public StorageFacade getStorageFacade() {
-        return storageFacade;
+        return slaveCursor.getStorageFacade();
     }
 
     public void put(Record record) {
@@ -123,11 +110,10 @@ public class LastRowIdRecordMap implements LastRecordMap {
 
     public void setSlaveCursor(RecordCursor<? extends Record> cursor) {
         this.slaveCursor = cursor;
-        this.storageFacade.of(cursor.getStorageFacade());
     }
 
     public SymbolTable getSymbolTable(String name) {
-        return storageFacade.getSymbolTable(name);
+        return getStorageFacade().getSymbolTable(name);
     }
 
     private static MultiMap.KeyWriter get(MultiMap map, Record record, IntHashSet indices, ObjList<ColumnType> types) {
