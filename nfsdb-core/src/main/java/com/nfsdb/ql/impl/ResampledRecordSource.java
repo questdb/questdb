@@ -23,6 +23,7 @@ package com.nfsdb.ql.impl;
 
 
 import com.nfsdb.collections.AbstractImmutableIterator;
+import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.Transient;
 import com.nfsdb.exceptions.JournalException;
@@ -54,7 +55,7 @@ public class ResampledRecordSource extends AbstractImmutableIterator<Record> imp
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public ResampledRecordSource(
             RecordSource<? extends Record> recordSource,
-            @Transient ObjList<CharSequence> keyColumns,
+            @Transient ObjList<String> keyColumns,
             ObjList<AggregatorFunction> aggregators,
             SampleBy sampleBy
     ) {
@@ -62,15 +63,14 @@ public class ResampledRecordSource extends AbstractImmutableIterator<Record> imp
         this.keyIndices = new int[keyColumnsSize];
         // define key columns
 
-        ObjList<RecordColumnMetadata> keyCols = new ObjList<>();
+        ObjHashSet<String> keyCols = new ObjHashSet<>();
 
         RecordMetadata rm = recordSource.getMetadata();
-        this.tsIndex = rm.getColumnIndex(rm.getTimestampMetadata().getName());
-        keyCols.add(rm.getTimestampMetadata());
+        this.tsIndex = rm.getTimestampIndex();
+        keyCols.add(rm.getColumnName(tsIndex));
         for (int i = 0; i < keyColumnsSize; i++) {
-            RecordColumnMetadata cm = rm.getColumn(keyColumns.getQuick(i));
-            keyCols.add(cm);
-            keyIndices[i] = rm.getColumnIndex(cm.getName());
+            keyCols.add(keyColumns.getQuick(i));
+            keyIndices[i] = rm.getColumnIndex(keyColumns.getQuick(i));
         }
 
         this.aggregators = aggregators;
@@ -92,7 +92,7 @@ public class ResampledRecordSource extends AbstractImmutableIterator<Record> imp
             }
         }
 
-        this.map = new MultiMap(valueCols, keyCols, interceptors);
+        this.map = new MultiMap(rm, keyCols, valueCols, interceptors);
         this.recordSource = recordSource;
         this.sampleBy = sampleBy;
     }

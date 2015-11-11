@@ -77,7 +77,7 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
                     case BINARY:
                         throw new JournalRuntimeException("Binary columns are not supported");
                     case STRING:
-                        if (!masterKeyColumns.contains(slave.getMetadata().getColumnQuick(i).getName())) {
+                        if (!masterKeyColumns.contains(slave.getMetadata().getColumnName(i))) {
                             var = true;
                         }
                         break OUT;
@@ -91,7 +91,7 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
                 this.holder = new FixRecordHolder(slave.getMetadata());
             }
         }
-        map.getMetadata().setAlias(slave.getMetadata().getAlias());
+//        map.getMetadata().setAlias(slave.getMetadata().getAlias());
         this.metadata = new SplitRecordMetadata(master.getMetadata(), map.getMetadata());
         this.record = new SplitRecord(this.metadata, master.getMetadata().getColumnCount());
         this.storageFacade = new SplitRecordStorageFacade(this.metadata, master.getMetadata().getColumnCount());

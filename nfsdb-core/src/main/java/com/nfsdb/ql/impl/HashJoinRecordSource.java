@@ -23,6 +23,7 @@ package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.collections.IntList;
+import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
@@ -163,13 +164,13 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
         }
 
         RecordMetadata sm = slaveSource.getMetadata();
-        ObjList<RecordColumnMetadata> keyCols = new ObjList<>();
+        ObjHashSet<String> keyCols = new ObjHashSet<>();
         for (int i = 0, k = slaveColIndex.size(); i < k; i++) {
             int index = slaveColIndex.getQuick(i);
             this.slaveColumns.add(sm.getColumnQuick(index));
-            keyCols.add(sm.getColumnQuick(index));
+            keyCols.add(sm.getColumnName(index));
         }
-        return byRowId ? new MultiRecordMap(keyCols, rowIdRecord.getMetadata()) : new MultiRecordMap(keyCols, slaveSource.getMetadata());
+        return byRowId ? new MultiRecordMap(sm, keyCols, rowIdRecord.getMetadata()) : new MultiRecordMap(sm, keyCols, slaveSource.getMetadata());
     }
 
     private boolean hasNext0() {

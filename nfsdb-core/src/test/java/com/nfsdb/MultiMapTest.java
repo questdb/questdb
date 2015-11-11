@@ -32,6 +32,7 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.collections.MapValues;
 import com.nfsdb.ql.collections.MultiMap;
+import com.nfsdb.ql.impl.CollectionRecordMetadata;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
@@ -115,16 +116,17 @@ public class MultiMapTest extends AbstractTest {
         final int tsIndex = w.getMetadata().getColumnIndex("timestamp");
         final int symIndex = w.getMetadata().getColumnIndex("sym");
 
+        CollectionRecordMetadata keyMeta = new CollectionRecordMetadata()
+                .add(w.getMetadata().getColumn(tsIndex))
+                .add(w.getMetadata().getColumn(symIndex));
         MultiMap map = new MultiMap(
+                keyMeta,
+                keyMeta.getColumnNames(),
                 new ObjList<RecordColumnMetadata>() {{
                     add(new ColumnMetadata() {{
                         name = "count";
                         type = ColumnType.INT;
                     }});
-                }},
-                new ObjList<RecordColumnMetadata>() {{
-                    add(w.getMetadata().getColumn(tsIndex));
-                    add(w.getMetadata().getColumn(symIndex));
                 }},
                 null);
 

@@ -37,6 +37,7 @@ public class SelectedColumnsMetadata extends AbstractRecordMetadata {
     private final RecordMetadata delegate;
     private final RecordColumnMetadata columnMetadata[];
     private final CharSequenceIntHashMap nameIndex;
+    private int timestampIndex = -1;
 
     /**
      * Metadata that contains only selected columns from delegate metadata. There is also
@@ -47,9 +48,9 @@ public class SelectedColumnsMetadata extends AbstractRecordMetadata {
      * to their references, so these data structured do not have to be allocated new each time
      * constructing metadata.
      *
-     * @param delegate  the delegate metadata
-     * @param names     list of column names to select
-     * @param aliases   set of column aliases
+     * @param delegate the delegate metadata
+     * @param names    list of column names to select
+     * @param aliases  set of column aliases
      */
     public SelectedColumnsMetadata(RecordMetadata delegate, ObjList<CharSequence> names, CharSequenceHashSet aliases) {
         this.delegate = delegate;
@@ -58,33 +59,24 @@ public class SelectedColumnsMetadata extends AbstractRecordMetadata {
         this.columnMetadata = new RecordColumnMetadata[k];
         for (int i = 0; i < k; i++) {
             CharSequence name = names.getQuick(i);
-            CharSequence _newName = aliases.get(i);
+            CharSequence _newName = aliases == null ? null : aliases.get(i);
             String result = (_newName != null ? _newName : name).toString();
-            columnMetadata[i] = meta(delegate.getColumn(name), result);
+            int index = delegate.getColumnIndex(name);
+            columnMetadata[i] = meta(delegate.getColumn(index), result);
             nameIndex.put(result, i);
+            if (index == delegate.getTimestampIndex()) {
+                timestampIndex = i;
+            }
         }
     }
 
     public SelectedColumnsMetadata(RecordMetadata delegate, ObjList<CharSequence> names) {
-        this.delegate = delegate;
-        int k = names.size();
-        this.nameIndex = new CharSequenceIntHashMap(k);
-        this.columnMetadata = new RecordColumnMetadata[k];
-        for (int i = 0; i < k; i++) {
-            String name = names.getQuick(i).toString();
-            columnMetadata[i] = meta(delegate.getColumn(name), name);
-            nameIndex.put(name, i);
-        }
+        this(delegate, names, null);
     }
 
     @Override
     public String getAlias() {
         return delegate.getAlias();
-    }
-
-    @Override
-    protected int getLocalColumnIndex(CharSequence name) {
-        return nameIndex.get(name);
     }
 
     @Override
@@ -98,13 +90,18 @@ public class SelectedColumnsMetadata extends AbstractRecordMetadata {
     }
 
     @Override
+    public int getColumnIndexQuiet(CharSequence name) {
+        return nameIndex.get(name);
+    }
+
+    @Override
     public RecordColumnMetadata getColumnQuick(int index) {
         return Unsafe.arrayGet(columnMetadata, index);
     }
 
     @Override
-    public RecordColumnMetadata getTimestampMetadata() {
-        return delegate.getTimestampMetadata();
+    public int getTimestampIndex() {
+        return timestampIndex;
     }
 
     @Override

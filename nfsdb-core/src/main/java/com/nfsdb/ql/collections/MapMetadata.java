@@ -22,10 +22,12 @@
 package com.nfsdb.ql.collections;
 
 import com.nfsdb.collections.CharSequenceIntHashMap;
+import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.collections.ObjList;
+import com.nfsdb.collections.Transient;
 import com.nfsdb.factory.configuration.AbstractRecordMetadata;
-import com.nfsdb.factory.configuration.ColumnName;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
+import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.utils.Unsafe;
 
 public final class MapMetadata extends AbstractRecordMetadata {
@@ -51,6 +53,28 @@ public final class MapMetadata extends AbstractRecordMetadata {
         }
     }
 
+    public MapMetadata(
+            @Transient RecordMetadata keySourceMetadata,
+            @Transient ObjHashSet<String> keyNames,
+            @Transient ObjList<RecordColumnMetadata> valueColumns) {
+
+        this.columnCount = valueColumns.size() + keyNames.size();
+        this.nameCache = new CharSequenceIntHashMap(columnCount);
+        this.columns = new RecordColumnMetadata[columnCount];
+        int split = valueColumns.size();
+
+        for (int i = 0; i < split; i++) {
+            columns[i] = valueColumns.get(i);
+            nameCache.put(columns[i].getName(), i);
+        }
+
+        for (int i = 0, sz = keyNames.size(); i < sz; i++) {
+            int index = keySourceMetadata.getColumnIndex(keyNames.get(i));
+            columns[split + i] = keySourceMetadata.getColumnQuick(index);
+            nameCache.put(keyNames.get(i), split + i);
+        }
+    }
+
     @Override
     public RecordColumnMetadata getColumn(int index) {
         return columns[index];
@@ -62,23 +86,17 @@ public final class MapMetadata extends AbstractRecordMetadata {
     }
 
     @Override
+    public int getColumnIndexQuiet(CharSequence name) {
+        return nameCache.get(name);
+    }
+
+    @Override
     public RecordColumnMetadata getColumnQuick(int index) {
         return Unsafe.arrayGet(columns, index);
     }
 
     @Override
-    public RecordColumnMetadata getTimestampMetadata() {
-        return null;
+    public int getTimestampIndex() {
+        return -1;
     }
-
-    @Override
-    public int getColumnIndexQuiet(ColumnName columnName) {
-        return nameCache.get(columnName);
-    }
-
-    @Override
-    protected int getLocalColumnIndex(CharSequence name) {
-        return nameCache.get(name);
-    }
-
 }

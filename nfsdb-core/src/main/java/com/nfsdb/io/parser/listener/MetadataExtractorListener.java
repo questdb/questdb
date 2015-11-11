@@ -31,6 +31,7 @@ import com.nfsdb.io.ImportedColumnType;
 import com.nfsdb.io.parser.listener.probe.*;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.ql.collections.MultiMap;
+import com.nfsdb.ql.impl.CollectionRecordMetadata;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Misc;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -43,8 +44,9 @@ public class MetadataExtractorListener implements Listener, Closeable {
     // order of probes in array is critical
     private static final TypeProbe probes[] = new TypeProbe[]{new IntProbe(), new LongProbe(), new DoubleProbe(), new BooleanProbe(), new DateIsoProbe(), new DateFmt1Probe(), new DateFmt2Probe()};
     private static final int probeLen = probes.length;
-    private static final ObjList<RecordColumnMetadata> keyMeta = new ObjList<>(1);
     private static final ObjList<RecordColumnMetadata> counterMeta = new ObjList<>(1);
+    private static final CollectionRecordMetadata keyMetadata = new CollectionRecordMetadata();
+    private static final ObjList<String> kc = new ObjList<>();
     public final int frequencyMapAreaSize;
     private final StringSink tempSink = new StringSink();
     private final ImportSchema importSchema;
@@ -92,7 +94,7 @@ public class MetadataExtractorListener implements Listener, Closeable {
         this.headers = new String[count];
         this.frequencyMaps = new MultiMap[count];
         for (int i = 0; i < count; i++) {
-            frequencyMaps[i] = new MultiMap(counterMeta, keyMeta, null);
+            frequencyMaps[i] = new MultiMap(keyMetadata, keyMetadata.getColumnNames(), counterMeta, null);
         }
     }
 
@@ -253,7 +255,8 @@ public class MetadataExtractorListener implements Listener, Closeable {
         ColumnMetadata keyMeta = new ColumnMetadata();
         keyMeta.setName("Key");
         keyMeta.setType(ColumnType.STRING);
-        MetadataExtractorListener.keyMeta.add(keyMeta);
+        kc.add(keyMeta.getName());
+        keyMetadata.add(keyMeta);
 
         ColumnMetadata counterMeta = new ColumnMetadata();
         counterMeta.setName("Counter");

@@ -47,7 +47,7 @@ public class IntervalJournalRecordSource extends AbstractImmutableIterator<Recor
         this.delegate = delegate;
         this.intervalSource = intervalSource;
         final RecordMetadata metadata = delegate.getMetadata();
-        this.timestampIndex = metadata.getColumnIndex(metadata.getTimestampMetadata().getName());
+        this.timestampIndex = metadata.getTimestampIndex();
     }
 
     @Override

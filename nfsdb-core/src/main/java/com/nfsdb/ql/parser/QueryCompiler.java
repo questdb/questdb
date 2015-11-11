@@ -100,7 +100,7 @@ public class QueryCompiler {
     private final ObjectPool<QueryColumn> aggregateColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 8);
     private final ObjList<QueryColumn> aggregators = new ObjList<>();
     private final ObjList<QueryColumn> outerVirtualColumns = new ObjList<>();
-    private final ObjList<CharSequence> groupKeyColumns = new ObjList<>();
+    private final ObjHashSet<String> groupKeyColumns = new ObjHashSet<>();
     private ObjList<JoinContext> emittedJoinClauses;
     private int aggregateColumnSequence;
 
@@ -516,7 +516,7 @@ public class QueryCompiler {
         CharSequenceIntHashMap map = model.getColumnNameHistogram();
         RecordMetadata m = rs.getMetadata();
         for (int i = 0, n = m.getColumnCount(); i < n; i++) {
-            CharSequence name = m.getColumnQuick(i).getName();
+            CharSequence name = m.getColumnName(i);
             map.put(name, map.get(name) + 1);
         }
     }
@@ -881,10 +881,10 @@ public class QueryCompiler {
             if (slaveTimestampIndex == -1) {
                 throw new ParserException(slaveTimestampNode.position, "Invalid column");
             }
-        } else if (slaveMetadata.getTimestampMetadata() == null) {
+        } else if (slaveMetadata.getTimestampIndex() == -1) {
             throw new ParserException(0, "Result set timestamp column is undefined");
         } else {
-            slaveTimestampIndex = slaveMetadata.getColumnIndex(slaveMetadata.getTimestampMetadata().getName());
+            slaveTimestampIndex = slaveMetadata.getTimestampIndex();
         }
 
 
@@ -893,10 +893,10 @@ public class QueryCompiler {
             if (masterTimestampIndex == -1) {
                 throw new ParserException(masterTimestampNode.position, "Invalid column");
             }
-        } else if (masterMetadata.getTimestampMetadata() == null) {
+        } else if (masterMetadata.getTimestampIndex() == -1) {
             throw new ParserException(0, "Result set timestamp column is undefined");
         } else {
-            masterTimestampIndex = masterMetadata.getColumnIndex(masterMetadata.getTimestampMetadata().getName());
+            masterTimestampIndex = masterMetadata.getTimestampIndex();
         }
 
         if (jc == null) {
@@ -1443,7 +1443,7 @@ public class QueryCompiler {
         return cost;
     }
 
-    private ExprNode replaceIfAggregate(@Transient ExprNode node, ObjList<QueryColumn> aggregateColumns) throws ParserException {
+    private ExprNode replaceIfAggregate(@Transient ExprNode node, ObjList<QueryColumn> aggregateColumns) {
         if (node != null && FunctionFactories.isAggregate(node.token)) {
             QueryColumn c = aggregateColumnPool.next().of(createAlias(aggregateColumnSequence++), node);
             aggregateColumns.add(c);
@@ -1519,46 +1519,6 @@ public class QueryCompiler {
             }
 
             return index;
-        }
-    }
-
-    private boolean rewriteColumnName(QueryModel model, ExprNode node) {
-        if (node == null || node.type != ExprNode.NodeType.LITERAL) {
-            return false;
-        }
-
-        ObjList<ExprNode> leftNodes = model.getContext().aNodes;
-        for (int i = 0, n = leftNodes.size(); i < n; i++) {
-            if (leftNodes.getQuick(i).token.equals(node.token)) {
-                node.token = model.getContext().bNodes.getQuick(i).token;
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private void rewriteColumnsRemovedByJoins(QueryModel model) {
-        final ObjList<QueryModel> joinModels = model.getJoinModels();
-
-        for (int i = 0, n = joinModels.size(); i < n; i++) {
-            QueryModel m = joinModels.getQuick(i);
-            ExprNode node = m.getPostJoinWhereClause();
-            exprNodeStack.clear();
-            // only outer and asof joins need their filters analyzed.
-            // inner join filters are applied before join, so journal references
-            // remain valid.
-            if (node != null && joinBarriers.contains(m.getJoinType().ordinal())) {
-                while (!exprNodeStack.isEmpty() || node != null) {
-                    if (node != null) {
-                        if (node.rhs != null && !rewriteColumnName(m, node.rhs)) {
-                            exprNodeStack.push(node.rhs);
-                        }
-                        node = rewriteColumnName(m, node.lhs) ? null : node.lhs;
-                    } else {
-                        node = exprNodeStack.poll();
-                    }
-                }
-            }
         }
     }
 
@@ -1683,7 +1643,7 @@ public class QueryCompiler {
         return rs;
     }
 
-    private void splitAggregates(@Transient ExprNode node, ObjList<QueryColumn> aggregateColumns) throws ParserException {
+    private void splitAggregates(@Transient ExprNode node, ObjList<QueryColumn> aggregateColumns) {
 
         this.exprNodeStack.clear();
 

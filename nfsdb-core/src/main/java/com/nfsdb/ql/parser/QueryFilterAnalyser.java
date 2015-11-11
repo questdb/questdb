@@ -52,7 +52,7 @@ final class QueryFilterAnalyser {
     private final IntList tempPos = new IntList();
     private final CharSequenceHashSet tempK = new CharSequenceHashSet();
     private final IntList tempP = new IntList();
-    private RecordColumnMetadata timestamp;
+    private String timestamp;
     private String preferredKeyColumn;
 
     private boolean analyzeEquals(IntrinsicModel model, ExprNode node, RecordMetadata m) throws ParserException {
@@ -65,7 +65,7 @@ final class QueryFilterAnalyser {
         }
 
         if (a.type == ExprNode.NodeType.LITERAL && b.type == ExprNode.NodeType.CONSTANT) {
-            if (timestamp != null && timestamp.getName().equals(a.token)) {
+            if (isTimestamp(a)) {
                 boolean reversible = parseInterval(model, quoteEraser.ofQuoted(b.token), b.position);
                 node.intrinsicValue = IntrinsicValue.TRUE;
                 // exact timestamp matches will be returning FALSE
@@ -146,7 +146,7 @@ final class QueryFilterAnalyser {
             return false;
         }
 
-        if (node.lhs.type == ExprNode.NodeType.LITERAL && node.lhs.token.equals(timestamp.getName())) {
+        if (node.lhs.type == ExprNode.NodeType.LITERAL && node.lhs.token.equals(timestamp)) {
             try {
                 long lo = Dates.tryParse(quoteEraser.ofQuoted(node.rhs.token)) + inc;
                 if (lo > model.intervalLo) {
@@ -159,7 +159,7 @@ final class QueryFilterAnalyser {
             }
         }
 
-        if (node.rhs.type == ExprNode.NodeType.LITERAL && node.rhs.token.equals(timestamp.getName())) {
+        if (node.rhs.type == ExprNode.NodeType.LITERAL && node.rhs.token.equals(timestamp)) {
             try {
                 long hi = Dates.tryParse(quoteEraser.ofQuoted(node.lhs.token)) - inc;
                 if (hi < model.intervalHi) {
@@ -196,7 +196,7 @@ final class QueryFilterAnalyser {
 
     @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE", "LEST_LOST_EXCEPTION_STACK_TRACE"})
     private boolean analyzeInInterval(IntrinsicModel model, ExprNode col, ExprNode in) throws ParserException {
-        if (timestamp == null || !Chars.equals(timestamp.getName(), col.token)) {
+        if (!isTimestamp(col)) {
             return false;
         }
 
@@ -283,7 +283,7 @@ final class QueryFilterAnalyser {
             return false;
         }
 
-        if (node.lhs.type == ExprNode.NodeType.LITERAL && node.lhs.token.equals(timestamp.getName())) {
+        if (node.lhs.type == ExprNode.NodeType.LITERAL && node.lhs.token.equals(timestamp)) {
             try {
                 long hi = Dates.tryParse(quoteEraser.ofQuoted(node.rhs.token)) - inc;
                 if (hi < model.intervalHi) {
@@ -297,7 +297,7 @@ final class QueryFilterAnalyser {
             }
         }
 
-        if (node.rhs.type == ExprNode.NodeType.LITERAL && node.rhs.token.equals(timestamp.getName())) {
+        if (node.rhs.type == ExprNode.NodeType.LITERAL && node.rhs.token.equals(timestamp)) {
             try {
                 long lo = Dates.tryParse(quoteEraser.ofQuoted(node.lhs.token)) + inc;
                 if (lo > model.intervalLo) {
@@ -412,7 +412,8 @@ final class QueryFilterAnalyser {
         this.stack.clear();
         this.keyNodes.clear();
         this.timestampNodes.clear();
-        this.timestamp = m.getTimestampMetadata();
+        int timestampIndex = m.getTimestampIndex();
+        this.timestamp = timestampIndex == -1 ? null : m.getColumnName(timestampIndex);
         this.preferredKeyColumn = preferredKeyColumn;
 
         IntrinsicModel model = models.next();
@@ -444,6 +445,10 @@ final class QueryFilterAnalyser {
         }
         model.filter = collapseIntrinsicNodes(root);
         return model;
+    }
+
+    private boolean isTimestamp(ExprNode n) {
+        return timestamp != null && timestamp.equals(n.token);
     }
 
     private boolean parseInterval(IntrinsicModel model, CharSequence seq, int position) throws ParserException {

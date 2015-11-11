@@ -22,52 +22,19 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.DirectInputStream;
-import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.factory.configuration.AbstractRecordMetadata;
-import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.AbstractRecord;
 import com.nfsdb.ql.collections.LongMetadata;
-import com.nfsdb.utils.Chars;
 
 import java.io.OutputStream;
 
 public class RowIdHolderRecord extends AbstractRecord {
 
-    private final static String name = "KY_0C81_";
-
+    private static final CollectionRecordMetadata metadata = new CollectionRecordMetadata().add(LongMetadata.INSTANCE);
     private long rowId;
 
     public RowIdHolderRecord() {
-        super(new AbstractRecordMetadata() {
-            @Override
-            public RecordColumnMetadata getColumn(int index) {
-                if (index == 0) {
-                    return LongMetadata.INSTANCE;
-                }
-                throw new JournalRuntimeException("Invalid column index: %d", index);
-            }
-
-            @Override
-            public int getColumnCount() {
-                return 1;
-            }
-
-            @Override
-            public RecordColumnMetadata getColumnQuick(int index) {
-                return LongMetadata.INSTANCE;
-            }
-
-            @Override
-            public RecordColumnMetadata getTimestampMetadata() {
-                return null;
-            }
-
-            @Override
-            protected int getLocalColumnIndex(CharSequence name) {
-                return Chars.equals(RowIdHolderRecord.name, name) ? 0 : -1;
-            }
-        });
+        super(metadata);
     }
 
     @Override

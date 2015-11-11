@@ -22,7 +22,6 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.factory.configuration.AbstractRecordMetadata;
-import com.nfsdb.factory.configuration.ColumnName;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.utils.Unsafe;
@@ -30,7 +29,6 @@ import com.nfsdb.utils.Unsafe;
 public class SplitRecordMetadata extends AbstractRecordMetadata {
     private final int columnCount;
     private final RecordColumnMetadata[] columns;
-    private final RecordColumnMetadata timestampMetadata;
     private final RecordMetadata a;
     private final RecordMetadata b;
     private final int split;
@@ -40,7 +38,6 @@ public class SplitRecordMetadata extends AbstractRecordMetadata {
         this.b = b;
 
         int split = a.getColumnCount();
-        this.timestampMetadata = a.getTimestampMetadata();
         this.columnCount = split + b.getColumnCount();
         this.columns = new RecordColumnMetadata[columnCount];
 
@@ -67,24 +64,10 @@ public class SplitRecordMetadata extends AbstractRecordMetadata {
     }
 
     @Override
-    public RecordColumnMetadata getColumnQuick(int index) {
-        return Unsafe.arrayGet(columns, index);
-    }
-
-    @Override
-    public RecordColumnMetadata getTimestampMetadata() {
-        return timestampMetadata;
-    }
-
-    @Override
     public int getColumnIndexQuiet(CharSequence name) {
-        return getColumnIndexQuiet(columnName.of(name));
-    }
-
-    public int getColumnIndexQuiet(ColumnName columnName) {
-        int index = a.getColumnIndexQuiet(columnName);
+        int index = a.getColumnIndexQuiet(name);
         if (index == -1) {
-            index = b.getColumnIndexQuiet(columnName);
+            index = b.getColumnIndexQuiet(name);
             if (index == -1) {
                 return index;
             } else {
@@ -96,7 +79,12 @@ public class SplitRecordMetadata extends AbstractRecordMetadata {
     }
 
     @Override
-    protected int getLocalColumnIndex(CharSequence name) {
-        return -1;
+    public RecordColumnMetadata getColumnQuick(int index) {
+        return Unsafe.arrayGet(columns, index);
+    }
+
+    @Override
+    public int getTimestampIndex() {
+        return a.getTimestampIndex();
     }
 }

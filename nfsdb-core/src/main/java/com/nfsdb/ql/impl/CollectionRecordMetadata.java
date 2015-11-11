@@ -21,57 +21,57 @@
 
 package com.nfsdb.ql.impl;
 
-import com.nfsdb.collections.CharSequenceIntHashMap;
+import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.collections.ObjList;
+import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.AbstractRecordMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.factory.configuration.RecordMetadata;
-import com.nfsdb.ql.ops.VirtualColumn;
+import com.nfsdb.utils.Chars;
 
-public class VirtualRecordMetadata extends AbstractRecordMetadata {
-    private final RecordMetadata delegate;
-    private final ObjList<VirtualColumn> virtualColumns;
-    private final int split;
-    private final CharSequenceIntHashMap nameToIndexMap = new CharSequenceIntHashMap();
+public class CollectionRecordMetadata extends AbstractRecordMetadata {
+    private final ObjList<RecordColumnMetadata> columns = new ObjList<>();
+    private final ObjHashSet<String> columnNames = new ObjHashSet<>();
 
-    public VirtualRecordMetadata(RecordMetadata delegate, ObjList<VirtualColumn> virtualColumns) {
-        this.delegate = delegate;
-        this.split = delegate.getColumnCount();
-        this.virtualColumns = virtualColumns;
-
-        for (int i = 0, k = virtualColumns.size(); i < k; i++) {
-            nameToIndexMap.put(virtualColumns.getQuick(i).getName(), i + split);
+    public CollectionRecordMetadata add(RecordColumnMetadata meta) {
+        if (columnNames.add(meta.getName())) {
+            columns.add(meta);
+            return this;
+        } else {
+            throw new JournalRuntimeException("Duplicate column name");
         }
     }
 
     @Override
-    public String getAlias() {
-        return delegate.getAlias();
-    }
-
-    @Override
     public RecordColumnMetadata getColumn(int index) {
-        return index < split ? delegate.getColumn(index) : virtualColumns.get(index - split);
+        return columns.get(index);
     }
 
     @Override
     public int getColumnCount() {
-        return delegate.getColumnCount() + virtualColumns.size();
+        return columns.size();
     }
 
     @Override
     public int getColumnIndexQuiet(CharSequence name) {
-        int index = nameToIndexMap.get(name);
-        return index == -1 ? delegate.getColumnIndexQuiet(name) : index;
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (Chars.equals(columns.getQuick(i).getName(), name)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     @Override
     public RecordColumnMetadata getColumnQuick(int index) {
-        return index < split ? delegate.getColumnQuick(index) : virtualColumns.getQuick(index - split);
+        return columns.getQuick(index);
     }
 
     @Override
     public int getTimestampIndex() {
-        return delegate.getTimestampIndex();
+        return -1;
+    }
+
+    public ObjHashSet<String> getColumnNames() {
+        return columnNames;
     }
 }

@@ -22,10 +22,8 @@
 package com.nfsdb.factory.configuration;
 
 import com.nfsdb.exceptions.NoSuchColumnException;
-import com.nfsdb.utils.Chars;
 
 public abstract class AbstractRecordMetadata implements RecordMetadata {
-    protected final ColumnName columnName = new ColumnName();
     private String alias;
 
     @Override
@@ -44,11 +42,6 @@ public abstract class AbstractRecordMetadata implements RecordMetadata {
     }
 
     @Override
-    public RecordColumnMetadata getColumn(ColumnName name) {
-        return getColumn(getColumnIndex(name));
-    }
-
-    @Override
     public final int getColumnIndex(CharSequence columnName) {
         int index = getColumnIndexQuiet(columnName);
         if (index == -1) {
@@ -59,26 +52,7 @@ public abstract class AbstractRecordMetadata implements RecordMetadata {
     }
 
     @Override
-    public int getColumnIndex(ColumnName columnName) {
-        int index = getColumnIndexQuiet(columnName);
-        if (index == -1) {
-            throw new NoSuchColumnException(columnName.toString());
-
-        }
-        return index;
+    public String getColumnName(int index) {
+        return getColumnQuick(index).getName();
     }
-
-    @Override
-    public int getColumnIndexQuiet(CharSequence name) {
-        return getColumnIndexQuiet(columnName.of(name));
-    }
-
-    public int getColumnIndexQuiet(ColumnName columnName) {
-        if ((alias != null && Chars.equals(alias, columnName.alias())) || columnName.alias().length() == 0) {
-            return getLocalColumnIndex(columnName.name());
-        }
-        return -1;
-    }
-
-    protected abstract int getLocalColumnIndex(CharSequence name);
 }

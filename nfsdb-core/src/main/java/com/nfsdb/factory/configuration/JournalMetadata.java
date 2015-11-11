@@ -27,6 +27,7 @@ import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.storage.UnstructuredFile;
+import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -54,6 +55,7 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
     private final int lag;
     private final boolean partialMapping;
     private final JournalKey<T> key;
+    private final ColumnName columnName = new ColumnName();
 
     public JournalMetadata(
             String id
@@ -146,12 +148,35 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
     }
 
     @Override
+    public int getColumnIndexQuiet(CharSequence name) {
+        int index = columnIndexLookup.get(name);
+        if (index > -1) {
+            return index;
+        }
+
+        if (getAlias() == null) {
+            return -1;
+        }
+
+        columnName.of(name);
+
+        if (columnName.alias().length() == 0) {
+            return -1;
+        }
+
+        if (Chars.equals(columnName.alias(), getAlias())) {
+            return columnIndexLookup.get(columnName.name());
+        }
+        return -1;
+    }
+
+    @Override
     public ColumnMetadata getColumnQuick(int index) {
         return Unsafe.arrayGet(columnMetadata, index);
     }
 
-    public ColumnMetadata getTimestampMetadata() {
-        return timestampMetadata;
+    public int getTimestampIndex() {
+        return timestampColumnIndex;
     }
 
     public String getId() {
@@ -197,8 +222,8 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         return ioBlockRecordCount;
     }
 
-    public int getTimestampIndex() {
-        return timestampColumnIndex;
+    public ColumnMetadata getTimestampMetadata() {
+        return timestampMetadata;
     }
 
     public int getTxCountHint() {
@@ -294,16 +319,7 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         buf.setAppendOffset(buf.getPos());
     }
 
-    private void col(StringBuilder b, ColumnMetadata m) {
-        pad(b, TO_STRING_COL2_PAD, (m.distinctCountHint > 0 ? m.distinctCountHint + " ~ " : "") + (m.indexed ? '#' : "") + m.name + (m.sameAs != null ? " -> " + m.sameAs : "") + ' ' + m.type.name() + '(' + m.size + ')');
-    }
-
-    @Override
-    protected int getLocalColumnIndex(CharSequence name) {
-        return columnIndexLookup.get(name);
-    }
-
-    private StringBuilder pad(StringBuilder b, int w, String value) {
+    private static StringBuilder pad(StringBuilder b, int w, String value) {
         int pad = value == null ? w : w - value.length();
         for (int i = 0; i < pad; i++) {
             b.append(' ');
@@ -322,7 +338,7 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         return b;
     }
 
-    private void sep(StringBuilder b) {
+    private static void sep(StringBuilder b) {
         b.append('+');
         for (int i = 0; i < TO_STRING_COL1_PAD + TO_STRING_COL2_PAD + 5; i++) {
             b.append('-');
@@ -330,5 +346,7 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         b.append("+\n");
     }
 
-
+    private void col(StringBuilder b, ColumnMetadata m) {
+        pad(b, TO_STRING_COL2_PAD, (m.distinctCountHint > 0 ? m.distinctCountHint + " ~ " : "") + (m.indexed ? '#' : "") + m.name + (m.sameAs != null ? " -> " + m.sameAs : "") + ' ' + m.type.name() + '(' + m.size + ')');
+    }
 }

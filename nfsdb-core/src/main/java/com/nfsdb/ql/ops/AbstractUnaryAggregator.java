@@ -29,8 +29,8 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 @SuppressFBWarnings({"EI_EXPOSE_REP"})
 public abstract class AbstractUnaryAggregator extends AbstractUnaryOperator implements AggregatorFunction {
 
+    private final RecordColumnMetadata[] metadata = {this};
     protected int valueIndex;
-    private RecordColumnMetadata[] metadata = {this};
 
     public AbstractUnaryAggregator(ColumnType type) {
         super(type);

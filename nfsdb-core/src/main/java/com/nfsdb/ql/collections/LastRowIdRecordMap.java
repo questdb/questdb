@@ -23,6 +23,7 @@ package com.nfsdb.ql.collections;
 
 import com.nfsdb.collections.CharSequenceHashSet;
 import com.nfsdb.collections.IntHashSet;
+import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
@@ -61,7 +62,7 @@ public class LastRowIdRecordMap implements LastRecordMap {
         this.slaveKeyIndexes = new IntHashSet(ksz);
 
         // collect key field indexes for slave
-        ObjList<RecordColumnMetadata> keyCols = new ObjList<>(ksz);
+        ObjHashSet<String> keyCols = new ObjHashSet<>(ksz);
 
         for (int i = 0; i < ksz; i++) {
             int idx;
@@ -72,15 +73,15 @@ public class LastRowIdRecordMap implements LastRecordMap {
             idx = slaveMetadata.getColumnIndex(slaveKeyColumns.get(i));
             slaveKeyIndexes.add(idx);
             slaveKeyTypes.add(slaveMetadata.getColumnQuick(idx).getType());
-            keyCols.add(slaveMetadata.getColumnQuick(idx));
+            keyCols.add(slaveMetadata.getColumnName(idx));
         }
 
         ObjList<CharSequence> slaveColumnNames = new ObjList<>();
         for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
-            slaveColumnNames.add(slaveMetadata.getColumnQuick(i).getName());
+            slaveColumnNames.add(slaveMetadata.getColumnName(i));
         }
 
-        this.map = new MultiMap(valueMetadata, keyCols, null);
+        this.map = new MultiMap(slaveMetadata, keyCols, valueMetadata, null);
         this.metadata = new SelectedColumnsMetadata(slaveMetadata, slaveColumnNames);
         this.record = new SelectedColumnsRecord(slaveMetadata, slaveColumnNames);
         this.storageFacade = new SelectedColumnsStorageFacade(slaveMetadata, this.metadata, slaveColumnNames);

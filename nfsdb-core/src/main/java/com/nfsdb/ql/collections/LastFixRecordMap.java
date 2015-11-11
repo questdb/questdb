@@ -58,8 +58,8 @@ public class LastFixRecordMap implements LastRecordMap {
     public LastFixRecordMap(
             RecordMetadata masterMetadata,
             RecordMetadata slaveMetadata,
-            CharSequenceHashSet masterKeyColumns,
-            CharSequenceHashSet slaveKeyColumns,
+            @Transient CharSequenceHashSet masterKeyColumns,
+            @Transient CharSequenceHashSet slaveKeyColumns,
             int pageSize) {
         this.pageSize = Numbers.ceilPow2(pageSize);
         this.bits = Numbers.msb(this.pageSize);
@@ -72,7 +72,7 @@ public class LastFixRecordMap implements LastRecordMap {
         this.slaveKeyIndexes = new IntHashSet(ksz);
 
         // collect key field indexes for slave
-        ObjList<RecordColumnMetadata> keyCols = new ObjList<>(ksz);
+        ObjHashSet<String> keyCols = new ObjHashSet<>(ksz);
 
         for (int i = 0; i < ksz; i++) {
             int idx;
@@ -83,7 +83,7 @@ public class LastFixRecordMap implements LastRecordMap {
             idx = slaveMetadata.getColumnIndex(slaveKeyColumns.get(i));
             slaveKeyIndexes.add(idx);
             slaveKeyTypes.add(slaveMetadata.getColumnQuick(idx).getType());
-            keyCols.add(slaveMetadata.getColumnQuick(idx));
+            keyCols.add(slaveMetadata.getColumnName(idx));
         }
 
         this.fixedOffsets = new IntList(ksz - keyCols.size());
@@ -94,7 +94,7 @@ public class LastFixRecordMap implements LastRecordMap {
         int varOffset = 0;
         // collect indexes of non-key fields in slave record
         for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
-            slaveColumnNames.add(slaveMetadata.getColumnQuick(i).getName());
+            slaveColumnNames.add(slaveMetadata.getColumnName(i));
             fixedOffsets.add(varOffset);
             slaveValueIndexes.add(i);
             ColumnType type = slaveMetadata.getColumnQuick(i).getType();
@@ -126,7 +126,7 @@ public class LastFixRecordMap implements LastRecordMap {
         }
 
         this.recordLen = varOffset;
-        this.map = new MultiMap(valueMetadata, keyCols, null);
+        this.map = new MultiMap(slaveMetadata, keyCols, valueMetadata, null);
         this.metadata = new SelectedColumnsMetadata(slaveMetadata, slaveColumnNames);
         this.record = new MapRecord(this.metadata);
         this.storageFacade = new SelectedColumnsStorageFacade(slaveMetadata, this.metadata, slaveColumnNames);

@@ -22,7 +22,9 @@
 package com.nfsdb.ql.collections;
 
 import com.nfsdb.collections.Mutable;
+import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.collections.ObjList;
+import com.nfsdb.collections.Transient;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
@@ -39,10 +41,13 @@ public class MultiRecordMap implements Closeable, Mutable {
     private final MultiMap map;
     private final RecordDequeue records;
 
-    public MultiRecordMap(ObjList<RecordColumnMetadata> keys, RecordMetadata value) {
-        map = new MultiMap(valueCols, keys, null);
+    public MultiRecordMap(
+            @Transient RecordMetadata keyMetadata,
+            @Transient ObjHashSet<String> keyNames,
+            RecordMetadata valueMetadata) {
+        map = new MultiMap(keyMetadata, keyNames, valueCols, null);
         //todo: extract config
-        records = new RecordDequeue(value, 4 * 1024 * 1024);
+        records = new RecordDequeue(valueMetadata, 4 * 1024 * 1024);
     }
 
     public void add(MultiMap.KeyWriter key, Record record) {

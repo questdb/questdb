@@ -40,7 +40,6 @@ import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Rnd;
 import org.junit.Assert;
 import org.junit.BeforeClass;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class JoinQueryTest extends AbstractOptimiserTest {
@@ -87,7 +86,6 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
-    @Ignore
     public void testCount() throws Exception {
         assertThat("", "select count(), c.customerId from customers c" +
                 " outer join orders o on c.customerId = o.customerId " +

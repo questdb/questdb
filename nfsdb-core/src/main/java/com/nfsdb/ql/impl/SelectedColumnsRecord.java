@@ -23,6 +23,7 @@ package com.nfsdb.ql.impl;
 
 import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.collections.ObjList;
+import com.nfsdb.collections.Transient;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.AbstractRecord;
@@ -34,7 +35,7 @@ public class SelectedColumnsRecord extends AbstractRecord {
     private final int reindex[];
     private Record base;
 
-    public SelectedColumnsRecord(RecordMetadata metadata, ObjList<CharSequence> names) {
+    public SelectedColumnsRecord(RecordMetadata metadata, @Transient ObjList<CharSequence> names) {
         super(metadata);
         int k = names.size();
         this.reindex = new int[k];

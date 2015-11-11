@@ -247,21 +247,24 @@ public class CstTest {
         final int symIndex = w.getMetadata().getColumnIndex("sym");
 
         long t = 0;
+
+        CollectionRecordMetadata keyMeta = new CollectionRecordMetadata()
+                .add(w.getMetadata().getColumn(tsIndex))
+                .add(w.getMetadata().getColumn(symIndex));
+
         for (int i = -10; i < 10; i++) {
             if (i == 0) {
                 t = System.nanoTime();
             }
 
             MultiMap map = new MultiMap(
+                    keyMeta,
+                    keyMeta.getColumnNames(),
                     new ObjList<RecordColumnMetadata>() {{
                         add(new ColumnMetadata() {{
                             name = "count";
                             type = ColumnType.INT;
                         }});
-                    }},
-                    new ObjList<RecordColumnMetadata>() {{
-                        add(w.getMetadata().getColumn(tsIndex));
-                        add(w.getMetadata().getColumn(symIndex));
                     }},
                     null);
 

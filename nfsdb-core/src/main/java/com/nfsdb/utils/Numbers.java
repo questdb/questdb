@@ -321,6 +321,7 @@ public final class Numbers {
         return parseDouble(sequence, 0, sequence.length());
     }
 
+    @SuppressWarnings("Duplicates")
     public static double parseDouble(CharSequence sequence, int p, int lim) throws NumericException {
 
         if (lim == p) {
@@ -403,6 +404,7 @@ public final class Numbers {
         return parseFloat(sequence, 0, sequence.length());
     }
 
+    @SuppressWarnings("Duplicates")
     public static float parseFloat(CharSequence sequence, int p, int lim) throws NumericException {
 
         if (lim == p) {

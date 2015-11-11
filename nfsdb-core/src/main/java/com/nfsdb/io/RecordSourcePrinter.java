@@ -75,7 +75,7 @@ public class RecordSourcePrinter {
             if (i > 0) {
                 sink.put(delimiter);
             }
-            sink.put(metadata.getColumnQuick(i).getName());
+            sink.put(metadata.getColumnName(i));
         }
         sink.put('\n');
     }

@@ -23,6 +23,7 @@ package com.nfsdb.ql.impl;
 
 
 import com.nfsdb.collections.AbstractImmutableIterator;
+import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.Transient;
 import com.nfsdb.exceptions.JournalException;
@@ -54,21 +55,15 @@ public class GroupByRecordSource extends AbstractImmutableIterator<Record> imple
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public GroupByRecordSource(
             RecordSource<? extends Record> recordSource,
-            @Transient ObjList<CharSequence> keyColumns,
+            @Transient ObjHashSet<String> keyColumns,
             ObjList<AggregatorFunction> aggregators
     ) {
         int keyColumnsSize = keyColumns.size();
         this.keyIndices = new int[keyColumnsSize];
 
-        // define key columns
-        ObjList<RecordColumnMetadata> keyCols = new ObjList<>();
-
         RecordMetadata rm = recordSource.getMetadata();
         for (int i = 0; i < keyColumnsSize; i++) {
-            CharSequence columnName = keyColumns.getQuick(i);
-            RecordColumnMetadata cm = rm.getColumn(columnName);
-            keyCols.add(cm);
-            keyIndices[i] = rm.getColumnIndex(columnName);
+            keyIndices[i] = rm.getColumnIndex(keyColumns.get(i));
         }
 
         this.aggregators = aggregators;
@@ -90,8 +85,7 @@ public class GroupByRecordSource extends AbstractImmutableIterator<Record> imple
                 interceptors.add((MapRecordValueInterceptor) func);
             }
         }
-
-        this.map = new MultiMap(valueCols, keyCols, interceptors);
+        this.map = new MultiMap(rm, keyColumns, valueCols, interceptors);
         this.recordSource = recordSource;
     }
 

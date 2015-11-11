@@ -50,16 +50,21 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
     private int size = 0;
     private int mask;
 
-    public MultiMap(ObjList<RecordColumnMetadata> valueColumns, ObjList<RecordColumnMetadata> keyColumns, ObjList<MapRecordValueInterceptor> interceptors) {
+    public MultiMap(
+            @Transient RecordMetadata keySourceMetadata,
+            @Transient ObjHashSet<String> keyNames,
+            @Transient ObjList<RecordColumnMetadata> valueColumns,
+            ObjList<MapRecordValueInterceptor> interceptors) {
         //todo: extract config
-        this(1024 * 1024, 4 * 1024 * 1024, 0.5f, valueColumns, keyColumns, interceptors);
+        this(1024 * 1024, 4 * 1024 * 1024, 0.5f, keySourceMetadata, keyNames, valueColumns, interceptors);
     }
 
     public MultiMap(int capacity,
                     long dataSize,
                     float loadFactor,
-                    ObjList<RecordColumnMetadata> valueColumns,
-                    ObjList<RecordColumnMetadata> keyColumns,
+                    @Transient RecordMetadata keySourceMetadata,
+                    @Transient ObjHashSet<String> keyNames,
+                    @Transient ObjList<RecordColumnMetadata> valueColumns,
                     ObjList<MapRecordValueInterceptor> interceptors) {
         this.loadFactor = loadFactor;
         this.address = Unsafe.getUnsafe().allocateMemory(dataSize + Unsafe.CACHE_LINE_SIZE);
@@ -98,9 +103,9 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
         }
 
         this.values = new MapValues(valueOffsets);
-        this.metadata = new MapMetadata(valueColumns, keyColumns);
+        this.metadata = new MapMetadata(keySourceMetadata, keyNames, valueColumns);
         this.keyBlockOffset = offset;
-        this.keyDataOffset = this.keyBlockOffset + 4 * keyColumns.size();
+        this.keyDataOffset = this.keyBlockOffset + 4 * keyNames.size();
         MapRecord record = new MapRecord(metadata, valueOffsets, keyDataOffset, keyBlockOffset);
         this.recordSource = new MapRecordSource(record, this.values, interceptors);
     }
