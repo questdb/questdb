@@ -295,6 +295,11 @@ public final class FunctionFactories {
 
         noargSigAgg("count", CountAggregator.FACTORY);
         unSigAgg("count", ColumnType.DOUBLE, CountDoubleAggregator.FACTORY);
-        unSigAgg("count", ColumnType.DOUBLE, CountDoubleAggregator.FACTORY);
+        unSigAgg("count", ColumnType.FLOAT, CountFloatAggregator.FACTORY);
+        unSigAgg("count", ColumnType.INT, CountIntAggregator.FACTORY);
+        unSigAgg("count", ColumnType.LONG, CountLongAggregator.FACTORY);
+        unSigAgg("count", ColumnType.DATE, CountLongAggregator.FACTORY);
+        unSigAgg("count", ColumnType.STRING, CountStrAggregator.FACTORY);
+        unSigAgg("count", ColumnType.SYMBOL, CountSymAggregator.FACTORY);
     }
 }

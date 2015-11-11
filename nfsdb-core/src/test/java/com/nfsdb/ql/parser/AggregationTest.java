@@ -29,7 +29,7 @@ import com.nfsdb.utils.Rnd;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-public class GroupByQueryTest extends AbstractOptimiserTest {
+public class AggregationTest extends AbstractOptimiserTest {
 
     @BeforeClass
     public static void setUp() throws Exception {

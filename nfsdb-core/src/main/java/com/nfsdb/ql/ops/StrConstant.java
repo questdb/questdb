@@ -25,6 +25,7 @@ import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.storage.ColumnType;
+import com.nfsdb.storage.VariableColumn;
 import com.nfsdb.utils.Chars;
 
 public class StrConstant extends AbstractVirtualColumn {
@@ -52,7 +53,7 @@ public class StrConstant extends AbstractVirtualColumn {
 
     @Override
     public int getStrLen(Record rec) {
-        return value == null ? 0 : value.length();
+        return value == null ? VariableColumn.NULL_LEN : value.length();
     }
 
     @Override

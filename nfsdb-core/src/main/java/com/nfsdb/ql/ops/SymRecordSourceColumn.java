@@ -26,6 +26,7 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.storage.VariableColumn;
 
 public class SymRecordSourceColumn extends AbstractVirtualColumn {
     private final int index;
@@ -59,7 +60,7 @@ public class SymRecordSourceColumn extends AbstractVirtualColumn {
     @Override
     public int getStrLen(Record rec) {
         CharSequence cs = rec.getSym(index);
-        return cs == null ? 0 : cs.length();
+        return cs == null ? VariableColumn.NULL_LEN : cs.length();
     }
 
     @Override

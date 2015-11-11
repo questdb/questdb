@@ -22,42 +22,31 @@
 package com.nfsdb.ql.ops;
 
 import com.nfsdb.collections.ObjList;
-import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
+import com.nfsdb.ql.collections.MapValues;
 import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.VariableColumn;
+import com.nfsdb.storage.SymbolTable;
 
-public class StoAFunction extends AbstractUnaryOperator {
+public final class CountSymAggregator extends AbstractUnaryAggregator {
 
-    public final static StoAFunction FACTORY = new StoAFunction();
+    public static final CountSymAggregator FACTORY = new CountSymAggregator();
 
-    private StoAFunction() {
-        super(ColumnType.STRING);
+    private CountSymAggregator() {
+        super(ColumnType.LONG);
     }
 
     @Override
-    public CharSequence getFlyweightStr(Record rec) {
-        return value.getSym(rec);
-    }
-
-    @Override
-    public CharSequence getStr(Record rec) {
-        return value.getSym(rec);
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink) {
-        sink.put(value.getSym(rec));
-    }
-
-    @Override
-    public int getStrLen(Record rec) {
-        CharSequence cs = value.getSym(rec);
-        return cs == null ? VariableColumn.NULL_LEN : cs.length();
+    public void calculate(Record rec, MapValues values) {
+        int d = value.getInt(rec);
+        if (values.isNew()) {
+            values.putLong(valueIndex, d == SymbolTable.VALUE_IS_NULL ? 0 : 1);
+        } else if (d > SymbolTable.VALUE_IS_NULL) {
+            values.putLong(valueIndex, values.getLong(valueIndex) + 1);
+        }
     }
 
     @Override
     public Function newInstance(ObjList<VirtualColumn> args) {
-        return new StoAFunction();
+        return new CountSymAggregator();
     }
 }

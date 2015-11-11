@@ -38,6 +38,7 @@ import java.nio.ByteBuffer;
 
 @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public class VariableColumn extends AbstractColumn {
+    public static final int NULL_LEN = -1;
     private final FixedColumn indexColumn;
     private final BinaryOutputStream binOut = new BinaryOutputStream();
     private final BinaryInputStream binIn = new BinaryInputStream();
@@ -184,7 +185,7 @@ public class VariableColumn extends AbstractColumn {
     public CharSequence getFlyweightStr(long localRowID) {
         long offset = indexColumn.getLong(localRowID);
         int len = Unsafe.getUnsafe().getInt(mappedFile.addressOf(offset, 4));
-        if (len == -1) {
+        if (len == NULL_LEN) {
             return null;
         }
         long lo = mappedFile.addressOf(offset + 4, len * 2);
@@ -199,7 +200,7 @@ public class VariableColumn extends AbstractColumn {
         long offset = indexColumn.getLong(localRowID);
         int len = Unsafe.getUnsafe().getInt(mappedFile.addressOf(offset, 4));
 
-        if (len == -1) {
+        if (len == NULL_LEN) {
             return null;
         }
         return getStr0(mappedFile.addressOf(offset + 4, len * 2), len);
@@ -209,7 +210,7 @@ public class VariableColumn extends AbstractColumn {
         long offset = indexColumn.getLong(localRowID);
         int len = Unsafe.getUnsafe().getInt(mappedFile.addressOf(offset, 4));
 
-        if (len == -1) {
+        if (len == NULL_LEN) {
             sink.put("null");
             return;
         }
@@ -305,7 +306,7 @@ public class VariableColumn extends AbstractColumn {
 
     public long putNull() {
         long offset = getOffset();
-        Unsafe.getUnsafe().putInt(mappedFile.addressOf(offset, 4), -1);
+        Unsafe.getUnsafe().putInt(mappedFile.addressOf(offset, 4), NULL_LEN);
         return commitAppend(offset, 4);
     }
 
@@ -340,7 +341,7 @@ public class VariableColumn extends AbstractColumn {
     }
 
     private boolean isNull(long localRowID) {
-        return Unsafe.getUnsafe().getInt(mappedFile.addressOf(indexColumn.getLong(localRowID), 4)) == -1;
+        return Unsafe.getUnsafe().getInt(mappedFile.addressOf(indexColumn.getLong(localRowID), 4)) == NULL_LEN;
     }
 
     private class BinaryOutputStream extends OutputStream {
