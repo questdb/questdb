@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
@@ -1623,6 +1623,7 @@ public class QueryCompiler {
         }
 
         // if aggregators present, wrap record source into group-by source
+        ExprNode sampleBy = model.getSampleBy();
         int asz = aggregators.size();
         if (asz > 0) {
             ObjList<AggregatorFunction> af = new ObjList<>(aggregators.size());
@@ -1638,7 +1639,6 @@ public class QueryCompiler {
                 }
             }
 
-            ExprNode sampleBy = model.getSampleBy();
             if (sampleBy == null) {
                 rs = new AggregatedRecordSource(rs, groupKeyColumns, af);
             } else {
@@ -1647,6 +1647,10 @@ public class QueryCompiler {
                     throw new ParserException(sampleBy.position, "Invalid sample");
                 }
                 rs = new ResampledRecordSource(rs, groupKeyColumns, af, sampler);
+            }
+        } else {
+            if (sampleBy != null) {
+                throw new ParserException(sampleBy.position, "There are no aggregation columns");
             }
         }
 

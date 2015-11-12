@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,15 +17,17 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
+import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Rnd;
+import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -241,6 +243,25 @@ public class AggregationTest extends AbstractOptimiserTest {
                         "2014-05-05T00:00:00.000Z\tUEDRQQULO\t16.987375521363\t16.987375521363\n" +
                         "2014-05-05T00:00:00.000Z\tTGPGWFFYU\t17.260132823173\t17.260132823173\n",
                 "select orderDate, employeeId, sum(price*quantity)/lsum(quantity), vwap(price, quantity) sum from orders sample by 1d");
+    }
+
+    @Test
+    public void testResampling2() throws Exception {
+        assertThat("2014-05-04T08:00:00.000Z\t-18.041874103485\n" +
+                        "2014-05-04T16:00:00.000Z\t-12.148285354848\n" +
+                        "2014-05-05T00:00:00.000Z\t-10.773253435499\n" +
+                        "2014-05-05T08:00:00.000Z\t0.750778769143\n",
+                "select orderDate, vwap(price, quantity) from orders sample by 8h");
+    }
+
+    @Test
+    public void testResamplingNoAggregates() throws Exception {
+        try {
+            compiler.compile("select orderDate, price+quantity from orders sample by 8h");
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(55, e.getPosition());
+        }
     }
 
     @Test

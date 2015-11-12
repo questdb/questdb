@@ -6,7 +6,7 @@ __lang__
         (aggregation does not require "group by" clause. Compiler works out
         key fields names automatically, e.g. 'select x, sum(y) from A' is
         equivalent to 'select x, sum(y) from A group by x')
-- [ ] simple resampling (where aggregation function produces single row of values)
+- [x] simple resampling (where aggregation function produces single row of values)
 - [ ] multi-row aggregation
 - [ ] multi-row resampling
 - [x] classic sql joins (hash, nested loops)
