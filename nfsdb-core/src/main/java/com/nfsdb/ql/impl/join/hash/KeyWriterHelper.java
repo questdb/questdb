@@ -30,7 +30,7 @@ final public class KeyWriterHelper {
     private KeyWriterHelper() {
     }
 
-    public static void setKey(MultiMap.KeyWriter key, Record r, ColumnType columnType, int columnIndex) {
+    public static void setKey(MultiMap.KeyWriter key, Record r, int columnIndex, ColumnType columnType) {
         switch (columnType) {
             case BOOLEAN:
                 key.putBoolean(r.getBool(columnIndex));
@@ -57,7 +57,7 @@ final public class KeyWriterHelper {
                 key.putStr(r.getFlyweightStr(columnIndex));
                 break;
             case SYMBOL:
-                key.putStr(r.getSym(columnIndex));
+                key.putInt(r.getInt(columnIndex));
                 break;
             case BINARY:
                 key.putBin(r.getBin(columnIndex));

@@ -149,7 +149,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
         for (Record r : slaveCursor) {
             MultiMap.KeyWriter key = recordMap.claimKey();
             for (int i = 0, k = slaveColumns.size(); i < k; i++) {
-                setKey(key, r, slaveColumns.getQuick(i).getType(), slaveColIndex.getQuick(i));
+                setKey(key, r, slaveColIndex.getQuick(i), slaveColumns.getQuick(i).getType());
             }
             if (byRowId) {
                 recordMap.add(key, rowIdRecord.init(r.getRowId()));
@@ -184,7 +184,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
             MultiMap.KeyWriter key = recordMap.claimKey();
 
             for (int i = 0, k = masterColumns.size(); i < k; i++) {
-                setKey(key, r, masterColumns.getQuick(i).getType(), masterColIndex.getQuick(i));
+                setKey(key, r, masterColIndex.getQuick(i), masterColumns.getQuick(i).getType());
             }
 
             hashTableCursor = recordMap.get(key);

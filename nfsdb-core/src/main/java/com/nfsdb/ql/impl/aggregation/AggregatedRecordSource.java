@@ -27,11 +27,11 @@ import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.Transient;
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.*;
+import com.nfsdb.ql.impl.join.hash.KeyWriterHelper;
 import com.nfsdb.ql.impl.map.MapRecordValueInterceptor;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.impl.map.MultiMap;
@@ -147,23 +147,13 @@ public class AggregatedRecordSource extends AbstractImmutableIterator<Record> im
             // we are inside of time window, compute aggregates
             MultiMap.KeyWriter keyWriter = map.keyWriter();
             for (int i = 0; i < keyIndices.length; i++) {
-                int index = Unsafe.arrayGet(keyIndices, i);
-                switch (recordSource.getMetadata().getColumnQuick(index).getType()) {
-                    case LONG:
-                        keyWriter.putLong(rec.getLong(index));
-                        break;
-                    case INT:
-                        keyWriter.putInt(rec.getInt(index));
-                        break;
-                    case STRING:
-                        keyWriter.putStr(rec.getStr(index));
-                        break;
-                    case SYMBOL:
-                        keyWriter.putInt(rec.getInt(index));
-                        break;
-                    default:
-                        throw new JournalRuntimeException("Unsupported type: " + recordSource.getMetadata().getColumnQuick(index).getType());
-                }
+                int index;
+                KeyWriterHelper.setKey(
+                        keyWriter,
+                        rec,
+                        index = Unsafe.arrayGet(keyIndices, i),
+                        recordSource.getMetadata().getColumnQuick(index).getType()
+                );
             }
 
             MapValues values = map.getOrCreateValues(keyWriter);
