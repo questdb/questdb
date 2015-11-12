@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,15 +17,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl.aggregation;
 
 
-import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.collections.ObjHashSet;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.collections.Transient;
+import com.nfsdb.collections.*;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
@@ -35,7 +32,6 @@ import com.nfsdb.ql.impl.join.hash.KeyWriterHelper;
 import com.nfsdb.ql.impl.map.MapRecordValueInterceptor;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.impl.map.MultiMap;
-import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
@@ -43,10 +39,10 @@ public class ResampledRecordSource extends AbstractImmutableIterator<Record> imp
 
     private final MultiMap map;
     private final RecordSource<? extends Record> recordSource;
-    private final int[] keyIndices;
+    private final IntList keyIndices;
     private final int tsIndex;
     private final ObjList<AggregatorFunction> aggregators;
-    private final TimestampResampler resampler;
+    private final TimestampSampler sampler;
     private RecordCursor<? extends Record> recordCursor;
     private RecordCursor<Record> mapRecordSource;
     private Record nextRecord = null;
@@ -54,12 +50,12 @@ public class ResampledRecordSource extends AbstractImmutableIterator<Record> imp
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public ResampledRecordSource(
             RecordSource<? extends Record> recordSource,
-            @Transient ObjList<String> keyColumns,
+            @Transient ObjHashSet<String> keyColumns,
             ObjList<AggregatorFunction> aggregators,
-            TimestampResampler resampler
+            TimestampSampler sampler
     ) {
         int keyColumnsSize = keyColumns.size();
-        this.keyIndices = new int[keyColumnsSize];
+        this.keyIndices = new IntList(keyColumnsSize);
         // define key columns
 
         ObjHashSet<String> keyCols = new ObjHashSet<>();
@@ -68,12 +64,15 @@ public class ResampledRecordSource extends AbstractImmutableIterator<Record> imp
         this.tsIndex = rm.getTimestampIndex();
         keyCols.add(rm.getColumnName(tsIndex));
         for (int i = 0; i < keyColumnsSize; i++) {
-            keyCols.add(keyColumns.getQuick(i));
-            keyIndices[i] = rm.getColumnIndex(keyColumns.getQuick(i));
+            keyCols.add(keyColumns.get(i));
+            int index = rm.getColumnIndex(keyColumns.get(i));
+            if (index != tsIndex) {
+                keyIndices.add(index);
+            }
         }
 
         this.aggregators = aggregators;
-        this.resampler = resampler;
+        this.sampler = sampler;
 
         ObjList<RecordColumnMetadata> valueCols = new ObjList<>();
         ObjList<MapRecordValueInterceptor> interceptors = new ObjList<>();
@@ -156,28 +155,7 @@ public class ResampledRecordSource extends AbstractImmutableIterator<Record> imp
         }
 
         do {
-            long sample = resampler.resample(rec.getLong(tsIndex));
-
-//            switch (sampleBy) {
-//                case YEAR:
-//                    sample = Dates.floorYYYY();
-//                    break;
-//                case MONTH:
-//                    sample = Dates.floorMM(rec.getLong(tsIndex));
-//                    break;
-//                case DAY:
-//                    sample = Dates.floorDD(rec.getLong(tsIndex));
-//                    break;
-//                case HOUR:
-//                    sample = Dates.floorHH(rec.getLong(tsIndex));
-//                    break;
-//                case MINUTE:
-//                    sample = Dates.floorMI(rec.getLong(tsIndex));
-//                    break;
-//                default:
-//                    sample = 0;
-//            }
-
+            long sample = sampler.resample(rec.getLong(tsIndex));
             if (first) {
                 current = sample;
                 first = false;
@@ -187,20 +165,19 @@ public class ResampledRecordSource extends AbstractImmutableIterator<Record> imp
             }
 
             // we are inside of time window, compute aggregates
-            MultiMap.KeyWriter keyWriter = map.keyWriter();
-            keyWriter.putLong(sample);
-            for (int i = 0; i < keyIndices.length; i++) {
+            MultiMap.KeyWriter kw = map.keyWriter();
+            kw.putLong(sample);
+            for (int i = 0, n = keyIndices.size(); i < n; i++) {
                 int index;
                 KeyWriterHelper.setKey(
-                        keyWriter,
+                        kw,
                         rec,
-                        index = Unsafe.arrayGet(keyIndices, i),
+                        index = keyIndices.getQuick(i),
                         recordSource.getMetadata().getColumnQuick(index).getType()
                 );
             }
 
-            MapValues values = map.getOrCreateValues(keyWriter);
-
+            MapValues values = map.getOrCreateValues(kw);
             for (int i = 0, sz = aggregators.size(); i < sz; i++) {
                 aggregators.getQuick(i).calculate(rec, values);
             }
@@ -215,10 +192,5 @@ public class ResampledRecordSource extends AbstractImmutableIterator<Record> imp
         } while (true);
 
         return (mapRecordSource = map.getCursor()).hasNext();
-    }
-
-
-    public enum SampleBy {
-        YEAR, MONTH, DAY, HOUR, MINUTE, SECOND
     }
 }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.parser;
 
@@ -86,11 +86,10 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testEmptyGroupBy() throws Exception {
         try {
-            parser.parse("select x, y from tab group by");
+            parser.parse("select x, y from tab sample by");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
-            Assert.assertEquals(27, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("end of input"));
+            Assert.assertEquals(28, e.getPosition());
         }
     }
 
@@ -106,14 +105,6 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testGroupBy1() throws Exception {
-        Statement statement = parser.parse("select x,y from tab group by x,y,z");
-        Assert.assertNotNull(statement.getQueryModel());
-        Assert.assertEquals(3, statement.getQueryModel().getGroupBy().size());
-        Assert.assertEquals("[x,y,z]", statement.getQueryModel().getGroupBy().toString());
-    }
-
-    @Test
     public void testInnerJoin() throws Exception {
         Statement statement = parser.parse("select x from a a inner join b on b.x = a.x");
         Assert.assertNotNull(statement.getQueryModel());
@@ -126,33 +117,31 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testInvalidGroupBy1() throws Exception {
         try {
-            parser.parse("select x, y from tab group by x,");
+            parser.parse("select x, y from tab sample by x,");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
-            Assert.assertEquals(32, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("end of input"));
+            Assert.assertEquals(33, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("Unexpected"));
         }
     }
 
     @Test
     public void testInvalidGroupBy2() throws Exception {
         try {
-            parser.parse("select x, y from (tab group by x,)");
+            parser.parse("select x, y from (tab sample by x,)");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
-            Assert.assertEquals(33, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("name expected"));
+            Assert.assertEquals(34, e.getPosition());
         }
     }
 
     @Test
     public void testInvalidGroupBy3() throws Exception {
         try {
-            parser.parse("select x, y from tab group by x, order by y");
+            parser.parse("select x, y from tab sample by x, order by y");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
             Assert.assertEquals(33, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("name expected"));
         }
     }
 
@@ -362,6 +351,13 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertEquals(2, statement.getQueryModel().getJoinModels().size());
         Assert.assertEquals(QueryModel.JoinType.OUTER, statement.getQueryModel().getJoinModels().getQuick(1).getJoinType());
         Assert.assertEquals("b.xa.x=", TestUtils.toRpn(statement.getQueryModel().getJoinModels().getQuick(1).getJoinCriteria()));
+    }
+
+    @Test
+    public void testSampleBy1() throws Exception {
+        Statement statement = parser.parse("select x,y from tab sample by 2m");
+        Assert.assertNotNull(statement.getQueryModel());
+        Assert.assertEquals("2m", statement.getQueryModel().getSampleBy().token);
     }
 
     @Test

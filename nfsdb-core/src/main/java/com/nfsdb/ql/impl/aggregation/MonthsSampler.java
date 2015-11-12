@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,10 +17,27 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl.aggregation;
 
-public interface TimestampResampler {
-    long resample(long value);
+import com.nfsdb.utils.Dates;
+
+public class MonthsSampler implements TimestampSampler {
+    private final int bucket;
+
+    public MonthsSampler(int bucket) {
+        this.bucket = bucket;
+    }
+
+    @Override
+    public long resample(long value) {
+        int y = Dates.getYear(value);
+        boolean l = Dates.isLeapYear(y);
+        int m = Dates.getMonthOfYear(value, y, l);
+        // target month
+        int n = ((m - 1) / bucket) * bucket + 1;
+        return Dates.yearMillis(y, l) +
+                Dates.monthOfYearMillis(n, l);
+    }
 }

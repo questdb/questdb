@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.parser;
 
@@ -48,6 +48,14 @@ final class QueryParser {
 
     private ParserException err(String msg) {
         return new ParserException(toks.position(), msg);
+    }
+
+    private ExprNode expectExpr() throws ParserException {
+        ExprNode n = expr();
+        if (n == null) {
+            throw new ParserException(toks.position(), "Expression expected");
+        }
+        return n;
     }
 
     @SuppressFBWarnings("UCPM_USE_CHARACTER_PARAMETERIZED_METHOD")
@@ -357,18 +365,10 @@ final class QueryParser {
 
         // expect [group by]
 
-        if (tok != null && Chars.equals(tok, "group")) {
+        if (tok != null && Chars.equals(tok, "sample")) {
             expectTok(tok(), "by");
-            do {
-                tok = tok();
-
-                if (groupByStopSet.contains(tok)) {
-                    throw err("Column name expected");
-                }
-
-                model.addGroupBy(tok.toString());
-                tok = optionTok();
-            } while (tok != null && Chars.equals(tok, ","));
+            model.setSampleBy(expectExpr());
+            tok = optionTok();
         }
 
         // expect [order by]
@@ -469,7 +469,7 @@ final class QueryParser {
         aliasStopSet.add("outer");
         aliasStopSet.add("asof");
         aliasStopSet.add("cross");
-        aliasStopSet.add("group");
+        aliasStopSet.add("sample");
         aliasStopSet.add("order");
         aliasStopSet.add("on");
         aliasStopSet.add("timestamp");

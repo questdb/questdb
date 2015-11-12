@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.parser;
 
@@ -36,6 +36,9 @@ import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.ql.*;
 import com.nfsdb.ql.impl.*;
 import com.nfsdb.ql.impl.aggregation.AggregatedRecordSource;
+import com.nfsdb.ql.impl.aggregation.ResampledRecordSource;
+import com.nfsdb.ql.impl.aggregation.SamplerFactory;
+import com.nfsdb.ql.impl.aggregation.TimestampSampler;
 import com.nfsdb.ql.impl.interval.IntervalJournalRecordSource;
 import com.nfsdb.ql.impl.interval.MultiIntervalPartitionSource;
 import com.nfsdb.ql.impl.interval.SingleIntervalSource;
@@ -1634,7 +1637,17 @@ public class QueryCompiler {
                     throw new ParserException(qc.getAst().position, "Internal configuration error. Not an aggregate");
                 }
             }
-            rs = new AggregatedRecordSource(rs, groupKeyColumns, af);
+
+            ExprNode sampleBy = model.getSampleBy();
+            if (sampleBy == null) {
+                rs = new AggregatedRecordSource(rs, groupKeyColumns, af);
+            } else {
+                TimestampSampler sampler = SamplerFactory.from(sampleBy.token);
+                if (sampler == null) {
+                    throw new ParserException(sampleBy.position, "Invalid sample");
+                }
+                rs = new ResampledRecordSource(rs, groupKeyColumns, af, sampler);
+            }
         }
 
         if (outerVirtualColumns.size() > 0) {

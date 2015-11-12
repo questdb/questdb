@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,19 +17,19 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl.aggregation;
 
-public class MillisResampler implements TimestampResampler {
+public class MillisSampler implements TimestampSampler {
     private final long bucket;
 
-    public MillisResampler(long bucket) {
+    public MillisSampler(long bucket) {
         this.bucket = bucket;
     }
 
     @Override
     public long resample(long value) {
-        return value / bucket;
+        return value - value % bucket;
     }
 }

@@ -33,7 +33,7 @@ import org.junit.Test;
 public class NullTest extends AbstractTest {
 
     @Test
-    public void tumbleTryNullTest() throws JournalException, NumericException {
+    public void tumbleDryNullTest() throws JournalException, NumericException {
         final int TEST_DATA_SIZE = (int) 1E3;
         JournalWriter<Quote> w = factory.writer(Quote.class, "quote", 1000);
         long timestamp = Dates.parseDateTime("2013-10-05T10:00:00.000Z");

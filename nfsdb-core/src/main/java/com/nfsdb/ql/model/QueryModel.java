@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.model;
 
@@ -35,7 +35,6 @@ public class QueryModel implements Mutable {
 
     private final ObjList<QueryColumn> columns = new ObjList<>();
     private final ObjList<QueryModel> joinModels = new ObjList<>();
-    private final ObjList<String> groupBy = new ObjList<>();
     private final ObjList<ExprNode> orderBy = new ObjList<>();
     private final IntHashSet dependencies = new IntHashSet();
     private final IntList orderedJoinModels1 = new IntList();
@@ -58,6 +57,7 @@ public class QueryModel implements Mutable {
     private ExprNode alias;
     private ExprNode latestBy;
     private ExprNode timestamp;
+    private ExprNode sampleBy;
     private RecordSource<? extends Record> recordSource;
     private RecordMetadata metadata;
     private JoinContext context;
@@ -85,10 +85,6 @@ public class QueryModel implements Mutable {
         dependencies.add(index);
     }
 
-    public void addGroupBy(String name) {
-        groupBy.add(name);
-    }
-
     public void addJoinModel(QueryModel model) {
         joinModels.add(model);
     }
@@ -109,7 +105,7 @@ public class QueryModel implements Mutable {
         columns.clear();
         joinModels.clear();
         joinModels.add(this);
-        groupBy.clear();
+        sampleBy = null;
         orderBy.clear();
         dependencies.clear();
         parsedWhere.clear();
@@ -166,10 +162,6 @@ public class QueryModel implements Mutable {
 
     public IntHashSet getDependencies() {
         return dependencies;
-    }
-
-    public ObjList<String> getGroupBy() {
-        return groupBy;
     }
 
     public ExprNode getJoinCriteria() {
@@ -279,6 +271,14 @@ public class QueryModel implements Mutable {
         this.recordSource = recordSource;
     }
 
+    public ExprNode getSampleBy() {
+        return sampleBy;
+    }
+
+    public void setSampleBy(ExprNode sampleBy) {
+        this.sampleBy = sampleBy;
+    }
+
     public ExprNode getTimestamp() {
         return timestamp;
     }
@@ -300,7 +300,7 @@ public class QueryModel implements Mutable {
      * Every time ordering takes place optimiser will keep at most two lists:
      * one is last known order the other is new order. If new order cost is better
      * optimiser will replace last known order with new one.
-     * <p/>
+     * <p>
      * To facilitate this behaviour the function will always return non-current list.
      *
      * @return non current order list.

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl.aggregation;
 
@@ -26,15 +26,15 @@ import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.utils.Dates;
 import com.nfsdb.utils.Numbers;
 
-public final class GroupKeyParser {
+public final class SamplerFactory {
 
     /**
      * Parses strings such as '10m', '3M', '5d', '12h', 'y', '35s'
      *
      * @param cs the key
-     * @return instance of appropriate TimestampResampler
+     * @return instance of appropriate TimestampSampler
      */
-    public static TimestampResampler parse(CharSequence cs) {
+    public static TimestampSampler from(CharSequence cs) {
         int k = -1;
 
         // look for end of digits
@@ -58,7 +58,7 @@ public final class GroupKeyParser {
 
         if (k == 0) {
             if (cs.charAt(k) == 'Y') {
-                return YearResampler.INSTANCE;
+                return YearSampler.INSTANCE;
             } else {
                 return null;
             }
@@ -69,19 +69,19 @@ public final class GroupKeyParser {
             switch (cs.charAt(k)) {
                 case 's':
                     // seconds
-                    return new MillisResampler(Dates.SECOND_MILLIS * n);
+                    return new MillisSampler(Dates.SECOND_MILLIS * n);
                 case 'm':
                     // minutes
-                    return new MillisResampler(Dates.MINUTE_MILLIS * n);
+                    return new MillisSampler(Dates.MINUTE_MILLIS * n);
                 case 'h':
                     // hours
-                    return new MillisResampler(Dates.HOUR_MILLIS * n);
+                    return new MillisSampler(Dates.HOUR_MILLIS * n);
                 case 'd':
                     // days
-                    return new MillisResampler(Dates.DAY_MILLIS * n);
+                    return new MillisSampler(Dates.DAY_MILLIS * n);
                 case 'M':
                     // months
-                    return new MonthsResampler(n);
+                    return new MonthsSampler(n);
                 default:
                     return null;
 
