@@ -23,7 +23,7 @@ package com.nfsdb.ql.ops;
 
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
-import com.nfsdb.ql.collections.MapValues;
+import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.VariableColumn;
 

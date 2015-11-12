@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql;
 
@@ -29,7 +29,11 @@ import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.model.Album;
 import com.nfsdb.model.Band;
 import com.nfsdb.model.Quote;
-import com.nfsdb.ql.impl.*;
+import com.nfsdb.ql.impl.JournalPartitionSource;
+import com.nfsdb.ql.impl.JournalSource;
+import com.nfsdb.ql.impl.interval.MultiIntervalPartitionSource;
+import com.nfsdb.ql.impl.interval.SingleIntervalSource;
+import com.nfsdb.ql.impl.latest.KvIndexSymAllHeadRowSource;
 import com.nfsdb.ql.ops.IntConstant;
 import com.nfsdb.ql.ops.IntEqualsOperator;
 import com.nfsdb.ql.ops.SymRecordSourceColumn;

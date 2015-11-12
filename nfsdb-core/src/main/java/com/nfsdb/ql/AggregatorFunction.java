@@ -22,7 +22,7 @@
 package com.nfsdb.ql;
 
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.ql.collections.MapValues;
+import com.nfsdb.ql.impl.map.MapValues;
 
 public interface AggregatorFunction {
 

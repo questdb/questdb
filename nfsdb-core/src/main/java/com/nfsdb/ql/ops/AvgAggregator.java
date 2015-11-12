@@ -26,8 +26,8 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.ql.AggregatorFunction;
 import com.nfsdb.ql.Record;
-import com.nfsdb.ql.collections.MapRecordValueInterceptor;
-import com.nfsdb.ql.collections.MapValues;
+import com.nfsdb.ql.impl.map.MapRecordValueInterceptor;
+import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.storage.ColumnType;
 
 public final class AvgAggregator extends AbstractUnaryOperator implements AggregatorFunction, MapRecordValueInterceptor {

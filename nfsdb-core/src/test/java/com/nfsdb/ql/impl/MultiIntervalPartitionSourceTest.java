@@ -25,6 +25,8 @@ import com.nfsdb.JournalWriter;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.model.Quote;
+import com.nfsdb.ql.impl.interval.MillisIntervalSource;
+import com.nfsdb.ql.impl.interval.MultiIntervalPartitionSource;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Dates;

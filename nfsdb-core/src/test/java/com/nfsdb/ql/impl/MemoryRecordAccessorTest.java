@@ -30,6 +30,7 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.ql.Record;
+import com.nfsdb.ql.impl.join.hash.MemoryRecordAccessor;
 import com.nfsdb.ql.parser.QueryCompiler;
 import com.nfsdb.storage.SequentialMemory;
 import com.nfsdb.test.tools.JournalTestFactory;

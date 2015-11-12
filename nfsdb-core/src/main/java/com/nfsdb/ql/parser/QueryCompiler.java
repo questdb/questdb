@@ -35,6 +35,18 @@ import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.ql.*;
 import com.nfsdb.ql.impl.*;
+import com.nfsdb.ql.impl.aggregation.AggregatedRecordSource;
+import com.nfsdb.ql.impl.interval.IntervalJournalRecordSource;
+import com.nfsdb.ql.impl.interval.MultiIntervalPartitionSource;
+import com.nfsdb.ql.impl.interval.SingleIntervalSource;
+import com.nfsdb.ql.impl.join.AsOfJoinRecordSource;
+import com.nfsdb.ql.impl.join.AsOfPartitionedJoinRecordSource;
+import com.nfsdb.ql.impl.join.CrossJoinRecordSource;
+import com.nfsdb.ql.impl.join.HashJoinRecordSource;
+import com.nfsdb.ql.impl.lambda.*;
+import com.nfsdb.ql.impl.latest.*;
+import com.nfsdb.ql.impl.select.SelectedColumnsRecordSource;
+import com.nfsdb.ql.impl.virtual.VirtualColumnRecordSource;
 import com.nfsdb.ql.model.*;
 import com.nfsdb.ql.ops.FunctionFactories;
 import com.nfsdb.ql.ops.LongConstant;
@@ -1622,7 +1634,7 @@ public class QueryCompiler {
                     throw new ParserException(qc.getAst().position, "Internal configuration error. Not an aggregate");
                 }
             }
-            rs = new GroupByRecordSource(rs, groupKeyColumns, af);
+            rs = new AggregatedRecordSource(rs, groupKeyColumns, af);
         }
 
         if (outerVirtualColumns.size() > 0) {

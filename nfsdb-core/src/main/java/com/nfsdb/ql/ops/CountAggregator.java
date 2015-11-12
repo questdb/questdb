@@ -27,7 +27,7 @@ import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.AggregatorFunction;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
-import com.nfsdb.ql.collections.MapValues;
+import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.storage.ColumnType;
 
 public final class CountAggregator extends AbstractVirtualColumn implements AggregatorFunction, Function {

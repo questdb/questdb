@@ -21,6 +21,7 @@
 
 package com.nfsdb.ql.collections;
 
+import com.nfsdb.ql.impl.join.asof.FreeList;
 import org.junit.Assert;
 import org.junit.Test;
 

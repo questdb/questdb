@@ -27,7 +27,7 @@ import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.model.Quote;
 import com.nfsdb.ql.impl.AllRowSource;
 import com.nfsdb.ql.impl.JournalSource;
-import com.nfsdb.ql.impl.JournalTailPartitionSource;
+import com.nfsdb.ql.impl.unused.JournalTailPartitionSource;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import com.nfsdb.utils.Dates;
