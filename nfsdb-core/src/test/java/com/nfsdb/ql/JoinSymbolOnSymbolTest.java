@@ -37,7 +37,7 @@ import com.nfsdb.ql.impl.join.InnerSkipNullJoinRecordSource;
 import com.nfsdb.ql.impl.join.NestedLoopJoinRecordSource;
 import com.nfsdb.ql.impl.unused.*;
 import com.nfsdb.ql.ops.SymGlue;
-import com.nfsdb.ql.ops.SymRecordSourceColumn;
+import com.nfsdb.ql.ops.col.SymRecordSourceColumn;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.utils.Files;
 import org.junit.Assert;

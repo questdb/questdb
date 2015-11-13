@@ -141,4 +141,19 @@ public class NullCountingTest extends AbstractOptimiserTest {
                         "437\txnull-\n",
                 "select customerId, 'x'+productId+'-' from orders where customerId = 437 and productId = null", true);
     }
+
+    @Test
+    public void testStrNotEqSym() throws Exception {
+        assertThat("col0\n" +
+                        "6327\n",
+                "select count() from orders " +
+                        "where productId != null " +
+                        "and employeeId != null " +
+                        "and quantity != NaN " +
+                        "and price != NaN " +
+                        "and x != NaN " +
+                        "and productId != 'FCLTJCKFM' " +
+                        "and quantity != 12570116270 " +
+                        "and x != 2454524639747643470", true);
+    }
 }

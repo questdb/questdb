@@ -44,7 +44,7 @@ import com.nfsdb.ql.impl.unused.KvIndexTopRowSource;
 import com.nfsdb.ql.impl.unused.StatefulJournalSourceImpl;
 import com.nfsdb.ql.impl.unused.SymBySymCachingLookupKeySource;
 import com.nfsdb.ql.ops.SymGlue;
-import com.nfsdb.ql.ops.SymRecordSourceColumn;
+import com.nfsdb.ql.ops.col.SymRecordSourceColumn;
 import com.nfsdb.ql.parser.QueryCompiler;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.test.tools.JournalTestFactory;

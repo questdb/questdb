@@ -30,6 +30,8 @@ import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.model.ExprNode;
 import com.nfsdb.ql.ops.*;
+import com.nfsdb.ql.ops.col.*;
+import com.nfsdb.ql.ops.constant.*;
 import com.nfsdb.utils.Chars;
 import com.nfsdb.utils.Numbers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;

@@ -24,6 +24,52 @@ package com.nfsdb.ql.ops;
 import com.nfsdb.collections.CharSequenceHashSet;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.ObjObjHashMap;
+import com.nfsdb.ql.ops.conv.*;
+import com.nfsdb.ql.ops.count.*;
+import com.nfsdb.ql.ops.div.DivDoubleOperator;
+import com.nfsdb.ql.ops.eq.*;
+import com.nfsdb.ql.ops.first.FirstDoubleAggregator;
+import com.nfsdb.ql.ops.first.FirstFloatAggregator;
+import com.nfsdb.ql.ops.first.FirstIntAggregator;
+import com.nfsdb.ql.ops.first.FirstLongAggregator;
+import com.nfsdb.ql.ops.gt.DoubleGreaterThanOperator;
+import com.nfsdb.ql.ops.gt.IntGreaterThanOperator;
+import com.nfsdb.ql.ops.gt.LongGreaterThanOperator;
+import com.nfsdb.ql.ops.gte.DoubleGreaterOrEqualOperator;
+import com.nfsdb.ql.ops.gte.IntGreaterOrEqualOperator;
+import com.nfsdb.ql.ops.gte.LongGreaterOrEqualOperator;
+import com.nfsdb.ql.ops.last.*;
+import com.nfsdb.ql.ops.lt.DoubleLessThanOperator;
+import com.nfsdb.ql.ops.lt.IntLessThanOperator;
+import com.nfsdb.ql.ops.lt.LongLessThanOperator;
+import com.nfsdb.ql.ops.lte.DoubleLessOrEqualOperator;
+import com.nfsdb.ql.ops.lte.IntLessOrEqualOperator;
+import com.nfsdb.ql.ops.lte.LongLessOrEqualOperator;
+import com.nfsdb.ql.ops.max.MaxDateAggregator;
+import com.nfsdb.ql.ops.max.MaxDoubleAggregator;
+import com.nfsdb.ql.ops.max.MaxIntAggregator;
+import com.nfsdb.ql.ops.max.MaxLongAggregator;
+import com.nfsdb.ql.ops.min.MinDateAggregator;
+import com.nfsdb.ql.ops.min.MinDoubleAggregator;
+import com.nfsdb.ql.ops.min.MinIntAggregator;
+import com.nfsdb.ql.ops.min.MinLongAggregator;
+import com.nfsdb.ql.ops.minus.MinusDoubleOperator;
+import com.nfsdb.ql.ops.minus.MinusIntOperator;
+import com.nfsdb.ql.ops.minus.MinusLongOperator;
+import com.nfsdb.ql.ops.mult.MultDoubleOperator;
+import com.nfsdb.ql.ops.mult.MultIntOperator;
+import com.nfsdb.ql.ops.mult.MultLongOperator;
+import com.nfsdb.ql.ops.neg.DoubleNegativeOperator;
+import com.nfsdb.ql.ops.neg.IntNegativeOperator;
+import com.nfsdb.ql.ops.neg.LongNegativeOperator;
+import com.nfsdb.ql.ops.neq.*;
+import com.nfsdb.ql.ops.plus.AddDoubleOperator;
+import com.nfsdb.ql.ops.plus.AddIntOperator;
+import com.nfsdb.ql.ops.plus.AddLongOperator;
+import com.nfsdb.ql.ops.plus.StrConcatOperator;
+import com.nfsdb.ql.ops.sum.SumDoubleAggregator;
+import com.nfsdb.ql.ops.sum.SumIntAggregator;
+import com.nfsdb.ql.ops.sum.SumLongAggregator;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.utils.Chars;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -53,6 +99,25 @@ public final class FunctionFactories {
                         return IntEqualsNaNOperator.FACTORY;
                     case LONG:
                         return LongEqualsNaNOperator.FACTORY;
+                }
+            }
+        }
+
+        if (Chars.equals("!=", sig.name) &&
+                sig.paramCount == 2 &&
+                sig.paramTypes.getQuick(1) == ColumnType.DOUBLE &&
+                args.getQuick(1).isConstant()) {
+            double d = args.getQuick(1).getDouble(null);
+
+            // NaN
+            if (d != d) {
+                switch (sig.paramTypes.getQuick(0)) {
+                    case DOUBLE:
+                        return DoubleNotEqualsNanOperator.FACTORY;
+                    case INT:
+                        return IntNotEqualsNaNOperator.FACTORY;
+                    case LONG:
+                        return LongNotEqualsNaNOperator.FACTORY;
                 }
             }
         }
@@ -213,6 +278,23 @@ public final class FunctionFactories {
         binSig("=", ColumnType.LONG, ColumnType.LONG, LongEqualsOperator.FACTORY);
         binSig("=", ColumnType.LONG, ColumnType.INT, LongEqualsOperator.FACTORY);
         binSig("=", ColumnType.INT, ColumnType.LONG, LongEqualsOperator.FACTORY);
+        factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, false), StrEqualsOperator.FACTORY);
+        factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, true), SymEqualsOperator.FACTORY);
+        factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.SYMBOL, false), SymEqualsROperator.FACTORY);
+
+        binSig("!=", ColumnType.INT, ColumnType.INT, IntNotEqualsOperator.FACTORY);
+        binSig("!=", ColumnType.STRING, ColumnType.STRING, StrNotEqualsOperator.FACTORY);
+        binSig("!=", ColumnType.DOUBLE, ColumnType.DOUBLE, DoubleNotEqualsOperator.FACTORY);
+        binSig("!=", ColumnType.INT, ColumnType.DOUBLE, DoubleNotEqualsOperator.FACTORY);
+        binSig("!=", ColumnType.DOUBLE, ColumnType.INT, DoubleNotEqualsOperator.FACTORY);
+        binSig("!=", ColumnType.DOUBLE, ColumnType.LONG, DoubleNotEqualsOperator.FACTORY);
+        binSig("!=", ColumnType.LONG, ColumnType.DOUBLE, DoubleNotEqualsOperator.FACTORY);
+        binSig("!=", ColumnType.LONG, ColumnType.LONG, LongNotEqualsOperator.FACTORY);
+        binSig("!=", ColumnType.LONG, ColumnType.INT, LongNotEqualsOperator.FACTORY);
+        binSig("!=", ColumnType.INT, ColumnType.LONG, LongNotEqualsOperator.FACTORY);
+        factories.put(new Signature().setName("!=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, false), StrNotEqualsOperator.FACTORY);
+        factories.put(new Signature().setName("!=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, true), SymNotEqualsOperator.FACTORY);
+        factories.put(new Signature().setName("!=").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.SYMBOL, false), SymNotEqualsROperator.FACTORY);
 
         triSig("eq", ColumnType.DOUBLE, ColumnType.DOUBLE, ColumnType.DOUBLE, DoubleScaledEqualsOperator.FACTORY);
         triSig("eq", ColumnType.DOUBLE, ColumnType.INT, ColumnType.DOUBLE, DoubleScaledEqualsOperator.FACTORY);
@@ -231,9 +313,6 @@ public final class FunctionFactories {
         unSig("ltod", ColumnType.LONG, LtoDFunction.FACTORY);
         unSig("dtol", ColumnType.DATE, DtoLFunction.FACTORY);
 
-        factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, false), StrEqualsOperator.FACTORY);
-        factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, true), SymEqualsOperator.FACTORY);
-        factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.SYMBOL, false), SymEqualsROperator.FACTORY);
         factories.put(new Signature().setName("~").setParamCount(2).paramType(0, ColumnType.STRING, false).paramType(1, ColumnType.STRING, true), StrRegexOperator.FACTORY);
         factories.put(new Signature().setName("~").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, true), SymRegexOperator.FACTORY);
         binSig("and", ColumnType.BOOLEAN, ColumnType.BOOLEAN, AndOperator.FACTORY);

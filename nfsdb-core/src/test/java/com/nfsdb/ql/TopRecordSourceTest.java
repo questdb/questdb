@@ -26,7 +26,7 @@ import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.model.Quote;
 import com.nfsdb.ql.impl.TopRecordSource;
-import com.nfsdb.ql.ops.LongConstant;
+import com.nfsdb.ql.ops.constant.LongConstant;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;

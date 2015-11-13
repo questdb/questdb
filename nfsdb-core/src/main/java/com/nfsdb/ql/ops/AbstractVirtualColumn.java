@@ -29,11 +29,11 @@ import com.nfsdb.storage.SymbolTable;
 
 import java.io.OutputStream;
 
-abstract class AbstractVirtualColumn implements VirtualColumn {
+public abstract class AbstractVirtualColumn implements VirtualColumn {
     private final ColumnType type;
     private String name;
 
-    AbstractVirtualColumn(ColumnType type) {
+    protected AbstractVirtualColumn(ColumnType type) {
         this.type = type;
     }
 
