@@ -421,6 +421,17 @@ public final class TestUtils {
         }
     }
 
+    public static long toMemory(CharSequence sequence) {
+        long lo = Unsafe.getUnsafe().allocateMemory(sequence.length() * 2);
+        long ptr = lo;
+
+        for (int i = 0; i < sequence.length(); i++) {
+            Unsafe.getUnsafe().putByte(lo++, (byte) sequence.charAt(i));
+        }
+
+        return ptr;
+    }
+
     public static String toRpn(ExprNode node) {
         switch (node.paramCount) {
             case 0:

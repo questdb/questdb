@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
@@ -94,8 +94,8 @@ final class QueryParser {
     }
 
     Statement parse(CharSequence query) throws ParserException {
-        queryModelPool.reset();
-        queryColumnPool.reset();
+        queryModelPool.clear();
+        queryColumnPool.clear();
         return parseInternal(query);
     }
 

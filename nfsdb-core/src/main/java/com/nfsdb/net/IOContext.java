@@ -19,47 +19,28 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.concurrent;
+package com.nfsdb.net;
 
-public class SPSequence extends AbstractSSequence {
-    private final int cycle;
-    private volatile long index = -1;
-    private volatile long cache = -1;
+import com.nfsdb.collections.Mutable;
+import com.nfsdb.net.http.Request;
+import com.nfsdb.net.http.Response;
 
-    public SPSequence(int cycle, WaitStrategy waitStrategy) {
-        super(waitStrategy);
-        this.cycle = cycle;
-    }
+import java.io.Closeable;
 
-    public SPSequence(int cycle) {
-        this(cycle, null);
+public class IOContext implements Closeable, Mutable {
+    // todo: extract config
+    public final Request request = new Request(128 * 1024, 16 * 1024 * 1024, 1024);
+    public final Response response = new Response(1024, 1024 * 1024);
+
+    @Override
+    public void clear() {
+        request.clear();
+        response.clear();
     }
 
     @Override
-    public long availableIndex(long lo) {
-        return index;
-    }
-
-    @Override
-    public long availableIndex() {
-        return index;
-    }
-
-    @Override
-    public void done(long cursor) {
-        index = cursor;
-        barrier.signal();
-    }
-
-    @Override
-    public long next() {
-        long next = index + 1;
-        long lo = next - cycle;
-        return lo > cache && lo > (cache = barrier.availableIndex(lo)) ? -1 : next;
-    }
-
-    @Override
-    public void reset() {
-
+    public void close() {
+        request.close();
+        response.close();
     }
 }

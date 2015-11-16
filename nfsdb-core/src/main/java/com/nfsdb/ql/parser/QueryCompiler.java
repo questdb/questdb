@@ -515,10 +515,10 @@ public class QueryCompiler {
     }
 
     private void clearState() {
-        csPool.reset();
-        exprNodePool.reset();
-        contextPool.reset();
-        intListPool.reset();
+        csPool.clear();
+        exprNodePool.clear();
+        contextPool.clear();
+        intListPool.clear();
         joinClausesSwap1.clear();
         joinClausesSwap2.clear();
         queryFilterAnalyser.reset();

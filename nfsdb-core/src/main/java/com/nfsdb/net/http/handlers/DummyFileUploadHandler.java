@@ -19,47 +19,29 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.concurrent;
+package com.nfsdb.net.http.handlers;
 
-public class SPSequence extends AbstractSSequence {
-    private final int cycle;
-    private volatile long index = -1;
-    private volatile long cache = -1;
+import com.nfsdb.collections.ByteSequence;
+import com.nfsdb.net.http.*;
 
-    public SPSequence(int cycle, WaitStrategy waitStrategy) {
-        super(waitStrategy);
-        this.cycle = cycle;
-    }
+import java.io.IOException;
 
-    public SPSequence(int cycle) {
-        this(cycle, null);
+public class DummyFileUploadHandler implements ContextHandler, MultipartListener {
+    @Override
+    public void onChunk(RequestHeaderBuffer hb, ByteSequence data, boolean continued) {
+
     }
 
     @Override
-    public long availableIndex(long lo) {
-        return index;
+    public void onComplete(Request request, Response response) throws IOException {
+        response.status(200, "text/html; charset=utf-8");
+        response.flushHeader();
+        response.write("OK, got it");
+        response.end();
     }
 
     @Override
-    public long availableIndex() {
-        return index;
-    }
-
-    @Override
-    public void done(long cursor) {
-        index = cursor;
-        barrier.signal();
-    }
-
-    @Override
-    public long next() {
-        long next = index + 1;
-        long lo = next - cycle;
-        return lo > cache && lo > (cache = barrier.availableIndex(lo)) ? -1 : next;
-    }
-
-    @Override
-    public void reset() {
+    public void onHeaders(Request request, Response response) {
 
     }
 }

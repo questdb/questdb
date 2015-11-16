@@ -21,48 +21,35 @@
 
 package com.nfsdb.collections;
 
-import org.jetbrains.annotations.NotNull;
 
-/**
- * Single threaded object pool based on ObjList. The goal is to optimise intermediate allocation of intermediate objects.
- */
-public class ObjectPool<T extends Mutable> implements Mutable {
+public class ByteSequenceImpl implements ByteSequence {
+    private CharSequence sequence;
+    private int lo;
+    private int len;
 
-    private final ObjList<T> list;
-    private final ObjectPoolFactory<T> factory;
-    private int pos = 0;
-    private int size = 0;
-
-    public ObjectPool(@NotNull ObjectPoolFactory<T> factory, int size) {
-        this.list = new ObjList<>(size);
-        this.factory = factory;
-        this.size = size;
-        fill();
+    @Override
+    public byte byteAt(int index) {
+        return (byte) sequence.charAt(lo + index);
     }
 
     @Override
-    public void clear() {
-        pos = 0;
+    public int length() {
+        return len;
     }
 
-    public T next() {
-        if (pos == size) {
-            expand();
+    public ByteSequence of(CharSequence sequence, int lo, int len) {
+        this.sequence = sequence;
+        this.lo = lo;
+        this.len = len;
+        return this;
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder b = new StringBuilder();
+        for (int i = lo; i < lo + len; i++) {
+            b.append(sequence.charAt(i));
         }
-
-        T o = list.getQuick(pos++);
-        o.clear();
-        return o;
-    }
-
-    private void expand() {
-        fill();
-        size <<= 1;
-    }
-
-    private void fill() {
-        for (int i = 0; i < size; i++) {
-            list.add(factory.newInstance());
-        }
+        return b.toString();
     }
 }

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.io.parser;
 
@@ -191,10 +191,10 @@ public abstract class AbstractTextParser implements TextParser {
         DirectByteCharSequence seq = fields[fieldIndex];
 
         if (lastQuotePos > -1) {
-            seq.init(this.fieldLo, lastQuotePos - 1);
+            seq.of(this.fieldLo, lastQuotePos - 1);
             lastQuotePos = -1;
         } else {
-            seq.init(this.fieldLo, this.fieldHi - 1);
+            seq.of(this.fieldLo, this.fieldHi - 1);
         }
 
         this.fieldLo = this.fieldHi;

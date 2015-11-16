@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,19 +17,33 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.collections;
 
 import com.nfsdb.utils.Unsafe;
 
-public class DirectByteCharSequence extends AbstractCharSequence {
+public class DirectByteCharSequence extends AbstractCharSequence implements Mutable, ByteSequence {
+    public static final Factory FACTORY = new Factory();
     private long lo;
     private long hi;
 
-    public void init(long lo, long hi) {
-        this.lo = lo;
-        this.hi = hi;
+    @Override
+    public byte byteAt(int index) {
+        return Unsafe.getUnsafe().getByte(lo + index);
+    }
+
+    @Override
+    public void clear() {
+        this.lo = this.hi = 0;
+    }
+
+    public long getHi() {
+        return hi;
+    }
+
+    public long getLo() {
+        return lo;
     }
 
     @Override
@@ -39,7 +53,7 @@ public class DirectByteCharSequence extends AbstractCharSequence {
 
     @Override
     public char charAt(int index) {
-        return (char) Unsafe.getUnsafe().getByte(lo + index);
+        return (char) byteAt(index);
     }
 
     @Override
@@ -53,5 +67,18 @@ public class DirectByteCharSequence extends AbstractCharSequence {
     public void lshift(long delta) {
         this.lo -= delta;
         this.hi -= delta;
+    }
+
+    public DirectByteCharSequence of(long lo, long hi) {
+        this.lo = lo;
+        this.hi = hi;
+        return this;
+    }
+
+    public static final class Factory implements ObjectPoolFactory<DirectByteCharSequence> {
+        @Override
+        public DirectByteCharSequence newInstance() {
+            return new DirectByteCharSequence();
+        }
     }
 }

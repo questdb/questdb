@@ -619,6 +619,6 @@ final class QueryFilterAnalyser {
     }
 
     void reset() {
-        this.models.reset();
+        this.models.clear();
     }
 }

@@ -21,45 +21,32 @@
 
 package com.nfsdb.concurrent;
 
-public class SPSequence extends AbstractSSequence {
-    private final int cycle;
-    private volatile long index = -1;
-    private volatile long cache = -1;
+import com.nfsdb.utils.Unsafe;
 
-    public SPSequence(int cycle, WaitStrategy waitStrategy) {
-        super(waitStrategy);
-        this.cycle = cycle;
-    }
+public abstract class SynchronizedRunnable implements Runnable {
+    private static final long LOCKED_OFFSET;
 
-    public SPSequence(int cycle) {
-        this(cycle, null);
-    }
+    @SuppressWarnings({"unused", "FieldCanBeLocal"})
+    private volatile int locked = 0;
 
     @Override
-    public long availableIndex(long lo) {
-        return index;
+    public void run() {
+        if (Unsafe.getUnsafe().compareAndSwapInt(this, LOCKED_OFFSET, 0, 1)) {
+            try {
+                _run();
+            } finally {
+                locked = 0;
+            }
+        }
     }
 
-    @Override
-    public long availableIndex() {
-        return index;
-    }
+    protected abstract void _run();
 
-    @Override
-    public void done(long cursor) {
-        index = cursor;
-        barrier.signal();
-    }
-
-    @Override
-    public long next() {
-        long next = index + 1;
-        long lo = next - cycle;
-        return lo > cache && lo > (cache = barrier.availableIndex(lo)) ? -1 : next;
-    }
-
-    @Override
-    public void reset() {
-
+    static {
+        try {
+            LOCKED_OFFSET = Unsafe.getUnsafe().objectFieldOffset(SynchronizedRunnable.class.getDeclaredField("locked"));
+        } catch (NoSuchFieldException e) {
+            throw new Error(e);
+        }
     }
 }

@@ -19,47 +19,12 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.concurrent;
+package com.nfsdb.net.http;
 
-public class SPSequence extends AbstractSSequence {
-    private final int cycle;
-    private volatile long index = -1;
-    private volatile long cache = -1;
+import java.io.IOException;
 
-    public SPSequence(int cycle, WaitStrategy waitStrategy) {
-        super(waitStrategy);
-        this.cycle = cycle;
-    }
+public interface ContextHandler {
+    void onComplete(Request request, Response response) throws IOException;
 
-    public SPSequence(int cycle) {
-        this(cycle, null);
-    }
-
-    @Override
-    public long availableIndex(long lo) {
-        return index;
-    }
-
-    @Override
-    public long availableIndex() {
-        return index;
-    }
-
-    @Override
-    public void done(long cursor) {
-        index = cursor;
-        barrier.signal();
-    }
-
-    @Override
-    public long next() {
-        long next = index + 1;
-        long lo = next - cycle;
-        return lo > cache && lo > (cache = barrier.availableIndex(lo)) ? -1 : next;
-    }
-
-    @Override
-    public void reset() {
-
-    }
+    void onHeaders(Request request, Response response);
 }

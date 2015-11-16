@@ -60,7 +60,7 @@ public class ExprParser {
     }
 
     public void parseExpr(CharSequence in, ExprListener listener) throws ParserException {
-        exprNodePool.reset();
+        exprNodePool.clear();
         toks.setContent(in);
         parseExpr(listener);
     }

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,14 +17,15 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
-package com.nfsdb.net;
+package com.nfsdb.exceptions;
 
-import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.SocketChannel;
+@SuppressWarnings("ThrowableInstanceNeverThrown")
+public final class InvalidMultipartHeader extends Exception {
+    public static final InvalidMultipartHeader INSTANCE = new InvalidMultipartHeader();
 
-public interface ContextHandler {
-    void handle(Request request, Session session, SocketChannel channel, ByteBuffer buffer) throws IOException;
+    private InvalidMultipartHeader() {
+        super("Invalid format at boundary start");
+    }
 }

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,123 +17,79 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net;
 
-import com.lmax.disruptor.BlockingWaitStrategy;
-import com.lmax.disruptor.FatalExceptionHandler;
-import com.lmax.disruptor.RingBuffer;
-import com.lmax.disruptor.WorkerPool;
-import com.nfsdb.collections.CharSequenceObjHashMap;
-import com.nfsdb.collections.ObjHashSet;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import com.nfsdb.collections.ObjList;
+import com.nfsdb.concurrent.MCSequence;
+import com.nfsdb.concurrent.RingQueue;
+import com.nfsdb.concurrent.SPSequence;
+import com.nfsdb.concurrent.Worker;
+import com.nfsdb.net.http.handlers.DummyFileUploadHandler;
 
 import java.io.IOException;
-import java.lang.reflect.Field;
 import java.net.InetSocketAddress;
-import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
-import java.nio.channels.SocketChannel;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.CountDownLatch;
 
 public class HttpServer {
-    private static final int BUFFER_SIZE = 1024 * 8;
-    private final CharSequenceObjHashMap<ContextHandler> contextHandlers = new CharSequenceObjHashMap<>();
     private final InetSocketAddress address;
-    private final int threadCount;
-    private ExecutorService executor;
-    private WorkerPool<NetworkEvent> workerPool;
+    private final ObjList<Worker> workers;
+    private final CountDownLatch haltLatch;
+    private final int ioQueueSize;
+    private final int workerCount;
     private ServerSocketChannel channel;
     private Selector selector;
-    private Dispatcher dispatcher;
 
-    public HttpServer(final InetSocketAddress address, int threadCount) {
+    public HttpServer(InetSocketAddress address, int workerCount, int ioQueueSize) {
         this.address = address;
-        this.threadCount = threadCount;
+        this.haltLatch = new CountDownLatch(workerCount);
+        this.workers = new ObjList<>(workerCount);
+        this.ioQueueSize = ioQueueSize;
+        this.workerCount = workerCount;
     }
 
-    public static void main(String[] args) throws IOException, InterruptedException {
-        HttpServer server = new HttpServer(new InetSocketAddress(9000), 2);
-
-        server.addContext("/hello", new ContextHandler() {
-            @Override
-            public void handle(Request request, Session session, SocketChannel channel, ByteBuffer buffer) throws IOException {
-                final String cannedResponse = "HTTP/1.1 200 OK\r\n" +
-                        "Content-Length:14\r\n" +
-                        "Content-Type:text/html\r\n" +
-                        "\r\n" +
-                        "This is a test";
-
-                buffer.clear();
-                for (int i = 0, n = cannedResponse.length(); i < n; i++) {
-                    buffer.put((byte) cannedResponse.charAt(i));
-                }
-                buffer.flip();
-                while (buffer.hasRemaining()) {
-                    channel.write(buffer);
-                }
-
-            }
-        });
-
-        server.start();
+    public static void main(String[] args) throws IOException {
+        new HttpServer(new InetSocketAddress(9000), 2, 1024).start();
+        System.out.println("Server started");
     }
 
-    public void addContext(String context, ContextHandler handler) {
-        contextHandlers.put(context, handler);
-    }
-
-    public void halt() throws InterruptedException, IOException {
-        dispatcher.halt();
-        workerPool.halt();
-        executor.shutdownNow();
+    public void halt() throws IOException, InterruptedException {
+        for (int i = 0; i < workers.size(); i++) {
+            workers.getQuick(i).halt();
+        }
+        haltLatch.await();
         selector.close();
         channel.close();
     }
 
     public void start() throws IOException {
-        this.executor = Executors.newFixedThreadPool(threadCount + 1);
         this.channel = ServerSocketChannel.open();
         this.channel.bind(address);
         this.channel.configureBlocking(false);
-        this.selector = openSelector();
-        RingBuffer<NetworkEvent> networkEvents = RingBuffer.createSingleProducer(NetworkEvent.EVENT_FACTORY, BUFFER_SIZE, new BlockingWaitStrategy());
-        this.dispatcher = new Dispatcher(selector, channel.register(selector, SelectionKey.OP_ACCEPT), networkEvents);
-        Worker[] workers = new Worker[threadCount];
-        for (int i = 0; i < threadCount; i++) {
-            workers[i] = new Worker(dispatcher, contextHandlers);
-        }
-        this.workerPool = new WorkerPool<>(networkEvents, networkEvents.newBarrier(), new FatalExceptionHandler(), workers);
-        networkEvents.addGatingSequences(workerPool.getWorkerSequences());
-        executor.submit(dispatcher);
-        workerPool.start(executor);
-    }
+        this.selector = Selector.open();
 
-    @SuppressFBWarnings({"REC_CATCH_EXCEPTION"})
-    private Selector openSelector() throws IOException {
-        Selector selector = Selector.open();
+        RingQueue<IOEvent> ioQueue = new RingQueue<>(IOEvent.FACTORY, ioQueueSize);
+        SPSequence ioPubSequence = new SPSequence(ioQueueSize);
+        MCSequence ioSubSequence = new MCSequence(ioQueueSize, null);
+        ioPubSequence.followedBy(ioSubSequence);
+        ioSubSequence.followedBy(ioPubSequence);
 
-        ObjHashSet<SelectionKey> set = new ObjHashSet<>();
+        IOLoopRunnable ioLoop = new IOLoopRunnable(selector, channel.register(selector, SelectionKey.OP_ACCEPT), ioQueue, ioPubSequence, ioQueueSize);
+        IOHttpRunnable ioHttp = new IOHttpRunnable(ioQueue, ioSubSequence, ioLoop);
+        ioHttp.add("/up", new DummyFileUploadHandler());
 
-        try {
-            Class<?> selectorImplClass = Class.forName("sun.nio.ch.SelectorImpl", false, HttpServer.class.getClassLoader());
-            // Ensure the current selector implementation is what we can instrument.
-            if (!selectorImplClass.isAssignableFrom(selector.getClass())) {
-                return selector;
-            }
-            Field selectedKeysField = selectorImplClass.getDeclaredField("selectedKeys");
-            Field publicSelectedKeysField = selectorImplClass.getDeclaredField("publicSelectedKeys");
-            selectedKeysField.setAccessible(true);
-            publicSelectedKeysField.setAccessible(true);
-            selectedKeysField.set(selector, set);
-            publicSelectedKeysField.set(selector, set);
-            return selector;
-        } catch (Exception e) {
-            return selector;
+        ObjList<Runnable> jobs = new ObjList<>();
+        jobs.add(ioLoop);
+        jobs.add(ioHttp);
+
+        for (int i = 0; i < workerCount; i++) {
+            Worker w;
+            workers.add(w = new Worker(jobs, haltLatch));
+            w.start();
         }
     }
 }

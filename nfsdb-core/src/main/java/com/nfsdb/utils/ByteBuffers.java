@@ -23,6 +23,7 @@ package com.nfsdb.utils;
 
 import com.nfsdb.exceptions.JournalDisconnectedChannelException;
 import com.nfsdb.exceptions.JournalNetworkException;
+import com.nfsdb.exceptions.SlowChannelException;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.IOException;
@@ -110,6 +111,27 @@ public final class ByteBuffers {
             to.position(to.position() + d);
         } else {
             to.put(from);
+        }
+    }
+
+    public static int copyNonBlocking(ReadableByteChannel channel, ByteBuffer to) throws SlowChannelException, IOException {
+        try {
+            int r = to.remaining();
+            int target = r;
+            while (target > 0) {
+                int result = channel.read(to);
+                if (result <= 0) {
+                    throw SlowChannelException.INSTANCE;
+                }
+
+                if (result < target) {
+                    return result + r - target;
+                }
+                target -= result;
+            }
+            return r;
+        } finally {
+            to.flip();
         }
     }
 
