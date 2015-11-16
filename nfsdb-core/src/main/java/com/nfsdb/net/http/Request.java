@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.net.http;
 
@@ -163,7 +163,7 @@ public class Request implements Closeable, Mutable {
                 if (p > hi) {
                     break;
                 }
-            } else {
+            } else if (b == '=') {
                 name = name == null ? pool.next().of(_lo, p - 1) : name.of(_lo, p - 1);
                 _lo = p;
                 swallowSpace = false;
