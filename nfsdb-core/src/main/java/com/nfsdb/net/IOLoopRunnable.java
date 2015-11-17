@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net;
 
@@ -103,7 +103,7 @@ public class IOLoopRunnable extends SynchronizedRunnable {
     private void configure(SocketChannel channel) throws IOException {
         channel.configureBlocking(false);
         channel.setOption(StandardSocketOptions.TCP_NODELAY, Boolean.TRUE);
-        channel.setOption(StandardSocketOptions.SO_RCVBUF, ZERO);
+        channel.setOption(StandardSocketOptions.SO_RCVBUF, 1024 * 1024);
         channel.register(selector, SelectionKey.OP_READ).attach(new IOContext());
     }
 

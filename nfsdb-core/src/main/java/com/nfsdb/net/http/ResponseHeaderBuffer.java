@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,10 +17,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
+import com.nfsdb.collections.IntObjHashMap;
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.exceptions.ResponseHeaderBufferTooSmallException;
 import com.nfsdb.utils.ByteBuffers;
@@ -37,6 +38,8 @@ import java.util.Calendar;
 import java.util.TimeZone;
 
 public class ResponseHeaderBuffer implements Closeable, Mutable {
+    private static IntObjHashMap<CharSequence> statusMap = new IntObjHashMap<>();
+
     private final long headerPtr;
     private final long limit;
     private ByteBuffer headers;
@@ -97,7 +100,12 @@ public class ResponseHeaderBuffer implements Closeable, Mutable {
 
     void flush(WritableByteChannel channel) throws IOException {
         headers.limit((int) (_wptr - headerPtr));
+        MultipartParser.dump(headers);
         channel.write(headers);
         headers.clear();
+    }
+
+    static {
+        statusMap.put(200, "OK");
     }
 }

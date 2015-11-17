@@ -31,6 +31,7 @@ public class Worker extends Thread {
 
     private final ObjList<Runnable> jobs;
     private final CountDownLatch haltLatch;
+    @SuppressWarnings("FieldCanBeLocal")
     private volatile int running = 0;
 
     public Worker(ObjList<Runnable> jobs, CountDownLatch haltLatch) {

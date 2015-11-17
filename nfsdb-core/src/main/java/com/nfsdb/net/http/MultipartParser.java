@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
@@ -30,6 +30,7 @@ import com.nfsdb.exceptions.InvalidMultipartHeader;
 import com.nfsdb.utils.Unsafe;
 
 import java.io.Closeable;
+import java.nio.ByteBuffer;
 
 public class MultipartParser implements Closeable, Mutable {
 
@@ -45,6 +46,14 @@ public class MultipartParser implements Closeable, Mutable {
     public MultipartParser(int headerBufSize, ObjectPool<DirectByteCharSequence> pool) {
         this.hb = new RequestHeaderBuffer(headerBufSize, pool);
         clear();
+    }
+
+    public static void dump(ByteBuffer b) {
+        int p = b.position();
+        while (b.hasRemaining()) {
+            System.out.print((char) b.get());
+        }
+        b.position(p);
     }
 
     @Override
@@ -79,6 +88,8 @@ public class MultipartParser implements Closeable, Mutable {
                     break;
                 case START_BOUNDARY:
                     boundaryPtr = 1;
+                    // fall thru
+                case PARTIAL_START_BOUNDARY:
                     switch (matchBoundary(ptr, hi)) {
                         case INCOMPLETE:
                             state = State.PARTIAL_START_BOUNDARY;
@@ -91,27 +102,12 @@ public class MultipartParser implements Closeable, Mutable {
                             throw InvalidMultipartHeader.INSTANCE;
                     }
                     break;
-                case PARTIAL_START_BOUNDARY:
-                    //todo: review if we can fall through
-                    switch (matchBoundary(ptr, hi)) {
-                        case INCOMPLETE:
-                            return false;
-                        case MATCH:
-                            state = State.PRE_HEADERS;
-                            ptr += consumedBoundaryLen;
-                            break;
-                        default:
-                            throw InvalidMultipartHeader.INSTANCE;
-                    }
-                    break;
                 case PRE_HEADERS:
                     switch (Unsafe.getUnsafe().getByte(ptr)) {
-                        case '\r':
-                            ptr++;
-                            break;
                         case '\n':
-                            // todo: review fall thru
                             state = State.HEADERS;
+                            // fall thru
+                        case '\r':
                             ptr++;
                             break;
                         case '-':
@@ -176,7 +172,6 @@ public class MultipartParser implements Closeable, Mutable {
 
         return false;
     }
-
 
     private BoundaryStatus matchBoundary(long lo, long hi) {
         long start = lo;

@@ -110,6 +110,7 @@ public class IOHttpRunnable implements Runnable {
                             handler.onHeaders(r, response);
                             feedMultipartContent((MultipartListener) handler, r, channel);
                             handler.onComplete(r, response);
+                            r.clear();
                         } else {
                             // todo: 400 - bad request
                         }

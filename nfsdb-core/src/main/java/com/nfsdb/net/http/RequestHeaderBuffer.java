@@ -57,7 +57,6 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
     public void clear() {
         this.needMethod = true;
         this._wptr = this._lo = this.headerPtr;
-        pool.clear();
         this.incomplete = true;
         this.headers.clear();
         this.method = null;

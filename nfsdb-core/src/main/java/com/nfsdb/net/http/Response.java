@@ -23,6 +23,7 @@ package com.nfsdb.net.http;
 
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.exceptions.ResponseHeaderBufferTooSmallException;
+import com.nfsdb.io.sink.DirectUnboundedAnsiSink;
 import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Numbers;
 import com.nfsdb.utils.Unsafe;
@@ -39,6 +40,7 @@ public class Response implements Closeable, Mutable {
     private final long outPtr;
     private final long limit;
     private final ByteBuffer chunkHeader;
+    private final DirectUnboundedAnsiSink chunkSink;
     private final ResponseHeaderBuffer hb;
     private WritableByteChannel channel;
     private long _wptr;
@@ -56,7 +58,10 @@ public class Response implements Closeable, Mutable {
         int sz = Numbers.ceilPow2(contentBufferSize);
         this.out = ByteBuffer.allocateDirect(sz);
         this.hb = new ResponseHeaderBuffer(headerBufferSize);
-        this.chunkHeader = ByteBuffer.allocateDirect((int) Math.log10(sz) + 5);
+        // size is 32bit int, as hex string max 8 bytes
+        this.chunkHeader = ByteBuffer.allocateDirect(8 + 2 * EOL.length());
+        this.chunkSink = new DirectUnboundedAnsiSink(((DirectBuffer) chunkHeader).address());
+        this.chunkSink.put(EOL);
         this.outPtr = this._wptr = ((DirectBuffer) out).address();
         this.limit = outPtr + sz;
     }
@@ -91,6 +96,7 @@ public class Response implements Closeable, Mutable {
         if (lim > 0) {
             chunk(lim);
             out.limit(lim);
+            MultipartParser.dump(out);
             channel.write(out);
             out.clear();
             _wptr = outPtr;
@@ -124,14 +130,13 @@ public class Response implements Closeable, Mutable {
         return this;
     }
 
-    //todo: optimise
     private void chunk(int len) throws IOException {
         chunkHeader.clear();
-        String h = EOL + Integer.toHexString(len) + EOL;
-        for (int i = 0; i < h.length(); i++) {
-            chunkHeader.put((byte) h.charAt(i));
-        }
-        chunkHeader.flip();
+        chunkSink.clear(EOL.length());
+        Numbers.appendHex(chunkSink, len);
+        chunkSink.put(EOL);
+        chunkHeader.limit(chunkSink.length());
+        MultipartParser.dump(chunkHeader);
         channel.write(chunkHeader);
     }
 }
