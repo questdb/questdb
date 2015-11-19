@@ -34,8 +34,6 @@ import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.query.AbstractResultSetBuilder;
 import com.nfsdb.query.api.Query;
-import com.nfsdb.query.iterator.ConcurrentIterator;
-import com.nfsdb.query.iterator.JournalPeekingIterator;
 import com.nfsdb.query.spi.QueryImpl;
 import com.nfsdb.storage.*;
 import com.nfsdb.utils.*;
@@ -94,10 +92,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
         configure();
     }
 
-    public JournalPeekingIterator<T> bufferedIterator() {
-        return query().all().bufferedIterator();
-    }
-
     /**
      * Closes all columns in all partitions.
      */
@@ -119,10 +113,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
         } else {
             throw new JournalRuntimeException("Already closed: %s", this);
         }
-    }
-
-    public ConcurrentIterator<T> concurrentIterator() {
-        return query().all().concurrentIterator();
     }
 
     public TempPartition<T> createTempPartition(String name) throws JournalException {
@@ -357,29 +347,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
         return getClass().getName() + "[location=" + location + ", " + "mode=" + getMode() + ", " + ", metadata=" + metadata + ']';
     }
 
-    /**
-     * Same as #incrementBuffered(). The only difference that new instance of T is created on every iteration.
-     *
-     * @return Iterator that traverses journal increment
-     * @since 2.0.1
-     */
-    public JournalPeekingIterator<T> increment() {
-        return query().all().incrementIterator();
-    }
-
-    /**
-     * Creates buffered iterator for journal increment before and after #refresh() call.
-     * This is useful when you have a two threads, one writer and another reader, tailing former writer.
-     * Reader would be refreshed periodically and if there is data increment, returned iterator would
-     * traverse it.
-     *
-     * @return Iterator that traverses journal increment
-     * @since 2.0.1
-     */
-    public JournalPeekingIterator<T> incrementBuffered() {
-        return query().all().incrementBufferedIterator();
-    }
-
     public long incrementRowID(long rowID) throws JournalException {
 
         int count = getPartitionCount();
@@ -436,7 +403,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
 
     @Override
     public Iterator<T> iterator() {
-        return query().all().iterator();
+        return JournalIterators.iterator(this);
     }
 
     @SuppressWarnings("unchecked")

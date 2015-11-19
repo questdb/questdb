@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ha;
 
@@ -66,7 +66,6 @@ public class JournalServer {
     private final List<SocketChannelHolder> channels = new CopyOnWriteArrayList<>();
     private final OnDemandAddressSender addressSender;
     private final AuthorizationHandler authorizationHandler;
-    private final JournalServerLogger serverLogger = new JournalServerLogger();
     private final int uid;
     private final IntResponseConsumer intResponseConsumer = new IntResponseConsumer();
     private final IntResponseProducer intResponseProducer = new IntResponseProducer();
@@ -126,10 +125,6 @@ public class JournalServer {
         return factory;
     }
 
-    public JournalServerLogger getLogger() {
-        return serverLogger;
-    }
-
     public void halt(long timeout, TimeUnit unit) {
         if (!running.compareAndSet(true, false)) {
             return;
@@ -164,9 +159,6 @@ public class JournalServer {
 
         LOGGER.info("Closing channels on %d", uid);
         closeChannels();
-
-        LOGGER.info("Stopping logger on %d", uid);
-        serverLogger.halt();
 
         try {
             if (timeout > 0) {
@@ -205,7 +197,6 @@ public class JournalServer {
     }
 
     public void start() throws JournalNetworkException {
-        serverLogger.start();
         for (ObjIntHashMap.Entry<JournalWriter> e : writers) {
             JournalEventPublisher publisher = new JournalEventPublisher(e.value, bridge);
             e.key.setTxListener(publisher);

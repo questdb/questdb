@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ha;
 
@@ -45,6 +45,7 @@ import com.nfsdb.ha.protocol.CommandConsumer;
 import com.nfsdb.ha.protocol.CommandProducer;
 import com.nfsdb.ha.protocol.Version;
 import com.nfsdb.ha.protocol.commands.*;
+import com.nfsdb.logging.Logger;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
@@ -54,6 +55,8 @@ import java.nio.channels.WritableByteChannel;
 
 @SuppressFBWarnings({"PL_PARALLEL_LISTS", "LII_LIST_INDEXED_ITERATING", "LII_LIST_INDEXED_ITERATING"})
 public class JournalServerAgent {
+
+    private final static Logger LOGGER = Logger.getLogger(JournalServerAgent.class);
 
     private static final byte JOURNAL_INDEX_NOT_FOUND = -1;
     private final IntIntHashMap writerToReaderMap = new IntIntHashMap();
@@ -110,7 +113,7 @@ public class JournalServerAgent {
                 break;
             case DELTA_REQUEST_CMD:
                 checkAuthorized(channel);
-                log(ServerLogMsg.Level.TRACE, "DeltaRequest command received");
+                LOGGER.trace("{1} DeltaRequest command received", socketAddress);
                 journalClientStateConsumer.read(channel);
                 storeDeltaRequest(channel, journalClientStateConsumer.getValue());
                 break;
@@ -158,7 +161,7 @@ public class JournalServerAgent {
                 }
                 authorized = authorizationHandler.isAuthorized(value, keys);
             } catch (Throwable e) {
-                log(ServerLogMsg.Level.ERROR, "Exception in authorization handler:", e);
+                LOGGER.error("{1} Exception in authorization handler:", e, socketAddress);
                 authorized = false;
             }
         }
@@ -232,12 +235,7 @@ public class JournalServerAgent {
             }
             return dataSent;
         } catch (Exception e) {
-            server.getLogger().msg()
-                    .setLevel(ServerLogMsg.Level.ERROR)
-                    .setSocketAddress(socketAddress)
-                    .setMessage("Client appears to be refusing new data from server, corrupt client")
-                    .setException(e)
-                    .send();
+            LOGGER.debug("{1} Client appears to be refusing new data from server, corrupt client", e, socketAddress);
             return false;
         }
     }
@@ -251,7 +249,7 @@ public class JournalServerAgent {
 
         journalDeltaProducer.configure(txn, txPin);
         if (journalDeltaProducer.hasContent()) {
-            server.getLogger().msg().setMessage("Sending data").setSocketAddress(socketAddress).send();
+            LOGGER.debug("{1} Sending data", socketAddress);
             commandProducer.write(channel, Command.JOURNAL_DELTA_CMD);
             intResponseProducer.write(channel, index);
             journalDeltaProducer.write(channel);
@@ -267,29 +265,11 @@ public class JournalServerAgent {
 
     private void error(WritableByteChannel channel, String message, Exception e) throws JournalNetworkException {
         stringResponseProducer.write(channel, message);
-        server.getLogger().msg()
-                .setLevel(ServerLogMsg.Level.INFO)
-                .setSocketAddress(socketAddress)
-                .setMessage(message)
-                .setException(e)
-                .send();
+        LOGGER.info(message, e, socketAddress);
     }
 
     private JournalDeltaProducer getProducer(int index) {
         return producers.get(index);
-    }
-
-    private void log(ServerLogMsg.Level level, String msg) {
-        log(level, msg, null);
-    }
-
-    private void log(ServerLogMsg.Level level, String msg, Throwable e) {
-        server.getLogger().msg()
-                .setLevel(level)
-                .setSocketAddress(socketAddress)
-                .setMessage(msg)
-                .setException(e)
-                .send();
     }
 
     private void ok(WritableByteChannel channel) throws JournalNetworkException {
@@ -318,20 +298,11 @@ public class JournalServerAgent {
             if (dataSent) {
                 commandProducer.write(channel, Command.SERVER_READY_CMD);
             } else if (blocking) {
-                server.getLogger().msg()
-                        .setLevel(ServerLogMsg.Level.INFO)
-                        .setSocketAddress(socketAddress)
-                        .setMessage("Client appears to be refusing new data from server, corrupt client")
-                        .send();
+                LOGGER.info("{1} Client appears to be refusing new data from server, corrupt client", socketAddress);
             }
         } else {
             if (server.isRunning()) {
                 commandProducer.write(channel, Command.SERVER_HEARTBEAT);
-                server.getLogger().msg()
-                        .setLevel(ServerLogMsg.Level.TRACE)
-                        .setSocketAddress(socketAddress)
-                        .setMessage("Heartbeat")
-                        .send();
             } else {
                 commandProducer.write(channel, Command.SERVER_SHUTDOWN);
             }
@@ -347,7 +318,7 @@ public class JournalServerAgent {
 
     @SuppressWarnings("unchecked")
     private void setClientKey(ByteChannel channel) throws JournalNetworkException {
-        log(ServerLogMsg.Level.TRACE, "SetKey command received");
+        LOGGER.trace("{1} SetKey command received", socketAddress);
         setKeyRequestConsumer.read(channel);
         IndexedJournalKey indexedKey = setKeyRequestConsumer.getValue();
 

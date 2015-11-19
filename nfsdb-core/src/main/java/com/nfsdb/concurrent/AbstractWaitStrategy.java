@@ -21,38 +21,19 @@
 
 package com.nfsdb.concurrent;
 
-public class SCSequence extends AbstractSSequence {
+public abstract class AbstractWaitStrategy implements WaitStrategy {
+    private volatile boolean alerted = false;
 
-    private volatile long index = -1;
-    private volatile long cache = -1;
-
-    public SCSequence(WaitStrategy waitStrategy) {
-        super(waitStrategy);
-    }
-
-    public SCSequence() {
+    @Override
+    public void alert() {
+        alerted = true;
+        signal();
     }
 
     @Override
-    public long availableIndex(long lo) {
-        return this.index;
-    }
-
-    @Override
-    public void done(long cursor) {
-        index = cursor;
-        barrier.signal();
-    }
-
-    @Override
-    public long next() {
-        long next = index + 1;
-        return next > cache && next > (cache = barrier.availableIndex(next)) ? -1 : next;
-    }
-
-    @Override
-    public void reset() {
-        index = -1;
-        cache = -1;
+    public void checkAlerted() {
+        if (alerted) {
+            throw AlertedException.INSTANCE;
+        }
     }
 }

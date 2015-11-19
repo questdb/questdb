@@ -61,7 +61,7 @@ public class IteratorTest extends AbstractTest {
         TestUtils.generateQuoteData(origin, 10000);
 
         int count = 0;
-        for (Quote q : r.incrementBuffered()) {
+        for (Quote q : JournalIterators.incrementBufferedIterator(r)) {
             count++;
         }
 
@@ -69,7 +69,7 @@ public class IteratorTest extends AbstractTest {
         w.append(origin.query().all().asResultSet().subset(0, 5000));
         w.commit();
 
-        for (Quote q : r.incrementBuffered()) {
+        for (Quote q : JournalIterators.incrementBufferedIterator(r)) {
             count++;
         }
         Assert.assertEquals(5000, count);
@@ -77,7 +77,7 @@ public class IteratorTest extends AbstractTest {
         w.commit();
 
         count = 0;
-        for (Quote q : r.incrementBuffered()) {
+        for (Quote q : JournalIterators.incrementBufferedIterator(r)) {
             count++;
         }
         Assert.assertEquals(5000, count);
@@ -101,7 +101,7 @@ public class IteratorTest extends AbstractTest {
         TestUtils.generateQuoteData(origin, 10000);
 
         int count = 0;
-        for (Quote q : r.increment()) {
+        for (Quote q : JournalIterators.incrementIterator(r)) {
             count++;
         }
 
@@ -109,7 +109,7 @@ public class IteratorTest extends AbstractTest {
         w.append(origin.query().all().asResultSet().subset(0, 5000));
         w.commit();
 
-        for (Quote q : r.increment()) {
+        for (Quote q : JournalIterators.incrementIterator(r)) {
             count++;
         }
         Assert.assertEquals(5000, count);
@@ -117,7 +117,7 @@ public class IteratorTest extends AbstractTest {
         w.commit();
 
         count = 0;
-        for (Quote q : r.increment()) {
+        for (Quote q : JournalIterators.incrementIterator(r)) {
             count++;
         }
         Assert.assertEquals(5000, count);
@@ -137,7 +137,7 @@ public class IteratorTest extends AbstractTest {
         }
 
         int i = 0;
-        for (Quote q : r.bufferedIterator()) {
+        for (Quote q : JournalIterators.bufferedIterator(r)) {
             Assert.assertEquals(q, posList.get(i++));
         }
         i = 0;
@@ -156,8 +156,8 @@ public class IteratorTest extends AbstractTest {
         TestUtils.generateQuoteData(w, 100000);
         Journal<Quote> r = factory.reader(Quote.class);
         Journal<Quote> r2 = factory.reader(Quote.class);
-        try (ConcurrentIterator<Quote> it = r.concurrentIterator()) {
-            TestUtils.assertEquals(r2.bufferedIterator(), it);
+        try (ConcurrentIterator<Quote> it = JournalIterators.concurrentIterator(r)) {
+            TestUtils.assertEquals(JournalIterators.bufferedIterator(r2), it);
         }
     }
 
@@ -174,7 +174,7 @@ public class IteratorTest extends AbstractTest {
 
         List<JournalIterator<Quote>> list = new ArrayList<>();
         for (int i = 0; i < journals.size(); i++) {
-            list.add(journals.get(i).bufferedIterator());
+            list.add(JournalIterators.bufferedIterator(journals.get(i)));
         }
 
         long ts = 0;
@@ -196,18 +196,18 @@ public class IteratorTest extends AbstractTest {
         }};
 
         JournalWriter<Quote> writer = factory.writer(Quote.class, "quote-merge");
-        writer.mergeAppend(journals.get(3).bufferedIterator());
+        writer.mergeAppend(JournalIterators.bufferedIterator(journals.get(3)));
         writer.commit();
 
 
         List<JournalPeekingIterator<Quote>> list = new ArrayList<>();
         for (int i = 0; i < journals.size(); i++) {
-            list.add(journals.get(i).bufferedIterator());
+            list.add(JournalIterators.bufferedIterator(journals.get(i)));
         }
         writer.mergeAppend(MergingPeekingIterator.mergePeek(list, comparator));
         writer.commit();
         Assert.assertEquals(60000, writer.size());
-        TestUtils.assertOrder(writer.bufferedIterator());
+        TestUtils.assertOrder(JournalIterators.bufferedIterator(writer));
     }
 
     @Test
@@ -223,7 +223,7 @@ public class IteratorTest extends AbstractTest {
 
         List<JournalPeekingIterator<Quote>> list = new ArrayList<>();
         for (int i = 0; i < journals.size(); i++) {
-            list.add(journals.get(i).bufferedIterator());
+            list.add(JournalIterators.bufferedIterator(journals.get(i)));
         }
 
         long ts = 0;
@@ -283,7 +283,7 @@ public class IteratorTest extends AbstractTest {
         Journal<Quote> r1 = factory.reader(Quote.class);
         Journal<Quote> r2 = factory.reader(Quote.class);
 
-        try (ConcurrentIterator<Quote> expected = r1.concurrentIterator()) {
+        try (ConcurrentIterator<Quote> expected = JournalIterators.concurrentIterator(r1)) {
             try (ConcurrentIterator<Quote> actual = r2.query().all().concurrentIterator()) {
                 TestUtils.assertEquals(expected, actual);
             }

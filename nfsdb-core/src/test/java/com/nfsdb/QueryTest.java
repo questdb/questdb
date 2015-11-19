@@ -1217,7 +1217,7 @@ public class QueryTest extends AbstractTest {
         long inc = System.currentTimeMillis() - max;
 
         JournalWriter<Quote> w2 = factory.writer(Quote.class, "w2");
-        for (Quote a : q.getJournal().bufferedIterator()) {
+        for (Quote a : JournalIterators.bufferedIterator(q.getJournal())) {
             a.setTimestamp(a.getTimestamp() + inc);
             w2.append(a);
         }

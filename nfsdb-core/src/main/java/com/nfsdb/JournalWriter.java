@@ -152,7 +152,7 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     public void append(Journal<T> journal) throws JournalException {
-        try (ConcurrentIterator<T> iterator = journal.concurrentIterator()) {
+        try (ConcurrentIterator<T> iterator = JournalIterators.concurrentIterator(journal)) {
             for (T obj : iterator) {
                 append(obj);
             }

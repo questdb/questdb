@@ -66,7 +66,9 @@ public class Partition<T> implements Closeable {
         this.columnCount = meta.getColumnCount();
         this.columnMetadata = new ColumnMetadata[columnCount];
         meta.copyColumnMetadata(columnMetadata);
-        setPartitionDir(new File(this.journal.getLocation(), interval.getDirName(meta.getPartitionType())), indexTxAddresses);
+        if (interval != null) {
+            setPartitionDir(new File(this.journal.getLocation(), interval.getDirName(meta.getPartitionType())), indexTxAddresses);
+        }
     }
 
     public void applyTx(long txLimit, long[] indexTxAddresses) {

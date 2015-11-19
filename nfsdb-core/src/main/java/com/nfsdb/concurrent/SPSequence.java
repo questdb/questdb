@@ -41,11 +41,6 @@ public class SPSequence extends AbstractSSequence {
     }
 
     @Override
-    public long availableIndex() {
-        return index;
-    }
-
-    @Override
     public void done(long cursor) {
         index = cursor;
         barrier.signal();

@@ -22,7 +22,11 @@
 package com.nfsdb.concurrent;
 
 public interface WaitStrategy {
+    void alert();
+
     void await(int code);
+
+    void checkAlerted();
 
     void signal();
 }

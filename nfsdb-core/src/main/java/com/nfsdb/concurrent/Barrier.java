@@ -24,7 +24,5 @@ package com.nfsdb.concurrent;
 public interface Barrier {
     long availableIndex(long lo);
 
-    long availableIndex();
-
     void signal();
 }

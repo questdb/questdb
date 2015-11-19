@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.logging;
 
@@ -58,6 +58,11 @@ public class Logger {
         }
     }
 
+    public void debug(String format, Throwable e, Object... args) {
+        if (isDebugEnabled()) {
+            log(Level.FINE, String.format(format, args), e);
+        }
+    }
 
     /////////////////////////////////////////////////////////////////
 
@@ -78,6 +83,13 @@ public class Logger {
             log(Level.SEVERE, String.format(format, args));
         }
     }
+
+    public void error(String format, Throwable e, Object... args) {
+        if (isErrorEnabled()) {
+            log(Level.SEVERE, String.format(format, args), e);
+        }
+    }
+
     /////////////////////////////////////////////////////////////////
 
     public void info(java.lang.Object message) {
@@ -91,6 +103,12 @@ public class Logger {
     public void info(String format, Object... args) {
         if (isInfoEnabled()) {
             log(Level.INFO, String.format(format, args));
+        }
+    }
+
+    public void info(String format, Throwable e, Object... args) {
+        if (isInfoEnabled()) {
+            log(Level.INFO, String.format(format, args), e);
         }
     }
 

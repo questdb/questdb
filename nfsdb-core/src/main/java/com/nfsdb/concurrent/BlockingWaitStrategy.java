@@ -27,7 +27,7 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
-public class BlockingWaitStrategy implements WaitStrategy {
+public class BlockingWaitStrategy extends AbstractWaitStrategy {
     private final Lock lock = new ReentrantLock();
     private final Condition condition = lock.newCondition();
 

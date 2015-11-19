@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
@@ -82,7 +82,7 @@ public class NullTest extends AbstractTest {
 
         Journal<Quote> r = factory.reader(Quote.class, "quote");
         int i = 0;
-        for (Quote qr : r.bufferedIterator()) {
+        for (Quote qr : JournalIterators.bufferedIterator(r)) {
             if (i % 7 != 0) {
                 Assert.assertEquals(symbols[i % symbols.length], qr.getSym());
             }

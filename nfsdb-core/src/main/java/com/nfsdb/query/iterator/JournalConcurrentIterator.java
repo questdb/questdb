@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,24 +17,49 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.query.iterator;
 
 import com.nfsdb.Journal;
 import com.nfsdb.collections.ObjList;
+import com.nfsdb.concurrent.*;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.utils.NamedDaemonThreadFactory;
 import com.nfsdb.utils.Rows;
 
-public class JournalConcurrentIterator<T> extends AbstractConcurrentIterator<T> {
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+public class JournalConcurrentIterator<T> extends com.nfsdb.collections.AbstractImmutableIterator<T>
+        implements RingEntryFactory<JournalConcurrentIterator.Holder<T>>, ConcurrentIterator<T> {
     private final Journal<T> journal;
     private final ObjList<JournalIteratorRange> ranges;
+    private final ExecutorService service;
+    private RingQueue<Holder<T>> buffer;
+    private Sequence pubSeq;
+    private Sequence subSeq;
+    private int bufferSize;
+    private boolean started = false;
+    private long cursor = -1;
 
     public JournalConcurrentIterator(Journal<T> journal, ObjList<JournalIteratorRange> ranges, int bufferSize) {
-        super(bufferSize);
+        this.bufferSize = bufferSize;
+        this.service = Executors.newSingleThreadExecutor(new NamedDaemonThreadFactory("nfsdb-iterator", false));
         this.journal = journal;
         this.ranges = ranges;
+    }
+
+    @Override
+    public ConcurrentIterator<T> buffer(int bufferSize) {
+        this.bufferSize = bufferSize;
+        return this;
+    }
+
+    @Override
+    public void close() {
+        service.shutdown();
     }
 
     @Override
@@ -43,7 +68,32 @@ public class JournalConcurrentIterator<T> extends AbstractConcurrentIterator<T> 
     }
 
     @Override
-    protected Runnable getRunnable() {
+    public boolean hasNext() {
+        if (!started) {
+            start();
+            started = true;
+        }
+        if (cursor >= 0) {
+            subSeq.done(cursor);
+        }
+        this.cursor = subSeq.nextBully();
+        return buffer.get(cursor).hasNext;
+    }
+
+    @Override
+    public T next() {
+        return buffer.get(cursor).object;
+    }
+
+    @Override
+    public Holder<T> newInstance() {
+        Holder<T> h = new Holder<>();
+        h.object = getJournal().newObject();
+        h.hasNext = true;
+        return h;
+    }
+
+    private Runnable getRunnable() {
         return new Runnable() {
 
             boolean hasNext = true;
@@ -55,10 +105,10 @@ public class JournalConcurrentIterator<T> extends AbstractConcurrentIterator<T> 
             @Override
             public void run() {
                 updateVariables();
-                while (!barrier.isAlerted()) {
+                while (true) {
                     try {
-                        long outSeq = buffer.next();
-                        Holder<T> holder = buffer.get(outSeq);
+                        long cursor = pubSeq.nextBully();
+                        Holder<T> holder = buffer.get(cursor);
                         boolean hadNext = hasNext;
                         if (hadNext) {
                             journal.read(Rows.toRowID(currentPartitionID, currentRowID), holder.object);
@@ -70,7 +120,7 @@ public class JournalConcurrentIterator<T> extends AbstractConcurrentIterator<T> 
                             }
                         }
                         holder.hasNext = hadNext;
-                        buffer.publish(outSeq);
+                        pubSeq.done(cursor);
 
                         if (!hadNext) {
                             break;
@@ -93,5 +143,21 @@ public class JournalConcurrentIterator<T> extends AbstractConcurrentIterator<T> 
             }
 
         };
+    }
+
+    private void start() {
+        this.buffer = new RingQueue<>(this, bufferSize);
+        this.pubSeq = new SPSequence(bufferSize);
+        this.subSeq = new SCSequence();
+
+        this.pubSeq.followedBy(subSeq);
+        this.subSeq.followedBy(pubSeq);
+
+        service.submit(getRunnable());
+    }
+
+    protected final static class Holder<T> {
+        T object;
+        boolean hasNext;
     }
 }

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,14 +17,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
-import com.lmax.disruptor.BatchEventProcessor;
-import com.lmax.disruptor.BlockingWaitStrategy;
-import com.lmax.disruptor.RingBuffer;
+import com.nfsdb.concurrent.*;
+import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.storage.TxLog;
 import com.nfsdb.utils.NamedDaemonThreadFactory;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -34,35 +34,47 @@ import java.util.concurrent.Executors;
 @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 class PartitionCleaner {
     private final ExecutorService executor;
-    private final RingBuffer<PartitionCleanerEvent> ringBuffer = RingBuffer.createSingleProducer(PartitionCleanerEvent.EVENT_FACTORY, 32, new BlockingWaitStrategy());
-    private final BatchEventProcessor<PartitionCleanerEvent> batchEventProcessor;
-    private final PartitionCleanerEventHandler h;
+    private final Sequence pubSeq;
+    private final Sequence subSeq;
+    private final JournalWriter writer;
+    private final TxLog txLog;
 
-    public PartitionCleaner(JournalWriter writer, String name) {
+    public PartitionCleaner(final JournalWriter writer, String name) throws JournalException {
         this.executor = Executors.newCachedThreadPool(new NamedDaemonThreadFactory("nfsdb-journal-cleaner-" + name, true));
-        this.batchEventProcessor = new BatchEventProcessor<>(ringBuffer, ringBuffer.newBarrier(), h = new PartitionCleanerEventHandler(writer));
-        ringBuffer.addGatingSequences(batchEventProcessor.getSequence());
+        this.writer = writer;
+        this.pubSeq = new SPSequence(32);
+        this.subSeq = new SCSequence(new BlockingWaitStrategy());
+        this.pubSeq.followedBy(subSeq);
+        this.subSeq.followedBy(pubSeq);
+        this.txLog = new TxLog(writer.getLocation(), JournalMode.READ, writer.getMetadata().getTxCountHint());
     }
 
     public void halt() {
         executor.shutdown();
-
-        try {
-            h.startLatch.await();
-            batchEventProcessor.halt();
-            h.stopLatch.await();
-        } catch (InterruptedException e) {
-            throw new JournalRuntimeException(e);
-        }
-
-        executor.shutdown();
+        subSeq.alert();
     }
 
     public void purge() {
-        ringBuffer.publish(ringBuffer.next());
+        pubSeq.done(pubSeq.nextBully());
     }
 
     public void start() {
-        executor.submit(batchEventProcessor);
+        executor.submit(new Runnable() {
+            @Override
+            public void run() {
+                while (true) {
+                    try {
+                        subSeq.done(subSeq.waitForNext());
+                        try {
+                            writer.purgeUnusedTempPartitions(txLog);
+                        } catch (JournalException e) {
+                            throw new JournalRuntimeException(e);
+                        }
+                    } catch (AlertedException ignore) {
+                        break;
+                    }
+                }
+            }
+        });
     }
 }

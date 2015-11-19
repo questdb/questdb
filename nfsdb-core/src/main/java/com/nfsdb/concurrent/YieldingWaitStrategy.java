@@ -23,7 +23,7 @@ package com.nfsdb.concurrent;
 
 import java.util.concurrent.locks.LockSupport;
 
-public class YieldingWaitStrategy implements WaitStrategy {
+public class YieldingWaitStrategy extends AbstractWaitStrategy {
     @Override
     public void await(int code) {
         LockSupport.parkNanos(1L);

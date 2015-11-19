@@ -26,14 +26,14 @@ import com.nfsdb.utils.Unsafe;
 
 import java.util.Arrays;
 
-public abstract class AbstractCSequence extends AbstractSSequence {
+public abstract class AbstractMSequence extends AbstractSSequence {
     final PLong index = new PLong();
     final PLong cache = new PLong();
     private final int flags[];
     private final int mask;
     private final int shift;
 
-    AbstractCSequence(int cycle, WaitStrategy waitStrategy) {
+    AbstractMSequence(int cycle, WaitStrategy waitStrategy) {
         super(waitStrategy);
         this.flags = new int[cycle];
         Arrays.fill(flags, -1);
@@ -44,13 +44,8 @@ public abstract class AbstractCSequence extends AbstractSSequence {
     @SuppressWarnings("StatementWithEmptyBody")
     @Override
     public long availableIndex(long lo) {
-        for (long hi = this.index.fencedGet() + 1; lo < hi && avalable0(lo); lo++) ;
+        for (long hi = this.index.fencedGet() + 1; lo < hi && available0(lo); lo++) ;
         return lo - 1;
-    }
-
-    @Override
-    public long availableIndex() {
-        return index.fencedGet() + 1;
     }
 
     @Override
@@ -66,7 +61,7 @@ public abstract class AbstractCSequence extends AbstractSSequence {
         cache.fencedSet(-1);
     }
 
-    private boolean avalable0(long lo) {
+    private boolean available0(long lo) {
         return Unsafe.getUnsafe().getIntVolatile(flags, ((int) (lo & mask)) * Unsafe.INT_SCALE + Unsafe.INT_OFFSET) == (int) (lo >>> shift);
     }
 }

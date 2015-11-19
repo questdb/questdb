@@ -21,7 +21,7 @@
 
 package com.nfsdb.concurrent;
 
-public class MCSequence extends AbstractCSequence {
+public class MCSequence extends AbstractMSequence {
     public MCSequence(int cycle, WaitStrategy waitStrategy) {
         super(cycle, waitStrategy);
     }

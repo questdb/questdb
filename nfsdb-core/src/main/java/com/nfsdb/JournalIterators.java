@@ -19,17 +19,12 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.query.spi;
+package com.nfsdb;
 
-import com.nfsdb.Journal;
-import com.nfsdb.Partition;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.query.OrderedResultSet;
 import com.nfsdb.query.OrderedResultSetBuilder;
-import com.nfsdb.query.api.QueryAll;
-import com.nfsdb.query.api.QueryAllBuilder;
 import com.nfsdb.query.iterator.*;
 import com.nfsdb.utils.Interval;
 import com.nfsdb.utils.Rows;
@@ -38,116 +33,68 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Iterator;
 
 @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
-public class QueryAllImpl<T> implements QueryAll<T> {
+public final class JournalIterators {
 
-    private final Journal<T> journal;
-
-    public QueryAllImpl(Journal<T> journal) {
-        this.journal = journal;
+    private JournalIterators() {
     }
 
-    @Override
-    public OrderedResultSet<T> asResultSet() throws JournalException {
-        return journal.iteratePartitions(new OrderedResultSetBuilder<T>() {
-            @Override
-            public void read(long lo, long hi) throws JournalException {
-                result.ensureCapacity((int) (hi - lo + 1));
-                for (long i = lo; i < hi + 1; i++) {
-                    result.add(Rows.toRowID(partition.getPartitionIndex(), i));
-                }
-            }
-        });
+    public static <T> JournalPeekingIterator<T> bufferedIterator(Journal<T> journal) {
+        return new JournalBufferedIterator<>(journal, createRanges(journal));
     }
 
-    @Override
-    public JournalPeekingIterator<T> bufferedIterator() {
-        return new JournalBufferedIterator<>(journal, createRanges());
+    public static <T> JournalPeekingIterator<T> bufferedIterator(Journal<T> journal, Interval interval) {
+        return new JournalBufferedIterator<>(journal, createRanges(journal, interval));
     }
 
-    @Override
-    public JournalPeekingIterator<T> bufferedIterator(Interval interval) {
-        return new JournalBufferedIterator<>(journal, createRanges(interval));
+    public static <T> JournalPeekingIterator<T> bufferedIterator(Journal<T> journal, long rowid) {
+        return new JournalBufferedIterator<>(journal, createRanges(journal, rowid));
     }
 
-    @Override
-    public JournalPeekingIterator<T> bufferedIterator(long rowid) {
-        return new JournalBufferedIterator<>(journal, createRanges(rowid));
+    public static <T> JournalConcurrentIterator<T> concurrentIterator(Journal<T> journal) {
+        return new JournalConcurrentIterator<>(journal, createRanges(journal), 1024);
     }
 
-    @Override
-    public JournalConcurrentIterator<T> concurrentIterator() {
-        return new JournalConcurrentIterator<>(journal, createRanges(), 1024);
+    public static <T> JournalConcurrentIterator<T> concurrentIterator(Journal<T> journal, Interval interval) {
+        return new JournalConcurrentIterator<>(journal, createRanges(journal, interval), 1024);
     }
 
-    @Override
-    public JournalConcurrentIterator<T> concurrentIterator(Interval interval) {
-        return new JournalConcurrentIterator<>(journal, createRanges(interval), 1024);
+    public static <T> JournalConcurrentIterator<T> concurrentIterator(Journal<T> journal, long rowid) {
+        return new JournalConcurrentIterator<>(journal, createRanges(journal, rowid), 1024);
     }
 
-    @Override
-    public JournalConcurrentIterator<T> concurrentIterator(long rowid) {
-        return new JournalConcurrentIterator<>(journal, createRanges(rowid), 1024);
-    }
-
-    @Override
-    public JournalPeekingIterator<T> incrementBufferedIterator() {
+    public static <T> JournalPeekingIterator<T> incrementBufferedIterator(Journal<T> journal) {
         try {
             long lo = journal.getMaxRowID();
             journal.refresh();
-            return new JournalBufferedIterator<>(journal, createRanges(journal.incrementRowID(lo)));
+            return new JournalBufferedIterator<>(journal, createRanges(journal, journal.incrementRowID(lo)));
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
     }
 
-    @Override
-    public JournalPeekingIterator<T> incrementIterator() {
+    public static <T> JournalPeekingIterator<T> incrementIterator(Journal<T> journal) {
         try {
             long lo = journal.getMaxRowID();
             journal.refresh();
-            return new JournalIteratorImpl<>(journal, createRanges(journal.incrementRowID(lo)));
+            return new JournalIteratorImpl<>(journal, createRanges(journal, journal.incrementRowID(lo)));
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
     }
 
-    @Override
-    public JournalIterator<T> iterator(Interval interval) {
-        return new JournalIteratorImpl<>(journal, createRanges(interval));
+    public static <T> JournalIterator<T> iterator(Journal<T> journal, Interval interval) {
+        return new JournalIteratorImpl<>(journal, createRanges(journal, interval));
     }
 
-    @Override
-    public JournalPeekingIterator<T> iterator(long rowid) {
-        return new JournalIteratorImpl<>(journal, createRanges(rowid));
+    public static <T> JournalPeekingIterator<T> iterator(Journal<T> journal, long rowid) {
+        return new JournalIteratorImpl<>(journal, createRanges(journal, rowid));
     }
 
-    @Override
-    public long size() {
-        try {
-            return journal.size();
-        } catch (JournalException e) {
-            throw new JournalRuntimeException(e);
-        }
+    public static <T> Iterator<T> iterator(Journal<T> journal) {
+        return new JournalIteratorImpl<>(journal, createRanges(journal));
     }
 
-    @Override
-    public QueryAllBuilder<T> withKeys(String... values) {
-        return withSymValues(journal.getMetadata().getKeyColumn(), values);
-    }
-
-    @Override
-    public QueryAllBuilder<T> withSymValues(String symbol, String... values) {
-        QueryAllBuilderImpl<T> result = new QueryAllBuilderImpl<>(journal);
-        result.setSymbol(symbol, values);
-        return result;
-    }
-
-    @Override
-    public Iterator<T> iterator() {
-        return new JournalIteratorImpl<>(journal, createRanges());
-    }
-
-    private ObjList<JournalIteratorRange> createRanges() {
+    private static <T> ObjList<JournalIteratorRange> createRanges(Journal<T> journal) {
         final int partitionCount = journal.getPartitionCount();
         ObjList<JournalIteratorRange> ranges = new ObjList<>(partitionCount);
         try {
@@ -164,7 +111,7 @@ public class QueryAllImpl<T> implements QueryAll<T> {
         return ranges;
     }
 
-    private ObjList<JournalIteratorRange> createRanges(Interval interval) {
+    private static <T> ObjList<JournalIteratorRange> createRanges(Journal<T> journal, Interval interval) {
         final ObjList<JournalIteratorRange> ranges = new ObjList<>();
         try {
             journal.iteratePartitions(new OrderedResultSetBuilder<T>(interval) {
@@ -179,7 +126,7 @@ public class QueryAllImpl<T> implements QueryAll<T> {
         return ranges;
     }
 
-    private ObjList<JournalIteratorRange> createRanges(long lo) {
+    private static <T> ObjList<JournalIteratorRange> createRanges(Journal<T> journal, long lo) {
         ObjList<JournalIteratorRange> ranges = new ObjList<>();
         int loPartitionID = Rows.toPartitionIndex(lo);
         long loLocalRowID = Rows.toLocalRowID(lo);

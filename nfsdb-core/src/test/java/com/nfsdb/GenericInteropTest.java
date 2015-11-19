@@ -180,7 +180,7 @@ public class GenericInteropTest extends AbstractTest {
 
         Journal<Data> reader = factory.reader(Data.class, "test");
 
-        Iterator<Data> src = reader.bufferedIterator();
+        Iterator<Data> src = JournalIterators.bufferedIterator(reader);
         Assert.assertTrue(src.hasNext());
         Data d;
         Assert.assertNotNull(d = src.next());
@@ -281,7 +281,7 @@ public class GenericInteropTest extends AbstractTest {
                 "Data{sym='HKDUSD', created=40000, bid=2.88, ask=2.89, bidSize=1000, askSize=1100, id=3, status='OK', user='system', rateId='HKDUSD:GLOBAL', active=true, nullable='null', ticks=989931, modulo=398}\n";
 
         StringBuilder builder = new StringBuilder();
-        for (Data data : reader.bufferedIterator()) {
+        for (Data data : JournalIterators.bufferedIterator(reader)) {
             builder.append(data).append('\n');
         }
         TestUtils.assertEquals(expected, builder);
@@ -370,7 +370,7 @@ public class GenericInteropTest extends AbstractTest {
         String expected = "Partial{sym='EURUSD', created=19999, bid=1.24, ask=1.25, bidSize=10000, askSize=12000}";
 
         StringBuilder builder = new StringBuilder();
-        for (Partial p : reader.bufferedIterator()) {
+        for (Partial p : JournalIterators.bufferedIterator(reader)) {
             builder.append(p);
         }
         TestUtils.assertEquals(expected, builder);

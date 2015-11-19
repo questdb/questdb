@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
@@ -40,8 +40,8 @@ public class ReplayIteratorTest extends AbstractTest {
         JournalWriter<Quote> w = factory.writer(Quote.class);
         TestUtils.generateQuoteData(w, 1000);
 
-        ReplayIterator<Quote> replay = new ReplayIterator<>(w.bufferedIterator(), 0.00000001f);
-        TestUtils.assertEquals(w.bufferedIterator(), replay);
+        ReplayIterator<Quote> replay = new ReplayIterator<>(JournalIterators.bufferedIterator(w), 0.00000001f);
+        TestUtils.assertEquals(JournalIterators.bufferedIterator(w), replay);
     }
 
     @Test
@@ -50,7 +50,7 @@ public class ReplayIteratorTest extends AbstractTest {
         TestUtils.generateQuoteData(w, 1000);
 
         ReplayIterator<Quote> replay = new ReplayIterator<>(w, 0.00000001f);
-        TestUtils.assertEquals(w.bufferedIterator(), replay);
+        TestUtils.assertEquals(JournalIterators.bufferedIterator(w), replay);
     }
 
     @Test

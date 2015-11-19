@@ -33,11 +33,6 @@ public final class OpenBarrier implements Barrier {
     }
 
     @Override
-    public long availableIndex() {
-        return -1;
-    }
-
-    @Override
     public void signal() {
     }
 }
