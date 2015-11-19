@@ -86,7 +86,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         this.metadata = metadata;
         this.key = key;
         this.location = new File(metadata.getLocation());
-        this.txLog = new TxLog(location, getMode());
+        this.txLog = new TxLog(location, getMode(), metadata.getTxCountHint());
         this.open = true;
         this.timestampOffset = getMetadata().getTimestampMetadata() == null ? -1 : getMetadata().getTimestampMetadata().offset;
         this.inactiveColumns = new BitSet(metadata.getColumnCount());

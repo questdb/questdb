@@ -638,8 +638,14 @@ public class JournalWriter<T> extends Journal<T> {
         tx.lastPartitionTimestamp = partition == null || partition.getInterval() == null ? 0 : partition.getInterval().getLo();
         tx.lagSize = lag == null ? 0 : lag.open().size();
         tx.lagName = lag == null ? null : lag.getName();
-        tx.symbolTableSizes = new int[getSymbolTableCount()];
-        tx.symbolTableIndexPointers = new long[tx.symbolTableSizes.length];
+
+        int len = getSymbolTableCount();
+        if (tx.symbolTableSizes == null || tx.symbolTableSizes.length < len) {
+            tx.symbolTableSizes = new int[len];
+        }
+        if (tx.symbolTableIndexPointers == null || tx.symbolTableIndexPointers.length < len) {
+            tx.symbolTableIndexPointers = new long[len];
+        }
         for (int i = 0; i < tx.symbolTableSizes.length; i++) {
             SymbolTable tab = getSymbolTable(i);
             tab.commit();
@@ -649,7 +655,10 @@ public class JournalWriter<T> extends Journal<T> {
             tx.symbolTableSizes[i] = tab.size();
             tx.symbolTableIndexPointers[i] = tab.getIndexTxAddress();
         }
-        tx.indexPointers = new long[getMetadata().getColumnCount()];
+
+        if (tx.indexPointers == null) {
+            tx.indexPointers = new long[metadata.getColumnCount()];
+        }
 
         for (int i = Math.max(txPartitionIndex, 0), sz = nonLagPartitionCount(); i < sz; i++) {
             Partition<T> p = getPartition(i, true);
@@ -664,7 +673,9 @@ public class JournalWriter<T> extends Journal<T> {
             partition.getIndexPointers(tx.indexPointers);
         }
 
-        tx.lagIndexPointers = new long[tx.indexPointers.length];
+        if (tx.lagIndexPointers == null) {
+            tx.lagIndexPointers = new long[tx.indexPointers.length];
+        }
         if (lag != null) {
             lag.commit();
             if (force) {

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
@@ -42,8 +42,8 @@ public class TxLogTest extends AbstractTest {
     public final TemporaryFolder temp = new TemporaryFolder();
 
     public static void main(String[] args) throws JournalException {
-        TxLog server = new TxLog(new File("D:\\data\\org.nfsdb.examples.model.Price"), JournalMode.READ);
-        TxLog client = new TxLog(new File("D:\\data\\price-copy"), JournalMode.READ);
+        TxLog server = new TxLog(new File("D:\\data\\org.nfsdb.examples.model.Price"), JournalMode.READ, 2);
+        TxLog client = new TxLog(new File("D:\\data\\price-copy"), JournalMode.READ, 2);
 
         System.out.println(client.getCurrentTxn());
         System.out.println(client.getCurrentTxnPin());
@@ -54,7 +54,7 @@ public class TxLogTest extends AbstractTest {
     @Test
     public void testTx() throws Exception {
         File dir = temp.newFolder();
-        TxLog txLog = new TxLog(dir, JournalMode.APPEND);
+        TxLog txLog = new TxLog(dir, JournalMode.APPEND, 2);
         Assert.assertFalse(txLog.hasNext());
 
         Tx tx = new Tx();
@@ -74,7 +74,7 @@ public class TxLogTest extends AbstractTest {
 
         Assert.assertFalse(txLog.hasNext());
 
-        TxLog r = new TxLog(dir, JournalMode.READ);
+        TxLog r = new TxLog(dir, JournalMode.READ, 2);
         Assert.assertTrue(r.hasNext());
 
         Tx tx1 = new Tx();

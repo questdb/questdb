@@ -23,7 +23,7 @@ package com.nfsdb.storage;
 
 import com.nfsdb.JournalMode;
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.factory.configuration.Constants;
+import com.nfsdb.utils.ByteBuffers;
 import com.nfsdb.utils.Rnd;
 import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -39,9 +39,8 @@ public class TxLog {
     private long currentAddress = 0;
     private long txn;
 
-    public TxLog(File baseLocation, JournalMode mode) throws JournalException {
-        // todo: calculate hint
-        this.hb = new UnstructuredFile(new File(baseLocation, FILE_NAME), Constants.HB_HINT, mode);
+    public TxLog(File baseLocation, JournalMode mode, int txCount) throws JournalException {
+        this.hb = new UnstructuredFile(new File(baseLocation, FILE_NAME), ByteBuffers.getBitHint(512, txCount), mode);
         this.rnd = new Rnd(System.currentTimeMillis(), System.nanoTime());
         this.txn = getCurrentTxn() + 1;
     }
