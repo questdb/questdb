@@ -30,12 +30,12 @@ import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.io.sink.FlexBufferSink;
 import com.nfsdb.logging.Logger;
+import com.nfsdb.misc.*;
 import com.nfsdb.query.ResultSet;
 import com.nfsdb.query.iterator.ConcurrentIterator;
 import com.nfsdb.query.iterator.MergingIterator;
 import com.nfsdb.query.iterator.PeekingIterator;
 import com.nfsdb.storage.*;
-import com.nfsdb.utils.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;

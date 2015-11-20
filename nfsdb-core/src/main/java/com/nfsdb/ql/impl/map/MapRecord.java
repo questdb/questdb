@@ -25,8 +25,8 @@ import com.nfsdb.collections.DirectCharSequence;
 import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.misc.Unsafe;
 import com.nfsdb.ql.AbstractRecord;
-import com.nfsdb.utils.Unsafe;
 
 import java.io.OutputStream;
 

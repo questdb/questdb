@@ -22,7 +22,7 @@
 package com.nfsdb.ql.impl.interval;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.utils.Interval;
+import com.nfsdb.misc.Interval;
 
 public class MillisIntervalSource extends AbstractImmutableIterator<Interval> implements IntervalSource {
     private final Interval start;

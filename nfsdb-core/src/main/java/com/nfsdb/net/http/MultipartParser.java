@@ -27,7 +27,7 @@ import com.nfsdb.collections.Mutable;
 import com.nfsdb.collections.ObjectPool;
 import com.nfsdb.exceptions.HeadersTooLargeException;
 import com.nfsdb.exceptions.InvalidMultipartHeader;
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.Unsafe;
 
 import java.io.Closeable;
 import java.nio.ByteBuffer;

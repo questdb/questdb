@@ -21,13 +21,13 @@
 
 package com.nfsdb.printer;
 
+import com.nfsdb.misc.Dates;
 import com.nfsdb.model.Quote;
 import com.nfsdb.model.TestEntity;
 import com.nfsdb.printer.appender.Appender;
 import com.nfsdb.printer.converter.DateConverter;
 import com.nfsdb.printer.converter.ScaledDoubleConverter;
 import com.nfsdb.printer.converter.StripCRLFStringConverter;
-import com.nfsdb.utils.Dates;
 import org.junit.Assert;
 import org.junit.Test;
 

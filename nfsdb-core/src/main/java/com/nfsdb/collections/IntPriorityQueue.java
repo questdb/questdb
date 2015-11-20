@@ -21,7 +21,7 @@
 
 package com.nfsdb.collections;
 
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.Unsafe;
 
 public class IntPriorityQueue {
     private int[] buffer;

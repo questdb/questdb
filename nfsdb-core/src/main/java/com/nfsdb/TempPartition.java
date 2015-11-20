@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,14 +17,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.misc.Interval;
 import com.nfsdb.storage.Lock;
 import com.nfsdb.storage.LockManager;
-import com.nfsdb.utils.Interval;
 
 import java.io.File;
 

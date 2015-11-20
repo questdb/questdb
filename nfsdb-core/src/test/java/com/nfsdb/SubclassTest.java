@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,14 +17,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
+import com.nfsdb.misc.Files;
 import com.nfsdb.model.SubQuote;
 import com.nfsdb.test.tools.JournalTestFactory;
-import com.nfsdb.utils.Files;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;

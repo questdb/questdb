@@ -26,8 +26,8 @@ import com.nfsdb.collections.ObjList;
 import com.nfsdb.concurrent.*;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.utils.NamedDaemonThreadFactory;
-import com.nfsdb.utils.Rows;
+import com.nfsdb.misc.NamedDaemonThreadFactory;
+import com.nfsdb.misc.Rows;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;

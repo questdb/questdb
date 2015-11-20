@@ -28,8 +28,8 @@ import com.nfsdb.factory.configuration.AbstractRecordMetadata;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
+import com.nfsdb.misc.Unsafe;
 import com.nfsdb.storage.ColumnType;
-import com.nfsdb.utils.Unsafe;
 
 import java.util.Arrays;
 

@@ -24,8 +24,8 @@ package com.nfsdb;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.misc.Misc;
 import com.nfsdb.storage.KVIndex;
-import com.nfsdb.utils.Misc;
 
 import java.io.Closeable;
 import java.io.File;

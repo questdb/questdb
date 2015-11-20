@@ -21,7 +21,7 @@
 
 package com.nfsdb.collections;
 
-import com.nfsdb.utils.Rnd;
+import com.nfsdb.misc.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 

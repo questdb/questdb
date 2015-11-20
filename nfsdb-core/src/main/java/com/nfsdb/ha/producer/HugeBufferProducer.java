@@ -26,9 +26,9 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.factory.configuration.Constants;
 import com.nfsdb.ha.ChannelProducer;
+import com.nfsdb.misc.ByteBuffers;
+import com.nfsdb.misc.Unsafe;
 import com.nfsdb.storage.UnstructuredFile;
-import com.nfsdb.utils.ByteBuffers;
-import com.nfsdb.utils.Unsafe;
 
 import java.io.Closeable;
 import java.io.File;

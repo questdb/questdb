@@ -24,12 +24,12 @@ package com.nfsdb.ql.impl.join.asof;
 import com.nfsdb.collections.IntList;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.RecordMetadata;
+import com.nfsdb.misc.Unsafe;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
-import com.nfsdb.utils.Unsafe;
 
 public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
     private final ObjList<ColumnType> types;

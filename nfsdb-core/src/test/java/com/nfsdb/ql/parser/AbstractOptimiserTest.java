@@ -25,10 +25,10 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
+import com.nfsdb.misc.Files;
 import com.nfsdb.model.configuration.ModelConfiguration;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.test.tools.TestUtils;
-import com.nfsdb.utils.Files;
 import org.junit.ClassRule;
 
 public abstract class AbstractOptimiserTest {

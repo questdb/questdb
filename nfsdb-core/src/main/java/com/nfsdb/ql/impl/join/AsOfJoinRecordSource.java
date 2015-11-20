@@ -26,6 +26,7 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordMetadata;
+import com.nfsdb.misc.Misc;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
@@ -34,7 +35,6 @@ import com.nfsdb.ql.impl.join.asof.FixRecordHolder;
 import com.nfsdb.ql.impl.join.asof.RecordHolder;
 import com.nfsdb.ql.impl.join.asof.RowidRecordHolder;
 import com.nfsdb.ql.impl.join.asof.VarRecordHolder;
-import com.nfsdb.utils.Misc;
 
 import java.io.Closeable;
 import java.io.IOException;

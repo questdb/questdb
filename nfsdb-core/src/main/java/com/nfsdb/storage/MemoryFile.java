@@ -27,10 +27,10 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNoSuchFileException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.logging.Logger;
-import com.nfsdb.utils.ByteBuffers;
-import com.nfsdb.utils.Files;
-import com.nfsdb.utils.Misc;
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.ByteBuffers;
+import com.nfsdb.misc.Files;
+import com.nfsdb.misc.Misc;
+import com.nfsdb.misc.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.*;

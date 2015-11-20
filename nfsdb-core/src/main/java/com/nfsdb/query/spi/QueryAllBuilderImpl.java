@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.query.spi;
 
@@ -25,10 +25,10 @@ import com.nfsdb.Journal;
 import com.nfsdb.collections.IntList;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.misc.Interval;
 import com.nfsdb.query.UnorderedResultSet;
 import com.nfsdb.query.api.QueryAllBuilder;
 import com.nfsdb.storage.SymbolTable;
-import com.nfsdb.utils.Interval;
 
 public class QueryAllBuilderImpl<T> implements QueryAllBuilder<T> {
 

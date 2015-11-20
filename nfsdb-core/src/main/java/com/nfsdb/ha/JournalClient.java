@@ -49,10 +49,10 @@ import com.nfsdb.ha.protocol.CommandProducer;
 import com.nfsdb.ha.protocol.Version;
 import com.nfsdb.ha.protocol.commands.*;
 import com.nfsdb.logging.Logger;
+import com.nfsdb.misc.Chars;
+import com.nfsdb.misc.Files;
+import com.nfsdb.misc.NamedDaemonThreadFactory;
 import com.nfsdb.storage.TxListener;
-import com.nfsdb.utils.Chars;
-import com.nfsdb.utils.Files;
-import com.nfsdb.utils.NamedDaemonThreadFactory;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;

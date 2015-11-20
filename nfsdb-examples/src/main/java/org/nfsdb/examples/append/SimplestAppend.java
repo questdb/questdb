@@ -24,7 +24,7 @@ package org.nfsdb.examples.append;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.utils.Files;
+import com.nfsdb.misc.Files;
 import org.nfsdb.examples.model.ModelConfiguration;
 import org.nfsdb.examples.model.Price;
 

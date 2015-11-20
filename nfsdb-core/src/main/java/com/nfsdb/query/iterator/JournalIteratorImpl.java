@@ -26,7 +26,7 @@ import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.utils.Rows;
+import com.nfsdb.misc.Rows;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})

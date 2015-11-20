@@ -21,7 +21,7 @@
 
 package com.nfsdb.concurrent;
 
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.Unsafe;
 
 public abstract class SynchronizedRunnable implements Runnable {
     private static final long LOCKED_OFFSET;

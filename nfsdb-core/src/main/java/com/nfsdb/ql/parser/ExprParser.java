@@ -25,8 +25,8 @@ import com.nfsdb.collections.IntHashSet;
 import com.nfsdb.collections.IntStack;
 import com.nfsdb.collections.ObjectPool;
 import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.misc.Chars;
 import com.nfsdb.ql.model.ExprNode;
-import com.nfsdb.utils.Chars;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;

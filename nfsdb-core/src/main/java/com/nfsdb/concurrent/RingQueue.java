@@ -21,7 +21,7 @@
 
 package com.nfsdb.concurrent;
 
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.Unsafe;
 
 public class RingQueue<T> {
     private final int mask;

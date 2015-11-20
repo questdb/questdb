@@ -24,6 +24,7 @@ package com.nfsdb.ql;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.misc.Dates;
 import com.nfsdb.model.Quote;
 import com.nfsdb.ql.impl.JournalPartitionSource;
 import com.nfsdb.ql.impl.JournalSource;
@@ -32,7 +33,6 @@ import com.nfsdb.ql.impl.latest.KvIndexSymLookupRowSource;
 import com.nfsdb.ql.impl.latest.MergingRowSource;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
-import com.nfsdb.utils.Dates;
 import org.junit.Assert;
 import org.junit.Test;
 

@@ -31,6 +31,7 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.misc.*;
 import com.nfsdb.model.Quote;
 import com.nfsdb.model.TestEntity;
 import com.nfsdb.printer.JournalPrinter;
@@ -42,7 +43,6 @@ import com.nfsdb.query.iterator.JournalIterator;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.KVIndex;
 import com.nfsdb.storage.SymbolTable;
-import com.nfsdb.utils.*;
 import org.junit.Assert;
 
 import java.io.File;

@@ -26,11 +26,11 @@ import com.nfsdb.Partition;
 import com.nfsdb.collections.LongList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.misc.Rnd;
+import com.nfsdb.misc.Rows;
 import com.nfsdb.query.iterator.ResultSetBufferedIterator;
 import com.nfsdb.query.iterator.ResultSetIterator;
 import com.nfsdb.storage.SymbolTable;
-import com.nfsdb.utils.Rnd;
-import com.nfsdb.utils.Rows;
 
 import java.util.Iterator;
 

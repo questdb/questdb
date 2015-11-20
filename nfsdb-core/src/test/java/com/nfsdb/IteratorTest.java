@@ -24,12 +24,12 @@ package com.nfsdb;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.factory.JournalFactory;
+import com.nfsdb.misc.Dates;
+import com.nfsdb.misc.Interval;
 import com.nfsdb.model.Quote;
 import com.nfsdb.query.iterator.*;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
-import com.nfsdb.utils.Dates;
-import com.nfsdb.utils.Interval;
 import org.junit.Assert;
 import org.junit.Test;
 

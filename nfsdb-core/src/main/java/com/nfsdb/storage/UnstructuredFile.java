@@ -23,8 +23,8 @@ package com.nfsdb.storage;
 
 import com.nfsdb.JournalMode;
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.utils.Chars;
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.Chars;
+import com.nfsdb.misc.Unsafe;
 
 import java.io.File;
 

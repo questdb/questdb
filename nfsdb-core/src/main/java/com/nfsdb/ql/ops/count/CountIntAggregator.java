@@ -22,13 +22,13 @@
 package com.nfsdb.ql.ops.count;
 
 import com.nfsdb.collections.ObjList;
+import com.nfsdb.misc.Numbers;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.ops.AbstractUnaryAggregator;
 import com.nfsdb.ql.ops.Function;
 import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.storage.ColumnType;
-import com.nfsdb.utils.Numbers;
 
 public final class CountIntAggregator extends AbstractUnaryAggregator {
 

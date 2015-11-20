@@ -24,7 +24,7 @@ package com.nfsdb.ql.parser;
 import com.nfsdb.collections.AbstractCharSequence;
 import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.collections.IntObjHashMap;
-import com.nfsdb.utils.Chars;
+import com.nfsdb.misc.Chars;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayList;

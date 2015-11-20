@@ -25,10 +25,10 @@ import com.nfsdb.PartitionType;
 import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.collections.ObjObjHashMap;
 import com.nfsdb.exceptions.JournalConfigurationException;
+import com.nfsdb.misc.ByteBuffers;
+import com.nfsdb.misc.Numbers;
+import com.nfsdb.misc.Unsafe;
 import com.nfsdb.storage.ColumnType;
-import com.nfsdb.utils.ByteBuffers;
-import com.nfsdb.utils.Numbers;
-import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;

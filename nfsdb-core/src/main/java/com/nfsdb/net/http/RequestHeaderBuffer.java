@@ -26,8 +26,8 @@ import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.collections.ObjectPool;
 import com.nfsdb.exceptions.HeadersTooLargeException;
-import com.nfsdb.utils.Numbers;
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.Numbers;
+import com.nfsdb.misc.Unsafe;
 
 import java.io.Closeable;
 

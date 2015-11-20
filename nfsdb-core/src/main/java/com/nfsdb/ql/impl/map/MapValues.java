@@ -21,7 +21,7 @@
 
 package com.nfsdb.ql.impl.map;
 
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"EI_EXPOSE_REP2"})

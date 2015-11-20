@@ -21,8 +21,8 @@
 
 package com.nfsdb.collections;
 
-import com.nfsdb.utils.Numbers;
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.Numbers;
+import com.nfsdb.misc.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
 

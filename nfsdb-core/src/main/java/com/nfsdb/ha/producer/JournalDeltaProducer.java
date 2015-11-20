@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ha.producer;
 
@@ -29,8 +29,8 @@ import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.ha.ChannelProducer;
 import com.nfsdb.ha.model.JournalServerState;
 import com.nfsdb.logging.Logger;
+import com.nfsdb.misc.Rows;
 import com.nfsdb.storage.Tx;
-import com.nfsdb.utils.Rows;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.nio.channels.WritableByteChannel;

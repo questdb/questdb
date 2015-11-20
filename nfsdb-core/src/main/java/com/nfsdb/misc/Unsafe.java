@@ -19,7 +19,7 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.utils;
+package com.nfsdb.misc;
 
 import com.nfsdb.exceptions.JournalRuntimeException;
 

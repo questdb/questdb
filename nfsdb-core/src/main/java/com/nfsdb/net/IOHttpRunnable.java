@@ -28,8 +28,8 @@ import com.nfsdb.exceptions.HeadersTooLargeException;
 import com.nfsdb.exceptions.InvalidMultipartHeader;
 import com.nfsdb.exceptions.SlowChannelException;
 import com.nfsdb.exceptions.UnsupportedContentTypeException;
+import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.net.http.*;
-import com.nfsdb.utils.ByteBuffers;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.IOException;

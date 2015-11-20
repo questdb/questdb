@@ -24,9 +24,9 @@ package com.nfsdb.net.http;
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.exceptions.ResponseHeaderBufferTooSmallException;
 import com.nfsdb.io.sink.DirectUnboundedAnsiSink;
-import com.nfsdb.utils.ByteBuffers;
-import com.nfsdb.utils.Numbers;
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.ByteBuffers;
+import com.nfsdb.misc.Numbers;
+import com.nfsdb.misc.Unsafe;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.Closeable;

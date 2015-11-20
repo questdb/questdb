@@ -25,10 +25,10 @@ import com.nfsdb.JournalMode;
 import com.nfsdb.collections.LongList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.utils.ByteBuffers;
-import com.nfsdb.utils.Files;
-import com.nfsdb.utils.Numbers;
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.ByteBuffers;
+import com.nfsdb.misc.Files;
+import com.nfsdb.misc.Numbers;
+import com.nfsdb.misc.Unsafe;
 
 import java.io.Closeable;
 import java.io.File;

@@ -30,13 +30,13 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
+import com.nfsdb.misc.Misc;
+import com.nfsdb.misc.Unsafe;
 import com.nfsdb.ql.*;
 import com.nfsdb.ql.impl.join.hash.KeyWriterHelper;
 import com.nfsdb.ql.impl.map.MapRecordValueInterceptor;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.impl.map.MultiMap;
-import com.nfsdb.utils.Misc;
-import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;

@@ -24,7 +24,7 @@ package com.nfsdb.ql.impl.join;
 import com.nfsdb.factory.configuration.AbstractRecordMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.Unsafe;
 
 public class SplitRecordMetadata extends AbstractRecordMetadata {
     private final int columnCount;

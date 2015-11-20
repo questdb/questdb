@@ -27,6 +27,7 @@ import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.io.sink.StringSink;
+import com.nfsdb.misc.Dates;
 import com.nfsdb.model.Quote;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
@@ -36,7 +37,6 @@ import com.nfsdb.ql.impl.map.MultiMap;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
-import com.nfsdb.utils.Dates;
 import org.junit.Assert;
 import org.junit.Test;
 

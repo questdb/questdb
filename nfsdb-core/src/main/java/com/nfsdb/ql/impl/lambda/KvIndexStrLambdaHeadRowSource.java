@@ -28,6 +28,8 @@ import com.nfsdb.collections.LongList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.misc.Chars;
+import com.nfsdb.misc.Hash;
 import com.nfsdb.ql.*;
 import com.nfsdb.ql.impl.AbstractRowSource;
 import com.nfsdb.ql.impl.JournalRecord;
@@ -35,8 +37,6 @@ import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
 import com.nfsdb.storage.VariableColumn;
-import com.nfsdb.utils.Chars;
-import com.nfsdb.utils.Hash;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public abstract class KvIndexStrLambdaHeadRowSource extends AbstractRowSource {

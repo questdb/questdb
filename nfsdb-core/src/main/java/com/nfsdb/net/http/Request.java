@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
@@ -27,10 +27,10 @@ import com.nfsdb.collections.ObjectPool;
 import com.nfsdb.exceptions.HeadersTooLargeException;
 import com.nfsdb.exceptions.SlowChannelException;
 import com.nfsdb.exceptions.UnsupportedContentTypeException;
-import com.nfsdb.utils.ByteBuffers;
-import com.nfsdb.utils.Chars;
-import com.nfsdb.utils.Numbers;
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.ByteBuffers;
+import com.nfsdb.misc.Chars;
+import com.nfsdb.misc.Numbers;
+import com.nfsdb.misc.Unsafe;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.Closeable;

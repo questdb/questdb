@@ -24,13 +24,13 @@ package com.nfsdb.ql.impl;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
+import com.nfsdb.misc.Dates;
+import com.nfsdb.misc.Interval;
 import com.nfsdb.model.Quote;
 import com.nfsdb.ql.impl.interval.MillisIntervalSource;
 import com.nfsdb.ql.impl.interval.MultiIntervalPartitionSource;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
-import com.nfsdb.utils.Dates;
-import com.nfsdb.utils.Interval;
 import org.junit.Assert;
 import org.junit.Test;
 

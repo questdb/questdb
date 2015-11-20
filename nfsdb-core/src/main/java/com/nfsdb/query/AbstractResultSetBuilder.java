@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.query;
 
@@ -25,8 +25,8 @@ import com.nfsdb.Journal;
 import com.nfsdb.Partition;
 import com.nfsdb.collections.LongList;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.misc.Interval;
 import com.nfsdb.storage.BSearchType;
-import com.nfsdb.utils.Interval;
 
 public abstract class AbstractResultSetBuilder<T, X> {
     protected final LongList result = new LongList();

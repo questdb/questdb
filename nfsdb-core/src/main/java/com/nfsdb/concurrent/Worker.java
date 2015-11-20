@@ -22,7 +22,7 @@
 package com.nfsdb.concurrent;
 
 import com.nfsdb.collections.ObjList;
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.Unsafe;
 
 import java.util.concurrent.CountDownLatch;
 

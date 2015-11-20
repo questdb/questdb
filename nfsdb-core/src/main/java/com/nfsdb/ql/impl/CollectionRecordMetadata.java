@@ -26,7 +26,7 @@ import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.AbstractRecordMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.utils.Chars;
+import com.nfsdb.misc.Chars;
 
 public class CollectionRecordMetadata extends AbstractRecordMetadata {
     private final ObjList<RecordColumnMetadata> columns = new ObjList<>();

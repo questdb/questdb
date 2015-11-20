@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,24 +17,23 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
-package com.nfsdb.utils;
+package com.nfsdb.misc;
 
-public final class Rows {
+import com.sun.management.OperatingSystemMXBean;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-    private Rows() {
+import java.lang.management.ManagementFactory;
+
+@SuppressFBWarnings({"IICU_INCORRECT_INTERNAL_CLASS_USE"})
+final class Os {
+    private static final OperatingSystemMXBean bean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
+
+    private Os() {
     }
 
-    public static long toLocalRowID(long rowID) {
-        return rowID & 0xFFFFFFFFFFFL;
-    }
-
-    public static int toPartitionIndex(long rowID) {
-        return (int) (rowID >>> 44);
-    }
-
-    public static long toRowID(int partitionIndex, long localRowID) {
-        return (((long) partitionIndex) << 44L) + localRowID;
+    public static long getSystemMemory() {
+        return bean.getTotalPhysicalMemorySize();
     }
 }

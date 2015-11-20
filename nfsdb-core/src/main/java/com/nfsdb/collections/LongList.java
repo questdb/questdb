@@ -21,8 +21,8 @@
 
 package com.nfsdb.collections;
 
-import com.nfsdb.utils.Rnd;
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.Rnd;
+import com.nfsdb.misc.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.Arrays;

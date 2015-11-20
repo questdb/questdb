@@ -23,9 +23,9 @@ package com.nfsdb.storage;
 
 import com.nfsdb.JournalMode;
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.utils.ByteBuffers;
-import com.nfsdb.utils.Files;
-import com.nfsdb.utils.Rnd;
+import com.nfsdb.misc.ByteBuffers;
+import com.nfsdb.misc.Files;
+import com.nfsdb.misc.Rnd;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 

@@ -24,8 +24,8 @@ package com.nfsdb;
 import com.nfsdb.concurrent.*;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.misc.NamedDaemonThreadFactory;
 import com.nfsdb.storage.TxLog;
-import com.nfsdb.utils.NamedDaemonThreadFactory;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.concurrent.ExecutorService;

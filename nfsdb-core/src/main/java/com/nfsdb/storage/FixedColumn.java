@@ -21,7 +21,7 @@
 
 package com.nfsdb.storage;
 
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.Unsafe;
 
 public class FixedColumn extends AbstractColumn {
     private final int width;

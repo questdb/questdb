@@ -25,6 +25,9 @@ import com.nfsdb.collections.*;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
+import com.nfsdb.misc.Chars;
+import com.nfsdb.misc.Numbers;
+import com.nfsdb.misc.Unsafe;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.StorageFacade;
@@ -33,9 +36,6 @@ import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.impl.map.MultiMap;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
-import com.nfsdb.utils.Chars;
-import com.nfsdb.utils.Numbers;
-import com.nfsdb.utils.Unsafe;
 
 public class LastVarRecordMap implements LastRecordMap {
     private static final ObjList<RecordColumnMetadata> valueMetadata = new ObjList<>();

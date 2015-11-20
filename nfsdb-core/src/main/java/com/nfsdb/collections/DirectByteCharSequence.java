@@ -21,7 +21,7 @@
 
 package com.nfsdb.collections;
 
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.Unsafe;
 
 public class DirectByteCharSequence extends AbstractCharSequence implements Mutable, ByteSequence {
     public static final Factory FACTORY = new Factory();

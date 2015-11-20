@@ -21,8 +21,8 @@
 
 package com.nfsdb.collections;
 
-import com.nfsdb.utils.Chars;
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.Chars;
+import com.nfsdb.misc.Unsafe;
 
 public class DirectCharSequence extends AbstractCharSequence {
     private long lo;

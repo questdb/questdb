@@ -26,13 +26,13 @@ import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.misc.Chars;
+import com.nfsdb.misc.Unsafe;
 import com.nfsdb.ql.AbstractRecord;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SequentialMemory;
-import com.nfsdb.utils.Chars;
-import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
 

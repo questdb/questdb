@@ -19,28 +19,22 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.utils;
+package com.nfsdb.misc;
 
-import com.nfsdb.logging.Logger;
+public final class Rows {
 
-import java.io.Closeable;
-import java.io.IOException;
-
-public final class Misc {
-    private final static Logger LOGGER = Logger.getLogger(Misc.class);
-
-    private Misc() {
+    private Rows() {
     }
 
-    public static <T> T free(T object) {
-        if (object instanceof Closeable) {
-            try {
-                ((Closeable) object).close();
-                return null;
-            } catch (IOException e) {
-                LOGGER.error("Failed to close", e);
-            }
-        }
-        return object;
+    public static long toLocalRowID(long rowID) {
+        return rowID & 0xFFFFFFFFFFFL;
+    }
+
+    public static int toPartitionIndex(long rowID) {
+        return (int) (rowID >>> 44);
+    }
+
+    public static long toRowID(int partitionIndex, long localRowID) {
+        return (((long) partitionIndex) << 44L) + localRowID;
     }
 }

@@ -24,7 +24,7 @@ package com.nfsdb.io.parser;
 import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.io.parser.listener.Listener;
 import com.nfsdb.logging.Logger;
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.Unsafe;
 
 public abstract class AbstractTextParser implements TextParser {
     private final static Logger LOGGER = Logger.getLogger(AbstractTextParser.class);

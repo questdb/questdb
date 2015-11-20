@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,16 +17,16 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.query.api;
 
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.misc.Interval;
 import com.nfsdb.query.OrderedResultSet;
 import com.nfsdb.query.iterator.ConcurrentIterator;
 import com.nfsdb.query.iterator.JournalIterator;
 import com.nfsdb.query.iterator.JournalPeekingIterator;
-import com.nfsdb.utils.Interval;
 
 public interface QueryAll<T> extends Iterable<T> {
 

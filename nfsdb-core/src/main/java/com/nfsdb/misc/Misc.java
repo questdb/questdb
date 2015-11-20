@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,23 +17,30 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
-package com.nfsdb.utils;
+package com.nfsdb.misc;
 
-import com.sun.management.OperatingSystemMXBean;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import com.nfsdb.logging.Logger;
 
-import java.lang.management.ManagementFactory;
+import java.io.Closeable;
+import java.io.IOException;
 
-@SuppressFBWarnings({"IICU_INCORRECT_INTERNAL_CLASS_USE"})
-final class Os {
-    private static final OperatingSystemMXBean bean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
+public final class Misc {
+    private final static Logger LOGGER = Logger.getLogger(Misc.class);
 
-    private Os() {
+    private Misc() {
     }
 
-    public static long getSystemMemory() {
-        return bean.getTotalPhysicalMemorySize();
+    public static <T> T free(T object) {
+        if (object instanceof Closeable) {
+            try {
+                ((Closeable) object).close();
+                return null;
+            } catch (IOException e) {
+                LOGGER.error("Failed to close", e);
+            }
+        }
+        return object;
     }
 }

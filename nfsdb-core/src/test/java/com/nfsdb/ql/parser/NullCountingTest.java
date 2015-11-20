@@ -24,9 +24,9 @@ package com.nfsdb.ql.parser;
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.factory.configuration.JournalStructure;
-import com.nfsdb.utils.Dates;
-import com.nfsdb.utils.Numbers;
-import com.nfsdb.utils.Rnd;
+import com.nfsdb.misc.Dates;
+import com.nfsdb.misc.Numbers;
+import com.nfsdb.misc.Rnd;
 import org.junit.BeforeClass;
 import org.junit.Test;
 

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
@@ -26,10 +26,10 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalFactoryPool;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.JournalConfiguration;
+import com.nfsdb.misc.Files;
 import com.nfsdb.model.Quote;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
-import com.nfsdb.utils.Files;
 import org.junit.Assert;
 import org.junit.Test;
 

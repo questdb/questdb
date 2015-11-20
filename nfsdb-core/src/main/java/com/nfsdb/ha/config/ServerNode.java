@@ -23,7 +23,7 @@ package com.nfsdb.ha.config;
 
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.exceptions.NumericException;
-import com.nfsdb.utils.Numbers;
+import com.nfsdb.misc.Numbers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
 

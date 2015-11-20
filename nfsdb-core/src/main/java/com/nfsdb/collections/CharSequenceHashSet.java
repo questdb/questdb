@@ -21,9 +21,9 @@
 
 package com.nfsdb.collections;
 
-import com.nfsdb.utils.Chars;
-import com.nfsdb.utils.Numbers;
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.Chars;
+import com.nfsdb.misc.Numbers;
+import com.nfsdb.misc.Unsafe;
 
 import java.util.Arrays;
 

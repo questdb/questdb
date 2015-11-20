@@ -21,8 +21,8 @@
 
 package com.nfsdb.factory.configuration;
 
+import com.nfsdb.misc.Numbers;
 import com.nfsdb.storage.ColumnType;
-import com.nfsdb.utils.Numbers;
 
 public class GenericStringBuilder extends AbstractGenericMetadataBuilder {
 

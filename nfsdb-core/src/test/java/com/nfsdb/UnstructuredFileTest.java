@@ -21,8 +21,8 @@
 
 package com.nfsdb;
 
+import com.nfsdb.misc.Rnd;
 import com.nfsdb.storage.UnstructuredFile;
-import com.nfsdb.utils.Rnd;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;

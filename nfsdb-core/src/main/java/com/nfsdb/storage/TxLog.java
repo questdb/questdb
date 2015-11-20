@@ -23,9 +23,9 @@ package com.nfsdb.storage;
 
 import com.nfsdb.JournalMode;
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.utils.ByteBuffers;
-import com.nfsdb.utils.Rnd;
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.ByteBuffers;
+import com.nfsdb.misc.Rnd;
+import com.nfsdb.misc.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;

@@ -21,7 +21,7 @@
 
 package com.nfsdb.io.sink;
 
-import com.nfsdb.utils.Misc;
+import com.nfsdb.misc.Misc;
 
 import java.io.Closeable;
 import java.io.IOException;

@@ -22,10 +22,10 @@
 package com.nfsdb;
 
 import com.nfsdb.collections.IntLongPriorityQueue;
+import com.nfsdb.misc.Rnd;
 import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
 import com.nfsdb.test.tools.AbstractTest;
-import com.nfsdb.utils.Rnd;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;

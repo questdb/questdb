@@ -22,7 +22,7 @@
 package com.nfsdb.factory.configuration;
 
 import com.nfsdb.collections.FlyweightCharSequence;
-import com.nfsdb.utils.Chars;
+import com.nfsdb.misc.Chars;
 import org.jetbrains.annotations.NotNull;
 
 public class ColumnName implements CharSequence {

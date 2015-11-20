@@ -26,8 +26,8 @@ import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.io.sink.CharSink;
-import com.nfsdb.utils.Chars;
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.Chars;
+import com.nfsdb.misc.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;

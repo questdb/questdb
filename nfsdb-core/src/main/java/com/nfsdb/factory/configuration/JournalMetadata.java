@@ -26,9 +26,9 @@ import com.nfsdb.PartitionType;
 import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.misc.Chars;
+import com.nfsdb.misc.Unsafe;
 import com.nfsdb.storage.UnstructuredFile;
-import com.nfsdb.utils.Chars;
-import com.nfsdb.utils.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.lang.StringBuilder;

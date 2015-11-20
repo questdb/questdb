@@ -29,6 +29,7 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
+import com.nfsdb.misc.Files;
 import com.nfsdb.model.Album;
 import com.nfsdb.model.Band;
 import com.nfsdb.model.Quote;
@@ -39,7 +40,6 @@ import com.nfsdb.ql.impl.join.HashJoinRecordSource;
 import com.nfsdb.ql.impl.select.SelectedColumnsRecordSource;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.test.tools.TestUtils;
-import com.nfsdb.utils.Files;
 import org.junit.*;
 
 public class HashJoinRecordSourceTest {

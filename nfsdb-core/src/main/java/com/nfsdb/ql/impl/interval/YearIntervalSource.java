@@ -22,8 +22,8 @@
 package com.nfsdb.ql.impl.interval;
 
 import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.utils.Dates;
-import com.nfsdb.utils.Interval;
+import com.nfsdb.misc.Dates;
+import com.nfsdb.misc.Interval;
 
 public class YearIntervalSource extends AbstractImmutableIterator<Interval> implements IntervalSource {
     private final Interval start;

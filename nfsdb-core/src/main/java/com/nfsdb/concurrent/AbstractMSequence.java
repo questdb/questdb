@@ -21,8 +21,8 @@
 
 package com.nfsdb.concurrent;
 
-import com.nfsdb.utils.Numbers;
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.Numbers;
+import com.nfsdb.misc.Unsafe;
 
 import java.util.Arrays;
 

@@ -32,11 +32,11 @@ import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.Constants;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.logging.Logger;
+import com.nfsdb.misc.*;
 import com.nfsdb.query.AbstractResultSetBuilder;
 import com.nfsdb.query.api.Query;
 import com.nfsdb.query.spi.QueryImpl;
 import com.nfsdb.storage.*;
-import com.nfsdb.utils.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;

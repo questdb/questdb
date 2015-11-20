@@ -29,6 +29,7 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
+import com.nfsdb.misc.Misc;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
@@ -37,7 +38,6 @@ import com.nfsdb.ql.impl.join.hash.MultiRecordMap;
 import com.nfsdb.ql.impl.join.hash.NullRecord;
 import com.nfsdb.ql.impl.join.hash.RowIdHolderRecord;
 import com.nfsdb.ql.impl.map.MultiMap;
-import com.nfsdb.utils.Misc;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;

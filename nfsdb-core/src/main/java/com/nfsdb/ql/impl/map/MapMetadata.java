@@ -28,7 +28,7 @@ import com.nfsdb.collections.Transient;
 import com.nfsdb.factory.configuration.AbstractRecordMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.Unsafe;
 
 public final class MapMetadata extends AbstractRecordMetadata {
 

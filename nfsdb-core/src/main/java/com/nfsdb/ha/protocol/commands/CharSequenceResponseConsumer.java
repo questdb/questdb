@@ -23,7 +23,7 @@ package com.nfsdb.ha.protocol.commands;
 
 import com.nfsdb.collections.DirectCharSequence;
 import com.nfsdb.ha.AbstractImmutableObjectConsumer;
-import com.nfsdb.utils.ByteBuffers;
+import com.nfsdb.misc.ByteBuffers;
 
 import java.nio.ByteBuffer;
 

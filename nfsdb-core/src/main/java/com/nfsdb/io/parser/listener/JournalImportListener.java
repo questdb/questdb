@@ -29,10 +29,10 @@ import com.nfsdb.factory.JournalWriterFactory;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.ImportedColumnMetadata;
 import com.nfsdb.logging.Logger;
-import com.nfsdb.utils.Chars;
-import com.nfsdb.utils.Dates;
-import com.nfsdb.utils.Misc;
-import com.nfsdb.utils.Numbers;
+import com.nfsdb.misc.Chars;
+import com.nfsdb.misc.Dates;
+import com.nfsdb.misc.Misc;
+import com.nfsdb.misc.Numbers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;

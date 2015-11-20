@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.query.spi;
 
@@ -26,11 +26,11 @@ import com.nfsdb.collections.IntList;
 import com.nfsdb.collections.LongList;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.misc.Interval;
+import com.nfsdb.misc.Rows;
 import com.nfsdb.query.UnorderedResultSetBuilder;
 import com.nfsdb.storage.IndexCursor;
 import com.nfsdb.storage.KVIndex;
-import com.nfsdb.utils.Interval;
-import com.nfsdb.utils.Rows;
 
 public class QueryAllResultSetBuilder<T> extends UnorderedResultSetBuilder<T> {
     private final IntList symbolKeys;

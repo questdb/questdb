@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,20 +17,20 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
 import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.misc.Dates;
+import com.nfsdb.misc.Interval;
 import com.nfsdb.model.Quote;
 import com.nfsdb.ql.model.ExprNode;
 import com.nfsdb.ql.model.IntrinsicModel;
 import com.nfsdb.ql.model.IntrinsicValue;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
-import com.nfsdb.utils.Dates;
-import com.nfsdb.utils.Interval;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;

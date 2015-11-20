@@ -28,12 +28,12 @@ import com.nfsdb.exceptions.NoSuchColumnException;
 import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.RecordMetadata;
+import com.nfsdb.misc.Chars;
+import com.nfsdb.misc.Numbers;
 import com.nfsdb.ql.model.ExprNode;
 import com.nfsdb.ql.ops.*;
 import com.nfsdb.ql.ops.col.*;
 import com.nfsdb.ql.ops.constant.*;
-import com.nfsdb.utils.Chars;
-import com.nfsdb.utils.Numbers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;

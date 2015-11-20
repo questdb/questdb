@@ -25,8 +25,8 @@ import com.nfsdb.collections.ByteSequence;
 import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.ObjectPool;
+import com.nfsdb.misc.Unsafe;
 import com.nfsdb.test.tools.TestUtils;
-import com.nfsdb.utils.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 

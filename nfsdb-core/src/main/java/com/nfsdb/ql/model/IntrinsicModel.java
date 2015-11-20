@@ -25,8 +25,8 @@ import com.nfsdb.collections.CharSequenceHashSet;
 import com.nfsdb.collections.IntList;
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.collections.ObjectPoolFactory;
+import com.nfsdb.misc.Dates;
 import com.nfsdb.ql.impl.interval.IntervalSource;
-import com.nfsdb.utils.Dates;
 
 public class IntrinsicModel implements Mutable {
     public static final IntrinsicModelFactory FACTORY = new IntrinsicModelFactory();

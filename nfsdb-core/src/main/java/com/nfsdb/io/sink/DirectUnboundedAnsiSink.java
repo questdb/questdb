@@ -21,7 +21,7 @@
 
 package com.nfsdb.io.sink;
 
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.Unsafe;
 
 public class DirectUnboundedAnsiSink extends AbstractCharSink {
     private final long address;

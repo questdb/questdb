@@ -28,10 +28,10 @@ import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalInvalidSymbolValueException;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.utils.ByteBuffers;
-import com.nfsdb.utils.Hash;
-import com.nfsdb.utils.Misc;
-import com.nfsdb.utils.Numbers;
+import com.nfsdb.misc.ByteBuffers;
+import com.nfsdb.misc.Hash;
+import com.nfsdb.misc.Misc;
+import com.nfsdb.misc.Numbers;
 
 import java.io.Closeable;
 import java.io.File;

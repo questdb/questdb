@@ -21,7 +21,7 @@
 
 package com.nfsdb.ql.impl.interval;
 
-import com.nfsdb.utils.Interval;
+import com.nfsdb.misc.Interval;
 
 import java.util.Iterator;
 

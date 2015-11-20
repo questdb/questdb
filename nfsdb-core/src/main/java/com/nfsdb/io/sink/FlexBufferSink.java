@@ -22,7 +22,7 @@
 package com.nfsdb.io.sink;
 
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.utils.ByteBuffers;
+import com.nfsdb.misc.ByteBuffers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;

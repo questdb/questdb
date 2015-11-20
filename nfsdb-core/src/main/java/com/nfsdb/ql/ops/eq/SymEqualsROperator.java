@@ -22,6 +22,7 @@
 package com.nfsdb.ql.ops.eq;
 
 import com.nfsdb.collections.ObjList;
+import com.nfsdb.misc.Numbers;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.ops.AbstractBinaryOperator;
@@ -29,7 +30,6 @@ import com.nfsdb.ql.ops.Function;
 import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
-import com.nfsdb.utils.Numbers;
 
 public class SymEqualsROperator extends AbstractBinaryOperator {
 

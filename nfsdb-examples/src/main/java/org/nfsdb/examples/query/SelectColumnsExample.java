@@ -27,7 +27,7 @@ import com.nfsdb.JournalWriter;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.utils.Files;
+import com.nfsdb.misc.Files;
 import org.nfsdb.examples.model.Quote;
 import org.nfsdb.examples.support.QuoteGenerator;
 

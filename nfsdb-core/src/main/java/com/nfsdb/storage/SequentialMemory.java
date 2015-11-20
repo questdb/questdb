@@ -23,8 +23,8 @@ package com.nfsdb.storage;
 
 import com.nfsdb.collections.LongList;
 import com.nfsdb.collections.Mutable;
-import com.nfsdb.utils.Numbers;
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.Numbers;
+import com.nfsdb.misc.Unsafe;
 
 import java.io.Closeable;
 import java.io.IOException;

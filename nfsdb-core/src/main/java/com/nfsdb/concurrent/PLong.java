@@ -21,7 +21,7 @@
 
 package com.nfsdb.concurrent;
 
-import com.nfsdb.utils.Unsafe;
+import com.nfsdb.misc.Unsafe;
 
 public class PLong {
     private static final long INITIAL_VALUE = -1;

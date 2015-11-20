@@ -30,10 +30,10 @@ import com.nfsdb.io.ImportedColumnMetadata;
 import com.nfsdb.io.ImportedColumnType;
 import com.nfsdb.io.parser.listener.probe.*;
 import com.nfsdb.io.sink.StringSink;
+import com.nfsdb.misc.Misc;
 import com.nfsdb.ql.impl.CollectionRecordMetadata;
 import com.nfsdb.ql.impl.map.MultiMap;
 import com.nfsdb.storage.ColumnType;
-import com.nfsdb.utils.Misc;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;

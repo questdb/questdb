@@ -29,10 +29,10 @@ import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.GenericIntBuilder;
 import com.nfsdb.factory.configuration.JournalStructure;
+import com.nfsdb.misc.Chars;
+import com.nfsdb.misc.Numbers;
 import com.nfsdb.ql.model.*;
 import com.nfsdb.storage.ColumnType;
-import com.nfsdb.utils.Chars;
-import com.nfsdb.utils.Numbers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 final class QueryParser {
