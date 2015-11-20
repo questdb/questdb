@@ -28,6 +28,7 @@ import com.nfsdb.collections.ObjectPool;
 import com.nfsdb.exceptions.HeadersTooLargeException;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Unsafe;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 
@@ -54,7 +55,7 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
     }
 
     @Override
-    public void clear() {
+    public final void clear() {
         this.needMethod = true;
         this._wptr = this._lo = this.headerPtr;
         this.incomplete = true;
@@ -92,6 +93,7 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
         return headers.size();
     }
 
+    @SuppressFBWarnings("SF_SWITCH_NO_DEFAULT")
     public long write(long ptr, int len, boolean _method) throws HeadersTooLargeException {
         if (_method && needMethod) {
             int l = parseMethod(ptr, len);

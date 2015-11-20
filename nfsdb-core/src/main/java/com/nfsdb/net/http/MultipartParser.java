@@ -28,10 +28,12 @@ import com.nfsdb.collections.ObjectPool;
 import com.nfsdb.exceptions.HeadersTooLargeException;
 import com.nfsdb.exceptions.InvalidMultipartHeader;
 import com.nfsdb.misc.Unsafe;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.nio.ByteBuffer;
 
+@SuppressFBWarnings("SF_SWITCH_FALLTHROUGH")
 public class MultipartParser implements Closeable, Mutable {
 
     private final RequestHeaderBuffer hb;
@@ -57,7 +59,7 @@ public class MultipartParser implements Closeable, Mutable {
     }
 
     @Override
-    public void clear() {
+    public final void clear() {
         this.state = State.START_BOUNDARY;
         this.boundaryPtr = 0;
         this.consumedBoundaryLen = 0;
@@ -75,6 +77,7 @@ public class MultipartParser implements Closeable, Mutable {
         return this;
     }
 
+    @SuppressFBWarnings("SF_SWITCH_NO_DEFAULT")
     public boolean parse(long ptr, int len, MultipartListener listener) throws InvalidMultipartHeader, HeadersTooLargeException {
         long hi = ptr + len;
         long _lo = Long.MAX_VALUE;

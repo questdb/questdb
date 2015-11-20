@@ -53,8 +53,9 @@ public class ObjList<T> implements Mutable {
     }
 
     public void addAll(ObjList<T> that) {
-        ensureCapacity0(pos + that.size());
-        for (int i = 0, n = that.size(); i < n; i++) {
+        int n = that.size();
+        ensureCapacity0(pos + n);
+        for (int i = 0; i < n; i++) {
             Unsafe.arrayPut(buffer, pos++, that.getQuick(i));
         }
     }

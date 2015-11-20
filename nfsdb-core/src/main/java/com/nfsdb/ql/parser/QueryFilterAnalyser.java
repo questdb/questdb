@@ -41,6 +41,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;
 
+@SuppressFBWarnings("LEST_LOST_EXCEPTION_STACK_TRACE")
 final class QueryFilterAnalyser {
 
     private final ArrayDeque<ExprNode> stack = new ArrayDeque<>();

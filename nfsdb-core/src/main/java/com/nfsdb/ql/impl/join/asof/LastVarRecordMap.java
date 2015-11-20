@@ -36,6 +36,7 @@ import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.impl.map.MultiMap;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class LastVarRecordMap implements LastRecordMap {
     private static final ObjList<RecordColumnMetadata> valueMetadata = new ObjList<>();
@@ -97,9 +98,10 @@ public class LastVarRecordMap implements LastRecordMap {
             keyCols.add(slaveMetadata.getColumnName(idx));
         }
 
-        this.fixedOffsets = new IntList(ksz - keyCols.size());
-        this.slaveValueIndexes = new IntList(ksz - keyCols.size());
-        this.slaveValueTypes = new ObjList<>(ksz - keyCols.size());
+        int sz = ksz - keyCols.size();
+        this.fixedOffsets = new IntList(sz);
+        this.slaveValueIndexes = new IntList(sz);
+        this.slaveValueTypes = new ObjList<>(sz);
 
         int varOffset = 0;
         // collect indexes of non-key fields in slave record
@@ -108,29 +110,13 @@ public class LastVarRecordMap implements LastRecordMap {
             slaveValueIndexes.add(i);
             ColumnType type = slaveMetadata.getColumnQuick(i).getType();
             slaveValueTypes.add(type);
-
-            switch (type) {
-                case INT:
-                case FLOAT:
-                case SYMBOL:
-                    varOffset += 4;
-                    break;
-                case LONG:
-                case DOUBLE:
-                case DATE:
-                    varOffset += 8;
-                    break;
-                case BOOLEAN:
-                case BYTE:
-                    varOffset++;
-                    break;
-                case SHORT:
-                    varOffset += 2;
-                    break;
-                default:
-                    varColumns.add(i);
-                    varOffset += 4;
-                    break;
+            int size = type.size();
+            if (size == 0) {
+                // variable size col
+                varColumns.add(i);
+                varOffset += 4;
+            } else {
+                varOffset += size;
             }
         }
 
@@ -237,49 +223,6 @@ public class LastVarRecordMap implements LastRecordMap {
         this.storageFacade = cursor.getStorageFacade();
     }
 
-    private static MultiMap.KeyWriter get(MultiMap map, Record record, IntHashSet indices, ObjList<ColumnType> types) {
-        MultiMap.KeyWriter kw = map.keyWriter();
-        for (int i = 0, n = indices.size(); i < n; i++) {
-            int idx = indices.get(i);
-            switch (types.getQuick(i)) {
-                case INT:
-                    kw.putInt(record.getInt(idx));
-                    break;
-                case LONG:
-                    kw.putLong(record.getLong(idx));
-                    break;
-                case FLOAT:
-                    kw.putFloat(record.getFloat(idx));
-                    break;
-                case DOUBLE:
-                    kw.putDouble(record.getDouble(idx));
-                    break;
-                case BOOLEAN:
-                    kw.putBoolean(record.getBool(idx));
-                    break;
-                case BYTE:
-                    kw.putByte(record.get(idx));
-                    break;
-                case SHORT:
-                    kw.putShort(record.getShort(idx));
-                    break;
-                case DATE:
-                    kw.putLong(record.getDate(idx));
-                    break;
-                case STRING:
-                    kw.putStr(record.getFlyweightStr(idx));
-                    break;
-                case SYMBOL:
-                    // this is key field
-                    // we have to write out string rather than int
-                    // because master int values for same strings can be different
-                    kw.putStr(record.getSym(idx));
-                    break;
-            }
-        }
-        return kw;
-    }
-
     private void appendRec(Record record, int size, MapValues values) {
         int pgInx = pageIndex(appendOffset);
         int pgOfs = pageOffset(appendOffset);
@@ -311,11 +254,11 @@ public class LastVarRecordMap implements LastRecordMap {
     }
 
     private MapValues getByMaster(Record record) {
-        return map.getValues(get(map, record, masterKeyIndexes, masterKeyTypes));
+        return map.getValues(RecordUtils.createKey(map, record, masterKeyIndexes, masterKeyTypes));
     }
 
     private MapValues getBySlave(Record record) {
-        return map.getOrCreateValues(get(map, record, slaveKeyIndexes, slaveKeyTypes));
+        return map.getOrCreateValues(RecordUtils.createKey(map, record, slaveKeyIndexes, slaveKeyTypes));
     }
 
     private int pageIndex(long offset) {
@@ -331,6 +274,7 @@ public class LastVarRecordMap implements LastRecordMap {
         writeRec0(pages.getQuick(pageIndex(offset)) + pageOffset(offset) + 4, record);
     }
 
+    @SuppressFBWarnings("SF_SWITCH_NO_DEFAULT")
     private void writeRec0(long addr, Record record) {
         int varOffset = this.varOffset;
         for (int i = 0, n = slaveValueIndexes.size(); i < n; i++) {

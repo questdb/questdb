@@ -41,10 +41,10 @@ public final class MapMetadata extends AbstractRecordMetadata {
             @Transient ObjHashSet<String> keyNames,
             @Transient ObjList<RecordColumnMetadata> valueColumns) {
 
-        this.columnCount = valueColumns.size() + keyNames.size();
+        int split = valueColumns.size();
+        this.columnCount = split + keyNames.size();
         this.nameCache = new CharSequenceIntHashMap(columnCount);
         this.columns = new RecordColumnMetadata[columnCount];
-        int split = valueColumns.size();
 
         for (int i = 0; i < split; i++) {
             columns[i] = valueColumns.get(i);

@@ -31,6 +31,7 @@ import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolder {
     private final ObjList<ColumnType> types;
@@ -99,6 +100,7 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
         this.storageFacade = cursor.getStorageFacade();
     }
 
+    @SuppressFBWarnings("SF_SWITCH_NO_DEFAULT")
     public void write(Record record) {
         this.held = true;
         int sz = varOffset;

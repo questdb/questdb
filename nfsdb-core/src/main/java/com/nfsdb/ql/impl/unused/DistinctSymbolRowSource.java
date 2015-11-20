@@ -31,6 +31,7 @@ import com.nfsdb.ql.RowSource;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.impl.AbstractRowSource;
 import com.nfsdb.storage.FixedColumn;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 /**
  * Takes stream of rowids, converts them to int values of FixedColumn and
@@ -60,6 +61,7 @@ public class DistinctSymbolRowSource extends AbstractRowSource {
         columnIndex = metadata.getColumnIndex(symbol);
     }
 
+    @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_NO_CHECKED")
     @Override
     public RowCursor prepareCursor(PartitionSlice slice) {
         try {

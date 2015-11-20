@@ -22,7 +22,6 @@
 package com.nfsdb.ql.ops.count;
 
 import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.AggregatorFunction;
 import com.nfsdb.ql.Record;
@@ -77,6 +76,6 @@ public final class CountAggregator extends AbstractVirtualColumn implements Aggr
     }
 
     @Override
-    public void setArg(int pos, VirtualColumn arg) throws ParserException {
+    public void setArg(int pos, VirtualColumn arg) {
     }
 }

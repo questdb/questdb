@@ -88,6 +88,7 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
                 case BYTE:
                 case BOOLEAN:
                     offset++;
+                    break;
                 case INT:
                 case FLOAT:
                     offset += 4;

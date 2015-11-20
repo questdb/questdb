@@ -26,6 +26,7 @@ import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.io.sink.StringSink;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+@SuppressFBWarnings("CD_CIRCULAR_DEPENDENCY")
 final public class Dates {
 
     public static final long DAY_MILLIS = 86400000L;

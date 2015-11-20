@@ -23,7 +23,9 @@ package com.nfsdb.factory.configuration;
 
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.storage.ColumnType;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+@SuppressFBWarnings("CD_CIRCULAR_DEPENDENCY")
 public class GenericStringBuilder extends AbstractGenericMetadataBuilder {
 
     public GenericStringBuilder(JournalStructure parent, ColumnMetadata meta) {

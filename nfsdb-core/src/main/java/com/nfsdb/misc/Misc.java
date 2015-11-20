@@ -22,6 +22,7 @@
 package com.nfsdb.misc;
 
 import com.nfsdb.logging.Logger;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -32,6 +33,7 @@ public final class Misc {
     private Misc() {
     }
 
+    @SuppressFBWarnings("CFS_CONFUSING_FUNCTION_SEMANTICS")
     public static <T> T free(T object) {
         if (object instanceof Closeable) {
             try {

@@ -61,10 +61,10 @@ import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.ql.ops.constant.LongConstant;
 import com.nfsdb.storage.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayDeque;
 
+@SuppressFBWarnings("LEST_LOST_EXCEPTION_STACK_TRACE")
 public class QueryCompiler {
 
     private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
@@ -274,6 +274,7 @@ public class QueryCompiler {
         }
     }
 
+    @SuppressFBWarnings("PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS")
     private void analyseEquals(QueryModel parent, ExprNode node) throws ParserException {
         literalCollectorAIndexes.clear();
         literalCollectorBIndexes.clear();
@@ -391,6 +392,7 @@ public class QueryCompiler {
         }
     }
 
+    @SuppressFBWarnings("PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS")
     private void assignFilters(QueryModel parent) throws ParserException {
 
         journalsSoFar.clear();
@@ -930,7 +932,6 @@ public class QueryCompiler {
         }
     }
 
-    @NotNull
     private RecordSource<? extends Record> createHashJoin(QueryModel model, RecordSource<? extends Record> master, RecordSource<? extends Record> slave) throws ParserException {
         JoinContext jc = model.getContext();
         RecordMetadata bm = master.getMetadata();
@@ -960,8 +961,7 @@ public class QueryCompiler {
             masterColIndices.add(ib);
             slaveColIndices.add(ia);
         }
-        master = new HashJoinRecordSource(master, masterColIndices, slave, slaveColIndices, model.getJoinType() == QueryModel.JoinType.OUTER);
-        return master;
+        return new HashJoinRecordSource(master, masterColIndices, slave, slaveColIndices, model.getJoinType() == QueryModel.JoinType.OUTER);
     }
 
     /**
@@ -1541,7 +1541,7 @@ public class QueryCompiler {
         return model.getColumns().size() == 0 ? rs : selectColumns0(rs, model);
     }
 
-    @NotNull
+    @SuppressFBWarnings("PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS")
     private RecordSource<? extends Record> selectColumns0(RecordSource<? extends Record> rs, QueryModel model) throws ParserException {
         final ObjList<QueryColumn> columns = model.getColumns();
         final CharSequenceIntHashMap columnNameHistogram = model.getColumnNameHistogram();
@@ -1626,7 +1626,7 @@ public class QueryCompiler {
         ExprNode sampleBy = model.getSampleBy();
         int asz = aggregators.size();
         if (asz > 0) {
-            ObjList<AggregatorFunction> af = new ObjList<>(aggregators.size());
+            ObjList<AggregatorFunction> af = new ObjList<>(asz);
             // create virtual columns
             for (int i = 0; i < asz; i++) {
                 QueryColumn qc = aggregators.get(i);
@@ -1760,7 +1760,7 @@ public class QueryCompiler {
             try {
                 int v = Numbers.parseInt(im.keyValues.get(i));
                 if (set == null) {
-                    set = new IntHashSet(im.keyValues.size());
+                    set = new IntHashSet(n);
                 }
                 set.add(v);
             } catch (NumericException e) {

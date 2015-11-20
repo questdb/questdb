@@ -120,55 +120,12 @@ public class LastRowIdRecordMap implements LastRecordMap {
         return getStorageFacade().getSymbolTable(name);
     }
 
-    private static MultiMap.KeyWriter get(MultiMap map, Record record, IntHashSet indices, ObjList<ColumnType> types) {
-        MultiMap.KeyWriter kw = map.keyWriter();
-        for (int i = 0, n = indices.size(); i < n; i++) {
-            int idx = indices.get(i);
-            switch (types.getQuick(i)) {
-                case INT:
-                    kw.putInt(record.getInt(idx));
-                    break;
-                case LONG:
-                    kw.putLong(record.getLong(idx));
-                    break;
-                case FLOAT:
-                    kw.putFloat(record.getFloat(idx));
-                    break;
-                case DOUBLE:
-                    kw.putDouble(record.getDouble(idx));
-                    break;
-                case BOOLEAN:
-                    kw.putBoolean(record.getBool(idx));
-                    break;
-                case BYTE:
-                    kw.putByte(record.get(idx));
-                    break;
-                case SHORT:
-                    kw.putShort(record.getShort(idx));
-                    break;
-                case DATE:
-                    kw.putLong(record.getDate(idx));
-                    break;
-                case STRING:
-                    kw.putStr(record.getFlyweightStr(idx));
-                    break;
-                case SYMBOL:
-                    // this is key field
-                    // we have to write out string rather than int
-                    // because master int values for same strings can be different
-                    kw.putStr(record.getSym(idx));
-                    break;
-            }
-        }
-        return kw;
-    }
-
     private MapValues getByMaster(Record record) {
-        return map.getValues(get(map, record, masterKeyIndexes, masterKeyTypes));
+        return map.getValues(RecordUtils.createKey(map, record, masterKeyIndexes, masterKeyTypes));
     }
 
     private MapValues getBySlave(Record record) {
-        return map.getOrCreateValues(get(map, record, slaveKeyIndexes, slaveKeyTypes));
+        return map.getOrCreateValues(RecordUtils.createKey(map, record, slaveKeyIndexes, slaveKeyTypes));
     }
 
     static {

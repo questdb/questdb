@@ -25,6 +25,7 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Numbers;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public final class SamplerFactory {
 
@@ -34,6 +35,7 @@ public final class SamplerFactory {
      * @param cs the key
      * @return instance of appropriate TimestampSampler
      */
+    @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
     public static TimestampSampler from(CharSequence cs) {
         int k = -1;
 

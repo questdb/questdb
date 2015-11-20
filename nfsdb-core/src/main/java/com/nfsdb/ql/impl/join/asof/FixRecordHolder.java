@@ -30,6 +30,7 @@ import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.storage.SymbolTable;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
     private final ObjList<ColumnType> types;
@@ -38,6 +39,7 @@ public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
     private StorageFacade storageFacade;
     private boolean held = false;
 
+    @SuppressFBWarnings("SF_SWITCH_NO_DEFAULT")
     public FixRecordHolder(RecordMetadata metadata) {
         super(metadata);
 
@@ -89,37 +91,11 @@ public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
         this.storageFacade = cursor.getStorageFacade();
     }
 
+    @SuppressFBWarnings("SF_SWITCH_NO_DEFAULT")
     public void write(Record record) {
         this.held = true;
         for (int i = 0, n = types.size(); i < n; i++) {
-            long address = this.address + offsets.getQuick(i);
-            switch (types.getQuick(i)) {
-                case INT:
-                case SYMBOL:
-                    // write out int as symbol value
-                    // need symbol facade to resolve back to string
-                    Unsafe.getUnsafe().putInt(address, record.getInt(i));
-                    break;
-                case LONG:
-                    Unsafe.getUnsafe().putLong(address, record.getLong(i));
-                    break;
-                case FLOAT:
-                    Unsafe.getUnsafe().putFloat(address, record.getFloat(i));
-                    break;
-                case DOUBLE:
-                    Unsafe.getUnsafe().putDouble(address, record.getDouble(i));
-                    break;
-                case BOOLEAN:
-                case BYTE:
-                    Unsafe.getUnsafe().putByte(address, record.get(i));
-                    break;
-                case SHORT:
-                    Unsafe.getUnsafe().putShort(address, record.getShort(i));
-                    break;
-                case DATE:
-                    Unsafe.getUnsafe().putLong(address, record.getDate(i));
-                    break;
-            }
+            RecordUtils.copyFixed(types.getQuick(i), record, i, this.address + offsets.getQuick(i));
         }
     }
 

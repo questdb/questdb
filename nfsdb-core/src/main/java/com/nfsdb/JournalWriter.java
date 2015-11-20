@@ -22,6 +22,7 @@
 package com.nfsdb;
 
 import com.nfsdb.collections.PeekingListIterator;
+import com.nfsdb.concurrent.*;
 import com.nfsdb.exceptions.IncompatibleJournalException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
@@ -42,10 +43,13 @@ import java.io.File;
 import java.io.FileFilter;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.nio.channels.FileChannel;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 @SuppressFBWarnings({"PATH_TRAVERSAL_IN", "EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
@@ -861,13 +865,14 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
+    @SuppressFBWarnings("SF_SWITCH_NO_DEFAULT")
     private void writeDiscardFile(long rowid) throws JournalException {
 
         if (discardTxtRaf == null) {
             try {
                 discardTxtRaf = new RandomAccessFile(discardTxt, "rw");
-                discardTxtRaf.getChannel();
-                discardSink = new FlexBufferSink(discardTxtRaf.getChannel().position(discardTxtRaf.getChannel().size()), 1024 * 1024);
+                FileChannel ch = discardTxtRaf.getChannel();
+                discardSink = new FlexBufferSink(ch.position(ch.size()), 1024 * 1024);
             } catch (IOException e) {
                 throw new JournalException(e);
             }
@@ -927,6 +932,54 @@ public class JournalWriter<T> extends Journal<T> {
             }
         } finally {
             discardSink.flush();
+        }
+    }
+
+    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
+    private static class PartitionCleaner {
+        private final ExecutorService executor;
+        private final Sequence pubSeq;
+        private final Sequence subSeq;
+        private final JournalWriter writer;
+        private final TxLog txLog;
+
+        public PartitionCleaner(final JournalWriter writer, String name) throws JournalException {
+            this.executor = Executors.newCachedThreadPool(new NamedDaemonThreadFactory("nfsdb-journal-cleaner-" + name, true));
+            this.writer = writer;
+            this.pubSeq = new SPSequence(32);
+            this.subSeq = new SCSequence(new BlockingWaitStrategy());
+            this.pubSeq.followedBy(subSeq);
+            this.subSeq.followedBy(pubSeq);
+            this.txLog = new TxLog(writer.getLocation(), JournalMode.READ, writer.getMetadata().getTxCountHint());
+        }
+
+        public void halt() {
+            executor.shutdown();
+            subSeq.alert();
+        }
+
+        public void purge() {
+            pubSeq.done(pubSeq.nextBully());
+        }
+
+        public void start() {
+            executor.submit(new Runnable() {
+                @Override
+                public void run() {
+                    while (true) {
+                        try {
+                            subSeq.done(subSeq.waitForNext());
+                            try {
+                                writer.purgeUnusedTempPartitions(txLog);
+                            } catch (JournalException e) {
+                                throw new JournalRuntimeException(e);
+                            }
+                        } catch (AlertedException ignore) {
+                            break;
+                        }
+                    }
+                }
+            });
         }
     }
 }

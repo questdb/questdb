@@ -87,9 +87,10 @@ public class LastFixRecordMap implements LastRecordMap {
             keyCols.add(slaveMetadata.getColumnName(idx));
         }
 
-        this.fixedOffsets = new IntList(ksz - keyCols.size());
-        this.slaveValueIndexes = new IntList(ksz - keyCols.size());
-        this.slaveValueTypes = new ObjList<>(ksz - keyCols.size());
+        int sz = ksz - keyCols.size();
+        this.fixedOffsets = new IntList(sz);
+        this.slaveValueIndexes = new IntList(sz);
+        this.slaveValueTypes = new ObjList<>(sz);
 
         int varOffset = 0;
         // collect indexes of non-key fields in slave record
@@ -98,26 +99,7 @@ public class LastFixRecordMap implements LastRecordMap {
             slaveValueIndexes.add(i);
             ColumnType type = slaveMetadata.getColumnQuick(i).getType();
             slaveValueTypes.add(type);
-
-            switch (type) {
-                case INT:
-                case FLOAT:
-                case SYMBOL:
-                    varOffset += 4;
-                    break;
-                case LONG:
-                case DOUBLE:
-                case DATE:
-                    varOffset += 8;
-                    break;
-                case BOOLEAN:
-                case BYTE:
-                    varOffset++;
-                    break;
-                case SHORT:
-                    varOffset += 2;
-                    break;
-            }
+            varOffset += type.size();
         }
 
         if (varOffset > pageSize) {
@@ -180,49 +162,6 @@ public class LastFixRecordMap implements LastRecordMap {
         this.storageFacade = cursor.getStorageFacade();
     }
 
-    private static MultiMap.KeyWriter get(MultiMap map, Record record, IntHashSet indices, ObjList<ColumnType> types) {
-        MultiMap.KeyWriter kw = map.keyWriter();
-        for (int i = 0, n = indices.size(); i < n; i++) {
-            int idx = indices.get(i);
-            switch (types.getQuick(i)) {
-                case INT:
-                    kw.putInt(record.getInt(idx));
-                    break;
-                case LONG:
-                    kw.putLong(record.getLong(idx));
-                    break;
-                case FLOAT:
-                    kw.putFloat(record.getFloat(idx));
-                    break;
-                case DOUBLE:
-                    kw.putDouble(record.getDouble(idx));
-                    break;
-                case BOOLEAN:
-                    kw.putBoolean(record.getBool(idx));
-                    break;
-                case BYTE:
-                    kw.putByte(record.get(idx));
-                    break;
-                case SHORT:
-                    kw.putShort(record.getShort(idx));
-                    break;
-                case DATE:
-                    kw.putLong(record.getDate(idx));
-                    break;
-                case STRING:
-                    kw.putStr(record.getFlyweightStr(idx));
-                    break;
-                case SYMBOL:
-                    // this is key field
-                    // we have to write out string rather than int
-                    // because master int values for same strings can be different
-                    kw.putStr(record.getSym(idx));
-                    break;
-            }
-        }
-        return kw;
-    }
-
     private void appendRec(Record record, MapValues values) {
         int pgInx = pageIndex(appendOffset);
         int pgOfs = pageOffset(appendOffset);
@@ -243,11 +182,11 @@ public class LastFixRecordMap implements LastRecordMap {
     }
 
     private MapValues getByMaster(Record record) {
-        return map.getValues(get(map, record, masterKeyIndexes, masterKeyTypes));
+        return map.getValues(RecordUtils.createKey(map, record, masterKeyIndexes, masterKeyTypes));
     }
 
     private MapValues getBySlave(Record record) {
-        return map.getOrCreateValues(get(map, record, slaveKeyIndexes, slaveKeyTypes));
+        return map.getOrCreateValues(RecordUtils.createKey(map, record, slaveKeyIndexes, slaveKeyTypes));
     }
 
     private int pageIndex(long offset) {
@@ -265,35 +204,7 @@ public class LastFixRecordMap implements LastRecordMap {
 
     private void writeRec0(long addr, Record record) {
         for (int i = 0, n = slaveValueIndexes.size(); i < n; i++) {
-            int idx = slaveValueIndexes.getQuick(i);
-            long address = addr + fixedOffsets.getQuick(i);
-            switch (slaveValueTypes.getQuick(i)) {
-                case INT:
-                case SYMBOL:
-                    // write out int as symbol value
-                    // need symbol facade to resolve back to string
-                    Unsafe.getUnsafe().putInt(address, record.getInt(idx));
-                    break;
-                case LONG:
-                    Unsafe.getUnsafe().putLong(address, record.getLong(idx));
-                    break;
-                case FLOAT:
-                    Unsafe.getUnsafe().putFloat(address, record.getFloat(idx));
-                    break;
-                case DOUBLE:
-                    Unsafe.getUnsafe().putDouble(address, record.getDouble(idx));
-                    break;
-                case BOOLEAN:
-                case BYTE:
-                    Unsafe.getUnsafe().putByte(address, record.get(idx));
-                    break;
-                case SHORT:
-                    Unsafe.getUnsafe().putShort(address, record.getShort(idx));
-                    break;
-                case DATE:
-                    Unsafe.getUnsafe().putLong(address, record.getDate(idx));
-                    break;
-            }
+            RecordUtils.copyFixed(slaveValueTypes.getQuick(i), record, slaveValueIndexes.getQuick(i), addr + fixedOffsets.getQuick(i));
         }
     }
 
