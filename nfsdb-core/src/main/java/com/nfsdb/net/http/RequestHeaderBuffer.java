@@ -26,6 +26,8 @@ import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.collections.ObjectPool;
 import com.nfsdb.exceptions.HeadersTooLargeException;
+import com.nfsdb.exceptions.MalformedHeaderException;
+import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -38,12 +40,17 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
     private final long hi;
     private long _wptr;
     private long headerPtr;
-    private DirectByteCharSequence method;
-    private DirectByteCharSequence url;
+    private CharSequence method;
+    private CharSequence url;
     private boolean needMethod;
     private long _lo;
-    private DirectByteCharSequence n;
+    private CharSequence n;
     private boolean incomplete;
+    private CharSequence contentType;
+    private CharSequence encoding;
+    private CharSequence boundary;
+    private CharSequence contentDispositionName;
+    private CharSequence contentDispositionFilename;
 
     public RequestHeaderBuffer(int size, ObjectPool<DirectByteCharSequence> pool) {
         int sz = Numbers.ceilPow2(size);
@@ -63,6 +70,11 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
         this.method = null;
         this.url = null;
         this.n = null;
+        this.contentType = null;
+        this.boundary = null;
+        this.encoding = null;
+        this.contentDispositionName = null;
+        this.contentDispositionFilename = null;
     }
 
     @Override
@@ -75,6 +87,26 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
 
     public CharSequence get(CharSequence name) {
         return headers.get(name);
+    }
+
+    public CharSequence getBoundary() {
+        return boundary;
+    }
+
+    public CharSequence getContentDispositionFilename() {
+        return contentDispositionFilename;
+    }
+
+    public CharSequence getContentDispositionName() {
+        return contentDispositionName;
+    }
+
+    public CharSequence getContentType() {
+        return contentType;
+    }
+
+    public CharSequence getEncoding() {
+        return encoding;
     }
 
     public CharSequence getMethod() {
@@ -94,7 +126,7 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
     }
 
     @SuppressFBWarnings("SF_SWITCH_NO_DEFAULT")
-    public long write(long ptr, int len, boolean _method) throws HeadersTooLargeException {
+    public long write(long ptr, int len, boolean _method) throws HeadersTooLargeException, MalformedHeaderException {
         if (_method && needMethod) {
             int l = parseMethod(ptr, len);
             len -= l;
@@ -131,6 +163,7 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
                 case '\n':
                     if (n == null) {
                         incomplete = false;
+                        parseKnownHeaders();
                         return p;
                     }
                     v = pool.next().of(_lo, _wptr - 1);
@@ -142,6 +175,145 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
         }
 
         return p;
+    }
+
+    private static DirectByteCharSequence unquote(DirectByteCharSequence that) throws MalformedHeaderException {
+        int len = that.length();
+        if (len == 0) {
+            // zero length mandatory field
+            throw MalformedHeaderException.INSTANCE;
+        }
+
+        if (that.charAt(0) == '"') {
+            if (that.charAt(len - 1) == '"') {
+                return that.of(that.getLo() + 1, that.getHi() - 1);
+            } else {
+                // unclosed quote
+                throw MalformedHeaderException.INSTANCE;
+            }
+        } else {
+            return that;
+        }
+    }
+
+    private void parseContentDisposition() throws MalformedHeaderException {
+        CharSequence contentDisposition = get("Content-Disposition");
+        if (contentDisposition == null) {
+            return;
+        }
+
+        long p = ((DirectByteCharSequence) contentDisposition).getLo();
+        long _lo = p;
+        long hi = ((DirectByteCharSequence) contentDisposition).getHi();
+
+        boolean expectFormData = true;
+        boolean swallowSpace = true;
+
+        DirectByteCharSequence name = null;
+
+        while (p <= hi) {
+            char b = (char) Unsafe.getUnsafe().getByte(p++);
+
+            if (b == ' ' && swallowSpace) {
+                _lo = p;
+                continue;
+            }
+
+            if (p > hi || b == ';') {
+                if (expectFormData) {
+                    _lo = p;
+                    expectFormData = false;
+                    continue;
+                }
+
+                if (name == null) {
+                    throw MalformedHeaderException.INSTANCE;
+                }
+
+                if (Chars.equals("name", name)) {
+                    this.contentDispositionName = unquote(pool.next().of(_lo, p - 1));
+                    swallowSpace = true;
+                    _lo = p;
+                    continue;
+                }
+
+                if (Chars.equals("filename", name)) {
+                    this.contentDispositionFilename = unquote(pool.next().of(_lo, p - 1));
+                    _lo = p;
+                    continue;
+                }
+
+                if (p > hi) {
+                    break;
+                }
+            } else if (b == '=') {
+                name = name == null ? pool.next().of(_lo, p - 1) : name.of(_lo, p - 1);
+                _lo = p;
+                swallowSpace = false;
+            }
+        }
+    }
+
+    private void parseContentType() throws MalformedHeaderException {
+        CharSequence seq = get("Content-Type");
+        if (seq == null) {
+            return;
+        }
+
+        long p = ((DirectByteCharSequence) seq).getLo();
+        long _lo = p;
+        long hi = ((DirectByteCharSequence) seq).getHi();
+
+        DirectByteCharSequence name = null;
+        boolean contentType = true;
+        boolean swallowSpace = true;
+
+        while (p <= hi) {
+            char b = (char) Unsafe.getUnsafe().getByte(p++);
+
+            if (b == ' ' && swallowSpace) {
+                _lo = p;
+                continue;
+            }
+
+            if (p > hi || b == ';') {
+                if (contentType) {
+                    this.contentType = pool.next().of(_lo, p - 1);
+                    _lo = p;
+                    contentType = false;
+                    continue;
+                }
+
+                if (name == null) {
+                    throw MalformedHeaderException.INSTANCE;
+                }
+
+                if (Chars.equals("encoding", name)) {
+                    this.encoding = pool.next().of(_lo, p - 1);
+                    _lo = p;
+                    continue;
+                }
+
+                if (Chars.equals("boundary", name)) {
+                    this.boundary = pool.next().of(_lo, p - 1);
+                    _lo = p;
+                    continue;
+                }
+
+                if (p > hi) {
+                    break;
+                }
+            } else if (b == '=') {
+                name = name == null ? pool.next().of(_lo, p - 1) : name.of(_lo, p - 1);
+                _lo = p;
+                swallowSpace = false;
+            }
+        }
+    }
+
+    private void parseKnownHeaders() throws MalformedHeaderException {
+        parseContentType();
+        parseContentDisposition();
     }
 
     private int parseMethod(long lo, int len) {

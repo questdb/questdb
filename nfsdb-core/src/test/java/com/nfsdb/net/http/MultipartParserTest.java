@@ -62,20 +62,20 @@ public class MultipartParserTest {
             "</project>\n";
 
     private static final String content = "------WebKitFormBoundaryxFKYDBybTLu2rb8P\r\n" +
-            "Content-Disposition: form-data; name=\"textline\"\n" +
-            "\n" +
-            "\n" +
+            "Content-Disposition: form-data; name=\"textline\"\r\n" +
+            "\r\n" +
+            "\r\n" +
             "------WebKitFormBoundaryxFKYDBybTLu2rb8P\n" +
             "Content-Disposition: form-data; name=\"textline2\"\n" +
-            "\n" +
-            "\n" +
+            "\r\n" +
+            "\r\n" +
             "------WebKitFormBoundaryxFKYDBybTLu2rb8P\n" +
-            "Content-Disposition: form-data; name=\"datafile\"; filename=\"pom.xml\"\n" +
-            "Content-Type: text/xml\n" +
-            "\n" +
+            "Content-Disposition: form-data; name=\"datafile\"; filename=\"pom.xml\"\r\n" +
+            "Content-Type: text/xml\r\n" +
+            "\r\n" +
             file +
-            "\n" +
-            "------WebKitFormBoundaryxFKYDBybTLu2rb8P--\n";
+            "\r\n" +
+            "------WebKitFormBoundaryxFKYDBybTLu2rb8P--\r\n";
 
     @Test
     public void testParse() throws Exception {
@@ -87,7 +87,7 @@ public class MultipartParserTest {
         long p = TestUtils.toMemory(content);
         try {
             for (int i = 0; i < content.length(); i++) {
-                parser.of("\n" + "------WebKitFormBoundaryxFKYDBybTLu2rb8P");
+                parser.of("\r\n" + "------WebKitFormBoundaryxFKYDBybTLu2rb8P");
                 parser.parse(p, i, lsnr);
                 parser.parse(p + i, content.length() - i, lsnr);
                 lsnr.assertLine();

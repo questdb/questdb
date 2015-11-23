@@ -26,11 +26,12 @@ import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.collections.ObjectPool;
 import com.nfsdb.exceptions.HeadersTooLargeException;
-import com.nfsdb.exceptions.InvalidMultipartHeader;
+import com.nfsdb.exceptions.MalformedHeaderException;
 import com.nfsdb.misc.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 
 @SuppressFBWarnings("SF_SWITCH_FALLTHROUGH")
@@ -78,7 +79,7 @@ public class MultipartParser implements Closeable, Mutable {
     }
 
     @SuppressFBWarnings("SF_SWITCH_NO_DEFAULT")
-    public boolean parse(long ptr, int len, MultipartListener listener) throws InvalidMultipartHeader, HeadersTooLargeException {
+    public boolean parse(long ptr, int len, MultipartListener listener) throws HeadersTooLargeException, MalformedHeaderException, IOException {
         long hi = ptr + len;
         long _lo = Long.MAX_VALUE;
         char b;
@@ -90,7 +91,7 @@ public class MultipartParser implements Closeable, Mutable {
                     state = State.BODY_CONTINUED;
                     break;
                 case START_BOUNDARY:
-                    boundaryPtr = 1;
+                    boundaryPtr = 2;
                     // fall thru
                 case PARTIAL_START_BOUNDARY:
                     switch (matchBoundary(ptr, hi)) {
@@ -102,7 +103,7 @@ public class MultipartParser implements Closeable, Mutable {
                             ptr += consumedBoundaryLen;
                             break;
                         default:
-                            throw InvalidMultipartHeader.INSTANCE;
+                            throw MalformedHeaderException.INSTANCE;
                     }
                     break;
                 case PRE_HEADERS:

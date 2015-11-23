@@ -22,10 +22,11 @@
 package com.nfsdb.exceptions;
 
 @SuppressWarnings("ThrowableInstanceNeverThrown")
-public final class UnsupportedContentTypeException extends Exception {
-    public final static UnsupportedContentTypeException INSTANCE = new UnsupportedContentTypeException();
+public final class MalformedHeaderException extends Exception {
+    //todo: log additional information with all instances where this exception is thrown
+    public final static MalformedHeaderException INSTANCE = new MalformedHeaderException();
 
-    private UnsupportedContentTypeException() {
+    private MalformedHeaderException() {
         super("Unsupported content type");
     }
 }

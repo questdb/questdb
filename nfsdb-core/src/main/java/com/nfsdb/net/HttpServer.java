@@ -21,13 +21,16 @@
 
 package com.nfsdb.net;
 
+import com.nfsdb.collections.CharSequenceObjHashMap;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.concurrent.MCSequence;
 import com.nfsdb.concurrent.RingQueue;
 import com.nfsdb.concurrent.SPSequence;
 import com.nfsdb.concurrent.Worker;
+import com.nfsdb.net.http.ContextHandler;
 import com.nfsdb.net.http.handlers.DummyFileUploadHandler;
 
+import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.channels.SelectionKey;
@@ -41,8 +44,12 @@ public class HttpServer {
     private final CountDownLatch haltLatch;
     private final int ioQueueSize;
     private final int workerCount;
+    private final CountDownLatch startComplete = new CountDownLatch(1);
+    private final CharSequenceObjHashMap<ContextHandler> handlers = new CharSequenceObjHashMap<>();
     private ServerSocketChannel channel;
     private Selector selector;
+    private volatile boolean running = true;
+
 
     public HttpServer(InetSocketAddress address, int workerCount, int ioQueueSize) {
         this.address = address;
@@ -53,20 +60,34 @@ public class HttpServer {
     }
 
     public static void main(String[] args) throws IOException {
-        new HttpServer(new InetSocketAddress(9000), 2, 1024).start();
+        HttpServer server = new HttpServer(new InetSocketAddress(9000), 2, 1024);
+        server.add("/up", new DummyFileUploadHandler(new File("~/dev/data")));
+        server.start();
         System.out.println("Server started");
     }
 
-    public void halt() throws IOException, InterruptedException {
-        for (int i = 0; i < workers.size(); i++) {
-            workers.getQuick(i).halt();
+    public void add(String url, ContextHandler handler) {
+        if (handlers.get(url) != null) {
+            throw new IllegalArgumentException(("Duplicate url: " + url));
         }
-        haltLatch.await();
-        selector.close();
-        channel.close();
+        handlers.put(url, handler);
+    }
+
+    public void halt() throws IOException, InterruptedException {
+        if (running) {
+            running = false;
+            startComplete.await();
+            for (int i = 0; i < workers.size(); i++) {
+                workers.getQuick(i).halt();
+            }
+            haltLatch.await();
+            selector.close();
+            channel.close();
+        }
     }
 
     public void start() throws IOException {
+        this.running = true;
         this.channel = ServerSocketChannel.open();
         this.channel.bind(address);
         this.channel.configureBlocking(false);
@@ -79,8 +100,7 @@ public class HttpServer {
         ioSubSequence.followedBy(ioPubSequence);
 
         IOLoopRunnable ioLoop = new IOLoopRunnable(selector, channel.register(selector, SelectionKey.OP_ACCEPT), ioQueue, ioPubSequence, ioQueueSize);
-        IOHttpRunnable ioHttp = new IOHttpRunnable(ioQueue, ioSubSequence, ioLoop);
-        ioHttp.add("/up", new DummyFileUploadHandler());
+        IOHttpRunnable ioHttp = new IOHttpRunnable(ioQueue, ioSubSequence, ioLoop, handlers);
 
         ObjList<Runnable> jobs = new ObjList<>();
         jobs.add(ioLoop);
@@ -91,5 +111,7 @@ public class HttpServer {
             workers.add(w = new Worker(jobs, haltLatch));
             w.start();
         }
+
+        startComplete.countDown();
     }
 }

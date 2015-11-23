@@ -184,6 +184,7 @@ public class MemoryFile implements Closeable {
 
         MappedByteBuffer buffer = buffers.getQuiet(index);
 
+        // this may occur when journal is refreshed.
         if (buffer != null && buffer.limit() < bufferPos) {
             buffer = ByteBuffers.release(buffer);
         }

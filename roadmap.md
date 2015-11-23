@@ -21,8 +21,8 @@ __lang__
 
 __server__
 
-- [ ] file upload handling (multipart form parsing)
-- [ ] file upload handling from curl (100-continue recognition)
+- [x] file upload handling (multipart form parsing)
+- [x] file upload handling from curl (100-continue recognition)
 - [x] query execution
 - [ ] result set serialization (binary, json? - for javascript grid or chart)
 - [ ] flow control on file upload (park upload if client is not sending file)

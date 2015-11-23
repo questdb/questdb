@@ -25,9 +25,8 @@ import com.nfsdb.collections.CharSequenceObjHashMap;
 import com.nfsdb.concurrent.RingQueue;
 import com.nfsdb.concurrent.Sequence;
 import com.nfsdb.exceptions.HeadersTooLargeException;
-import com.nfsdb.exceptions.InvalidMultipartHeader;
+import com.nfsdb.exceptions.MalformedHeaderException;
 import com.nfsdb.exceptions.SlowChannelException;
-import com.nfsdb.exceptions.UnsupportedContentTypeException;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.net.http.*;
 import sun.nio.ch.DirectBuffer;
@@ -40,19 +39,13 @@ public class IOHttpRunnable implements Runnable {
     private final RingQueue<IOEvent> ioQueue;
     private final Sequence ioSequence;
     private final IOLoopRunnable loop;
-    private final CharSequenceObjHashMap<ContextHandler> handlers = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<ContextHandler> handlers;
 
-    public IOHttpRunnable(RingQueue<IOEvent> ioQueue, Sequence ioSequence, IOLoopRunnable loop) {
+    public IOHttpRunnable(RingQueue<IOEvent> ioQueue, Sequence ioSequence, IOLoopRunnable loop, CharSequenceObjHashMap<ContextHandler> handlers) {
         this.ioQueue = ioQueue;
         this.ioSequence = ioSequence;
         this.loop = loop;
-    }
-
-    public void add(String url, ContextHandler handler) {
-        if (handlers.get(url) != null) {
-            throw new IllegalArgumentException(("Duplicate url: " + url));
-        }
-        handlers.put(url, handler);
+        this.handlers = handlers;
     }
 
     @Override
@@ -74,9 +67,10 @@ public class IOHttpRunnable implements Runnable {
     }
 
     private void feedMultipartContent(MultipartListener handler, Request r, SocketChannel channel)
-            throws InvalidMultipartHeader, HeadersTooLargeException, SlowChannelException, IOException {
-        MultipartParser parser = r.getMultipartParser().of("\n--" + r.getBoundary());
+            throws HeadersTooLargeException, SlowChannelException, IOException, MalformedHeaderException {
+        MultipartParser parser = r.getMultipartParser().of(r.getBoundary());
         while (true) {
+//            MultipartParser.dump(r.in);
             try {
                 int sz = r.in.remaining();
                 if (sz > 0 && parser.parse(((DirectBuffer) r.in).address() + r.in.position(), sz, handler)) {
@@ -109,7 +103,7 @@ public class IOHttpRunnable implements Runnable {
                         if (handler instanceof MultipartListener) {
                             handler.onHeaders(r, response);
                             feedMultipartContent((MultipartListener) handler, r, channel);
-                            handler.onComplete(r, response);
+                            handler.onComplete();
                             r.clear();
                         } else {
                             // todo: 400 - bad request
@@ -119,16 +113,13 @@ public class IOHttpRunnable implements Runnable {
                     // todo: 404
                 }
             }
-        } catch (HeadersTooLargeException | InvalidMultipartHeader e) {
+        } catch (HeadersTooLargeException | MalformedHeaderException e) {
             status = Request.ChannelStatus.DISCONNECTED;
         } catch (SlowChannelException e) {
             status = Request.ChannelStatus.READY;
         } catch (IOException e) {
             status = Request.ChannelStatus.DISCONNECTED;
             e.printStackTrace();
-        } catch (UnsupportedContentTypeException e) {
-            context.clear();
-            status = Request.ChannelStatus.READY;
         }
 
         if (status != Request.ChannelStatus.DISCONNECTED) {

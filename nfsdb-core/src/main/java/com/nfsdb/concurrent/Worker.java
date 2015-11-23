@@ -40,7 +40,7 @@ public class Worker extends Thread {
     }
 
     public void halt() {
-        Unsafe.getUnsafe().compareAndSwapInt(this, RUNNING_OFFSET, 1, 2);
+        running = 2;
     }
 
     @Override
