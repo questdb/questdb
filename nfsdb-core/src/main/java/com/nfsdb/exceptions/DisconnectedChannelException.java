@@ -19,31 +19,12 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net;
+package com.nfsdb.exceptions;
 
-import com.nfsdb.collections.Mutable;
-import com.nfsdb.net.http.Request;
-import com.nfsdb.net.http.Response;
+@SuppressWarnings("ThrowableInstanceNeverThrown")
+public final class DisconnectedChannelException extends Exception {
+    public final static DisconnectedChannelException INSTANCE = new DisconnectedChannelException();
 
-import java.io.Closeable;
-
-public class IOContext implements Closeable, Mutable {
-    // todo: extract config
-    public final Request request = new Request(128 * 1024, 16 * 1024 * 1024, 1024);
-    public final Response response = new Response(1024, 1024 * 1024);
-
-    public IOContext() {
-    }
-
-    @Override
-    public void clear() {
-        request.clear();
-        response.clear();
-    }
-
-    @Override
-    public void close() {
-        request.close();
-        response.close();
+    private DisconnectedChannelException() {
     }
 }

@@ -21,6 +21,7 @@
 
 package com.nfsdb.misc;
 
+import com.nfsdb.exceptions.DisconnectedChannelException;
 import com.nfsdb.exceptions.JournalDisconnectedChannelException;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.exceptions.SlowChannelException;
@@ -114,22 +115,26 @@ public final class ByteBuffers {
         }
     }
 
-    public static int copyNonBlocking(ReadableByteChannel channel, ByteBuffer to) throws SlowChannelException, IOException {
+    public static void copyNonBlocking(ReadableByteChannel channel, ByteBuffer to, int retryCount) throws SlowChannelException, IOException, DisconnectedChannelException {
         try {
             int r = to.remaining();
             int target = r;
             while (target > 0) {
                 int result = channel.read(to);
-                if (result <= 0) {
-                    throw SlowChannelException.INSTANCE;
+
+                // disconnected
+                if (result == -1) {
+                    throw DisconnectedChannelException.INSTANCE;
                 }
 
-                if (result < target) {
-                    return result + r - target;
+                if (result == 0 && --retryCount < 0) {
+                    if (target == r) {
+                        throw SlowChannelException.INSTANCE;
+                    }
+                    break;
                 }
                 target -= result;
             }
-            return r;
         } finally {
             to.flip();
         }

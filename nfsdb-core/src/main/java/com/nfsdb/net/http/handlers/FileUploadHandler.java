@@ -25,28 +25,30 @@ import com.nfsdb.JournalMode;
 import com.nfsdb.collections.ByteSequence;
 import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.misc.Unsafe;
-import com.nfsdb.net.http.*;
+import com.nfsdb.net.IOContext;
+import com.nfsdb.net.http.ContextHandler;
+import com.nfsdb.net.http.MultipartListener;
+import com.nfsdb.net.http.RequestHeaderBuffer;
 import com.nfsdb.storage.PlainFile;
 
 import java.io.File;
 import java.io.IOException;
 
-public class DummyFileUploadHandler implements ContextHandler, MultipartListener {
+public class FileUploadHandler implements ContextHandler, MultipartListener {
     private final File path;
     private PlainFile mf;
-    private Response response;
     private long wptr = 0;
 
-    public DummyFileUploadHandler(File path) {
+    public FileUploadHandler(File path) {
         this.path = path;
     }
 
     @Override
-    public void onChunk(RequestHeaderBuffer hb, ByteSequence data, boolean continued) throws IOException {
+    public void onChunk(IOContext context, RequestHeaderBuffer hb, ByteSequence data, boolean continued) throws IOException {
         if (hb.getContentDispositionFilename() != null) {
             if (!continued) {
                 closeFile();
-                openFile(hb.getContentDispositionFilename());
+                openFile(context, hb.getContentDispositionFilename());
             }
             write(data);
         } else {
@@ -55,17 +57,16 @@ public class DummyFileUploadHandler implements ContextHandler, MultipartListener
     }
 
     @Override
-    public void onComplete() throws IOException {
+    public void onComplete(IOContext context) throws IOException {
         closeFile();
-        response.status(200, "text/html; charset=utf-8");
-        response.flushHeader();
-        response.write("OK, got it");
-        response.end();
+        context.response.status(200, "text/html; charset=utf-8");
+        context.response.flushHeader();
+        context.response.write("OK, got it\r\n");
+        context.response.end();
     }
 
     @Override
-    public void onHeaders(Request request, Response response) {
-        this.response = response;
+    public void onHeaders(IOContext context) {
     }
 
     private void closeFile() throws IOException {
@@ -76,19 +77,19 @@ public class DummyFileUploadHandler implements ContextHandler, MultipartListener
         }
     }
 
-    private void openFile(CharSequence name) throws IOException {
+    private void openFile(IOContext context, CharSequence name) throws IOException {
         try {
             this.mf = new PlainFile(new File(path, name.toString()), 21, JournalMode.APPEND);
         } catch (IOException ignore) {
-            sendError();
+            sendError(context);
         }
     }
 
-    private void sendError() throws IOException {
-        response.status(200, "text/html; charset=utf-8");
-        response.flushHeader();
-        response.write("OOPS");
-        response.end();
+    private void sendError(IOContext context) throws IOException {
+        context.response.status(200, "text/html; charset=utf-8");
+        context.response.flushHeader();
+        context.response.write("OOPS");
+        context.response.end();
     }
 
     private void write(ByteSequence data) {

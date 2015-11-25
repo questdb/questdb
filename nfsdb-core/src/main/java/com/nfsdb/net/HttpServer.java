@@ -28,7 +28,7 @@ import com.nfsdb.concurrent.RingQueue;
 import com.nfsdb.concurrent.SPSequence;
 import com.nfsdb.concurrent.Worker;
 import com.nfsdb.net.http.ContextHandler;
-import com.nfsdb.net.http.handlers.DummyFileUploadHandler;
+import com.nfsdb.net.http.handlers.FileUploadHandler;
 
 import java.io.File;
 import java.io.IOException;
@@ -61,7 +61,7 @@ public class HttpServer {
 
     public static void main(String[] args) throws IOException {
         HttpServer server = new HttpServer(new InetSocketAddress(9000), 2, 1024);
-        server.add("/up", new DummyFileUploadHandler(new File("~/dev/data")));
+        server.add("/up", new FileUploadHandler(new File("~/dev/data")));
         server.start();
         System.out.println("Server started");
     }

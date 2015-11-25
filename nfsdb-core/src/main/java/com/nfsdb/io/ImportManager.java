@@ -30,6 +30,7 @@ import com.nfsdb.io.parser.listener.Listener;
 import com.nfsdb.io.parser.listener.MetadataExtractorListener;
 import com.nfsdb.misc.ByteBuffers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.io.IOException;
@@ -82,10 +83,10 @@ public final class ImportManager {
      * @param factory      journal factory
      * @param fileName     name of input file
      * @param format       inout format
-     * @param importSchema instance of ImportSchema
+     * @param importSchema optional instance of ImportSchema
      * @throws IOException
      */
-    public static void importFile(JournalWriterFactory factory, String fileName, TextFileFormat format, ImportSchema importSchema) throws IOException {
+    public static void importFile(JournalWriterFactory factory, String fileName, TextFileFormat format, @Nullable ImportSchema importSchema) throws IOException {
         importFile(factory, fileName, format, importSchema, SAMPLE_SIZE);
     }
 

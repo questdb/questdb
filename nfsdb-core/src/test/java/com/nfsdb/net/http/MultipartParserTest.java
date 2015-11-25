@@ -26,6 +26,7 @@ import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.ObjectPool;
 import com.nfsdb.misc.Unsafe;
+import com.nfsdb.net.IOContext;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -88,8 +89,8 @@ public class MultipartParserTest {
         try {
             for (int i = 0; i < content.length(); i++) {
                 parser.of("\r\n" + "------WebKitFormBoundaryxFKYDBybTLu2rb8P");
-                parser.parse(p, i, lsnr);
-                parser.parse(p + i, content.length() - i, lsnr);
+                parser.parse(null, p, i, lsnr);
+                parser.parse(null, p + i, content.length() - i, lsnr);
                 lsnr.assertLine();
                 parser.clear();
                 lsnr.clear();
@@ -115,7 +116,7 @@ public class MultipartParserTest {
         }
 
         @Override
-        public void onChunk(RequestHeaderBuffer hb, ByteSequence data, boolean continued) {
+        public void onChunk(IOContext context, RequestHeaderBuffer hb, ByteSequence data, boolean continued) {
             if (continued) {
                 String s = lines.getLast();
                 lines.setQuick(lines.size() - 1, s + data.toString());

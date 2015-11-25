@@ -21,10 +21,12 @@
 
 package com.nfsdb.net.http;
 
+import com.nfsdb.net.IOContext;
+
 import java.io.IOException;
 
 public interface ContextHandler {
-    void onComplete() throws IOException;
+    void onComplete(IOContext context) throws IOException;
 
-    void onHeaders(Request request, Response response);
+    void onHeaders(IOContext context);
 }

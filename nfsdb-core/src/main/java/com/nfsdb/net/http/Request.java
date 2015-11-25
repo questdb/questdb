@@ -24,12 +24,14 @@ package com.nfsdb.net.http;
 import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.collections.ObjectPool;
+import com.nfsdb.exceptions.DisconnectedChannelException;
 import com.nfsdb.exceptions.HeadersTooLargeException;
 import com.nfsdb.exceptions.MalformedHeaderException;
 import com.nfsdb.exceptions.SlowChannelException;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Numbers;
+import com.nfsdb.net.IOHttpRunnable;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.Closeable;
@@ -55,6 +57,7 @@ public class Request implements Closeable, Mutable {
         this.hb.clear();
         this.pool.clear();
         this.in.clear();
+        this.multipartParser.clear();
     }
 
     @Override
@@ -79,28 +82,24 @@ public class Request implements Closeable, Mutable {
         return hb.getUrl();
     }
 
+    public boolean isIncomplete() {
+        return hb.isIncomplete();
+    }
+
     public boolean isMultipart() {
         return hb.getContentType() != null && Chars.equals("multipart/form-data", hb.getContentType());
     }
 
-    public ChannelStatus read(ReadableByteChannel channel) throws HeadersTooLargeException, SlowChannelException, IOException, MalformedHeaderException {
+    public ChannelStatus read(ReadableByteChannel channel) throws HeadersTooLargeException, SlowChannelException, IOException, MalformedHeaderException, DisconnectedChannelException {
+        ByteBuffers.copyNonBlocking(channel, in, IOHttpRunnable.SO_READ_RETRY_COUNT);
+        long address = ((DirectBuffer) in).address();
+        in.position((int) (hb.write(address, in.remaining(), true) - address));
+
         if (hb.isIncomplete()) {
-            ByteBuffers.copyNonBlocking(channel, in);
-            if (in.remaining() == 0) {
-                // nothing sent, browsers do that when user clicks "stop" button
-                return ChannelStatus.DISCONNECTED;
-            }
-
-            long address = ((DirectBuffer) in).address();
-            in.position((int) (hb.write(address, in.remaining(), true) - address));
-
-            if (hb.isIncomplete()) {
-                return ChannelStatus.NEED_REQUEST;
-            }
+            return ChannelStatus.NEED_REQUEST;
         }
         return ChannelStatus.READY;
     }
-
 
     public enum ChannelStatus {
         READY, NEED_REQUEST, DISCONNECTED

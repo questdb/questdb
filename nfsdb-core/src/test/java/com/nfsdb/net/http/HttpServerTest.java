@@ -22,7 +22,7 @@
 package com.nfsdb.net.http;
 
 import com.nfsdb.net.HttpServer;
-import com.nfsdb.net.http.handlers.DummyFileUploadHandler;
+import com.nfsdb.net.http.handlers.FileUploadHandler;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Rule;
 import org.junit.Test;
@@ -51,7 +51,7 @@ public class HttpServerTest {
     public void testUpload() throws Exception {
         HttpServer server = new HttpServer(new InetSocketAddress(9090), 2, 1024);
         File dir = temp.newFolder();
-        server.add("/upload", new DummyFileUploadHandler(dir));
+        server.add("/upload", new FileUploadHandler(dir));
         server.start();
 
         File expected = new File(this.getClass().getResource("/csv/test-import.csv").getFile());

@@ -24,6 +24,7 @@ package com.nfsdb.net;
 import com.nfsdb.collections.CharSequenceObjHashMap;
 import com.nfsdb.concurrent.RingQueue;
 import com.nfsdb.concurrent.Sequence;
+import com.nfsdb.exceptions.DisconnectedChannelException;
 import com.nfsdb.exceptions.HeadersTooLargeException;
 import com.nfsdb.exceptions.MalformedHeaderException;
 import com.nfsdb.exceptions.SlowChannelException;
@@ -32,10 +33,16 @@ import com.nfsdb.net.http.*;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.IOException;
+import java.net.StandardSocketOptions;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 
 public class IOHttpRunnable implements Runnable {
+    // todo: extract config
+    public static final int SO_READ_RETRY_COUNT = 1000;
+    public static final int SO_RCVBUF_UPLOAD = 4 * 1024 * 1024;
+    public static final int SO_RVCBUF_DOWNLD = 128 * 1024;
+
     private final RingQueue<IOEvent> ioQueue;
     private final Sequence ioSequence;
     private final IOLoopRunnable loop;
@@ -66,45 +73,55 @@ public class IOHttpRunnable implements Runnable {
         process(channel, context, op);
     }
 
-    private void feedMultipartContent(MultipartListener handler, Request r, SocketChannel channel)
-            throws HeadersTooLargeException, SlowChannelException, IOException, MalformedHeaderException {
+    private void feedMultipartContent(MultipartListener handler, IOContext context, SocketChannel channel)
+            throws HeadersTooLargeException, SlowChannelException, IOException, MalformedHeaderException, DisconnectedChannelException {
+
+        channel.setOption(StandardSocketOptions.SO_RCVBUF, SO_RCVBUF_UPLOAD);
+        Request r = context.request;
         MultipartParser parser = r.getMultipartParser().of(r.getBoundary());
         while (true) {
 //            MultipartParser.dump(r.in);
             try {
                 int sz = r.in.remaining();
-                if (sz > 0 && parser.parse(((DirectBuffer) r.in).address() + r.in.position(), sz, handler)) {
+                System.out.println("rem: " + sz);
+                if (sz > 0 && parser.parse(context, ((DirectBuffer) r.in).address() + r.in.position(), sz, handler)) {
                     break;
                 }
             } finally {
                 r.in.clear();
             }
-            ByteBuffers.copyNonBlocking(channel, r.in);
+            ByteBuffers.copyNonBlocking(channel, r.in, SO_READ_RETRY_COUNT);
         }
+        channel.setOption(StandardSocketOptions.SO_RCVBUF, SO_RVCBUF_DOWNLD);
     }
 
     @SuppressWarnings("StatementWithEmptyBody")
     private void process(SocketChannel channel, IOContext context, int op) {
         Request r = context.request;
-        Request.ChannelStatus status;
+        Request.ChannelStatus status = Request.ChannelStatus.READY;
 
+        boolean _new = r.isIncomplete();
         try {
-            while ((status = r.read(channel)) == Request.ChannelStatus.NEED_REQUEST) {
-                // loop
+            if (_new) {
+                while ((status = r.read(channel)) == Request.ChannelStatus.NEED_REQUEST) {
+                    // loop
+                }
             }
 
             final Response response = context.response;
             response.setChannel(channel);
 
             if (status == Request.ChannelStatus.READY) {
+                System.out.println("Handling: " + r.getUrl());
                 ContextHandler handler = handlers.get(r.getUrl());
                 if (handler != null) {
                     if (r.isMultipart()) {
                         if (handler instanceof MultipartListener) {
-                            handler.onHeaders(r, response);
-                            feedMultipartContent((MultipartListener) handler, r, channel);
-                            handler.onComplete();
-                            r.clear();
+                            if (_new) {
+                                handler.onHeaders(context);
+                            }
+                            feedMultipartContent((MultipartListener) handler, context, channel);
+                            handler.onComplete(context);
                         } else {
                             // todo: 400 - bad request
                         }
@@ -112,10 +129,12 @@ public class IOHttpRunnable implements Runnable {
                 } else {
                     // todo: 404
                 }
+                r.clear();
             }
-        } catch (HeadersTooLargeException | MalformedHeaderException e) {
+        } catch (HeadersTooLargeException | MalformedHeaderException | DisconnectedChannelException e) {
             status = Request.ChannelStatus.DISCONNECTED;
         } catch (SlowChannelException e) {
+            System.out.println("slow");
             status = Request.ChannelStatus.READY;
         } catch (IOException e) {
             status = Request.ChannelStatus.DISCONNECTED;
@@ -125,6 +144,7 @@ public class IOHttpRunnable implements Runnable {
         if (status != Request.ChannelStatus.DISCONNECTED) {
             loop.registerChannel(channel, SelectionKey.OP_READ, context);
         } else {
+            System.out.println("Disconnected: " + channel);
             try {
                 channel.close();
                 context.close();

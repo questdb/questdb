@@ -29,7 +29,6 @@ import java.nio.channels.*;
 import java.util.Set;
 
 public class IOLoopRunnable extends SynchronizedRunnable {
-    private final static Integer ZERO = 0;
     private final Selector selector;
     private final SelectionKey serverKey;
     private final RingQueue<IOEvent> ioQueue;
@@ -103,7 +102,7 @@ public class IOLoopRunnable extends SynchronizedRunnable {
     private void configure(SocketChannel channel) throws IOException {
         channel.configureBlocking(false);
         channel.setOption(StandardSocketOptions.TCP_NODELAY, Boolean.TRUE);
-        channel.setOption(StandardSocketOptions.SO_RCVBUF, 1024 * 1024);
+        channel.setOption(StandardSocketOptions.SO_RCVBUF, IOHttpRunnable.SO_RVCBUF_DOWNLD);
         channel.register(selector, SelectionKey.OP_READ).attach(new IOContext());
     }
 

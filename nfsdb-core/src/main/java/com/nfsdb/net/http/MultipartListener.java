@@ -22,9 +22,10 @@
 package com.nfsdb.net.http;
 
 import com.nfsdb.collections.ByteSequence;
+import com.nfsdb.net.IOContext;
 
 import java.io.IOException;
 
 public interface MultipartListener {
-    void onChunk(RequestHeaderBuffer hb, ByteSequence data, boolean continued) throws IOException;
+    void onChunk(IOContext context, RequestHeaderBuffer hb, ByteSequence data, boolean continued) throws IOException;
 }

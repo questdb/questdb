@@ -28,6 +28,7 @@ import com.nfsdb.collections.ObjectPool;
 import com.nfsdb.exceptions.HeadersTooLargeException;
 import com.nfsdb.exceptions.MalformedHeaderException;
 import com.nfsdb.misc.Unsafe;
+import com.nfsdb.net.IOContext;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
@@ -79,7 +80,7 @@ public class MultipartParser implements Closeable, Mutable {
     }
 
     @SuppressFBWarnings("SF_SWITCH_NO_DEFAULT")
-    public boolean parse(long ptr, int len, MultipartListener listener) throws HeadersTooLargeException, MalformedHeaderException, IOException {
+    public boolean parse(IOContext context, long ptr, int len, MultipartListener listener) throws HeadersTooLargeException, MalformedHeaderException, IOException {
         long hi = ptr + len;
         long _lo = Long.MAX_VALUE;
         char b;
@@ -140,11 +141,11 @@ public class MultipartParser implements Closeable, Mutable {
                         boundaryPtr = 1;
                         switch (matchBoundary(ptr, hi)) {
                             case INCOMPLETE:
-                                listener.onChunk(hb, bytes.of(_lo, ptr - 1), state == State.BODY_CONTINUED);
+                                listener.onChunk(context, hb, bytes.of(_lo, ptr - 1), state == State.BODY_CONTINUED);
                                 state = State.POTENTIAL_BOUNDARY;
                                 return false;
                             case MATCH:
-                                listener.onChunk(hb, bytes.of(_lo, ptr - 1), state == State.BODY_CONTINUED);
+                                listener.onChunk(context, hb, bytes.of(_lo, ptr - 1), state == State.BODY_CONTINUED);
                                 state = State.PRE_HEADERS;
                                 ptr += consumedBoundaryLen;
                                 break;
@@ -161,7 +162,7 @@ public class MultipartParser implements Closeable, Mutable {
                             state = State.PRE_HEADERS;
                             break;
                         case NO_MATCH:
-                            listener.onChunk(hb, chars.of(boundary, 0, p), true);
+                            listener.onChunk(context, hb, chars.of(boundary, 0, p), true);
                             state = State.BODY_BROKEN;
                             break;
                     }
@@ -170,7 +171,7 @@ public class MultipartParser implements Closeable, Mutable {
         }
 
         if (state == State.BODY || state == State.BODY_CONTINUED) {
-            listener.onChunk(hb, bytes.of(_lo, ptr), state == State.BODY_CONTINUED);
+            listener.onChunk(context, hb, bytes.of(_lo, ptr), state == State.BODY_CONTINUED);
             state = State.BODY_BROKEN;
         }
 

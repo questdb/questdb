@@ -19,31 +19,28 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net;
+package com.nfsdb.net.http.handlers;
 
-import com.nfsdb.collections.Mutable;
-import com.nfsdb.net.http.Request;
-import com.nfsdb.net.http.Response;
+import com.nfsdb.net.IOContext;
+import com.nfsdb.net.http.ContextHandler;
 
-import java.io.Closeable;
+import java.io.IOException;
 
-public class IOContext implements Closeable, Mutable {
-    // todo: extract config
-    public final Request request = new Request(128 * 1024, 16 * 1024 * 1024, 1024);
-    public final Response response = new Response(1024, 1024 * 1024);
+public class StaticContentHandler implements ContextHandler {
 
-    public IOContext() {
+    private final int bufferSize;
+
+    public StaticContentHandler(int bufferSize) {
+        this.bufferSize = bufferSize;
     }
 
     @Override
-    public void clear() {
-        request.clear();
-        response.clear();
+    public void onComplete(IOContext context) throws IOException {
+
     }
 
     @Override
-    public void close() {
-        request.close();
-        response.close();
+    public void onHeaders(IOContext context) {
+
     }
 }
