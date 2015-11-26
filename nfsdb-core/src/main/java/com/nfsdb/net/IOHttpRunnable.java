@@ -111,7 +111,6 @@ public class IOHttpRunnable implements Runnable {
             response.setChannel(channel);
 
             if (status == Request.ChannelStatus.READY) {
-                System.out.println("Handling: " + r.getUrl());
                 ContextHandler handler = handlers.get(r.getUrl());
                 if (handler != null) {
                     if (r.isMultipart()) {

@@ -47,7 +47,6 @@ public class PlainFile implements Closeable {
     private final int bitHint;
     private FileChannel channel;
     private ObjList<MappedByteBuffer> buffers;
-    private MappedByteBuffer cachedBuffer;
     private long cachedBufferLo = -1;
     private long cachedBufferHi = -1;
     private long cachedAddress;
@@ -93,16 +92,7 @@ public class PlainFile implements Closeable {
         Files.delete(file);
     }
 
-    public void force() {
-        for (int i = 0, k = buffers.size(); i < k; i++) {
-            MappedByteBuffer b = buffers.getQuick(i);
-            if (b != null) {
-                b.force();
-            }
-        }
-    }
-
-    public void open() throws IOException {
+    public final void open() throws IOException {
         String m;
         switch (mode) {
             case READ:
@@ -129,11 +119,11 @@ public class PlainFile implements Closeable {
     }
 
     private long allocateAddress(long offset) {
-        cachedBuffer = getBufferInternal(offset);
-        cachedBufferLo = offset - cachedBuffer.position() - 1;
-        cachedBufferHi = cachedBufferLo + cachedBuffer.limit() + 2;
-        cachedAddress = ByteBuffers.getAddress(cachedBuffer);
-        return cachedAddress + cachedBuffer.position();
+        MappedByteBuffer buf = getBufferInternal(offset);
+        cachedBufferLo = offset - buf.position() - 1;
+        cachedBufferHi = cachedBufferLo + buf.limit() + 2;
+        cachedAddress = ByteBuffers.getAddress(buf);
+        return cachedAddress + buf.position();
     }
 
     private MappedByteBuffer getBufferInternal(long offset) {
@@ -154,7 +144,6 @@ public class PlainFile implements Closeable {
                 case BULK_APPEND:
                     // for bulk operations unmap all buffers except for current one
                     // this is to prevent OS paging large files.
-                    cachedBuffer = null;
                     cachedBufferLo = cachedBufferHi = -1;
                     for (int i = index - 1; i > -1; i--) {
                         MappedByteBuffer b = buffers.getAndSetQuick(i, null);
@@ -221,7 +210,6 @@ public class PlainFile implements Closeable {
                 ByteBuffers.release(b);
             }
         }
-        cachedBuffer = null;
         cachedBufferLo = cachedBufferHi = -1;
         buffers.clear();
     }

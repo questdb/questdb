@@ -25,7 +25,7 @@ import com.nfsdb.misc.Unsafe;
 
 public class FanOut implements Barrier {
     private static final long BARRIERS;
-    private volatile Barrier[] barriers;
+    private final Barrier[] barriers;
 
     public FanOut(Barrier... barriers) {
         this.barriers = barriers;
@@ -95,7 +95,7 @@ public class FanOut implements Barrier {
         try {
             BARRIERS = Unsafe.getUnsafe().objectFieldOffset(FanOut.class.getDeclaredField("barriers"));
         } catch (NoSuchFieldException e) {
-            throw new Error("Internal error");
+            throw new Error("Internal error", e);
         }
     }
 }

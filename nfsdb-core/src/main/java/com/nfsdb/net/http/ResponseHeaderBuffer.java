@@ -38,11 +38,11 @@ import java.util.Calendar;
 import java.util.TimeZone;
 
 public class ResponseHeaderBuffer implements Closeable, Mutable {
-    private static IntObjHashMap<CharSequence> statusMap = new IntObjHashMap<>();
+    private static final IntObjHashMap<CharSequence> statusMap = new IntObjHashMap<>();
 
     private final long headerPtr;
     private final long limit;
-    private ByteBuffer headers;
+    private final ByteBuffer headers;
     private long _wptr;
 
     public ResponseHeaderBuffer(int size) {

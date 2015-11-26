@@ -32,6 +32,7 @@ import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.net.http.ContextHandler;
 import com.nfsdb.net.http.handlers.ImportHandler;
 import com.nfsdb.net.http.handlers.UploadHandler;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.io.IOException;
@@ -63,8 +64,12 @@ public class HttpServer {
         this.workerCount = workerCount;
     }
 
+    @SuppressFBWarnings("PATH_TRAVERSAL_IN")
     public static void main(String[] args) throws IOException, InterruptedException {
-        String dir = "/Users/vlad/dev/data";
+        if (args.length < 1) {
+            return;
+        }
+        String dir = args[0];
         HttpServer server = new HttpServer(new InetSocketAddress(9000), 2, 1024);
         server.add("/up", new UploadHandler(new File(dir)));
         server.add("/imp", new ImportHandler(new JournalFactory(dir)));

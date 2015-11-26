@@ -60,7 +60,6 @@ public class JournalEventBridge {
         event.setIndex(journalIndex);
         event.setTimestamp(timestamp);
         publisher.done(cursor);
-        System.out.println("PUBLISHED: " + cursor);
     }
 
     public void removeAgentSequence(Sequence sequence) {

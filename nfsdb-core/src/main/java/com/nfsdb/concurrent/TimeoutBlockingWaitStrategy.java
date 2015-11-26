@@ -41,7 +41,7 @@ public class TimeoutBlockingWaitStrategy extends AbstractWaitStrategy {
         this.unit = unit;
     }
 
-    @SuppressFBWarnings("WA_AWAIT_NOT_IN_LOOP")
+    @SuppressFBWarnings({"WA_AWAIT_NOT_IN_LOOP", "EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
     @Override
     public void await(int code) {
         lock.lock();

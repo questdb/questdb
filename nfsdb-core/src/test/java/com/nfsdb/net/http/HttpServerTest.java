@@ -38,7 +38,7 @@ import java.nio.file.Files;
 public class HttpServerTest {
 
     @Rule
-    public TemporaryFolder temp = new TemporaryFolder();
+    public final TemporaryFolder temp = new TemporaryFolder();
 
     @Test
     public void testStartStop() throws Exception {
