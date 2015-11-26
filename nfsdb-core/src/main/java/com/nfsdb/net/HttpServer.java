@@ -22,16 +22,21 @@
 package com.nfsdb.net;
 
 import com.nfsdb.collections.CharSequenceObjHashMap;
+import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.concurrent.MCSequence;
 import com.nfsdb.concurrent.RingQueue;
 import com.nfsdb.concurrent.SPSequence;
 import com.nfsdb.concurrent.Worker;
+import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.net.http.ContextHandler;
-import com.nfsdb.net.http.handlers.FileUploadHandler;
+import com.nfsdb.net.http.handlers.ImportHandler;
+import com.nfsdb.net.http.handlers.UploadHandler;
+import sun.nio.ch.SelectorImpl;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.net.InetSocketAddress;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
@@ -59,9 +64,11 @@ public class HttpServer {
         this.workerCount = workerCount;
     }
 
-    public static void main(String[] args) throws IOException {
+    public static void main(String[] args) throws IOException, InterruptedException {
+        String dir = "/Users/vlad/dev/data";
         HttpServer server = new HttpServer(new InetSocketAddress(9000), 2, 1024);
-        server.add("/up", new FileUploadHandler(new File("~/dev/data")));
+        server.add("/up", new UploadHandler(new File(dir)));
+        server.add("/imp", new ImportHandler(new JournalFactory(dir)));
         server.start();
         System.out.println("Server started");
     }
@@ -93,6 +100,8 @@ public class HttpServer {
         this.channel.configureBlocking(false);
         this.selector = Selector.open();
 
+        instrumentSelector();
+
         RingQueue<IOEvent> ioQueue = new RingQueue<>(IOEvent.FACTORY, ioQueueSize);
         SPSequence ioPubSequence = new SPSequence(ioQueueSize);
         MCSequence ioSubSequence = new MCSequence(ioQueueSize, null);
@@ -113,5 +122,23 @@ public class HttpServer {
         }
 
         startComplete.countDown();
+    }
+
+    private void instrumentSelector() {
+        try {
+            Field selectedKeys = SelectorImpl.class.getDeclaredField("selectedKeys");
+            Field publicSelectedKeys = SelectorImpl.class.getDeclaredField("publicSelectedKeys");
+
+            selectedKeys.setAccessible(true);
+            publicSelectedKeys.setAccessible(true);
+
+            ObjHashSet<SelectionKey> set = new ObjHashSet<>();
+
+            selectedKeys.set(this.selector, set);
+            publicSelectedKeys.set(this.selector, set);
+
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            e.printStackTrace();
+        }
     }
 }

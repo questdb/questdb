@@ -26,39 +26,30 @@ import com.nfsdb.collections.ByteSequence;
 import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.net.IOContext;
-import com.nfsdb.net.http.ContextHandler;
-import com.nfsdb.net.http.MultipartListener;
 import com.nfsdb.net.http.RequestHeaderBuffer;
 import com.nfsdb.storage.PlainFile;
 
 import java.io.File;
 import java.io.IOException;
 
-public class FileUploadHandler implements ContextHandler, MultipartListener {
+public class UploadHandler extends AbstractMultipartHandler {
     private final File path;
-    private PlainFile mf;
-    private long wptr = 0;
 
-    public FileUploadHandler(File path) {
+    public UploadHandler(File path) {
         this.path = path;
     }
 
     @Override
-    public void onChunk(IOContext context, RequestHeaderBuffer hb, ByteSequence data, boolean continued) throws IOException {
-        if (hb.getContentDispositionFilename() != null) {
-            if (!continued) {
-                closeFile();
-                openFile(context, hb.getContentDispositionFilename());
-            }
-            write(data);
-        } else {
-            closeFile();
-        }
+    public void onHeaders(IOContext context) {
     }
 
     @Override
-    public void onComplete(IOContext context) throws IOException {
-        closeFile();
+    public void park(IOContext context) {
+
+    }
+
+    @Override
+    protected void onComplete0(IOContext context) throws IOException {
         context.response.status(200, "text/html; charset=utf-8");
         context.response.flushHeader();
         context.response.write("OK, got it\r\n");
@@ -66,22 +57,56 @@ public class FileUploadHandler implements ContextHandler, MultipartListener {
     }
 
     @Override
-    public void onHeaders(IOContext context) {
-    }
+    protected void onData(IOContext context, RequestHeaderBuffer hb, ByteSequence data) {
+        if (context.mf != null) {
+            PlainFile mf = context.mf;
 
-    private void closeFile() throws IOException {
-        if (this.mf != null) {
-            mf.compact(wptr);
-            mf = null;
-            wptr = 0;
+            int len = data.length();
+            long mapAddr = mf.addressOf(context.wptr);
+            int mapLen = mf.pageRemaining(context.wptr);
+            if (len < mapLen) {
+                write0(data, 0, mapAddr, len);
+                context.wptr += len;
+            } else {
+                int p = 0;
+                while (true) {
+                    write0(data, p, mapAddr, mapLen);
+                    context.wptr += mapLen;
+                    len -= mapLen;
+                    p += mapLen;
+
+                    if (len > 0) {
+                        mapAddr = mf.addressOf(context.wptr);
+                        mapLen = mf.pageRemaining(context.wptr);
+                        if (len < mapLen) {
+                            mapLen = len;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
         }
     }
 
-    private void openFile(IOContext context, CharSequence name) throws IOException {
-        try {
-            this.mf = new PlainFile(new File(path, name.toString()), 21, JournalMode.APPEND);
-        } catch (IOException ignore) {
-            sendError(context);
+    @Override
+    protected void onPartBegin(IOContext context, RequestHeaderBuffer hb) throws IOException {
+        CharSequence file = hb.getContentDispositionFilename();
+        if (file != null) {
+            try {
+                context.mf = new PlainFile(new File(path, file.toString()), 21, JournalMode.APPEND);
+            } catch (IOException ignore) {
+                sendError(context);
+            }
+        }
+    }
+
+    @Override
+    protected void onPartEnd(IOContext context) throws IOException {
+        if (context.mf != null) {
+            context.mf.compact(context.wptr);
+            context.mf = null;
+            context.wptr = 0;
         }
     }
 
@@ -90,34 +115,6 @@ public class FileUploadHandler implements ContextHandler, MultipartListener {
         context.response.flushHeader();
         context.response.write("OOPS");
         context.response.end();
-    }
-
-    private void write(ByteSequence data) {
-        int len = data.length();
-        long mapAddr = mf.addressOf(wptr);
-        int mapLen = mf.pageRemaining(wptr);
-        if (len < mapLen) {
-            write0(data, 0, mapAddr, len);
-            wptr += len;
-        } else {
-            int p = 0;
-            while (true) {
-                write0(data, p, mapAddr, mapLen);
-                wptr += mapLen;
-                len -= mapLen;
-                p += mapLen;
-
-                if (len > 0) {
-                    mapAddr = mf.addressOf(wptr);
-                    mapLen = mf.pageRemaining(wptr);
-                    if (len < mapLen) {
-                        mapLen = len;
-                    }
-                } else {
-                    break;
-                }
-            }
-        }
     }
 
     private void write0(ByteSequence data, int offset, long addr, int len) {

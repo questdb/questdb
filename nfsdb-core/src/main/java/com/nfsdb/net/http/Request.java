@@ -31,6 +31,7 @@ import com.nfsdb.exceptions.SlowChannelException;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Numbers;
+import com.nfsdb.misc.Unsafe;
 import com.nfsdb.net.IOHttpRunnable;
 import sun.nio.ch.DirectBuffer;
 
@@ -44,7 +45,7 @@ public class Request implements Closeable, Mutable {
     private final ObjectPool<DirectByteCharSequence> pool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 64);
     private final RequestHeaderBuffer hb;
     private final MultipartParser multipartParser;
-    private final StringBuilder boundaryAugmenter = new StringBuilder();
+    private final BoundaryAugmenter augmenter = new BoundaryAugmenter();
 
     public Request(int headerBufferSize, int contentBufferSize, int multipartHeaderBufferSize) {
         this.hb = new RequestHeaderBuffer(headerBufferSize, pool);
@@ -65,13 +66,15 @@ public class Request implements Closeable, Mutable {
         hb.close();
         multipartParser.close();
         ByteBuffers.release(in);
+        augmenter.close();
     }
 
-    public CharSequence getBoundary() {
-        boundaryAugmenter.setLength(0);
-        boundaryAugmenter.append("\r\n--");
-        boundaryAugmenter.append(hb.getBoundary());
-        return boundaryAugmenter;
+    public DirectByteCharSequence getBoundary() {
+        return augmenter.of(hb.getBoundary());
+//        boundaryAugmenter.setLength(0);
+//        boundaryAugmenter.append("\r\n--");
+//        boundaryAugmenter.append(hb.getBoundary());
+//        return boundaryAugmenter;
     }
 
     public MultipartParser getMultipartParser() {
@@ -103,5 +106,51 @@ public class Request implements Closeable, Mutable {
 
     public enum ChannelStatus {
         READY, NEED_REQUEST, DISCONNECTED
+    }
+
+    public static class BoundaryAugmenter implements Closeable {
+        private static final String BOUNDARY_PREFIX = "\r\n--";
+        private final DirectByteCharSequence export = new DirectByteCharSequence();
+        private long lo;
+        private long lim;
+        private long _wptr;
+
+        public BoundaryAugmenter() {
+            this.lim = 64;
+            this.lo = this._wptr = Unsafe.getUnsafe().allocateMemory(this.lim);
+            _of(BOUNDARY_PREFIX);
+        }
+
+        public DirectByteCharSequence of(CharSequence value) {
+            int len = value.length() + BOUNDARY_PREFIX.length();
+            if (len > lim) {
+                resize(len);
+            }
+            _wptr = lo + BOUNDARY_PREFIX.length();
+            _of(value);
+            return export.of(lo, _wptr);
+        }
+
+        private void _of(CharSequence value) {
+            int len = value.length();
+            for (int i = 0; i < len; i++) {
+                Unsafe.getUnsafe().putByte(_wptr++, (byte) value.charAt(i));
+            }
+        }
+
+        private void resize(int lim) {
+            Unsafe.getUnsafe().freeMemory(this.lo);
+            this.lim = Numbers.ceilPow2(lim);
+            this.lo = _wptr = Unsafe.getUnsafe().allocateMemory(this.lim);
+            _of(BOUNDARY_PREFIX);
+        }
+
+        @Override
+        public void close() {
+            if (lo > 0) {
+                Unsafe.getUnsafe().freeMemory(this.lo);
+                this.lo = 0;
+            }
+        }
     }
 }

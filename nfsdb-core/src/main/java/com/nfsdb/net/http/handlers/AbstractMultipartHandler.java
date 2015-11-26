@@ -21,31 +21,36 @@
 
 package com.nfsdb.net.http.handlers;
 
+import com.nfsdb.collections.ByteSequence;
+import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.net.IOContext;
 import com.nfsdb.net.http.ContextHandler;
+import com.nfsdb.net.http.MultipartListener;
+import com.nfsdb.net.http.RequestHeaderBuffer;
 
 import java.io.IOException;
 
-public class StaticContentHandler implements ContextHandler {
-
-    private final int bufferSize;
-
-    public StaticContentHandler(int bufferSize) {
-        this.bufferSize = bufferSize;
+public abstract class AbstractMultipartHandler implements ContextHandler, MultipartListener {
+    @Override
+    public final void onChunk(IOContext context, RequestHeaderBuffer hb, DirectByteCharSequence data, boolean continued) throws IOException {
+        if (!continued) {
+            onPartEnd(context);
+            onPartBegin(context, hb);
+        }
+        onData(context, hb, data);
     }
 
     @Override
-    public void onComplete(IOContext context) throws IOException {
-
+    public final void onComplete(IOContext context) throws IOException {
+        onPartEnd(context);
+        onComplete0(context);
     }
 
-    @Override
-    public void onHeaders(IOContext context) {
+    protected abstract void onComplete0(IOContext context) throws IOException;
 
-    }
+    protected abstract void onData(IOContext context, RequestHeaderBuffer hb, ByteSequence data);
 
-    @Override
-    public void park(IOContext context) {
+    protected abstract void onPartBegin(IOContext context, RequestHeaderBuffer hb) throws IOException;
 
-    }
+    protected abstract void onPartEnd(IOContext context) throws IOException;
 }

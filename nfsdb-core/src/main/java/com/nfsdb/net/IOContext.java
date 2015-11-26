@@ -22,8 +22,12 @@
 package com.nfsdb.net;
 
 import com.nfsdb.collections.Mutable;
+import com.nfsdb.io.parser.TextParser;
+import com.nfsdb.io.parser.listener.JournalImportListener;
+import com.nfsdb.misc.Misc;
 import com.nfsdb.net.http.Request;
 import com.nfsdb.net.http.Response;
+import com.nfsdb.storage.PlainFile;
 
 import java.io.Closeable;
 
@@ -32,6 +36,16 @@ public class IOContext implements Closeable, Mutable {
     public final Request request = new Request(128 * 1024, 16 * 1024 * 1024, 1024);
     public final Response response = new Response(1024, 1024 * 1024);
 
+    // file upload fields
+    public PlainFile mf;
+    public long wptr = 0;
+
+    // import handler fields
+    public boolean analysed = false;
+    public TextParser textParser;
+    public JournalImportListener importer;
+
+
     public IOContext() {
     }
 
@@ -39,11 +53,19 @@ public class IOContext implements Closeable, Mutable {
     public void clear() {
         request.clear();
         response.clear();
+        freeResources();
     }
 
     @Override
     public void close() {
         request.close();
         response.close();
+        freeResources();
+    }
+
+    private void freeResources() {
+        mf = Misc.free(mf);
+        textParser = Misc.free(textParser);
+        importer = Misc.free(importer);
     }
 }

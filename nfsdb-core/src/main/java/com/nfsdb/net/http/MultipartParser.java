@@ -21,7 +21,6 @@
 
 package com.nfsdb.net.http;
 
-import com.nfsdb.collections.ByteSequenceImpl;
 import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.collections.ObjectPool;
@@ -40,8 +39,7 @@ public class MultipartParser implements Closeable, Mutable {
 
     private final RequestHeaderBuffer hb;
     private final DirectByteCharSequence bytes = new DirectByteCharSequence();
-    private final ByteSequenceImpl chars = new ByteSequenceImpl();
-    private CharSequence boundary;
+    private DirectByteCharSequence boundary;
     private int boundaryLen;
     private int boundaryPtr;
     private int consumedBoundaryLen;
@@ -73,7 +71,7 @@ public class MultipartParser implements Closeable, Mutable {
         hb.close();
     }
 
-    public MultipartParser of(CharSequence boundary) {
+    public MultipartParser of(DirectByteCharSequence boundary) {
         this.boundary = boundary;
         this.boundaryLen = boundary.length();
         return this;
@@ -162,7 +160,7 @@ public class MultipartParser implements Closeable, Mutable {
                             state = State.PRE_HEADERS;
                             break;
                         case NO_MATCH:
-                            listener.onChunk(context, hb, chars.of(boundary, 0, p), true);
+                            listener.onChunk(context, hb, bytes.of(boundary.getLo(), boundary.getLo() + p), true);
                             state = State.BODY_BROKEN;
                             break;
                     }
@@ -183,7 +181,7 @@ public class MultipartParser implements Closeable, Mutable {
         int ptr = boundaryPtr;
 
         while (lo < hi && ptr < boundaryLen) {
-            if (Unsafe.getUnsafe().getByte(lo++) != boundary.charAt(ptr++)) {
+            if (Unsafe.getUnsafe().getByte(lo++) != boundary.byteAt(ptr++)) {
                 return BoundaryStatus.NO_MATCH;
             }
         }

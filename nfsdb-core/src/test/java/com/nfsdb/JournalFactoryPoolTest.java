@@ -49,6 +49,7 @@ public class JournalFactoryPoolTest extends AbstractTest {
 
             JournalWriter<Quote> w = factory.writer(Quote.class);
             TestUtils.generateQuoteData(w, recordCount);
+            w.close();
 
             ExecutorService service = Executors.newCachedThreadPool();
 

@@ -24,13 +24,10 @@ package com.nfsdb.factory;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.logging.Logger;
-import com.nfsdb.misc.NamedDaemonThreadFactory;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
@@ -38,7 +35,6 @@ public class JournalFactoryPool implements Closeable {
     private static final Logger LOGGER = Logger.getLogger(JournalFactoryPool.class);
 
     private final ArrayBlockingQueue<JournalCachingFactory> pool;
-    private final ExecutorService service = Executors.newCachedThreadPool(new NamedDaemonThreadFactory("pool-release-thread", true));
     private final AtomicBoolean running = new AtomicBoolean(true);
 
     public JournalFactoryPool(JournalConfiguration configuration, int capacity) throws InterruptedException {
@@ -69,17 +65,11 @@ public class JournalFactoryPool implements Closeable {
     }
 
     void release(final JournalCachingFactory factory) {
-        service.submit(new Runnable() {
-                           @Override
-                           public void run() {
-                               factory.expireOpenFiles();
-                               try {
-                                   pool.put(factory);
-                               } catch (InterruptedException e) {
-                                   LOGGER.error("Cannot return factory to pool", e);
-                               }
-                           }
-                       }
-        );
+        factory.expireOpenFiles();
+        try {
+            pool.put(factory);
+        } catch (InterruptedException e) {
+            LOGGER.error("Cannot return factory to pool", e);
+        }
     }
 }

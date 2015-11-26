@@ -83,7 +83,6 @@ public class IOHttpRunnable implements Runnable {
 //            MultipartParser.dump(r.in);
             try {
                 int sz = r.in.remaining();
-                System.out.println("rem: " + sz);
                 if (sz > 0 && parser.parse(context, ((DirectBuffer) r.in).address() + r.in.position(), sz, handler)) {
                     break;
                 }
@@ -120,8 +119,13 @@ public class IOHttpRunnable implements Runnable {
                             if (_new) {
                                 handler.onHeaders(context);
                             }
-                            feedMultipartContent((MultipartListener) handler, context, channel);
-                            handler.onComplete(context);
+                            try {
+                                feedMultipartContent((MultipartListener) handler, context, channel);
+                                handler.onComplete(context);
+                            } catch (SlowChannelException e) {
+                                handler.park(context);
+                                throw e;
+                            }
                         } else {
                             // todo: 400 - bad request
                         }
