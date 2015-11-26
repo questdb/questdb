@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,30 +17,23 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ha.bridge;
 
-import com.lmax.disruptor.*;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.concurrent.RingQueue;
+import com.nfsdb.concurrent.Sequence;
+import com.nfsdb.exceptions.TimeoutException;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public class JournalEventProcessor {
-    private final SequenceBarrier barrier;
+    private final RingQueue<JournalEvent> queue;
     private final Sequence sequence;
-    private final RingBuffer<JournalEvent> ringBuffer;
-    private long nextSequence;
 
     public JournalEventProcessor(JournalEventBridge bridge) {
-        this(bridge.getOutRingBuffer(), bridge.createAgentSequence(), bridge.getOutBarrier());
-    }
-
-    private JournalEventProcessor(RingBuffer<JournalEvent> ringBuffer, Sequence sequence, SequenceBarrier barrier) {
-        this.ringBuffer = ringBuffer;
-        this.barrier = barrier;
-        this.sequence = sequence;
-        this.nextSequence = sequence.get() + 1L;
+        this.queue = bridge.getQueue();
+        this.sequence = bridge.createAgentSequence();
     }
 
     public Sequence getSequence() {
@@ -49,22 +42,14 @@ public class JournalEventProcessor {
 
     @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_RETURN_FALSE")
     public boolean process(JournalEventHandler handler, boolean blocking) {
-        this.barrier.clearAlert();
         try {
-            long availableSequence = blocking ? this.barrier.waitFor(nextSequence) : this.barrier.getCursor();
-            try {
-                while (nextSequence <= availableSequence) {
-                    handler.handle(ringBuffer.get(nextSequence));
-                    nextSequence++;
-                }
-                sequence.set(availableSequence);
-            } catch (final Throwable e) {
-                sequence.set(nextSequence);
-                nextSequence++;
+            long cursor = blocking ? sequence.waitForNext() : sequence.next();
+            if (cursor >= 0) {
+                int index = queue.get(cursor).getIndex();
+                sequence.done(cursor);
+                handler.handle(index);
             }
             return true;
-        } catch (InterruptedException | AlertException e) {
-            throw new JournalRuntimeException(e);
         } catch (TimeoutException e) {
             return false;
         }

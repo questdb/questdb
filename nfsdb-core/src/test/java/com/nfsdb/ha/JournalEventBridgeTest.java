@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,11 +17,10 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ha;
 
-import com.nfsdb.ha.bridge.JournalEvent;
 import com.nfsdb.ha.bridge.JournalEventBridge;
 import com.nfsdb.ha.bridge.JournalEventHandler;
 import com.nfsdb.ha.bridge.JournalEventProcessor;
@@ -34,18 +33,15 @@ public class JournalEventBridgeTest {
     @Test
     public void testStartStop() throws Exception {
         JournalEventBridge bridge = new JournalEventBridge(2, TimeUnit.SECONDS);
-        bridge.start();
         for (int i = 0; i < 10000; i++) {
             bridge.publish(10, System.currentTimeMillis());
         }
-        bridge.halt();
     }
 
     @Test
     public void testTwoPublishersThreeConsumers() throws Exception {
         ExecutorService service = Executors.newCachedThreadPool();
         final JournalEventBridge bridge = new JournalEventBridge(50, TimeUnit.MILLISECONDS);
-        bridge.start();
         final Future[] publishers = new Future[2];
         final Handler[] consumers = new Handler[3];
         final int batchSize = 1000;
@@ -120,7 +116,6 @@ public class JournalEventBridgeTest {
 //        });
 
         latch.await();
-        bridge.halt();
 
         for (Future f : publishers) {
             Assert.assertEquals(batchSize, f.get());
@@ -144,8 +139,8 @@ public class JournalEventBridgeTest {
         }
 
         @Override
-        public void handle(JournalEvent event) {
-            if (event.getIndex() == index) {
+        public void handle(int journalIndex) {
+            if (journalIndex == index) {
                 counter++;
             }
         }

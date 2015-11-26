@@ -30,6 +30,11 @@ public class SCSequence extends AbstractSSequence {
         super(waitStrategy);
     }
 
+    public SCSequence(long index, WaitStrategy waitStrategy) {
+        super(waitStrategy);
+        this.index = index;
+    }
+
     public SCSequence() {
     }
 

@@ -19,33 +19,12 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.ha.bridge;
+package com.nfsdb.exceptions;
 
-import com.nfsdb.concurrent.RingEntryFactory;
+@SuppressWarnings("ThrowableInstanceNeverThrown")
+public final class TimeoutException extends RuntimeException {
+    public final static TimeoutException INSTANCE = new TimeoutException();
 
-public class JournalEvent {
-    public static final RingEntryFactory<JournalEvent> EVENT_FACTORY = new RingEntryFactory<JournalEvent>() {
-        @Override
-        public JournalEvent newInstance() {
-            return new JournalEvent();
-        }
-    };
-    private int index;
-    private long timestamp;
-
-    public int getIndex() {
-        return index;
-    }
-
-    public void setIndex(int index) {
-        this.index = index;
-    }
-
-    public long getTimestamp() {
-        return timestamp;
-    }
-
-    public void setTimestamp(long timestamp) {
-        this.timestamp = timestamp;
+    private TimeoutException() {
     }
 }

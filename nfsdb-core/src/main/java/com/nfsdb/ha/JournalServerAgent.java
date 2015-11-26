@@ -31,7 +31,6 @@ import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.ha.auth.AuthorizationHandler;
-import com.nfsdb.ha.bridge.JournalEvent;
 import com.nfsdb.ha.bridge.JournalEventHandler;
 import com.nfsdb.ha.bridge.JournalEventProcessor;
 import com.nfsdb.ha.comsumer.JournalClientStateConsumer;
@@ -367,8 +366,8 @@ public class JournalServerAgent {
         private boolean dataSent = false;
 
         @Override
-        public void handle(JournalEvent event) {
-            int journalIndex = writerToReaderMap.get(event.getIndex());
+        public void handle(int index) {
+            int journalIndex = writerToReaderMap.get(index);
             if (journalIndex != JOURNAL_INDEX_NOT_FOUND) {
                 JournalClientState status = clientStates.getQuick(journalIndex);
                 if (status != null && status.isWaitingOnEvents()) {

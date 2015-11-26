@@ -21,108 +21,49 @@
 
 package com.nfsdb.ha.bridge;
 
-import com.lmax.disruptor.*;
-import com.nfsdb.misc.NamedDaemonThreadFactory;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import com.nfsdb.concurrent.*;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-/**
- * <pre>
- *                                                             +---------+
- *                                                       +---> | AGENT 1 |----+          +--------------+
- * +----------+                                          |     +---------+    |     +--> | writer 1 ack |
- * | writer 1 +----+                                     |                    |     |    +--------------+
- * +----------+    |      +-------+        +--------+    |     +---------+    |     |
- *                 +----> | IN_RB +------> | OUT RB +----+---> | AGENT 2 |----+-----+
- *                 |      +-------+        +--------+    |     +---------+    |     |
- * +----------+    |                                     |                    |     |    +--------------+
- * | writer 2 +----+                                     |     +---------+    |     +--> | writer 2 ack |
- * +----------+                                          +---> | AGENT 3 |----+          +--------------+
- *                                                             +---------+
- * </pre>
- */
 public class JournalEventBridge {
 
     private static final int BUFFER_SIZE = 1024;
-    private final ExecutorService executor = Executors.newFixedThreadPool(1, new NamedDaemonThreadFactory("nfsdb-evt-bridge", false));
-    private final RingBuffer<JournalEvent> inRingBuffer;
-    private final BatchEventProcessor<JournalEvent> batchEventProcessor;
-    private final RingBuffer<JournalEvent> outRingBuffer;
-    private final SequenceBarrier outBarrier;
+    private final RingQueue<JournalEvent> queue;
+    private final Sequence publisher;
+    private final FanOut fanOut;
+    private final long time;
+    private final TimeUnit unit;
 
-    @SuppressWarnings("CanBeFinal")
-
-
-    /**
-     * Many-to-many bridge between multiple journals publishing their commits and multiple subscribers consuming them.
-     * These subscribers are typically {@link com.nfsdb.ha.JournalServerAgent} instances.
-     * Disruptor library doesn't provide many-to-many ring buffer out-of-box, so this implementation employs
-     * two many-to-one ring buffers, <i>in</i> and <i>out</i>. Single thread is the sole consumer on the <b>in</b> buffer and
-     * sole publisher on the <i>out</i> ring buffer.
-     * <p>Out ring buffer has timeout blocking wait strategy to enable {@link com.nfsdb.ha.JournalServerAgent} to send
-     * heartbeat message to client. Value of {@code timeout} is heartbeat frequency between server agent and client.
-     *
-     * @param timeout         for out buffer wait.
-     * @param unit            time unit for timeout value
-     */
-    public JournalEventBridge(long timeout, TimeUnit unit) {
-        this.inRingBuffer = RingBuffer.createMultiProducer(JournalEvent.EVENT_FACTORY, BUFFER_SIZE, new BlockingWaitStrategy());
-        this.outRingBuffer = RingBuffer.createSingleProducer(JournalEvent.EVENT_FACTORY, BUFFER_SIZE, new com.nfsdb.ha.bridge.TimeoutBlockingWaitStrategy(timeout, unit));
-        this.outBarrier = outRingBuffer.newBarrier();
-        this.batchEventProcessor = new BatchEventProcessor<>(inRingBuffer, inRingBuffer.newBarrier(), new EventHandler<JournalEvent>() {
-            @Override
-            public void onEvent(JournalEvent event, long sequence, boolean endOfBatch) throws Exception {
-                long outSeq = outRingBuffer.next();
-                JournalEvent outEvent = outRingBuffer.get(outSeq);
-                outEvent.setIndex(event.getIndex());
-                outEvent.setTimestamp(event.getTimestamp());
-                outRingBuffer.publish(outSeq);
-            }
-        });
-        inRingBuffer.addGatingSequences(batchEventProcessor.getSequence());
+    public JournalEventBridge(long time, TimeUnit unit) {
+        this.queue = new RingQueue<>(JournalEvent.EVENT_FACTORY, BUFFER_SIZE);
+        this.publisher = new MPSequence(BUFFER_SIZE, null);
+        this.fanOut = new FanOut();
+        this.publisher.followedBy(fanOut);
+        this.time = time;
+        this.unit = unit;
     }
 
     public Sequence createAgentSequence() {
-        Sequence sequence = new Sequence(outBarrier.getCursor());
-        outRingBuffer.addGatingSequences(sequence);
+        Sequence sequence = new SCSequence(publisher.current(), new TimeoutBlockingWaitStrategy(time, unit));
+        sequence.followedBy(publisher);
+        fanOut.add(sequence);
         return sequence;
     }
 
-    public SequenceBarrier getOutBarrier() {
-        return outBarrier;
-    }
-
-    public RingBuffer<JournalEvent> getOutRingBuffer() {
-        return outRingBuffer;
-    }
-
-    @SuppressFBWarnings({"MDM_THREAD_YIELD"})
-    public void halt() {
-        executor.shutdown();
-        while (inRingBuffer.getCursor() < inRingBuffer.getMinimumGatingSequence()) {
-            Thread.yield();
-        }
-        while (batchEventProcessor.isRunning()) {
-            batchEventProcessor.halt();
-        }
+    public RingQueue<JournalEvent> getQueue() {
+        return queue;
     }
 
     public void publish(final int journalIndex, final long timestamp) {
-        long sequence = inRingBuffer.next();
-        JournalEvent event = inRingBuffer.get(sequence);
+        long cursor = publisher.nextBully();
+        JournalEvent event = queue.get(cursor);
         event.setIndex(journalIndex);
         event.setTimestamp(timestamp);
-        inRingBuffer.publish(sequence);
+        publisher.done(cursor);
+        System.out.println("PUBLISHED: " + cursor);
     }
 
     public void removeAgentSequence(Sequence sequence) {
-        outRingBuffer.removeGatingSequence(sequence);
-    }
-
-    public void start() {
-        executor.submit(batchEventProcessor);
+        fanOut.remove(sequence);
     }
 }

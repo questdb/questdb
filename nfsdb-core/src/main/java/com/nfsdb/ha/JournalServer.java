@@ -149,9 +149,6 @@ public class JournalServer {
             }
         }
 
-        LOGGER.info("Stopping bridge on %d", uid);
-        bridge.halt();
-
         if (addressSender != null) {
             LOGGER.info("Stopping mcast sender on %d", uid);
             addressSender.halt();
@@ -206,7 +203,6 @@ public class JournalServer {
         if (config.isMultiCastEnabled()) {
             addressSender.start();
         }
-        bridge.start();
         running.set(true);
         service.execute(new Acceptor());
     }
