@@ -32,7 +32,6 @@ import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.net.http.ContextHandler;
 import com.nfsdb.net.http.handlers.ImportHandler;
 import com.nfsdb.net.http.handlers.UploadHandler;
-import sun.nio.ch.SelectorImpl;
 
 import java.io.File;
 import java.io.IOException;
@@ -126,8 +125,14 @@ public class HttpServer {
 
     private void instrumentSelector() {
         try {
-            Field selectedKeys = SelectorImpl.class.getDeclaredField("selectedKeys");
-            Field publicSelectedKeys = SelectorImpl.class.getDeclaredField("publicSelectedKeys");
+            Class<?> impl = Class.forName("sun.nio.ch.SelectorImpl", false, ClassLoader.getSystemClassLoader());
+
+            if (!impl.isAssignableFrom(selector.getClass())) {
+                return;
+            }
+
+            Field selectedKeys = impl.getDeclaredField("selectedKeys");
+            Field publicSelectedKeys = impl.getDeclaredField("publicSelectedKeys");
 
             selectedKeys.setAccessible(true);
             publicSelectedKeys.setAccessible(true);
@@ -137,7 +142,7 @@ public class HttpServer {
             selectedKeys.set(this.selector, set);
             publicSelectedKeys.set(this.selector, set);
 
-        } catch (NoSuchFieldException | IllegalAccessException e) {
+        } catch (NoSuchFieldException | IllegalAccessException | ClassNotFoundException e) {
             e.printStackTrace();
         }
     }
