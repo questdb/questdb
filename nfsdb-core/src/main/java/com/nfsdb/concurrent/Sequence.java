@@ -26,6 +26,8 @@ public interface Sequence extends Barrier {
 
     void bully();
 
+    long current();
+
     void done(long cursor);
 
     void followedBy(Barrier barrier);

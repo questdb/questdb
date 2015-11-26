@@ -33,9 +33,18 @@ public class SCSequence extends AbstractSSequence {
     public SCSequence() {
     }
 
+    public SCSequence(long index) {
+        this.index = index;
+    }
+
     @Override
     public long availableIndex(long lo) {
         return this.index;
+    }
+
+    @Override
+    public long current() {
+        return index;
     }
 
     @Override

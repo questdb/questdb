@@ -49,6 +49,11 @@ public abstract class AbstractMSequence extends AbstractSSequence {
     }
 
     @Override
+    public long current() {
+        return index.fencedGet();
+    }
+
+    @Override
     public void done(long cursor) {
         Unsafe.getUnsafe().putOrderedInt(flags, ((int) (cursor & mask)) * Unsafe.INT_SCALE + Unsafe.INT_OFFSET, (int) (cursor >>> shift));
         barrier.signal();
