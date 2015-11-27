@@ -29,6 +29,8 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+import java.io.IOException;
+
 @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT"})
 public class RecordSourcePrinter {
     private final CharSink sink;
@@ -44,11 +46,11 @@ public class RecordSourcePrinter {
         this.delimiter = delimiter;
     }
 
-    public void printCursor(RecordCursor<? extends Record> src) {
+    public void printCursor(RecordCursor<? extends Record> src) throws IOException {
         printCursor(src, false);
     }
 
-    public void printCursor(RecordCursor<? extends Record> src, boolean header) {
+    public void printCursor(RecordCursor<? extends Record> src, boolean header) throws IOException {
         RecordMetadata metadata = src.getMetadata();
         if (header) {
             printHeader(metadata);
@@ -59,7 +61,7 @@ public class RecordSourcePrinter {
         }
     }
 
-    private void print(Record r, RecordMetadata m) {
+    private void print(Record r, RecordMetadata m) throws IOException {
         for (int i = 0, sz = m.getColumnCount(); i < sz; i++) {
             if (i > 0) {
                 sink.put(delimiter);

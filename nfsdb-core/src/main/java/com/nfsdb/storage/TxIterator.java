@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.storage;
 
@@ -72,7 +72,7 @@ public class TxIterator extends AbstractImmutableIterator<Tx> {
         }
     }
 
-    public void print(DelimitedCharSink sink) {
+    public void print(DelimitedCharSink sink) throws IOException {
         reset();
 
         sink.put("addr").put("prev").put("txn").put("txPin").put("timestamp").put("rowid").put("part timestamp").put("lag size").put("lag name");
@@ -92,6 +92,7 @@ public class TxIterator extends AbstractImmutableIterator<Tx> {
             sink.eol();
 
         }
+
         sink.flush();
     }
 

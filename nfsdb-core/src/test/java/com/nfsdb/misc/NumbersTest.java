@@ -19,12 +19,10 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb;
+package com.nfsdb.misc;
 
 import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.io.sink.StringSink;
-import com.nfsdb.misc.Numbers;
-import com.nfsdb.misc.Rnd;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;

@@ -364,7 +364,7 @@ final public class Dates {
 
     /**
      * Calculates if year is leap year using following algorithm:
-     * <p>
+     * <p/>
      * http://en.wikipedia.org/wiki/Leap_year
      *
      * @param year the year
@@ -527,20 +527,17 @@ final public class Dates {
         int p = lo;
         if (p + 2 > lim) {
             throw NumericException.INSTANCE;
-//                throw new NumberFormatException("Two digit month expected: " + seq);
         }
         int month = Numbers.parseInt(seq, p, p += 2);
         checkRange(month, 1, 12);
         checkChar(seq, p++, lim, '/');
 
         if (p + 4 > lim) {
-//                throw new NumberFormatException("Four digit year expected: " + seq);
             throw NumericException.INSTANCE;
         }
         int year = Numbers.parseInt(seq, p + 3, p + 7);
         boolean l = isLeapYear(year);
         if (p + 2 > lim) {
-//                throw new NumberFormatException("Two digit day of month expected: " + seq);
             throw NumericException.INSTANCE;
         }
         int day = Numbers.parseInt(seq, p, p += 2);
@@ -554,7 +551,33 @@ final public class Dates {
 
     public static long parseDateTimeFmt2Quiet(CharSequence seq) {
         try {
-            return parseDateTimeFmt2(seq, 0, seq.length());
+            return parseDateTimeFmt2(seq);
+        } catch (NumericException e) {
+            return Long.MIN_VALUE;
+        }
+    }
+
+    public static long parseDateTimeFmt3(CharSequence seq) throws NumericException {
+        return parseDateTimeFmt3(seq, 0, seq.length());
+    }
+
+    // DD/MM/YYYY
+    public static long parseDateTimeFmt3(CharSequence seq, int lo, int lim) throws NumericException {
+        int p = lo;
+        int day = _int(seq, p, p += 2, lim);
+        checkChar(seq, p++, lim, '/');
+        int month = _int(seq, p, p += 2, lim);
+        checkRange(month, 1, 12);
+        checkChar(seq, p++, lim, '/');
+        int year = _int(seq, p, p + 4, lim);
+        boolean l = isLeapYear(year);
+        checkRange(day, 1, getDaysPerMonth(month, l));
+        return yearMillis(year, l) + monthOfYearMillis(month, l) + (day - 1) * DAY_MILLIS;
+    }
+
+    public static long parseDateTimeFmt3Quiet(CharSequence seq) {
+        try {
+            return parseDateTimeFmt3(seq);
         } catch (NumericException e) {
             return Long.MIN_VALUE;
         }
@@ -744,6 +767,13 @@ final public class Dates {
         }
 
         return (year * 365L + (leapYears - DAYS_0000_TO_1970)) * DAY_MILLIS;
+    }
+
+    private static int _int(CharSequence s, int lo, int hi, int lim) throws NumericException {
+        if (hi > lim) {
+            throw NumericException.INSTANCE;
+        }
+        return Numbers.parseInt(s, lo, hi);
     }
 
     private static void append0(CharSink sink, int val) {

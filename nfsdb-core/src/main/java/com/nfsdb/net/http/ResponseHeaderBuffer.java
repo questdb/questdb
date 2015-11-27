@@ -24,6 +24,8 @@ package com.nfsdb.net.http;
 import com.nfsdb.collections.IntObjHashMap;
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.exceptions.ResponseHeaderBufferTooSmallException;
+import com.nfsdb.io.sink.AbstractCharSink;
+import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Unsafe;
@@ -37,9 +39,9 @@ import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.TimeZone;
 
-public class ResponseHeaderBuffer implements Closeable, Mutable {
+public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable, Mutable {
     private static final IntObjHashMap<CharSequence> statusMap = new IntObjHashMap<>();
-
+    private static final IntObjHashMap<String> httpStatusMap = new IntObjHashMap<>();
     private final long headerPtr;
     private final long limit;
     private final ByteBuffer headers;
@@ -53,7 +55,7 @@ public class ResponseHeaderBuffer implements Closeable, Mutable {
     }
 
     public void append(CharSequence name, CharSequence value) {
-        append(name).append(": ").append(value).append(Response.EOL);
+        put(name).put(": ").put(value).put(Response.EOL);
     }
 
     @Override
@@ -67,9 +69,41 @@ public class ResponseHeaderBuffer implements Closeable, Mutable {
         ByteBuffers.release(headers);
     }
 
-    public void status(int status, CharSequence contentType) {
-        // todo: append correct status
-        append("HTTP/1.1 200 OK").append(Response.EOL);
+    @Override
+    public void flush() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CharSink put(CharSequence cs) {
+        int len = cs.length();
+        long p = _wptr;
+        if (p + len < limit) {
+            for (int i = 0; i < len; i++) {
+                Unsafe.getUnsafe().putByte(p++, (byte) cs.charAt(i));
+            }
+            _wptr = p;
+        } else {
+            throw ResponseHeaderBufferTooSmallException.INSTANCE;
+        }
+        return this;
+    }
+
+    @Override
+    public CharSink put(char c) {
+        if (_wptr < limit) {
+            Unsafe.getUnsafe().putByte(_wptr++, (byte) c);
+            return this;
+        }
+        throw ResponseHeaderBufferTooSmallException.INSTANCE;
+    }
+
+    public void status(int code, CharSequence contentType) {
+        String status = httpStatusMap.get(code);
+        if (status == null) {
+            throw new IllegalArgumentException("Illegal status code: " + code);
+        }
+        put("HTTP/1.1 ").put(code).put(' ').put(status).put(Response.EOL);
         append("Server", "nfsdb/1.0");
         append("Date", getServerTime());
         append("Transfer-Encoding", "chunked");
@@ -84,25 +118,18 @@ public class ResponseHeaderBuffer implements Closeable, Mutable {
         return format.format(calendar.getTime());
     }
 
-    private ResponseHeaderBuffer append(CharSequence seq) {
-        int len = seq.length();
-        long p = _wptr;
-        if (p + len < limit) {
-            for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putByte(p++, (byte) seq.charAt(i));
-            }
-            _wptr = p;
-        } else {
-            throw ResponseHeaderBufferTooSmallException.INSTANCE;
-        }
-        return this;
-    }
-
     void flush(WritableByteChannel channel) throws IOException {
         headers.limit((int) (_wptr - headerPtr));
-        MultipartParser.dump(headers);
+//        MultipartParser.dump(headers);
         channel.write(headers);
         headers.clear();
+    }
+
+    static {
+        httpStatusMap.put(200, "OK");
+        httpStatusMap.put(400, "Bad request");
+        httpStatusMap.put(404, "Not Found");
+        httpStatusMap.put(500, "Internal server error");
     }
 
     static {

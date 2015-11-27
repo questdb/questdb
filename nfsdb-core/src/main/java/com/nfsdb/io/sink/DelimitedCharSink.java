@@ -51,7 +51,7 @@ public class DelimitedCharSink extends AbstractCharSink implements CharSink, Clo
     }
 
     @Override
-    public void flush() {
+    public void flush() throws IOException {
         delegate.flush();
     }
 

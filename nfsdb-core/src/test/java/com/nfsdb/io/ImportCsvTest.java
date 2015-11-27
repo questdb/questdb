@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,16 +17,15 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
-package com.nfsdb.impexp;
+package com.nfsdb.io;
 
 import com.nfsdb.Journal;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.io.*;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.storage.ColumnType;
 import com.nfsdb.test.tools.AbstractTest;
@@ -53,7 +52,7 @@ public class ImportCsvTest extends AbstractTest {
             JournalMetadata m = r.getMetadata();
             Assert.assertEquals(10, m.getColumnCount());
             Assert.assertEquals(ColumnType.SYMBOL, m.getColumn(0).type);
-            Assert.assertEquals(ColumnType.SYMBOL, m.getColumn(1).type);
+            Assert.assertEquals(ColumnType.INT, m.getColumn(1).type);
             Assert.assertEquals(ColumnType.INT, m.getColumn(2).type);
             Assert.assertEquals(ColumnType.DOUBLE, m.getColumn(3).type);
             Assert.assertEquals(ColumnType.DATE, m.getColumn(4).type);
@@ -112,7 +111,7 @@ public class ImportCsvTest extends AbstractTest {
         Assert.assertEquals(ColumnType.STRING, m.getColumn(6).type);
     }
 
-    private void assertThat(String expected, String query) throws ParserException, JournalException {
+    private void assertThat(String expected, String query) throws ParserException, JournalException, IOException {
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
         p.printCursor(compiler.compile(query));

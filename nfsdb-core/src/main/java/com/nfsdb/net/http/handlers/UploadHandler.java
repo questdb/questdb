@@ -52,7 +52,7 @@ public class UploadHandler extends AbstractMultipartHandler {
     protected void onComplete0(IOContext context) throws IOException {
         context.response.status(200, "text/html; charset=utf-8");
         context.response.flushHeader();
-        context.response.write("OK, got it\r\n");
+        context.response.put("OK, got it\r\n");
         context.response.end();
     }
 
@@ -113,7 +113,7 @@ public class UploadHandler extends AbstractMultipartHandler {
     private void sendError(IOContext context) throws IOException {
         context.response.status(200, "text/html; charset=utf-8");
         context.response.flushHeader();
-        context.response.write("OOPS");
+        context.response.put("OOPS");
         context.response.end();
     }
 

@@ -96,6 +96,9 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
                         case DATE_2:
                             w.putDate(i, Dates.parseDateTimeFmt2Quiet(values[i]));
                             break;
+                        case DATE_3:
+                            w.putDate(i, Dates.parseDateTimeFmt3Quiet(values[i]));
+                            break;
                         case SYMBOL:
                             w.putSym(i, values[i]);
                             break;

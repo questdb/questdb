@@ -23,6 +23,8 @@ package com.nfsdb.net.http;
 
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.exceptions.ResponseHeaderBufferTooSmallException;
+import com.nfsdb.io.sink.AbstractCharSink;
+import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.io.sink.DirectUnboundedAnsiSink;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Numbers;
@@ -34,7 +36,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.WritableByteChannel;
 
-public class Response implements Closeable, Mutable {
+public class Response extends AbstractCharSink implements Closeable, Mutable {
     public static final String EOL = "\r\n";
     private final ByteBuffer out;
     private final long outPtr;
@@ -83,7 +85,7 @@ public class Response implements Closeable, Mutable {
     public void end() throws IOException {
         flush();
         chunk(0);
-        write(EOL);
+        put(EOL);
         int lim = (int) (_wptr - outPtr);
         out.limit(lim);
         channel.write(out);
@@ -96,11 +98,34 @@ public class Response implements Closeable, Mutable {
         if (lim > 0) {
             chunk(lim);
             out.limit(lim);
-            MultipartParser.dump(out);
             channel.write(out);
             out.clear();
             _wptr = outPtr;
         }
+    }
+
+    // todo: this function should be able to send any length char sequence
+    public Response put(CharSequence seq) {
+        int len = seq.length();
+        long p = _wptr;
+        if (p + len < limit) {
+            for (int i = 0; i < len; i++) {
+                Unsafe.getUnsafe().putByte(p++, (byte) seq.charAt(i));
+            }
+            _wptr = p;
+        } else {
+            throw ResponseHeaderBufferTooSmallException.INSTANCE;
+        }
+        return this;
+    }
+
+    @Override
+    public CharSink put(char c) {
+        if (_wptr < limit) {
+            Unsafe.getUnsafe().putByte(_wptr++, (byte) c);
+            return this;
+        }
+        throw ResponseHeaderBufferTooSmallException.INSTANCE;
     }
 
     public void flushHeader() throws IOException {
@@ -115,28 +140,13 @@ public class Response implements Closeable, Mutable {
         this.hb.status(status, contentType);
     }
 
-    // todo: this function should be able to send any length char sequence
-    public Response write(CharSequence seq) {
-        int len = seq.length();
-        long p = _wptr;
-        if (p + len < limit) {
-            for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putByte(p++, (byte) seq.charAt(i));
-            }
-            _wptr = p;
-        } else {
-            throw ResponseHeaderBufferTooSmallException.INSTANCE;
-        }
-        return this;
-    }
-
     private void chunk(int len) throws IOException {
         chunkHeader.clear();
         chunkSink.clear(EOL.length());
         Numbers.appendHex(chunkSink, len);
         chunkSink.put(EOL);
         chunkHeader.limit(chunkSink.length());
-        MultipartParser.dump(chunkHeader);
+//        MultipartParser.dump(chunkHeader);
         channel.write(chunkHeader);
     }
 }

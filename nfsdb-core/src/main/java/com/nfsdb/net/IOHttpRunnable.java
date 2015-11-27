@@ -94,6 +94,46 @@ public class IOHttpRunnable implements Runnable {
         channel.setOption(StandardSocketOptions.SO_RCVBUF, SO_RVCBUF_DOWNLD);
     }
 
+    private Request.ChannelStatus http400(IOContext context) {
+        try {
+            context.response.status(400, "text/html; charset=utf-8");
+            context.response.flushHeader();
+            context.response.put("Bad request").put("\r\n");
+            context.response.end();
+            return Request.ChannelStatus.READY;
+        } catch (IOException ignored) {
+            return Request.ChannelStatus.DISCONNECTED;
+        }
+    }
+
+    private Request.ChannelStatus http404(IOContext context) {
+        try {
+            context.response.status(404, "text/html; charset=utf-8");
+            context.response.flushHeader();
+            context.response.put("Not found").put("\r\n");
+            context.response.end();
+            return Request.ChannelStatus.READY;
+        } catch (IOException ignored) {
+            return Request.ChannelStatus.DISCONNECTED;
+        }
+    }
+
+    private Request.ChannelStatus http500(IOContext context, String message) {
+        try {
+            context.response.status(500, "text/html; charset=utf-8");
+            context.response.flushHeader();
+            if (message != null) {
+                context.response.put(message);
+            }
+            context.response.put("\r\n");
+            context.response.end();
+            return Request.ChannelStatus.READY;
+        } catch (IOException ignored) {
+            ignored.printStackTrace();
+            return Request.ChannelStatus.DISCONNECTED;
+        }
+    }
+
     @SuppressWarnings("StatementWithEmptyBody")
     private void process(SocketChannel channel, IOContext context, int op) {
         Request r = context.request;
@@ -111,37 +151,44 @@ public class IOHttpRunnable implements Runnable {
             response.setChannel(channel);
 
             if (status == Request.ChannelStatus.READY) {
-                ContextHandler handler = handlers.get(r.getUrl());
-                if (handler != null) {
-                    if (r.isMultipart()) {
-                        if (handler instanceof MultipartListener) {
-                            if (_new) {
-                                handler.onHeaders(context);
-                            }
-                            try {
-                                feedMultipartContent((MultipartListener) handler, context, channel);
-                                handler.onComplete(context);
-                            } catch (SlowChannelException e) {
-                                handler.park(context);
-                                throw e;
-                            }
-                        } else {
-                            // todo: 400 - bad request
-                        }
-                    }
+                if (r.getUrl() == null) {
+                    status = http400(context);
                 } else {
-                    // todo: 404
+                    ContextHandler handler = handlers.get(r.getUrl());
+                    if (handler != null) {
+                        if (r.isMultipart()) {
+                            if (handler instanceof MultipartListener) {
+                                if (_new) {
+                                    handler.onHeaders(context);
+                                }
+                                try {
+                                    feedMultipartContent((MultipartListener) handler, context, channel);
+                                    handler.onComplete(context);
+                                } catch (SlowChannelException e) {
+                                    handler.park(context);
+                                    throw e;
+                                }
+                            } else {
+                                status = http400(context);
+                            }
+                        }
+                    } else {
+                        status = http404(context);
+                    }
                 }
                 r.clear();
             }
         } catch (HeadersTooLargeException | MalformedHeaderException | DisconnectedChannelException e) {
             status = Request.ChannelStatus.DISCONNECTED;
         } catch (SlowChannelException e) {
-            System.out.println("slow");
             status = Request.ChannelStatus.READY;
         } catch (IOException e) {
             status = Request.ChannelStatus.DISCONNECTED;
             e.printStackTrace();
+        } catch (Throwable e) {
+            e.printStackTrace();
+            status = http500(context, e.getMessage());
+            r.clear();
         }
 
         if (status != Request.ChannelStatus.DISCONNECTED) {

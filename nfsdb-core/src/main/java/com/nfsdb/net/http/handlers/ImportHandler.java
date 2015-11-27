@@ -67,7 +67,7 @@ public class ImportHandler extends AbstractMultipartHandler {
     protected void onComplete0(IOContext context) throws IOException {
         context.response.status(200, "text/html; charset=utf-8");
         context.response.flushHeader();
-        context.response.write("OK, imported\r\n");
+        context.response.put("OK, imported\r\n");
         context.response.end();
     }
 

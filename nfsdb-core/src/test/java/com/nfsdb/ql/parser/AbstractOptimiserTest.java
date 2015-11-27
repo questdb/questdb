@@ -31,6 +31,8 @@ import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.ClassRule;
 
+import java.io.IOException;
+
 public abstract class AbstractOptimiserTest {
 
     @ClassRule
@@ -43,13 +45,13 @@ public abstract class AbstractOptimiserTest {
         TestUtils.assertEquals(expected, compiler.plan(query));
     }
 
-    protected void assertThat(String expected, String query, boolean header) throws ParserException, JournalException {
+    protected void assertThat(String expected, String query, boolean header) throws ParserException, JournalException, IOException {
         sink.clear();
         printer.printCursor(compiler.compile(query), header);
         TestUtils.assertEquals(expected, sink);
     }
 
-    protected void assertThat(String expected, String query) throws JournalException, ParserException {
+    protected void assertThat(String expected, String query) throws JournalException, ParserException, IOException {
         assertThat(expected, query, false);
         assertThat(expected, query, false);
         compiler.clearCache();

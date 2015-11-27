@@ -19,11 +19,10 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb;
+package com.nfsdb.misc;
 
 import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.io.sink.StringSink;
-import com.nfsdb.misc.Dates;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -189,6 +188,18 @@ public class DatesTest {
         expectExceptionDateTime("2014-03-10T01:19:28.");
         expectExceptionDateTime("2014-03-10T01:19:28.2");
         expectExceptionDateTime("2014-03-10T01:19:28.255K");
+    }
+
+    @Test
+    public void testParseDateFmt2() throws Exception {
+        long date = Dates.parseDateTimeFmt2("02/24/2014");
+        Assert.assertEquals("2014-02-24T00:00:00.000Z", Dates.toString(date));
+    }
+
+    @Test
+    public void testParseDateFmt3() throws Exception {
+        long date = Dates.parseDateTimeFmt3("24/02/2014");
+        Assert.assertEquals("2014-02-24T00:00:00.000Z", Dates.toString(date));
     }
 
     @Test

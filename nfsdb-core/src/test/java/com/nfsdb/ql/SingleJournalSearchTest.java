@@ -46,6 +46,8 @@ import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Test;
 
+import java.io.IOException;
+
 public class SingleJournalSearchTest {
     @ClassRule
     public static final JournalTestFactory factory = new JournalTestFactory(
@@ -142,7 +144,7 @@ public class SingleJournalSearchTest {
 
     }
 
-    private void assertEquals(CharSequence expected, RecordSource<? extends Record> src) throws JournalException {
+    private void assertEquals(CharSequence expected, RecordSource<? extends Record> src) throws JournalException, IOException {
         new RecordSourcePrinter(sink).printCursor(src.prepareCursor(factory));
         Assert.assertEquals(expected, sink.toString());
         sink.flush();

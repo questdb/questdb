@@ -42,7 +42,16 @@ import java.io.Closeable;
 public class MetadataExtractorListener implements Listener, Closeable {
 
     // order of probes in array is critical
-    private static final TypeProbe probes[] = new TypeProbe[]{new IntProbe(), new LongProbe(), new DoubleProbe(), new BooleanProbe(), new DateIsoProbe(), new DateFmt1Probe(), new DateFmt2Probe()};
+    private static final TypeProbe probes[] = new TypeProbe[]{
+            new IntProbe(),
+            new LongProbe(),
+            new DoubleProbe(),
+            new BooleanProbe(),
+            new DateIsoProbe(),
+            new DateFmt1Probe(),
+            new DateFmt2Probe(),
+            new DateFmt3Probe()
+    };
     private static final int probeLen = probes.length;
     private static final ObjList<RecordColumnMetadata> counterMeta = new ObjList<>(1);
     private static final CollectionRecordMetadata keyMetadata = new CollectionRecordMetadata();
@@ -157,7 +166,6 @@ public class MetadataExtractorListener implements Listener, Closeable {
         for (int i = 0; i < fieldCount; i++) {
             switch (metadata[i].importedType) {
                 case STRING:
-                case INT:
                     int sz = frequencyMaps[i].size();
                     if (sz > frequencyExpectation
                             && (sz * 10) < ImportManager.SAMPLE_SIZE
@@ -165,7 +173,7 @@ public class MetadataExtractorListener implements Listener, Closeable {
                         ImportedColumnMetadata m = metadata[i];
                         m.type = ColumnType.SYMBOL;
                         m.importedType = ImportedColumnType.SYMBOL;
-                        m.indexed = true;
+                        m.indexed = false;
                         m.size = 4;
                     }
             }

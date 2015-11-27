@@ -19,28 +19,33 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.io.sink;
+package com.nfsdb.io.parser.listener.probe;
 
-import java.io.IOException;
+import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.io.ImportedColumnMetadata;
+import com.nfsdb.io.ImportedColumnType;
+import com.nfsdb.misc.Dates;
+import com.nfsdb.storage.ColumnType;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public interface CharSink {
-    void flush() throws IOException;
+public class DateFmt3Probe implements TypeProbe {
+    @Override
+    public ImportedColumnMetadata getMetadata() {
+        ImportedColumnMetadata m = new ImportedColumnMetadata();
+        m.type = ColumnType.DATE;
+        m.importedType = ImportedColumnType.DATE_3;
+        m.size = 8;
+        return m;
+    }
 
-    CharSink put(CharSequence cs);
-
-    CharSink put(char c);
-
-    CharSink put(int value);
-
-    CharSink put(long value);
-
-    CharSink put(float value, int scale);
-
-    CharSink put(double value, int scale);
-
-    CharSink put(boolean value);
-
-    CharSink putISODate(long value);
-
-    CharSink putTrim(double value, int scale);
+    @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_RETURN_FALSE")
+    @Override
+    public boolean probe(CharSequence seq) {
+        try {
+            Dates.parseDateTimeFmt3(seq);
+            return true;
+        } catch (NumericException e) {
+            return false;
+        }
+    }
 }

@@ -40,6 +40,8 @@ import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.IOException;
+
 public class SingleJournalQueryTest extends AbstractTest {
 
     private final StringSink sink = new StringSink();
@@ -3058,7 +3060,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         assertThat(expected, "select sym, 1-(bid+ask)/2 mid, bid, ask from q");
     }
 
-    private void assertNullSearch() throws JournalException, ParserException {
+    private void assertNullSearch() throws JournalException, ParserException, IOException {
         final String expected = "null\t256.000000000000\t-455.750000000000\n" +
                 "null\t525.287368774414\t-470.171875000000\n" +
                 "null\t512.000000000000\t-425.962463378906\n" +
@@ -3088,13 +3090,13 @@ public class SingleJournalQueryTest extends AbstractTest {
         assertThat(expected, "select id, x, y from tab where id = null and x > 120 and y < -400");
     }
 
-    protected void assertThat(String expected, String query, boolean header) throws ParserException, JournalException {
+    protected void assertThat(String expected, String query, boolean header) throws ParserException, JournalException, IOException {
         sink.clear();
         printer.printCursor(compiler.compile(query), header);
         TestUtils.assertEquals(expected, sink);
     }
 
-    protected void assertThat(String expected, String query) throws JournalException, ParserException {
+    protected void assertThat(String expected, String query) throws JournalException, ParserException, IOException {
         assertThat(expected, query, false);
         assertThat(expected, query, false);
     }
