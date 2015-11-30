@@ -33,7 +33,7 @@ public class BlockingWaitStrategy extends AbstractWaitStrategy {
 
     @SuppressFBWarnings("WA_AWAIT_NOT_IN_LOOP")
     @Override
-    public void await(int code) {
+    public void await() {
         lock.lock();
         try {
             condition.awaitUninterruptibly();

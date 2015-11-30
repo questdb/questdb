@@ -29,11 +29,11 @@ import org.jetbrains.annotations.NotNull;
 public class ObjectPool<T extends Mutable> implements Mutable {
 
     private final ObjList<T> list;
-    private final ObjectPoolFactory<T> factory;
+    private final ObjectFactory<T> factory;
     private int pos = 0;
     private int size = 0;
 
-    public ObjectPool(@NotNull ObjectPoolFactory<T> factory, int size) {
+    public ObjectPool(@NotNull ObjectFactory<T> factory, int size) {
         this.list = new ObjList<>(size);
         this.factory = factory;
         this.size = size;

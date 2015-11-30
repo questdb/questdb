@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.factory;
 
@@ -101,6 +101,12 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
     public <T> JournalWriter<T> writer(MetadataBuilder<T> b) throws JournalException {
         JournalMetadata<T> metadata = getConfiguration().buildWithRootLocation(b);
         return new JournalWriter<>(metadata, metadata.getKey());
+    }
+
+    @Override
+    public <T> JournalWriter<T> bulkWriter(MetadataBuilder<T> b) throws JournalException {
+        JournalMetadata<T> metadata = getConfiguration().buildWithRootLocation(b);
+        return new JournalBulkWriter<>(metadata, metadata.getKey());
     }
 
     @Override

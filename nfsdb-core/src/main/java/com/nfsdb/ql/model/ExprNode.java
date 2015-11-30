@@ -23,7 +23,7 @@ package com.nfsdb.ql.model;
 
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.collections.ObjList;
-import com.nfsdb.collections.ObjectPoolFactory;
+import com.nfsdb.collections.ObjectFactory;
 import com.nfsdb.io.sink.CharSink;
 
 public class ExprNode implements Mutable {
@@ -111,7 +111,7 @@ public class ExprNode implements Mutable {
         OPERATION, CONSTANT, LITERAL, FUNCTION, CONTROL, SET_OPERATION, LAMBDA
     }
 
-    private static final class ExprNodeFactory implements ObjectPoolFactory<ExprNode> {
+    private static final class ExprNodeFactory implements ObjectFactory<ExprNode> {
         @Override
         public ExprNode newInstance() {
             return new ExprNode();

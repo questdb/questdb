@@ -21,6 +21,7 @@
 
 package com.nfsdb.concurrent;
 
+import com.nfsdb.collections.ObjectFactory;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -461,7 +462,7 @@ public class ConcurrentTest {
     }
 
     private static class Event {
-        private static final RingEntryFactory<Event> FACTORY = new RingEntryFactory<Event>() {
+        private static final ObjectFactory<Event> FACTORY = new ObjectFactory<Event>() {
             @Override
             public Event newInstance() {
                 return new Event();

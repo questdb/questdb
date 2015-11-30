@@ -29,12 +29,10 @@ import com.nfsdb.storage.ColumnType;
 public class BooleanProbe implements TypeProbe {
 
     @Override
-    public ImportedColumnMetadata getMetadata() {
-        ImportedColumnMetadata m = new ImportedColumnMetadata();
+    public void getMetadata(ImportedColumnMetadata m) {
         m.type = ColumnType.BOOLEAN;
         m.importedType = ImportedColumnType.BOOLEAN;
         m.size = 1;
-        return m;
     }
 
     @Override

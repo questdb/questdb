@@ -64,7 +64,7 @@ public abstract class AbstractSSequence implements Sequence {
     public long waitForNext() {
         long r;
         while ((r = next()) < 0) {
-            waitStrategy.await((int) r);
+            waitStrategy.await();
         }
         return r;
     }

@@ -78,7 +78,7 @@ public class ColumnName implements CharSequence {
         return name;
     }
 
-    public ColumnName of(CharSequence that) {
+    public void of(CharSequence that) {
         this.underlying = that;
         int dot = Chars.indexOf(that, '.');
         if (dot == -1) {
@@ -88,6 +88,5 @@ public class ColumnName implements CharSequence {
             alias.of(that, 0, dot);
             name.of(that, dot + 1, that.length() - dot - 1);
         }
-        return this;
     }
 }

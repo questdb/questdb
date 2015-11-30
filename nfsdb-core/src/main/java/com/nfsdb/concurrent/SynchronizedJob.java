@@ -21,47 +21,30 @@
 
 package com.nfsdb.concurrent;
 
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.misc.Unsafe;
 
-import java.util.concurrent.CountDownLatch;
+public abstract class SynchronizedJob<T> implements Job<T> {
+    private static final long LOCKED_OFFSET;
 
-public class Worker<T> extends Thread {
-    private final static long RUNNING_OFFSET;
-
-    private final ObjList<Job<T>> jobs;
-    private final CountDownLatch haltLatch;
-    private final T context;
-    @SuppressWarnings("FieldCanBeLocal")
-    private volatile int running = 0;
-
-    public Worker(ObjList<Job<T>> jobs, CountDownLatch haltLatch, T context) {
-        this.jobs = jobs;
-        this.haltLatch = haltLatch;
-        this.context = context;
-    }
-
-    public void halt() {
-        running = 2;
-    }
+    @SuppressWarnings({"unused", "FieldCanBeLocal"})
+    private volatile int locked = 0;
 
     @Override
-    public void run() {
-        if (Unsafe.getUnsafe().compareAndSwapInt(this, RUNNING_OFFSET, 0, 1)) {
-            // acquire CPU lock
-            int n = jobs.size();
-            while (running == 1) {
-                for (int i = 0; i < n; i++) {
-                    jobs.getQuick(i).run(context);
-                }
+    public void run(T context) {
+        if (Unsafe.getUnsafe().compareAndSwapInt(this, LOCKED_OFFSET, 0, 1)) {
+            try {
+                _run(context);
+            } finally {
+                locked = 0;
             }
         }
-        haltLatch.countDown();
     }
+
+    protected abstract void _run(T context);
 
     static {
         try {
-            RUNNING_OFFSET = Unsafe.getUnsafe().objectFieldOffset(Worker.class.getDeclaredField("running"));
+            LOCKED_OFFSET = Unsafe.getUnsafe().objectFieldOffset(SynchronizedJob.class.getDeclaredField("locked"));
         } catch (NoSuchFieldException e) {
             throw new Error(e);
         }

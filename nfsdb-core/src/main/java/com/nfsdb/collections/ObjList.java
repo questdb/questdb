@@ -217,6 +217,25 @@ public class ObjList<T> implements Mutable {
         return false;
     }
 
+    public void seed(int capacity, ObjectFactory<T> factory) {
+        ensureCapacity0(capacity);
+        pos = capacity;
+        for (int i = 0; i < capacity; i++) {
+            T o = Unsafe.arrayGet(buffer, i);
+            if (o == null) {
+                Unsafe.arrayPut(buffer, i, factory.newInstance());
+            } else if (o instanceof Mutable) {
+                ((Mutable) o).clear();
+            }
+        }
+    }
+
+    public void setAll(int capacity, T value) {
+        ensureCapacity0(capacity);
+        pos = 0;
+        Arrays.fill(buffer, value);
+    }
+
     public void setQuick(int index, T value) {
         Unsafe.arrayPut(buffer, index, value);
     }

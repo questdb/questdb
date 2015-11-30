@@ -23,7 +23,11 @@ package com.nfsdb.query.iterator;
 
 import com.nfsdb.Journal;
 import com.nfsdb.collections.ObjList;
-import com.nfsdb.concurrent.*;
+import com.nfsdb.collections.ObjectFactory;
+import com.nfsdb.concurrent.RingQueue;
+import com.nfsdb.concurrent.SCSequence;
+import com.nfsdb.concurrent.SPSequence;
+import com.nfsdb.concurrent.Sequence;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.misc.NamedDaemonThreadFactory;
@@ -33,7 +37,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class JournalConcurrentIterator<T> extends com.nfsdb.collections.AbstractImmutableIterator<T>
-        implements RingEntryFactory<JournalConcurrentIterator.Holder<T>>, ConcurrentIterator<T> {
+        implements ObjectFactory<JournalConcurrentIterator.Holder<T>>, ConcurrentIterator<T> {
     private final Journal<T> journal;
     private final ObjList<JournalIteratorRange> ranges;
     private final ExecutorService service;

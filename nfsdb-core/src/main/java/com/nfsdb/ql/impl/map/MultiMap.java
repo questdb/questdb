@@ -66,6 +66,9 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
                     @Transient ObjHashSet<String> keyNames,
                     @Transient ObjList<RecordColumnMetadata> valueColumns,
                     ObjList<MapRecordValueInterceptor> interceptors) {
+        if (dataSize <= 0) {
+            throw new IllegalArgumentException("dataSize must be > 0");
+        }
         this.loadFactor = loadFactor;
         this.address = Unsafe.getUnsafe().allocateMemory(dataSize + Unsafe.CACHE_LINE_SIZE);
         this.kStart = kPos = this.address + (this.address & (Unsafe.CACHE_LINE_SIZE - 1));

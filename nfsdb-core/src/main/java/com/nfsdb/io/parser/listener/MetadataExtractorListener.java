@@ -21,25 +21,23 @@
 
 package com.nfsdb.io.parser.listener;
 
+import com.nfsdb.collections.IntList;
+import com.nfsdb.collections.Mutable;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.io.ImportManager;
 import com.nfsdb.io.ImportSchema;
 import com.nfsdb.io.ImportedColumnMetadata;
 import com.nfsdb.io.ImportedColumnType;
 import com.nfsdb.io.parser.listener.probe.*;
 import com.nfsdb.io.sink.StringSink;
-import com.nfsdb.misc.Misc;
+import com.nfsdb.misc.Unsafe;
 import com.nfsdb.ql.impl.CollectionRecordMetadata;
-import com.nfsdb.ql.impl.map.MultiMap;
 import com.nfsdb.storage.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-import java.io.Closeable;
-
 @SuppressFBWarnings({"PL_PARALLEL_LISTS", "LII_LIST_INDEXED_ITERATING"})
-public class MetadataExtractorListener implements Listener, Closeable {
+public class MetadataExtractorListener implements Listener, Mutable {
 
     // order of probes in array is critical
     private static final TypeProbe probes[] = new TypeProbe[]{
@@ -52,42 +50,43 @@ public class MetadataExtractorListener implements Listener, Closeable {
             new DateFmt2Probe(),
             new DateFmt3Probe()
     };
-    private static final int probeLen = probes.length;
+    private static final int probeCount = probes.length;
     private static final ObjList<RecordColumnMetadata> counterMeta = new ObjList<>(1);
     private static final CollectionRecordMetadata keyMetadata = new CollectionRecordMetadata();
     private static final ObjList<String> kc = new ObjList<>();
-    public final int frequencyMapAreaSize;
-    private final StringSink tempSink = new StringSink();
-    private final ImportSchema importSchema;
-    private int fieldCount;
-    private int histogram[];
-    private int blanks[];
-    private ImportedColumnMetadata metadata[];
-    private String headers[];
-    private boolean header = false;
-    private MultiMap frequencyMaps[];
 
-    public MetadataExtractorListener(ImportSchema importSchema, int sampleSize) {
-        this.importSchema = importSchema;
-        this.frequencyMapAreaSize = sampleSize * 163;
-    }
+    private final StringSink tempSink = new StringSink();
+    private final ObjList<ImportedColumnMetadata> _metadata = new ObjList<>();
+    private final ObjList<String> _headers = new ObjList<>();
+    private final IntList _blanks = new IntList();
+    private final IntList _histogram = new IntList();
+    private ImportSchema importSchema;
+    private int fieldCount;
+    private boolean header = false;
 
     @Override
-    public void close() {
-        if (frequencyMaps != null) {
-            for (int i = 0; i < frequencyMaps.length; i++) {
-                frequencyMaps[i] = Misc.free(frequencyMaps[i]);
-            }
-        }
+    public void clear() {
+        tempSink.clear();
+        _headers.clear();
+        _blanks.clear();
+        _histogram.clear();
+        fieldCount = 0;
+        header = false;
+        importSchema = null;
     }
 
-    @SuppressFBWarnings({"EI_EXPOSE_REP"})
-    public ImportedColumnMetadata[] getMetadata() {
-        return metadata;
+    public ObjList<ImportedColumnMetadata> getMetadata() {
+        return _metadata;
     }
 
     public boolean isHeader() {
         return header;
+    }
+
+    public MetadataExtractorListener of(ImportSchema schema) {
+        clear();
+        this.importSchema = schema;
+        return this;
     }
 
     @Override
@@ -97,14 +96,10 @@ public class MetadataExtractorListener implements Listener, Closeable {
 
     @Override
     public void onFieldCount(int count) {
-        this.histogram = new int[(fieldCount = count) * probeLen];
-        this.blanks = new int[count];
-        this.metadata = new ImportedColumnMetadata[count];
-        this.headers = new String[count];
-        this.frequencyMaps = new MultiMap[count];
-        for (int i = 0; i < count; i++) {
-            frequencyMaps[i] = new MultiMap(keyMetadata, keyMetadata.getColumnNames(), counterMeta, null);
-        }
+        this._histogram.setAll((fieldCount = count) * probeCount, 0);
+        this._blanks.setAll(count, 0);
+        this._metadata.seed(count, ImportedColumnMetadata.FACTORY);
+        this._headers.setAll(count, null);
     }
 
     @Override
@@ -116,15 +111,14 @@ public class MetadataExtractorListener implements Listener, Closeable {
 
         for (int i = 0; i < hi; i++) {
             if (values[i].length() == 0) {
-                blanks[i]++;
+                _blanks.increment(i);
             }
-            int offset = i * probeLen;
-            for (int k = 0; k < probeLen; k++) {
+            int offset = i * probeCount;
+            for (int k = 0; k < probeCount; k++) {
                 if (probes[k].probe(values[i])) {
-                    histogram[k + offset]++;
+                    _histogram.increment(k + offset);
                 }
             }
-            frequencyMaps[i].getOrCreateValues(frequencyMaps[i].keyWriter().putStr(values[i]));
         }
     }
 
@@ -136,16 +130,14 @@ public class MetadataExtractorListener implements Listener, Closeable {
     @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT"})
     @Override
     public void onLineCount(int count) {
-        int frequencyExpectation = 1;
         // try calculate types counting all rows
         // if all types come up as strings, reduce count by one and retry
         // if some fields come up as non-string after subtracting row - we have a header
         if (calcTypes(count, true)) {
-            frequencyExpectation++;
             if (!calcTypes(count - 1, false)) {
                 // copy headers
                 for (int i = 0; i < fieldCount; i++) {
-                    metadata[i].name = headers[i];
+                    _metadata.getQuick(i).name = _headers.getQuick(i);
                 }
                 header = true;
             }
@@ -156,26 +148,7 @@ public class MetadataExtractorListener implements Listener, Closeable {
             for (int i = 0; i < fieldCount; i++) {
                 tempSink.clear();
                 tempSink.put('f').put(i);
-                metadata[i].name = tempSink.toString();
-            }
-        }
-
-        // check field value frequencies to determine
-        // which fields can be symbols.
-        // consider only INT and STRING fields
-        for (int i = 0; i < fieldCount; i++) {
-            switch (metadata[i].importedType) {
-                case STRING:
-                    int sz = frequencyMaps[i].size();
-                    if (sz > frequencyExpectation
-                            && (sz * 10) < ImportManager.SAMPLE_SIZE
-                            && (blanks[i] * 10) < ImportManager.SAMPLE_SIZE) {
-                        ImportedColumnMetadata m = metadata[i];
-                        m.type = ColumnType.SYMBOL;
-                        m.importedType = ImportedColumnType.SYMBOL;
-                        m.indexed = false;
-                        m.size = 4;
-                    }
+                _metadata.getQuick(i).name = tempSink.toString();
             }
         }
 
@@ -185,9 +158,10 @@ public class MetadataExtractorListener implements Listener, Closeable {
             for (int i = 0, k = override.size(); i < k; i++) {
                 ImportedColumnMetadata m = override.getQuick(i);
                 if (m.columnIndex < fieldCount) {
-                    metadata[m.columnIndex].importedType = m.importedType;
-                    metadata[m.columnIndex].type = m.type;
-                    metadata[m.columnIndex].size = m.size;
+                    ImportedColumnMetadata im = _metadata.getQuick(m.columnIndex);
+                    im.importedType = m.importedType;
+                    im.type = m.type;
+                    im.size = m.size;
                 }
             }
         }
@@ -206,12 +180,15 @@ public class MetadataExtractorListener implements Listener, Closeable {
     private boolean calcTypes(int count, boolean setDefault) {
         boolean allStrings = true;
         for (int i = 0; i < fieldCount; i++) {
-            int offset = i * probeLen;
-            int blanks = this.blanks[i];
+            int offset = i * probeCount;
+            int blanks = _blanks.getQuick(i);
+            boolean unprobed = true;
+            ImportedColumnMetadata m = _metadata.getQuick(i);
 
-            for (int k = 0; k < probeLen; k++) {
-                if (histogram[k + offset] + blanks == count && blanks < count) {
-                    metadata[i] = probes[k].getMetadata();
+            for (int k = 0; k < probeCount; k++) {
+                if (_histogram.getQuick(k + offset) + blanks == count && blanks < count) {
+                    unprobed = false;
+                    probes[k].getMetadata(m);
                     if (allStrings) {
                         allStrings = false;
                     }
@@ -219,12 +196,10 @@ public class MetadataExtractorListener implements Listener, Closeable {
                 }
             }
 
-            if (setDefault && metadata[i] == null) {
-                ImportedColumnMetadata meta = new ImportedColumnMetadata();
-                meta.type = ColumnType.STRING;
-                meta.importedType = ImportedColumnType.STRING;
-                meta.size = meta.avgSize + 4;
-                metadata[i] = meta;
+            if (setDefault && unprobed) {
+                m.type = ColumnType.STRING;
+                m.importedType = ImportedColumnType.STRING;
+                m.size = m.avgSize + 4;
             }
         }
 
@@ -255,7 +230,7 @@ public class MetadataExtractorListener implements Listener, Closeable {
 
     private void stashPossibleHeader(CharSequence values[], int hi) {
         for (int i = 0; i < hi; i++) {
-            headers[i] = normalise(values[i]);
+            _headers.setQuick(i, normalise(Unsafe.arrayGet(values, i)));
         }
     }
 

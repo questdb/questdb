@@ -30,12 +30,10 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class DateFmt2Probe implements TypeProbe {
     @Override
-    public ImportedColumnMetadata getMetadata() {
-        ImportedColumnMetadata m = new ImportedColumnMetadata();
+    public void getMetadata(ImportedColumnMetadata m) {
         m.type = ColumnType.DATE;
         m.importedType = ImportedColumnType.DATE_2;
         m.size = 8;
-        return m;
     }
 
     @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_RETURN_FALSE")

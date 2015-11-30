@@ -89,9 +89,7 @@ public class IntList implements Mutable {
     }
 
     public void clear(int capacity) {
-        ensureCapacity0(capacity);
-        pos = 0;
-        Arrays.fill(buffer, noEntryValue);
+        setAll(capacity, noEntryValue);
     }
 
     public void ensureCapacity(int capacity) {
@@ -191,6 +189,10 @@ public class IntList implements Mutable {
         return toStringBuilder.toString();
     }
 
+    public void increment(int index) {
+        Unsafe.arrayPut(buffer, index, Unsafe.arrayGet(buffer, index) + 1);
+    }
+
     public boolean remove(int key) {
         for (int i = 0, n = size(); i < n; i++) {
             if (key == getQuick(i)) {
@@ -221,6 +223,12 @@ public class IntList implements Mutable {
             return;
         }
         throw new ArrayIndexOutOfBoundsException(index);
+    }
+
+    public void setAll(int capacity, int value) {
+        ensureCapacity0(capacity);
+        pos = 0;
+        Arrays.fill(buffer, value);
     }
 
     public void setQuick(int index, int value) {

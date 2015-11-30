@@ -21,32 +21,6 @@
 
 package com.nfsdb.concurrent;
 
-import com.nfsdb.misc.Unsafe;
-
-public abstract class SynchronizedRunnable implements Runnable {
-    private static final long LOCKED_OFFSET;
-
-    @SuppressWarnings({"unused", "FieldCanBeLocal"})
-    private volatile int locked = 0;
-
-    @Override
-    public void run() {
-        if (Unsafe.getUnsafe().compareAndSwapInt(this, LOCKED_OFFSET, 0, 1)) {
-            try {
-                _run();
-            } finally {
-                locked = 0;
-            }
-        }
-    }
-
-    protected abstract void _run();
-
-    static {
-        try {
-            LOCKED_OFFSET = Unsafe.getUnsafe().objectFieldOffset(SynchronizedRunnable.class.getDeclaredField("locked"));
-        } catch (NoSuchFieldException e) {
-            throw new Error(e);
-        }
-    }
+public interface Job<T> {
+    void run(T worker);
 }

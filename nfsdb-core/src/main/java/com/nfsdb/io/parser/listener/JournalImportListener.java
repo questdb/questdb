@@ -23,16 +23,14 @@ package com.nfsdb.io.parser.listener;
 
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.JournalWriterFactory;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.ImportedColumnMetadata;
 import com.nfsdb.logging.Logger;
-import com.nfsdb.misc.Chars;
-import com.nfsdb.misc.Dates;
-import com.nfsdb.misc.Misc;
-import com.nfsdb.misc.Numbers;
+import com.nfsdb.misc.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
@@ -43,7 +41,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
     private final JournalWriterFactory factory;
     private final String location;
     private JournalWriter writer;
-    private ImportedColumnMetadata metadata[];
+    private ObjList<ImportedColumnMetadata> metadata;
 
     public JournalImportListener(JournalWriterFactory factory, String location) {
         this.factory = factory;
@@ -70,47 +68,47 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
         try {
             JournalEntryWriter w = writer.entryWriter();
             for (int i = 0; i < hi; i++) {
-                if (values[i].length() == 0) {
+                if (Unsafe.arrayGet(values, i).length() == 0) {
                     continue;
                 }
                 try {
-                    switch (metadata[i].importedType) {
+                    switch (metadata.getQuick(i).importedType) {
                         case STRING:
-                            w.putStr(i, values[i]);
+                            w.putStr(i, Unsafe.arrayGet(values, i));
                             break;
                         case DOUBLE:
-                            w.putDouble(i, Numbers.parseDoubleQuiet(values[i]));
+                            w.putDouble(i, Numbers.parseDoubleQuiet(Unsafe.arrayGet(values, i)));
                             break;
                         case INT:
-                            w.putInt(i, Numbers.parseIntQuiet(values[i]));
+                            w.putInt(i, Numbers.parseIntQuiet(Unsafe.arrayGet(values, i)));
                             break;
                         case FLOAT:
-                            w.putFloat(i, Numbers.parseFloatQuiet(values[i]));
+                            w.putFloat(i, Numbers.parseFloatQuiet(Unsafe.arrayGet(values, i)));
                             break;
                         case DATE_ISO:
-                            w.putDate(i, Dates.parseDateTimeQuiet(values[i]));
+                            w.putDate(i, Dates.parseDateTimeQuiet(Unsafe.arrayGet(values, i)));
                             break;
                         case DATE_1:
-                            w.putDate(i, Dates.parseDateTimeFmt1Quiet(values[i]));
+                            w.putDate(i, Dates.parseDateTimeFmt1Quiet(Unsafe.arrayGet(values, i)));
                             break;
                         case DATE_2:
-                            w.putDate(i, Dates.parseDateTimeFmt2Quiet(values[i]));
+                            w.putDate(i, Dates.parseDateTimeFmt2Quiet(Unsafe.arrayGet(values, i)));
                             break;
                         case DATE_3:
-                            w.putDate(i, Dates.parseDateTimeFmt3Quiet(values[i]));
+                            w.putDate(i, Dates.parseDateTimeFmt3Quiet(Unsafe.arrayGet(values, i)));
                             break;
                         case SYMBOL:
-                            w.putSym(i, values[i]);
+                            w.putSym(i, Unsafe.arrayGet(values, i));
                             break;
                         case LONG:
-                            w.putLong(i, Numbers.parseLongQuiet(values[i]));
+                            w.putLong(i, Numbers.parseLongQuiet(Unsafe.arrayGet(values, i)));
                             break;
                         case BOOLEAN:
-                            w.putBool(i, Chars.equalsIgnoreCase(values[i], "true"));
+                            w.putBool(i, Chars.equalsIgnoreCase(Unsafe.arrayGet(values, i), "true"));
                     }
 
                 } catch (Exception e) {
-                    LOGGER.info("Error at (%d,%d) as %s: %s", line, i, metadata[i].type, e.getMessage());
+                    LOGGER.info("Error at (%d,%d) as %s: %s", line, i, metadata.getQuick(i).type, e.getMessage());
                     break;
                 }
             }
@@ -129,12 +127,11 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
 
     }
 
-    @SuppressFBWarnings({"EI_EXPOSE_REP2"})
     @Override
-    public void onMetadata(ImportedColumnMetadata metadata[]) {
+    public void onMetadata(ObjList<ImportedColumnMetadata> metadata) {
         if (writer == null) {
             try {
-                writer = factory.writer(new JournalStructure(location, this.metadata = metadata));
+                writer = factory.bulkWriter(new JournalStructure(location, this.metadata = metadata));
             } catch (JournalException e) {
                 throw new JournalRuntimeException(e);
             }

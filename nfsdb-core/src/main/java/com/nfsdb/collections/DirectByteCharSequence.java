@@ -75,7 +75,7 @@ public class DirectByteCharSequence extends AbstractCharSequence implements Muta
         return this;
     }
 
-    public static final class Factory implements ObjectPoolFactory<DirectByteCharSequence> {
+    public static final class Factory implements ObjectFactory<DirectByteCharSequence> {
         @Override
         public DirectByteCharSequence newInstance() {
             return new DirectByteCharSequence();

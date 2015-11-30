@@ -21,10 +21,10 @@
 
 package com.nfsdb.ha.bridge;
 
-import com.nfsdb.concurrent.RingEntryFactory;
+import com.nfsdb.collections.ObjectFactory;
 
 public class JournalEvent {
-    public static final RingEntryFactory<JournalEvent> EVENT_FACTORY = new RingEntryFactory<JournalEvent>() {
+    public static final ObjectFactory<JournalEvent> EVENT_FACTORY = new ObjectFactory<JournalEvent>() {
         @Override
         public JournalEvent newInstance() {
             return new JournalEvent();

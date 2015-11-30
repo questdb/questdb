@@ -21,7 +21,6 @@
 
 package com.nfsdb.io.sink;
 
-import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.misc.ByteBuffers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -55,14 +54,10 @@ public class FlexBufferSink extends AbstractCharSink implements Closeable {
 
     @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
     @Override
-    public void flush() {
-        try {
-            buffer.flip();
-            channel.write(buffer);
-            buffer.clear();
-        } catch (IOException e) {
-            throw new JournalRuntimeException(e);
-        }
+    public void flush() throws IOException {
+        buffer.flip();
+        channel.write(buffer);
+        buffer.clear();
     }
 
     @Override

@@ -22,7 +22,7 @@
 package com.nfsdb.collections;
 
 public class FlyweightCharSequence extends AbstractCharSequence implements Mutable {
-    public static final ObjectPoolFactory<FlyweightCharSequence> FACTORY = new ObjectPoolFactory<FlyweightCharSequence>() {
+    public static final ObjectFactory<FlyweightCharSequence> FACTORY = new ObjectFactory<FlyweightCharSequence>() {
         @Override
         public FlyweightCharSequence newInstance() {
             return new FlyweightCharSequence();

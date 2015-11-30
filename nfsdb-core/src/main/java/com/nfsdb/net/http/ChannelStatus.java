@@ -19,8 +19,8 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.concurrent;
+package com.nfsdb.net.http;
 
-public interface RingEntryFactory<T> {
-    T newInstance();
+public enum ChannelStatus {
+    READY, NEED_REQUEST, DISCONNECTED
 }

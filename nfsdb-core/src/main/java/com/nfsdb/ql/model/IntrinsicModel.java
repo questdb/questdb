@@ -24,7 +24,7 @@ package com.nfsdb.ql.model;
 import com.nfsdb.collections.CharSequenceHashSet;
 import com.nfsdb.collections.IntList;
 import com.nfsdb.collections.Mutable;
-import com.nfsdb.collections.ObjectPoolFactory;
+import com.nfsdb.collections.ObjectFactory;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.ql.impl.interval.IntervalSource;
 
@@ -88,7 +88,7 @@ public class IntrinsicModel implements Mutable {
                 '}';
     }
 
-    public static final class IntrinsicModelFactory implements ObjectPoolFactory<IntrinsicModel> {
+    public static final class IntrinsicModelFactory implements ObjectFactory<IntrinsicModel> {
         @Override
         public IntrinsicModel newInstance() {
             return new IntrinsicModel();

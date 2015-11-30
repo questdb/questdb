@@ -76,7 +76,6 @@ public class ImportSchema {
                 }
             }
         }
-
     }
 
     public ObjList<ImportedColumnMetadata> getMetadata() {

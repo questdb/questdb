@@ -136,6 +136,18 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
         this.channel = channel;
     }
 
+    public ChannelStatus simple(int code, CharSequence message) {
+        try {
+            status(code, "text/html; charset=utf-8");
+            flushHeader();
+            put(message).put(EOL);
+            end();
+            return ChannelStatus.READY;
+        } catch (IOException ignored) {
+            return ChannelStatus.DISCONNECTED;
+        }
+    }
+
     public void status(int status, CharSequence contentType) {
         this.hb.status(status, contentType);
     }

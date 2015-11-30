@@ -51,7 +51,7 @@ public class ImportCsvTest extends AbstractTest {
         try (Journal r = factory.reader(location)) {
             JournalMetadata m = r.getMetadata();
             Assert.assertEquals(10, m.getColumnCount());
-            Assert.assertEquals(ColumnType.SYMBOL, m.getColumn(0).type);
+            Assert.assertEquals(ColumnType.STRING, m.getColumn(0).type);
             Assert.assertEquals(ColumnType.INT, m.getColumn(1).type);
             Assert.assertEquals(ColumnType.INT, m.getColumn(2).type);
             Assert.assertEquals(ColumnType.DOUBLE, m.getColumn(3).type);

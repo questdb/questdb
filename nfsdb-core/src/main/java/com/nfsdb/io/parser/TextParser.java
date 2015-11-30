@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,25 +17,21 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.io.parser;
 
+import com.nfsdb.collections.Mutable;
 import com.nfsdb.io.parser.listener.Listener;
 
 import java.io.Closeable;
 
-public interface TextParser extends Closeable {
+public interface TextParser extends Closeable, Mutable {
     int getLineCount();
 
     void parse(long lo, long len, int lim, Listener listener);
 
     void parseLast();
-
-    /**
-     * Resets parser including metadata.
-     */
-    void reset();
 
     /**
      * Prepares parser to re-parse input keeping metadata intact.

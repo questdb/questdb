@@ -48,7 +48,14 @@ public abstract class AbstractTextParser implements TextParser {
     private long lastQuotePos = -1;
 
     public AbstractTextParser() {
-        reset();
+        clear();
+    }
+
+    @Override
+    public final void clear() {
+        restart();
+        this.fields = null;
+        this.calcFields = true;
     }
 
     @Override
@@ -79,13 +86,6 @@ public abstract class AbstractTextParser implements TextParser {
                 triggerLine(0);
             }
         }
-    }
-
-    @Override
-    public final void reset() {
-        restart();
-        this.fields = null;
-        this.calcFields = true;
     }
 
     public final void restart() {
@@ -167,7 +167,7 @@ public abstract class AbstractTextParser implements TextParser {
 
     private void shift(long d) {
         for (int i = 0; i < fieldIndex; i++) {
-            fields[i].lshift(d);
+            Unsafe.arrayGet(fields, i).lshift(d);
         }
         this.fieldLo -= d;
         this.fieldHi -= d;
@@ -188,7 +188,7 @@ public abstract class AbstractTextParser implements TextParser {
             return;
         }
 
-        DirectByteCharSequence seq = fields[fieldIndex];
+        DirectByteCharSequence seq = Unsafe.arrayGet(fields, fieldIndex);
 
         if (lastQuotePos > -1) {
             seq.of(this.fieldLo, lastQuotePos - 1);

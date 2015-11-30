@@ -109,7 +109,7 @@ public final class ImportManager {
     }
 
     public static void parse(File file, TextParser parser, long bufSize, boolean header, Listener listener) throws IOException {
-        parser.reset();
+        parser.clear();
         parser.setHeader(header);
         try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
             try (FileChannel channel = raf.getChannel()) {
@@ -134,7 +134,7 @@ public final class ImportManager {
     }
 
     private static void analyzeAndParse(File file, TextParser parser, InputAnalysisListener listener, ImportSchema importSchema, int sampleSize) throws IOException {
-        parser.reset();
+        parser.clear();
         try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
             try (FileChannel channel = raf.getChannel()) {
                 long size = channel.size();
@@ -159,13 +159,12 @@ public final class ImportManager {
 
     private static void analyze(TextParser parser, ByteBuffer buf, InputAnalysisListener listener, ImportSchema importSchema, int sampleSize) {
         // use field detector listener to process first 100 lines of input
-        try (MetadataExtractorListener lsnr = new MetadataExtractorListener(importSchema, sampleSize)) {
-            parser.parse(ByteBuffers.getAddress(buf), buf.remaining(), sampleSize, lsnr);
-            lsnr.onLineCount(parser.getLineCount());
-            buf.clear();
-            listener.onMetadata(lsnr.getMetadata());
-            parser.setHeader(lsnr.isHeader());
-            parser.restart();
-        }
+        MetadataExtractorListener lsnr = new MetadataExtractorListener().of(importSchema);
+        parser.parse(ByteBuffers.getAddress(buf), buf.remaining(), sampleSize, lsnr);
+        lsnr.onLineCount(parser.getLineCount());
+        buf.clear();
+        listener.onMetadata(lsnr.getMetadata());
+        parser.setHeader(lsnr.isHeader());
+        parser.restart();
     }
 }

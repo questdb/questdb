@@ -23,10 +23,15 @@ package com.nfsdb.net.http.handlers;
 
 import com.nfsdb.collections.ByteSequence;
 import com.nfsdb.collections.DirectByteCharSequence;
+import com.nfsdb.exceptions.DisconnectedChannelException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.io.parser.CsvParser;
+import com.nfsdb.io.parser.FormatParser;
+import com.nfsdb.io.parser.PipeParser;
+import com.nfsdb.io.parser.TabParser;
 import com.nfsdb.io.parser.listener.JournalImportListener;
 import com.nfsdb.io.parser.listener.MetadataExtractorListener;
+import com.nfsdb.misc.Chars;
 import com.nfsdb.net.IOContext;
 import com.nfsdb.net.http.RequestHeaderBuffer;
 
@@ -41,10 +46,6 @@ public class ImportHandler extends AbstractMultipartHandler {
     }
 
     @Override
-    public void onHeaders(IOContext context) {
-    }
-
-    @Override
     public void park(IOContext context) {
 
     }
@@ -52,14 +53,42 @@ public class ImportHandler extends AbstractMultipartHandler {
     private void analyseColumns(IOContext context, long address, int len) {
         // analyse columns and their types
         int sampleSize = 1000;
-        try (MetadataExtractorListener lsnr = new MetadataExtractorListener(null, sampleSize)) {
-            context.textParser.parse(address, len, sampleSize, lsnr);
-            lsnr.onLineCount(context.textParser.getLineCount());
-            context.importer.onMetadata(lsnr.getMetadata());
-            context.textParser.setHeader(lsnr.isHeader());
-            context.textParser.restart();
-        } finally {
-            context.analysed = true;
+        MetadataExtractorListener lsnr = (MetadataExtractorListener) context.threadContext.getCache().get(IOWorkerContextKey.ME.name());
+        if (lsnr == null) {
+            lsnr = new MetadataExtractorListener();
+            context.threadContext.getCache().put(IOWorkerContextKey.ME.name(), lsnr);
+        }
+
+        context.textParser.parse(address, len, sampleSize, lsnr);
+        lsnr.onLineCount(context.textParser.getLineCount());
+        context.importer.onMetadata(lsnr.getMetadata());
+        context.textParser.setHeader(lsnr.isHeader());
+        context.textParser.restart();
+        context.analysed = true;
+    }
+
+    private void analyseFormat(IOContext context, long address, int len) {
+        FormatParser parser = new FormatParser().of(address, len);
+        context.dataFormatValid = parser.getFormat() != null && parser.getStdDev() < 0.5;
+
+        if (context.dataFormatValid) {
+            if (context.textParser != null) {
+                context.textParser.clear();
+            } else {
+                switch (parser.getFormat()) {
+                    case CSV:
+                        context.textParser = new CsvParser();
+                        break;
+                    case TAB:
+                        context.textParser = new TabParser();
+                        break;
+                    case PIPE:
+                        context.textParser = new PipeParser();
+                        break;
+                    default:
+                        context.dataFormatValid = false;
+                }
+            }
         }
     }
 
@@ -77,18 +106,28 @@ public class ImportHandler extends AbstractMultipartHandler {
             long lo = ((DirectByteCharSequence) data).getLo();
             int len = data.length();
             if (!context.analysed) {
-                analyseColumns(context, lo, len);
+                analyseFormat(context, lo, len);
+                if (context.dataFormatValid) {
+                    analyseColumns(context, lo, len);
+                }
             }
-            context.textParser.parse(lo, len, Integer.MAX_VALUE, context.importer);
+
+            if (context.dataFormatValid) {
+                context.textParser.parse(lo, len, Integer.MAX_VALUE, context.importer);
+            }
         }
     }
 
     @Override
     protected void onPartBegin(IOContext context, RequestHeaderBuffer hb) throws IOException {
         if (hb.getContentDispositionFilename() != null) {
-            context.analysed = false;
-            context.textParser = new CsvParser();
-            context.importer = new JournalImportListener(factory, hb.getContentDispositionFilename().toString());
+            if (Chars.equals(hb.getContentDispositionName(), "data")) {
+                context.analysed = false;
+                context.importer = new JournalImportListener(factory, hb.getContentDispositionFilename().toString());
+            } else {
+                context.response.simple(400, "Unrecognised field");
+                throw DisconnectedChannelException.INSTANCE;
+            }
         }
     }
 

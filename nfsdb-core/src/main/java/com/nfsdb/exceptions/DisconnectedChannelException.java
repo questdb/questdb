@@ -21,8 +21,10 @@
 
 package com.nfsdb.exceptions;
 
+import java.io.IOException;
+
 @SuppressWarnings("ThrowableInstanceNeverThrown")
-public final class DisconnectedChannelException extends Exception {
+public final class DisconnectedChannelException extends IOException {
     public final static DisconnectedChannelException INSTANCE = new DisconnectedChannelException();
 
     private DisconnectedChannelException() {

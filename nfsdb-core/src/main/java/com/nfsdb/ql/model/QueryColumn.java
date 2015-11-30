@@ -22,10 +22,10 @@
 package com.nfsdb.ql.model;
 
 import com.nfsdb.collections.Mutable;
-import com.nfsdb.collections.ObjectPoolFactory;
+import com.nfsdb.collections.ObjectFactory;
 
 public final class QueryColumn implements Mutable {
-    public final static ObjectPoolFactory<QueryColumn> FACTORY = new ObjectPoolFactory<QueryColumn>() {
+    public final static ObjectFactory<QueryColumn> FACTORY = new ObjectFactory<QueryColumn>() {
         @Override
         public QueryColumn newInstance() {
             return new QueryColumn();

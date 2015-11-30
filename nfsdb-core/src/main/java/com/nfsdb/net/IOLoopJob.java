@@ -28,7 +28,7 @@ import java.net.StandardSocketOptions;
 import java.nio.channels.*;
 import java.util.Set;
 
-public class IOLoopRunnable extends SynchronizedRunnable {
+public class IOLoopJob extends SynchronizedJob<IOWorkerContext> {
     private final Selector selector;
     private final SelectionKey serverKey;
     private final RingQueue<IOEvent> ioQueue;
@@ -37,7 +37,7 @@ public class IOLoopRunnable extends SynchronizedRunnable {
     private final MPSequence interestPubSequence;
     private final SCSequence interestSubSequence = new SCSequence();
 
-    public IOLoopRunnable(Selector selector, SelectionKey serverKey, RingQueue<IOEvent> ioQueue, Sequence ioSequence, int interestQueueLen) {
+    public IOLoopJob(Selector selector, SelectionKey serverKey, RingQueue<IOEvent> ioQueue, Sequence ioSequence, int interestQueueLen) {
         this.selector = selector;
         this.serverKey = serverKey;
         this.ioQueue = ioQueue;
@@ -61,7 +61,7 @@ public class IOLoopRunnable extends SynchronizedRunnable {
     }
 
     @Override
-    protected void _run() {
+    protected void _run(IOWorkerContext context) {
         try {
             processRegistrations();
             selector.select(1L);
@@ -102,7 +102,7 @@ public class IOLoopRunnable extends SynchronizedRunnable {
     private void configure(SocketChannel channel) throws IOException {
         channel.configureBlocking(false);
         channel.setOption(StandardSocketOptions.TCP_NODELAY, Boolean.TRUE);
-        channel.setOption(StandardSocketOptions.SO_RCVBUF, IOHttpRunnable.SO_RVCBUF_DOWNLD);
+        channel.setOption(StandardSocketOptions.SO_RCVBUF, IOHttpJob.SO_RVCBUF_DOWNLD);
         channel.register(selector, SelectionKey.OP_READ).attach(new IOContext());
     }
 

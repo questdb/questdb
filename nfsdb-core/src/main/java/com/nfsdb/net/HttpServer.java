@@ -24,10 +24,7 @@ package com.nfsdb.net;
 import com.nfsdb.collections.CharSequenceObjHashMap;
 import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.collections.ObjList;
-import com.nfsdb.concurrent.MCSequence;
-import com.nfsdb.concurrent.RingQueue;
-import com.nfsdb.concurrent.SPSequence;
-import com.nfsdb.concurrent.Worker;
+import com.nfsdb.concurrent.*;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.net.http.ContextHandler;
 import com.nfsdb.net.http.handlers.ImportHandler;
@@ -45,7 +42,7 @@ import java.util.concurrent.CountDownLatch;
 
 public class HttpServer {
     private final InetSocketAddress address;
-    private final ObjList<Worker> workers;
+    private final ObjList<Worker<IOWorkerContext>> workers;
     private final CountDownLatch haltLatch;
     private final int ioQueueSize;
     private final int workerCount;
@@ -112,16 +109,16 @@ public class HttpServer {
         ioPubSequence.followedBy(ioSubSequence);
         ioSubSequence.followedBy(ioPubSequence);
 
-        IOLoopRunnable ioLoop = new IOLoopRunnable(selector, channel.register(selector, SelectionKey.OP_ACCEPT), ioQueue, ioPubSequence, ioQueueSize);
-        IOHttpRunnable ioHttp = new IOHttpRunnable(ioQueue, ioSubSequence, ioLoop, handlers);
+        IOLoopJob ioLoop = new IOLoopJob(selector, channel.register(selector, SelectionKey.OP_ACCEPT), ioQueue, ioPubSequence, ioQueueSize);
+        IOHttpJob ioHttp = new IOHttpJob(ioQueue, ioSubSequence, ioLoop, handlers);
 
-        ObjList<Runnable> jobs = new ObjList<>();
+        ObjList<Job<IOWorkerContext>> jobs = new ObjList<>();
         jobs.add(ioLoop);
         jobs.add(ioHttp);
 
         for (int i = 0; i < workerCount; i++) {
-            Worker w;
-            workers.add(w = new Worker(jobs, haltLatch));
+            Worker<IOWorkerContext> w;
+            workers.add(w = new Worker<>(jobs, haltLatch, new IOWorkerContext()));
             w.start();
         }
 

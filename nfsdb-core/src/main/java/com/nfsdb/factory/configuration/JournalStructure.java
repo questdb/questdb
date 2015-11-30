@@ -23,6 +23,7 @@ package com.nfsdb.factory.configuration;
 
 import com.nfsdb.PartitionType;
 import com.nfsdb.collections.CharSequenceIntHashMap;
+import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.misc.ByteBuffers;
@@ -62,11 +63,11 @@ public class JournalStructure implements MetadataBuilder<Object> {
         this.location = location;
     }
 
-    public JournalStructure(String location, ColumnMetadata columnMetadata[]) {
+    public JournalStructure(String location, ObjList<? extends ColumnMetadata> columnMetadata) {
         this.location = location;
-        for (int i = 0, sz = columnMetadata.length; i < sz; i++) {
+        for (int i = 0, sz = columnMetadata.size(); i < sz; i++) {
             ColumnMetadata to = new ColumnMetadata();
-            metadata.add(to.copy(columnMetadata[i]));
+            metadata.add(to.copy(columnMetadata.getQuick(i)));
             nameToIndexMap.put(to.name, i);
         }
     }

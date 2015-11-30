@@ -29,12 +29,10 @@ import com.nfsdb.storage.ColumnType;
 
 public class LongProbe implements TypeProbe {
     @Override
-    public ImportedColumnMetadata getMetadata() {
-        ImportedColumnMetadata m = new ImportedColumnMetadata();
+    public void getMetadata(ImportedColumnMetadata m) {
         m.type = ColumnType.LONG;
         m.importedType = ImportedColumnType.LONG;
         m.size = ColumnType.LONG.size();
-        return m;
     }
 
     @Override

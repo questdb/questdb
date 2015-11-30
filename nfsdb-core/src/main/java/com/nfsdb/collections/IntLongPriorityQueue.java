@@ -53,6 +53,10 @@ public class IntLongPriorityQueue {
         return size > 0;
     }
 
+    public int peekBottom() {
+        return Unsafe.arrayGet(src, size - 1);
+    }
+
     public long popAndReplace(int index, long value) {
         long v = Unsafe.arrayGet(buf, 0);
         int p = binSearch(value);

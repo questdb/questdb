@@ -115,7 +115,7 @@ public final class ByteBuffers {
         }
     }
 
-    public static void copyNonBlocking(ReadableByteChannel channel, ByteBuffer to, int retryCount) throws SlowChannelException, IOException, DisconnectedChannelException {
+    public static void copyNonBlocking(ReadableByteChannel channel, ByteBuffer to, int retryCount) throws SlowChannelException, IOException {
         try {
             int r = to.remaining();
             int target = r;

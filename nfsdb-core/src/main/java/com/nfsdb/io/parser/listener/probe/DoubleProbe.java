@@ -30,12 +30,10 @@ import com.nfsdb.storage.ColumnType;
 public class DoubleProbe implements TypeProbe {
 
     @Override
-    public ImportedColumnMetadata getMetadata() {
-        ImportedColumnMetadata m = new ImportedColumnMetadata();
+    public void getMetadata(ImportedColumnMetadata m) {
         m.type = ColumnType.DOUBLE;
         m.importedType = ImportedColumnType.DOUBLE;
         m.size = 8;
-        return m;
     }
 
     @Override

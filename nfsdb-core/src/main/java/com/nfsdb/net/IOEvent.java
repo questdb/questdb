@@ -21,12 +21,12 @@
 
 package com.nfsdb.net;
 
-import com.nfsdb.concurrent.RingEntryFactory;
+import com.nfsdb.collections.ObjectFactory;
 
 import java.nio.channels.SocketChannel;
 
 public class IOEvent {
-    public static final RingEntryFactory<IOEvent> FACTORY = new RingEntryFactory<IOEvent>() {
+    public static final ObjectFactory<IOEvent> FACTORY = new ObjectFactory<IOEvent>() {
         @Override
         public IOEvent newInstance() {
             return new IOEvent();

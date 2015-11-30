@@ -19,30 +19,9 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.concurrent;
+package com.nfsdb.net.http.handlers;
 
-import com.nfsdb.collections.ObjectFactory;
-import com.nfsdb.misc.Unsafe;
-
-public class RingQueue<T> {
-    private final int mask;
-    private final T[] buf;
-
-    @SuppressWarnings("unchecked")
-    public RingQueue(ObjectFactory<T> factory, int cycle) {
-        this.mask = cycle - 1;
-        this.buf = (T[]) new Object[cycle];
-
-        for (int i = 0; i < cycle; i++) {
-            buf[i] = factory.newInstance();
-        }
-    }
-
-    public T get(long cursor) {
-        return Unsafe.arrayGet(buf, (int) (cursor & mask));
-    }
-
-    public int getCycle() {
-        return buf.length;
-    }
+public enum IOWorkerContextKey {
+    // Metadata extractor listener
+    ME
 }

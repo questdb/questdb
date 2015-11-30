@@ -40,10 +40,6 @@ public class UploadHandler extends AbstractMultipartHandler {
     }
 
     @Override
-    public void onHeaders(IOContext context) {
-    }
-
-    @Override
     public void park(IOContext context) {
 
     }

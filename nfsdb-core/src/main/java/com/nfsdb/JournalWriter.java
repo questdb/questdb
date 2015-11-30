@@ -884,54 +884,58 @@ public class JournalWriter<T> extends Journal<T> {
         long rowCount = 0;
 
         try {
-            // partitions
-            for (int n = getPartitionCount() - 1; p < n; p++) {
-                final Partition partition = getPartition(n, true);
-                // partition rows
-                for (long r = row, psz = partition.size(); r < psz; r++) {
-                    // partition columns
-                    for (int c = 0, cc = m.getColumnCount(); c < cc; c++) {
-                        switch (m.getColumnQuick(c).type) {
-                            case DATE:
-                                Dates.appendDateTime(discardSink, partition.getLong(r, c));
-                                break;
-                            case DOUBLE:
-                                Numbers.append(discardSink, partition.getDouble(r, c), 12);
-                                break;
-                            case FLOAT:
-                                Numbers.append(discardSink, partition.getFloat(r, c), 4);
-                                break;
-                            case INT:
-                                Numbers.append(discardSink, partition.getInt(r, c));
-                                break;
-                            case STRING:
-                                partition.getStr(r, c, discardSink);
-                                break;
-                            case SYMBOL:
-                                discardSink.put(partition.getSym(r, c));
-                                break;
-                            case SHORT:
-                                Numbers.append(discardSink, partition.getShort(r, c));
-                                break;
-                            case LONG:
-                                Numbers.append(discardSink, partition.getLong(r, c));
-                                break;
-                            case BYTE:
-                                Numbers.append(discardSink, partition.getByte(r, c));
-                                break;
-                            case BOOLEAN:
-                                discardSink.put(partition.getBool(r, c) ? "true" : "false");
-                                break;
-                        }
+            try {
+                // partitions
+                for (int n = getPartitionCount() - 1; p < n; p++) {
+                    final Partition partition = getPartition(n, true);
+                    // partition rows
+                    for (long r = row, psz = partition.size(); r < psz; r++) {
+                        // partition columns
+                        for (int c = 0, cc = m.getColumnCount(); c < cc; c++) {
+                            switch (m.getColumnQuick(c).type) {
+                                case DATE:
+                                    Dates.appendDateTime(discardSink, partition.getLong(r, c));
+                                    break;
+                                case DOUBLE:
+                                    Numbers.append(discardSink, partition.getDouble(r, c), 12);
+                                    break;
+                                case FLOAT:
+                                    Numbers.append(discardSink, partition.getFloat(r, c), 4);
+                                    break;
+                                case INT:
+                                    Numbers.append(discardSink, partition.getInt(r, c));
+                                    break;
+                                case STRING:
+                                    partition.getStr(r, c, discardSink);
+                                    break;
+                                case SYMBOL:
+                                    discardSink.put(partition.getSym(r, c));
+                                    break;
+                                case SHORT:
+                                    Numbers.append(discardSink, partition.getShort(r, c));
+                                    break;
+                                case LONG:
+                                    Numbers.append(discardSink, partition.getLong(r, c));
+                                    break;
+                                case BYTE:
+                                    Numbers.append(discardSink, partition.getByte(r, c));
+                                    break;
+                                case BOOLEAN:
+                                    discardSink.put(partition.getBool(r, c) ? "true" : "false");
+                                    break;
+                            }
 
-                        if (((++rowCount) & 7) == 0) {
-                            discardSink.flush();
+                            if (((++rowCount) & 7) == 0) {
+                                discardSink.flush();
+                            }
                         }
                     }
                 }
+            } finally {
+                discardSink.flush();
             }
-        } finally {
-            discardSink.flush();
+        } catch (IOException e) {
+            throw new JournalException(e);
         }
     }
 

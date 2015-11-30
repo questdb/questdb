@@ -35,6 +35,7 @@ public class IOContext implements Closeable, Mutable {
     // todo: extract config
     public final Request request = new Request(128 * 1024, 16 * 1024 * 1024, 1024);
     public final Response response = new Response(1024, 1024 * 1024);
+    public IOWorkerContext threadContext;
 
     // file upload fields
     public PlainFile mf;
@@ -42,6 +43,7 @@ public class IOContext implements Closeable, Mutable {
 
     // import handler fields
     public boolean analysed = false;
+    public boolean dataFormatValid = false;
     public TextParser textParser;
     public JournalImportListener importer;
 
