@@ -211,6 +211,10 @@ public class LongList implements Mutable {
         return toStringBuilder.toString();
     }
 
+    public void increment(int index) {
+        Unsafe.arrayPut(buffer, index, Unsafe.arrayGet(buffer, index) + 1);
+    }
+
     public boolean remove(int v) {
         int index = indexOf(v);
         if (index > -1) {
@@ -229,6 +233,12 @@ public class LongList implements Mutable {
             System.arraycopy(buffer, index + 1, buffer, index, move);
         }
         Unsafe.arrayPut(buffer, --pos, noEntryValue);
+    }
+
+    public void seed(int capacity, long value) {
+        ensureCapacity(capacity);
+        pos = capacity;
+        Arrays.fill(buffer, value);
     }
 
     public void set(int index, long element) {

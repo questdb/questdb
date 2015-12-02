@@ -52,7 +52,7 @@ public class FormatParserTest {
         p.of(this.address, this.len);
         Assert.assertEquals(TextFileFormat.CSV, p.getFormat());
         Assert.assertEquals(0d, p.getStdDev(), 0.0000001d);
-        Assert.assertEquals(105, p.getAvgRecLen());
+        Assert.assertEquals(104, p.getAvgRecLen());
     }
 
     @Test

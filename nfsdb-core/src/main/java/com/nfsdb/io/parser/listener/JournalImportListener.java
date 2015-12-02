@@ -23,6 +23,7 @@ package com.nfsdb.io.parser.listener;
 
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
+import com.nfsdb.collections.LongList;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
@@ -40,6 +41,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
     private static final Logger LOGGER = Logger.getLogger(JournalImportListener.class);
     private final JournalWriterFactory factory;
     private final String location;
+    private final LongList errors = new LongList();
     private JournalWriter writer;
     private ObjList<ImportedColumnMetadata> metadata;
 
@@ -51,6 +53,10 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
     @Override
     public void close() {
         Misc.free(writer);
+    }
+
+    public LongList getErrors() {
+        return errors;
     }
 
     @Override
@@ -77,38 +83,38 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
                             w.putStr(i, Unsafe.arrayGet(values, i));
                             break;
                         case DOUBLE:
-                            w.putDouble(i, Numbers.parseDoubleQuiet(Unsafe.arrayGet(values, i)));
+                            w.putDouble(i, Numbers.parseDouble(Unsafe.arrayGet(values, i)));
                             break;
                         case INT:
-                            w.putInt(i, Numbers.parseIntQuiet(Unsafe.arrayGet(values, i)));
+                            w.putInt(i, Numbers.parseInt(Unsafe.arrayGet(values, i)));
                             break;
                         case FLOAT:
-                            w.putFloat(i, Numbers.parseFloatQuiet(Unsafe.arrayGet(values, i)));
+                            w.putFloat(i, Numbers.parseFloat(Unsafe.arrayGet(values, i)));
                             break;
                         case DATE_ISO:
-                            w.putDate(i, Dates.parseDateTimeQuiet(Unsafe.arrayGet(values, i)));
+                            w.putDate(i, Dates.parseDateTime(Unsafe.arrayGet(values, i)));
                             break;
                         case DATE_1:
-                            w.putDate(i, Dates.parseDateTimeFmt1Quiet(Unsafe.arrayGet(values, i)));
+                            w.putDate(i, Dates.parseDateTimeFmt1(Unsafe.arrayGet(values, i)));
                             break;
                         case DATE_2:
-                            w.putDate(i, Dates.parseDateTimeFmt2Quiet(Unsafe.arrayGet(values, i)));
+                            w.putDate(i, Dates.parseDateTimeFmt2(Unsafe.arrayGet(values, i)));
                             break;
                         case DATE_3:
-                            w.putDate(i, Dates.parseDateTimeFmt3Quiet(Unsafe.arrayGet(values, i)));
+                            w.putDate(i, Dates.parseDateTimeFmt3(Unsafe.arrayGet(values, i)));
                             break;
                         case SYMBOL:
                             w.putSym(i, Unsafe.arrayGet(values, i));
                             break;
                         case LONG:
-                            w.putLong(i, Numbers.parseLongQuiet(Unsafe.arrayGet(values, i)));
+                            w.putLong(i, Numbers.parseLong(Unsafe.arrayGet(values, i)));
                             break;
                         case BOOLEAN:
                             w.putBool(i, Chars.equalsIgnoreCase(Unsafe.arrayGet(values, i), "true"));
                     }
-
                 } catch (Exception e) {
-                    LOGGER.info("Error at (%d,%d) as %s: %s", line, i, metadata.getQuick(i).type, e.getMessage());
+                    errors.increment(i);
+                    LOGGER.debug("Error at (%d,%d) as %s: %s", line, i, metadata.getQuick(i).type, e.getMessage());
                     break;
                 }
             }
@@ -132,6 +138,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
         if (writer == null) {
             try {
                 writer = factory.bulkWriter(new JournalStructure(location, this.metadata = metadata));
+                errors.seed(metadata.size(), 0);
             } catch (JournalException e) {
                 throw new JournalRuntimeException(e);
             }

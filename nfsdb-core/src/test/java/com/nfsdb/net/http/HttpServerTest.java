@@ -21,9 +21,13 @@
 
 package com.nfsdb.net.http;
 
+import com.nfsdb.Journal;
+import com.nfsdb.ha.AbstractJournalTest;
 import com.nfsdb.net.HttpServer;
+import com.nfsdb.net.http.handlers.ImportHandler;
 import com.nfsdb.net.http.handlers.UploadHandler;
 import com.nfsdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -34,11 +38,69 @@ import java.net.InetSocketAddress;
 import java.net.URL;
 import java.net.URLConnection;
 import java.nio.file.Files;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 
-public class HttpServerTest {
+public class HttpServerTest extends AbstractJournalTest {
 
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
+
+    @Test
+    public void testConcurrentImport() throws Exception {
+        HttpServer server = new HttpServer(new InetSocketAddress(9090), 2, 1024);
+        server.add("/import", new ImportHandler(factory));
+        server.start();
+
+        final CyclicBarrier barrier = new CyclicBarrier(2);
+        final CountDownLatch latch = new CountDownLatch(2);
+        try {
+
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        barrier.await();
+                        upload(
+                                new File(HttpServerTest.this.getClass().getResource("/csv/test-import.csv").getFile()),
+                                "http://localhost:9090/import"
+                        );
+                        latch.countDown();
+                    } catch (Exception e) {
+                        Assert.fail(e.getMessage());
+                    }
+                }
+            }).start();
+
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        barrier.await();
+                        upload(
+                                new File(HttpServerTest.this.getClass().getResource("/csv/test-import-nan.csv").getFile()),
+                                "http://localhost:9090/import"
+                        );
+                        latch.countDown();
+                    } catch (Exception e) {
+                        Assert.fail(e.getMessage());
+                    }
+                }
+            }).start();
+
+            latch.await();
+
+            try (Journal r = factory.reader("test-import.csv")) {
+                Assert.assertEquals(129, r.size());
+            }
+
+            try (Journal r = factory.reader("test-import-nan.csv")) {
+                Assert.assertEquals(129, r.size());
+            }
+        } finally {
+            server.halt();
+        }
+    }
 
     @Test
     public void testStartStop() throws Exception {
@@ -84,7 +146,7 @@ public class HttpServerTest {
 
             // Send text file.
             writer.append("--").append(boundary).append(CRLF);
-            writer.append("Content-Disposition: form-data; name=\"textFile\"; filename=\"").append(file.getName()).append("\"").append(CRLF);
+            writer.append("Content-Disposition: form-data; name=\"data\"; filename=\"").append(file.getName()).append("\"").append(CRLF);
             writer.append("Content-Type: text/plain; charset=").append(charset).append(CRLF); // Text file itself must be saved in this charset!
             writer.append(CRLF).flush();
             Files.copy(file.toPath(), output);
@@ -94,7 +156,7 @@ public class HttpServerTest {
             // End of multipart/form-data.
             writer.append("--").append(boundary).append("--").append(CRLF).flush();
         }
-        // Request is lazily fired whenever you need to obtain information about response.
-        System.out.println(((HttpURLConnection) connection).getResponseCode()); // Should be 200
+
+        Assert.assertEquals(200, ((HttpURLConnection) connection).getResponseCode());
     }
 }

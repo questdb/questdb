@@ -108,6 +108,13 @@ public class FormatParser {
             }
         }
 
+        if (comma > _comma || pipe > _pipe || tab > _tab) {
+            line++;
+            commas.add(comma - _comma);
+            pipes.add(pipe - _pipe);
+            tabs.add(tab - _tab);
+        }
+
         if (line == 0) {
             return this;
         }

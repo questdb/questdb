@@ -46,6 +46,9 @@ public class TimeoutBlockingWaitStrategy extends AbstractWaitStrategy {
     public void await() {
         lock.lock();
         try {
+            if (alerted) {
+                throw AlertedException.INSTANCE;
+            }
             if (!condition.await(time, unit)) {
                 throw TimeoutException.INSTANCE;
             }

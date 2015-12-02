@@ -36,6 +36,9 @@ public class BlockingWaitStrategy extends AbstractWaitStrategy {
     public void await() {
         lock.lock();
         try {
+            if (alerted) {
+                throw AlertedException.INSTANCE;
+            }
             condition.awaitUninterruptibly();
         } finally {
             lock.unlock();

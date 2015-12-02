@@ -45,7 +45,7 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
     private final DirectUnboundedAnsiSink chunkSink;
     private final ResponseHeaderBuffer hb;
     private WritableByteChannel channel;
-    private long _wptr;
+    private long _wPtr;
 
     public Response(int headerBufferSize, int contentBufferSize) {
         if (headerBufferSize <= 0) {
@@ -64,7 +64,7 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
         this.chunkHeader = ByteBuffer.allocateDirect(8 + 2 * EOL.length());
         this.chunkSink = new DirectUnboundedAnsiSink(((DirectBuffer) chunkHeader).address());
         this.chunkSink.put(EOL);
-        this.outPtr = this._wptr = ((DirectBuffer) out).address();
+        this.outPtr = this._wPtr = ((DirectBuffer) out).address();
         this.limit = outPtr + sz;
     }
 
@@ -72,7 +72,7 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
     public void clear() {
         out.clear();
         hb.clear();
-        this._wptr = outPtr;
+        this._wPtr = outPtr;
     }
 
     @Override
@@ -86,33 +86,32 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
         flush();
         chunk(0);
         put(EOL);
-        int lim = (int) (_wptr - outPtr);
+        int lim = (int) (_wPtr - outPtr);
         out.limit(lim);
         channel.write(out);
         out.clear();
-        _wptr = outPtr;
+        _wPtr = outPtr;
     }
 
     public void flush() throws IOException {
-        int lim = (int) (_wptr - outPtr);
+        int lim = (int) (_wPtr - outPtr);
         if (lim > 0) {
             chunk(lim);
             out.limit(lim);
             channel.write(out);
             out.clear();
-            _wptr = outPtr;
+            _wPtr = outPtr;
         }
     }
 
-    // todo: this function should be able to send any length char sequence
     public Response put(CharSequence seq) {
         int len = seq.length();
-        long p = _wptr;
+        long p = _wPtr;
         if (p + len < limit) {
             for (int i = 0; i < len; i++) {
                 Unsafe.getUnsafe().putByte(p++, (byte) seq.charAt(i));
             }
-            _wptr = p;
+            _wPtr = p;
         } else {
             throw ResponseHeaderBufferTooSmallException.INSTANCE;
         }
@@ -121,8 +120,8 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
 
     @Override
     public CharSink put(char c) {
-        if (_wptr < limit) {
-            Unsafe.getUnsafe().putByte(_wptr++, (byte) c);
+        if (_wPtr < limit) {
+            Unsafe.getUnsafe().putByte(_wPtr++, (byte) c);
             return this;
         }
         throw ResponseHeaderBufferTooSmallException.INSTANCE;
@@ -158,7 +157,6 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
         Numbers.appendHex(chunkSink, len);
         chunkSink.put(EOL);
         chunkHeader.limit(chunkSink.length());
-//        MultipartParser.dump(chunkHeader);
         channel.write(chunkHeader);
     }
 }

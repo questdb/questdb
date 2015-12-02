@@ -52,7 +52,7 @@ public class ImportHandler extends AbstractMultipartHandler {
 
     private void analyseColumns(IOContext context, long address, int len) {
         // analyse columns and their types
-        int sampleSize = 1000;
+        int sampleSize = 100;
         MetadataExtractorListener lsnr = (MetadataExtractorListener) context.threadContext.getCache().get(IOWorkerContextKey.ME.name());
         if (lsnr == null) {
             lsnr = new MetadataExtractorListener();
@@ -134,6 +134,7 @@ public class ImportHandler extends AbstractMultipartHandler {
     @Override
     protected void onPartEnd(IOContext context) throws IOException {
         if (context.textParser != null) {
+            context.textParser.parseLast();
             context.textParser.close();
             context.textParser = null;
             context.importer.close();

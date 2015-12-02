@@ -22,8 +22,12 @@
 package com.nfsdb.concurrent;
 
 public abstract class AbstractWaitStrategy implements WaitStrategy {
+
+    protected volatile boolean alerted = false;
+
     @Override
     public void alert() {
+        alerted = true;
         signal();
     }
 }
