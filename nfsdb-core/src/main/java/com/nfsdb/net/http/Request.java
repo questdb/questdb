@@ -26,7 +26,6 @@ import com.nfsdb.collections.Mutable;
 import com.nfsdb.collections.ObjectPool;
 import com.nfsdb.exceptions.HeadersTooLargeException;
 import com.nfsdb.exceptions.MalformedHeaderException;
-import com.nfsdb.exceptions.SlowChannelException;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Numbers;
@@ -92,7 +91,7 @@ public class Request implements Closeable, Mutable {
         return hb.getContentType() != null && Chars.equals("multipart/form-data", hb.getContentType());
     }
 
-    public ChannelStatus read(ReadableByteChannel channel) throws HeadersTooLargeException, SlowChannelException, IOException, MalformedHeaderException {
+    public ChannelStatus read(ReadableByteChannel channel) throws HeadersTooLargeException, IOException, MalformedHeaderException {
         ByteBuffers.copyNonBlocking(channel, in, IOHttpJob.SO_READ_RETRY_COUNT);
         long address = ((DirectBuffer) in).address();
         in.position((int) (hb.write(address, in.remaining(), true) - address));
@@ -100,7 +99,7 @@ public class Request implements Closeable, Mutable {
         if (hb.isIncomplete()) {
             return ChannelStatus.NEED_REQUEST;
         }
-        return ChannelStatus.READY;
+        return ChannelStatus.READ;
     }
 
     public static class BoundaryAugmenter implements Closeable {

@@ -27,8 +27,10 @@ import com.nfsdb.io.sink.AbstractCharSink;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.io.sink.DirectUnboundedAnsiSink;
 import com.nfsdb.misc.ByteBuffers;
+import com.nfsdb.misc.Misc;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Unsafe;
+import com.nfsdb.net.IOHttpJob;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.Closeable;
@@ -37,7 +39,6 @@ import java.nio.ByteBuffer;
 import java.nio.channels.WritableByteChannel;
 
 public class Response extends AbstractCharSink implements Closeable, Mutable {
-    public static final String EOL = "\r\n";
     private final ByteBuffer out;
     private final long outPtr;
     private final long limit;
@@ -46,6 +47,7 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
     private final ResponseHeaderBuffer hb;
     private WritableByteChannel channel;
     private long _wPtr;
+    private ByteBuffer _flushBuf;
 
     public Response(int headerBufferSize, int contentBufferSize) {
         if (headerBufferSize <= 0) {
@@ -56,14 +58,13 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
             throw new IllegalArgumentException("contentBufferSize");
         }
 
-
         int sz = Numbers.ceilPow2(contentBufferSize);
         this.out = ByteBuffer.allocateDirect(sz);
         this.hb = new ResponseHeaderBuffer(headerBufferSize);
         // size is 32bit int, as hex string max 8 bytes
-        this.chunkHeader = ByteBuffer.allocateDirect(8 + 2 * EOL.length());
+        this.chunkHeader = ByteBuffer.allocateDirect(8 + 2 * Misc.EOL.length());
         this.chunkSink = new DirectUnboundedAnsiSink(((DirectBuffer) chunkHeader).address());
-        this.chunkSink.put(EOL);
+        this.chunkSink.put(Misc.EOL);
         this.outPtr = this._wPtr = ((DirectBuffer) out).address();
         this.limit = outPtr + sz;
     }
@@ -85,7 +86,7 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
     public void end() throws IOException {
         flush();
         chunk(0);
-        put(EOL);
+        put(Misc.EOL);
         int lim = (int) (_wPtr - outPtr);
         out.limit(lim);
         channel.write(out);
@@ -98,8 +99,7 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
         if (lim > 0) {
             chunk(lim);
             out.limit(lim);
-            channel.write(out);
-            out.clear();
+            flush(out);
             _wPtr = outPtr;
         }
     }
@@ -131,32 +131,47 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
         hb.flush(channel);
     }
 
+    public void flushRemaining() throws IOException {
+        if (_flushBuf != null) {
+            flush(_flushBuf);
+        }
+    }
+
     public void setChannel(WritableByteChannel channel) {
         this.channel = channel;
     }
 
+    public ChannelStatus simple(int code) {
+        return simple(code, null);
+    }
+
     public ChannelStatus simple(int code, CharSequence message) {
         try {
-            status(code, "text/html; charset=utf-8");
+            String std = status(code, "text/html; charset=utf-8");
             flushHeader();
-            put(message).put(EOL);
+            put(message == null ? std : message).put(Misc.EOL);
             end();
-            return ChannelStatus.READY;
+            return ChannelStatus.READ;
         } catch (IOException ignored) {
             return ChannelStatus.DISCONNECTED;
         }
     }
 
-    public void status(int status, CharSequence contentType) {
-        this.hb.status(status, contentType);
+    public String status(int status, CharSequence contentType) {
+        return this.hb.status(status, contentType);
     }
 
     private void chunk(int len) throws IOException {
-        chunkHeader.clear();
-        chunkSink.clear(EOL.length());
+        chunkSink.clear(Misc.EOL.length());
         Numbers.appendHex(chunkSink, len);
-        chunkSink.put(EOL);
+        chunkSink.put(Misc.EOL);
         chunkHeader.limit(chunkSink.length());
-        channel.write(chunkHeader);
+        flush(chunkHeader);
+    }
+
+    private void flush(ByteBuffer buf) throws IOException {
+        this._flushBuf = buf;
+        ByteBuffers.copyNonBlocking(buf, channel, IOHttpJob.SO_WRITE_RETRY_COUNT);
+        this._flushBuf = null;
     }
 }

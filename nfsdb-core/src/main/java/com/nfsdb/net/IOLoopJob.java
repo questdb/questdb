@@ -76,13 +76,22 @@ public class IOLoopJob extends SynchronizedJob<IOWorkerContext> {
                         continue;
                     }
 
-                    // delegate reading
+                    int operation = 0;
+
                     if (key.isReadable()) {
+                        operation |= SelectionKey.OP_READ;
+                    }
+
+                    if (key.isWritable()) {
+                        operation |= SelectionKey.OP_WRITE;
+                    }
+
+                    if (operation > 0) {
                         long cursor = ioSequence.nextBully();
 
                         IOEvent evt = ioQueue.get(cursor);
                         evt.channel = (SocketChannel) key.channel();
-                        evt.op = SelectionKey.OP_READ;
+                        evt.op = operation;
                         evt.context = (IOContext) key.attachment();
 
                         ioSequence.done(cursor);

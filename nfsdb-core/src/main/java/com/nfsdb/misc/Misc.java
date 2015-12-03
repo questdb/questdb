@@ -28,6 +28,7 @@ import java.io.Closeable;
 import java.io.IOException;
 
 public final class Misc {
+    public static final String EOL = "\r\n";
     private final static Logger LOGGER = Logger.getLogger(Misc.class);
 
     private Misc() {

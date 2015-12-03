@@ -23,21 +23,30 @@ package com.nfsdb.net.http.handlers;
 
 import com.nfsdb.collections.ByteSequence;
 import com.nfsdb.collections.DirectByteCharSequence;
+import com.nfsdb.collections.LongList;
 import com.nfsdb.exceptions.DisconnectedChannelException;
 import com.nfsdb.factory.JournalFactory;
+import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.io.parser.CsvParser;
 import com.nfsdb.io.parser.FormatParser;
 import com.nfsdb.io.parser.PipeParser;
 import com.nfsdb.io.parser.TabParser;
 import com.nfsdb.io.parser.listener.JournalImportListener;
 import com.nfsdb.io.parser.listener.MetadataExtractorListener;
+import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.misc.Chars;
+import com.nfsdb.misc.Misc;
 import com.nfsdb.net.IOContext;
 import com.nfsdb.net.http.RequestHeaderBuffer;
+import com.nfsdb.net.http.Response;
 
 import java.io.IOException;
 
 public class ImportHandler extends AbstractMultipartHandler {
+    private static final int TO_STRING_COL1_PAD = 15;
+    private static final int TO_STRING_COL2_PAD = 50;
+    private static final int TO_STRING_COL3_PAD = 10;
 
     private final JournalFactory factory;
 
@@ -45,9 +54,106 @@ public class ImportHandler extends AbstractMultipartHandler {
         this.factory = factory;
     }
 
-    @Override
-    public void park(IOContext context) {
+    private static CharSink pad(CharSink b, int w, CharSequence value) {
+        int pad = value == null ? w : w - value.length();
+        replicate(b, ' ', pad);
 
+        if (value != null) {
+            if (pad < 0) {
+                b.put("...").put(value.subSequence(-pad + 3, value.length()));
+            } else {
+                b.put(value);
+            }
+        }
+
+        b.put("  |");
+
+        return b;
+    }
+
+    private static CharSink pad(CharSink b, int w, long value) {
+        int len = (int) Math.log10(value);
+        if (len < 0) {
+            len = 0;
+        }
+        replicate(b, ' ', w - len - 1);
+        b.put(value);
+        b.put("  |");
+        return b;
+    }
+
+    private static void replicate(CharSink b, char c, int times) {
+        for (int i = 0; i < times; i++) {
+            b.put(c);
+        }
+    }
+
+    private static void sep(CharSink b) {
+        b.put('+');
+        replicate(b, '-', TO_STRING_COL1_PAD + TO_STRING_COL2_PAD + TO_STRING_COL3_PAD + 8);
+        b.put("+\n");
+    }
+
+    private static void col(CharSink b, ColumnMetadata m) {
+        pad(
+                b,
+                TO_STRING_COL2_PAD,
+                (m.distinctCountHint > 0 ? m.distinctCountHint + " ~ " : "")
+                        + (m.indexed ? '#' : "")
+                        + m.name
+                        + (m.sameAs != null ? " -> " + m.sameAs : "")
+                        + ' '
+                        + m.type.name()
+                        + '('
+                        + m.size
+                        + ')'
+        );
+    }
+
+    private static void sendSummary(IOContext context) throws IOException {
+        if (context.importer != null) {
+            Response r = context.response;
+
+            r.status(200, "text/plain; charset=utf-8");
+            r.flushHeader();
+
+            JournalMetadata m = context.importer.getMetadata();
+            LongList errors = context.importer.getErrors();
+
+            sep(r);
+            r.put('|');
+            pad(r, TO_STRING_COL1_PAD, "Location:");
+            pad(r, TO_STRING_COL2_PAD, m.getLocation());
+            pad(r, TO_STRING_COL3_PAD, "Errors").put(Misc.EOL);
+
+
+            r.put('|');
+            pad(r, TO_STRING_COL1_PAD, "Partition by");
+            pad(r, TO_STRING_COL2_PAD, m.getPartitionType().name());
+            pad(r, TO_STRING_COL3_PAD, "").put(Misc.EOL);
+            sep(r);
+
+            r.put('|');
+            pad(r, TO_STRING_COL1_PAD, "Rows handled");
+            pad(r, TO_STRING_COL2_PAD, context.textParser.getLineCount());
+            pad(r, TO_STRING_COL3_PAD, "").put(Misc.EOL);
+
+            r.put('|');
+            pad(r, TO_STRING_COL1_PAD, "Rows imported");
+            pad(r, TO_STRING_COL2_PAD, context.importer.getImportedRowCount());
+            pad(r, TO_STRING_COL3_PAD, "").put(Misc.EOL);
+            sep(r);
+
+            for (int i = 0, n = m.getColumnCount(); i < n; i++) {
+                r.put('|');
+                pad(r, TO_STRING_COL1_PAD, i);
+                col(r, m.getColumnQuick(i));
+                pad(r, TO_STRING_COL3_PAD, errors.getQuick(i));
+                r.put(Misc.EOL);
+            }
+            sep(r);
+            r.end();
+        }
     }
 
     private void analyseColumns(IOContext context, long address, int len) {
@@ -94,17 +200,13 @@ public class ImportHandler extends AbstractMultipartHandler {
 
     @Override
     protected void onComplete0(IOContext context) throws IOException {
-        context.response.status(200, "text/html; charset=utf-8");
-        context.response.flushHeader();
-        context.response.put("OK, imported\r\n");
-        context.response.end();
     }
 
     @Override
     protected void onData(IOContext context, RequestHeaderBuffer hb, ByteSequence data) {
-        if (hb.getContentDispositionFilename() != null) {
+        int len;
+        if (hb.getContentDispositionFilename() != null && (len = data.length()) > 0) {
             long lo = ((DirectByteCharSequence) data).getLo();
-            int len = data.length();
             if (!context.analysed) {
                 analyseFormat(context, lo, len);
                 if (context.dataFormatValid) {
@@ -114,6 +216,9 @@ public class ImportHandler extends AbstractMultipartHandler {
 
             if (context.dataFormatValid) {
                 context.textParser.parse(lo, len, Integer.MAX_VALUE, context.importer);
+            } else {
+                System.out.println("Data length: " + data.length());
+                context.response.simple(400, "Invalid data format");
             }
         }
     }
@@ -135,9 +240,9 @@ public class ImportHandler extends AbstractMultipartHandler {
     protected void onPartEnd(IOContext context) throws IOException {
         if (context.textParser != null) {
             context.textParser.parseLast();
-            context.textParser.close();
-            context.textParser = null;
-            context.importer.close();
+            sendSummary(context);
+            context.textParser = Misc.free(context.textParser);
+            context.importer = Misc.free(context.importer);
         }
     }
 }

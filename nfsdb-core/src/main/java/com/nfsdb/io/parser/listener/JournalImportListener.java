@@ -28,6 +28,7 @@ import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.JournalWriterFactory;
+import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.ImportedColumnMetadata;
 import com.nfsdb.logging.Logger;
@@ -44,6 +45,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
     private final LongList errors = new LongList();
     private JournalWriter writer;
     private ObjList<ImportedColumnMetadata> metadata;
+    private long _size;
 
     public JournalImportListener(JournalWriterFactory factory, String location) {
         this.factory = factory;
@@ -59,6 +61,19 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
         return errors;
     }
 
+    @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS")
+    public long getImportedRowCount() {
+        try {
+            return writer.size() - _size;
+        } catch (JournalException e) {
+            throw new JournalRuntimeException(e);
+        }
+    }
+
+    public JournalMetadata getMetadata() {
+        return writer.getMetadata();
+    }
+
     @Override
     public void onError(int line) {
 
@@ -71,6 +86,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
     @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT"})
     @Override
     public void onFields(int line, CharSequence[] values, int hi) {
+        boolean append = true;
         try {
             JournalEntryWriter w = writer.entryWriter();
             for (int i = 0; i < hi; i++) {
@@ -115,10 +131,13 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
                 } catch (Exception e) {
                     errors.increment(i);
                     LOGGER.debug("Error at (%d,%d) as %s: %s", line, i, metadata.getQuick(i).type, e.getMessage());
+                    append = false;
                     break;
                 }
             }
-            w.append();
+            if (append) {
+                w.append();
+            }
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
@@ -130,7 +149,6 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
 
     @Override
     public void onLineCount(int count) {
-
     }
 
     @Override
@@ -138,6 +156,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
         if (writer == null) {
             try {
                 writer = factory.bulkWriter(new JournalStructure(location, this.metadata = metadata));
+                _size = writer.size();
                 errors.seed(metadata.size(), 0);
             } catch (JournalException e) {
                 throw new JournalRuntimeException(e);

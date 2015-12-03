@@ -19,8 +19,14 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net.http;
+package com.nfsdb.exceptions;
 
-public enum ChannelStatus {
-    READ, NEED_REQUEST, DISCONNECTED, WRITE
+import java.io.IOException;
+
+@SuppressWarnings("ThrowableInstanceNeverThrown")
+public final class SlowReadableChannelException extends IOException {
+    public final static SlowReadableChannelException INSTANCE = new SlowReadableChannelException();
+
+    private SlowReadableChannelException() {
+    }
 }

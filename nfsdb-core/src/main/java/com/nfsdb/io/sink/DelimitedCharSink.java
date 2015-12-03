@@ -44,10 +44,9 @@ public class DelimitedCharSink extends AbstractCharSink implements CharSink, Clo
         Misc.free(delegate);
     }
 
-    public DelimitedCharSink eol() {
+    public void eol() {
         delegate.put(eol);
         del = false;
-        return this;
     }
 
     @Override

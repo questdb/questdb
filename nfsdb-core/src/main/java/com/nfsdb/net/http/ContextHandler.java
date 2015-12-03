@@ -27,6 +27,4 @@ import java.io.IOException;
 
 public interface ContextHandler {
     void onComplete(IOContext context) throws IOException;
-
-    void park(IOContext context);
 }

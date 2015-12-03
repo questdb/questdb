@@ -37,6 +37,9 @@ public class IOContext implements Closeable, Mutable {
     public final Response response = new Response(1024, 1024 * 1024);
     public IOWorkerContext threadContext;
 
+    // multipart generic
+    public boolean chunky = false;
+
     // file upload fields
     public PlainFile mf;
     public long wptr = 0;
@@ -47,7 +50,6 @@ public class IOContext implements Closeable, Mutable {
     public TextParser textParser;
     public JournalImportListener importer;
 
-
     public IOContext() {
     }
 
@@ -55,6 +57,7 @@ public class IOContext implements Closeable, Mutable {
     public void clear() {
         request.clear();
         response.clear();
+        this.chunky = false;
         freeResources();
     }
 

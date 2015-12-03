@@ -40,11 +40,6 @@ public class UploadHandler extends AbstractMultipartHandler {
     }
 
     @Override
-    public void park(IOContext context) {
-
-    }
-
-    @Override
     protected void onComplete0(IOContext context) throws IOException {
         context.response.status(200, "text/html; charset=utf-8");
         context.response.flushHeader();

@@ -25,10 +25,7 @@ import com.nfsdb.collections.CharSequenceObjHashMap;
 import com.nfsdb.concurrent.Job;
 import com.nfsdb.concurrent.RingQueue;
 import com.nfsdb.concurrent.Sequence;
-import com.nfsdb.exceptions.DisconnectedChannelException;
-import com.nfsdb.exceptions.HeadersTooLargeException;
-import com.nfsdb.exceptions.MalformedHeaderException;
-import com.nfsdb.exceptions.SlowChannelException;
+import com.nfsdb.exceptions.*;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.net.http.*;
 import sun.nio.ch.DirectBuffer;
@@ -41,6 +38,7 @@ import java.nio.channels.SocketChannel;
 public class IOHttpJob implements Job<IOWorkerContext> {
     // todo: extract config
     public static final int SO_READ_RETRY_COUNT = 1000;
+    public static final int SO_WRITE_RETRY_COUNT = 1000;
     public static final int SO_RCVBUF_UPLOAD = 4 * 1024 * 1024;
     public static final int SO_RVCBUF_DOWNLD = 128 * 1024;
 
@@ -75,7 +73,7 @@ public class IOHttpJob implements Job<IOWorkerContext> {
     }
 
     private void feedMultipartContent(MultipartListener handler, IOContext context, SocketChannel channel)
-            throws HeadersTooLargeException, SlowChannelException, IOException, MalformedHeaderException {
+            throws HeadersTooLargeException, IOException, MalformedHeaderException {
 
         channel.setOption(StandardSocketOptions.SO_RCVBUF, SO_RCVBUF_UPLOAD);
         Request r = context.request;
@@ -98,7 +96,7 @@ public class IOHttpJob implements Job<IOWorkerContext> {
     @SuppressWarnings("StatementWithEmptyBody")
     private void process(SocketChannel channel, IOContext context, int op) {
         Request r = context.request;
-        ChannelStatus status = ChannelStatus.READY;
+        ChannelStatus status = ChannelStatus.READ;
 
         boolean _new = r.isIncomplete();
         try {
@@ -111,46 +109,56 @@ public class IOHttpJob implements Job<IOWorkerContext> {
             final Response response = context.response;
             response.setChannel(channel);
 
-            if (status == ChannelStatus.READY) {
+            if (status == ChannelStatus.READ) {
                 if (r.getUrl() == null) {
-                    status = context.response.simple(400, "Bad Request");
+                    status = context.response.simple(400);
                 } else {
                     ContextHandler handler = handlers.get(r.getUrl());
                     if (handler != null) {
-                        if (r.isMultipart()) {
-                            if (handler instanceof MultipartListener) {
-                                try {
+
+                        // write what's left to
+                        if ((op & SelectionKey.OP_WRITE) != 0) {
+                            response.flushRemaining();
+                        }
+
+                        if ((op & SelectionKey.OP_READ) != 0) {
+                            if (r.isMultipart()) {
+                                if (handler instanceof MultipartListener) {
                                     feedMultipartContent((MultipartListener) handler, context, channel);
                                     handler.onComplete(context);
-                                } catch (SlowChannelException e) {
-                                    handler.park(context);
-                                    throw e;
+                                } else {
+                                    status = context.response.simple(400);
                                 }
-                            } else {
-                                status = context.response.simple(400, "Bad Request");
                             }
                         }
                     } else {
-                        status = context.response.simple(404, "Page not found");
+                        status = context.response.simple(404);
                     }
                 }
                 r.clear();
             }
-        } catch (HeadersTooLargeException | MalformedHeaderException | DisconnectedChannelException e) {
+        } catch (HeadersTooLargeException ignored) {
+            context.response.simple(431);
+            status = ChannelStatus.READ;
+        } catch (MalformedHeaderException | DisconnectedChannelException e) {
             status = ChannelStatus.DISCONNECTED;
-        } catch (SlowChannelException e) {
-            status = ChannelStatus.READY;
+        } catch (SlowReadableChannelException e) {
+            System.out.println("slow read");
+            status = ChannelStatus.READ;
+        } catch (SlowWritableChannelException e) {
+            System.out.println("slow write");
+            status = ChannelStatus.WRITE;
         } catch (IOException e) {
             status = ChannelStatus.DISCONNECTED;
             e.printStackTrace();
         } catch (Throwable e) {
+            context.response.simple(500, e.getMessage() != null ? e.getMessage() : "");
+            status = ChannelStatus.DISCONNECTED;
             e.printStackTrace();
-            status = context.response.simple(500, e.getMessage());
-            r.clear();
         }
 
         if (status != ChannelStatus.DISCONNECTED) {
-            loop.registerChannel(channel, SelectionKey.OP_READ, context);
+            loop.registerChannel(channel, status == ChannelStatus.WRITE ? SelectionKey.OP_WRITE : SelectionKey.OP_READ, context);
         } else {
             System.out.println("Disconnected: " + channel);
             try {

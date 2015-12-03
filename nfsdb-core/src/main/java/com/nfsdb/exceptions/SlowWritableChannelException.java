@@ -21,10 +21,12 @@
 
 package com.nfsdb.exceptions;
 
-@SuppressWarnings("ThrowableInstanceNeverThrown")
-public final class SlowChannelException extends Exception {
-    public final static SlowChannelException INSTANCE = new SlowChannelException();
+import java.io.IOException;
 
-    private SlowChannelException() {
+@SuppressWarnings("ThrowableInstanceNeverThrown")
+public final class SlowWritableChannelException extends IOException {
+    public final static SlowWritableChannelException INSTANCE = new SlowWritableChannelException();
+
+    private SlowWritableChannelException() {
     }
 }

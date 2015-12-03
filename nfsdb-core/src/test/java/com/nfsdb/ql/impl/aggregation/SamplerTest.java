@@ -33,7 +33,7 @@ public class SamplerTest {
     private final StringSink sink = new StringSink();
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         sink.clear();
     }
 

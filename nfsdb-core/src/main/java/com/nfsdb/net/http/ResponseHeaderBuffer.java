@@ -27,6 +27,7 @@ import com.nfsdb.exceptions.ResponseHeaderBufferTooSmallException;
 import com.nfsdb.io.sink.AbstractCharSink;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.misc.ByteBuffers;
+import com.nfsdb.misc.Misc;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Unsafe;
 import sun.nio.ch.DirectBuffer;
@@ -55,7 +56,7 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
     }
 
     public void append(CharSequence name, CharSequence value) {
-        put(name).put(": ").put(value).put(Response.EOL);
+        put(name).put(": ").put(value).put(Misc.EOL);
     }
 
     @Override
@@ -98,16 +99,18 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
         throw ResponseHeaderBufferTooSmallException.INSTANCE;
     }
 
-    public void status(int code, CharSequence contentType) {
+    public String status(int code, CharSequence contentType) {
         String status = httpStatusMap.get(code);
         if (status == null) {
             throw new IllegalArgumentException("Illegal status code: " + code);
         }
-        put("HTTP/1.1 ").put(code).put(' ').put(status).put(Response.EOL);
+        put("HTTP/1.1 ").put(code).put(' ').put(status).put(Misc.EOL);
         append("Server", "nfsdb/1.0");
         append("Date", getServerTime());
         append("Transfer-Encoding", "chunked");
         append("Content-Type", contentType);
+
+        return status;
     }
 
     // todo: implement this format
@@ -129,6 +132,7 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
         httpStatusMap.put(200, "OK");
         httpStatusMap.put(400, "Bad request");
         httpStatusMap.put(404, "Not Found");
+        httpStatusMap.put(431, "Headers too large");
         httpStatusMap.put(500, "Internal server error");
     }
 

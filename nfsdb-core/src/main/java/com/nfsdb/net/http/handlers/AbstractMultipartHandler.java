@@ -34,7 +34,10 @@ public abstract class AbstractMultipartHandler implements ContextHandler, Multip
     @Override
     public final void onChunk(IOContext context, RequestHeaderBuffer hb, DirectByteCharSequence data, boolean continued) throws IOException {
         if (!continued) {
-            onPartEnd(context);
+            if (context.chunky) {
+                onPartEnd(context);
+            }
+            context.chunky = true;
             onPartBegin(context, hb);
         }
         onData(context, hb, data);
