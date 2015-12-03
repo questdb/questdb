@@ -73,7 +73,7 @@ public class FormatParser {
         this.stdDev = Double.POSITIVE_INFINITY;
         this.format = null;
 
-        while (p < lim) {
+        while (p < lim && line < maxLines) {
             char b = (char) Unsafe.getUnsafe().getByte(p++);
 
             if (suspended && b != '"') {

@@ -22,5 +22,5 @@
 package com.nfsdb.concurrent;
 
 public interface Job<T> {
-    void run(T worker);
+    boolean run(T worker);
 }

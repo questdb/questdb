@@ -23,5 +23,7 @@ package com.nfsdb.net.http.handlers;
 
 public enum IOWorkerContextKey {
     // Metadata extractor listener
-    ME
+    ME,
+    // format parser
+    FP
 }

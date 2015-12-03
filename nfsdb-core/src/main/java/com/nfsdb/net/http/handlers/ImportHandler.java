@@ -174,7 +174,13 @@ public class ImportHandler extends AbstractMultipartHandler {
     }
 
     private void analyseFormat(IOContext context, long address, int len) {
-        FormatParser parser = new FormatParser().of(address, len);
+
+        FormatParser parser = (FormatParser) context.threadContext.getCache().get(IOWorkerContextKey.FP.name());
+        if (parser == null) {
+            context.threadContext.getCache().put(IOWorkerContextKey.FP.name(), parser = new FormatParser());
+        }
+
+        parser.of(address, len);
         context.dataFormatValid = parser.getFormat() != null && parser.getStdDev() < 0.5;
 
         if (context.dataFormatValid) {

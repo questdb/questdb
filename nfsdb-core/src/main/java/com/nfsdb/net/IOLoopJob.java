@@ -61,12 +61,16 @@ public class IOLoopJob extends SynchronizedJob<IOWorkerContext> {
     }
 
     @Override
-    protected void _run(IOWorkerContext context) {
+    protected boolean _run(IOWorkerContext context) {
         try {
-            processRegistrations();
-            selector.select(1L);
+            boolean useful = processRegistrations();
+            selector.select(1);
 
             Set<SelectionKey> keys = selector.selectedKeys();
+
+            if (keys.size() == 0) {
+                return useful;
+            }
 
             for (SelectionKey key : keys) {
                 try {
@@ -106,6 +110,8 @@ public class IOLoopJob extends SynchronizedJob<IOWorkerContext> {
         } catch (IOException e) {
             e.printStackTrace();
         }
+
+        return true;
     }
 
     private void configure(SocketChannel channel) throws IOException {
@@ -116,9 +122,11 @@ public class IOLoopJob extends SynchronizedJob<IOWorkerContext> {
     }
 
     @SuppressWarnings("MagicConstant")
-    private void processRegistrations() {
+    private boolean processRegistrations() {
         long cursor;
+        boolean useful = false;
         while ((cursor = interestSubSequence.next()) >= 0) {
+            useful = true;
             try {
                 IOEvent evt = interestQueue.get(cursor);
 
@@ -143,5 +151,7 @@ public class IOLoopJob extends SynchronizedJob<IOWorkerContext> {
                 e.printStackTrace();
             }
         }
+
+        return useful;
     }
 }

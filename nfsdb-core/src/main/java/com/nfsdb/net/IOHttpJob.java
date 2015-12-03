@@ -55,10 +55,10 @@ public class IOHttpJob implements Job<IOWorkerContext> {
     }
 
     @Override
-    public void run(IOWorkerContext context) {
+    public boolean run(IOWorkerContext context) {
         long cursor = ioSequence.next();
         if (cursor < 0) {
-            return;
+            return false;
         }
 
         IOEvent evt = ioQueue.get(cursor);
@@ -70,6 +70,8 @@ public class IOHttpJob implements Job<IOWorkerContext> {
         ioSequence.done(cursor);
         ioContext.threadContext = context;
         process(channel, ioContext, op);
+
+        return true;
     }
 
     private void feedMultipartContent(MultipartListener handler, IOContext context, SocketChannel channel)

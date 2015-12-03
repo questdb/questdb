@@ -30,17 +30,18 @@ public abstract class SynchronizedJob<T> implements Job<T> {
     private volatile int locked = 0;
 
     @Override
-    public void run(T context) {
+    public boolean run(T context) {
         if (Unsafe.getUnsafe().compareAndSwapInt(this, LOCKED_OFFSET, 0, 1)) {
             try {
-                _run(context);
+                return _run(context);
             } finally {
                 locked = 0;
             }
         }
+        return false;
     }
 
-    protected abstract void _run(T context);
+    protected abstract boolean _run(T context);
 
     static {
         try {
