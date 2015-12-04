@@ -180,7 +180,7 @@ public class ClusterControllerTest extends AbstractTest {
         AtomicInteger standby = new AtomicInteger();
         AtomicInteger shutdown = new AtomicInteger();
 
-        System.out.println("======= VOTING TEST ==========");
+//        System.out.println("======= VOTING TEST ==========");
 
         ClusterController c1 = createController2(0, fact1, active, standby, shutdown);
         ClusterController c2 = createController2(1, fact2, active, standby, shutdown);
@@ -218,39 +218,39 @@ public class ClusterControllerTest extends AbstractTest {
         standby.set(0);
         active.set(0);
 
-        System.out.println("--------------------------");
+//        System.out.println("--------------------------");
 
         if (c5.isLeader()) {
             c5.halt();
-            System.out.println("halted 4");
+//            System.out.println("halted 4");
         } else if (c4.isLeader()) {
             c4.halt();
-            System.out.println("halted 3");
+//            System.out.println("halted 3");
         } else if (c3.isLeader()) {
             c3.halt();
-            System.out.println("halted 2");
+//            System.out.println("halted 2");
         } else if (c2.isLeader()) {
             c2.halt();
-            System.out.println("halted 1");
+//            System.out.println("halted 1");
         } else if (c1.isLeader()) {
             c1.halt();
-            System.out.println("halted 0");
+//            System.out.println("halted 0");
         } else {
             Assert.fail("No leader");
         }
 
-        System.out.println("=========================");
+//        System.out.println("=========================");
         t = System.currentTimeMillis();
         while ((active.get() < 1 || standby.get() < 3) && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 180) {
             Thread.yield();
         }
-        System.out.println("LOOKING FOR LEADER");
+//        System.out.println("LOOKING FOR LEADER");
 
         try {
             Assert.assertEquals(3, standby.get());
             Assert.assertEquals(1, active.get());
 
-            System.out.println("+++++++++++++++++++++++++++++");
+//            System.out.println("+++++++++++++++++++++++++++++");
         } finally {
             c1.halt();
             c2.halt();

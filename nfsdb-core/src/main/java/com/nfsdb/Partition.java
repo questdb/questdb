@@ -28,9 +28,9 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.iter.PartitionBufferedIterator;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.misc.*;
-import com.nfsdb.query.iterator.PartitionBufferedIterator;
 import com.nfsdb.storage.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 

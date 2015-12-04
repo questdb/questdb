@@ -24,10 +24,10 @@ package com.nfsdb;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.iter.*;
 import com.nfsdb.misc.Interval;
 import com.nfsdb.misc.Rows;
 import com.nfsdb.query.OrderedResultSetBuilder;
-import com.nfsdb.query.iterator.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.Iterator;

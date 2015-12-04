@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,19 +17,13 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
-package com.nfsdb.query.iterator.clock;
+package com.nfsdb.iter;
 
-public final class NanoClock implements Clock {
+import com.nfsdb.Journal;
+import com.nfsdb.collections.ImmutableIterator;
 
-    public static final Clock INSTANCE = new NanoClock();
-
-    private NanoClock() {
-    }
-
-    @Override
-    public long getTicks() {
-        return System.nanoTime();
-    }
+public interface JournalIterator<T> extends ImmutableIterator<T> {
+    Journal<T> getJournal();
 }

@@ -171,6 +171,13 @@ public class NumbersTest {
     }
 
     @Test
+    public void testHexInt() throws Exception {
+        Assert.assertEquals('w', (char) Numbers.parseHexInt("77"));
+        Assert.assertEquals(0xf0, Numbers.parseHexInt("F0"));
+        Assert.assertEquals(0xac, Numbers.parseHexInt("ac"));
+    }
+
+    @Test
     public void testIntEdge() throws Exception {
         Numbers.append(sink, Integer.MAX_VALUE);
         Assert.assertEquals(Integer.MAX_VALUE, Numbers.parseInt(sink));
@@ -344,6 +351,11 @@ public class NumbersTest {
     @Test(expected = NumericException.class)
     public void testParseLongWrongChars() throws Exception {
         Numbers.parseLong("123ab");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseWrongHexInt() throws Exception {
+        Numbers.parseHexInt("0N");
     }
 
     @Test(expected = NumericException.class)

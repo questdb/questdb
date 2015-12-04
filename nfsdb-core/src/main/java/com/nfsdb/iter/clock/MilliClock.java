@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,15 +17,19 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
-package com.nfsdb.query.iterator;
+package com.nfsdb.iter.clock;
 
-import java.io.Closeable;
+public final class MilliClock implements Clock {
 
-public interface ConcurrentIterator<T> extends JournalIterator<T>, Closeable {
-    ConcurrentIterator<T> buffer(int bufferSize);
+    public static final Clock INSTANCE = new MilliClock();
+
+    private MilliClock() {
+    }
 
     @Override
-    void close();
+    public long getTicks() {
+        return System.currentTimeMillis();
+    }
 }

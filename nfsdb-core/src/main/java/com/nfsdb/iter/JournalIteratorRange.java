@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,10 +17,18 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
-package com.nfsdb.query.iterator.clock;
+package com.nfsdb.iter;
 
-public interface Clock {
-    long getTicks();
+public final class JournalIteratorRange {
+    final int partitionID;
+    final long hi;
+    final long lo;
+
+    public JournalIteratorRange(int partitionID, long lo, long hi) {
+        this.partitionID = partitionID;
+        this.lo = lo;
+        this.hi = hi;
+    }
 }

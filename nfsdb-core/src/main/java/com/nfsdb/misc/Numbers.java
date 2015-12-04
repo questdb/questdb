@@ -541,6 +541,74 @@ public final class Numbers {
         }
     }
 
+    public static int parseHexInt(CharSequence sequence) throws NumericException {
+        return parseHexInt(sequence, 0, sequence.length());
+    }
+
+    public static int parseHexInt(CharSequence sequence, int p, int lim) throws NumericException {
+
+        if (lim == p) {
+            throw NumericException.INSTANCE;
+        }
+
+        int val = 0;
+        int r;
+        for (; p < lim; p++) {
+            int c = sequence.charAt(p);
+            int n = val << 4;
+
+            switch (c) {
+                case '0':
+                case '1':
+                case '2':
+                case '3':
+                case '4':
+                case '5':
+                case '6':
+                case '7':
+                case '8':
+                case '9':
+                    r = n + (c - '0');
+                    break;
+                case 'A':
+                case 'a':
+                    r = n + 0xA;
+                    break;
+                case 'B':
+                case 'b':
+                    r = n + 0xB;
+                    break;
+                case 'C':
+                case 'c':
+                    r = n + 0xC;
+                    break;
+                case 'D':
+                case 'd':
+                    r = n + 0xD;
+                    break;
+                case 'E':
+                case 'e':
+                    r = n + 0xE;
+                    break;
+                case 'F':
+                case 'f':
+                    r = n + 0xF;
+                    break;
+                default:
+                    // malformed
+                    throw NumericException.INSTANCE;
+            }
+
+            if (r < val) {
+                // oveflow
+                throw NumericException.INSTANCE;
+            }
+
+            val = r;
+        }
+        return val;
+    }
+
     public static int parseInt(CharSequence sequence) throws NumericException {
         if (sequence == null) {
             throw NumericException.INSTANCE;
@@ -647,6 +715,9 @@ public final class Numbers {
         sink.put((char) ('0' + (c % 10)));
     }
 
+
+    //////////////////////
+
     private static void appendLong18(CharSink sink, long i) {
         long c;
         sink.put((char) ('0' + i / 100000000000000000L));
@@ -689,9 +760,6 @@ public final class Numbers {
         sink.put((char) ('0' + (c %= 100) / 10));
         sink.put((char) ('0' + (c % 10)));
     }
-
-
-    //////////////////////
 
     private static void appendLong16(CharSink sink, long i) {
         long c;

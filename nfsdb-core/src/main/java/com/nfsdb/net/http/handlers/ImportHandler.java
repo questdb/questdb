@@ -223,7 +223,6 @@ public class ImportHandler extends AbstractMultipartHandler {
             if (context.dataFormatValid) {
                 context.textParser.parse(lo, len, Integer.MAX_VALUE, context.importer);
             } else {
-                System.out.println("Data length: " + data.length());
                 context.response.simple(400, "Invalid data format");
             }
         }

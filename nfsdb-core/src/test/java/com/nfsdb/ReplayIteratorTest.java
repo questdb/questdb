@@ -21,11 +21,11 @@
 
 package com.nfsdb;
 
+import com.nfsdb.iter.ReplayIterator;
+import com.nfsdb.iter.TimeSource;
+import com.nfsdb.iter.clock.Clock;
+import com.nfsdb.iter.clock.MilliClock;
 import com.nfsdb.model.Quote;
-import com.nfsdb.query.iterator.ReplayIterator;
-import com.nfsdb.query.iterator.TimeSource;
-import com.nfsdb.query.iterator.clock.Clock;
-import com.nfsdb.query.iterator.clock.MilliClock;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;

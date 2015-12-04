@@ -23,6 +23,8 @@ package com.nfsdb;
 
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.iter.ConcurrentIterator;
+import com.nfsdb.iter.JournalIterator;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Interval;
 import com.nfsdb.model.Quote;
@@ -31,8 +33,6 @@ import com.nfsdb.query.UnorderedResultSet;
 import com.nfsdb.query.api.Query;
 import com.nfsdb.query.api.QueryAllBuilder;
 import com.nfsdb.query.api.QueryHeadBuilder;
-import com.nfsdb.query.iterator.ConcurrentIterator;
-import com.nfsdb.query.iterator.JournalIterator;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestData;
 import com.nfsdb.test.tools.TestUtils;

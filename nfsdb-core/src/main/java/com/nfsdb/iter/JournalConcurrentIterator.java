@@ -19,7 +19,7 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.query.iterator;
+package com.nfsdb.iter;
 
 import com.nfsdb.Journal;
 import com.nfsdb.collections.ObjList;

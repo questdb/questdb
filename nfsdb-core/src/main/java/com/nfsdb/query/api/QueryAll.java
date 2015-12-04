@@ -22,11 +22,11 @@
 package com.nfsdb.query.api;
 
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.iter.ConcurrentIterator;
+import com.nfsdb.iter.JournalIterator;
+import com.nfsdb.iter.JournalPeekingIterator;
 import com.nfsdb.misc.Interval;
 import com.nfsdb.query.OrderedResultSet;
-import com.nfsdb.query.iterator.ConcurrentIterator;
-import com.nfsdb.query.iterator.JournalIterator;
-import com.nfsdb.query.iterator.JournalPeekingIterator;
 
 public interface QueryAll<T> extends Iterable<T> {
 
