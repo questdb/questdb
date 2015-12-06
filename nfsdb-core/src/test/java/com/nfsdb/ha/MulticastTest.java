@@ -68,6 +68,9 @@ public class MulticastTest extends AbstractTest {
         if (multicastDisabled) {
             return;
         }
+
+        System.out.println("Multicast enabled IPV4Forced");
+
         System.setProperty("java.net.preferIPv4Stack", "true");
         assertMulticast();
     }
