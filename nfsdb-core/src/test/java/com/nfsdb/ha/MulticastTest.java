@@ -41,9 +41,15 @@ import java.util.concurrent.TimeUnit;
 
 public class MulticastTest extends AbstractTest {
 
+    private boolean multicastDisabled;
+
+    public MulticastTest() throws JournalNetworkException, SocketException {
+        multicastDisabled = isMulticastDisabled();
+    }
+
     @Test
     public void testAllNics() throws Exception {
-        if (isMulticastDisabled()) {
+        if (multicastDisabled) {
             return;
         }
         assertMulticast();
@@ -51,7 +57,7 @@ public class MulticastTest extends AbstractTest {
 
     @Test
     public void testDefaultNICBehaviour() throws Exception {
-        if (isMulticastDisabled()) {
+        if (multicastDisabled) {
             return;
         }
         assertMulticast();
@@ -59,7 +65,7 @@ public class MulticastTest extends AbstractTest {
 
     @Test
     public void testIPV4Forced() throws Exception {
-        if (isMulticastDisabled()) {
+        if (multicastDisabled) {
             return;
         }
         System.setProperty("java.net.preferIPv4Stack", "true");
@@ -68,7 +74,7 @@ public class MulticastTest extends AbstractTest {
 
     @Test
     public void testIPv6() throws Exception {
-        if (isMulticastDisabled()) {
+        if (multicastDisabled) {
             return;
         }
 
@@ -95,11 +101,15 @@ public class MulticastTest extends AbstractTest {
     @Test
     public void testLocalhostBehaviour() throws Exception {
 
-        if (isMulticastDisabled()) {
+        if (multicastDisabled) {
             return;
         }
 
         assertMulticast();
+    }
+
+    private static boolean isMulticastDisabled() throws JournalNetworkException, SocketException {
+        return !new ServerConfig().getMultiCastInterface(0).supportsMulticast();
     }
 
     private void assertMulticast() throws JournalNetworkException {
@@ -110,9 +120,5 @@ public class MulticastTest extends AbstractTest {
         ServerNode address = poller.poll(2, 500, TimeUnit.MILLISECONDS);
         Assert.assertNotNull(address);
         sender.halt();
-    }
-
-    private boolean isMulticastDisabled() throws JournalNetworkException, SocketException {
-        return !new ServerConfig().getMultiCastInterface(0).supportsMulticast();
     }
 }
