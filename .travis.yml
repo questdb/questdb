@@ -1,7 +1,7 @@
 language: java
 jdk:
   - oraclejdk7
-  - openjdk7
+  - openjdk8
   - oraclejdk8
   
 env:
@@ -13,9 +13,6 @@ os:
 branches:
   only:
     - master
-
-before_install:
-  echo "127.0.0.1 "hostname | sudo tee /etc/hosts
 
 install: mvn clean package
 
