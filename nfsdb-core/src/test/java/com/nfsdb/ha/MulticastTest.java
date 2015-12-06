@@ -36,7 +36,10 @@ import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.net.Inet6Address;
+import java.net.InterfaceAddress;
 import java.net.SocketException;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 public class MulticastTest extends AbstractTest {
@@ -68,20 +71,15 @@ public class MulticastTest extends AbstractTest {
         if (multicastDisabled) {
             return;
         }
-
-        System.out.println("Multicast enabled IPV4Forced");
-
         System.setProperty("java.net.preferIPv4Stack", "true");
         assertMulticast();
     }
 
     @Test
     public void testIPv6() throws Exception {
-        if (multicastDisabled) {
+        if (multicastDisabled || !hasIPv6()) {
             return;
         }
-
-        System.out.println("Multicast enabled?");
 
         JournalServer server = new JournalServer(new ServerConfig() {{
             addNode(new ServerNode(0, "[0:0:0:0:0:0:0:0]"));
@@ -113,6 +111,16 @@ public class MulticastTest extends AbstractTest {
 
     private static boolean isMulticastDisabled() throws JournalNetworkException, SocketException {
         return !new ServerConfig().getMultiCastInterface(0).supportsMulticast();
+    }
+
+    private static boolean hasIPv6() throws JournalNetworkException, SocketException {
+        List<InterfaceAddress> ifs = new ServerConfig().getMultiCastInterface(0).getInterfaceAddresses();
+        for (int i = 0; i < ifs.size(); i++) {
+            if (ifs.get(i).getAddress() instanceof Inet6Address) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void assertMulticast() throws JournalNetworkException {
