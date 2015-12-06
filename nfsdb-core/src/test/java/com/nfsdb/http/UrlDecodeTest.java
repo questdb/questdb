@@ -43,64 +43,97 @@ public class UrlDecodeTest {
 
     @Test
     public void testDuplicateAmp() throws Exception {
-        parse("x=a&&y==b");
-        TestUtils.assertEquals("a", map.get("x"));
-        TestUtils.assertEquals("b", map.get("y"));
-    }
-
-    @Test
-    public void testSimple() throws Exception {
-        parse("x=a&y=b");
-        TestUtils.assertEquals("a", map.get("x"));
-        TestUtils.assertEquals("b", map.get("y"));
-    }
-
-    @Test
-    public void testTrailingEmpty() throws Exception {
-        parse("x=a&y=b&z=");
-        TestUtils.assertEquals("a", map.get("x"));
-        TestUtils.assertEquals("b", map.get("y"));
-        Assert.assertNull(map.get("z"));
-    }
-
-    @Test
-    public void testTrailingNull() throws Exception {
-        parse("x=a&y=b&");
-        TestUtils.assertEquals("a", map.get("x"));
-        TestUtils.assertEquals("b", map.get("y"));
-    }
-
-    @Test
-    public void testURLDec() throws Exception {
-        parse("x=a&y=b+c%26&z=ab%20ba&w=2");
-        TestUtils.assertEquals("a", map.get("x"));
-        TestUtils.assertEquals("b c&", map.get("y"));
-        TestUtils.assertEquals("ab ba", map.get("z"));
-        TestUtils.assertEquals("2", map.get("w"));
-    }
-
-    @Test
-    public void testURLDecSpace() throws Exception {
-        parse("x=a&y=b+c&z=123");
-        TestUtils.assertEquals("a", map.get("x"));
-        TestUtils.assertEquals("b c", map.get("y"));
-        TestUtils.assertEquals("123", map.get("z"));
-    }
-
-    @Test
-    public void testURLDecTrailingSpace() throws Exception {
-        String qry = "x=a&y=b+c";
-        parse(qry);
-        TestUtils.assertEquals("a", map.get("x"));
-        TestUtils.assertEquals("b c", map.get("y"));
-    }
-
-    private void parse(String s) {
-        long p = TestUtils.toMemory(s);
+        String v = "x=a&&y==b";
+        long p = TestUtils.toMemory(v);
         try {
-            Request.urlDecode(p, p + s.length(), map, pool);
+            Request.urlDecode(p, p + v.length(), map, pool);
+            TestUtils.assertEquals("a", map.get("x"));
+            TestUtils.assertEquals("b", map.get("y"));
         } finally {
             Unsafe.getUnsafe().freeMemory(p);
         }
     }
+
+    @Test
+    public void testSimple() throws Exception {
+        String v = "x=a&y=b";
+        long p = TestUtils.toMemory(v);
+        try {
+            Request.urlDecode(p, p + v.length(), map, pool);
+            TestUtils.assertEquals("a", map.get("x"));
+            TestUtils.assertEquals("b", map.get("y"));
+        } finally {
+            Unsafe.getUnsafe().freeMemory(p);
+        }
+    }
+
+    @Test
+    public void testTrailingEmpty() throws Exception {
+        String v = "x=a&y=b&z=";
+        long p = TestUtils.toMemory(v);
+        try {
+            Request.urlDecode(p, p + v.length(), map, pool);
+            TestUtils.assertEquals("a", map.get("x"));
+            TestUtils.assertEquals("b", map.get("y"));
+            Assert.assertNull(map.get("z"));
+        } finally {
+            Unsafe.getUnsafe().freeMemory(p);
+        }
+    }
+
+    @Test
+    public void testTrailingNull() throws Exception {
+        String v = "x=a&y=b&";
+        long p = TestUtils.toMemory(v);
+        try {
+            Request.urlDecode(p, p + v.length(), map, pool);
+            TestUtils.assertEquals("a", map.get("x"));
+            TestUtils.assertEquals("b", map.get("y"));
+        } finally {
+            Unsafe.getUnsafe().freeMemory(p);
+        }
+    }
+
+    @Test
+    public void testURLDec() throws Exception {
+        String v = "x=a&y=b+c%26&z=ab%20ba&w=2";
+        long p = TestUtils.toMemory(v);
+        try {
+            Request.urlDecode(p, p + v.length(), map, pool);
+            TestUtils.assertEquals("a", map.get("x"));
+            TestUtils.assertEquals("b c&", map.get("y"));
+            TestUtils.assertEquals("ab ba", map.get("z"));
+            TestUtils.assertEquals("2", map.get("w"));
+        } finally {
+            Unsafe.getUnsafe().freeMemory(p);
+        }
+    }
+
+    @Test
+    public void testURLDecSpace() throws Exception {
+        String v = "x=a&y=b+c&z=123";
+        long p = TestUtils.toMemory(v);
+        try {
+            Request.urlDecode(p, p + v.length(), map, pool);
+            TestUtils.assertEquals("a", map.get("x"));
+            TestUtils.assertEquals("b c", map.get("y"));
+            TestUtils.assertEquals("123", map.get("z"));
+        } finally {
+            Unsafe.getUnsafe().freeMemory(p);
+        }
+    }
+
+    @Test
+    public void testURLDecTrailingSpace() throws Exception {
+        String v = "x=a&y=b+c";
+        long p = TestUtils.toMemory(v);
+        try {
+            Request.urlDecode(p, p + v.length(), map, pool);
+            TestUtils.assertEquals("a", map.get("x"));
+            TestUtils.assertEquals("b c", map.get("y"));
+        } finally {
+            Unsafe.getUnsafe().freeMemory(p);
+        }
+    }
+
 }
