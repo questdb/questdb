@@ -95,11 +95,11 @@ public class HttpServerTest extends AbstractJournalTest {
             latch.await();
 
             try (Journal r = factory.reader("test-import.csv")) {
-                Assert.assertEquals(129, r.size());
+                Assert.assertEquals("First failed", 129, r.size());
             }
 
             try (Journal r = factory.reader("test-import-nan.csv")) {
-                Assert.assertEquals(129, r.size());
+                Assert.assertEquals("Second failed", 129, r.size());
             }
         } finally {
             server.halt();
