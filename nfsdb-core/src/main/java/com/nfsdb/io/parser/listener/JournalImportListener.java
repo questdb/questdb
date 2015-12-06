@@ -57,6 +57,16 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
         Misc.free(writer);
     }
 
+    public void commit() {
+        if (writer != null) {
+            try {
+                writer.commit();
+            } catch (JournalException e) {
+                throw new JournalRuntimeException(e);
+            }
+        }
+    }
+
     public LongList getErrors() {
         return errors;
     }

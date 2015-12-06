@@ -247,6 +247,7 @@ public class ImportHandler extends AbstractMultipartHandler {
             System.out.println("Closing importer for \n\r" + context.importer.getMetadata());
             context.textParser.parseLast();
             System.out.println(context.importer.getImportedRowCount());
+            context.importer.commit();
             sendSummary(context);
             context.textParser = Misc.free(context.textParser);
             context.importer = Misc.free(context.importer);
