@@ -232,7 +232,9 @@ public class HttpServerTest extends AbstractJournalTest {
             writer.append("--").append(boundary).append("--").append(CRLF).flush();
         }
 
-        Assert.assertEquals(200, ((HttpURLConnection) connection).getResponseCode());
+        int response = ((HttpURLConnection) connection).getResponseCode();
+        System.out.println("Response: " + response);
+        Assert.assertEquals(200, response);
     }
 
     private SocketChannel openChannel(String host, int port, long timeout) throws IOException {
