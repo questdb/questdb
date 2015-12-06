@@ -23,6 +23,7 @@ package com.nfsdb.misc;
 
 import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.io.sink.CharSink;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public final class Numbers {
 
@@ -545,6 +546,7 @@ public final class Numbers {
         return parseHexInt(sequence, 0, sequence.length());
     }
 
+    @SuppressFBWarnings("CC_CYCLOMATIC_COMPLEXITY")
     public static int parseHexInt(CharSequence sequence, int p, int lim) throws NumericException {
 
         if (lim == p) {

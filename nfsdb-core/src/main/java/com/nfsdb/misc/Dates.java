@@ -46,8 +46,15 @@ final public class Dates {
     private static final int[] DAYS_PER_MONTH = {
             31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
     };
+    private static final String[] DAYS_OF_WEEK = {
+            "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"
+    };
+
     private static final long[] MIN_MONTH_OF_YEAR_MILLIS = new long[12];
     private static final long[] MAX_MONTH_OF_YEAR_MILLIS = new long[12];
+    private static final String[] MONTHS_OF_YEAR = {
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    };
 
     private Dates() {
     }
@@ -216,6 +223,28 @@ final public class Dates {
         append0(sink.put('-'), getDayOfMonth(millis, y, m, l));
     }
 
+    public static void formatHTTP(CharSink sink, long millis) {
+        int y = getYear(millis);
+        boolean l = isLeapYear(y);
+        int m = getMonthOfYear(millis, y, l);
+        sink.put(DAYS_OF_WEEK[getDayOfWeek(millis) - 1])
+                .put(", ")
+                .put(getDayOfMonth(millis, y, m, l))
+                .put(' ')
+                .put(MONTHS_OF_YEAR[m - 1])
+                .put(' ')
+                .put(y)
+                .put(' ')
+                .put(getHourOfDay(millis))
+                .put(':')
+                .put(getMinuteOfHour(millis))
+                .put(':')
+                .put(getSecondOfMinute(millis))
+                .put(' ')
+                .put("GMT");
+
+    }
+
     // YYYY
     public static void formatYYYY(CharSink sink, long millis) {
         Numbers.append(sink, getYear(millis));
@@ -239,24 +268,24 @@ final public class Dates {
         append0(sink, getDayOfMonth(millis, y, m, l));
     }
 
-//    public static int getDayOfWeek(long millis) {
-//        // 1970-01-01 is Thursday.
-//        long d;
-//        if (millis >= 0) {
-//            d = millis / DAY_MILLIS;
-//        } else {
-//            d = (millis - (DAY_MILLIS - 1)) / DAY_MILLIS;
-//            if (d < -3) {
-//                return 7 + (int) ((d + 4) % 7);
-//            }
-//        }
-//        return 1 + (int) ((d + 3) % 7);
-//    }
-
     public static int getDayOfMonth(long millis, int year, int month, boolean leap) {
         long dateMillis = yearMillis(year, leap);
         dateMillis += monthOfYearMillis(month, leap);
         return (int) ((millis - dateMillis) / DAY_MILLIS) + 1;
+    }
+
+    public static int getDayOfWeek(long millis) {
+        // 1970-01-01 is Thursday.
+        long d;
+        if (millis >= 0) {
+            d = millis / DAY_MILLIS;
+        } else {
+            d = (millis - (DAY_MILLIS - 1)) / DAY_MILLIS;
+            if (d < -3) {
+                return 7 + (int) ((d + 4) % 7);
+            }
+        }
+        return 1 + (int) ((d + 3) % 7);
     }
 
     /**
@@ -509,14 +538,6 @@ final public class Dates {
                 + sec * SECOND_MILLIS;
     }
 
-    public static long parseDateTimeFmt1Quiet(CharSequence seq) {
-        try {
-            return parseDateTimeFmt1(seq, 0, seq.length());
-        } catch (Exception e) {
-            return Long.MIN_VALUE;
-        }
-    }
-
     public static long parseDateTimeFmt2(CharSequence seq) throws NumericException {
         return parseDateTimeFmt2(seq, 0, seq.length());
     }
@@ -549,14 +570,6 @@ final public class Dates {
                 + (day - 1) * DAY_MILLIS;
     }
 
-    public static long parseDateTimeFmt2Quiet(CharSequence seq) {
-        try {
-            return parseDateTimeFmt2(seq);
-        } catch (NumericException e) {
-            return Long.MIN_VALUE;
-        }
-    }
-
     public static long parseDateTimeFmt3(CharSequence seq) throws NumericException {
         return parseDateTimeFmt3(seq, 0, seq.length());
     }
@@ -573,14 +586,6 @@ final public class Dates {
         boolean l = isLeapYear(year);
         checkRange(day, 1, getDaysPerMonth(month, l));
         return yearMillis(year, l) + monthOfYearMillis(month, l) + (day - 1) * DAY_MILLIS;
-    }
-
-    public static long parseDateTimeFmt3Quiet(CharSequence seq) {
-        try {
-            return parseDateTimeFmt3(seq);
-        } catch (NumericException e) {
-            return Long.MIN_VALUE;
-        }
     }
 
     // YYYY-MM-DDThh:mm:ss.mmm

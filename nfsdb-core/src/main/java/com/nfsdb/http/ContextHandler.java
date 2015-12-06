@@ -19,8 +19,10 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net.http;
+package com.nfsdb.http;
 
-public enum ChannelStatus {
-    READ, NEED_REQUEST, DISCONNECTED, WRITE
+import java.io.IOException;
+
+public interface ContextHandler {
+    void onComplete(IOContext context) throws IOException;
 }

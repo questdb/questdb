@@ -19,14 +19,8 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net;
+package com.nfsdb.http;
 
-import com.nfsdb.collections.AssociativeCache;
-
-public class IOWorkerContext {
-    private final AssociativeCache<Object> cache = new AssociativeCache<>(128, 4);
-
-    public AssociativeCache<Object> getCache() {
-        return cache;
-    }
+public interface UrlMatcher {
+    ContextHandler get(CharSequence url);
 }

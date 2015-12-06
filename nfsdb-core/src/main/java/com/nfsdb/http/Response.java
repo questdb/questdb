@@ -19,18 +19,18 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net.http;
+package com.nfsdb.http;
 
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.exceptions.ResponseHeaderBufferTooSmallException;
 import com.nfsdb.io.sink.AbstractCharSink;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.io.sink.DirectUnboundedAnsiSink;
+import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Misc;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Unsafe;
-import com.nfsdb.net.IOHttpJob;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.Closeable;
@@ -49,7 +49,7 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
     private long _wPtr;
     private ByteBuffer _flushBuf;
 
-    public Response(int headerBufferSize, int contentBufferSize) {
+    public Response(int headerBufferSize, int contentBufferSize, Clock clock) {
         if (headerBufferSize <= 0) {
             throw new IllegalArgumentException("headerBufferSize");
         }
@@ -60,7 +60,7 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
 
         int sz = Numbers.ceilPow2(contentBufferSize);
         this.out = ByteBuffer.allocateDirect(sz);
-        this.hb = new ResponseHeaderBuffer(headerBufferSize);
+        this.hb = new ResponseHeaderBuffer(headerBufferSize, clock);
         // size is 32bit int, as hex string max 8 bytes
         this.chunkHeader = ByteBuffer.allocateDirect(8 + 2 * Misc.EOL.length());
         this.chunkSink = new DirectUnboundedAnsiSink(((DirectBuffer) chunkHeader).address());

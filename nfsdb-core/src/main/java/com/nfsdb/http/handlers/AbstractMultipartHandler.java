@@ -19,14 +19,14 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net.http.handlers;
+package com.nfsdb.http.handlers;
 
 import com.nfsdb.collections.ByteSequence;
 import com.nfsdb.collections.DirectByteCharSequence;
-import com.nfsdb.net.IOContext;
-import com.nfsdb.net.http.ContextHandler;
-import com.nfsdb.net.http.MultipartListener;
-import com.nfsdb.net.http.RequestHeaderBuffer;
+import com.nfsdb.http.ContextHandler;
+import com.nfsdb.http.IOContext;
+import com.nfsdb.http.MultipartListener;
+import com.nfsdb.http.RequestHeaderBuffer;
 
 import java.io.IOException;
 

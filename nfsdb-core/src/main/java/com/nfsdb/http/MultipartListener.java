@@ -19,10 +19,9 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net.http;
+package com.nfsdb.http;
 
 import com.nfsdb.collections.DirectByteCharSequence;
-import com.nfsdb.net.IOContext;
 
 import java.io.IOException;
 

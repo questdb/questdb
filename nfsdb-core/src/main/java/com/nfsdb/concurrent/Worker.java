@@ -23,6 +23,7 @@ package com.nfsdb.concurrent;
 
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.misc.Unsafe;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.locks.LockSupport;
@@ -47,6 +48,7 @@ public class Worker<T> extends Thread {
         running = 2;
     }
 
+    @SuppressFBWarnings("MDM_THREAD_YIELD")
     @Override
     public void run() {
         if (Unsafe.getUnsafe().compareAndSwapInt(this, RUNNING_OFFSET, 0, 1)) {

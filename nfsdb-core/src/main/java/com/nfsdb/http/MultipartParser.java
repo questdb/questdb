@@ -19,7 +19,7 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net.http;
+package com.nfsdb.http;
 
 import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.collections.Mutable;
@@ -27,12 +27,10 @@ import com.nfsdb.collections.ObjectPool;
 import com.nfsdb.exceptions.HeadersTooLargeException;
 import com.nfsdb.exceptions.MalformedHeaderException;
 import com.nfsdb.misc.Unsafe;
-import com.nfsdb.net.IOContext;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.nio.ByteBuffer;
 
 @SuppressFBWarnings("SF_SWITCH_FALLTHROUGH")
 public class MultipartParser implements Closeable, Mutable {
@@ -48,14 +46,6 @@ public class MultipartParser implements Closeable, Mutable {
     public MultipartParser(int headerBufSize, ObjectPool<DirectByteCharSequence> pool) {
         this.hb = new RequestHeaderBuffer(headerBufSize, pool);
         clear();
-    }
-
-    public static void dump(ByteBuffer b) {
-        int p = b.position();
-        while (b.hasRemaining()) {
-            System.out.print((char) b.get());
-        }
-        b.position(p);
     }
 
     @Override

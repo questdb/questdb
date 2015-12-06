@@ -19,20 +19,8 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net;
+package com.nfsdb.http;
 
-import com.nfsdb.collections.ObjectFactory;
-
-import java.nio.channels.SocketChannel;
-
-public class IOEvent {
-    public static final ObjectFactory<IOEvent> FACTORY = new ObjectFactory<IOEvent>() {
-        @Override
-        public IOEvent newInstance() {
-            return new IOEvent();
-        }
-    };
-    public SocketChannel channel;
-    public int op;
-    public IOContext context;
+public enum ChannelStatus {
+    READ, NEED_REQUEST, DISCONNECTED, WRITE
 }

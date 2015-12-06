@@ -19,23 +19,23 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net;
+package com.nfsdb.http;
 
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.io.parser.TextParser;
 import com.nfsdb.io.parser.listener.JournalImportListener;
+import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.misc.Misc;
-import com.nfsdb.net.http.Request;
-import com.nfsdb.net.http.Response;
 import com.nfsdb.storage.PlainFile;
 
 import java.io.Closeable;
 
 public class IOContext implements Closeable, Mutable {
     // todo: extract config
-    public final Request request = new Request(128 * 1024, 16 * 1024 * 1024, 1024);
-    public final Response response = new Response(1024, 1024 * 1024);
+    public final Request request = new Request(128 * 1024, 4 * 1024 * 1024, 1024);
+    public final Response response;
     public IOWorkerContext threadContext;
+
 
     // multipart generic
     public boolean chunky = false;
@@ -50,7 +50,8 @@ public class IOContext implements Closeable, Mutable {
     public TextParser textParser;
     public JournalImportListener importer;
 
-    public IOContext() {
+    public IOContext(Clock clock) {
+        this.response = new Response(1024, 1024 * 1024, clock);
     }
 
     @Override

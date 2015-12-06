@@ -19,26 +19,21 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net.http;
+package com.nfsdb.http;
 
 import com.nfsdb.collections.IntObjHashMap;
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.exceptions.ResponseHeaderBufferTooSmallException;
 import com.nfsdb.io.sink.AbstractCharSink;
 import com.nfsdb.io.sink.CharSink;
-import com.nfsdb.misc.ByteBuffers;
-import com.nfsdb.misc.Misc;
-import com.nfsdb.misc.Numbers;
-import com.nfsdb.misc.Unsafe;
+import com.nfsdb.iter.clock.Clock;
+import com.nfsdb.misc.*;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.WritableByteChannel;
-import java.text.SimpleDateFormat;
-import java.util.Calendar;
-import java.util.TimeZone;
 
 public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable, Mutable {
     private static final IntObjHashMap<CharSequence> statusMap = new IntObjHashMap<>();
@@ -46,9 +41,11 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
     private final long headerPtr;
     private final long limit;
     private final ByteBuffer headers;
+    private final Clock clock;
     private long _wptr;
 
-    public ResponseHeaderBuffer(int size) {
+    public ResponseHeaderBuffer(int size, Clock clock) {
+        this.clock = clock;
         int sz = Numbers.ceilPow2(size);
         this.headers = ByteBuffer.allocateDirect(sz);
         this.headerPtr = _wptr = ((DirectBuffer) headers).address();
@@ -105,20 +102,14 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
             throw new IllegalArgumentException("Illegal status code: " + code);
         }
         put("HTTP/1.1 ").put(code).put(' ').put(status).put(Misc.EOL);
-        append("Server", "nfsdb/1.0");
-        append("Date", getServerTime());
+        append("Server", "nfsdb/0.1");
+        put("Date").put(": ");
+        Dates.formatHTTP(this, clock.getTicks());
+        put(Misc.EOL);
         append("Transfer-Encoding", "chunked");
         append("Content-Type", contentType);
 
         return status;
-    }
-
-    // todo: implement this format
-    private static String getServerTime() {
-        Calendar calendar = Calendar.getInstance();
-        SimpleDateFormat format = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss z");
-        format.setTimeZone(TimeZone.getTimeZone("GMT"));
-        return format.format(calendar.getTime());
     }
 
     void flush(WritableByteChannel channel) throws IOException {

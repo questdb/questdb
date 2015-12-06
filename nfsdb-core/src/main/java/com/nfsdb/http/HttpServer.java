@@ -19,16 +19,16 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net;
+package com.nfsdb.http;
 
-import com.nfsdb.collections.CharSequenceObjHashMap;
 import com.nfsdb.collections.ObjHashSet;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.concurrent.*;
 import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.net.http.ContextHandler;
-import com.nfsdb.net.http.handlers.ImportHandler;
-import com.nfsdb.net.http.handlers.UploadHandler;
+import com.nfsdb.http.handlers.ImportHandler;
+import com.nfsdb.http.handlers.UploadHandler;
+import com.nfsdb.iter.clock.Clock;
+import com.nfsdb.iter.clock.MilliClock;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
@@ -47,14 +47,15 @@ public class HttpServer {
     private final int ioQueueSize;
     private final int workerCount;
     private final CountDownLatch startComplete = new CountDownLatch(1);
-    private final CharSequenceObjHashMap<ContextHandler> handlers = new CharSequenceObjHashMap<>();
+    private final UrlMatcher urlMatcher;
     private ServerSocketChannel channel;
     private Selector selector;
     private volatile boolean running = true;
+    private Clock clock = MilliClock.INSTANCE;
 
-
-    public HttpServer(InetSocketAddress address, int workerCount, int ioQueueSize) {
+    public HttpServer(InetSocketAddress address, UrlMatcher urlMatcher, int workerCount, int ioQueueSize) {
         this.address = address;
+        this.urlMatcher = urlMatcher;
         this.haltLatch = new CountDownLatch(workerCount);
         this.workers = new ObjList<>(workerCount);
         this.ioQueueSize = ioQueueSize;
@@ -67,18 +68,12 @@ public class HttpServer {
             return;
         }
         String dir = args[0];
-        HttpServer server = new HttpServer(new InetSocketAddress(9000), 2, 1024);
-        server.add("/up", new UploadHandler(new File(dir)));
-        server.add("/imp", new ImportHandler(new JournalFactory(dir)));
+        SimpleUrlMatcher matcher = new SimpleUrlMatcher();
+        matcher.put("/up", new UploadHandler(new File(dir)));
+        matcher.put("/imp", new ImportHandler(new JournalFactory(dir)));
+        HttpServer server = new HttpServer(new InetSocketAddress(9000), matcher, 2, 1024);
         server.start();
         System.out.println("Server started");
-    }
-
-    public void add(String url, ContextHandler handler) {
-        if (handlers.get(url) != null) {
-            throw new IllegalArgumentException(("Duplicate url: " + url));
-        }
-        handlers.put(url, handler);
     }
 
     public void halt() throws IOException, InterruptedException {
@@ -92,6 +87,10 @@ public class HttpServer {
             selector.close();
             channel.close();
         }
+    }
+
+    public void setClock(Clock clock) {
+        this.clock = clock;
     }
 
     public void start() throws IOException {
@@ -109,8 +108,8 @@ public class HttpServer {
         ioPubSequence.followedBy(ioSubSequence);
         ioSubSequence.followedBy(ioPubSequence);
 
-        IOLoopJob ioLoop = new IOLoopJob(selector, channel.register(selector, SelectionKey.OP_ACCEPT), ioQueue, ioPubSequence, ioQueueSize);
-        IOHttpJob ioHttp = new IOHttpJob(ioQueue, ioSubSequence, ioLoop, handlers);
+        IOLoopJob ioLoop = new IOLoopJob(selector, channel.register(selector, SelectionKey.OP_ACCEPT), ioQueue, ioPubSequence, ioQueueSize, clock);
+        IOHttpJob ioHttp = new IOHttpJob(ioQueue, ioSubSequence, ioLoop, urlMatcher);
 
         ObjList<Job<IOWorkerContext>> jobs = new ObjList<>();
         jobs.add(ioLoop);

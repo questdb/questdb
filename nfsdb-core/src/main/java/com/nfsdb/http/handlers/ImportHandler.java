@@ -19,7 +19,7 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net.http.handlers;
+package com.nfsdb.http.handlers;
 
 import com.nfsdb.collections.ByteSequence;
 import com.nfsdb.collections.DirectByteCharSequence;
@@ -28,6 +28,9 @@ import com.nfsdb.exceptions.DisconnectedChannelException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.http.IOContext;
+import com.nfsdb.http.RequestHeaderBuffer;
+import com.nfsdb.http.Response;
 import com.nfsdb.io.parser.CsvParser;
 import com.nfsdb.io.parser.FormatParser;
 import com.nfsdb.io.parser.PipeParser;
@@ -37,9 +40,6 @@ import com.nfsdb.io.parser.listener.MetadataExtractorListener;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Misc;
-import com.nfsdb.net.IOContext;
-import com.nfsdb.net.http.RequestHeaderBuffer;
-import com.nfsdb.net.http.Response;
 
 import java.io.IOException;
 

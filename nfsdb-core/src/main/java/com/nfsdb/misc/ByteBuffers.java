@@ -160,6 +160,15 @@ public final class ByteBuffers {
         }
     }
 
+    public static void dump(ByteBuffer b) {
+        int p = b.position();
+        while (b.hasRemaining()) {
+            System.out.print((char) b.get());
+        }
+        b.position(p);
+    }
+
+
     public static long getAddress(ByteBuffer buffer) {
         return ((DirectBuffer) buffer).address();
     }

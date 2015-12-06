@@ -19,35 +19,9 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.concurrent;
+package com.nfsdb.http;
 
-import com.nfsdb.misc.Unsafe;
+import com.nfsdb.collections.CharSequenceObjHashMap;
 
-public abstract class SynchronizedJob<T> implements Job<T> {
-    private static final long LOCKED_OFFSET;
-
-    @SuppressWarnings({"unused", "FieldCanBeLocal"})
-    private volatile int locked = 0;
-
-    @Override
-    public boolean run(T context) {
-        if (Unsafe.getUnsafe().compareAndSwapInt(this, LOCKED_OFFSET, 0, 1)) {
-            try {
-                return _run();
-            } finally {
-                locked = 0;
-            }
-        }
-        return false;
-    }
-
-    protected abstract boolean _run();
-
-    static {
-        try {
-            LOCKED_OFFSET = Unsafe.getUnsafe().objectFieldOffset(SynchronizedJob.class.getDeclaredField("locked"));
-        } catch (NoSuchFieldException e) {
-            throw new Error(e);
-        }
-    }
+public class SimpleUrlMatcher extends CharSequenceObjHashMap<ContextHandler> implements UrlMatcher {
 }

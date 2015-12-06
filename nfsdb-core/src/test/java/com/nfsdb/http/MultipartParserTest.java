@@ -19,13 +19,12 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net.http;
+package com.nfsdb.http;
 
 import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.collections.ObjectPool;
 import com.nfsdb.misc.Unsafe;
-import com.nfsdb.net.IOContext;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;

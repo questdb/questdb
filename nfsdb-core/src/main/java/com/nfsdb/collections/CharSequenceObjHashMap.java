@@ -60,6 +60,7 @@ public class CharSequenceObjHashMap<V> implements Mutable {
 
     public final void clear() {
         Arrays.fill(keys, noEntryValue);
+        free = this.capacity;
     }
 
     public V get(CharSequence key) {

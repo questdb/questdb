@@ -23,6 +23,7 @@ package com.nfsdb.misc;
 
 import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.io.sink.StringSink;
+import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -151,6 +152,12 @@ public class DatesTest {
         assertTrue("2008-03-15T11:22:30.500Z");
         assertTrue("1917-10-01T11:22:30.500Z");
         assertTrue("0900-01-01T01:02:00.005Z");
+    }
+
+    @Test
+    public void testFormatHTTP() throws Exception {
+        Dates.formatHTTP(sink, Dates.parseDateTime("2015-12-05T12:34:55.332Z"));
+        TestUtils.assertEquals("Sat, 5 Dec 2015 12:34:55 GMT", sink);
     }
 
     @Test

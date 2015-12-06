@@ -19,18 +19,20 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net.http;
+package com.nfsdb.http;
 
+import com.nfsdb.collections.CharSequenceObjHashMap;
 import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.collections.ObjectPool;
 import com.nfsdb.exceptions.HeadersTooLargeException;
 import com.nfsdb.exceptions.MalformedHeaderException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Unsafe;
-import com.nfsdb.net.IOHttpJob;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.Closeable;
@@ -38,6 +40,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.ReadableByteChannel;
 
+@SuppressFBWarnings("CD_CIRCULAR_DEPENDENCY")
 public class Request implements Closeable, Mutable {
     public final ByteBuffer in;
     private final ObjectPool<DirectByteCharSequence> pool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 64);
@@ -49,6 +52,58 @@ public class Request implements Closeable, Mutable {
         this.hb = new RequestHeaderBuffer(headerBufferSize, pool);
         this.in = ByteBuffer.allocateDirect(Numbers.ceilPow2(contentBufferSize));
         this.multipartParser = new MultipartParser(multipartHeaderBufferSize, pool);
+    }
+
+    public static void urlDecode(long lo, long hi, CharSequenceObjHashMap<CharSequence> map, ObjectPool<DirectByteCharSequence> pool) {
+        long _lo = lo;
+        long rp = lo;
+        long wp = lo;
+        final DirectByteCharSequence temp = pool.next();
+
+        CharSequence name = null;
+
+        while (rp < hi) {
+            char b = (char) Unsafe.getUnsafe().getByte(rp++);
+
+            switch (b) {
+                case '=':
+                    if (_lo < wp) {
+                        name = pool.next().of(_lo, wp);
+                    }
+                    _lo = rp;
+                    wp = rp - 1;
+                    break;
+                case '&':
+                    if (name != null) {
+                        map.put(name, pool.next().of(_lo, wp));
+                        name = null;
+                    }
+                    _lo = rp;
+                    wp = rp - 1;
+                    break;
+                case '+':
+                    Unsafe.getUnsafe().putByte(wp, (byte) ' ');
+                    break;
+                case '%':
+                    try {
+                        if (rp + 1 < hi) {
+                            Unsafe.getUnsafe().putByte(wp++, (byte) Numbers.parseHexInt(temp.of(rp, rp += 2)));
+                            continue;
+                        }
+                    } catch (NumericException ignore) {
+                    }
+                    name = null;
+                    break;
+                default:
+                    Unsafe.getUnsafe().putByte(wp, (byte) b);
+                    break;
+            }
+            wp++;
+        }
+
+        if (_lo < wp && name != null) {
+            map.put(name, pool.next().of(_lo, wp));
+        }
     }
 
     @Override
@@ -69,10 +124,6 @@ public class Request implements Closeable, Mutable {
 
     public DirectByteCharSequence getBoundary() {
         return augmenter.of(hb.getBoundary());
-//        boundaryAugmenter.setLength(0);
-//        boundaryAugmenter.append("\r\n--");
-//        boundaryAugmenter.append(hb.getBoundary());
-//        return boundaryAugmenter;
     }
 
     public MultipartParser getMultipartParser() {

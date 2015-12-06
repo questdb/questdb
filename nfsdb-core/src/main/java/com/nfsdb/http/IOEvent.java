@@ -19,35 +19,20 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.concurrent;
+package com.nfsdb.http;
 
-import com.nfsdb.misc.Unsafe;
+import com.nfsdb.collections.ObjectFactory;
 
-public abstract class SynchronizedJob<T> implements Job<T> {
-    private static final long LOCKED_OFFSET;
+import java.nio.channels.SocketChannel;
 
-    @SuppressWarnings({"unused", "FieldCanBeLocal"})
-    private volatile int locked = 0;
-
-    @Override
-    public boolean run(T context) {
-        if (Unsafe.getUnsafe().compareAndSwapInt(this, LOCKED_OFFSET, 0, 1)) {
-            try {
-                return _run();
-            } finally {
-                locked = 0;
-            }
+public class IOEvent {
+    public static final ObjectFactory<IOEvent> FACTORY = new ObjectFactory<IOEvent>() {
+        @Override
+        public IOEvent newInstance() {
+            return new IOEvent();
         }
-        return false;
-    }
-
-    protected abstract boolean _run();
-
-    static {
-        try {
-            LOCKED_OFFSET = Unsafe.getUnsafe().objectFieldOffset(SynchronizedJob.class.getDeclaredField("locked"));
-        } catch (NoSuchFieldException e) {
-            throw new Error(e);
-        }
-    }
+    };
+    public SocketChannel channel;
+    public int op;
+    public IOContext context;
 }

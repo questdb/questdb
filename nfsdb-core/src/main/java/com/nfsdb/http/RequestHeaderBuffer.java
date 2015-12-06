@@ -19,7 +19,7 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net.http;
+package com.nfsdb.http;
 
 import com.nfsdb.collections.CharSequenceObjHashMap;
 import com.nfsdb.collections.DirectByteCharSequence;
@@ -37,6 +37,7 @@ import java.io.Closeable;
 public class RequestHeaderBuffer implements Mutable, Closeable {
     private final ObjectPool<DirectByteCharSequence> pool;
     private final CharSequenceObjHashMap<CharSequence> headers = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<CharSequence> urlParams = new CharSequenceObjHashMap<>();
     private final long hi;
     private long _wptr;
     private long headerPtr;
@@ -47,10 +48,12 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
     private CharSequence n;
     private boolean incomplete;
     private CharSequence contentType;
-    private CharSequence encoding;
     private CharSequence boundary;
     private CharSequence contentDispositionName;
     private CharSequence contentDispositionFilename;
+    private boolean m = true;
+    private boolean u = true;
+    private boolean q = false;
 
     public RequestHeaderBuffer(int size, ObjectPool<DirectByteCharSequence> pool) {
         int sz = Numbers.ceilPow2(size);
@@ -72,9 +75,12 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
         this.n = null;
         this.contentType = null;
         this.boundary = null;
-        this.encoding = null;
         this.contentDispositionName = null;
         this.contentDispositionFilename = null;
+        this.urlParams.clear();
+        this.m = true;
+        this.u = true;
+        this.q = false;
     }
 
     @Override
@@ -105,16 +111,16 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
         return contentType;
     }
 
-    public CharSequence getEncoding() {
-        return encoding;
-    }
-
     public CharSequence getMethod() {
         return method;
     }
 
     public CharSequence getUrl() {
         return url;
+    }
+
+    public CharSequence getUrlParam(CharSequence name) {
+        return urlParams.get(name);
     }
 
     public boolean isIncomplete() {
@@ -131,8 +137,7 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
             int l = parseMethod(ptr, len);
             len -= l;
             ptr += l;
-            _lo += l - 1;
-            needMethod = false;
+//            _lo += l;
         }
 
         long p = ptr;
@@ -289,7 +294,8 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
                 }
 
                 if (Chars.equals("encoding", name)) {
-                    this.encoding = pool.next().of(_lo, p - 1);
+                    // would be encoding, but we don't use it yet
+//                    this.encoding = pool.next().of(_lo, p - 1);
                     _lo = p;
                     continue;
                 }
@@ -316,17 +322,17 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
         parseContentDisposition();
     }
 
-    private int parseMethod(long lo, int len) {
+    private int parseMethod(long lo, int len) throws HeadersTooLargeException {
         long p = lo;
         long hi = lo + len;
-        long _lo = _wptr;
 
-        boolean m = true;
-        boolean u = true;
+//        boolean m = true;
+//        boolean u = true;
+//        boolean q = false;
 
         while (p < hi) {
             if (_wptr == this.hi) {
-                throw new IllegalArgumentException("URL is too long");
+                throw HeadersTooLargeException.INSTANCE;
             }
 
             char b = (char) Unsafe.getUnsafe().getByte(p++);
@@ -346,9 +352,22 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
                     } else if (u) {
                         url = pool.next().of(_lo, _wptr - 1);
                         u = false;
+                        _lo = _wptr;
+                    } else if (q) {
+                        Request.urlDecode(_lo, _wptr - 1, urlParams, pool);
+                        q = false;
+                        _lo = _wptr;
                     }
                     break;
+                case '?':
+                    url = pool.next().of(_lo, _wptr - 1);
+                    u = false;
+                    q = true;
+                    _lo = _wptr;
+                    break;
                 case '\n':
+                    needMethod = false;
+                    this._lo = _wptr;
                     return (int) (p - lo);
             }
         }

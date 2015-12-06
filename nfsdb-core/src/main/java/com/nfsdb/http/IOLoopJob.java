@@ -19,9 +19,10 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net;
+package com.nfsdb.http;
 
 import com.nfsdb.concurrent.*;
+import com.nfsdb.iter.clock.Clock;
 
 import java.io.IOException;
 import java.net.StandardSocketOptions;
@@ -36,8 +37,9 @@ public class IOLoopJob extends SynchronizedJob<IOWorkerContext> {
     private final RingQueue<IOEvent> interestQueue;
     private final MPSequence interestPubSequence;
     private final SCSequence interestSubSequence = new SCSequence();
+    private final Clock clock;
 
-    public IOLoopJob(Selector selector, SelectionKey serverKey, RingQueue<IOEvent> ioQueue, Sequence ioSequence, int interestQueueLen) {
+    public IOLoopJob(Selector selector, SelectionKey serverKey, RingQueue<IOEvent> ioQueue, Sequence ioSequence, int interestQueueLen, Clock clock) {
         this.selector = selector;
         this.serverKey = serverKey;
         this.ioQueue = ioQueue;
@@ -46,6 +48,7 @@ public class IOLoopJob extends SynchronizedJob<IOWorkerContext> {
         this.interestPubSequence = new MPSequence(interestQueueLen, null);
         this.interestPubSequence.followedBy(this.interestSubSequence);
         this.interestSubSequence.followedBy(this.interestPubSequence);
+        this.clock = clock;
     }
 
     public void registerChannel(SocketChannel channel, int op, IOContext context) {
@@ -61,14 +64,14 @@ public class IOLoopJob extends SynchronizedJob<IOWorkerContext> {
     }
 
     @Override
-    protected boolean _run(IOWorkerContext context) {
+    protected boolean _run() {
         try {
             boolean useful = processRegistrations();
             selector.select(1);
 
             Set<SelectionKey> keys = selector.selectedKeys();
 
-            if (keys.size() == 0) {
+            if (keys.isEmpty()) {
                 return useful;
             }
 
@@ -118,7 +121,7 @@ public class IOLoopJob extends SynchronizedJob<IOWorkerContext> {
         channel.configureBlocking(false);
         channel.setOption(StandardSocketOptions.TCP_NODELAY, Boolean.TRUE);
         channel.setOption(StandardSocketOptions.SO_RCVBUF, IOHttpJob.SO_RVCBUF_DOWNLD);
-        channel.register(selector, SelectionKey.OP_READ).attach(new IOContext());
+        channel.register(selector, SelectionKey.OP_READ).attach(new IOContext(clock));
     }
 
     @SuppressWarnings("MagicConstant")

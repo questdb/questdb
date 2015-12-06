@@ -19,15 +19,13 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net;
+package com.nfsdb.http;
 
-import com.nfsdb.collections.CharSequenceObjHashMap;
 import com.nfsdb.concurrent.Job;
 import com.nfsdb.concurrent.RingQueue;
 import com.nfsdb.concurrent.Sequence;
 import com.nfsdb.exceptions.*;
 import com.nfsdb.misc.ByteBuffers;
-import com.nfsdb.net.http.*;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.IOException;
@@ -45,13 +43,13 @@ public class IOHttpJob implements Job<IOWorkerContext> {
     private final RingQueue<IOEvent> ioQueue;
     private final Sequence ioSequence;
     private final IOLoopJob loop;
-    private final CharSequenceObjHashMap<ContextHandler> handlers;
+    private final UrlMatcher urlMatcher;
 
-    public IOHttpJob(RingQueue<IOEvent> ioQueue, Sequence ioSequence, IOLoopJob loop, CharSequenceObjHashMap<ContextHandler> handlers) {
+    public IOHttpJob(RingQueue<IOEvent> ioQueue, Sequence ioSequence, IOLoopJob loop, UrlMatcher urlMatcher) {
         this.ioQueue = ioQueue;
         this.ioSequence = ioSequence;
         this.loop = loop;
-        this.handlers = handlers;
+        this.urlMatcher = urlMatcher;
     }
 
     @Override
@@ -97,7 +95,11 @@ public class IOHttpJob implements Job<IOWorkerContext> {
 
     @SuppressWarnings("StatementWithEmptyBody")
     private void process(SocketChannel channel, IOContext context, int op) {
-        Request r = context.request;
+        final Request r = context.request;
+        final Response response = context.response;
+
+        response.setChannel(channel);
+
         ChannelStatus status = ChannelStatus.READ;
 
         boolean _new = r.isIncomplete();
@@ -108,14 +110,11 @@ public class IOHttpJob implements Job<IOWorkerContext> {
                 }
             }
 
-            final Response response = context.response;
-            response.setChannel(channel);
-
             if (status == ChannelStatus.READ) {
                 if (r.getUrl() == null) {
-                    status = context.response.simple(400);
+                    status = response.simple(400);
                 } else {
-                    ContextHandler handler = handlers.get(r.getUrl());
+                    ContextHandler handler = urlMatcher.get(r.getUrl());
                     if (handler != null) {
 
                         // write what's left to
@@ -129,18 +128,21 @@ public class IOHttpJob implements Job<IOWorkerContext> {
                                     feedMultipartContent((MultipartListener) handler, context, channel);
                                     handler.onComplete(context);
                                 } else {
-                                    status = context.response.simple(400);
+                                    status = response.simple(400);
                                 }
+                            } else {
+                                ByteBuffers.dump(r.in);
+                                status = response.simple(404);
                             }
                         }
                     } else {
-                        status = context.response.simple(404);
+                        status = response.simple(404);
                     }
                 }
                 r.clear();
             }
         } catch (HeadersTooLargeException ignored) {
-            context.response.simple(431);
+            response.simple(431);
             status = ChannelStatus.READ;
         } catch (MalformedHeaderException | DisconnectedChannelException e) {
             status = ChannelStatus.DISCONNECTED;
@@ -154,7 +156,7 @@ public class IOHttpJob implements Job<IOWorkerContext> {
             status = ChannelStatus.DISCONNECTED;
             e.printStackTrace();
         } catch (Throwable e) {
-            context.response.simple(500, e.getMessage() != null ? e.getMessage() : "");
+            response.simple(500, e.getMessage());
             status = ChannelStatus.DISCONNECTED;
             e.printStackTrace();
         }

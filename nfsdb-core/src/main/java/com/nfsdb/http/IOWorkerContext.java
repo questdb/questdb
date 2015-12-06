@@ -19,12 +19,14 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net.http;
+package com.nfsdb.http;
 
-import com.nfsdb.net.IOContext;
+import com.nfsdb.collections.AssociativeCache;
 
-import java.io.IOException;
+public class IOWorkerContext {
+    private final AssociativeCache<Object> cache = new AssociativeCache<>(128, 4);
 
-public interface ContextHandler {
-    void onComplete(IOContext context) throws IOException;
+    public AssociativeCache<Object> getCache() {
+        return cache;
+    }
 }

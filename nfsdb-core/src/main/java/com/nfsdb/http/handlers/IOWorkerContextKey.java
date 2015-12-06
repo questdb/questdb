@@ -19,7 +19,7 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net.http.handlers;
+package com.nfsdb.http.handlers;
 
 public enum IOWorkerContextKey {
     // Metadata extractor listener
