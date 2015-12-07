@@ -97,16 +97,24 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
     }
 
     public String status(int code, CharSequence contentType) {
+        return status(code, contentType, -1L);
+    }
+
+    public String status(int code, CharSequence contentType, long contentLength) {
         String status = httpStatusMap.get(code);
         if (status == null) {
             throw new IllegalArgumentException("Illegal status code: " + code);
         }
         put("HTTP/1.1 ").put(code).put(' ').put(status).put(Misc.EOL);
         append("Server", "nfsdb/0.1");
-        put("Date").put(": ");
+        put("Date: ");
         Dates.formatHTTP(this, clock.getTicks());
         put(Misc.EOL);
-        append("Transfer-Encoding", "chunked");
+        if (contentLength == -1) {
+            append("Transfer-Encoding", "chunked");
+        } else {
+            put("Content-Length: ").put(contentLength).put(Misc.EOL);
+        }
         append("Content-Type", contentType);
 
         return status;

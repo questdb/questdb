@@ -36,7 +36,7 @@ import java.nio.channels.SocketChannel;
 public class IOHttpJob implements Job<IOWorkerContext> {
     // todo: extract config
     public static final int SO_READ_RETRY_COUNT = 1000;
-    public static final int SO_WRITE_RETRY_COUNT = 1000;
+    public static final int SO_WRITE_RETRY_COUNT = 10;
     public static final int SO_RCVBUF_UPLOAD = 4 * 1024 * 1024;
     public static final int SO_RVCBUF_DOWNLD = 128 * 1024;
 
@@ -126,13 +126,18 @@ public class IOHttpJob implements Job<IOWorkerContext> {
                             if (r.isMultipart()) {
                                 if (handler instanceof MultipartListener) {
                                     feedMultipartContent((MultipartListener) handler, context, channel);
-                                    handler.onComplete(context);
+                                    handler.handle(context);
                                 } else {
                                     status = response.simple(400);
                                 }
                             } else {
-                                ByteBuffers.dump(r.in);
-                                status = response.simple(404);
+                                if (handler instanceof MultipartListener) {
+                                    status = response.simple(400);
+                                } else {
+                                    handler.handle(context);
+                                }
+//                                ByteBuffers.dump(r.in);
+//                                status = response.simple(404);
                             }
                         }
                     } else {

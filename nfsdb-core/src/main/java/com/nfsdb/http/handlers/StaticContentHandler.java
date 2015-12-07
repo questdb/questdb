@@ -19,8 +19,16 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.concurrent;
+package com.nfsdb.http.handlers;
 
-public interface Job<T> {
-    boolean run(T context);
+import com.nfsdb.http.ContextHandler;
+import com.nfsdb.http.IOContext;
+
+import java.io.IOException;
+
+public class StaticContentHandler implements ContextHandler {
+    @Override
+    public void handle(IOContext context) throws IOException {
+        context.response.send("/Users/vlad/Downloads/Stats19-Data1979-2004/Accidents7904.csv");
+    }
 }

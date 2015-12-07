@@ -32,6 +32,12 @@ import java.io.IOException;
 
 public abstract class AbstractMultipartHandler implements ContextHandler, MultipartListener {
     @Override
+    public final void handle(IOContext context) throws IOException {
+        onPartEnd(context);
+        onComplete0(context);
+    }
+
+    @Override
     public final void onChunk(IOContext context, RequestHeaderBuffer hb, DirectByteCharSequence data, boolean continued) throws IOException {
         if (!continued) {
             if (context.chunky) {
@@ -41,12 +47,6 @@ public abstract class AbstractMultipartHandler implements ContextHandler, Multip
             onPartBegin(context, hb);
         }
         onData(context, hb, data);
-    }
-
-    @Override
-    public final void onComplete(IOContext context) throws IOException {
-        onPartEnd(context);
-        onComplete0(context);
     }
 
     protected abstract void onComplete0(IOContext context) throws IOException;

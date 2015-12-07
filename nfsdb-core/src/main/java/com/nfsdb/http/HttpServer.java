@@ -26,6 +26,7 @@ import com.nfsdb.collections.ObjList;
 import com.nfsdb.concurrent.*;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.http.handlers.ImportHandler;
+import com.nfsdb.http.handlers.StaticContentHandler;
 import com.nfsdb.http.handlers.UploadHandler;
 import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.iter.clock.MilliClock;
@@ -71,6 +72,7 @@ public class HttpServer {
         SimpleUrlMatcher matcher = new SimpleUrlMatcher();
         matcher.put("/up", new UploadHandler(new File(dir)));
         matcher.put("/imp", new ImportHandler(new JournalFactory(dir)));
+        matcher.put("/tmp", new StaticContentHandler());
         HttpServer server = new HttpServer(new InetSocketAddress(9000), matcher, 2, 1024);
         server.start();
         System.out.println("Server started");

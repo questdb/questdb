@@ -35,7 +35,9 @@ import sun.nio.ch.DirectBuffer;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.channels.WritableByteChannel;
 
 public class Response extends AbstractCharSink implements Closeable, Mutable {
@@ -48,6 +50,8 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
     private WritableByteChannel channel;
     private long _wPtr;
     private ByteBuffer _flushBuf;
+    private RandomAccessFile raf = null;
+    private FileChannel rafCh;
 
     public Response(int headerBufferSize, int contentBufferSize, Clock clock) {
         if (headerBufferSize <= 0) {
@@ -74,6 +78,7 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
         out.clear();
         hb.clear();
         this._wPtr = outPtr;
+        this.raf = Misc.free(raf);
     }
 
     @Override
@@ -81,6 +86,7 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
         ByteBuffers.release(out);
         ByteBuffers.release(chunkHeader);
         hb.close();
+        this.raf = Misc.free(raf);
     }
 
     public void end() throws IOException {
@@ -135,6 +141,28 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
         if (_flushBuf != null) {
             flush(_flushBuf);
         }
+
+        if (rafCh != null) {
+            _flushBuf = out;
+            while (rafCh.read(out) > 0) {
+                out.flip();
+                ByteBuffers.copyNonBlocking(out, channel, IOHttpJob.SO_WRITE_RETRY_COUNT);
+                out.clear();
+            }
+            _flushBuf = null;
+            rafCh = Misc.free(rafCh);
+            raf = Misc.free(raf);
+        }
+    }
+
+    public void send(String fileName) throws IOException {
+        raf = new RandomAccessFile(fileName, "r");
+        rafCh = raf.getChannel();
+        hb.status(200, "text/plain; charset=utf-8", raf.length());
+        flushHeader();
+        put(Misc.EOL);
+        out.position(Misc.EOL.length());
+        flushRemaining();
     }
 
     public void setChannel(WritableByteChannel channel) {
@@ -172,6 +200,7 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
     private void flush(ByteBuffer buf) throws IOException {
         this._flushBuf = buf;
         ByteBuffers.copyNonBlocking(buf, channel, IOHttpJob.SO_WRITE_RETRY_COUNT);
+        this._flushBuf.clear();
         this._flushBuf = null;
     }
 }
