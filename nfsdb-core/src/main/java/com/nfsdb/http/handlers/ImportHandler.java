@@ -115,7 +115,6 @@ public class ImportHandler extends AbstractMultipartHandler {
             Response r = context.response;
 
             r.status(200, "text/plain; charset=utf-8");
-            r.flushHeader();
 
             JournalMetadata m = context.importer.getMetadata();
             LongList errors = context.importer.getErrors();

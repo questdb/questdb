@@ -23,12 +23,35 @@ package com.nfsdb.http.handlers;
 
 import com.nfsdb.http.ContextHandler;
 import com.nfsdb.http.IOContext;
+import com.nfsdb.misc.Misc;
 
 import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 
 public class StaticContentHandler implements ContextHandler {
+    public void _continue(IOContext context) throws IOException {
+        if (context.raf == null) {
+            return;
+        }
+        FileChannel ch = context.raf.getChannel();
+        ByteBuffer out = context.response.getOut();
+
+        while (ch.read(out) > 0) {
+            out.flip();
+            context.response.sendBody();
+        }
+
+        context.raf = Misc.free(context.raf);
+    }
+
     @Override
     public void handle(IOContext context) throws IOException {
-        context.response.send("/Users/vlad/Downloads/Stats19-Data1979-2004/Accidents7904.csv");
+        context.raf = new RandomAccessFile("/Users/vlad/Downloads/Stats19-Data1979-2004/Accidents7904.csv", "r");
+        context.response.setFragmented(true);
+        context.response.status(200, "text/plain; charset=utf-8", context.raf.length());
+        context.response.sendHeader();
+        _continue(context);
     }
 }

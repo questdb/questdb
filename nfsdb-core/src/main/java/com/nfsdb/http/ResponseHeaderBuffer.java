@@ -31,9 +31,7 @@ import com.nfsdb.misc.*;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.channels.WritableByteChannel;
 
 public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable, Mutable {
     private static final IntObjHashMap<CharSequence> statusMap = new IntObjHashMap<>();
@@ -43,6 +41,7 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
     private final ByteBuffer headers;
     private final Clock clock;
     private long _wptr;
+    private boolean chunky;
 
     public ResponseHeaderBuffer(int size, Clock clock) {
         this.clock = clock;
@@ -96,8 +95,8 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
         throw ResponseHeaderBufferTooSmallException.INSTANCE;
     }
 
-    public String status(int code, CharSequence contentType) {
-        return status(code, contentType, -1L);
+    public boolean isChunky() {
+        return chunky;
     }
 
     public String status(int code, CharSequence contentType, long contentLength) {
@@ -110,7 +109,7 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
         put("Date: ");
         Dates.formatHTTP(this, clock.getTicks());
         put(Misc.EOL);
-        if (contentLength == -1) {
+        if (this.chunky = (contentLength == -1)) {
             append("Transfer-Encoding", "chunked");
         } else {
             put("Content-Length: ").put(contentLength).put(Misc.EOL);
@@ -120,12 +119,14 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
         return status;
     }
 
-    void flush(WritableByteChannel channel) throws IOException {
+    ByteBuffer prepareBuffer() {
+        if (!chunky) {
+            put(Misc.EOL);
+        }
         headers.limit((int) (_wptr - headerPtr));
-//        MultipartParser.dump(headers);
-        channel.write(headers);
-        headers.clear();
+        return headers;
     }
+
 
     static {
         httpStatusMap.put(200, "OK");

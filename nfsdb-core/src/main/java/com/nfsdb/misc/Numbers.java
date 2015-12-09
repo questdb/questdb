@@ -451,14 +451,6 @@ public final class Numbers {
         }
     }
 
-    public static double parseDoubleQuiet(CharSequence sequence) {
-        try {
-            return parseDouble(sequence, 0, sequence.length());
-        } catch (NumericException e) {
-            return Double.NaN;
-        }
-    }
-
     public static float parseFloat(CharSequence sequence) throws NumericException {
         return parseFloat(sequence, 0, sequence.length());
     }
@@ -531,14 +523,6 @@ public final class Numbers {
             return (negative ? -val : val) * pow10f[exp];
         } else {
             return (negative ? -val : val) / pow10f[-exp];
-        }
-    }
-
-    public static float parseFloatQuiet(CharSequence sequence) {
-        try {
-            return parseFloat(sequence, 0, sequence.length());
-        } catch (Exception e) {
-            return Float.NaN;
         }
     }
 

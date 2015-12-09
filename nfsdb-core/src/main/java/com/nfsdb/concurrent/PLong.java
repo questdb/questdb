@@ -48,14 +48,6 @@ public class PLong {
         Unsafe.getUnsafe().putLongVolatile(this.value, VALUE_OFFSET, value);
     }
 
-    public long get() {
-        return Unsafe.getUnsafe().getLong(value, VALUE_OFFSET);
-    }
-
-    public void set(final long value) {
-        Unsafe.getUnsafe().putLong(this.value, VALUE_OFFSET, value);
-    }
-
     @Override
     public String toString() {
         return Long.toString(fencedGet());

@@ -24,8 +24,6 @@ package com.nfsdb.concurrent;
 public interface Sequence extends Barrier {
     void alert();
 
-    void bully();
-
     long current();
 
     void done(long cursor);

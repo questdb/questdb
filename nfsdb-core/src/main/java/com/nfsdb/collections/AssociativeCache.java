@@ -35,7 +35,6 @@ public class AssociativeCache<V> implements Closeable {
     private static final int MINROWS = 16;
     private final CharSequence[] keys;
     private final V[] values;
-    private final int rows;
     private final int rmask;
     private final int bmask;
     private final int blocks;
@@ -45,15 +44,15 @@ public class AssociativeCache<V> implements Closeable {
     public AssociativeCache(int blocks, int rows) {
 
         this.blocks = Math.max(MIN_BLOCKS, Numbers.ceilPow2(blocks));
-        this.rows = Math.max(MINROWS, Numbers.ceilPow2(rows));
+        rows = Math.max(MINROWS, Numbers.ceilPow2(rows));
 
-        int size = this.rows * this.blocks;
+        int size = rows * this.blocks;
         if (size < 0) {
             throw new OutOfMemoryError();
         }
         this.keys = new CharSequence[size];
         this.values = (V[]) new Object[size];
-        this.rmask = this.rows - 1;
+        this.rmask = rows - 1;
         this.bmask = this.blocks - 1;
         this.bshift = Numbers.msb(this.blocks);
         Arrays.fill(keys, null);
@@ -86,10 +85,6 @@ public class AssociativeCache<V> implements Closeable {
             }
         }
         return null;
-    }
-
-    public int getRows() {
-        return rows;
     }
 
     public CharSequence put(CharSequence key, V value) {

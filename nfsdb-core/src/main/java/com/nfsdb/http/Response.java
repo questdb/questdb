@@ -35,9 +35,7 @@ import sun.nio.ch.DirectBuffer;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 import java.nio.channels.WritableByteChannel;
 
 public class Response extends AbstractCharSink implements Closeable, Mutable {
@@ -50,8 +48,8 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
     private WritableByteChannel channel;
     private long _wPtr;
     private ByteBuffer _flushBuf;
-    private RandomAccessFile raf = null;
-    private FileChannel rafCh;
+    private ResponseState state;
+    private boolean fragmented = false;
 
     public Response(int headerBufferSize, int contentBufferSize, Clock clock) {
         if (headerBufferSize <= 0) {
@@ -73,12 +71,58 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
         this.limit = outPtr + sz;
     }
 
+    public void _continue() throws IOException {
+        boolean chunky = hb.isChunky();
+        while (true) {
+            if (_flushBuf != null) {
+                flush(_flushBuf);
+            }
+
+            switch (state) {
+                case HEADER:
+                    if (fragmented) {
+                        return;
+                    }
+                case BODY_PART:
+                    if (chunky) {
+                        state = ResponseState.CHUNK;
+                        _flushBuf = _prepareChunk((int) (_wPtr - outPtr));
+                        break;
+                    }
+                    // fall through
+                case CHUNK:
+                    if (fragmented) {
+                        return;
+                    }
+                    _flushBuf = _prepareBody();
+                    state = ResponseState.BODY;
+                    break;
+                case BODY:
+                    if (chunky) {
+                        _flushBuf = _prepareChunk(0);
+                        state = ResponseState.END_CHUNK;
+                        break;
+                    }
+                    // fall through
+                case END_CHUNK:
+                    if (chunky) {
+                        put(Misc.EOL);
+                        _flushBuf = _prepareBody();
+                        state = ResponseState.END_BODY;
+                        break;
+                    }
+                    // fall through
+                case END_BODY:
+                    return;
+            }
+        }
+    }
+
     @Override
     public void clear() {
         out.clear();
         hb.clear();
         this._wPtr = outPtr;
-        this.raf = Misc.free(raf);
     }
 
     @Override
@@ -86,28 +130,16 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
         ByteBuffers.release(out);
         ByteBuffers.release(chunkHeader);
         hb.close();
-        this.raf = Misc.free(raf);
     }
 
     public void end() throws IOException {
-        flush();
-        chunk(0);
-        put(Misc.EOL);
-        int lim = (int) (_wPtr - outPtr);
-        out.limit(lim);
-        channel.write(out);
-        out.clear();
-        _wPtr = outPtr;
+        if (fragmented) {
+            return;
+        }
+        sendHeader();
     }
 
     public void flush() throws IOException {
-        int lim = (int) (_wPtr - outPtr);
-        if (lim > 0) {
-            chunk(lim);
-            out.limit(lim);
-            flush(out);
-            _wPtr = outPtr;
-        }
     }
 
     public Response put(CharSequence seq) {
@@ -133,40 +165,28 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
         throw ResponseHeaderBufferTooSmallException.INSTANCE;
     }
 
-    public void flushHeader() throws IOException {
-        hb.flush(channel);
+    public ByteBuffer getOut() {
+        return out;
     }
 
-    public void flushRemaining() throws IOException {
-        if (_flushBuf != null) {
-            flush(_flushBuf);
-        }
-
-        if (rafCh != null) {
-            _flushBuf = out;
-            while (rafCh.read(out) > 0) {
-                out.flip();
-                ByteBuffers.copyNonBlocking(out, channel, IOHttpJob.SO_WRITE_RETRY_COUNT);
-                out.clear();
-            }
-            _flushBuf = null;
-            rafCh = Misc.free(rafCh);
-            raf = Misc.free(raf);
-        }
+    public void sendBody() throws IOException {
+        state = ResponseState.BODY_PART;
+        _flushBuf = out;
+        _continue();
     }
 
-    public void send(String fileName) throws IOException {
-        raf = new RandomAccessFile(fileName, "r");
-        rafCh = raf.getChannel();
-        hb.status(200, "text/plain; charset=utf-8", raf.length());
-        flushHeader();
-        put(Misc.EOL);
-        out.position(Misc.EOL.length());
-        flushRemaining();
+    public void sendHeader() throws IOException {
+        state = ResponseState.HEADER;
+        _flushBuf = hb.prepareBuffer();
+        _continue();
     }
 
     public void setChannel(WritableByteChannel channel) {
         this.channel = channel;
+    }
+
+    public void setFragmented(boolean fragmented) {
+        this.fragmented = fragmented;
     }
 
     public ChannelStatus simple(int code) {
@@ -176,7 +196,6 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
     public ChannelStatus simple(int code, CharSequence message) {
         try {
             String std = status(code, "text/html; charset=utf-8");
-            flushHeader();
             put(message == null ? std : message).put(Misc.EOL);
             end();
             return ChannelStatus.READ;
@@ -186,21 +205,35 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
     }
 
     public String status(int status, CharSequence contentType) {
-        return this.hb.status(status, contentType);
+        return status(status, contentType, -1);
     }
 
-    private void chunk(int len) throws IOException {
+    public String status(int status, CharSequence contentType, long len) {
+        return this.hb.status(status, contentType, len);
+    }
+
+    private ByteBuffer _prepareBody() {
+        out.limit((int) (_wPtr - outPtr));
+        _wPtr = outPtr;
+        return out;
+    }
+
+    private ByteBuffer _prepareChunk(int len) {
         chunkSink.clear(Misc.EOL.length());
         Numbers.appendHex(chunkSink, len);
         chunkSink.put(Misc.EOL);
         chunkHeader.limit(chunkSink.length());
-        flush(chunkHeader);
+        return chunkHeader;
     }
 
     private void flush(ByteBuffer buf) throws IOException {
         this._flushBuf = buf;
         ByteBuffers.copyNonBlocking(buf, channel, IOHttpJob.SO_WRITE_RETRY_COUNT);
-        this._flushBuf.clear();
+        buf.clear();
         this._flushBuf = null;
+    }
+
+    private enum ResponseState {
+        HEADER, CHUNK, BODY, BODY_PART, END_CHUNK, END_BODY
     }
 }

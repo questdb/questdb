@@ -29,6 +29,7 @@ import com.nfsdb.misc.Misc;
 import com.nfsdb.storage.PlainFile;
 
 import java.io.Closeable;
+import java.io.RandomAccessFile;
 
 public class IOContext implements Closeable, Mutable {
     // todo: extract config
@@ -49,6 +50,9 @@ public class IOContext implements Closeable, Mutable {
     public boolean dataFormatValid = false;
     public TextParser textParser;
     public JournalImportListener importer;
+
+    // static sending fields
+    public RandomAccessFile raf;
 
     public IOContext(Clock clock) {
         this.response = new Response(1024, 1024 * 1024, clock);
@@ -71,6 +75,7 @@ public class IOContext implements Closeable, Mutable {
 
     private void freeResources() {
         mf = Misc.free(mf);
+        raf = Misc.free(raf);
         textParser = Misc.free(textParser);
         importer = Misc.free(importer);
     }

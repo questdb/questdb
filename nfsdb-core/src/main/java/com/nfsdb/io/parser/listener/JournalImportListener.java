@@ -57,6 +57,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
         Misc.free(writer);
     }
 
+    @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS")
     public void commit() {
         if (writer != null) {
             try {

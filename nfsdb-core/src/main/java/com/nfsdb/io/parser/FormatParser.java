@@ -50,7 +50,7 @@ public class FormatParser {
     }
 
     @SuppressWarnings("ConstantConditions")
-    public FormatParser of(long address, int len) {
+    public void of(long address, int len) {
         long lim = address + len;
         long p = address;
         boolean suspended = false;
@@ -116,7 +116,7 @@ public class FormatParser {
         }
 
         if (line == 0) {
-            return this;
+            return;
         }
 
         this.avgRecLen = len / line;
@@ -150,7 +150,7 @@ public class FormatParser {
 
         if (n == 0) {
             format = null;
-            return this;
+            return;
         }
 
         temp = 0;
@@ -167,6 +167,5 @@ public class FormatParser {
         }
 
         this.stdDev = Math.sqrt(temp / n);
-        return this;
     }
 }

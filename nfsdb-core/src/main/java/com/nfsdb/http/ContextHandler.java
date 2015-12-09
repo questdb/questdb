@@ -24,5 +24,7 @@ package com.nfsdb.http;
 import java.io.IOException;
 
 public interface ContextHandler {
+    void _continue(IOContext context) throws IOException;
+
     void handle(IOContext context) throws IOException;
 }

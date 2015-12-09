@@ -119,7 +119,8 @@ public class IOHttpJob implements Job<IOWorkerContext> {
 
                         // write what's left to
                         if ((op & SelectionKey.OP_WRITE) != 0) {
-                            response.flushRemaining();
+                            response._continue();
+                            handler._continue(context);
                         }
 
                         if ((op & SelectionKey.OP_READ) != 0) {

@@ -27,10 +27,16 @@ import com.nfsdb.http.ContextHandler;
 import com.nfsdb.http.IOContext;
 import com.nfsdb.http.MultipartListener;
 import com.nfsdb.http.RequestHeaderBuffer;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;
 
 public abstract class AbstractMultipartHandler implements ContextHandler, MultipartListener {
+    @SuppressFBWarnings("ACEM_ABSTRACT_CLASS_EMPTY_METHODS")
+    @Override
+    public void _continue(IOContext context) throws IOException {
+    }
+
     @Override
     public final void handle(IOContext context) throws IOException {
         onPartEnd(context);

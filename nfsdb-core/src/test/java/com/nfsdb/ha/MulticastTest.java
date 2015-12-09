@@ -113,7 +113,7 @@ public class MulticastTest extends AbstractTest {
         return !new ServerConfig().getMultiCastInterface(0).supportsMulticast();
     }
 
-    private static boolean hasIPv6() throws JournalNetworkException, SocketException {
+    private static boolean hasIPv6() throws JournalNetworkException {
         List<InterfaceAddress> ifs = new ServerConfig().getMultiCastInterface(0).getInterfaceAddresses();
         for (int i = 0; i < ifs.size(); i++) {
             if (ifs.get(i).getAddress() instanceof Inet6Address) {
