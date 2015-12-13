@@ -51,6 +51,9 @@ public class StaticContentHandler implements ContextHandler {
         context.raf = new RandomAccessFile("/Users/vlad/Downloads/Stats19-Data1979-2004/Accidents7904.csv", "r");
         context.response.setFragmented(true);
         context.response.status(200, "text/plain; charset=utf-8", context.raf.length());
+        context.response.headers().put("Content-Disposition: attachment; filename=\"").put("Accidents7904.csv").put("\"").put(Misc.EOL);
+        //Content-Disposition: attachment; filename="filename.pdf"
+
         context.response.sendHeader();
         _continue(context);
     }

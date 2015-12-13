@@ -26,7 +26,6 @@ import com.nfsdb.concurrent.RingQueue;
 import com.nfsdb.concurrent.Sequence;
 import com.nfsdb.exceptions.*;
 import com.nfsdb.misc.ByteBuffers;
-import sun.nio.ch.DirectBuffer;
 
 import java.io.IOException;
 import java.net.StandardSocketOptions;
@@ -66,6 +65,8 @@ public class IOHttpJob implements Job<IOWorkerContext> {
         final IOContext ioContext = evt.context;
 
         ioSequence.done(cursor);
+
+
         ioContext.threadContext = context;
         process(channel, ioContext, op);
 
@@ -82,7 +83,7 @@ public class IOHttpJob implements Job<IOWorkerContext> {
 //            MultipartParser.dump(r.in);
             try {
                 int sz = r.in.remaining();
-                if (sz > 0 && parser.parse(context, ((DirectBuffer) r.in).address() + r.in.position(), sz, handler)) {
+                if (sz > 0 && parser.parse(context, ByteBuffers.getAddress(r.in) + r.in.position(), sz, handler)) {
                     break;
                 }
             } finally {

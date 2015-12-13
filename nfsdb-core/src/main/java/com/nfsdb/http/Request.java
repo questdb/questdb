@@ -33,7 +33,6 @@ import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import sun.nio.ch.DirectBuffer;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -144,7 +143,7 @@ public class Request implements Closeable, Mutable {
 
     public ChannelStatus read(ReadableByteChannel channel) throws HeadersTooLargeException, IOException, MalformedHeaderException {
         ByteBuffers.copyNonBlocking(channel, in, IOHttpJob.SO_READ_RETRY_COUNT);
-        long address = ((DirectBuffer) in).address();
+        long address = ByteBuffers.getAddress(in);
         in.position((int) (hb.write(address, in.remaining(), true) - address));
 
         if (hb.isIncomplete()) {

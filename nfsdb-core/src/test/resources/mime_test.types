@@ -1,0 +1,8 @@
+# This file maps Internet media types to unique file extension(s).
+application/andrew-inset			ez
+application/inkml+xml				ink inkml
+application/iotp
+# application/mosskey-request
+application/mp21				m21 mp21
+application/mp4					mp4s
+# application/mpeg4-generic

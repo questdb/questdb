@@ -113,8 +113,7 @@ public final class ByteBuffers {
     }
 
     public static void copyNonBlocking(ByteBuffer from, WritableByteChannel channel, int retryCount) throws IOException {
-        int r = from.remaining();
-        int target = r;
+        int target = from.remaining();
         while (target > 0) {
             int result = channel.write(from);
 
@@ -123,11 +122,10 @@ public final class ByteBuffers {
                 throw DisconnectedChannelException.INSTANCE;
             }
 
-            if (result == 0 && --retryCount < 0) {
-                if (target == r) {
+            if (result == 0) {
+                if (--retryCount < 0) {
                     throw SlowWritableChannelException.INSTANCE;
                 }
-                break;
             }
             target -= result;
         }

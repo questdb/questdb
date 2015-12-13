@@ -58,4 +58,13 @@ public class DirectUnboundedAnsiSink extends AbstractCharSink {
     public int length() {
         return (int) (_wptr - address);
     }
+
+    @Override
+    public String toString() {
+        StringBuilder b = new StringBuilder();
+        for (long p = address, hi = _wptr; p < hi; p++) {
+            b.append((char) Unsafe.getUnsafe().getByte(p));
+        }
+        return b.toString();
+    }
 }

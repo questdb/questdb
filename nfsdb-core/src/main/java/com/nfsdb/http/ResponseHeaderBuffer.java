@@ -28,7 +28,6 @@ import com.nfsdb.io.sink.AbstractCharSink;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.misc.*;
-import sun.nio.ch.DirectBuffer;
 
 import java.io.Closeable;
 import java.nio.ByteBuffer;
@@ -47,12 +46,8 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
         this.clock = clock;
         int sz = Numbers.ceilPow2(size);
         this.headers = ByteBuffer.allocateDirect(sz);
-        this.headerPtr = _wptr = ((DirectBuffer) headers).address();
+        this.headerPtr = _wptr = ByteBuffers.getAddress(headers);
         this.limit = headerPtr + sz;
-    }
-
-    public void append(CharSequence name, CharSequence value) {
-        put(name).put(": ").put(value).put(Misc.EOL);
     }
 
     @Override
@@ -105,16 +100,16 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
             throw new IllegalArgumentException("Illegal status code: " + code);
         }
         put("HTTP/1.1 ").put(code).put(' ').put(status).put(Misc.EOL);
-        append("Server", "nfsdb/0.1");
+        put("Server: ").put("nfsdb/0.1").put(Misc.EOL);
         put("Date: ");
         Dates.formatHTTP(this, clock.getTicks());
         put(Misc.EOL);
         if (this.chunky = (contentLength == -1)) {
-            append("Transfer-Encoding", "chunked");
+            put("Transfer-Encoding: ").put("chunked").put(Misc.EOL);
         } else {
             put("Content-Length: ").put(contentLength).put(Misc.EOL);
         }
-        append("Content-Type", contentType);
+        put("Content-Type: ").put(contentType).put(Misc.EOL);
 
         return status;
     }

@@ -37,7 +37,6 @@ public class IOContext implements Closeable, Mutable {
     public final Response response;
     public IOWorkerContext threadContext;
 
-
     // multipart generic
     public boolean chunky = false;
 

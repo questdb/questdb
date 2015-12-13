@@ -22,10 +22,10 @@
 package com.nfsdb.io.parser;
 
 import com.nfsdb.io.TextFileFormat;
+import com.nfsdb.misc.ByteBuffers;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
-import sun.nio.ch.DirectBuffer;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -78,6 +78,6 @@ public class FormatParserTest {
         FileChannel channel = raf.getChannel();
         this.len = maxLen < raf.length() ? maxLen : (int) raf.length();
         ByteBuffer b = channel.map(FileChannel.MapMode.READ_ONLY, 0, this.len);
-        this.address = ((DirectBuffer) b).address();
+        this.address = ByteBuffers.getAddress(b);
     }
 }

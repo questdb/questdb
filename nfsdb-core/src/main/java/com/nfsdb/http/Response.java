@@ -31,7 +31,6 @@ import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Misc;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Unsafe;
-import sun.nio.ch.DirectBuffer;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -65,9 +64,9 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
         this.hb = new ResponseHeaderBuffer(headerBufferSize, clock);
         // size is 32bit int, as hex string max 8 bytes
         this.chunkHeader = ByteBuffer.allocateDirect(8 + 2 * Misc.EOL.length());
-        this.chunkSink = new DirectUnboundedAnsiSink(((DirectBuffer) chunkHeader).address());
+        this.chunkSink = new DirectUnboundedAnsiSink(ByteBuffers.getAddress(chunkHeader));
         this.chunkSink.put(Misc.EOL);
-        this.outPtr = this._wPtr = ((DirectBuffer) out).address();
+        this.outPtr = this._wPtr = ByteBuffers.getAddress(out);
         this.limit = outPtr + sz;
     }
 
@@ -167,6 +166,10 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
 
     public ByteBuffer getOut() {
         return out;
+    }
+
+    public CharSink headers() {
+        return hb;
     }
 
     public void sendBody() throws IOException {

@@ -149,7 +149,6 @@ public class HttpServerTest extends AbstractJournalTest {
             buf.flip();
             ByteBuffers.copy(buf, channel);
 
-
             channel.configureBlocking(false);
 
             ByteBuffers.copyNonBlocking(channel, out, 100000);
