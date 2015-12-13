@@ -30,7 +30,6 @@ import com.nfsdb.ha.config.ClientConfig;
 import com.nfsdb.ha.config.ServerConfig;
 import com.nfsdb.misc.Rnd;
 import com.nfsdb.model.Quote;
-import com.nfsdb.query.ResultSet;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestData;
 import com.nfsdb.test.tools.TestUtils;
@@ -92,7 +91,7 @@ public class ScenarioTest extends AbstractTest {
 
         local.refresh();
         remoteReader.refresh();
-        assertEquals(remoteReader, local);
+        TestUtils.assertEquals(remoteReader, local);
     }
 
     @Test
@@ -152,16 +151,6 @@ public class ScenarioTest extends AbstractTest {
 
         local.refresh();
         TestUtils.assertEquals(expected, local.query().head().withKeys().asResultSet());
-    }
-
-    private <T> void assertEquals(Journal<T> expected, Journal<T> actual) throws JournalException {
-        Assert.assertEquals("Size mismatch", expected.size(), actual.size());
-        Assert.assertEquals("Partition count mismatch", expected.getPartitionCount(), actual.getPartitionCount());
-        ResultSet<T> rsExpected = expected.query().all().asResultSet();
-        ResultSet<T> rsActual = actual.query().all().asResultSet();
-        for (int i = 0; i < rsExpected.size(); i++) {
-            Assert.assertEquals(rsExpected.read(i), rsActual.read(i));
-        }
     }
 
     private void lagIteration(final Journal<Quote> origin, final JournalWriter<Quote> remote, final int lo, final int hi) throws JournalException {

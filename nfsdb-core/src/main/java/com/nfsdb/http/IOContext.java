@@ -32,8 +32,7 @@ import java.io.Closeable;
 import java.io.RandomAccessFile;
 
 public class IOContext implements Closeable, Mutable {
-    // todo: extract config
-    public final Request request = new Request(128 * 1024, 4 * 1024 * 1024, 1024);
+    public final Request request;
     public final Response response;
     public IOWorkerContext threadContext;
 
@@ -53,8 +52,9 @@ public class IOContext implements Closeable, Mutable {
     // static sending fields
     public RandomAccessFile raf;
 
-    public IOContext(Clock clock) {
-        this.response = new Response(1024, 1024 * 1024, clock);
+    public IOContext(Clock clock, int reqHeaderSize, int reqContentSize, int reqMultipartHeaderSize, int respHeaderSize, int respContentSize) {
+        this.request = new Request(reqHeaderSize, reqContentSize, reqMultipartHeaderSize);
+        this.response = new Response(respHeaderSize, respContentSize, clock);
     }
 
     @Override

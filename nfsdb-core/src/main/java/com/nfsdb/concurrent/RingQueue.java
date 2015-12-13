@@ -41,4 +41,8 @@ public class RingQueue<T> {
     public T get(long cursor) {
         return Unsafe.arrayGet(buf, (int) (cursor & mask));
     }
+
+    public int getCapacity() {
+        return buf.length;
+    }
 }

@@ -38,17 +38,24 @@ public class IOLoopJob extends SynchronizedJob<IOWorkerContext> {
     private final MPSequence interestPubSequence;
     private final SCSequence interestSubSequence = new SCSequence();
     private final Clock clock;
+    private final HttpServerConfiguration configuration;
 
-    public IOLoopJob(Selector selector, SelectionKey serverKey, RingQueue<IOEvent> ioQueue, Sequence ioSequence, int interestQueueLen, Clock clock) {
+    public IOLoopJob(Selector selector,
+                     SelectionKey serverKey,
+                     RingQueue<IOEvent> ioQueue,
+                     Sequence ioSequence,
+                     Clock clock,
+                     HttpServerConfiguration configuration) {
         this.selector = selector;
         this.serverKey = serverKey;
         this.ioQueue = ioQueue;
         this.ioSequence = ioSequence;
-        this.interestQueue = new RingQueue<>(IOEvent.FACTORY, interestQueueLen);
-        this.interestPubSequence = new MPSequence(interestQueueLen, null);
+        this.interestQueue = new RingQueue<>(IOEvent.FACTORY, ioQueue.getCapacity());
+        this.interestPubSequence = new MPSequence(interestQueue.getCapacity(), null);
         this.interestPubSequence.followedBy(this.interestSubSequence);
         this.interestSubSequence.followedBy(this.interestPubSequence);
         this.clock = clock;
+        this.configuration = configuration;
     }
 
     public void registerChannel(SocketChannel channel, int op, IOContext context) {
@@ -121,7 +128,16 @@ public class IOLoopJob extends SynchronizedJob<IOWorkerContext> {
         channel.configureBlocking(false);
         channel.setOption(StandardSocketOptions.TCP_NODELAY, Boolean.TRUE);
         channel.setOption(StandardSocketOptions.SO_RCVBUF, IOHttpJob.SO_RVCBUF_DOWNLD);
-        channel.register(selector, SelectionKey.OP_READ).attach(new IOContext(clock));
+        channel.register(selector, SelectionKey.OP_READ).attach(
+                new IOContext(
+                        clock,
+                        configuration.getHttpBufReqHeader(),
+                        configuration.getHttpBufReqContent(),
+                        configuration.getHttpBufReqMultipart(),
+                        configuration.getHttpBufRespHeader(),
+                        configuration.getHttpBufRespContent()
+                )
+        );
     }
 
     @SuppressWarnings("MagicConstant")

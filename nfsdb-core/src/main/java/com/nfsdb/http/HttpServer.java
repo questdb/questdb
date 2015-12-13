@@ -27,55 +27,76 @@ import com.nfsdb.concurrent.*;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.http.handlers.ImportHandler;
 import com.nfsdb.http.handlers.StaticContentHandler;
-import com.nfsdb.http.handlers.UploadHandler;
 import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.iter.clock.MilliClock;
+import com.nfsdb.logging.Logger;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.net.InetSocketAddress;
+import java.net.URISyntaxException;
+import java.net.URL;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
+import java.nio.file.*;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.EnumSet;
 import java.util.concurrent.CountDownLatch;
 
+import static java.nio.file.FileVisitResult.CONTINUE;
+import static java.nio.file.StandardCopyOption.COPY_ATTRIBUTES;
+import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
+
 public class HttpServer {
+    private final static int ioQueueSize = 1024;
+    private final static Logger LOGGER = Logger.getLogger(HttpServer.class);
     private final InetSocketAddress address;
     private final ObjList<Worker<IOWorkerContext>> workers;
     private final CountDownLatch haltLatch;
-    private final int ioQueueSize;
     private final int workerCount;
     private final CountDownLatch startComplete = new CountDownLatch(1);
     private final UrlMatcher urlMatcher;
+    private final HttpServerConfiguration configuration;
     private ServerSocketChannel channel;
     private Selector selector;
     private volatile boolean running = true;
     private Clock clock = MilliClock.INSTANCE;
 
-    public HttpServer(InetSocketAddress address, UrlMatcher urlMatcher, int workerCount, int ioQueueSize) {
-        this.address = address;
+    public HttpServer(HttpServerConfiguration configuration, UrlMatcher urlMatcher) {
+        this.address = new InetSocketAddress(configuration.getHttpPort());
         this.urlMatcher = urlMatcher;
+        this.workerCount = configuration.getHttpThreads();
         this.haltLatch = new CountDownLatch(workerCount);
         this.workers = new ObjList<>(workerCount);
-        this.ioQueueSize = ioQueueSize;
-        this.workerCount = workerCount;
+        this.configuration = configuration;
     }
 
     @SuppressFBWarnings("PATH_TRAVERSAL_IN")
-    public static void main(String[] args) throws IOException, InterruptedException {
+    public static void main(String[] args) throws IOException, InterruptedException, URISyntaxException {
         if (args.length < 1) {
             return;
         }
         String dir = args[0];
+        extractSite(dir);
+        File conf = new File(dir, "conf/nfsdb.conf");
+
+        if (!conf.exists()) {
+            LOGGER.error("Configuration file does not exist: " + conf);
+            return;
+        }
+
+        HttpServerConfiguration configuration = new HttpServerConfiguration(conf);
         SimpleUrlMatcher matcher = new SimpleUrlMatcher();
-        matcher.put("/up", new UploadHandler(new File(dir)));
-        matcher.put("/imp", new ImportHandler(new JournalFactory(dir)));
+        matcher.put("/imp", new ImportHandler(new JournalFactory(configuration.getDbPath().getAbsolutePath())));
         matcher.put("/tmp", new StaticContentHandler());
-        HttpServer server = new HttpServer(new InetSocketAddress(9000), matcher, 2, 1024);
+
+        HttpServer server = new HttpServer(configuration, matcher);
         server.start();
-        System.out.println("Server started");
+        LOGGER.info("Server started");
+        LOGGER.info(configuration);
     }
 
     public void halt() throws IOException, InterruptedException {
@@ -110,7 +131,7 @@ public class HttpServer {
         ioPubSequence.followedBy(ioSubSequence);
         ioSubSequence.followedBy(ioPubSequence);
 
-        IOLoopJob ioLoop = new IOLoopJob(selector, channel.register(selector, SelectionKey.OP_ACCEPT), ioQueue, ioPubSequence, ioQueueSize, clock);
+        IOLoopJob ioLoop = new IOLoopJob(selector, channel.register(selector, SelectionKey.OP_ACCEPT), ioQueue, ioPubSequence, clock, configuration);
         IOHttpJob ioHttp = new IOHttpJob(ioQueue, ioSubSequence, ioLoop, urlMatcher);
 
         ObjList<Job<IOWorkerContext>> jobs = new ObjList<>();
@@ -124,6 +145,45 @@ public class HttpServer {
         }
 
         startComplete.countDown();
+    }
+
+    private static void extractSite(String dir) throws URISyntaxException, IOException {
+        URL url = HttpServer.class.getResource("/site/");
+        final Path source = Paths.get(url.toURI());
+        final Path target = Paths.get(dir);
+        final EnumSet<FileVisitOption> walkOptions = EnumSet.of(FileVisitOption.FOLLOW_LINKS);
+        final CopyOption[] copyOptions = new CopyOption[]{COPY_ATTRIBUTES, REPLACE_EXISTING};
+
+        Files.walkFileTree(source, walkOptions, Integer.MAX_VALUE, new FileVisitor<Path>() {
+
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                Path newDirectory = target.resolve(source.relativize(dir));
+                try {
+                    Files.copy(dir, newDirectory, copyOptions);
+                } catch (FileAlreadyExistsException ignore) {
+                } catch (IOException x) {
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
+                return CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                Files.copy(file, target.resolve(source.relativize(file)), copyOptions);
+                return CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                return CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult postVisitDirectory(Path dir, IOException exc) {
+                return FileVisitResult.CONTINUE;
+            }
+        });
     }
 
     private void instrumentSelector() {

@@ -354,6 +354,23 @@ public class NumbersTest {
     }
 
     @Test(expected = NumericException.class)
+    public void testParseSizeFail() throws Exception {
+        Numbers.parseIntSize("5Kb");
+    }
+
+    @Test
+    public void testParseSizeKb() throws Exception {
+        Assert.assertEquals(5 * 1024, Numbers.parseIntSize("5K"));
+        Assert.assertEquals(5 * 1024, Numbers.parseIntSize("5k"));
+    }
+
+    @Test
+    public void testParseSizeMb() throws Exception {
+        Assert.assertEquals(5 * 1024 * 1024, Numbers.parseIntSize("5M"));
+        Assert.assertEquals(5 * 1024 * 1024, Numbers.parseIntSize("5m"));
+    }
+
+    @Test(expected = NumericException.class)
     public void testParseWrongHexInt() throws Exception {
         Numbers.parseHexInt("0N");
     }

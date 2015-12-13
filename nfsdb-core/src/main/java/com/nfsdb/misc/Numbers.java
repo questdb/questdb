@@ -622,6 +622,60 @@ public final class Numbers {
 
     }
 
+    public static int parseIntSize(CharSequence sequence) throws NumericException {
+        return parseIntSize(sequence, 0, sequence.length());
+    }
+
+    public static int parseIntSize(CharSequence sequence, int p, int lim) throws NumericException {
+
+        if (lim == p) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(p) == '-';
+        if (negative) {
+            p++;
+        }
+
+        if (p >= lim) {
+            throw NumericException.INSTANCE;
+        }
+
+        int val = 0;
+        EX:
+        for (; p < lim; p++) {
+            int c = sequence.charAt(p);
+            if (c < '0' || c > '9') {
+                if (p == lim - 1) {
+                    switch (c) {
+                        case 'K':
+                        case 'k':
+                            val = val * 1024;
+                            break EX;
+                        case 'M':
+                        case 'm':
+                            val = val * 1024 * 1024;
+                            break EX;
+                        default:
+                            break;
+                    }
+                }
+                throw NumericException.INSTANCE;
+            }
+            // val * 10 + (c - '0')
+            int r = (val << 3) + (val << 1) - (c - '0');
+            if (r > val) {
+                throw NumericException.INSTANCE;
+            }
+            val = r;
+        }
+
+        if (val == Integer.MIN_VALUE && !negative) {
+            throw NumericException.INSTANCE;
+        }
+        return negative ? val : -val;
+    }
+
     public static long parseLong(CharSequence sequence) throws NumericException {
         if (sequence == null) {
             throw NumericException.INSTANCE;
@@ -678,6 +732,9 @@ public final class Numbers {
         sink.put((char) ('0' + (c % 10)));
     }
 
+
+    //////////////////////
+
     private static void appendLong19(CharSink sink, long i) {
         long c;
         sink.put((char) ('0' + i / 1000000000000000000L));
@@ -700,9 +757,6 @@ public final class Numbers {
         sink.put((char) ('0' + (c %= 100) / 10));
         sink.put((char) ('0' + (c % 10)));
     }
-
-
-    //////////////////////
 
     private static void appendLong18(CharSink sink, long i) {
         long c;

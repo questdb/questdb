@@ -413,14 +413,6 @@ public final class TestUtils {
         generateTestEntityData(w, count, Dates.parseDateTime("2012-05-15T10:55:00.000Z"), count * 100);
     }
 
-    @SuppressWarnings("unused")
-    public static <T> void print(JournalIterator<T> iterator) throws IOException {
-        try (JournalPrinter p = new JournalPrinter()) {
-            configure(p, iterator.getJournal().getMetadata());
-            out(p, iterator);
-        }
-    }
-
     public static long toMemory(CharSequence sequence) {
         long lo = Unsafe.getUnsafe().allocateMemory(sequence.length() * 2);
         long ptr = lo;

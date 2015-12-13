@@ -51,9 +51,9 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testConcurrentImport() throws Exception {
-        HttpServer server = new HttpServer(new InetSocketAddress(9090), new SimpleUrlMatcher() {{
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
             put("/import", new ImportHandler(factory));
-        }}, 2, 1024);
+        }});
         server.start();
 
         final CyclicBarrier barrier = new CyclicBarrier(2);
@@ -107,8 +107,8 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
-    public void testGoogle() throws Exception {
-        HttpServer server = new HttpServer(new InetSocketAddress(9000), new SimpleUrlMatcher(), 2, 1000);
+    public void testFragmentedUrl() throws Exception {
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher());
         server.setClock(new Clock() {
 
             @Override
@@ -122,7 +122,7 @@ public class HttpServerTest extends AbstractJournalTest {
         });
         server.start();
 
-        try (SocketChannel channel = openChannel("localhost", 9000, 5000)) {
+        try (SocketChannel channel = openChannel("localhost", 9090, 5000)) {
             ByteBuffer buf = ByteBuffer.allocate(1024);
             ByteBuffer out = ByteBuffer.allocate(1024);
             final String request = "GET /imp?x=1&z=2 HTTP/1.1\r\n" +
@@ -177,7 +177,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testStartStop() throws Exception {
-        HttpServer server = new HttpServer(new InetSocketAddress(9090), new SimpleUrlMatcher(), 2, 1024);
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher());
         server.start();
         server.halt();
     }
@@ -185,9 +185,9 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testUpload() throws Exception {
         final File dir = temp.newFolder();
-        HttpServer server = new HttpServer(new InetSocketAddress(9090), new SimpleUrlMatcher() {{
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
             put("/upload", new UploadHandler(dir));
-        }}, 2, 1024);
+        }});
         server.start();
 
         File expected = new File(this.getClass().getResource("/csv/test-import.csv").getFile());
