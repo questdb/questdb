@@ -38,7 +38,7 @@ public class HttpServerConfiguration {
     private int httpBufReqContent = 4 * 1024 * 1024;
     private int httpBufReqMultipart = 1024;
     private int httpBufRespHeader = 1024;
-    private int httpBufRespContent = 1024;
+    private int httpBufRespContent = 1024 * 1024;
     private int httpThreads = 2;
     private File dbPath = new File("db");
 

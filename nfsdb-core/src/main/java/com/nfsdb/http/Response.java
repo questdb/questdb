@@ -22,7 +22,7 @@
 package com.nfsdb.http;
 
 import com.nfsdb.collections.Mutable;
-import com.nfsdb.exceptions.ResponseHeaderBufferTooSmallException;
+import com.nfsdb.exceptions.ResponseContentBufferTooSmallException;
 import com.nfsdb.io.sink.AbstractCharSink;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.io.sink.DirectUnboundedAnsiSink;
@@ -150,7 +150,7 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
             }
             _wPtr = p;
         } else {
-            throw ResponseHeaderBufferTooSmallException.INSTANCE;
+            throw ResponseContentBufferTooSmallException.INSTANCE;
         }
         return this;
     }
@@ -161,7 +161,7 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
             Unsafe.getUnsafe().putByte(_wPtr++, (byte) c);
             return this;
         }
-        throw ResponseHeaderBufferTooSmallException.INSTANCE;
+        throw ResponseContentBufferTooSmallException.INSTANCE;
     }
 
     public ByteBuffer getOut() {
