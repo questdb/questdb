@@ -41,13 +41,16 @@ public class HttpServerConfiguration {
     private int httpBufRespContent = 1024 * 1024;
     private int httpThreads = 2;
     private File dbPath = new File("db");
+    private File mimeTypes = new File("conf/mime.types");
 
     public HttpServerConfiguration() {
     }
 
     public HttpServerConfiguration(File nfsdbConf) throws IOException {
 
-        Properties props = new Properties();
+        final Properties props = new Properties();
+        final File root = nfsdbConf.getParentFile().getParentFile();
+
         try (FileInputStream fis = new FileInputStream(nfsdbConf)) {
             props.load(fis);
         }
@@ -84,16 +87,15 @@ public class HttpServerConfiguration {
 
         String s;
         if ((s = props.getProperty("db.path")) != null) {
-            this.dbPath = new File(s);
+            this.dbPath = mkdirs(normalize(root, new File(s)));
+        } else {
+            this.dbPath = mkdirs(normalize(root, this.dbPath));
         }
 
-        // normalise path
-        if (!dbPath.isAbsolute()) {
-            this.dbPath = new File(nfsdbConf.getParentFile().getParentFile(), dbPath.getName());
-        }
-
-        if (!this.dbPath.exists()) {
-            Files.createDirectories(this.dbPath.toPath());
+        if ((s = props.getProperty("mime.types")) != null) {
+            this.mimeTypes = normalize(root, new File(s));
+        } else {
+            this.mimeTypes = normalize(root, mimeTypes);
         }
     }
 
@@ -129,6 +131,10 @@ public class HttpServerConfiguration {
         return httpThreads;
     }
 
+    public File getMimeTypes() {
+        return mimeTypes;
+    }
+
     @Override
     public String toString() {
         return "HttpServerConfiguration{" +
@@ -141,6 +147,20 @@ public class HttpServerConfiguration {
                 ",\n\thttpThreads=" + httpThreads +
                 ",\n\tdbPath=" + dbPath +
                 "\n}";
+    }
+
+    private File mkdirs(File dir) throws IOException {
+        if (!dir.exists()) {
+            Files.createDirectories(this.dbPath.toPath());
+        }
+        return dir;
+    }
+
+    private File normalize(File root, File file) {
+        if (file.isAbsolute()) {
+            return file;
+        }
+        return new File(root, file.getPath());
     }
 
     private int parseInt(Properties props, String name) {

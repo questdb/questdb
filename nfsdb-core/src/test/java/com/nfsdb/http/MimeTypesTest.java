@@ -25,10 +25,12 @@ import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.File;
+
 public class MimeTypesTest {
     @Test
     public void testLoading() throws Exception {
-        MimeTypes mimeTypes = new MimeTypes(this.getClass().getResource("/mime_test.types").getFile());
+        MimeTypes mimeTypes = new MimeTypes(new File(this.getClass().getResource("/mime_test.types").getFile()));
         Assert.assertEquals(6, mimeTypes.size());
         TestUtils.assertEquals("application/andrew-inset", mimeTypes.get("ez"));
         TestUtils.assertEquals("application/inkml+xml", mimeTypes.get("ink"));

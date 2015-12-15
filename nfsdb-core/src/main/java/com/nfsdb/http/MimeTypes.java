@@ -28,6 +28,7 @@ import com.nfsdb.misc.Misc;
 import com.nfsdb.misc.Unsafe;
 
 import java.io.Closeable;
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -35,7 +36,7 @@ import java.nio.ByteBuffer;
 public final class MimeTypes extends CharSequenceObjHashMap<CharSequence> implements Closeable {
     private ByteBuffer buf;
 
-    public MimeTypes(String file) throws IOException {
+    public MimeTypes(File file) throws IOException {
         try (FileInputStream fis = new FileInputStream(file)) {
             int sz;
             buf = ByteBuffer.allocateDirect(sz = fis.available());

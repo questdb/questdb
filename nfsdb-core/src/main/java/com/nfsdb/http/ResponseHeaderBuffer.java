@@ -104,12 +104,16 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
         put("Date: ");
         Dates.formatHTTP(this, clock.getTicks());
         put(Misc.EOL);
-        if (this.chunky = (contentLength == -1)) {
-            put("Transfer-Encoding: ").put("chunked").put(Misc.EOL);
-        } else {
-            put("Content-Length: ").put(contentLength).put(Misc.EOL);
+        if (contentLength > -2) {
+            if (this.chunky = (contentLength == -1)) {
+                put("Transfer-Encoding: ").put("chunked").put(Misc.EOL);
+            } else {
+                put("Content-Length: ").put(contentLength).put(Misc.EOL);
+            }
         }
-        put("Content-Type: ").put(contentType).put(Misc.EOL);
+        if (contentType != null) {
+            put("Content-Type: ").put(contentType).put(Misc.EOL);
+        }
 
         return status;
     }
@@ -125,8 +129,11 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
 
     static {
         httpStatusMap.put(200, "OK");
+        httpStatusMap.put(206, "Partial content");
+        httpStatusMap.put(304, "Not Modified");
         httpStatusMap.put(400, "Bad request");
         httpStatusMap.put(404, "Not Found");
+        httpStatusMap.put(416, "Request range not satisfiable");
         httpStatusMap.put(431, "Headers too large");
         httpStatusMap.put(500, "Internal server error");
     }

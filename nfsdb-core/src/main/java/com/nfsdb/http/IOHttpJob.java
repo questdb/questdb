@@ -146,7 +146,7 @@ public class IOHttpJob implements Job<IOWorkerContext> {
                         status = response.simple(404);
                     }
                 }
-                r.clear();
+                context.clear();
             }
         } catch (HeadersTooLargeException ignored) {
             response.simple(431);

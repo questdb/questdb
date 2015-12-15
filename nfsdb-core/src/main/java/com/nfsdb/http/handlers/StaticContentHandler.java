@@ -22,39 +22,26 @@
 package com.nfsdb.http.handlers;
 
 import com.nfsdb.http.ContextHandler;
+import com.nfsdb.http.FileSender;
 import com.nfsdb.http.IOContext;
-import com.nfsdb.misc.Misc;
 
+import java.io.File;
 import java.io.IOException;
-import java.io.RandomAccessFile;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 
 public class StaticContentHandler implements ContextHandler {
+
+    private final FileSender sender;
+
+    public StaticContentHandler(FileSender sender) {
+        this.sender = sender;
+    }
+
     public void _continue(IOContext context) throws IOException {
-        if (context.raf == null) {
-            return;
-        }
-        FileChannel ch = context.raf.getChannel();
-        ByteBuffer out = context.response.getOut();
-
-        while (ch.read(out) > 0) {
-            out.flip();
-            context.response.sendBody();
-        }
-
-        context.raf = Misc.free(context.raf);
+        sender._continue(context);
     }
 
     @Override
     public void handle(IOContext context) throws IOException {
-        context.raf = new RandomAccessFile("/Users/vlad/Downloads/Stats19-Data1979-2004/Accidents7904.csv", "r");
-        context.response.setFragmented(true);
-        context.response.status(200, "text/plain; charset=utf-8", context.raf.length());
-        context.response.headers().put("Content-Disposition: attachment; filename=\"").put("Accidents7904.csv").put("\"").put(Misc.EOL);
-        //Content-Disposition: attachment; filename="filename.pdf"
-
-        context.response.sendHeader();
-        _continue(context);
+        sender.send(context, new File("/Users/vlad/Downloads/Stats19-Data1979-2004/get.html"), false);
     }
 }

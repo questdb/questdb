@@ -21,6 +21,7 @@
 
 package com.nfsdb.http;
 
+import com.nfsdb.collections.FlyweightCharSequence;
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.io.parser.TextParser;
 import com.nfsdb.io.parser.listener.JournalImportListener;
@@ -34,23 +35,22 @@ import java.io.RandomAccessFile;
 public class IOContext implements Closeable, Mutable {
     public final Request request;
     public final Response response;
+    public final FlyweightCharSequence ext = new FlyweightCharSequence();
     public IOWorkerContext threadContext;
-
     // multipart generic
     public boolean chunky = false;
-
     // file upload fields
     public PlainFile mf;
     public long wptr = 0;
-
     // import handler fields
     public boolean analysed = false;
     public boolean dataFormatValid = false;
     public TextParser textParser;
     public JournalImportListener importer;
-
     // static sending fields
     public RandomAccessFile raf;
+    public long bytesSent;
+    public long sendMax;
 
     public IOContext(Clock clock, int reqHeaderSize, int reqContentSize, int reqMultipartHeaderSize, int respHeaderSize, int respContentSize) {
         this.request = new Request(reqHeaderSize, reqContentSize, reqMultipartHeaderSize);

@@ -88,10 +88,12 @@ public class HttpServer {
             return;
         }
 
-        HttpServerConfiguration configuration = new HttpServerConfiguration(conf);
-        SimpleUrlMatcher matcher = new SimpleUrlMatcher();
+        final HttpServerConfiguration configuration = new HttpServerConfiguration(conf);
+        final FileSender fileSender = new FileSender(new MimeTypes(configuration.getMimeTypes()));
+        final SimpleUrlMatcher matcher = new SimpleUrlMatcher();
+
         matcher.put("/imp", new ImportHandler(new JournalFactory(configuration.getDbPath().getAbsolutePath())));
-        matcher.put("/tmp", new StaticContentHandler());
+        matcher.put("/tmp", new StaticContentHandler(fileSender));
 
         HttpServer server = new HttpServer(configuration, matcher);
         server.start();

@@ -114,7 +114,20 @@ public final class Chars {
     }
 
     public static int indexOf(CharSequence s, char c) {
-        for (int i = 0, n = s.length(); i < n; i++) {
+        return indexOf(s, 0, c);
+    }
+
+    public static int indexOf(CharSequence s, int i, char c) {
+        for (int n = s.length(); i < n; i++) {
+            if (s.charAt(i) == c) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    public static int lastIndexOf(CharSequence s, char c) {
+        for (int i = s.length() - 1; i > -1; i--) {
             if (s.charAt(i) == c) {
                 return i;
             }
@@ -130,6 +143,20 @@ public final class Chars {
             Unsafe.getUnsafe().putChar(address + (i << 1), value.charAt(i));
         }
         return (len << 1) + 4;
+    }
+
+    public static boolean startsWith(CharSequence _this, CharSequence that) {
+        int len = that.length();
+        if (_this.length() < len) {
+            return false;
+        }
+
+        for (int i = 0; i < len; i++) {
+            if (_this.charAt(i) != that.charAt(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public static String stripQuotes(String s) {

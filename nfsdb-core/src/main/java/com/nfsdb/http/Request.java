@@ -125,6 +125,10 @@ public class Request implements Closeable, Mutable {
         return augmenter.of(hb.getBoundary());
     }
 
+    public CharSequence getHeader(CharSequence name) {
+        return hb.get(name);
+    }
+
     public MultipartParser getMultipartParser() {
         return multipartParser;
     }
