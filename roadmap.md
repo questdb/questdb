@@ -25,8 +25,8 @@ __server__
 - [x] file upload handling from curl (100-continue recognition)
 - [x] query execution
 - [ ] result set serialization (binary, json? - for javascript grid or chart)
-- [ ] flow control on file upload (park upload if client is not sending file)
-- [ ] flow control on query executions (do not execute until client is ready to read, park streaming if client is not ready to read)
+- [x] flow control on file upload (park upload if client is not sending file)
+- [x] flow control on query executions (do not execute until client is ready to read, park streaming if client is not ready to read)
 - [ ] manage parked uploads and downloads (timeout with resource cleanup)
 - [ ] C layer for windows (io completion ports)
 - [ ] C layer for linux (epoll)
