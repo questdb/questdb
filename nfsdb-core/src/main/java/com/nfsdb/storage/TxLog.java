@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.storage;
 
@@ -28,9 +28,10 @@ import com.nfsdb.misc.Rnd;
 import com.nfsdb.misc.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+import java.io.Closeable;
 import java.io.File;
 
-public class TxLog {
+public class TxLog implements Closeable {
 
     public static final String FILE_NAME = "_tx";
     private final UnstructuredFile hb;

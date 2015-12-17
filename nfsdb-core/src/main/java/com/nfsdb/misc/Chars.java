@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.misc;
 
@@ -27,6 +27,31 @@ public final class Chars {
     private final static ThreadLocal<char[]> builder = new ThreadLocal<>();
 
     private Chars() {
+    }
+
+    public static boolean containts(CharSequence _this, CharSequence that) {
+        int m = that.length();
+        if (m == 0) {
+            return false;
+        }
+
+
+        for (int i = 0, n = _this.length(); i < n; i++) {
+            if (_this.charAt(i) == that.charAt(0)) {
+                boolean found = true;
+                for (int k = 1; k < m && k + i < n; k++) {
+                    if (_this.charAt(i + k) != that.charAt(k)) {
+                        found = false;
+                        break;
+                    }
+                }
+                if (found) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     public static boolean equals(CharSequence l, CharSequence r) {

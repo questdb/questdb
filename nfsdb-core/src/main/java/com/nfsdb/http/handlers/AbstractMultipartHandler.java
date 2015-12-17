@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,12 +17,13 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.http.handlers;
 
 import com.nfsdb.collections.ByteSequence;
 import com.nfsdb.collections.DirectByteCharSequence;
+import com.nfsdb.exceptions.DisconnectedChannelException;
 import com.nfsdb.http.ContextHandler;
 import com.nfsdb.http.IOContext;
 import com.nfsdb.http.MultipartListener;
@@ -57,7 +58,7 @@ public abstract class AbstractMultipartHandler implements ContextHandler, Multip
 
     protected abstract void onComplete0(IOContext context) throws IOException;
 
-    protected abstract void onData(IOContext context, RequestHeaderBuffer hb, ByteSequence data);
+    protected abstract void onData(IOContext context, RequestHeaderBuffer hb, ByteSequence data) throws DisconnectedChannelException;
 
     protected abstract void onPartBegin(IOContext context, RequestHeaderBuffer hb) throws IOException;
 

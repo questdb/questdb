@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.http;
 
@@ -77,21 +77,24 @@ public class IOHttpJob implements Job<IOWorkerContext> {
             throws HeadersTooLargeException, IOException, MalformedHeaderException {
 
         channel.setOption(StandardSocketOptions.SO_RCVBUF, SO_RCVBUF_UPLOAD);
-        Request r = context.request;
-        MultipartParser parser = r.getMultipartParser().of(r.getBoundary());
-        while (true) {
+        try {
+            Request r = context.request;
+            MultipartParser parser = r.getMultipartParser().of(r.getBoundary());
+            while (true) {
 //            MultipartParser.dump(r.in);
-            try {
-                int sz = r.in.remaining();
-                if (sz > 0 && parser.parse(context, ByteBuffers.getAddress(r.in) + r.in.position(), sz, handler)) {
-                    break;
+                try {
+                    int sz = r.in.remaining();
+                    if (sz > 0 && parser.parse(context, ByteBuffers.getAddress(r.in) + r.in.position(), sz, handler)) {
+                        break;
+                    }
+                } finally {
+                    r.in.clear();
                 }
-            } finally {
-                r.in.clear();
+                ByteBuffers.copyNonBlocking(channel, r.in, SO_READ_RETRY_COUNT);
             }
-            ByteBuffers.copyNonBlocking(channel, r.in, SO_READ_RETRY_COUNT);
+        } finally {
+            channel.setOption(StandardSocketOptions.SO_RCVBUF, SO_RVCBUF_DOWNLD);
         }
-        channel.setOption(StandardSocketOptions.SO_RCVBUF, SO_RVCBUF_DOWNLD);
     }
 
     @SuppressWarnings("StatementWithEmptyBody")
@@ -154,10 +157,8 @@ public class IOHttpJob implements Job<IOWorkerContext> {
         } catch (MalformedHeaderException | DisconnectedChannelException e) {
             status = ChannelStatus.DISCONNECTED;
         } catch (SlowReadableChannelException e) {
-            System.out.println("slow read");
             status = ChannelStatus.READ;
         } catch (SlowWritableChannelException e) {
-            System.out.println("slow write");
             status = ChannelStatus.WRITE;
         } catch (IOException e) {
             status = ChannelStatus.DISCONNECTED;

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,11 +17,22 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.http;
 
 import com.nfsdb.collections.CharSequenceObjHashMap;
 
 public class SimpleUrlMatcher extends CharSequenceObjHashMap<ContextHandler> implements UrlMatcher {
+    private ContextHandler defaultHandler;
+
+    @Override
+    public ContextHandler get(CharSequence key) {
+        ContextHandler res = super.get(key);
+        return res == null ? defaultHandler : res;
+    }
+
+    public void setDefaultHandler(ContextHandler defaultHandler) {
+        this.defaultHandler = defaultHandler;
+    }
 }

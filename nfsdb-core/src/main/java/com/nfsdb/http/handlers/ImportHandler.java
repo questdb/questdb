@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.http.handlers;
 
@@ -208,7 +208,7 @@ public class ImportHandler extends AbstractMultipartHandler {
     }
 
     @Override
-    protected void onData(IOContext context, RequestHeaderBuffer hb, ByteSequence data) {
+    protected void onData(IOContext context, RequestHeaderBuffer hb, ByteSequence data) throws DisconnectedChannelException {
         int len;
         if (hb.getContentDispositionFilename() != null && (len = data.length()) > 0) {
             long lo = ((DirectByteCharSequence) data).getLo();
@@ -223,6 +223,7 @@ public class ImportHandler extends AbstractMultipartHandler {
                 context.textParser.parse(lo, len, Integer.MAX_VALUE, context.importer);
             } else {
                 context.response.simple(400, "Invalid data format");
+                throw DisconnectedChannelException.INSTANCE;
             }
         }
     }

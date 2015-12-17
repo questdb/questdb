@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,12 +17,15 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb;
 
 import com.nfsdb.collections.PeekingListIterator;
-import com.nfsdb.concurrent.*;
+import com.nfsdb.concurrent.BlockingWaitStrategy;
+import com.nfsdb.concurrent.SCSequence;
+import com.nfsdb.concurrent.SPSequence;
+import com.nfsdb.concurrent.Sequence;
 import com.nfsdb.exceptions.IncompatibleJournalException;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
@@ -48,6 +51,7 @@ import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -570,11 +574,12 @@ public class JournalWriter<T> extends Journal<T> {
                 try {
                     if (lock != null && lock.isValid()) {
                         LOGGER.trace("Purging : %s", files[i]);
+
                         if (!Files.delete(files[i])) {
-                            LOGGER.info("Could not purge: %s", files[i]);
+                            LOGGER.trace("Could not purge: %s", files[i]);
                         }
                     } else {
-                        LOGGER.trace("Partition in use: %s", files[i]);
+                        LOGGER.info("Partition in use: %s", files[i]);
                     }
                 } finally {
                     LockManager.release(lock);
@@ -945,10 +950,12 @@ public class JournalWriter<T> extends Journal<T> {
         private final Sequence pubSeq;
         private final Sequence subSeq;
         private final JournalWriter writer;
-        private final TxLog txLog;
+        private final CountDownLatch haltLatch = new CountDownLatch(1);
+        private volatile TxLog txLog;
+        private volatile boolean running = false;
 
         public PartitionCleaner(final JournalWriter writer, String name) throws JournalException {
-            this.executor = Executors.newCachedThreadPool(new NamedDaemonThreadFactory("nfsdb-journal-cleaner-" + name, true));
+            this.executor = Executors.newCachedThreadPool(new NamedDaemonThreadFactory("nfsdb-journal-cleaner-" + name, false));
             this.writer = writer;
             this.pubSeq = new SPSequence(32);
             this.subSeq = new SCSequence(new BlockingWaitStrategy());
@@ -960,6 +967,13 @@ public class JournalWriter<T> extends Journal<T> {
         public void halt() {
             executor.shutdown();
             subSeq.alert();
+//            txLog = Misc.free(txLog);
+            try {
+                if (running) {
+                    haltLatch.await();
+                }
+            } catch (InterruptedException ignore) {
+            }
         }
 
         public void purge() {
@@ -967,20 +981,29 @@ public class JournalWriter<T> extends Journal<T> {
         }
 
         public void start() {
+            running = true;
             executor.submit(new Runnable() {
                 @Override
                 public void run() {
-                    while (true) {
-                        try {
-                            subSeq.done(subSeq.waitForNext());
+                    try {
+                        while (true) {
                             try {
-                                writer.purgeUnusedTempPartitions(txLog);
-                            } catch (JournalException e) {
-                                throw new JournalRuntimeException(e);
+                                subSeq.done(subSeq.waitForNext());
+                                try {
+                                    if (txLog != null) {
+                                        writer.purgeUnusedTempPartitions(txLog);
+                                    }
+                                } catch (JournalException e) {
+                                    throw new JournalRuntimeException(e);
+                                }
+                            } catch (Exception ignore) {
+                                running = false;
+                                haltLatch.countDown();
+                                break;
                             }
-                        } catch (AlertedException ignore) {
-                            break;
                         }
+                    } finally {
+                        txLog = Misc.free(txLog);
                     }
                 }
             });

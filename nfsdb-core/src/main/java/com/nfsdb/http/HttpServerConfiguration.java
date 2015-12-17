@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.http;
 
@@ -42,6 +42,7 @@ public class HttpServerConfiguration {
     private int httpThreads = 2;
     private File dbPath = new File("db");
     private File mimeTypes = new File("conf/mime.types");
+    private File httpPublic = new File("public");
 
     public HttpServerConfiguration() {
     }
@@ -86,6 +87,7 @@ public class HttpServerConfiguration {
         }
 
         String s;
+
         if ((s = props.getProperty("db.path")) != null) {
             this.dbPath = mkdirs(normalize(root, new File(s)));
         } else {
@@ -96,6 +98,12 @@ public class HttpServerConfiguration {
             this.mimeTypes = normalize(root, new File(s));
         } else {
             this.mimeTypes = normalize(root, mimeTypes);
+        }
+
+        if ((s = props.getProperty("http.public")) != null) {
+            this.httpPublic = mkdirs(normalize(root, new File(s)));
+        } else {
+            this.httpPublic = mkdirs(normalize(root, this.httpPublic));
         }
     }
 
@@ -127,6 +135,10 @@ public class HttpServerConfiguration {
         return httpPort;
     }
 
+    public File getHttpPublic() {
+        return httpPublic;
+    }
+
     public int getHttpThreads() {
         return httpThreads;
     }
@@ -151,7 +163,7 @@ public class HttpServerConfiguration {
 
     private File mkdirs(File dir) throws IOException {
         if (!dir.exists()) {
-            Files.createDirectories(this.dbPath.toPath());
+            Files.createDirectories(dir.toPath());
         }
         return dir;
     }
