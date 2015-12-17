@@ -81,7 +81,6 @@ public class IOHttpJob implements Job<IOWorkerContext> {
             Request r = context.request;
             MultipartParser parser = r.getMultipartParser().of(r.getBoundary());
             while (true) {
-//            MultipartParser.dump(r.in);
                 try {
                     int sz = r.in.remaining();
                     if (sz > 0 && parser.parse(context, ByteBuffers.getAddress(r.in) + r.in.position(), sz, handler)) {
@@ -141,8 +140,6 @@ public class IOHttpJob implements Job<IOWorkerContext> {
                                 } else {
                                     handler.handle(context);
                                 }
-//                                ByteBuffers.dump(r.in);
-//                                status = response.simple(404);
                             }
                         }
                     } else {
@@ -172,7 +169,6 @@ public class IOHttpJob implements Job<IOWorkerContext> {
         if (status != ChannelStatus.DISCONNECTED) {
             loop.registerChannel(channel, status == ChannelStatus.WRITE ? SelectionKey.OP_WRITE : SelectionKey.OP_READ, context);
         } else {
-            System.out.println("Disconnected: " + channel);
             try {
                 channel.close();
                 context.close();

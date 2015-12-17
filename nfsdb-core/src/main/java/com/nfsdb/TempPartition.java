@@ -36,7 +36,6 @@ public class TempPartition<T> extends Partition<T> {
         super(journal, interval, partitionIndex, Journal.TX_LIMIT_EVAL, null);
         setPartitionDir(new File(journal.getLocation(), name), null);
         this.lock = LockManager.lockShared(getPartitionDir());
-        System.out.println("Got shared lock: " + lock);
     }
 
     @Override
