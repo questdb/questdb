@@ -73,6 +73,7 @@ public class FormatParser {
         this.stdDev = Double.POSITIVE_INFINITY;
         this.format = null;
 
+        boolean eol = false;
         while (p < lim && line < maxLines) {
             char b = (char) Unsafe.getUnsafe().getByte(p++);
 
@@ -83,17 +84,33 @@ public class FormatParser {
             switch (b) {
                 case ',':
                     comma++;
+                    if (eol) {
+                        eol = false;
+                    }
                     break;
                 case '|':
                     pipe++;
+                    if (eol) {
+                        eol = false;
+                    }
                     break;
                 case '\t':
                     tab++;
+                    if (eol) {
+                        eol = false;
+                    }
                     break;
                 case '"':
                     suspended = !suspended;
+                    if (eol) {
+                        eol = false;
+                    }
                     break;
-                case '\r':
+                case '\n':
+                    if (eol) {
+                        break;
+                    }
+
                     line++;
                     commas.add(comma - _comma);
                     pipes.add(pipe - _pipe);
@@ -102,17 +119,15 @@ public class FormatParser {
                     _comma = comma;
                     _pipe = pipe;
                     _tab = tab;
+
+                    eol = true;
                     break;
                 default:
+                    if (eol) {
+                        eol = false;
+                    }
                     break;
             }
-        }
-
-        if (comma > _comma || pipe > _pipe || tab > _tab) {
-            line++;
-            commas.add(comma - _comma);
-            pipes.add(pipe - _pipe);
-            tabs.add(tab - _tab);
         }
 
         if (line == 0) {

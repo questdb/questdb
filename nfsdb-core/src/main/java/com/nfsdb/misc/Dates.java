@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.misc;
 
@@ -114,7 +114,6 @@ final public class Dates {
                 return Dates.addYear(lo, period);
             default:
                 throw NumericException.INSTANCE;
-//                throw new NumberFormatException("Unsupported period: " + type);
         }
     }
 
@@ -417,20 +416,17 @@ final public class Dates {
         int p = lo;
         if (p + 4 > lim) {
             throw NumericException.INSTANCE;
-//                throw new NumberFormatException("Four digit year expected: " + seq);
         }
         int year = Numbers.parseInt(seq, p, p += 4);
         checkChar(seq, p++, lim, '-');
         if (p + 2 > lim) {
             throw NumericException.INSTANCE;
-//                throw new NumberFormatException("Two digit month expected: " + seq);
         }
         int month = Numbers.parseInt(seq, p, p += 2);
         checkRange(month, 1, 12);
         checkChar(seq, p++, lim, '-');
         if (p + 2 > lim) {
             throw NumericException.INSTANCE;
-//                throw new NumberFormatException("Two digit day of month expected: " + seq);
         }
         boolean l = isLeapYear(year);
         int day = Numbers.parseInt(seq, p, p += 2);
@@ -438,21 +434,18 @@ final public class Dates {
         checkChar(seq, p++, lim, 'T');
         if (p + 2 > lim) {
             throw NumericException.INSTANCE;
-//                throw new NumberFormatException("Two digit number of hours (24h scale) expected: " + seq);
         }
         int hour = Numbers.parseInt(seq, p, p += 2);
         checkRange(hour, 0, 23);
         checkChar(seq, p++, lim, ':');
         if (p + 2 > lim) {
             throw NumericException.INSTANCE;
-//                throw new NumberFormatException("Two digit number of minutes expected: " + seq);
         }
         int min = Numbers.parseInt(seq, p, p += 2);
         checkRange(min, 0, 59);
         checkChar(seq, p++, lim, ':');
         if (p + 2 > lim) {
             throw NumericException.INSTANCE;
-//                throw new NumberFormatException("Two digit number of seconds expected: " + seq);
         }
         int sec = Numbers.parseInt(seq, p, p += 2);
         checkRange(sec, 0, 59);
@@ -461,7 +454,6 @@ final public class Dates {
 
             if (p + 4 > lim) {
                 throw NumericException.INSTANCE;
-//                    throw new NumberFormatException("Three digit number of millis expected: " + seq);
             }
             mil = Numbers.parseInt(seq, ++p, p += 3);
             checkRange(mil, 0, 999);
@@ -490,20 +482,17 @@ final public class Dates {
         int p = lo;
         if (p + 4 > lim) {
             throw NumericException.INSTANCE;
-//                throw new NumberFormatException("Four digit year expected: " + seq);
         }
         int year = Numbers.parseInt(seq, p, p += 4);
         checkChar(seq, p++, lim, '-');
         if (p + 2 > lim) {
             throw NumericException.INSTANCE;
-//                throw new NumberFormatException("Two digit month expected: " + seq);
         }
         int month = Numbers.parseInt(seq, p, p += 2);
         checkRange(month, 1, 12);
         checkChar(seq, p++, lim, '-');
         if (p + 2 > lim) {
             throw NumericException.INSTANCE;
-//                throw new NumberFormatException("Two digit day of month expected: " + seq);
         }
         boolean l = isLeapYear(year);
         int day = Numbers.parseInt(seq, p, p += 2);
@@ -511,21 +500,18 @@ final public class Dates {
         checkChar(seq, p++, lim, ' ');
         if (p + 2 > lim) {
             throw NumericException.INSTANCE;
-//                throw new NumberFormatException("Two digit number of hours (24h scale) expected: " + seq);
         }
         int hour = Numbers.parseInt(seq, p, p += 2);
         checkRange(hour, 0, 23);
         checkChar(seq, p++, lim, ':');
         if (p + 2 > lim) {
             throw NumericException.INSTANCE;
-//                throw new NumberFormatException("Two digit number of minutes expected: " + seq);
         }
         int min = Numbers.parseInt(seq, p, p += 2);
         checkRange(min, 0, 59);
         checkChar(seq, p++, lim, ':');
         if (p + 2 > lim) {
             throw NumericException.INSTANCE;
-//                throw new NumberFormatException("Two digit number of seconds expected: " + seq);
         }
         int sec = Numbers.parseInt(seq, p, p + 2);
         checkRange(sec, 0, 59);
@@ -627,7 +613,6 @@ final public class Dates {
                             int sec = Numbers.parseInt(seq, p, p += 2);
                             checkRange(sec, 0, 59);
                             if (p < len) {
-//                                    throw new NumberFormatException("not an interval");
                                 throw NumericException.INSTANCE;
                             } else {
                                 // seconds
@@ -810,14 +795,12 @@ final public class Dates {
 
     private static void checkChar(CharSequence s, int p, int lim, char c) throws NumericException {
         if (p >= lim || s.charAt(p) != c) {
-//            throw new NumberFormatException("Expected " + c + " at " + p);
             throw NumericException.INSTANCE;
         }
     }
 
     private static void checkRange(int x, int min, int max) throws NumericException {
         if (x < min || x > max) {
-//            throw new NumberFormatException(what + " not in range: " + x);
             throw NumericException.INSTANCE;
         }
     }

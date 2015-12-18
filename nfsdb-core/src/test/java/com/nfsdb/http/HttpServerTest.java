@@ -25,12 +25,14 @@ import com.nfsdb.Journal;
 import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.ha.AbstractJournalTest;
 import com.nfsdb.http.handlers.ImportHandler;
+import com.nfsdb.http.handlers.StaticContentHandler;
 import com.nfsdb.http.handlers.UploadHandler;
 import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -38,10 +40,13 @@ import org.junit.rules.TemporaryFolder;
 import java.io.*;
 import java.net.*;
 import java.nio.ByteBuffer;
+import java.nio.channels.Channels;
+import java.nio.channels.ReadableByteChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 public class HttpServerTest extends AbstractJournalTest {
@@ -50,9 +55,87 @@ public class HttpServerTest extends AbstractJournalTest {
     public final TemporaryFolder temp = new TemporaryFolder();
 
     @Test
+    @Ignore
+    public void testConcurrentDownload() throws Exception {
+        final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(HttpServerTest.class.getResource("/site").getPath(), "conf/nfsdb.conf"));
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), new FileSender(new MimeTypes(configuration.getMimeTypes()))));
+        }});
+        server.start();
+
+        final File actual1 = new File(temp.getRoot(), "get.html");
+        final File actual2 = new File(temp.getRoot(), "post.html");
+        final File actual3 = new File(temp.getRoot(), "upload.html");
+
+        final CyclicBarrier barrier = new CyclicBarrier(3);
+        final CountDownLatch haltLatch = new CountDownLatch(3);
+
+        final AtomicInteger counter = new AtomicInteger(0);
+
+        new Thread() {
+            @Override
+            public void run() {
+                try {
+                    barrier.await();
+                    download("http://localhost:9090/get.html", actual1);
+                } catch (Exception e) {
+                    counter.incrementAndGet();
+                } finally {
+                    haltLatch.countDown();
+                }
+            }
+        }.start();
+
+
+        new Thread() {
+            @Override
+            public void run() {
+                try {
+                    barrier.await();
+                    download("http://localhost:9090/post.html", actual2);
+                } catch (Exception e) {
+                    counter.incrementAndGet();
+                } finally {
+                    haltLatch.countDown();
+                }
+            }
+        }.start();
+
+        new Thread() {
+            @Override
+            public void run() {
+                try {
+                    barrier.await();
+                    download("http://localhost:9090/upload.html", actual3);
+                } catch (Exception e) {
+                    counter.incrementAndGet();
+                } finally {
+                    haltLatch.countDown();
+                }
+            }
+        }.start();
+
+        haltLatch.await();
+
+        Assert.assertEquals(0, counter.get());
+        TestUtils.assertEquals(new File(HttpServerTest.class.getResource("/site/public/get.html").getPath()), actual1);
+        TestUtils.assertEquals(new File(HttpServerTest.class.getResource("/site/public/post.html").getPath()), actual2);
+        TestUtils.assertEquals(new File(HttpServerTest.class.getResource("/site/public/upload.html").getPath()), actual3);
+
+        server.halt();
+        System.out.println("ok");
+
+        Thread[] th = new Thread[Thread.activeCount()];
+        int c = Thread.enumerate(th);
+        for (int i = 0; i < c; i++) {
+            System.out.println(th[i]);
+        }
+    }
+
+    @Test
     public void testConcurrentImport() throws Exception {
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/import", new ImportHandler(factory));
+            put("/imp", new ImportHandler(factory));
         }});
         server.start();
 
@@ -65,10 +148,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 public void run() {
                     try {
                         barrier.await();
-                        upload(
-                                new File(HttpServerTest.this.getClass().getResource("/csv/test-import.csv").getFile()),
-                                "http://localhost:9090/import"
-                        );
+                        Assert.assertEquals(200, upload("/csv/test-import.csv", "http://localhost:9090/imp"));
                         latch.countDown();
                     } catch (Exception e) {
                         Assert.fail(e.getMessage());
@@ -81,10 +161,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 public void run() {
                     try {
                         barrier.await();
-                        upload(
-                                new File(HttpServerTest.this.getClass().getResource("/csv/test-import-nan.csv").getFile()),
-                                "http://localhost:9090/import"
-                        );
+                        Assert.assertEquals(200, upload("/csv/test-import-nan.csv", "http://localhost:9090/imp"));
                         latch.countDown();
                     } catch (Exception e) {
                         Assert.fail(e.getMessage());
@@ -176,6 +253,16 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
+    public void testImportUnknownFormat() throws Exception {
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            put("/imp", new ImportHandler(factory));
+        }});
+        server.start();
+        Assert.assertEquals(400, upload("/com/nfsdb/collections/AssociativeCache.class", "http://localhost:9090/imp"));
+        server.halt();
+    }
+
+    @Test
     public void testStartStop() throws Exception {
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher());
         server.start();
@@ -198,7 +285,11 @@ public class HttpServerTest extends AbstractJournalTest {
         server.halt();
     }
 
-    private static void upload(File file, String url) throws IOException {
+    private static int upload(String resouce, String url) throws IOException {
+        return upload(new File(HttpServerTest.class.getResource(resouce).getFile()), url);
+    }
+
+    private static int upload(File file, String url) throws IOException {
         String charset = "UTF-8";
         String param = "value";
         String boundary = Long.toHexString(System.currentTimeMillis()); // Just generate some unique random value.
@@ -231,8 +322,16 @@ public class HttpServerTest extends AbstractJournalTest {
             writer.append("--").append(boundary).append("--").append(CRLF).flush();
         }
 
-        int response = ((HttpURLConnection) connection).getResponseCode();
-        Assert.assertEquals(200, response);
+        return ((HttpURLConnection) connection).getResponseCode();
+    }
+
+    private void download(String url, File out) throws IOException {
+        URLConnection connection = new URL(url).openConnection();
+        try (ReadableByteChannel rbc = Channels.newChannel(connection.getInputStream())) {
+            try (FileOutputStream fos = new FileOutputStream(out)) {
+                fos.getChannel().transferFrom(rbc, 0, Long.MAX_VALUE);
+            }
+        }
     }
 
     private SocketChannel openChannel(String host, int port, long timeout) throws IOException {

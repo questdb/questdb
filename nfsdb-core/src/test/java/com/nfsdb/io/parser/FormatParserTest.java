@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.io.parser;
 
@@ -52,13 +52,14 @@ public class FormatParserTest {
         p.of(this.address, this.len);
         Assert.assertEquals(TextFileFormat.CSV, p.getFormat());
         Assert.assertEquals(0d, p.getStdDev(), 0.0000001d);
-        Assert.assertEquals(104, p.getAvgRecLen());
+        Assert.assertEquals(105, p.getAvgRecLen());
     }
 
     @Test
     public void testRandomText() throws Exception {
         open("/upload.html");
         p.of(this.address, this.len);
+        System.out.println(p.getStdDev());
         Assert.assertTrue(p.getStdDev() > 1d);
     }
 
