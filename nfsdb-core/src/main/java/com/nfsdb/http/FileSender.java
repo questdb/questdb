@@ -54,9 +54,12 @@ public class FileSender {
             if (l + context.bytesSent > context.sendMax) {
                 l = (int) (context.sendMax - context.bytesSent);
                 out.limit(l);
+                // do not refactor, placement is critical
+                context.bytesSent += l;
                 context.response.sendBody();
                 break;
             } else {
+                // do not refactor, placement is critical
                 context.bytesSent += l;
                 context.response.sendBody();
             }

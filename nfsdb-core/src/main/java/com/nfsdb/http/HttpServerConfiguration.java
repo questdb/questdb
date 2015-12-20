@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,13 +17,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.http;
 
 import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.misc.Numbers;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -31,6 +32,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.util.Properties;
 
+@SuppressFBWarnings("PATH_TRAVERSAL_IN")
 public class HttpServerConfiguration {
     private static final Logger LOGGER = Logger.getLogger(HttpServerConfiguration.class);
     private int httpPort = 9090;

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.http;
 
@@ -31,19 +31,25 @@ import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.test.tools.TestUtils;
+import org.apache.http.Header;
+import org.apache.http.HttpResponse;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.mime.MultipartEntityBuilder;
+import org.apache.http.entity.mime.content.FileBody;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.*;
-import java.net.*;
+import java.net.InetSocketAddress;
+import java.net.StandardSocketOptions;
 import java.nio.ByteBuffer;
-import java.nio.channels.Channels;
-import java.nio.channels.ReadableByteChannel;
 import java.nio.channels.SocketChannel;
-import java.nio.file.Files;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -55,80 +61,78 @@ public class HttpServerTest extends AbstractJournalTest {
     public final TemporaryFolder temp = new TemporaryFolder();
 
     @Test
-    @Ignore
     public void testConcurrentDownload() throws Exception {
-        final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(HttpServerTest.class.getResource("/site").getPath(), "conf/nfsdb.conf"));
+        final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/nfsdb.conf"));
+        final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), new FileSender(new MimeTypes(configuration.getMimeTypes()))));
+            setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), new FileSender(mimeTypes)));
         }});
         server.start();
 
-        final File actual1 = new File(temp.getRoot(), "get.html");
-        final File actual2 = new File(temp.getRoot(), "post.html");
-        final File actual3 = new File(temp.getRoot(), "upload.html");
+        try {
 
-        final CyclicBarrier barrier = new CyclicBarrier(3);
-        final CountDownLatch haltLatch = new CountDownLatch(3);
+            final File actual1 = new File(temp.getRoot(), "get.html");
+            final File actual2 = new File(temp.getRoot(), "post.html");
+            final File actual3 = new File(temp.getRoot(), "upload.html");
 
-        final AtomicInteger counter = new AtomicInteger(0);
+            final CyclicBarrier barrier = new CyclicBarrier(3);
+            final CountDownLatch haltLatch = new CountDownLatch(3);
 
-        new Thread() {
-            @Override
-            public void run() {
-                try {
-                    barrier.await();
-                    download("http://localhost:9090/get.html", actual1);
-                } catch (Exception e) {
-                    counter.incrementAndGet();
-                } finally {
-                    haltLatch.countDown();
+            final AtomicInteger counter = new AtomicInteger(0);
+
+            new Thread() {
+                @Override
+                public void run() {
+                    try {
+                        barrier.await();
+                        download("http://localhost:9090/get.html", actual1);
+                    } catch (Exception e) {
+                        counter.incrementAndGet();
+                    } finally {
+                        haltLatch.countDown();
+                    }
                 }
-            }
-        }.start();
+            }.start();
 
 
-        new Thread() {
-            @Override
-            public void run() {
-                try {
-                    barrier.await();
-                    download("http://localhost:9090/post.html", actual2);
-                } catch (Exception e) {
-                    counter.incrementAndGet();
-                } finally {
-                    haltLatch.countDown();
+            new Thread() {
+                @Override
+                public void run() {
+                    try {
+                        barrier.await();
+                        download("http://localhost:9090/post.html", actual2);
+                    } catch (Exception e) {
+                        counter.incrementAndGet();
+                    } finally {
+                        haltLatch.countDown();
+                    }
                 }
-            }
-        }.start();
+            }.start();
 
-        new Thread() {
-            @Override
-            public void run() {
-                try {
-                    barrier.await();
-                    download("http://localhost:9090/upload.html", actual3);
-                } catch (Exception e) {
-                    counter.incrementAndGet();
-                } finally {
-                    haltLatch.countDown();
+            new Thread() {
+                @Override
+                public void run() {
+                    try {
+                        barrier.await();
+                        download("http://localhost:9090/upload.html", actual3);
+                    } catch (Exception e) {
+                        counter.incrementAndGet();
+                    } finally {
+                        haltLatch.countDown();
+                    }
                 }
-            }
-        }.start();
+            }.start();
 
-        haltLatch.await();
+            haltLatch.await();
 
-        Assert.assertEquals(0, counter.get());
-        TestUtils.assertEquals(new File(HttpServerTest.class.getResource("/site/public/get.html").getPath()), actual1);
-        TestUtils.assertEquals(new File(HttpServerTest.class.getResource("/site/public/post.html").getPath()), actual2);
-        TestUtils.assertEquals(new File(HttpServerTest.class.getResource("/site/public/upload.html").getPath()), actual3);
+            Assert.assertEquals(0, counter.get());
+            TestUtils.assertEquals(new File(HttpServerTest.class.getResource("/site/public/get.html").getPath()), actual1);
+            TestUtils.assertEquals(new File(HttpServerTest.class.getResource("/site/public/post.html").getPath()), actual2);
+            TestUtils.assertEquals(new File(HttpServerTest.class.getResource("/site/public/upload.html").getPath()), actual3);
 
-        server.halt();
-        System.out.println("ok");
-
-        Thread[] th = new Thread[Thread.activeCount()];
-        int c = Thread.enumerate(th);
-        for (int i = 0; i < c; i++) {
-            System.out.println(th[i]);
+        } finally {
+            server.halt();
+            mimeTypes.close();
         }
     }
 
@@ -263,6 +267,102 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
+    public void testNotModified() throws Exception {
+        final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/nfsdb.conf"));
+        final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), new FileSender(mimeTypes)));
+        }});
+        server.start();
+        try {
+            File out = new File(temp.getRoot(), "get.html");
+            HttpGet get = new HttpGet("http://localhost:9090/get.html");
+
+            try (CloseableHttpClient client = HttpClients.createDefault()) {
+
+                Header h;
+                try (
+                        CloseableHttpResponse r = client.execute(get);
+                        FileOutputStream fos = new FileOutputStream(out)
+                ) {
+                    copy(r.getEntity().getContent(), fos);
+                    Assert.assertEquals(200, r.getStatusLine().getStatusCode());
+                    h = findHeader("ETag", r.getAllHeaders());
+                }
+
+                Assert.assertNotNull(h);
+                get.addHeader("If-None-Match", h.getValue());
+
+                try (CloseableHttpResponse r = client.execute(get)) {
+                    Assert.assertEquals(304, r.getStatusLine().getStatusCode());
+                }
+            }
+        } finally {
+            server.halt();
+            mimeTypes.close();
+        }
+    }
+
+    @Test
+    public void testRanges() throws Exception {
+        final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(HttpServerTest.class.getResource("/site").getPath(), "conf/nfsdb.conf"));
+        final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            put("/upload", new UploadHandler(temp.getRoot()));
+            setDefaultHandler(new StaticContentHandler(temp.getRoot(), new FileSender(mimeTypes)));
+        }});
+        server.start();
+        try {
+
+            upload("/large.csv", "http://localhost:9090/upload");
+
+            File out = new File(temp.getRoot(), "out.csv");
+
+            HttpGet get = new HttpGet("http://localhost:9090/large.csv");
+            get.addHeader("Range", "xyz");
+
+            try (CloseableHttpClient client = HttpClients.createDefault()) {
+
+                try (CloseableHttpResponse r = client.execute(get)) {
+                    Assert.assertEquals(416, r.getStatusLine().getStatusCode());
+                }
+
+                File f = resourceFile("/large.csv");
+                long size;
+
+                try (FileInputStream is = new FileInputStream(f)) {
+                    size = is.available();
+                }
+
+                long part = size / 2;
+
+
+                try (FileOutputStream fos = new FileOutputStream(out)) {
+
+                    // first part
+                    get.addHeader("Range", "bytes=0-" + part);
+                    try (CloseableHttpResponse r = client.execute(get)) {
+                        copy(r.getEntity().getContent(), fos);
+                        Assert.assertEquals(206, r.getStatusLine().getStatusCode());
+                    }
+
+                    // second part
+                    get.addHeader("Range", "bytes=" + part + "-");
+                    try (CloseableHttpResponse r = client.execute(get)) {
+                        copy(r.getEntity().getContent(), fos);
+                        Assert.assertEquals(206, r.getStatusLine().getStatusCode());
+                    }
+                }
+
+                TestUtils.assertEquals(f, out);
+            }
+        } finally {
+            server.halt();
+            mimeTypes.close();
+        }
+    }
+
+    @Test
     public void testStartStop() throws Exception {
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher());
         server.start();
@@ -277,7 +377,7 @@ public class HttpServerTest extends AbstractJournalTest {
         }});
         server.start();
 
-        File expected = new File(this.getClass().getResource("/csv/test-import.csv").getFile());
+        File expected = resourceFile("/csv/test-import.csv");
         File actual = new File(dir, "test-import.csv");
         upload(expected, "http://localhost:9090/upload");
 
@@ -285,52 +385,49 @@ public class HttpServerTest extends AbstractJournalTest {
         server.halt();
     }
 
-    private static int upload(String resouce, String url) throws IOException {
-        return upload(new File(HttpServerTest.class.getResource(resouce).getFile()), url);
+    private static int upload(String resource, String url) throws IOException {
+        return upload(resourceFile(resource), url);
+    }
+
+    private static File resourceFile(String resource) {
+        return new File(HttpServerTest.class.getResource(resource).getFile());
     }
 
     private static int upload(File file, String url) throws IOException {
-        String charset = "UTF-8";
-        String param = "value";
-        String boundary = Long.toHexString(System.currentTimeMillis()); // Just generate some unique random value.
-        String CRLF = "\r\n"; // Line separator required by multipart/form-data.
-
-        URLConnection connection = new URL(url).openConnection();
-        connection.setDoOutput(true);
-        connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
-
-        try (
-                OutputStream output = connection.getOutputStream();
-                PrintWriter writer = new PrintWriter(new OutputStreamWriter(output, charset), true)
-        ) {
-            // Send normal param.
-            writer.append("--").append(boundary).append(CRLF);
-            writer.append("Content-Disposition: form-data; name=\"param\"").append(CRLF);
-            writer.append("Content-Type: text/plain; charset=").append(charset).append(CRLF);
-            writer.append(CRLF).append(param).append(CRLF).flush();
-
-            // Send text file.
-            writer.append("--").append(boundary).append(CRLF);
-            writer.append("Content-Disposition: form-data; name=\"data\"; filename=\"").append(file.getName()).append("\"").append(CRLF);
-            writer.append("Content-Type: text/plain; charset=").append(charset).append(CRLF); // Text file itself must be saved in this charset!
-            writer.append(CRLF).flush();
-            Files.copy(file.toPath(), output);
-            output.flush(); // Important before continuing with writer!
-            writer.append(CRLF).flush(); // CRLF is important! It indicates end of boundary.
-
-            // End of multipart/form-data.
-            writer.append("--").append(boundary).append("--").append(CRLF).flush();
+        HttpPost post = new HttpPost(url);
+        try (CloseableHttpClient client = HttpClients.createDefault()) {
+            MultipartEntityBuilder b = MultipartEntityBuilder.create();
+            b.addPart("data", new FileBody(file));
+            post.setEntity(b.build());
+            HttpResponse r = client.execute(post);
+            return r.getStatusLine().getStatusCode();
         }
+    }
 
-        return ((HttpURLConnection) connection).getResponseCode();
+    private static Header findHeader(String name, org.apache.http.Header[] headers) {
+        for (Header h : headers) {
+            if (name.equals(h.getName())) {
+                return h;
+            }
+        }
+        return null;
+    }
+
+    private void copy(InputStream is, OutputStream os) throws IOException {
+        byte[] buf = new byte[4096];
+        int l;
+        while ((l = is.read(buf)) > 0) {
+            os.write(buf, 0, l);
+        }
     }
 
     private void download(String url, File out) throws IOException {
-        URLConnection connection = new URL(url).openConnection();
-        try (ReadableByteChannel rbc = Channels.newChannel(connection.getInputStream())) {
-            try (FileOutputStream fos = new FileOutputStream(out)) {
-                fos.getChannel().transferFrom(rbc, 0, Long.MAX_VALUE);
-            }
+        try (
+                CloseableHttpClient client = HttpClients.createDefault();
+                CloseableHttpResponse r = client.execute(new HttpGet(url));
+                FileOutputStream fos = new FileOutputStream(out)
+        ) {
+            copy(r.getEntity().getContent(), fos);
         }
     }
 
