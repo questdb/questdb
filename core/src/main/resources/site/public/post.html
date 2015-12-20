@@ -19,30 +19,21 @@
   ~ limitations under the License.
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://maven.apache.org/POM/4.0.0"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
-    <modelVersion>4.0.0</modelVersion>
+<form action="http://localhost:9000/imp" method="post"
+      xmlns="http://www.w3.org/1999/html">
+    <p>
+        <label>
+            <input name="x" type="text" size="30"/>
+        </label>
+    </p>
 
-    <version>1.0</version>
-    <groupId>com.nfsdb</groupId>
-    <artifactId>nfsdb</artifactId>
-    <packaging>pom</packaging>
-    <name>NFSdb</name>
+    <p>
+        <label>
+            <input name="y" type="text" size="30"/>
+        </label>
+    </p>
 
-    <build>
-        <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-deploy-plugin</artifactId>
-                <version>2.8.1</version>
-                <configuration>
-                    <skip>true</skip>
-                </configuration>
-            </plugin>
-        </plugins>
-    </build>
-    <modules>
-        <module>core</module>
-        <module>examples</module>
-    </modules>
-</project>
+    <div>
+        <input type="submit" value="Send"/>
+    </div>
+</form>
