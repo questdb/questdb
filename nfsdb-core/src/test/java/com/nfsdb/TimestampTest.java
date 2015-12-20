@@ -118,7 +118,6 @@ public class TimestampTest extends AbstractTest {
             journal.mergeAppend(data);
             journal.mergeAppend(data);
         }
-        System.out.println("quit");
     }
 
 }

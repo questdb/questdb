@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb;
 
@@ -177,14 +177,14 @@ public class JournalWriter<T> extends Journal<T> {
     @Override
     public final void close() {
         if (open) {
-            if (partitionCleaner != null) {
-                partitionCleaner.halt();
-                partitionCleaner = null;
-            }
             try {
                 if (isCommitOnClose()) {
                     commit();
-                    purgeUnusedTempPartitions(txLog);
+                }
+                if (partitionCleaner != null) {
+                    purgeTempPartitions();
+                    partitionCleaner.halt();
+                    partitionCleaner = null;
                 }
                 super.close();
                 if (writeLock != null) {
@@ -543,49 +543,6 @@ public class JournalWriter<T> extends Journal<T> {
 
     public void purgeTempPartitions() {
         partitionCleaner.purge();
-    }
-
-    public void purgeUnusedTempPartitions(TxLog txLog) throws JournalException {
-        final Tx tx = new Tx();
-        final String lagPartitionName = hasIrregularPartition() ? getIrregularPartition().getName() : null;
-
-        File[] files = getLocation().listFiles(new FileFilter() {
-            public boolean accept(File f) {
-                return f.isDirectory() && f.getName().startsWith(Constants.TEMP_DIRECTORY_PREFIX) &&
-                        (lagPartitionName == null || !lagPartitionName.equals(f.getName()));
-            }
-        });
-
-        if (files != null) {
-
-            Arrays.sort(files);
-
-            for (int i = 0; i < files.length; i++) {
-
-                if (!txLog.isEmpty()) {
-                    txLog.head(tx);
-                    if (files[i].getName().equals(tx.lagName)) {
-                        continue;
-                    }
-                }
-
-                // get exclusive lock
-                Lock lock = LockManager.lockExclusive(files[i]);
-                try {
-                    if (lock != null && lock.isValid()) {
-                        LOGGER.trace("Purging : %s", files[i]);
-
-                        if (!Files.delete(files[i])) {
-                            LOGGER.trace("Could not purge: %s", files[i]);
-                        }
-                    } else {
-                        LOGGER.info("Partition in use: %s", files[i]);
-                    }
-                } finally {
-                    LockManager.release(lock);
-                }
-            }
-        }
     }
 
     public void rebuildIndexes() throws JournalException {
@@ -967,7 +924,6 @@ public class JournalWriter<T> extends Journal<T> {
         public void halt() {
             executor.shutdown();
             subSeq.alert();
-//            txLog = Misc.free(txLog);
             try {
                 if (running) {
                     haltLatch.await();
@@ -991,7 +947,46 @@ public class JournalWriter<T> extends Journal<T> {
                                 subSeq.done(subSeq.waitForNext());
                                 try {
                                     if (txLog != null) {
-                                        writer.purgeUnusedTempPartitions(txLog);
+                                        final Tx tx1 = new Tx();
+                                        final String lagPartitionName = writer.hasIrregularPartition() ? writer.getIrregularPartition().getName() : null;
+
+                                        File[] files = writer.getLocation().listFiles(new FileFilter() {
+                                            public boolean accept(File f) {
+                                                return f.isDirectory() && f.getName().startsWith(Constants.TEMP_DIRECTORY_PREFIX) &&
+                                                        (lagPartitionName == null || !lagPartitionName.equals(f.getName()));
+                                            }
+                                        });
+
+                                        if (files != null) {
+
+                                            Arrays.sort(files);
+
+                                            for (int i = 0; i < files.length; i++) {
+
+                                                if (!txLog.isEmpty()) {
+                                                    txLog.head(tx1);
+                                                    if (files[i].getName().equals(tx1.lagName)) {
+                                                        continue;
+                                                    }
+                                                }
+
+                                                // get exclusive lock
+                                                Lock lock = LockManager.lockExclusive(files[i]);
+                                                try {
+                                                    if (lock != null && lock.isValid()) {
+                                                        LOGGER.trace("Purging : %s", files[i]);
+
+                                                        if (!Files.delete(files[i])) {
+                                                            LOGGER.trace("Could not purge: %s", files[i]);
+                                                        }
+                                                    } else {
+                                                        LOGGER.trace("Partition in use: %s", files[i]);
+                                                    }
+                                                } finally {
+                                                    LockManager.release(lock);
+                                                }
+                                            }
+                                        }
                                     }
                                 } catch (JournalException e) {
                                     throw new JournalRuntimeException(e);
