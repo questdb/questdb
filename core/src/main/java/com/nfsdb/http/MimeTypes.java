@@ -24,7 +24,6 @@ package com.nfsdb.http;
 import com.nfsdb.collections.CharSequenceObjHashMap;
 import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.misc.ByteBuffers;
-import com.nfsdb.misc.Misc;
 import com.nfsdb.misc.Unsafe;
 
 import java.io.Closeable;
@@ -99,6 +98,6 @@ public final class MimeTypes extends CharSequenceObjHashMap<CharSequence> implem
 
     @Override
     public void close() throws IOException {
-        buf = Misc.free(buf);
+        buf = ByteBuffers.release(buf);
     }
 }

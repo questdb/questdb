@@ -39,6 +39,8 @@ public final class Files {
     private Files() {
     } // Prevent construction.
 
+    public native static int close(int fd);
+
     @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_RETURN_FALSE")
     public static boolean delete(File file) {
         try {
@@ -68,6 +70,10 @@ public final class Files {
         }
     }
 
+    public native static long lastModified(long lpszName);
+
+    public native static long length(long lpszName);
+
     public static File makeTempDir() {
         File result;
         try {
@@ -95,6 +101,12 @@ public final class Files {
         }
     }
 
+    public native static int openRO(long lpszName);
+
+    public native static int openRW(long lpszName);
+
+    public native static long read(int fd, long address, int len, long offset);
+
     public static String readStringFromFile(File file) throws JournalException {
         try {
             try (FileInputStream fis = new FileInputStream(file)) {
@@ -110,6 +122,8 @@ public final class Files {
             throw new JournalException("Cannot read from %s", e, file.getAbsolutePath());
         }
     }
+
+    public native static long write(int fd, long address, int len, long offset);
 
     public static void writeStringToFile(File file, String s) throws JournalException {
         try {

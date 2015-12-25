@@ -29,9 +29,9 @@
 
     <version>3.0.0-SNAPSHOT</version>
     <groupId>com.nfsdb</groupId>
-    <artifactId>core</artifactId>
+    <artifactId>nfsdb</artifactId>
     <packaging>jar</packaging>
-    <name>NFSdb.Core</name>
+    <name>nfsdb</name>
     <description>Low Latency, high throughput database and cache</description>
 
     <url>http://github.nfsdb.org</url>
@@ -170,7 +170,6 @@
     </profiles>
 
     <dependencies>
-
         <!-- test dependencies -->
         <dependency>
             <groupId>junit</groupId>

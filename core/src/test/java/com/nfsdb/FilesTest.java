@@ -21,8 +21,13 @@
 
 package com.nfsdb;
 
+import com.nfsdb.collections.DirectCharSequence;
+import com.nfsdb.collections.LPSZ;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Files;
+import com.nfsdb.misc.Os;
+import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -31,8 +36,10 @@ import org.junit.rules.TemporaryFolder;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 
-public class TestFiles {
+public class FilesTest {
 
     @Rule
     public final TemporaryFolder temporaryFolder = new TemporaryFolder();
@@ -46,6 +53,53 @@ public class TestFiles {
         touch(new File(r, "a/b/2.txt"));
         Assert.assertTrue(Files.delete(r));
         Assert.assertFalse(r.exists());
+    }
+
+    @Test
+    public void testWrite() throws Exception {
+        if (Os.nativelySupported) {
+            LPSZ lpsz = new LPSZ();
+            File f = temporaryFolder.newFile();
+            int fd = Files.openRW(lpsz.of(f.getAbsolutePath()));
+            try {
+                Assert.assertTrue(fd > 0);
+
+                ByteBuffer buf = ByteBuffer.allocateDirect(1024).order(ByteOrder.LITTLE_ENDIAN);
+                try {
+                    ByteBuffers.putStr(buf, "hello from java");
+                    int len = buf.position();
+                    Files.write(fd, ByteBuffers.getAddress(buf), len, 0);
+
+                    buf.clear();
+
+                    ByteBuffers.putStr(buf, ", awesome");
+                    Files.write(fd, ByteBuffers.getAddress(buf), buf.position(), len);
+                } finally {
+                    ByteBuffers.release(buf);
+                }
+            } finally {
+                Files.close(fd);
+            }
+
+            fd = Files.openRO(lpsz.address());
+            try {
+                Assert.assertTrue(fd > 0);
+                ByteBuffer buf = ByteBuffer.allocateDirect(1024).order(ByteOrder.LITTLE_ENDIAN);
+                try {
+                    int len = (int) Files.length(lpsz.address());
+                    long ptr = ByteBuffers.getAddress(buf);
+                    Assert.assertEquals(48, Files.read(fd, ptr, len, 0));
+                    DirectCharSequence cs = new DirectCharSequence().of(ptr, ptr + len);
+                    TestUtils.assertEquals("hello from java, awesome", cs);
+                } finally {
+                    ByteBuffers.release(buf);
+                }
+            } finally {
+                Files.close(fd);
+            }
+        } else {
+            System.out.println("No native support");
+        }
     }
 
     @Test

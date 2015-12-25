@@ -24,10 +24,15 @@ package com.nfsdb.misc;
 import com.sun.management.OperatingSystemMXBean;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.lang.management.ManagementFactory;
 
 @SuppressFBWarnings({"IICU_INCORRECT_INTERNAL_CLASS_USE"})
-final class Os {
+public final class Os {
+    public static final boolean nativelySupported;
     private static final OperatingSystemMXBean bean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
 
     private Os() {
@@ -36,4 +41,47 @@ final class Os {
     public static long getSystemMemory() {
         return bean.getTotalPhysicalMemorySize();
     }
+
+    private static void loadLib(String lib) {
+        InputStream is = Os.class.getResourceAsStream(lib);
+        if (is == null) {
+            throw new Error("Internal error: cannot find " + lib + ", broken package?");
+        }
+
+        File tempLib;
+        try {
+            tempLib = File.createTempFile(lib, ".so");
+            // copy to tempLib
+            try (FileOutputStream out = new FileOutputStream(tempLib)) {
+                byte[] buf = new byte[4096];
+                while (true) {
+                    int read = is.read(buf);
+                    if (read == -1) {
+                        break;
+                    }
+                    out.write(buf, 0, read);
+                }
+                System.load(tempLib.getAbsolutePath());
+            } finally {
+                tempLib.deleteOnExit();
+            }
+        } catch (IOException e) {
+            throw new Error("Internal error: cannot unpack " + lib, e);
+        }
+    }
+
+    static {
+        String osName = System.getProperty("os.name");
+        if (osName.contains("Linux")) {
+            nativelySupported = false;
+        } else if (osName.contains("Mac")) {
+            loadLib("/binaries/osx/libnfsdb.dylib");
+            nativelySupported = true;
+        } else if (osName.contains("Windows")) {
+            nativelySupported = false;
+        } else {
+            nativelySupported = false;
+        }
+    }
+
 }

@@ -31,7 +31,7 @@
     <groupId>com.nfsdb</groupId>
     <artifactId>examples</artifactId>
     <packaging>jar</packaging>
-    <name>NFSdb.Examples</name>
+    <name>nfsdb.examples</name>
     <description>Code examples and usage scenarios for NFSdb</description>
 
     <url>http://github.nfsdb.org</url>
@@ -81,7 +81,7 @@
 
         <dependency>
             <groupId>com.nfsdb</groupId>
-            <artifactId>core</artifactId>
+            <artifactId>nfsdb</artifactId>
             <version>${project.version}</version>
         </dependency>
 

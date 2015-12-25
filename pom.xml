@@ -25,9 +25,9 @@
 
     <version>1.0</version>
     <groupId>com.nfsdb</groupId>
-    <artifactId>nfsdb</artifactId>
+    <artifactId>nfsdb-parent</artifactId>
     <packaging>pom</packaging>
-    <name>NFSdb</name>
+    <name>nfsdb.parent</name>
 
     <build>
         <plugins>
