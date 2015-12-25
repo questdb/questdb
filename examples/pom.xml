@@ -115,7 +115,7 @@
 
         <dependency>
             <groupId>com.nfsdb</groupId>
-            <artifactId>core</artifactId>
+            <artifactId>nfsdb</artifactId>
             <version>${project.version}</version>
             <type>test-jar</type>
             <scope>test</scope>
