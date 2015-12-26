@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.misc;
 
@@ -32,6 +32,14 @@ import java.lang.management.ManagementFactory;
 
 @SuppressFBWarnings({"IICU_INCORRECT_INTERNAL_CLASS_USE"})
 public final class Os {
+    public static final int OSX = 1;
+    public static final int LINUX = 2;
+    public static final int WINDOWS = 3;
+    public static final int UNKNOWN = -1;
+    public static final int _32Bit = -2;
+
+    public static final int type;
+
     public static final boolean nativelySupported;
     private static final OperatingSystemMXBean bean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
 
@@ -61,27 +69,36 @@ public final class Os {
                     }
                     out.write(buf, 0, read);
                 }
-                System.load(tempLib.getAbsolutePath());
             } finally {
                 tempLib.deleteOnExit();
             }
+            System.load(tempLib.getAbsolutePath());
         } catch (IOException e) {
             throw new Error("Internal error: cannot unpack " + lib, e);
         }
     }
 
     static {
-        String osName = System.getProperty("os.name");
-        if (osName.contains("Linux")) {
-            nativelySupported = false;
-        } else if (osName.contains("Mac")) {
-            loadLib("/binaries/osx/libnfsdb.dylib");
-            nativelySupported = true;
-        } else if (osName.contains("Windows")) {
-            nativelySupported = false;
+        if ("64".equals(System.getProperty("sun.arch.data.model"))) {
+            String osName = System.getProperty("os.name");
+            if (osName.contains("Linux")) {
+                type = LINUX;
+                nativelySupported = false;
+            } else if (osName.contains("Mac")) {
+                type = OSX;
+                loadLib("/binaries/osx/libnfsdb.dylib");
+                nativelySupported = true;
+            } else if (osName.contains("Windows")) {
+                type = WINDOWS;
+                loadLib("/binaries/windows/libnfsdb.dll");
+                nativelySupported = true;
+            } else {
+                type = UNKNOWN;
+                nativelySupported = false;
+            }
         } else {
+            type = _32Bit;
             nativelySupported = false;
         }
     }
-
 }

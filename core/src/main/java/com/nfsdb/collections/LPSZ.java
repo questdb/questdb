@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,10 +17,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.collections;
 
+import com.nfsdb.misc.Os;
 import com.nfsdb.misc.Unsafe;
 
 public final class LPSZ {
@@ -58,7 +59,8 @@ public final class LPSZ {
 
     private void copy(CharSequence str, int len) {
         for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putByte(ptr + i, (byte) str.charAt(i));
+            char c = str.charAt(i);
+            Unsafe.getUnsafe().putByte(ptr + i, (byte) (Os.type == Os.WINDOWS && c == '/' ? '\\' : c));
         }
         Unsafe.getUnsafe().putByte(ptr + len, (byte) 0);
     }

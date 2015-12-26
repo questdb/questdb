@@ -10,42 +10,26 @@ extern "C" {
 /*
  * Class:     com_nfsdb_misc_Files
  * Method:    close
- * Signature: (I)I
+ * Signature: (J)I
  */
 JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Files_close
-        (JNIEnv *, jclass, jint);
+        (JNIEnv *, jclass, jlong);
 
 /*
  * Class:     com_nfsdb_misc_Files
- * Method:    lastModified
+ * Method:    getLastModified
  * Signature: (J)J
  */
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_lastModified
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_getLastModified
         (JNIEnv *, jclass, jlong);
 
 /*
  * Class:     com_nfsdb_misc_Files
- * Method:    openRO
- * Signature: (J)I
+ * Method:    setLastModified
+ * Signature: (JJ)Z
  */
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Files_openRO
-        (JNIEnv *, jclass, jlong);
-
-/*
- * Class:     com_nfsdb_misc_Files
- * Method:    openRW
- * Signature: (J)I
- */
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Files_openRW
-        (JNIEnv *, jclass, jlong);
-
-/*
- * Class:     com_nfsdb_misc_Files
- * Method:    read
- * Signature: (IJIJ)J
- */
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_read
-        (JNIEnv *, jclass, jint, jlong, jint, jlong);
+JNIEXPORT jboolean JNICALL Java_com_nfsdb_misc_Files_setLastModified
+        (JNIEnv *, jclass, jlong, jlong);
 
 /*
  * Class:     com_nfsdb_misc_Files
@@ -57,11 +41,35 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_length
 
 /*
  * Class:     com_nfsdb_misc_Files
+ * Method:    openRO
+ * Signature: (J)J
+ */
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openRO
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_nfsdb_misc_Files
+ * Method:    openRW
+ * Signature: (J)J
+ */
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openRW
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_nfsdb_misc_Files
+ * Method:    read
+ * Signature: (JJIJ)J
+ */
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_read
+        (JNIEnv *, jclass, jlong, jlong, jint, jlong);
+
+/*
+ * Class:     com_nfsdb_misc_Files
  * Method:    write
- * Signature: (IJIJ)J
+ * Signature: (JJIJ)J
  */
 JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_write
-        (JNIEnv *, jclass, jint, jlong, jint, jlong);
+        (JNIEnv *, jclass, jlong, jlong, jint, jlong);
 
 #ifdef __cplusplus
 }

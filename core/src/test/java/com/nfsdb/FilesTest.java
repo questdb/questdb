@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,14 +17,16 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb;
 
 import com.nfsdb.collections.DirectCharSequence;
 import com.nfsdb.collections.LPSZ;
 import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.misc.ByteBuffers;
+import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Files;
 import com.nfsdb.misc.Os;
 import com.nfsdb.test.tools.TestUtils;
@@ -56,11 +58,23 @@ public class FilesTest {
     }
 
     @Test
+    public void testLastModified() throws IOException, NumericException {
+        if (Os.nativelySupported) {
+            LPSZ lpsz = new LPSZ();
+            File f = temporaryFolder.newFile();
+            Assert.assertTrue(Files.touch(lpsz.of(f.getAbsolutePath())));
+            long t = Dates.parseDateTime("2015-10-17T10:00:00.000Z");
+            Assert.assertTrue(Files.setLastModified(lpsz.address(), t));
+            Assert.assertEquals(t, Files.getLastModified(lpsz.address()));
+        }
+    }
+
+    @Test
     public void testWrite() throws Exception {
         if (Os.nativelySupported) {
             LPSZ lpsz = new LPSZ();
             File f = temporaryFolder.newFile();
-            int fd = Files.openRW(lpsz.of(f.getAbsolutePath()));
+            long fd = Files.openRW(lpsz.of(f.getAbsolutePath()));
             try {
                 Assert.assertTrue(fd > 0);
 
@@ -97,8 +111,6 @@ public class FilesTest {
             } finally {
                 Files.close(fd);
             }
-        } else {
-            System.out.println("No native support");
         }
     }
 

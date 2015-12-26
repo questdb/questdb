@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.misc;
 
@@ -39,7 +39,7 @@ public final class Files {
     private Files() {
     } // Prevent construction.
 
-    public native static int close(int fd);
+    public native static int close(long fd);
 
     @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_RETURN_FALSE")
     public static boolean delete(File file) {
@@ -70,7 +70,7 @@ public final class Files {
         }
     }
 
-    public native static long lastModified(long lpszName);
+    public native static long getLastModified(long lpszName);
 
     public native static long length(long lpszName);
 
@@ -101,11 +101,11 @@ public final class Files {
         }
     }
 
-    public native static int openRO(long lpszName);
+    public native static long openRO(long lpszName);
 
-    public native static int openRW(long lpszName);
+    public native static long openRW(long lpszName);
 
-    public native static long read(int fd, long address, int len, long offset);
+    public native static long read(long fd, long address, int len, long offset);
 
     public static String readStringFromFile(File file) throws JournalException {
         try {
@@ -123,7 +123,16 @@ public final class Files {
         }
     }
 
-    public native static long write(int fd, long address, int len, long offset);
+    public native static boolean setLastModified(long lpszName, long millis);
+
+    public static boolean touch(long lpszName) {
+        long fd = openRW(lpszName);
+        boolean result = fd > 0;
+        close(fd);
+        return result;
+    }
+
+    public native static long write(long fd, long address, int len, long offset);
 
     public static void writeStringToFile(File file, String s) throws JournalException {
         try {

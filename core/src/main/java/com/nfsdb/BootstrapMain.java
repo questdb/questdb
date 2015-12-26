@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb;
 
@@ -26,6 +26,7 @@ import com.nfsdb.http.*;
 import com.nfsdb.http.handlers.ImportHandler;
 import com.nfsdb.http.handlers.StaticContentHandler;
 import com.nfsdb.logging.Logger;
+import com.nfsdb.misc.Os;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
@@ -48,6 +49,12 @@ public class BootstrapMain {
         if (args.length < 1) {
             return;
         }
+
+        if (Os.type == Os._32Bit) {
+            LOGGER.error("NFSdb requires 64-bit JVM");
+            return;
+        }
+
         String dir = args[0];
         extractSite(dir);
         File conf = new File(dir, "conf/nfsdb.conf");

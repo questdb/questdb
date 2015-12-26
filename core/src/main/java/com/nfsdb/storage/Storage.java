@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.storage;
 
@@ -35,7 +35,7 @@ public class Storage {
 
         LPSZ lpsz = new LPSZ();
 
-        int fd = Files.openRO(lpsz.of("x.txt"));
+        long fd = Files.openRO(lpsz.of("x.txt"));
         System.out.println(fd);
         try {
             ByteBuffer buf = ByteBuffer.allocateDirect(1024);
@@ -61,9 +61,9 @@ public class Storage {
 //        write(fd, ByteBuffers.getAddress(buf), buf.remaining(), 0);
 //        System.out.println("hello");
 
-        long t = Files.lastModified(new LPSZ("pom.xml").address());
+        long t = Files.getLastModified(new LPSZ("pom.xml").address());
         System.out.println(Dates.toString(t));
-//        System.out.println(lastModified(new LPSZ("/Users/vlad/dev/nfsdb/x.txt").address()));
+//        System.out.println(getLastModified(new LPSZ("/Users/vlad/dev/nfsdb/x.txt").address()));
 //        s.close();
 
         System.out.println("Hello");
