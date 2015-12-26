@@ -1,29 +1,31 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/fcntl.h>
+#include <sys/time.h>
+#include <utime.h>
 #include "files.h"
 
 JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_write
         (JNIEnv *e, jclass cl,
-         jint fd,
+         jlong fd,
          jlong address,
          jint len,
          jlong offset) {
 
-    return pwrite(fd, (void *) (address), (size_t) len, (off_t) offset);
+    return pwrite((int) fd, (void *) (address), (size_t) len, (off_t) offset);
 }
 
 JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_read
         (JNIEnv *e, jclass cl,
-         jint fd,
+         jlong fd,
          jlong address,
          jint len,
          jlong offset) {
 
-    return pread(fd, (void *) address, (size_t) len, (off_t) offset);
+    return pread((int) fd, (void *) address, (size_t) len, (off_t) offset);
 }
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_lastModified
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_getLastModified
         (JNIEnv *e, jclass cl, jlong pchar) {
 
     struct stat st;
@@ -32,17 +34,17 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_lastModified
     return r == 0 ? 1000 * (jlong) st.st_mtime : r;
 }
 
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Files_openRO
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openRO
         (JNIEnv *e, jclass cl, jlong lpszName) {
     return open((const char *) lpszName, O_RDONLY);
 }
 
 JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Files_close
-        (JNIEnv *e, jclass cl, jint fd) {
-    return close(fd);
+        (JNIEnv *e, jclass cl, jlong fd) {
+    return close((int) fd);
 }
 
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Files_openRW
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openRW
         (JNIEnv *e, jclass cl, jlong lpszName) {
     return open((const char *) lpszName, O_CREAT | O_RDWR);
 }
@@ -54,3 +56,12 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_length
     int r = stat((const char *) pchar, &st);
     return r == 0 ? st.st_size : r;
 }
+
+JNIEXPORT jboolean JNICALL Java_com_nfsdb_misc_Files_setLastModified
+        (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
+    struct timeval t[2];
+    t[1].tv_sec  = millis/1000;
+    t[1].tv_usec = (__darwin_suseconds_t) ((millis % 1000) * 1000);
+    return (jboolean) (utimes((const char *) lpszName, t) == 0);
+}
+
