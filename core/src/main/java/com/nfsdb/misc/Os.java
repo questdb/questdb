@@ -88,7 +88,8 @@ public final class Os {
             String osName = System.getProperty("os.name");
             if (osName.contains("Linux")) {
                 type = LINUX;
-                nativelySupported = false;
+                loadLib("/binaries/linux/libnfsdb.so");
+                nativelySupported = true;
             } else if (osName.contains("Mac")) {
                 type = OSX;
                 loadLib("/binaries/osx/libnfsdb.dylib");

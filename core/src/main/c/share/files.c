@@ -57,11 +57,24 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_length
     return r == 0 ? st.st_size : r;
 }
 
+#ifdef __APPLE__
 JNIEXPORT jboolean JNICALL Java_com_nfsdb_misc_Files_setLastModified
         (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
     struct timeval t[2];
     t[1].tv_sec  = millis/1000;
     t[1].tv_usec = (__darwin_suseconds_t) ((millis % 1000) * 1000);
-    return (jboolean) (utimes((const char *) lpszName, t) == 0);
+    int k = utimes((const char *) lpszName, t);
+    printf("%d: ", k);
+    return (jboolean) (k == 0);
 }
+#else
+JNIEXPORT jboolean JNICALL Java_com_nfsdb_misc_Files_setLastModified
+        (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
+    struct utimbuf t;
+    t.modtime = millis/1000;
+    int k = utime((const char *) lpszName, &t);
+    printf("%d: ", k);
+    return (jboolean) (k == 0);
+}
+#endif
 

@@ -18,6 +18,12 @@ if (APPLE)
     set(SOURCE_FILES ${HEADERS} src/main/c/share/files.c)
 endif (APPLE)
 
+if (UNIX)
+    include_directories(${JAVA_HOME}/include/linux/)
+    set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/linux)
+    set(SOURCE_FILES ${HEADERS} src/main/c/share/files.c)
+endif (UNIX)
+
 if (WIN32)
     include_directories(${JAVA_HOME}/include/win32/)
     set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/windows)
