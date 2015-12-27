@@ -45,9 +45,4 @@ public class SplitCharSequence extends AbstractCharSequence {
             return rhs.charAt(index - split);
         }
     }
-
-    @Override
-    public CharSequence subSequence(int start, int end) {
-        return null;
-    }
 }

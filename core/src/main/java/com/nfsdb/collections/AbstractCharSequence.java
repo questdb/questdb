@@ -28,6 +28,11 @@ public abstract class AbstractCharSequence implements CharSequence {
 
     private StringBuilder builder;
 
+    @Override
+    public CharSequence subSequence(int start, int end) {
+        throw new UnsupportedOperationException();
+    }
+
     @SuppressFBWarnings("RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE")
     @NotNull
     @Override

@@ -31,9 +31,4 @@ class NullCharSequence extends AbstractCharSequence {
     public char charAt(int index) {
         return 0;
     }
-
-    @Override
-    public CharSequence subSequence(int start, int end) {
-        return null;
-    }
 }

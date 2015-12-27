@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,11 +17,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.storage;
 
-import com.nfsdb.collections.LPSZ;
+import com.nfsdb.collections.Path;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Files;
@@ -33,9 +33,9 @@ public class Storage {
 
     public static void main(String[] args) throws IOException {
 
-        LPSZ lpsz = new LPSZ();
+        Path path = new Path();
 
-        long fd = Files.openRO(lpsz.of("x.txt"));
+        long fd = Files.openRO(path.of("x.txt"));
         System.out.println(fd);
         try {
             ByteBuffer buf = ByteBuffer.allocateDirect(1024);
@@ -61,9 +61,9 @@ public class Storage {
 //        write(fd, ByteBuffers.getAddress(buf), buf.remaining(), 0);
 //        System.out.println("hello");
 
-        long t = Files.getLastModified(new LPSZ("pom.xml").address());
+        long t = Files.getLastModified(new Path("pom.xml"));
         System.out.println(Dates.toString(t));
-//        System.out.println(getLastModified(new LPSZ("/Users/vlad/dev/nfsdb/x.txt").address()));
+//        System.out.println(getLastModified(new Path("/Users/vlad/dev/nfsdb/x.txt").address()));
 //        s.close();
 
         System.out.println("Hello");

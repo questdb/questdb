@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,10 +17,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.misc;
 
+import com.nfsdb.collections.LPSZ;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -70,9 +71,17 @@ public final class Files {
         }
     }
 
-    public native static long getLastModified(long lpszName);
+    public static boolean exists(LPSZ lpsz) {
+        return getLastModified(lpsz) != -1;
+    }
 
-    public native static long length(long lpszName);
+    public static long getLastModified(LPSZ lpsz) {
+        return getLastModified(lpsz.address());
+    }
+
+    public static long length(LPSZ lpsz) {
+        return length(lpsz.address());
+    }
 
     public static File makeTempDir() {
         File result;
@@ -101,9 +110,13 @@ public final class Files {
         }
     }
 
-    public native static long openRO(long lpszName);
+    public static long openRO(LPSZ lpsz) {
+        return openRO(lpsz.address());
+    }
 
-    public native static long openRW(long lpszName);
+    public static long openRW(LPSZ lpsz) {
+        return openRW(lpsz.address());
+    }
 
     public native static long read(long fd, long address, int len, long offset);
 
@@ -123,10 +136,12 @@ public final class Files {
         }
     }
 
-    public native static boolean setLastModified(long lpszName, long millis);
+    public static boolean setLastModified(LPSZ lpsz, long millis) {
+        return setLastModified(lpsz.address(), millis);
+    }
 
-    public static boolean touch(long lpszName) {
-        long fd = openRW(lpszName);
+    public static boolean touch(LPSZ lpsz) {
+        long fd = openRW(lpsz);
         boolean result = fd > 0;
         close(fd);
         return result;
@@ -143,6 +158,16 @@ public final class Files {
             throw new JournalException("Cannot write to %s", e, file.getAbsolutePath());
         }
     }
+
+    private native static long getLastModified(long lpszName);
+
+    private native static long length(long lpszName);
+
+    private native static long openRO(long lpszName);
+
+    private native static long openRW(long lpszName);
+
+    private native static boolean setLastModified(long lpszName, long millis);
 
     @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE"})
     private static void deleteDirContentsOrException(File file) throws JournalException {

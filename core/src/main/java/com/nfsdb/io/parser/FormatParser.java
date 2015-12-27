@@ -23,19 +23,28 @@ package com.nfsdb.io.parser;
 
 import com.nfsdb.collections.IntList;
 import com.nfsdb.collections.IntLongPriorityQueue;
+import com.nfsdb.collections.ObjectFactory;
 import com.nfsdb.io.TextFileFormat;
 import com.nfsdb.misc.Unsafe;
 
 public class FormatParser {
+    public static final ObjectFactory<FormatParser> FACTORY = new ObjectFactory<FormatParser>() {
+        @Override
+        public FormatParser newInstance() {
+            return new FormatParser();
+        }
+    };
     private static final int maxLines = 10000;
     private final IntList commas = new IntList(maxLines);
     private final IntList pipes = new IntList(maxLines);
     private final IntList tabs = new IntList(maxLines);
     private final IntLongPriorityQueue heap = new IntLongPriorityQueue(3);
-
     private double stdDev;
     private int avgRecLen;
     private TextFileFormat format;
+
+    private FormatParser() {
+    }
 
     public int getAvgRecLen() {
         return avgRecLen;

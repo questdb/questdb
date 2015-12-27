@@ -26,7 +26,7 @@ import org.junit.Test;
 
 public class RangeParserTest {
 
-    private final RangeParser parser = new RangeParser();
+    private final RangeParser parser = RangeParser.FACTORY.newInstance();
 
     @Test
     public void testFmt1() throws Exception {

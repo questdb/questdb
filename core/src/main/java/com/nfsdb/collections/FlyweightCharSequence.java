@@ -48,11 +48,6 @@ public class FlyweightCharSequence extends AbstractCharSequence implements Mutab
         return delegate.charAt(index + lo);
     }
 
-    @Override
-    public CharSequence subSequence(int start, int end) {
-        return null;
-    }
-
     public FlyweightCharSequence of(CharSequence delegate, int lo, int len) {
         this.delegate = delegate;
         this.lo = lo;

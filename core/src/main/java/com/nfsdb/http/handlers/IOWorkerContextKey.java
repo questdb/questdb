@@ -25,5 +25,9 @@ public enum IOWorkerContextKey {
     // Metadata extractor listener
     ME,
     // format parser
-    FP
+    FP,
+    // Range parser
+    RP,
+    // PrefixPath
+    PP
 }

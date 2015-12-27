@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,51 +17,10 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.collections;
 
-import com.nfsdb.misc.Os;
-import com.nfsdb.misc.Unsafe;
-
-public final class LPSZ {
-    private long ptr;
-    private int len;
-
-    public LPSZ() {
-        alloc(128);
-    }
-
-    public LPSZ(CharSequence str) {
-        int l = str.length();
-        alloc(l);
-        copy(str, l);
-    }
-
-    public long address() {
-        return ptr;
-    }
-
-    public long of(CharSequence str) {
-        int l = str.length();
-        if (l >= len) {
-            Unsafe.getUnsafe().freeMemory(ptr);
-            alloc(l);
-        }
-        copy(str, l);
-        return ptr;
-    }
-
-    private void alloc(int len) {
-        this.len = len;
-        this.ptr = Unsafe.getUnsafe().allocateMemory(len + 1);
-    }
-
-    private void copy(CharSequence str, int len) {
-        for (int i = 0; i < len; i++) {
-            char c = str.charAt(i);
-            Unsafe.getUnsafe().putByte(ptr + i, (byte) (Os.type == Os.WINDOWS && c == '/' ? '\\' : c));
-        }
-        Unsafe.getUnsafe().putByte(ptr + len, (byte) 0);
-    }
+public interface LPSZ extends CharSequence {
+    long address();
 }

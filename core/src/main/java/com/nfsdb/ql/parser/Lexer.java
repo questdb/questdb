@@ -232,10 +232,5 @@ class Lexer extends AbstractImmutableIterator<CharSequence> {
         public char charAt(int index) {
             return content.charAt(_lo + index);
         }
-
-        @Override
-        public CharSequence subSequence(int start, int end) {
-            throw new UnsupportedOperationException();
-        }
     }
 }

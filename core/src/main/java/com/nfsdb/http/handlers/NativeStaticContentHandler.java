@@ -21,89 +21,92 @@
 
 package com.nfsdb.http.handlers;
 
+import com.nfsdb.collections.LPSZ;
+import com.nfsdb.collections.ObjectFactory;
+import com.nfsdb.collections.PrefixedPath;
 import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.http.ContextHandler;
 import com.nfsdb.http.IOContext;
 import com.nfsdb.http.MimeTypes;
 import com.nfsdb.http.RangeParser;
 import com.nfsdb.io.sink.CharSink;
-import com.nfsdb.misc.Chars;
-import com.nfsdb.misc.Misc;
-import com.nfsdb.misc.Numbers;
+import com.nfsdb.misc.*;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 
-public class StaticContentHandler implements ContextHandler {
+public class NativeStaticContentHandler implements ContextHandler {
 
-    private final File publicDir;
     private final MimeTypes mimeTypes;
+    private final ObjectFactory<PrefixedPath> ppFactory;
 
-    public StaticContentHandler(File publicDir, MimeTypes mimeTypes) {
-        this.publicDir = publicDir;
+    public NativeStaticContentHandler(final File publicDir, MimeTypes mimeTypes) {
         this.mimeTypes = mimeTypes;
+        this.ppFactory = new ObjectFactory<PrefixedPath>() {
+            @Override
+            public PrefixedPath newInstance() {
+                return new PrefixedPath(publicDir.getAbsolutePath());
+            }
+        };
     }
 
     public void _continue(IOContext context) throws IOException {
-        if (context.raf == null) {
+        if (context.fd == -1) {
             return;
         }
-        FileChannel ch = context.raf.getChannel();
-        ByteBuffer out = context.response.getOut();
 
-        while (ch.read(out) > 0) {
-            out.flip();
-            int l = out.remaining();
+        ByteBuffer out = context.response.getOut();
+        long wptr = ByteBuffers.getAddress(out);
+        int sz = out.remaining();
+
+        long l;
+        while ((l = Files.read(context.fd, wptr, sz, context.bytesSent)) > 0) {
             if (l + context.bytesSent > context.sendMax) {
-                l = (int) (context.sendMax - context.bytesSent);
-                out.limit(l);
+                l = context.sendMax - context.bytesSent;
+                out.limit((int) l);
                 // do not refactor, placement is critical
                 context.bytesSent += l;
                 context.response.sendBody();
                 break;
             } else {
                 // do not refactor, placement is critical
+                out.limit((int) l);
                 context.bytesSent += l;
                 context.response.sendBody();
             }
         }
-        context.raf = Misc.free(context.raf);
+        Files.close(context.fd);
+        context.fd = -1;
     }
 
     @Override
     public void handle(IOContext context) throws IOException {
-        //todo: implement non-allocating version of file existence check
         CharSequence url = context.request.getUrl();
         if (Chars.containts(url, "..")) {
             context.response.simple(404);
         } else {
-            File file = new File(publicDir, url.toString());
-            if (file.exists()) {
-                send(context, file, false);
+            PrefixedPath path = context.getThreadLocal(IOWorkerContextKey.PP.name(), ppFactory);
+            if (Files.exists(path.of(url))) {
+                send(context, path, false);
             } else {
                 context.response.simple(404);
             }
         }
     }
 
-    public void send(IOContext context, File file, boolean asAttachment) throws IOException {
-        //todo: implement in c/jni, too many allocations
-        CharSequence name = file.getName();
-
-        int n = Chars.lastIndexOf(name, '.');
+    public void send(IOContext context, LPSZ path, boolean asAttachment) throws IOException {
+        int n = Chars.lastIndexOf(path, '.');
         if (n == -1) {
             context.response.simple(404);
             return;
         }
 
-        CharSequence contentType = mimeTypes.get(context.ext.of(name, n + 1, name.length() - n - 1));
+        CharSequence contentType = mimeTypes.get(context.ext.of(path, n + 1, path.length() - n - 1));
 
         CharSequence val;
         if ((val = context.request.getHeader("Range")) != null) {
-            sendRange(context, val, file, contentType, asAttachment);
+            sendRange(context, val, path, contentType, asAttachment);
             return;
         }
 
@@ -112,7 +115,7 @@ public class StaticContentHandler implements ContextHandler {
             if ((l = val.length()) > 2 && val.charAt(0) == '"' && val.charAt(l - 1) == '"') {
                 try {
                     long that = Numbers.parseLong(val, 1, l - 1);
-                    if (that == file.lastModified()) {
+                    if (that == Files.getLastModified(path)) {
                         context.response.status(304, null, -2);
                         context.response.sendHeader();
                         context.response.end();
@@ -125,33 +128,40 @@ public class StaticContentHandler implements ContextHandler {
             }
         }
 
-        sendVanilla(context, file, contentType, asAttachment);
+        sendVanilla(context, path, contentType, asAttachment);
     }
 
-    private void sendRange(IOContext context, CharSequence range, File file, CharSequence contentType, boolean asAttachment) throws IOException {
+    private void sendRange(IOContext context, CharSequence range, LPSZ path, CharSequence contentType, boolean asAttachment) throws IOException {
         RangeParser rangeParser = context.getThreadLocal(IOWorkerContextKey.FP.name(), RangeParser.FACTORY);
         if (rangeParser.of(range)) {
-            context.raf = new RandomAccessFile(file, "r");
+
+            context.fd = Files.openRO(path);
+            if (context.fd == -1) {
+                context.response.simple(404);
+                return;
+            }
+
             context.bytesSent = 0;
 
-            final long length = context.raf.length();
+            final long length = Files.length(path);
             final long l = rangeParser.getLo();
             final long h = rangeParser.getHi();
             if (l > length || (h != Long.MAX_VALUE && h > length) || l > h) {
                 context.response.simple(416);
             } else {
-                context.raf.seek(l);
+                context.bytesSent = l;
                 context.sendMax = h == Long.MAX_VALUE ? length : h;
                 context.response.status(206, contentType, context.sendMax - l);
 
                 final CharSink sink = context.response.headers();
 
                 if (asAttachment) {
-                    sink.put("Content-Disposition: attachment; filename=\"").put(file.getName()).put('\"').put(Misc.EOL);
+                    //todo: extract name from path
+                    sink.put("Content-Disposition: attachment; filename=\"").put(path).put('\"').put(Misc.EOL);
                 }
                 sink.put("Accept-Ranges: bytes").put(Misc.EOL);
                 sink.put("Content-Range: bytes ").put(l).put('-').put(context.sendMax).put('/').put(length).put(Misc.EOL);
-                sink.put("ETag: ").put(file.lastModified()).put(Misc.EOL);
+                sink.put("ETag: ").put(Files.getLastModified(path)).put(Misc.EOL);
                 context.response.sendHeader();
                 _continue(context);
             }
@@ -160,17 +170,23 @@ public class StaticContentHandler implements ContextHandler {
         }
     }
 
-    private void sendVanilla(IOContext context, File file, CharSequence contentType, boolean asAttachment) throws IOException {
-        context.raf = new RandomAccessFile(file, "r");
-        context.bytesSent = 0;
-        final long length = context.raf.length();
-        context.sendMax = Long.MAX_VALUE;
-        context.response.status(200, contentType, length);
-        if (asAttachment) {
-            context.response.headers().put("Content-Disposition: attachment; filename=\"").put(file.getName()).put("\"").put(Misc.EOL);
+    private void sendVanilla(IOContext context, LPSZ path, CharSequence contentType, boolean asAttachment) throws IOException {
+        long fd = Files.openRO(path);
+        if (fd == -1) {
+            context.response.simple(404);
+        } else {
+            context.fd = fd;
+            context.bytesSent = 0;
+            final long length = Files.length(path);
+            context.sendMax = Long.MAX_VALUE;
+            context.response.status(200, contentType, length);
+            if (asAttachment) {
+                // todo: extract name from path
+                context.response.headers().put("Content-Disposition: attachment; filename=\"").put(path).put("\"").put(Misc.EOL);
+            }
+            context.response.headers().put("ETag: ").put('"').put(Files.getLastModified(path)).put('"').put(Misc.EOL);
+            context.response.sendHeader();
+            _continue(context);
         }
-        context.response.headers().put("ETag: ").put('"').put(file.lastModified()).put('"').put(Misc.EOL);
-        context.response.sendHeader();
-        _continue(context);
     }
 }

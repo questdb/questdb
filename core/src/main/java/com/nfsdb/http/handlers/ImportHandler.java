@@ -71,7 +71,7 @@ public class ImportHandler extends AbstractMultipartHandler {
         return b;
     }
 
-    private static CharSink pad(CharSink b, int w, long value) {
+    private static void pad(CharSink b, int w, long value) {
         int len = (int) Math.log10(value);
         if (len < 0) {
             len = 0;
@@ -79,7 +79,6 @@ public class ImportHandler extends AbstractMultipartHandler {
         replicate(b, ' ', w - len - 1);
         b.put(value);
         b.put("  |");
-        return b;
     }
 
     private static void replicate(CharSink b, char c, int times) {
@@ -158,12 +157,7 @@ public class ImportHandler extends AbstractMultipartHandler {
     private void analyseColumns(IOContext context, long address, int len) {
         // analyse columns and their types
         int sampleSize = 100;
-        MetadataExtractorListener lsnr = (MetadataExtractorListener) context.threadContext.getCache().get(IOWorkerContextKey.ME.name());
-        if (lsnr == null) {
-            lsnr = new MetadataExtractorListener();
-            context.threadContext.getCache().put(IOWorkerContextKey.ME.name(), lsnr);
-        }
-
+        MetadataExtractorListener lsnr = context.getThreadLocal(IOWorkerContextKey.ME.name(), MetadataExtractorListener.FACTORY);
         context.textParser.parse(address, len, sampleSize, lsnr);
         lsnr.onLineCount(context.textParser.getLineCount());
         context.importer.onMetadata(lsnr.getMetadata());
@@ -173,12 +167,7 @@ public class ImportHandler extends AbstractMultipartHandler {
     }
 
     private void analyseFormat(IOContext context, long address, int len) {
-
-        FormatParser parser = (FormatParser) context.threadContext.getCache().get(IOWorkerContextKey.FP.name());
-        if (parser == null) {
-            context.threadContext.getCache().put(IOWorkerContextKey.FP.name(), parser = new FormatParser());
-        }
-
+        FormatParser parser = context.getThreadLocal(IOWorkerContextKey.FP.name(), FormatParser.FACTORY);
         parser.of(address, len);
         context.dataFormatValid = parser.getFormat() != null && parser.getStdDev() < 0.5;
 

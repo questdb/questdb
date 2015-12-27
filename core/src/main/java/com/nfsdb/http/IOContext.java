@@ -21,11 +21,14 @@
 
 package com.nfsdb.http;
 
+import com.nfsdb.collections.AssociativeCache;
 import com.nfsdb.collections.FlyweightCharSequence;
 import com.nfsdb.collections.Mutable;
+import com.nfsdb.collections.ObjectFactory;
 import com.nfsdb.io.parser.TextParser;
 import com.nfsdb.io.parser.listener.JournalImportListener;
 import com.nfsdb.iter.clock.Clock;
+import com.nfsdb.misc.Files;
 import com.nfsdb.misc.Misc;
 import com.nfsdb.storage.PlainFile;
 
@@ -49,6 +52,7 @@ public class IOContext implements Closeable, Mutable {
     public JournalImportListener importer;
     // static sending fields
     public RandomAccessFile raf;
+    public long fd = -1;
     public long bytesSent;
     public long sendMax;
 
@@ -72,10 +76,23 @@ public class IOContext implements Closeable, Mutable {
         freeResources();
     }
 
+    @SuppressWarnings("unchecked")
+    public <T> T getThreadLocal(CharSequence key, ObjectFactory<T> factory) {
+        AssociativeCache<Object> cache = threadContext.getCache();
+        Object result = cache.get(key);
+        if (result == null) {
+            cache.put(key, result = factory.newInstance());
+        }
+        return (T) result;
+    }
+
     private void freeResources() {
         mf = Misc.free(mf);
         raf = Misc.free(raf);
         textParser = Misc.free(textParser);
         importer = Misc.free(importer);
+        if (fd != -1) {
+            Files.close(fd);
+        }
     }
 }

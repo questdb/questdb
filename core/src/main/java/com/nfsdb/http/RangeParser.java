@@ -21,15 +21,24 @@
 
 package com.nfsdb.http;
 
+import com.nfsdb.collections.ObjectFactory;
 import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Numbers;
 
 public class RangeParser {
+    public static final ObjectFactory<RangeParser> FACTORY = new ObjectFactory<RangeParser>() {
+        @Override
+        public RangeParser newInstance() {
+            return new RangeParser();
+        }
+    };
     private static final String BYTES = "bytes=";
-
     public long lo;
     public long hi;
+
+    private RangeParser() {
+    }
 
     public long getHi() {
         return hi;

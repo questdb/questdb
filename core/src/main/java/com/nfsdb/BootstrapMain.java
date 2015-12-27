@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,13 +17,17 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
 import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.http.*;
+import com.nfsdb.http.HttpServer;
+import com.nfsdb.http.HttpServerConfiguration;
+import com.nfsdb.http.MimeTypes;
+import com.nfsdb.http.SimpleUrlMatcher;
 import com.nfsdb.http.handlers.ImportHandler;
+import com.nfsdb.http.handlers.NativeStaticContentHandler;
 import com.nfsdb.http.handlers.StaticContentHandler;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.misc.Os;
@@ -65,10 +69,14 @@ public class BootstrapMain {
         }
 
         final HttpServerConfiguration configuration = new HttpServerConfiguration(conf);
-        final FileSender fileSender = new FileSender(new MimeTypes(configuration.getMimeTypes()));
         final SimpleUrlMatcher matcher = new SimpleUrlMatcher();
         matcher.put("/imp", new ImportHandler(new JournalFactory(configuration.getDbPath().getAbsolutePath())));
-        matcher.setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), fileSender));
+        if (Os.nativelySupported) {
+            matcher.setDefaultHandler(new NativeStaticContentHandler(configuration.getHttpPublic(), new MimeTypes(configuration.getMimeTypes())));
+        } else {
+            matcher.setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), new MimeTypes(configuration.getMimeTypes())));
+        }
+
 
         HttpServer server = new HttpServer(configuration, matcher);
         server.start();

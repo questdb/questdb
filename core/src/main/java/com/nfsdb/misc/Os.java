@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.misc;
 
@@ -50,31 +50,36 @@ public final class Os {
         return bean.getTotalPhysicalMemorySize();
     }
 
+    @SuppressFBWarnings("OBL_UNSATISFIED_OBLIGATION")
     private static void loadLib(String lib) {
         InputStream is = Os.class.getResourceAsStream(lib);
         if (is == null) {
             throw new Error("Internal error: cannot find " + lib + ", broken package?");
         }
 
-        File tempLib;
         try {
-            tempLib = File.createTempFile(lib, ".so");
-            // copy to tempLib
-            try (FileOutputStream out = new FileOutputStream(tempLib)) {
-                byte[] buf = new byte[4096];
-                while (true) {
-                    int read = is.read(buf);
-                    if (read == -1) {
-                        break;
+            File tempLib;
+            try {
+                tempLib = File.createTempFile(lib, ".so");
+                // copy to tempLib
+                try (FileOutputStream out = new FileOutputStream(tempLib)) {
+                    byte[] buf = new byte[4096];
+                    while (true) {
+                        int read = is.read(buf);
+                        if (read == -1) {
+                            break;
+                        }
+                        out.write(buf, 0, read);
                     }
-                    out.write(buf, 0, read);
+                } finally {
+                    tempLib.deleteOnExit();
                 }
-            } finally {
-                tempLib.deleteOnExit();
+                System.load(tempLib.getAbsolutePath());
+            } catch (IOException e) {
+                throw new Error("Internal error: cannot unpack " + lib, e);
             }
-            System.load(tempLib.getAbsolutePath());
-        } catch (IOException e) {
-            throw new Error("Internal error: cannot unpack " + lib, e);
+        } finally {
+            Misc.free(is);
         }
     }
 

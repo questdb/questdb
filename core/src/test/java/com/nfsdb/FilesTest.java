@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,12 +17,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
 import com.nfsdb.collections.DirectCharSequence;
-import com.nfsdb.collections.LPSZ;
+import com.nfsdb.collections.Path;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.misc.ByteBuffers;
@@ -60,21 +60,21 @@ public class FilesTest {
     @Test
     public void testLastModified() throws IOException, NumericException {
         if (Os.nativelySupported) {
-            LPSZ lpsz = new LPSZ();
+            Path path = new Path();
             File f = temporaryFolder.newFile();
-            Assert.assertTrue(Files.touch(lpsz.of(f.getAbsolutePath())));
+            Assert.assertTrue(Files.touch(path.of(f.getAbsolutePath())));
             long t = Dates.parseDateTime("2015-10-17T10:00:00.000Z");
-            Assert.assertTrue(Files.setLastModified(lpsz.address(), t));
-            Assert.assertEquals(t, Files.getLastModified(lpsz.address()));
+            Assert.assertTrue(Files.setLastModified(path, t));
+            Assert.assertEquals(t, Files.getLastModified(path));
         }
     }
 
     @Test
     public void testWrite() throws Exception {
         if (Os.nativelySupported) {
-            LPSZ lpsz = new LPSZ();
+            Path path = new Path();
             File f = temporaryFolder.newFile();
-            long fd = Files.openRW(lpsz.of(f.getAbsolutePath()));
+            long fd = Files.openRW(path.of(f.getAbsolutePath()));
             try {
                 Assert.assertTrue(fd > 0);
 
@@ -95,12 +95,12 @@ public class FilesTest {
                 Files.close(fd);
             }
 
-            fd = Files.openRO(lpsz.address());
+            fd = Files.openRO(path);
             try {
                 Assert.assertTrue(fd > 0);
                 ByteBuffer buf = ByteBuffer.allocateDirect(1024).order(ByteOrder.LITTLE_ENDIAN);
                 try {
-                    int len = (int) Files.length(lpsz.address());
+                    int len = (int) Files.length(path);
                     long ptr = ByteBuffers.getAddress(buf);
                     Assert.assertEquals(48, Files.read(fd, ptr, len, 0));
                     DirectCharSequence cs = new DirectCharSequence().of(ptr, ptr + len);
@@ -111,6 +111,9 @@ public class FilesTest {
             } finally {
                 Files.close(fd);
             }
+
+            Assert.assertTrue(Files.exists(path));
+            Assert.assertFalse(Files.exists(path.of("/x/yz/1/2/3")));
         }
     }
 

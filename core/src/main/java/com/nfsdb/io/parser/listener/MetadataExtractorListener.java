@@ -24,6 +24,7 @@ package com.nfsdb.io.parser.listener;
 import com.nfsdb.collections.IntList;
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.collections.ObjList;
+import com.nfsdb.collections.ObjectFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.io.ImportSchema;
@@ -39,6 +40,12 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 @SuppressFBWarnings({"PL_PARALLEL_LISTS", "LII_LIST_INDEXED_ITERATING"})
 public class MetadataExtractorListener implements Listener, Mutable {
 
+    public static final ObjectFactory<MetadataExtractorListener> FACTORY = new ObjectFactory<MetadataExtractorListener>() {
+        @Override
+        public MetadataExtractorListener newInstance() {
+            return new MetadataExtractorListener();
+        }
+    };
     // order of probes in array is critical
     private static final TypeProbe probes[] = new TypeProbe[]{
             new IntProbe(),
@@ -54,7 +61,6 @@ public class MetadataExtractorListener implements Listener, Mutable {
     private static final ObjList<RecordColumnMetadata> counterMeta = new ObjList<>(1);
     private static final CollectionRecordMetadata keyMetadata = new CollectionRecordMetadata();
     private static final ObjList<String> kc = new ObjList<>();
-
     private final StringSink tempSink = new StringSink();
     private final ObjList<ImportedColumnMetadata> _metadata = new ObjList<>();
     private final ObjList<String> _headers = new ObjList<>();
