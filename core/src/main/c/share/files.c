@@ -11,7 +11,6 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_write
          jlong address,
          jint len,
          jlong offset) {
-
     return pwrite((int) fd, (void *) (address), (size_t) len, (off_t) offset);
 }
 

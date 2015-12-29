@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,20 +17,20 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb;
 
 import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.http.HttpServer;
-import com.nfsdb.http.HttpServerConfiguration;
-import com.nfsdb.http.MimeTypes;
-import com.nfsdb.http.SimpleUrlMatcher;
-import com.nfsdb.http.handlers.ImportHandler;
-import com.nfsdb.http.handlers.NativeStaticContentHandler;
-import com.nfsdb.http.handlers.StaticContentHandler;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.misc.Os;
+import com.nfsdb.net.http.HttpServer;
+import com.nfsdb.net.http.HttpServerConfiguration;
+import com.nfsdb.net.http.MimeTypes;
+import com.nfsdb.net.http.SimpleUrlMatcher;
+import com.nfsdb.net.http.handlers.ImportHandler;
+import com.nfsdb.net.http.handlers.NativeStaticContentHandler;
+import com.nfsdb.net.http.handlers.StaticContentHandler;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
@@ -49,7 +49,7 @@ public class BootstrapMain {
     private static final Logger LOGGER = Logger.getLogger(BootstrapMain.class);
 
     @SuppressFBWarnings("PATH_TRAVERSAL_IN")
-    public static void main(String[] args) throws IOException, InterruptedException, URISyntaxException {
+    public static void main(String[] args) throws Exception {
         if (args.length < 1) {
             return;
         }
@@ -77,11 +77,16 @@ public class BootstrapMain {
             matcher.setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), new MimeTypes(configuration.getMimeTypes())));
         }
 
-
         HttpServer server = new HttpServer(configuration, matcher);
         server.start();
-        LOGGER.info("Server started");
-//        LOGGER.info(configuration);
+
+        StringBuilder welcome = new StringBuilder();
+        welcome.append("Server started on port: ").append(configuration.getHttpPort());
+        if (configuration.getSslConfig().isSecure()) {
+            welcome.append(" [HTTPS]");
+        }
+
+        LOGGER.info(welcome);
     }
 
     private static void extractSite(String dir) throws URISyntaxException, IOException {
