@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http.handlers;
 
@@ -75,7 +75,6 @@ public class StaticContentHandler implements ContextHandler {
 
     @Override
     public void handle(IOContext context) throws IOException {
-        //todo: implement non-allocating version of file existence check
         CharSequence url = context.request.getUrl();
         if (Chars.containts(url, "..")) {
             context.response.simple(404);
@@ -90,7 +89,6 @@ public class StaticContentHandler implements ContextHandler {
     }
 
     public void send(IOContext context, File file, boolean asAttachment) throws IOException {
-        //todo: implement in c/jni, too many allocations
         CharSequence name = file.getName();
 
         int n = Chars.lastIndexOf(name, '.');

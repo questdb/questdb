@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
@@ -46,7 +46,8 @@ public class Request implements Closeable, Mutable {
     public static final int SO_RVCBUF_DOWNLD = 128 * 1024;
     public static final int SO_READ_RETRY_COUNT = 1000;
 
-    public final ByteBuffer in;
+    private final ByteBuffer in;
+    private final long inAddr;
     private final ObjectPool<DirectByteCharSequence> pool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 64);
     private final RequestHeaderBuffer hb;
     private final MultipartParser multipartParser;
@@ -57,6 +58,7 @@ public class Request implements Closeable, Mutable {
         this.channel = channel;
         this.hb = new RequestHeaderBuffer(headerBufferSize, pool);
         this.in = ByteBuffer.allocateDirect(Numbers.ceilPow2(contentBufferSize));
+        this.inAddr = ByteBuffers.getAddress(in);
         this.multipartParser = new MultipartParser(multipartHeaderBufferSize, pool);
     }
 
@@ -154,36 +156,44 @@ public class Request implements Closeable, Mutable {
 
     public void parseMultipart(IOContext context, MultipartListener handler)
             throws HeadersTooLargeException, IOException, MalformedHeaderException {
-
         channel.getSocketChannel().setOption(StandardSocketOptions.SO_RCVBUF, SO_RCVBUF_UPLOAD);
         try {
             MultipartParser parser = getMultipartParser().of(getBoundary());
             while (true) {
-                try {
-                    int sz = in.remaining();
-                    if (sz > 0 && parser.parse(context, ByteBuffers.getAddress(in) + in.position(), sz, handler)) {
-                        break;
-                    }
-                } finally {
-                    in.clear();
+                int sz = in.remaining();
+                if (sz > 0 && parser.parse(context, ByteBuffers.getAddress(in) + in.position(), sz, handler)) {
+                    break;
                 }
-                ByteBuffers.copyNonBlocking(channel, in, SO_READ_RETRY_COUNT);
+                drainChannel();
             }
         } finally {
             channel.getSocketChannel().setOption(StandardSocketOptions.SO_RCVBUF, SO_RVCBUF_DOWNLD);
         }
     }
 
-    public ChannelStatus read() throws HeadersTooLargeException, IOException, MalformedHeaderException {
-        ByteBuffers.copyNonBlocking(channel, in, SO_READ_RETRY_COUNT);
-        long address = ByteBuffers.getAddress(in);
-        ByteBuffers.dump(in);
-        in.position((int) (hb.write(address, in.remaining(), true) - address));
-
-        if (hb.isIncomplete()) {
-            return ChannelStatus.NEED_REQUEST;
+    public void read() throws HeadersTooLargeException, IOException, MalformedHeaderException {
+        drainChannel();
+        if (isIncomplete()) {
+            readHeaders();
         }
-        return ChannelStatus.READ;
+    }
+
+    private void drainChannel() throws IOException {
+        in.clear();
+        ByteBuffers.copyNonBlocking(channel, in, SO_READ_RETRY_COUNT);
+        in.flip();
+//        ByteBuffers.dump(in);
+    }
+
+    private void readHeaders() throws HeadersTooLargeException, IOException, MalformedHeaderException {
+        do {
+            in.position((int) (hb.write(inAddr, in.remaining(), true) - inAddr));
+            if (hb.isIncomplete()) {
+                drainChannel();
+            } else {
+                break;
+            }
+        } while (true);
     }
 
     public static class BoundaryAugmenter implements Closeable {

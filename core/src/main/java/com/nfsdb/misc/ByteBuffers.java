@@ -112,28 +112,7 @@ public final class ByteBuffers {
         }
     }
 
-    public static void copyNonBlocking(ByteBuffer from, WritableByteChannel channel, int retryCount) throws IOException {
-        int target = from.remaining();
-        while (target > 0) {
-            int result = channel.write(from);
-
-            // disconnected
-            if (result == -1) {
-                throw DisconnectedChannelException.INSTANCE;
-            }
-
-            if (result == 0) {
-                if (--retryCount < 0) {
-                    throw SlowWritableChannelException.INSTANCE;
-                }
-            }
-            target -= result;
-        }
-        from.clear();
-    }
-
-
-    public static void copyNonBlocking(ReadableByteChannel channel, ByteBuffer to, int retryCount) throws IOException {
+    public static void copyGreedyNonBlocking(ReadableByteChannel channel, ByteBuffer to, int retryCount) throws IOException {
         try {
             int r = to.remaining();
             int target = r;
@@ -151,10 +130,51 @@ public final class ByteBuffers {
                     }
                     break;
                 }
+
                 target -= result;
             }
         } finally {
             to.flip();
+        }
+    }
+
+    public static void copyNonBlocking(ByteBuffer from, WritableByteChannel channel, int retryCount) throws IOException {
+        int target = from.remaining();
+        while (target > 0) {
+            int result = channel.write(from);
+
+            // disconnected
+            if (result == -1) {
+                throw DisconnectedChannelException.INSTANCE;
+            }
+
+            if (result == 0) {
+                if (--retryCount < 0) {
+                    throw SlowWritableChannelException.INSTANCE;
+                }
+            }
+            target -= result;
+        }
+    }
+
+    public static void copyNonBlocking(ReadableByteChannel channel, ByteBuffer to, int retryCount) throws IOException {
+        int r = to.remaining();
+        int target = r;
+        while (target > 0) {
+            int result = channel.read(to);
+
+            // disconnected
+            if (result == -1) {
+                throw DisconnectedChannelException.INSTANCE;
+            }
+
+            if (result == 0 && target < r) {
+                break;
+            } else if (--retryCount < 0) {
+                throw SlowReadableChannelException.INSTANCE;
+            }
+
+            target -= result;
         }
     }
 
@@ -269,6 +289,4 @@ public final class ByteBuffers {
         }
         return result;
     }
-
-
 }

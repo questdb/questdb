@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,12 +17,13 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net;
 
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.exceptions.SlowReadableChannelException;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.misc.ByteBuffers;
 
@@ -38,14 +39,14 @@ public class NonBlockingSecureSocketChannel implements SocketChannelWrapper {
 
     private final SocketChannel socketChannel;
     private final SSLEngine engine;
-    private final ByteBuffer inBuf;
-    private final ByteBuffer outBuf;
+    private final ByteBuffer in;
+    private final ByteBuffer out;
     private final int sslDataLimit;
     private final boolean client;
     private boolean inData = false;
     private SSLEngineResult.HandshakeStatus handshakeStatus = SSLEngineResult.HandshakeStatus.NEED_WRAP;
-    private ByteBuffer swapBuf;
-    private boolean fillInBuf = true;
+    private ByteBuffer unwrapped;
+    private ReadState readState = ReadState.READ_CLEAN_CHANNEL;
 
     public NonBlockingSecureSocketChannel(SocketChannel socketChannel, SslConfig sslConfig) throws JournalNetworkException {
         this.socketChannel = socketChannel;
@@ -57,9 +58,9 @@ public class NonBlockingSecureSocketChannel implements SocketChannelWrapper {
         this.client = sslConfig.isClient();
         SSLSession session = engine.getSession();
         this.sslDataLimit = session.getApplicationBufferSize();
-        inBuf = ByteBuffer.allocateDirect(session.getPacketBufferSize()).order(ByteOrder.LITTLE_ENDIAN);
-        outBuf = ByteBuffer.allocateDirect(session.getPacketBufferSize()).order(ByteOrder.LITTLE_ENDIAN);
-        swapBuf = ByteBuffer.allocateDirect(sslDataLimit * 2).order(ByteOrder.LITTLE_ENDIAN);
+        in = ByteBuffer.allocateDirect(session.getPacketBufferSize()).order(ByteOrder.LITTLE_ENDIAN);
+        out = ByteBuffer.allocateDirect(session.getPacketBufferSize()).order(ByteOrder.LITTLE_ENDIAN);
+        unwrapped = ByteBuffer.allocateDirect(sslDataLimit * 2).order(ByteOrder.LITTLE_ENDIAN);
     }
 
     @Override
@@ -75,9 +76,9 @@ public class NonBlockingSecureSocketChannel implements SocketChannelWrapper {
     @Override
     public void close() throws IOException {
         socketChannel.close();
-        ByteBuffers.release(inBuf);
-        ByteBuffers.release(outBuf);
-        ByteBuffers.release(swapBuf);
+        ByteBuffers.release(in);
+        ByteBuffers.release(out);
+        ByteBuffers.release(unwrapped);
         if (engine.isOutboundDone()) {
             engine.closeOutbound();
         }
@@ -100,33 +101,83 @@ public class NonBlockingSecureSocketChannel implements SocketChannelWrapper {
 
         int p = dst.position();
 
-        while (true) {
+        int limit = dst.remaining();
 
-            int limit = dst.remaining();
-            if (limit == 0) {
-                break;
-            }
+        if (limit == 0) {
+            return 0;
+        }
 
-            // check if anything is remaining in swapBuf
-            if (swapBuf.hasRemaining()) {
-                ByteBuffers.copy(swapBuf, dst);
-            } else {
+        if (unwrapped.hasRemaining()) {
+//            System.out.println("copied");
+            ByteBuffers.copy(unwrapped, dst);
+        }
 
-                if (fillInBuf) {
-                    inBuf.clear();
-                    int size = socketChannel.read(inBuf);
-                }
+        OUT:
+        while ((limit = dst.remaining()) > 0) {
 
-                // dst is larger than minimum?
-                if (limit < sslDataLimit) {
-                    // no, dst is small, use swap
-                    swapBuf.clear();
-                    fillInBuf = unwrap(swapBuf);
-                    swapBuf.flip();
-                    ByteBuffers.copy(swapBuf, dst);
-                } else {
-                    fillInBuf = unwrap(dst);
-                }
+//            System.out.println(readState);
+
+            switch (readState) {
+                case READ_CLEAN_CHANNEL:
+                    in.clear();
+                    readState = ReadState.READ_CHANNEL;
+                    // fall through
+                case READ_CHANNEL:
+                    try {
+//                        System.out.println(in.remaining());
+                        ByteBuffers.copyNonBlocking(socketChannel, in, 1);
+                        in.flip();
+                        if (limit < sslDataLimit) {
+                            readState = ReadState.UNWRAP_CLEAN_CACHED;
+                        } else {
+                            readState = ReadState.UNWRAP_DIRECT;
+                        }
+                    } catch (SlowReadableChannelException e) {
+//                        System.out.println("slow?");
+                        break OUT;
+                    }
+                    break;
+                case UNWRAP_DIRECT:
+                    switch (engine.unwrap(in, dst).getStatus()) {
+                        case BUFFER_OVERFLOW:
+                            readState = ReadState.UNWRAP_CLEAN_CACHED;
+                            break;
+                        case OK:
+                            if (in.remaining() == 0) {
+                                readState = ReadState.READ_CLEAN_CHANNEL;
+                            }
+                            break;
+                        case BUFFER_UNDERFLOW:
+                            in.compact();
+                            readState = ReadState.READ_CHANNEL;
+                            break;
+                    }
+                    break;
+                case UNWRAP_CLEAN_CACHED:
+                    unwrapped.clear();
+                    readState = ReadState.UNWRAP_CACHED;
+                    // fall through
+                case UNWRAP_CACHED:
+                    switch (engine.unwrap(in, unwrapped).getStatus()) {
+                        case BUFFER_OVERFLOW:
+                            readState = ReadState.UNWRAP_CLEAN_CACHED;
+                            break;
+                        case OK:
+                            if (in.remaining() == 0) {
+                                readState = ReadState.READ_CLEAN_CHANNEL;
+                            } else {
+                                readState = ReadState.UNWRAP_CLEAN_CACHED;
+                            }
+                            break;
+                        case BUFFER_UNDERFLOW:
+                            in.compact();
+                            readState = ReadState.READ_CHANNEL;
+                            break;
+                    }
+                    unwrapped.flip();
+                    ByteBuffers.copy(unwrapped, dst);
+                    break;
+
             }
         }
         return dst.position() - p;
@@ -134,36 +185,40 @@ public class NonBlockingSecureSocketChannel implements SocketChannelWrapper {
 
     @Override
     public int write(ByteBuffer src) throws IOException {
+
+        ByteBuffers.dump(src);
+
         if (handshakeStatus != SSLEngineResult.HandshakeStatus.FINISHED) {
             handshake();
         }
 
-        int count = src.remaining();
-        while (src.hasRemaining()) {
-            outBuf.clear();
-            SSLEngineResult result = engine.wrap(src, outBuf);
+        if (out.remaining() > 0) {
+            ByteBuffers.copyNonBlocking(out, socketChannel, 10);
+        }
+
+        int r = src.remaining();
+        while (src.remaining() > 0) {
+            out.clear();
+            SSLEngineResult result = engine.wrap(src, out);
+
             if (result.getStatus() != SSLEngineResult.Status.OK) {
                 throw new IOException("Expected OK, got: " + result.getStatus());
             }
-            outBuf.flip();
-            try {
-                ByteBuffers.copy(outBuf, socketChannel);
-            } catch (JournalNetworkException e) {
-                throw new IOException(e);
-            }
+            out.flip();
+            ByteBuffers.copyNonBlocking(out, socketChannel, 10);
         }
-        return count;
+        return r - src.remaining();
     }
 
     private void closureOnException() throws IOException {
-        swapBuf.position(0);
-        swapBuf.limit(0);
+        unwrapped.position(0);
+        unwrapped.limit(0);
         SSLEngineResult sslEngineResult;
         do {
-            outBuf.clear();
-            sslEngineResult = engine.wrap(swapBuf, outBuf);
-            outBuf.flip();
-            socketChannel.write(outBuf);
+            out.clear();
+            sslEngineResult = engine.wrap(unwrapped, out);
+            out.flip();
+            socketChannel.write(out);
             if (sslEngineResult.getStatus() == SSLEngineResult.Status.CLOSED) {
                 break;
             }
@@ -184,35 +239,35 @@ public class NonBlockingSecureSocketChannel implements SocketChannelWrapper {
                 case NOT_HANDSHAKING:
                     throw new IOException("Not handshaking");
                 case NEED_WRAP:
-                    outBuf.clear();
-                    swapBuf.clear();
+                    out.clear();
+                    unwrapped.clear();
                     try {
-                        handshakeStatus = engine.wrap(swapBuf, outBuf).getHandshakeStatus();
+                        handshakeStatus = engine.wrap(unwrapped, out).getHandshakeStatus();
                     } catch (SSLException e) {
                         LOGGER.error("Server SSL handshake failed: %s", e.getMessage());
                         closureOnException();
                         throw e;
                     }
-                    outBuf.flip();
-                    socketChannel.write(outBuf);
+                    out.flip();
+                    socketChannel.write(out);
                     break;
                 case NEED_UNWRAP:
 
-                    if (!inData || !inBuf.hasRemaining()) {
-                        inBuf.clear();
-                        socketChannel.read(inBuf);
-                        inBuf.flip();
+                    if (!inData || !in.hasRemaining()) {
+                        in.clear();
+                        socketChannel.read(in);
+                        in.flip();
                         inData = true;
                     }
 
                     try {
-                        SSLEngineResult res = engine.unwrap(inBuf, swapBuf);
+                        SSLEngineResult res = engine.unwrap(in, unwrapped);
                         handshakeStatus = res.getHandshakeStatus();
                         switch (res.getStatus()) {
                             case BUFFER_UNDERFLOW:
-                                inBuf.compact();
-                                socketChannel.read(inBuf);
-                                inBuf.flip();
+                                in.compact();
+                                socketChannel.read(in);
+                                in.flip();
                                 break;
                             case BUFFER_OVERFLOW:
                                 throw new IOException("Did not expect OVERFLOW here");
@@ -238,30 +293,14 @@ public class NonBlockingSecureSocketChannel implements SocketChannelWrapper {
             }
         }
 
-        inBuf.clear();
-        // make sure swapBuf starts by having remaining() == false
-        swapBuf.position(swapBuf.limit());
+        in.clear();
+        // make sure unwrapped starts by having remaining() == false
+        unwrapped.position(unwrapped.limit());
 
         LOGGER.info("Handshake SSL complete: %s", client ? "CLIENT" : "SERVER");
     }
 
-    private boolean unwrap(ByteBuffer dst) throws IOException {
-        while (inBuf.hasRemaining()) {
-            SSLEngineResult.Status status = engine.unwrap(inBuf, dst).getStatus();
-            switch (status) {
-                case BUFFER_UNDERFLOW:
-                    inBuf.compact();
-                    socketChannel.read(inBuf);
-                    inBuf.flip();
-                    break;
-                case BUFFER_OVERFLOW:
-                    return false;
-                case OK:
-                    break;
-                case CLOSED:
-                    throw new IOException("Did not expect CLOSED");
-            }
-        }
-        return true;
+    private enum ReadState {
+        READ_CLEAN_CHANNEL, READ_CHANNEL, UNWRAP_DIRECT, UNWRAP_CLEAN_CACHED, UNWRAP_CACHED, ANALYSE_BUFFER_SIZE
     }
 }

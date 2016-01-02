@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
@@ -66,56 +66,50 @@ public class IOHttpJob implements Job<IOWorkerContext> {
         return true;
     }
 
-    @SuppressWarnings("StatementWithEmptyBody")
     private void process(IOContext context, int op) {
         final Request r = context.request;
         final Response response = context.response;
 
         ChannelStatus status = ChannelStatus.READ;
-
-        boolean _new = r.isIncomplete();
         try {
-            if (_new) {
-                while ((status = r.read()) == ChannelStatus.NEED_REQUEST) {
-                    // loop
-                }
+
+            if ((op & SelectionKey.OP_READ) != 0) {
+                r.read();
             }
 
-            if (status == ChannelStatus.READ) {
-                if (r.getUrl() == null) {
-                    status = response.simple(400);
-                } else {
-                    ContextHandler handler = urlMatcher.get(r.getUrl());
-                    if (handler != null) {
+            if (r.getUrl() == null) {
+                status = response.simple(400);
+            } else {
+                ContextHandler handler = urlMatcher.get(r.getUrl());
+                if (handler != null) {
 
-                        // write what's left to
-                        if ((op & SelectionKey.OP_WRITE) != 0) {
-                            response._continue();
-                            handler._continue(context);
-                        }
+                    // write what's left to
+                    if ((op & SelectionKey.OP_WRITE) != 0) {
+                        response._continue();
+                        handler._continue(context);
+                    }
 
-                        if ((op & SelectionKey.OP_READ) != 0) {
-                            if (r.isMultipart()) {
-                                if (handler instanceof MultipartListener) {
-                                    r.parseMultipart(context, (MultipartListener) handler);
-                                    handler.handle(context);
-                                } else {
-                                    status = response.simple(400);
-                                }
+                    if ((op & SelectionKey.OP_READ) != 0) {
+                        if (r.isMultipart()) {
+                            if (handler instanceof MultipartListener) {
+                                r.parseMultipart(context, (MultipartListener) handler);
+                                handler.handle(context);
                             } else {
-                                if (handler instanceof MultipartListener) {
-                                    status = response.simple(400);
-                                } else {
-                                    handler.handle(context);
-                                }
+                                status = response.simple(400);
+                            }
+                        } else {
+                            if (handler instanceof MultipartListener) {
+                                status = response.simple(400);
+                            } else {
+                                handler.handle(context);
                             }
                         }
-                    } else {
-                        status = response.simple(404);
                     }
+                } else {
+                    status = response.simple(404);
                 }
-                context.clear();
             }
+            context.clear();
         } catch (HeadersTooLargeException ignored) {
             response.simple(431);
             status = ChannelStatus.READ;
@@ -137,6 +131,7 @@ public class IOHttpJob implements Job<IOWorkerContext> {
         if (status != ChannelStatus.DISCONNECTED) {
             loop.registerChannel(context, status == ChannelStatus.WRITE ? SelectionKey.OP_WRITE : SelectionKey.OP_READ);
         } else {
+            System.out.println("DISCO");
             context.close();
         }
     }

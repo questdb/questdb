@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
@@ -170,7 +170,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
             channel.configureBlocking(false);
 
-            ByteBuffers.copyNonBlocking(channel, out, 100000);
+            ByteBuffers.copyGreedyNonBlocking(channel, out, 100000);
 
             final String expected = "HTTP/1.1 404 Not Found\r\n" +
                     "Server: nfsdb/0.1\r\n" +
