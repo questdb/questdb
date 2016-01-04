@@ -50,6 +50,9 @@ public final class Os {
         return bean.getTotalPhysicalMemorySize();
     }
 
+    public static void init() {
+    }
+
     @SuppressFBWarnings("OBL_UNSATISFIED_OBLIGATION")
     private static void loadLib(String lib) {
         InputStream is = Os.class.getResourceAsStream(lib);

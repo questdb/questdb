@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,43 +17,42 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.channels.SocketChannel;
+import java.nio.channels.ByteChannel;
 
-public class PlainSocketChannel implements SocketChannelWrapper {
-    private final SocketChannel socketChannel;
+public class PlainSocketChannel<T extends ByteChannel> implements SocketChannelWrapper<T> {
+    private final T channel;
 
-    public PlainSocketChannel(SocketChannel socketChannel) {
-        this.socketChannel = socketChannel;
+    public PlainSocketChannel(T channel) {
+        this.channel = channel;
     }
 
-    @Override
-    public SocketChannel getSocketChannel() {
-        return socketChannel;
+    public T getChannel() {
+        return channel;
     }
 
     @Override
     public boolean isOpen() {
-        return socketChannel.isOpen();
+        return channel.isOpen();
     }
 
     @Override
     public void close() throws IOException {
-        socketChannel.close();
+        channel.close();
     }
 
     @Override
     public int read(ByteBuffer dst) throws IOException {
-        return socketChannel.read(dst);
+        return channel.read(dst);
     }
 
     @Override
     public int write(ByteBuffer src) throws IOException {
-        return socketChannel.write(src);
+        return channel.write(src);
     }
 }

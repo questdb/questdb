@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
@@ -129,7 +129,7 @@ public class IOLoopJob extends SynchronizedJob<IOWorkerContext> {
         channel.setOption(StandardSocketOptions.SO_RCVBUF, Request.SO_RVCBUF_DOWNLD);
         channel.register(selector, SelectionKey.OP_READ).attach(
                 new IOContext(
-                        configuration.getSslConfig().isSecure() ? new NonBlockingSecureSocketChannel(channel, configuration.getSslConfig()) : new PlainSocketChannel(channel),
+                        configuration.getSslConfig().isSecure() ? new NonBlockingSecureSocketChannel<>(channel, configuration.getSslConfig()) : new PlainSocketChannel<>(channel),
                         clock,
                         configuration.getHttpBufReqHeader(),
                         configuration.getHttpBufReqContent(),
@@ -155,7 +155,7 @@ public class IOLoopJob extends SynchronizedJob<IOWorkerContext> {
                 if (context.channel != null) {
                     while (true) {
                         try {
-                            context.channel.getSocketChannel().register(selector, op, context);
+                            context.channel.getChannel().register(selector, op, context);
                             break;
                         } catch (CancelledKeyException e) {
                             selector.selectNow();

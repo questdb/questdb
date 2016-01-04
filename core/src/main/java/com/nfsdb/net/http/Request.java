@@ -39,6 +39,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.net.StandardSocketOptions;
 import java.nio.ByteBuffer;
+import java.nio.channels.SocketChannel;
 
 @SuppressFBWarnings("CD_CIRCULAR_DEPENDENCY")
 public class Request implements Closeable, Mutable {
@@ -52,9 +53,9 @@ public class Request implements Closeable, Mutable {
     private final RequestHeaderBuffer hb;
     private final MultipartParser multipartParser;
     private final BoundaryAugmenter augmenter = new BoundaryAugmenter();
-    private final SocketChannelWrapper channel;
+    private final SocketChannelWrapper<SocketChannel> channel;
 
-    public Request(SocketChannelWrapper channel, int headerBufferSize, int contentBufferSize, int multipartHeaderBufferSize) {
+    public Request(SocketChannelWrapper<SocketChannel> channel, int headerBufferSize, int contentBufferSize, int multipartHeaderBufferSize) {
         this.channel = channel;
         this.hb = new RequestHeaderBuffer(headerBufferSize, pool);
         this.in = ByteBuffer.allocateDirect(Numbers.ceilPow2(contentBufferSize));
@@ -156,7 +157,7 @@ public class Request implements Closeable, Mutable {
 
     public void parseMultipart(IOContext context, MultipartListener handler)
             throws HeadersTooLargeException, IOException, MalformedHeaderException {
-        channel.getSocketChannel().setOption(StandardSocketOptions.SO_RCVBUF, SO_RCVBUF_UPLOAD);
+        channel.getChannel().setOption(StandardSocketOptions.SO_RCVBUF, SO_RCVBUF_UPLOAD);
         try {
             MultipartParser parser = getMultipartParser().of(getBoundary());
             while (true) {
@@ -167,7 +168,7 @@ public class Request implements Closeable, Mutable {
                 drainChannel();
             }
         } finally {
-            channel.getSocketChannel().setOption(StandardSocketOptions.SO_RCVBUF, SO_RVCBUF_DOWNLD);
+            channel.getChannel().setOption(StandardSocketOptions.SO_RCVBUF, SO_RVCBUF_DOWNLD);
         }
     }
 

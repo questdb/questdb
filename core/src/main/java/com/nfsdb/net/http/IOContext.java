@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
@@ -35,9 +35,10 @@ import com.nfsdb.storage.PlainFile;
 
 import java.io.Closeable;
 import java.io.RandomAccessFile;
+import java.nio.channels.SocketChannel;
 
 public class IOContext implements Closeable, Mutable {
-    public final SocketChannelWrapper channel;
+    public final SocketChannelWrapper<SocketChannel> channel;
     public final Request request;
     public final Response response;
     public final FlyweightCharSequence ext = new FlyweightCharSequence();
@@ -58,7 +59,7 @@ public class IOContext implements Closeable, Mutable {
     public long bytesSent;
     public long sendMax;
 
-    public IOContext(SocketChannelWrapper channel, Clock clock, int reqHeaderSize, int reqContentSize, int reqMultipartHeaderSize, int respHeaderSize, int respContentSize) {
+    public IOContext(SocketChannelWrapper<SocketChannel> channel, Clock clock, int reqHeaderSize, int reqContentSize, int reqMultipartHeaderSize, int respHeaderSize, int respContentSize) {
         this.channel = channel;
         this.request = new Request(channel, reqHeaderSize, reqContentSize, reqMultipartHeaderSize);
         this.response = new Response(channel, respHeaderSize, respContentSize, clock);

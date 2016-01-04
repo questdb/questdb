@@ -31,13 +31,13 @@ import javax.net.ssl.*;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.channels.SocketChannel;
+import java.nio.channels.ByteChannel;
 
-public class NonBlockingSecureSocketChannel implements SocketChannelWrapper {
+public class NonBlockingSecureSocketChannel<T extends ByteChannel> implements SocketChannelWrapper<T> {
 
     private static final Logger LOGGER = Logger.getLogger(NonBlockingSecureSocketChannel.class);
 
-    private final SocketChannel socketChannel;
+    private final T channel;
     private final SSLEngine engine;
     private final ByteBuffer in;
     private final ByteBuffer out;
@@ -48,8 +48,8 @@ public class NonBlockingSecureSocketChannel implements SocketChannelWrapper {
     private ByteBuffer unwrapped;
     private ReadState readState = ReadState.READ_CLEAN_CHANNEL;
 
-    public NonBlockingSecureSocketChannel(SocketChannel socketChannel, SslConfig sslConfig) throws JournalNetworkException {
-        this.socketChannel = socketChannel;
+    public NonBlockingSecureSocketChannel(T channel, SslConfig sslConfig) throws JournalNetworkException {
+        this.channel = channel;
         SSLContext sslc = sslConfig.getSslContext();
         this.engine = sslc.createSSLEngine();
         this.engine.setEnableSessionCreation(true);
@@ -63,19 +63,18 @@ public class NonBlockingSecureSocketChannel implements SocketChannelWrapper {
         unwrapped = ByteBuffer.allocateDirect(sslDataLimit * 2).order(ByteOrder.LITTLE_ENDIAN);
     }
 
-    @Override
-    public SocketChannel getSocketChannel() {
-        return socketChannel;
+    public T getChannel() {
+        return channel;
     }
 
     @Override
     public boolean isOpen() {
-        return socketChannel.isOpen();
+        return channel.isOpen();
     }
 
     @Override
     public void close() throws IOException {
-        socketChannel.close();
+        channel.close();
         ByteBuffers.release(in);
         ByteBuffers.release(out);
         ByteBuffers.release(unwrapped);
@@ -125,7 +124,7 @@ public class NonBlockingSecureSocketChannel implements SocketChannelWrapper {
                 case READ_CHANNEL:
                     try {
 //                        System.out.println(in.remaining());
-                        ByteBuffers.copyNonBlocking(socketChannel, in, 1);
+                        ByteBuffers.copyNonBlocking(channel, in, 1);
                         in.flip();
                         if (limit < sslDataLimit) {
                             readState = ReadState.UNWRAP_CLEAN_CACHED;
@@ -185,15 +184,12 @@ public class NonBlockingSecureSocketChannel implements SocketChannelWrapper {
 
     @Override
     public int write(ByteBuffer src) throws IOException {
-
-        ByteBuffers.dump(src);
-
         if (handshakeStatus != SSLEngineResult.HandshakeStatus.FINISHED) {
             handshake();
         }
 
         if (out.remaining() > 0) {
-            ByteBuffers.copyNonBlocking(out, socketChannel, 10);
+            ByteBuffers.copyNonBlocking(out, channel, 10);
         }
 
         int r = src.remaining();
@@ -205,7 +201,7 @@ public class NonBlockingSecureSocketChannel implements SocketChannelWrapper {
                 throw new IOException("Expected OK, got: " + result.getStatus());
             }
             out.flip();
-            ByteBuffers.copyNonBlocking(out, socketChannel, 10);
+            ByteBuffers.copyNonBlocking(out, channel, 10);
         }
         return r - src.remaining();
     }
@@ -218,7 +214,7 @@ public class NonBlockingSecureSocketChannel implements SocketChannelWrapper {
             out.clear();
             sslEngineResult = engine.wrap(unwrapped, out);
             out.flip();
-            socketChannel.write(out);
+            channel.write(out);
             if (sslEngineResult.getStatus() == SSLEngineResult.Status.CLOSED) {
                 break;
             }
@@ -249,13 +245,13 @@ public class NonBlockingSecureSocketChannel implements SocketChannelWrapper {
                         throw e;
                     }
                     out.flip();
-                    socketChannel.write(out);
+                    channel.write(out);
                     break;
                 case NEED_UNWRAP:
 
                     if (!inData || !in.hasRemaining()) {
                         in.clear();
-                        socketChannel.read(in);
+                        channel.read(in);
                         in.flip();
                         inData = true;
                     }
@@ -266,7 +262,7 @@ public class NonBlockingSecureSocketChannel implements SocketChannelWrapper {
                         switch (res.getStatus()) {
                             case BUFFER_UNDERFLOW:
                                 in.compact();
-                                socketChannel.read(in);
+                                channel.read(in);
                                 in.flip();
                                 break;
                             case BUFFER_OVERFLOW:
@@ -301,6 +297,6 @@ public class NonBlockingSecureSocketChannel implements SocketChannelWrapper {
     }
 
     private enum ReadState {
-        READ_CLEAN_CHANNEL, READ_CHANNEL, UNWRAP_DIRECT, UNWRAP_CLEAN_CACHED, UNWRAP_CACHED, ANALYSE_BUFFER_SIZE
+        READ_CLEAN_CHANNEL, READ_CHANNEL, UNWRAP_DIRECT, UNWRAP_CLEAN_CACHED, UNWRAP_CACHED
     }
 }
