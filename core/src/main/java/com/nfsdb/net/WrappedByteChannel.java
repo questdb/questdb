@@ -23,6 +23,6 @@ package com.nfsdb.net;
 
 import java.nio.channels.ByteChannel;
 
-public interface SocketChannelWrapper<T extends ByteChannel> extends ByteChannel {
+public interface WrappedByteChannel<T> extends ByteChannel, WrappedWritableChannel<T> {
     T getChannel();
 }

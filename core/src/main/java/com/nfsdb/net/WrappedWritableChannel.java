@@ -21,38 +21,8 @@
 
 package com.nfsdb.net;
 
-import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.ByteChannel;
+import java.nio.channels.WritableByteChannel;
 
-public class PlainSocketChannel<T extends ByteChannel> implements WrappedByteChannel<T> {
-    private final T channel;
-
-    public PlainSocketChannel(T channel) {
-        this.channel = channel;
-    }
-
-    public T getChannel() {
-        return channel;
-    }
-
-    @Override
-    public boolean isOpen() {
-        return channel.isOpen();
-    }
-
-    @Override
-    public void close() throws IOException {
-        channel.close();
-    }
-
-    @Override
-    public int read(ByteBuffer dst) throws IOException {
-        return channel.read(dst);
-    }
-
-    @Override
-    public int write(ByteBuffer src) throws IOException {
-        return channel.write(src);
-    }
+public interface WrappedWritableChannel<T> extends WritableByteChannel {
+    T getChannel();
 }

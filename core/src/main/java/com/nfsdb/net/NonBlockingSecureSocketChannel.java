@@ -33,7 +33,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.ByteChannel;
 
-public class NonBlockingSecureSocketChannel<T extends ByteChannel> implements SocketChannelWrapper<T> {
+public class NonBlockingSecureSocketChannel<T extends ByteChannel> implements WrappedByteChannel<T> {
 
     private static final Logger LOGGER = Logger.getLogger(NonBlockingSecureSocketChannel.class);
 

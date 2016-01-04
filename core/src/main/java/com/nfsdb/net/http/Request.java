@@ -32,7 +32,7 @@ import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Unsafe;
-import com.nfsdb.net.SocketChannelWrapper;
+import com.nfsdb.net.WrappedByteChannel;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
@@ -53,9 +53,9 @@ public class Request implements Closeable, Mutable {
     private final RequestHeaderBuffer hb;
     private final MultipartParser multipartParser;
     private final BoundaryAugmenter augmenter = new BoundaryAugmenter();
-    private final SocketChannelWrapper<SocketChannel> channel;
+    private final WrappedByteChannel<SocketChannel> channel;
 
-    public Request(SocketChannelWrapper<SocketChannel> channel, int headerBufferSize, int contentBufferSize, int multipartHeaderBufferSize) {
+    public Request(WrappedByteChannel<SocketChannel> channel, int headerBufferSize, int contentBufferSize, int multipartHeaderBufferSize) {
         this.channel = channel;
         this.hb = new RequestHeaderBuffer(headerBufferSize, pool);
         this.in = ByteBuffer.allocateDirect(Numbers.ceilPow2(contentBufferSize));

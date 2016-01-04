@@ -30,7 +30,7 @@ import com.nfsdb.io.parser.listener.JournalImportListener;
 import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.misc.Files;
 import com.nfsdb.misc.Misc;
-import com.nfsdb.net.SocketChannelWrapper;
+import com.nfsdb.net.WrappedByteChannel;
 import com.nfsdb.storage.PlainFile;
 
 import java.io.Closeable;
@@ -38,7 +38,7 @@ import java.io.RandomAccessFile;
 import java.nio.channels.SocketChannel;
 
 public class IOContext implements Closeable, Mutable {
-    public final SocketChannelWrapper<SocketChannel> channel;
+    public final WrappedByteChannel<SocketChannel> channel;
     public final Request request;
     public final Response response;
     public final FlyweightCharSequence ext = new FlyweightCharSequence();
@@ -59,7 +59,7 @@ public class IOContext implements Closeable, Mutable {
     public long bytesSent;
     public long sendMax;
 
-    public IOContext(SocketChannelWrapper<SocketChannel> channel, Clock clock, int reqHeaderSize, int reqContentSize, int reqMultipartHeaderSize, int respHeaderSize, int respContentSize) {
+    public IOContext(WrappedByteChannel<SocketChannel> channel, Clock clock, int reqHeaderSize, int reqContentSize, int reqMultipartHeaderSize, int respHeaderSize, int respContentSize) {
         this.channel = channel;
         this.request = new Request(channel, reqHeaderSize, reqContentSize, reqMultipartHeaderSize);
         this.response = new Response(channel, respHeaderSize, respContentSize, clock);
