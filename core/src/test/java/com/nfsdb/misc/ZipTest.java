@@ -68,7 +68,7 @@ public class ZipTest {
                         int crc = 0;
                         while ((len = (int) Files.read(fdIn, in, available, pIn)) > 0) {
                             pIn += len;
-                            Zip.setDeflateInput(strm, in, len);
+                            Zip.setInput(strm, in, len);
                             crc = Zip.crc32(crc, in, len);
                             do {
                                 int have = Zip.deflate(strm, out, available, false);

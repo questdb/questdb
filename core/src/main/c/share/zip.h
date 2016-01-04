@@ -13,19 +13,27 @@ extern "C" {
 #define com_nfsdb_misc_Zip_GZIP_MAGIC 35615L
 /*
  * Class:     com_nfsdb_misc_Zip
+ * Method:    crc32
+ * Signature: (IJI)I
+ */
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Zip_crc32
+        (JNIEnv *, jclass, jint, jlong, jint);
+
+/*
+ * Class:     com_nfsdb_misc_Zip
+ * Method:    setInput
+ * Signature: (JJI)V
+ */
+JNIEXPORT void JNICALL Java_com_nfsdb_misc_Zip_setInput
+        (JNIEnv *, jclass, jlong, jlong, jint);
+
+/*
+ * Class:     com_nfsdb_misc_Zip
  * Method:    deflateInit
  * Signature: (IZ)J
  */
 JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Zip_deflateInit
         (JNIEnv *, jclass, jint, jboolean);
-
-/*
- * Class:     com_nfsdb_misc_Zip
- * Method:    setDeflateInput
- * Signature: (JJI)V
- */
-JNIEXPORT void JNICALL Java_com_nfsdb_misc_Zip_setDeflateInput
-        (JNIEnv *, jclass, jlong, jlong, jint);
 
 /*
  * Class:     com_nfsdb_misc_Zip
@@ -45,11 +53,27 @@ JNIEXPORT void JNICALL Java_com_nfsdb_misc_Zip_deflateEnd
 
 /*
  * Class:     com_nfsdb_misc_Zip
- * Method:    crc32
- * Signature: (IJI)I
+ * Method:    inflateInit
+ * Signature: (Z)J
  */
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Zip_crc32
-        (JNIEnv *, jclass, jint, jlong, jint);
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Zip_inflateInit
+        (JNIEnv *, jclass, jboolean);
+
+/*
+ * Class:     com_nfsdb_misc_Zip
+ * Method:    inflate
+ * Signature: (JJIZ)I
+ */
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Zip_inflate
+        (JNIEnv *, jclass, jlong, jlong, jint, jboolean);
+
+/*
+ * Class:     com_nfsdb_misc_Zip
+ * Method:    inflateEnd
+ * Signature: (J)V
+ */
+JNIEXPORT void JNICALL Java_com_nfsdb_misc_Zip_inflateEnd
+        (JNIEnv *, jclass, jlong);
 
 #ifdef __cplusplus
 }
