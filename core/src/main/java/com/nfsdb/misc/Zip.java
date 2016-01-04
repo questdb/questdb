@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.misc;
 
@@ -32,29 +32,31 @@ public final class Zip {
 
     public static native int crc32(int crc, long address, int available);
 
-    public static native void setInput(long z_streamp, long address, int available);
-
-    public static int remainingInput(long z_streamp) {
-        return Unsafe.getUnsafe().getInt(z_streamp + 8);
-    }
-
-    // Deflate
-
-    public static native long deflateInit(int level, boolean nowrap);
-
-
     public static native int deflate(long z_streamp, long out, int available, boolean flush);
 
     public static native void deflateEnd(long z_streamp);
 
-    // Inflate
+    public static native long deflateInit(int level, boolean nowrap);
 
-    public static native long inflateInit(boolean nowrap);
+    // Deflate
+
+    public static native int deflateReset(long z_stream);
 
     public static native int inflate(long z_streamp, long address, int available, boolean flush);
 
     public static native void inflateEnd(long z_streamp);
 
+    public static native long inflateInit(boolean nowrap);
+
+    // Inflate
+
+    public static native int inflateReset(long z_streamp);
+
+    public static int remainingInput(long z_streamp) {
+        return Unsafe.getUnsafe().getInt(z_streamp + 8);
+    }
+
+    public static native void setInput(long z_streamp, long address, int available);
 
     static {
         gzipHeader = Unsafe.getUnsafe().allocateMemory(Numbers.ceilPow2(gzipHeaderLen));

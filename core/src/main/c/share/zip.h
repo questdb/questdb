@@ -21,22 +21,6 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Zip_crc32
 
 /*
  * Class:     com_nfsdb_misc_Zip
- * Method:    setInput
- * Signature: (JJI)V
- */
-JNIEXPORT void JNICALL Java_com_nfsdb_misc_Zip_setInput
-        (JNIEnv *, jclass, jlong, jlong, jint);
-
-/*
- * Class:     com_nfsdb_misc_Zip
- * Method:    deflateInit
- * Signature: (IZ)J
- */
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Zip_deflateInit
-        (JNIEnv *, jclass, jint, jboolean);
-
-/*
- * Class:     com_nfsdb_misc_Zip
  * Method:    deflate
  * Signature: (JJIZ)I
  */
@@ -53,11 +37,19 @@ JNIEXPORT void JNICALL Java_com_nfsdb_misc_Zip_deflateEnd
 
 /*
  * Class:     com_nfsdb_misc_Zip
- * Method:    inflateInit
- * Signature: (Z)J
+ * Method:    deflateReset
+ * Signature: (J)I
  */
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Zip_inflateInit
-        (JNIEnv *, jclass, jboolean);
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Zip_deflateReset
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_nfsdb_misc_Zip
+ * Method:    deflateInit
+ * Signature: (IZ)J
+ */
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Zip_deflateInit
+        (JNIEnv *, jclass, jint, jboolean);
 
 /*
  * Class:     com_nfsdb_misc_Zip
@@ -74,6 +66,30 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Zip_inflate
  */
 JNIEXPORT void JNICALL Java_com_nfsdb_misc_Zip_inflateEnd
         (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_nfsdb_misc_Zip
+ * Method:    inflateReset
+ * Signature: (J)I
+ */
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Zip_inflateReset
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_nfsdb_misc_Zip
+ * Method:    inflateInit
+ * Signature: (Z)J
+ */
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Zip_inflateInit
+        (JNIEnv *, jclass, jboolean);
+
+/*
+ * Class:     com_nfsdb_misc_Zip
+ * Method:    setInput
+ * Signature: (JJI)V
+ */
+JNIEXPORT void JNICALL Java_com_nfsdb_misc_Zip_setInput
+        (JNIEnv *, jclass, jlong, jlong, jint);
 
 #ifdef __cplusplus
 }

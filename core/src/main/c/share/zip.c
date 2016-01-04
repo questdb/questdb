@@ -39,7 +39,7 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Zip_deflate
     if ((ret = deflate(strm, flush ? Z_FINISH : Z_NO_FLUSH)) < 0) {
         return ret;
     }
-    return available - strm->avail_out;
+    return (jint) (available - strm->avail_out);
 }
 
 JNIEXPORT void JNICALL Java_com_nfsdb_misc_Zip_deflateEnd
@@ -83,7 +83,7 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Zip_inflate
     if ((ret = inflate(strm, flush ? Z_FINISH : Z_NO_FLUSH)) < 0) {
         return ret;
     }
-    return available - strm->avail_out;
+    return (jint) (available - strm->avail_out);
 }
 
 JNIEXPORT void JNICALL Java_com_nfsdb_misc_Zip_inflateEnd
@@ -91,4 +91,14 @@ JNIEXPORT void JNICALL Java_com_nfsdb_misc_Zip_inflateEnd
     z_streamp strm = (z_streamp) ptr;
     inflateEnd(strm);
     free(strm);
+}
+
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Zip_inflateReset
+        (JNIEnv *e, jclass cl, jlong ptr) {
+    return (jint) inflateReset((z_streamp) ptr);
+}
+
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Zip_deflateReset
+        (JNIEnv *e, jclass cl, jlong ptr) {
+    return (jint) deflateReset((z_streamp) ptr);
 }
