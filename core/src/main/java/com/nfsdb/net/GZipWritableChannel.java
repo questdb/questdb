@@ -40,7 +40,7 @@ public class GZipWritableChannel<T extends WritableByteChannel> implements Writa
     private int crc = 0;
     private long total = 0;
 
-    public GZipWritableChannel() throws IOException {
+    public GZipWritableChannel() {
         this.z_streamp = Zip.deflateInit(-1, true);
         if (z_streamp <= 0) {
             throw new OutOfMemoryError();

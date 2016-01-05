@@ -38,4 +38,4 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${OUTPUT})
 set(ZLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/zlib-1.2.8)
 include(${ZLIB_SOURCE_DIR}/CMakeLists.txt)
 
-add_library(nfsdb SHARED ${SOURCE_FILES} ${ZLIB_SRCS} ${ZLIB_ASMS})
+add_library(nfsdb SHARED ${SOURCE_FILES} ${ZLIB_SRCS})

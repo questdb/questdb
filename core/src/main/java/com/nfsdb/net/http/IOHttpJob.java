@@ -131,7 +131,6 @@ public class IOHttpJob implements Job<IOWorkerContext> {
         if (status != ChannelStatus.DISCONNECTED) {
             loop.registerChannel(context, status == ChannelStatus.WRITE ? SelectionKey.OP_WRITE : SelectionKey.OP_READ);
         } else {
-            System.out.println("DISCO");
             context.close();
         }
     }
