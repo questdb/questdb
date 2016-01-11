@@ -38,20 +38,34 @@ import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.config.Registry;
+import org.apache.http.config.RegistryBuilder;
+import org.apache.http.conn.socket.ConnectionSocketFactory;
+import org.apache.http.conn.socket.PlainConnectionSocketFactory;
+import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
 import org.apache.http.entity.mime.MultipartEntityBuilder;
 import org.apache.http.entity.mime.content.FileBody;
 import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClientBuilder;
 import org.apache.http.impl.client.HttpClients;
+import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
+import org.apache.http.ssl.SSLContextBuilder;
+import org.apache.http.ssl.TrustStrategy;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSession;
 import java.io.*;
 import java.net.InetSocketAddress;
 import java.net.StandardSocketOptions;
 import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -65,13 +79,14 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testConcurrentDownload() throws Exception {
         final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/nfsdb.conf"));
+        configuration.getSslConfig().setSecure(false);
         final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
             setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), mimeTypes));
         }});
         server.start();
 
-        assertConcurrentDownload(mimeTypes, server);
+        assertConcurrentDownload(mimeTypes, server, "http");
     }
 
     @Test
@@ -90,7 +105,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 public void run() {
                     try {
                         barrier.await();
-                        Assert.assertEquals(200, upload("/csv/test-import.csv", "http://localhost:9090/imp"));
+                        Assert.assertEquals(200, upload("/csv/test-import.csv", "http://localhost:9000/imp"));
                         latch.countDown();
                     } catch (Exception e) {
                         Assert.fail(e.getMessage());
@@ -103,7 +118,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 public void run() {
                     try {
                         barrier.await();
-                        Assert.assertEquals(200, upload("/csv/test-import-nan.csv", "http://localhost:9090/imp"));
+                        Assert.assertEquals(200, upload("/csv/test-import-nan.csv", "http://localhost:9000/imp"));
                         latch.countDown();
                     } catch (Exception e) {
                         Assert.fail(e.getMessage());
@@ -141,7 +156,7 @@ public class HttpServerTest extends AbstractJournalTest {
         });
         server.start();
 
-        try (SocketChannel channel = openChannel("localhost", 9090, 5000)) {
+        try (SocketChannel channel = openChannel("localhost", 9000, 5000)) {
             ByteBuffer buf = ByteBuffer.allocate(1024);
             ByteBuffer out = ByteBuffer.allocate(1024);
             final String request = "GET /imp?x=1&z=2 HTTP/1.1\r\n" +
@@ -200,7 +215,7 @@ public class HttpServerTest extends AbstractJournalTest {
             put("/imp", new ImportHandler(factory));
         }});
         server.start();
-        Assert.assertEquals(400, upload("/com/nfsdb/collections/AssociativeCache.class", "http://localhost:9090/imp"));
+        Assert.assertEquals(400, upload("/com/nfsdb/collections/AssociativeCache.class", "http://localhost:9000/imp"));
         server.halt();
     }
 
@@ -208,13 +223,14 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testNativeConcurrentDownload() throws Exception {
         if (Os.nativelySupported) {
             final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/nfsdb.conf"));
+            configuration.getSslConfig().setSecure(false);
             final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
-            HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
                 setDefaultHandler(new NativeStaticContentHandler(configuration.getHttpPublic(), mimeTypes));
             }});
             server.start();
 
-            assertConcurrentDownload(mimeTypes, server);
+            assertConcurrentDownload(mimeTypes, server, "http");
         }
     }
 
@@ -261,6 +277,23 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
+    public void testSslConcurrentDownload() throws Exception {
+        if (Os.nativelySupported) {
+            final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/nfsdb.conf"));
+            configuration.getSslConfig().setSecure(true);
+            configuration.getSslConfig().setKeyStore(new FileInputStream(resourceFile("/keystore/singlekey.ks")), "changeit");
+
+
+            final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
+            HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
+                setDefaultHandler(new NativeStaticContentHandler(configuration.getHttpPublic(), mimeTypes));
+            }});
+            server.start();
+            assertConcurrentDownload(mimeTypes, server, "https");
+        }
+    }
+
+    @Test
     public void testStartStop() throws Exception {
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher());
         server.start();
@@ -277,10 +310,49 @@ public class HttpServerTest extends AbstractJournalTest {
 
         File expected = resourceFile("/csv/test-import.csv");
         File actual = new File(dir, "test-import.csv");
-        upload(expected, "http://localhost:9090/upload");
+        upload(expected, "http://localhost:9000/upload");
 
         TestUtils.assertEquals(expected, actual);
         server.halt();
+    }
+
+    private static HttpClientBuilder clientBuilder(boolean ssl) throws Exception {
+        return (ssl ? createHttpClient_AcceptsUntrustedCerts() : HttpClientBuilder.create());
+    }
+
+    private static HttpClientBuilder createHttpClient_AcceptsUntrustedCerts() throws Exception {
+        HttpClientBuilder b = HttpClientBuilder.create();
+
+        // setup a Trust Strategy that allows all certificates.
+        //
+        SSLContext sslContext = new SSLContextBuilder().loadTrustMaterial(null, new TrustStrategy() {
+            public boolean isTrusted(X509Certificate[] arg0, String arg1) throws CertificateException {
+                return true;
+            }
+        }).build();
+
+        b.setSSLContext(sslContext);
+
+        // here's the special part:
+        //      -- need to create an SSL Socket Factory, to use our weakened "trust strategy";
+        //      -- and create a Registry, to register it.
+        //
+        SSLConnectionSocketFactory sslSocketFactory = new SSLConnectionSocketFactory(sslContext, new HostnameVerifier() {
+            @Override
+            public boolean verify(String s, SSLSession sslSession) {
+                return true;
+            }
+        });
+        Registry<ConnectionSocketFactory> socketFactoryRegistry = RegistryBuilder.<ConnectionSocketFactory>create()
+                .register("http", PlainConnectionSocketFactory.getSocketFactory())
+                .register("https", sslSocketFactory)
+                .build();
+
+        // now, we create connection-manager using our Registry.
+        //      -- allows multi-threaded use
+        b.setConnectionManager(new PoolingHttpClientConnectionManager(socketFactoryRegistry));
+
+        return b;
     }
 
     private static int upload(String resource, String url) throws IOException {
@@ -308,11 +380,14 @@ public class HttpServerTest extends AbstractJournalTest {
                 return h;
             }
         }
+
         return null;
     }
 
-    private void assertConcurrentDownload(MimeTypes mimeTypes, HttpServer server) throws InterruptedException, IOException {
+    private void assertConcurrentDownload(MimeTypes mimeTypes, HttpServer server, final String proto) throws InterruptedException, IOException {
         try {
+
+            // ssl
 
             final File actual1 = new File(temp.getRoot(), "get.html");
             final File actual2 = new File(temp.getRoot(), "post.html");
@@ -328,9 +403,10 @@ public class HttpServerTest extends AbstractJournalTest {
                 public void run() {
                     try {
                         barrier.await();
-                        download("http://localhost:9090/get.html", actual1);
+                        download(clientBuilder("https".equals(proto)), proto + "://localhost:9000/get.html", actual1);
                     } catch (Exception e) {
                         counter.incrementAndGet();
+                        e.printStackTrace();
                     } finally {
                         haltLatch.countDown();
                     }
@@ -343,9 +419,10 @@ public class HttpServerTest extends AbstractJournalTest {
                 public void run() {
                     try {
                         barrier.await();
-                        download("http://localhost:9090/post.html", actual2);
+                        download(clientBuilder("https".equals(proto)), proto + "://localhost:9000/post.html", actual2);
                     } catch (Exception e) {
                         counter.incrementAndGet();
+                        e.printStackTrace();
                     } finally {
                         haltLatch.countDown();
                     }
@@ -357,9 +434,10 @@ public class HttpServerTest extends AbstractJournalTest {
                 public void run() {
                     try {
                         barrier.await();
-                        download("http://localhost:9090/upload.html", actual3);
+                        download(clientBuilder("https".equals(proto)), proto + "://localhost:9000/upload.html", actual3);
                     } catch (Exception e) {
                         counter.incrementAndGet();
+                        e.printStackTrace();
                     } finally {
                         haltLatch.countDown();
                     }
@@ -383,7 +461,7 @@ public class HttpServerTest extends AbstractJournalTest {
         server.start();
         try {
             File out = new File(temp.getRoot(), "get.html");
-            HttpGet get = new HttpGet("http://localhost:9090/get.html");
+            HttpGet get = new HttpGet("http://localhost:9000/get.html");
 
             try (CloseableHttpClient client = HttpClients.createDefault()) {
 
@@ -414,11 +492,11 @@ public class HttpServerTest extends AbstractJournalTest {
         server.start();
         try {
 
-            upload("/large.csv", "http://localhost:9090/upload");
+            upload("/large.csv", "http://localhost:9000/upload");
 
             File out = new File(temp.getRoot(), "out.csv");
 
-            HttpGet get = new HttpGet("http://localhost:9090/large.csv");
+            HttpGet get = new HttpGet("http://localhost:9000/large.csv");
             get.addHeader("Range", "xyz");
 
             try (CloseableHttpClient client = HttpClients.createDefault()) {
@@ -470,9 +548,9 @@ public class HttpServerTest extends AbstractJournalTest {
         }
     }
 
-    private void download(String url, File out) throws IOException {
+    private void download(HttpClientBuilder b, String url, File out) throws IOException {
         try (
-                CloseableHttpClient client = HttpClients.createDefault();
+                CloseableHttpClient client = b.build();
                 CloseableHttpResponse r = client.execute(new HttpGet(url));
                 FileOutputStream fos = new FileOutputStream(out)
         ) {

@@ -28,6 +28,8 @@ import com.nfsdb.io.sink.CharSink;
 import java.nio.ByteBuffer;
 
 public interface FixedSizeResponse {
+    void flush();
+
     CharSink headers();
 
     ByteBuffer out();

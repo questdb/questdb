@@ -21,6 +21,7 @@
 
 package com.nfsdb.net;
 
+import com.nfsdb.exceptions.DisconnectedChannelException;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.exceptions.SlowReadableChannelException;
@@ -42,7 +43,6 @@ public class NonBlockingSecureSocketChannel<T extends ByteChannel> implements Wr
     private final ByteBuffer in;
     private final ByteBuffer out;
     private final int sslDataLimit;
-    private final boolean client;
     private boolean inData = false;
     private SSLEngineResult.HandshakeStatus handshakeStatus = SSLEngineResult.HandshakeStatus.NEED_WRAP;
     private ByteBuffer unwrapped;
@@ -55,12 +55,11 @@ public class NonBlockingSecureSocketChannel<T extends ByteChannel> implements Wr
         this.engine.setEnableSessionCreation(true);
         this.engine.setUseClientMode(sslConfig.isClient());
         this.engine.setNeedClientAuth(sslConfig.isRequireClientAuth());
-        this.client = sslConfig.isClient();
         SSLSession session = engine.getSession();
         this.sslDataLimit = session.getApplicationBufferSize();
-        in = ByteBuffer.allocateDirect(session.getPacketBufferSize()).order(ByteOrder.LITTLE_ENDIAN);
-        out = ByteBuffer.allocateDirect(session.getPacketBufferSize()).order(ByteOrder.LITTLE_ENDIAN);
-        unwrapped = ByteBuffer.allocateDirect(sslDataLimit * 2).order(ByteOrder.LITTLE_ENDIAN);
+        in = ByteBuffer.allocateDirect(session.getPacketBufferSize()).order(ByteOrder.BIG_ENDIAN);
+        out = ByteBuffer.allocateDirect(session.getPacketBufferSize()).order(ByteOrder.BIG_ENDIAN);
+        unwrapped = ByteBuffer.allocateDirect(sslDataLimit * 2).order(ByteOrder.BIG_ENDIAN);
     }
 
     public T getChannel() {
@@ -86,7 +85,6 @@ public class NonBlockingSecureSocketChannel<T extends ByteChannel> implements Wr
             try {
                 engine.closeInbound();
             } catch (SSLException ignored) {
-                // ignore
             }
         }
     }
@@ -123,8 +121,7 @@ public class NonBlockingSecureSocketChannel<T extends ByteChannel> implements Wr
                     // fall through
                 case READ_CHANNEL:
                     try {
-//                        System.out.println(in.remaining());
-                        ByteBuffers.copyNonBlocking(channel, in, 1);
+                        ByteBuffers.copyNonBlocking(channel, in, 1000);
                         in.flip();
                         if (limit < sslDataLimit) {
                             readState = ReadState.UNWRAP_CLEAN_CACHED;
@@ -132,7 +129,6 @@ public class NonBlockingSecureSocketChannel<T extends ByteChannel> implements Wr
                             readState = ReadState.UNWRAP_DIRECT;
                         }
                     } catch (SlowReadableChannelException e) {
-//                        System.out.println("slow?");
                         break OUT;
                     }
                     break;
@@ -150,6 +146,8 @@ public class NonBlockingSecureSocketChannel<T extends ByteChannel> implements Wr
                             in.compact();
                             readState = ReadState.READ_CHANNEL;
                             break;
+                        case CLOSED:
+                            throw DisconnectedChannelException.INSTANCE;
                     }
                     break;
                 case UNWRAP_CLEAN_CACHED:
@@ -172,6 +170,8 @@ public class NonBlockingSecureSocketChannel<T extends ByteChannel> implements Wr
                             in.compact();
                             readState = ReadState.READ_CHANNEL;
                             break;
+                        case CLOSED:
+                            throw DisconnectedChannelException.INSTANCE;
                     }
                     unwrapped.flip();
                     ByteBuffers.copy(unwrapped, dst);
@@ -292,8 +292,6 @@ public class NonBlockingSecureSocketChannel<T extends ByteChannel> implements Wr
         in.clear();
         // make sure unwrapped starts by having remaining() == false
         unwrapped.position(unwrapped.limit());
-
-        LOGGER.info("Handshake SSL complete: %s", client ? "CLIENT" : "SERVER");
     }
 
     private enum ReadState {

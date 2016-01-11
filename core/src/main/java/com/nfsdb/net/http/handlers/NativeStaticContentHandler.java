@@ -82,6 +82,7 @@ public class NativeStaticContentHandler implements ContextHandler {
             context.bytesSent += l;
             r.sendBuf();
         }
+        r.flush();
 
         // reached the end naturally?
         Files.close(context.fd);

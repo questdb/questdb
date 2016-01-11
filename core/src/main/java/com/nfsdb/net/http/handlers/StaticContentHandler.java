@@ -84,6 +84,7 @@ public class StaticContentHandler implements ContextHandler {
                 r.sendBuf();
             }
         }
+        r.flush();
         context.raf = Misc.free(context.raf);
     }
 

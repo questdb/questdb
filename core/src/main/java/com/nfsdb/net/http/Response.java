@@ -245,6 +245,11 @@ public class Response implements Closeable, Mutable {
 
     private class FixedSizeResponseImpl implements FixedSizeResponse {
         @Override
+        public void flush() {
+
+        }
+
+        @Override
         public CharSink headers() {
             return hb;
         }

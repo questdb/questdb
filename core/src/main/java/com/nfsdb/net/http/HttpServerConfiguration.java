@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
@@ -38,7 +38,7 @@ import java.util.Properties;
 public class HttpServerConfiguration {
     private static final Logger LOGGER = Logger.getLogger(HttpServerConfiguration.class);
     private final SslConfig sslConfig = new SslConfig();
-    private int httpPort = 9090;
+    private int httpPort = 9000;
     private int httpBufReqHeader = 64 * 1024;
     private int httpBufReqContent = 4 * 1024 * 1024;
     private int httpBufReqMultipart = 1024;
