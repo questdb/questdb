@@ -66,9 +66,16 @@ public class IOHttpJob implements Job<IOWorkerContext> {
         return true;
     }
 
+    private static void silent(SimpleResponse sr, int code, CharSequence msg) {
+        try {
+            sr.send(code, msg);
+        } catch (IOException ignore) {
+        }
+    }
+
     private void process(IOContext context, int op) {
         final Request r = context.request;
-        final Response response = context.response;
+        final SimpleResponse sr = context.simpleResponse();
 
         ChannelStatus status = ChannelStatus.READ;
         try {
@@ -78,15 +85,15 @@ public class IOHttpJob implements Job<IOWorkerContext> {
             }
 
             if (r.getUrl() == null) {
-                status = response.simple(400);
+                sr.send(400);
             } else {
                 ContextHandler handler = urlMatcher.get(r.getUrl());
                 if (handler != null) {
 
                     // write what's left to
                     if ((op & SelectionKey.OP_WRITE) != 0) {
-                        response._continue();
-                        handler._continue(context);
+                        context.resume();
+                        handler.resume(context);
                     }
 
                     if ((op & SelectionKey.OP_READ) != 0) {
@@ -95,23 +102,23 @@ public class IOHttpJob implements Job<IOWorkerContext> {
                                 r.parseMultipart(context, (MultipartListener) handler);
                                 handler.handle(context);
                             } else {
-                                status = response.simple(400);
+                                sr.send(400);
                             }
                         } else {
                             if (handler instanceof MultipartListener) {
-                                status = response.simple(400);
+                                sr.send(400);
                             } else {
                                 handler.handle(context);
                             }
                         }
                     }
                 } else {
-                    status = response.simple(404);
+                    sr.send(404);
                 }
             }
             context.clear();
         } catch (HeadersTooLargeException ignored) {
-            response.simple(431);
+            silent(sr, 431, null);
             status = ChannelStatus.READ;
         } catch (MalformedHeaderException | DisconnectedChannelException e) {
             status = ChannelStatus.DISCONNECTED;
@@ -123,7 +130,7 @@ public class IOHttpJob implements Job<IOWorkerContext> {
             status = ChannelStatus.DISCONNECTED;
             e.printStackTrace();
         } catch (Throwable e) {
-            response.simple(500, e.getMessage());
+            silent(sr, 500, e.getMessage());
             status = ChannelStatus.DISCONNECTED;
             e.printStackTrace();
         }

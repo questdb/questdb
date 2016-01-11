@@ -21,10 +21,20 @@
 
 package com.nfsdb.net.http;
 
-import java.io.IOException;
+import com.nfsdb.exceptions.DisconnectedChannelException;
+import com.nfsdb.exceptions.SlowWritableChannelException;
+import com.nfsdb.io.sink.CharSink;
 
-public interface ContextHandler {
-    void handle(IOContext context) throws IOException;
+import java.nio.ByteBuffer;
 
-    void resume(IOContext context) throws IOException;
+public interface FixedSizeResponse {
+    CharSink headers();
+
+    ByteBuffer out();
+
+    void sendBuf() throws DisconnectedChannelException, SlowWritableChannelException;
+
+    void sendHeader() throws DisconnectedChannelException, SlowWritableChannelException;
+
+    void status(int status, CharSequence contentType, long len);
 }

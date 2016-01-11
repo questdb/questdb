@@ -21,10 +21,13 @@
 
 package com.nfsdb.net.http;
 
-import java.io.IOException;
+import com.nfsdb.exceptions.DisconnectedChannelException;
+import com.nfsdb.exceptions.SlowWritableChannelException;
 
-public interface ContextHandler {
-    void handle(IOContext context) throws IOException;
+public interface SimpleResponse {
+    void send(int code) throws DisconnectedChannelException, SlowWritableChannelException;
 
-    void resume(IOContext context) throws IOException;
+    void send(int code, CharSequence message) throws DisconnectedChannelException, SlowWritableChannelException;
+
+    void sendEmptyBody(int code) throws DisconnectedChannelException, SlowWritableChannelException;
 }

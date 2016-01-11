@@ -37,7 +37,7 @@ import java.util.zip.GZIPInputStream;
 public class GZipWritableChannelTest {
 
     @Rule
-    public TemporaryFolder temp = new TemporaryFolder();
+    public final TemporaryFolder temp = new TemporaryFolder();
 
     @Test
     public void testGzip() throws Exception {

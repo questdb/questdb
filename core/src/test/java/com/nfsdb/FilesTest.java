@@ -82,7 +82,7 @@ public class FilesTest {
                 try {
                     ByteBuffers.putStr(buf, "hello from java");
                     int len = buf.position();
-                    Files.write(fd, ByteBuffers.getAddress(buf), len, 0);
+                    Assert.assertEquals(len, Files.write(fd, ByteBuffers.getAddress(buf), len, 0));
 
                     buf.clear();
 

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http.handlers;
 
@@ -27,10 +27,7 @@ import com.nfsdb.collections.PrefixedPath;
 import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.misc.*;
-import com.nfsdb.net.http.ContextHandler;
-import com.nfsdb.net.http.IOContext;
-import com.nfsdb.net.http.MimeTypes;
-import com.nfsdb.net.http.RangeParser;
+import com.nfsdb.net.http.*;
 
 import java.io.File;
 import java.io.IOException;
@@ -51,54 +48,50 @@ public class NativeStaticContentHandler implements ContextHandler {
         };
     }
 
-    public void _continue(IOContext context) throws IOException {
-        if (context.fd == -1) {
-            return;
-        }
-
-        ByteBuffer out = context.response.getOut();
-        long wptr = ByteBuffers.getAddress(out);
-        int sz = out.remaining();
-
-        long l;
-        while ((l = Files.read(context.fd, wptr, sz, context.bytesSent)) > 0) {
-            if (l + context.bytesSent > context.sendMax) {
-                l = context.sendMax - context.bytesSent;
-                out.limit((int) l);
-                // do not refactor, placement is critical
-                context.bytesSent += l;
-                context.response.sendBody();
-                break;
-            } else {
-                // do not refactor, placement is critical
-                out.limit((int) l);
-                context.bytesSent += l;
-                context.response.sendBody();
-            }
-        }
-        Files.close(context.fd);
-        context.fd = -1;
-    }
-
     @Override
     public void handle(IOContext context) throws IOException {
         CharSequence url = context.request.getUrl();
         if (Chars.containts(url, "..")) {
-            context.response.simple(404);
+            context.simpleResponse().send(404);
         } else {
             PrefixedPath path = context.getThreadLocal(IOWorkerContextKey.PP.name(), ppFactory);
             if (Files.exists(path.of(url))) {
                 send(context, path, false);
             } else {
-                context.response.simple(404);
+                context.simpleResponse().send(404);
             }
         }
+    }
+
+    public void resume(IOContext context) throws IOException {
+        if (context.fd == -1) {
+            return;
+        }
+
+        FixedSizeResponse r = context.fixedSizeResponse();
+        ByteBuffer out = r.out();
+        long wptr = ByteBuffers.getAddress(out);
+        int sz = out.remaining();
+
+        long l;
+        while (context.bytesSent < context.sendMax && (l = Files.read(context.fd, wptr, sz, context.bytesSent)) > 0) {
+            if (l + context.bytesSent > context.sendMax) {
+                l = context.sendMax - context.bytesSent;
+            }
+            out.limit((int) l);
+            context.bytesSent += l;
+            r.sendBuf();
+        }
+
+        // reached the end naturally?
+        Files.close(context.fd);
+        context.fd = -1;
     }
 
     public void send(IOContext context, LPSZ path, boolean asAttachment) throws IOException {
         int n = Chars.lastIndexOf(path, '.');
         if (n == -1) {
-            context.response.simple(404);
+            context.simpleResponse().send(404);
             return;
         }
 
@@ -116,13 +109,11 @@ public class NativeStaticContentHandler implements ContextHandler {
                 try {
                     long that = Numbers.parseLong(val, 1, l - 1);
                     if (that == Files.getLastModified(path)) {
-                        context.response.status(304, null, -2);
-                        context.response.sendHeader();
-                        context.response.end();
+                        context.simpleResponse().sendEmptyBody(304);
                         return;
                     }
                 } catch (NumericException e) {
-                    context.response.simple(400);
+                    context.simpleResponse().send(400);
                     return;
                 }
             }
@@ -137,7 +128,7 @@ public class NativeStaticContentHandler implements ContextHandler {
 
             context.fd = Files.openRO(path);
             if (context.fd == -1) {
-                context.response.simple(404);
+                context.simpleResponse().send(404);
                 return;
             }
 
@@ -147,13 +138,16 @@ public class NativeStaticContentHandler implements ContextHandler {
             final long l = rangeParser.getLo();
             final long h = rangeParser.getHi();
             if (l > length || (h != Long.MAX_VALUE && h > length) || l > h) {
-                context.response.simple(416);
+                context.simpleResponse().send(416);
             } else {
                 context.bytesSent = l;
                 context.sendMax = h == Long.MAX_VALUE ? length : h;
-                context.response.status(206, contentType, context.sendMax - l);
 
-                final CharSink sink = context.response.headers();
+                final FixedSizeResponse r = context.fixedSizeResponse();
+
+                r.status(206, contentType, context.sendMax - l);
+
+                final CharSink sink = r.headers();
 
                 if (asAttachment) {
                     //todo: extract name from path
@@ -162,31 +156,33 @@ public class NativeStaticContentHandler implements ContextHandler {
                 sink.put("Accept-Ranges: bytes").put(Misc.EOL);
                 sink.put("Content-Range: bytes ").put(l).put('-').put(context.sendMax).put('/').put(length).put(Misc.EOL);
                 sink.put("ETag: ").put(Files.getLastModified(path)).put(Misc.EOL);
-                context.response.sendHeader();
-                _continue(context);
+                r.sendHeader();
+                resume(context);
             }
         } else {
-            context.response.simple(416);
+            context.simpleResponse().send(416);
         }
     }
 
     private void sendVanilla(IOContext context, LPSZ path, CharSequence contentType, boolean asAttachment) throws IOException {
         long fd = Files.openRO(path);
         if (fd == -1) {
-            context.response.simple(404);
+            context.simpleResponse().send(404);
         } else {
             context.fd = fd;
             context.bytesSent = 0;
             final long length = Files.length(path);
             context.sendMax = Long.MAX_VALUE;
-            context.response.status(200, contentType, length);
+
+            final FixedSizeResponse r = context.fixedSizeResponse();
+            r.status(200, contentType, length);
             if (asAttachment) {
                 // todo: extract name from path
-                context.response.headers().put("Content-Disposition: attachment; filename=\"").put(path).put("\"").put(Misc.EOL);
+                r.headers().put("Content-Disposition: attachment; filename=\"").put(path).put("\"").put(Misc.EOL);
             }
-            context.response.headers().put("ETag: ").put('"').put(Files.getLastModified(path)).put('"').put(Misc.EOL);
-            context.response.sendHeader();
-            _continue(context);
+            r.headers().put("ETag: ").put('"').put(Files.getLastModified(path)).put('"').put(Misc.EOL);
+            r.sendHeader();
+            resume(context);
         }
     }
 }

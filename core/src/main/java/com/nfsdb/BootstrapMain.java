@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
@@ -28,6 +28,7 @@ import com.nfsdb.net.http.HttpServer;
 import com.nfsdb.net.http.HttpServerConfiguration;
 import com.nfsdb.net.http.MimeTypes;
 import com.nfsdb.net.http.SimpleUrlMatcher;
+import com.nfsdb.net.http.handlers.DummyHandler;
 import com.nfsdb.net.http.handlers.ImportHandler;
 import com.nfsdb.net.http.handlers.NativeStaticContentHandler;
 import com.nfsdb.net.http.handlers.StaticContentHandler;
@@ -71,6 +72,7 @@ public class BootstrapMain {
         final HttpServerConfiguration configuration = new HttpServerConfiguration(conf);
         final SimpleUrlMatcher matcher = new SimpleUrlMatcher();
         matcher.put("/imp", new ImportHandler(new JournalFactory(configuration.getDbPath().getAbsolutePath())));
+        matcher.put("/x", new DummyHandler());
         if (Os.nativelySupported) {
             matcher.setDefaultHandler(new NativeStaticContentHandler(configuration.getHttpPublic(), new MimeTypes(configuration.getMimeTypes())));
         } else {

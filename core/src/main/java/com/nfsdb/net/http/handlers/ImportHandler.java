@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http.handlers;
 
@@ -25,6 +25,7 @@ import com.nfsdb.collections.ByteSequence;
 import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.collections.LongList;
 import com.nfsdb.exceptions.DisconnectedChannelException;
+import com.nfsdb.exceptions.SlowWritableChannelException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
@@ -39,7 +40,7 @@ import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Misc;
 import com.nfsdb.net.http.IOContext;
 import com.nfsdb.net.http.RequestHeaderBuffer;
-import com.nfsdb.net.http.Response;
+import com.nfsdb.net.http.ResponseSink;
 
 import java.io.IOException;
 
@@ -111,7 +112,8 @@ public class ImportHandler extends AbstractMultipartHandler {
 
     private static void sendSummary(IOContext context) throws IOException {
         if (context.importer != null) {
-            Response r = context.response;
+
+            ResponseSink r = context.responseSink();
 
             r.status(200, "text/plain; charset=utf-8");
 
@@ -150,7 +152,7 @@ public class ImportHandler extends AbstractMultipartHandler {
                 r.put(Misc.EOL);
             }
             sep(r);
-            r.end();
+            r.flush();
         }
     }
 
@@ -197,7 +199,7 @@ public class ImportHandler extends AbstractMultipartHandler {
     }
 
     @Override
-    protected void onData(IOContext context, RequestHeaderBuffer hb, ByteSequence data) throws DisconnectedChannelException {
+    protected void onData(IOContext context, RequestHeaderBuffer hb, ByteSequence data) throws DisconnectedChannelException, SlowWritableChannelException {
         int len;
         if (hb.getContentDispositionFilename() != null && (len = data.length()) > 0) {
             long lo = ((DirectByteCharSequence) data).getLo();
@@ -211,7 +213,7 @@ public class ImportHandler extends AbstractMultipartHandler {
             if (context.dataFormatValid) {
                 context.textParser.parse(lo, len, Integer.MAX_VALUE, context.importer);
             } else {
-                context.response.simple(400, "Invalid data format");
+                context.simpleResponse().send(400, "Invalid data format");
                 throw DisconnectedChannelException.INSTANCE;
             }
         }
@@ -224,7 +226,7 @@ public class ImportHandler extends AbstractMultipartHandler {
                 context.analysed = false;
                 context.importer = new JournalImportListener(factory, hb.getContentDispositionFilename().toString());
             } else {
-                context.response.simple(400, "Unrecognised field");
+                context.simpleResponse().send(400, "Unrecognised field");
                 throw DisconnectedChannelException.INSTANCE;
             }
         }

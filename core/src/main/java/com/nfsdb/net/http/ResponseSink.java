@@ -21,10 +21,8 @@
 
 package com.nfsdb.net.http;
 
-import java.io.IOException;
+import com.nfsdb.io.sink.CharSink;
 
-public interface ContextHandler {
-    void handle(IOContext context) throws IOException;
-
-    void resume(IOContext context) throws IOException;
+public interface ResponseSink extends CharSink {
+    void status(int status, CharSequence contentType);
 }

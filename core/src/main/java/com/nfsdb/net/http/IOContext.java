@@ -25,6 +25,8 @@ import com.nfsdb.collections.AssociativeCache;
 import com.nfsdb.collections.FlyweightCharSequence;
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.collections.ObjectFactory;
+import com.nfsdb.exceptions.DisconnectedChannelException;
+import com.nfsdb.exceptions.SlowWritableChannelException;
 import com.nfsdb.io.parser.TextParser;
 import com.nfsdb.io.parser.listener.JournalImportListener;
 import com.nfsdb.iter.clock.Clock;
@@ -40,8 +42,8 @@ import java.nio.channels.SocketChannel;
 public class IOContext implements Closeable, Mutable {
     public final WrappedByteChannel<SocketChannel> channel;
     public final Request request;
-    public final Response response;
     public final FlyweightCharSequence ext = new FlyweightCharSequence();
+    private final Response response;
     public IOWorkerContext threadContext;
     // multipart generic
     public boolean chunky = false;
@@ -65,6 +67,10 @@ public class IOContext implements Closeable, Mutable {
         this.response = new Response(channel, respHeaderSize, respContentSize, clock);
     }
 
+    public ChunkedResponse chunkedResponse() {
+        return response.asChunked();
+    }
+
     @Override
     public void clear() {
         request.clear();
@@ -81,6 +87,10 @@ public class IOContext implements Closeable, Mutable {
         freeResources();
     }
 
+    public FixedSizeResponse fixedSizeResponse() {
+        return response.asFixedSize();
+    }
+
     @SuppressWarnings("unchecked")
     public <T> T getThreadLocal(CharSequence key, ObjectFactory<T> factory) {
         AssociativeCache<Object> cache = threadContext.getCache();
@@ -89,6 +99,18 @@ public class IOContext implements Closeable, Mutable {
             cache.put(key, result = factory.newInstance());
         }
         return (T) result;
+    }
+
+    public ResponseSink responseSink() {
+        return response.asSink();
+    }
+
+    public void resume() throws DisconnectedChannelException, SlowWritableChannelException {
+        response.resume();
+    }
+
+    public SimpleResponse simpleResponse() {
+        return response.asSimple();
     }
 
     private void freeResources() {

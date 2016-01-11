@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,12 +17,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
 import com.nfsdb.collections.Mutable;
+import com.nfsdb.exceptions.DisconnectedChannelException;
 import com.nfsdb.exceptions.ResponseContentBufferTooSmallException;
+import com.nfsdb.exceptions.SlowWritableChannelException;
 import com.nfsdb.io.sink.AbstractCharSink;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.io.sink.DirectUnboundedAnsiSink;
@@ -37,7 +39,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.WritableByteChannel;
 
-public class Response extends AbstractCharSink implements Closeable, Mutable {
+public class Response implements Closeable, Mutable {
     private final ByteBuffer out;
     private final long outPtr;
     private final long limit;
@@ -45,10 +47,13 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
     private final DirectUnboundedAnsiSink chunkSink;
     private final ResponseHeaderBuffer hb;
     private final WritableByteChannel channel;
+    private final SimpleResponse simple = new SimpleResponseImpl();
+    private final ResponseSink sink = new ResponseSinkImpl();
+    private final FixedSizeResponse fixedSize = new FixedSizeResponseImpl();
+    private final ChunkedResponse chunkedResponse = new ChunkedResponseImpl();
     private long _wPtr;
     private ByteBuffer _flushBuf;
     private ResponseState state;
-    private boolean fragmented = false;
 
     public Response(WritableByteChannel channel, int headerBufferSize, int contentBufferSize, Clock clock) {
         if (headerBufferSize <= 0) {
@@ -71,53 +76,6 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
         this.limit = outPtr + sz;
     }
 
-    public void _continue() throws IOException {
-        boolean chunky = hb.isChunky();
-        while (true) {
-            if (_flushBuf != null) {
-                flush(_flushBuf);
-            }
-
-            switch (state) {
-                case HEADER:
-                    if (fragmented) {
-                        return;
-                    }
-                case BODY_PART:
-                    if (chunky) {
-                        state = ResponseState.CHUNK;
-                        _flushBuf = _prepareChunk((int) (_wPtr - outPtr));
-                        break;
-                    }
-                    // fall through
-                case CHUNK:
-                    if (fragmented) {
-                        return;
-                    }
-                    _flushBuf = _prepareBody();
-                    state = ResponseState.BODY;
-                    break;
-                case BODY:
-                    if (chunky) {
-                        _flushBuf = _prepareChunk(0);
-                        state = ResponseState.END_CHUNK;
-                        break;
-                    }
-                    // fall through
-                case END_CHUNK:
-                    if (chunky) {
-                        put(Misc.EOL);
-                        _flushBuf = _prepareBody();
-                        state = ResponseState.END_BODY;
-                        break;
-                    }
-                    // fall through
-                case END_BODY:
-                    return;
-            }
-        }
-    }
-
     @Override
     public void clear() {
         out.clear();
@@ -132,84 +90,12 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
         hb.close();
     }
 
-    public void end() throws IOException {
-        if (fragmented) {
-            return;
+    public void resume() throws DisconnectedChannelException, SlowWritableChannelException {
+        if (state != ResponseState.DONE) {
+            machine0();
+        } else if (_flushBuf != null) {
+            flush(_flushBuf);
         }
-        sendHeader();
-    }
-
-    public void flush() throws IOException {
-    }
-
-    public Response put(CharSequence seq) {
-        int len = seq.length();
-        long p = _wPtr;
-        if (p + len < limit) {
-            for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putByte(p++, (byte) seq.charAt(i));
-            }
-            _wPtr = p;
-        } else {
-            throw ResponseContentBufferTooSmallException.INSTANCE;
-        }
-        return this;
-    }
-
-    @Override
-    public CharSink put(char c) {
-        if (_wPtr < limit) {
-            Unsafe.getUnsafe().putByte(_wPtr++, (byte) c);
-            return this;
-        }
-        throw ResponseContentBufferTooSmallException.INSTANCE;
-    }
-
-    public ByteBuffer getOut() {
-        return out;
-    }
-
-    public CharSink headers() {
-        return hb;
-    }
-
-    public void sendBody() throws IOException {
-        state = ResponseState.BODY_PART;
-        _flushBuf = out;
-        _continue();
-    }
-
-    public void sendHeader() throws IOException {
-        state = ResponseState.HEADER;
-        _flushBuf = hb.prepareBuffer();
-        _continue();
-    }
-
-    public void setFragmented(boolean fragmented) {
-        this.fragmented = fragmented;
-    }
-
-    public ChannelStatus simple(int code) {
-        return simple(code, null);
-    }
-
-    public ChannelStatus simple(int code, CharSequence message) {
-        try {
-            String std = status(code, "text/html; charset=utf-8");
-            put(message == null ? std : message).put(Misc.EOL);
-            end();
-            return ChannelStatus.READ;
-        } catch (IOException ignored) {
-            return ChannelStatus.DISCONNECTED;
-        }
-    }
-
-    public String status(int status, CharSequence contentType) {
-        return status(status, contentType, -1);
-    }
-
-    public String status(int status, CharSequence contentType, long len) {
-        return this.hb.status(status, contentType, len);
     }
 
     private ByteBuffer _prepareBody() {
@@ -226,14 +112,184 @@ public class Response extends AbstractCharSink implements Closeable, Mutable {
         return chunkHeader;
     }
 
-    private void flush(ByteBuffer buf) throws IOException {
+    final ChunkedResponse asChunked() {
+        return chunkedResponse;
+    }
+
+    final FixedSizeResponse asFixedSize() {
+        return fixedSize;
+    }
+
+    final SimpleResponse asSimple() {
+        return simple;
+    }
+
+    final ResponseSink asSink() {
+        return sink;
+    }
+
+    private void flush(ByteBuffer buf) throws DisconnectedChannelException, SlowWritableChannelException {
         this._flushBuf = buf;
         ByteBuffers.copyNonBlocking(buf, channel, IOHttpJob.SO_WRITE_RETRY_COUNT);
         buf.clear();
         this._flushBuf = null;
     }
 
+    private void flushSingle(ByteBuffer buf) throws DisconnectedChannelException, SlowWritableChannelException {
+        state = ResponseState.DONE;
+        flush(buf);
+    }
+
+    private void machine(ByteBuffer buf, ResponseState next) throws DisconnectedChannelException, SlowWritableChannelException {
+        _flushBuf = buf;
+        state = next;
+        machine0();
+    }
+
+    private void machine0() throws DisconnectedChannelException, SlowWritableChannelException {
+        while (true) {
+
+            if (_flushBuf != null) {
+                flush(_flushBuf);
+            }
+
+            switch (state) {
+                case MULTI_CHUNK:
+                    _flushBuf = _prepareBody();
+                    state = ResponseState.DONE;
+                    break;
+                case CHUNK_HEAD:
+                    _flushBuf = _prepareChunk((int) (_wPtr - outPtr));
+                    state = ResponseState.CHUNK_DATA;
+                    break;
+                case CHUNK_DATA:
+                    _flushBuf = _prepareBody();
+                    state = ResponseState.END_CHUNK;
+                    break;
+                case END_CHUNK:
+                    _flushBuf = _prepareChunk(0);
+                    state = ResponseState.FIN;
+                    break;
+                case FIN:
+                    sink.put(Misc.EOL);
+                    _flushBuf = _prepareBody();
+                    state = ResponseState.DONE;
+                    break;
+                case DONE:
+                    return;
+            }
+        }
+
+    }
+
     private enum ResponseState {
-        HEADER, CHUNK, BODY, BODY_PART, END_CHUNK, END_BODY
+        CHUNK_HEAD, CHUNK_DATA, FIN, MULTI_CHUNK, END_CHUNK, DONE
+    }
+
+    private class SimpleResponseImpl implements SimpleResponse {
+
+        public void send(int code) throws DisconnectedChannelException, SlowWritableChannelException {
+            send(code, null);
+        }
+
+        @Override
+        public void send(int code, CharSequence message) throws DisconnectedChannelException, SlowWritableChannelException {
+            final String std = hb.status(code, "text/html; charset=utf-8", -1L);
+            sink.put(message == null ? std : message).put(Misc.EOL);
+            machine(hb.prepareBuffer(), ResponseState.CHUNK_HEAD);
+        }
+
+        @Override
+        public void sendEmptyBody(int code) throws DisconnectedChannelException, SlowWritableChannelException {
+            hb.status(code, "text/html; charset=utf-8", -2);
+            flushSingle(hb.prepareBuffer());
+        }
+    }
+
+    private class ResponseSinkImpl extends AbstractCharSink implements ResponseSink {
+
+        @Override
+        public void flush() throws IOException {
+            machine(hb.prepareBuffer(), ResponseState.CHUNK_HEAD);
+        }
+
+        @Override
+        public CharSink put(CharSequence seq) {
+            int len = seq.length();
+            long p = _wPtr;
+            if (p + len < limit) {
+                for (int i = 0; i < len; i++) {
+                    Unsafe.getUnsafe().putByte(p++, (byte) seq.charAt(i));
+                }
+                _wPtr = p;
+            } else {
+                throw ResponseContentBufferTooSmallException.INSTANCE;
+            }
+            return this;
+        }
+
+        @Override
+        public CharSink put(char c) {
+            if (_wPtr < limit) {
+                Unsafe.getUnsafe().putByte(_wPtr++, (byte) c);
+                return this;
+            }
+            throw ResponseContentBufferTooSmallException.INSTANCE;
+        }
+
+        @Override
+        public void status(int status, CharSequence contentType) {
+            hb.status(status, contentType, -1);
+        }
+    }
+
+    private class FixedSizeResponseImpl implements FixedSizeResponse {
+        @Override
+        public CharSink headers() {
+            return hb;
+        }
+
+        @Override
+        public ByteBuffer out() {
+            return out;
+        }
+
+        @Override
+        public void sendBuf() throws DisconnectedChannelException, SlowWritableChannelException {
+            flushSingle(out);
+        }
+
+        @Override
+        public void sendHeader() throws DisconnectedChannelException, SlowWritableChannelException {
+            flushSingle(hb.prepareBuffer());
+        }
+
+        @Override
+        public void status(int status, CharSequence contentType, long len) {
+            hb.status(status, contentType, len);
+        }
+    }
+
+    private class ChunkedResponseImpl extends ResponseSinkImpl implements ChunkedResponse {
+
+        @Override
+        public void endChunk() throws DisconnectedChannelException, SlowWritableChannelException {
+            machine(null, ResponseState.END_CHUNK);
+        }
+
+        @Override
+        public CharSink headers() {
+            return hb;
+        }
+
+        @Override
+        public void sendChunk() throws DisconnectedChannelException, SlowWritableChannelException {
+            machine(_prepareChunk((int) (_wPtr - outPtr)), ResponseState.MULTI_CHUNK);
+        }
+
+        @Override
+        public void sendHeader() throws DisconnectedChannelException, SlowWritableChannelException {
+            flushSingle(hb.prepareBuffer());
+        }
     }
 }

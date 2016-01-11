@@ -26,10 +26,7 @@ import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Misc;
 import com.nfsdb.misc.Numbers;
-import com.nfsdb.net.http.ContextHandler;
-import com.nfsdb.net.http.IOContext;
-import com.nfsdb.net.http.MimeTypes;
-import com.nfsdb.net.http.RangeParser;
+import com.nfsdb.net.http.*;
 
 import java.io.File;
 import java.io.IOException;
@@ -47,12 +44,29 @@ public class StaticContentHandler implements ContextHandler {
         this.mimeTypes = mimeTypes;
     }
 
-    public void _continue(IOContext context) throws IOException {
+    @Override
+    public void handle(IOContext context) throws IOException {
+        CharSequence url = context.request.getUrl();
+        if (Chars.containts(url, "..")) {
+            context.simpleResponse().send(404);
+        } else {
+            File file = new File(publicDir, url.toString());
+            if (file.exists()) {
+                send(context, file, false);
+            } else {
+                context.simpleResponse().send(404);
+            }
+        }
+    }
+
+    public void resume(IOContext context) throws IOException {
         if (context.raf == null) {
             return;
         }
+
+        FixedSizeResponse r = context.fixedSizeResponse();
         FileChannel ch = context.raf.getChannel();
-        ByteBuffer out = context.response.getOut();
+        ByteBuffer out = r.out();
 
         while (ch.read(out) > 0) {
             out.flip();
@@ -62,30 +76,15 @@ public class StaticContentHandler implements ContextHandler {
                 out.limit(l);
                 // do not refactor, placement is critical
                 context.bytesSent += l;
-                context.response.sendBody();
+                r.sendBuf();
                 break;
             } else {
                 // do not refactor, placement is critical
                 context.bytesSent += l;
-                context.response.sendBody();
+                r.sendBuf();
             }
         }
         context.raf = Misc.free(context.raf);
-    }
-
-    @Override
-    public void handle(IOContext context) throws IOException {
-        CharSequence url = context.request.getUrl();
-        if (Chars.containts(url, "..")) {
-            context.response.simple(404);
-        } else {
-            File file = new File(publicDir, url.toString());
-            if (file.exists()) {
-                send(context, file, false);
-            } else {
-                context.response.simple(404);
-            }
-        }
     }
 
     public void send(IOContext context, File file, boolean asAttachment) throws IOException {
@@ -93,7 +92,7 @@ public class StaticContentHandler implements ContextHandler {
 
         int n = Chars.lastIndexOf(name, '.');
         if (n == -1) {
-            context.response.simple(404);
+            context.simpleResponse().send(404);
             return;
         }
 
@@ -111,13 +110,11 @@ public class StaticContentHandler implements ContextHandler {
                 try {
                     long that = Numbers.parseLong(val, 1, l - 1);
                     if (that == file.lastModified()) {
-                        context.response.status(304, null, -2);
-                        context.response.sendHeader();
-                        context.response.end();
+                        context.simpleResponse().sendEmptyBody(304);
                         return;
                     }
                 } catch (NumericException e) {
-                    context.response.simple(400);
+                    context.simpleResponse().send(400);
                     return;
                 }
             }
@@ -136,13 +133,14 @@ public class StaticContentHandler implements ContextHandler {
             final long l = rangeParser.getLo();
             final long h = rangeParser.getHi();
             if (l > length || (h != Long.MAX_VALUE && h > length) || l > h) {
-                context.response.simple(416);
+                context.simpleResponse().send(416);
             } else {
+                FixedSizeResponse r = context.fixedSizeResponse();
                 context.raf.seek(l);
                 context.sendMax = h == Long.MAX_VALUE ? length : h;
-                context.response.status(206, contentType, context.sendMax - l);
+                r.status(206, contentType, context.sendMax - l);
 
-                final CharSink sink = context.response.headers();
+                final CharSink sink = r.headers();
 
                 if (asAttachment) {
                     sink.put("Content-Disposition: attachment; filename=\"").put(file.getName()).put('\"').put(Misc.EOL);
@@ -150,11 +148,11 @@ public class StaticContentHandler implements ContextHandler {
                 sink.put("Accept-Ranges: bytes").put(Misc.EOL);
                 sink.put("Content-Range: bytes ").put(l).put('-').put(context.sendMax).put('/').put(length).put(Misc.EOL);
                 sink.put("ETag: ").put(file.lastModified()).put(Misc.EOL);
-                context.response.sendHeader();
-                _continue(context);
+                r.sendHeader();
+                resume(context);
             }
         } else {
-            context.response.simple(416);
+            context.simpleResponse().send(416);
         }
     }
 
@@ -163,12 +161,15 @@ public class StaticContentHandler implements ContextHandler {
         context.bytesSent = 0;
         final long length = context.raf.length();
         context.sendMax = Long.MAX_VALUE;
-        context.response.status(200, contentType, length);
+
+        FixedSizeResponse r = context.fixedSizeResponse();
+
+        r.status(200, contentType, length);
         if (asAttachment) {
-            context.response.headers().put("Content-Disposition: attachment; filename=\"").put(file.getName()).put("\"").put(Misc.EOL);
+            r.headers().put("Content-Disposition: attachment; filename=\"").put(file.getName()).put("\"").put(Misc.EOL);
         }
-        context.response.headers().put("ETag: ").put('"').put(file.lastModified()).put('"').put(Misc.EOL);
-        context.response.sendHeader();
-        _continue(context);
+        r.headers().put("ETag: ").put('"').put(file.lastModified()).put('"').put(Misc.EOL);
+        r.sendHeader();
+        resume(context);
     }
 }

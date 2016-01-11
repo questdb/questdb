@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,13 +17,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http.handlers;
 
 import com.nfsdb.collections.ByteSequence;
 import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.exceptions.DisconnectedChannelException;
+import com.nfsdb.exceptions.SlowWritableChannelException;
 import com.nfsdb.net.http.ContextHandler;
 import com.nfsdb.net.http.IOContext;
 import com.nfsdb.net.http.MultipartListener;
@@ -33,15 +34,15 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 
 public abstract class AbstractMultipartHandler implements ContextHandler, MultipartListener {
-    @SuppressFBWarnings("ACEM_ABSTRACT_CLASS_EMPTY_METHODS")
-    @Override
-    public void _continue(IOContext context) throws IOException {
-    }
-
     @Override
     public final void handle(IOContext context) throws IOException {
         onPartEnd(context);
         onComplete0(context);
+    }
+
+    @SuppressFBWarnings("ACEM_ABSTRACT_CLASS_EMPTY_METHODS")
+    @Override
+    public void resume(IOContext context) throws IOException {
     }
 
     @Override
@@ -58,7 +59,7 @@ public abstract class AbstractMultipartHandler implements ContextHandler, Multip
 
     protected abstract void onComplete0(IOContext context) throws IOException;
 
-    protected abstract void onData(IOContext context, RequestHeaderBuffer hb, ByteSequence data) throws DisconnectedChannelException;
+    protected abstract void onData(IOContext context, RequestHeaderBuffer hb, ByteSequence data) throws DisconnectedChannelException, SlowWritableChannelException;
 
     protected abstract void onPartBegin(IOContext context, RequestHeaderBuffer hb) throws IOException;
 

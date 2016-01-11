@@ -138,10 +138,16 @@ public final class ByteBuffers {
         }
     }
 
-    public static void copyNonBlocking(ByteBuffer from, WritableByteChannel channel, int retryCount) throws IOException {
+    public static void copyNonBlocking(ByteBuffer from, WritableByteChannel channel, int retryCount) throws DisconnectedChannelException, SlowWritableChannelException {
         int target = from.remaining();
         while (target > 0) {
-            int result = channel.write(from);
+            int result;
+
+            try {
+                result = channel.write(from);
+            } catch (IOException e) {
+                throw DisconnectedChannelException.INSTANCE;
+            }
 
             // disconnected
             if (result == -1) {
@@ -157,11 +163,16 @@ public final class ByteBuffers {
         }
     }
 
-    public static void copyNonBlocking(ReadableByteChannel channel, ByteBuffer to, int retryCount) throws IOException {
+    public static void copyNonBlocking(ReadableByteChannel channel, ByteBuffer to, int retryCount) throws DisconnectedChannelException, SlowReadableChannelException {
         int r = to.remaining();
         int target = r;
         while (target > 0) {
-            int result = channel.read(to);
+            int result;
+            try {
+                result = channel.read(to);
+            } catch (IOException e) {
+                throw DisconnectedChannelException.INSTANCE;
+            }
 
             // disconnected
             if (result == -1) {

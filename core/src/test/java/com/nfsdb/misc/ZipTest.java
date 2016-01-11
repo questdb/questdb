@@ -35,7 +35,7 @@ import java.util.zip.GZIPInputStream;
 public class ZipTest {
 
     @Rule
-    public TemporaryFolder temp = new TemporaryFolder();
+    public final TemporaryFolder temp = new TemporaryFolder();
 
     @Test
     public void testGzip() throws Exception {

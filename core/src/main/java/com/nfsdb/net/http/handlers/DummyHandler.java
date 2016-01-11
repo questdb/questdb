@@ -19,12 +19,37 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net.http;
+package com.nfsdb.net.http.handlers;
+
+import com.nfsdb.misc.Misc;
+import com.nfsdb.misc.Numbers;
+import com.nfsdb.net.http.ChunkedResponse;
+import com.nfsdb.net.http.ContextHandler;
+import com.nfsdb.net.http.IOContext;
 
 import java.io.IOException;
 
-public interface ContextHandler {
-    void handle(IOContext context) throws IOException;
+public class DummyHandler implements ContextHandler {
+    private int counter = 0;
 
-    void resume(IOContext context) throws IOException;
+    @Override
+    public void handle(IOContext context) throws IOException {
+        ChunkedResponse r = context.chunkedResponse();
+        r.status(200, "text/plain; charset=utf-8");
+        r.sendHeader();
+        counter = 0;
+        resume(context);
+    }
+
+    @Override
+    public void resume(IOContext context) throws IOException {
+        ChunkedResponse r = context.chunkedResponse();
+        for (int i = counter; i < 4; i++) {
+            r.put("This is chunk ");
+            Numbers.append(r, i);
+            r.put(Misc.EOL);
+            r.sendChunk();
+        }
+        r.endChunk();
+    }
 }

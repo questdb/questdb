@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,16 +17,18 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http.handlers;
 
 import com.nfsdb.JournalMode;
 import com.nfsdb.collections.ByteSequence;
 import com.nfsdb.collections.DirectByteCharSequence;
+import com.nfsdb.misc.Misc;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.net.http.IOContext;
 import com.nfsdb.net.http.RequestHeaderBuffer;
+import com.nfsdb.net.http.ResponseSink;
 import com.nfsdb.storage.PlainFile;
 
 import java.io.File;
@@ -41,9 +43,10 @@ public class UploadHandler extends AbstractMultipartHandler {
 
     @Override
     protected void onComplete0(IOContext context) throws IOException {
-        context.response.status(200, "text/html; charset=utf-8");
-        context.response.put("OK, got it\r\n");
-        context.response.end();
+        ResponseSink sink = context.responseSink();
+        sink.status(200, "text/html; charset=utf-8");
+        sink.put("OK, got it").put(Misc.EOL);
+        sink.flush();
     }
 
     @Override
@@ -101,9 +104,10 @@ public class UploadHandler extends AbstractMultipartHandler {
     }
 
     private void sendError(IOContext context) throws IOException {
-        context.response.status(200, "text/html; charset=utf-8");
-        context.response.put("OOPS");
-        context.response.end();
+        ResponseSink sink = context.responseSink();
+        sink.status(200, "text/html; charset=utf-8");
+        sink.put("OOPS").put(Misc.EOL);
+        sink.flush();
     }
 
     private void write0(ByteSequence data, int offset, long addr, int len) {
