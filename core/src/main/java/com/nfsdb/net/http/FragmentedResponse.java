@@ -21,5 +21,20 @@
 
 package com.nfsdb.net.http;
 
-public interface ChunkedResponse extends ResponseSink, FragmentedResponse {
+import com.nfsdb.exceptions.DisconnectedChannelException;
+import com.nfsdb.exceptions.SlowWritableChannelException;
+import com.nfsdb.io.sink.CharSink;
+
+import java.nio.ByteBuffer;
+
+public interface FragmentedResponse {
+    void done() throws DisconnectedChannelException, SlowWritableChannelException;
+
+    CharSink headers();
+
+    ByteBuffer out();
+
+    void sendChunk() throws DisconnectedChannelException, SlowWritableChannelException;
+
+    void sendHeader() throws DisconnectedChannelException, SlowWritableChannelException;
 }

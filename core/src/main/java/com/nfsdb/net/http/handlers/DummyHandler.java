@@ -50,6 +50,6 @@ public class DummyHandler implements ContextHandler {
             r.put(Misc.EOL);
             r.sendChunk();
         }
-        r.endChunk();
+        r.done();
     }
 }

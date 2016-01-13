@@ -25,14 +25,12 @@ import com.nfsdb.collections.Mutable;
 import com.nfsdb.exceptions.DisconnectedChannelException;
 import com.nfsdb.exceptions.ResponseContentBufferTooSmallException;
 import com.nfsdb.exceptions.SlowWritableChannelException;
+import com.nfsdb.exceptions.ZLibException;
 import com.nfsdb.io.sink.AbstractCharSink;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.io.sink.DirectUnboundedAnsiSink;
 import com.nfsdb.iter.clock.Clock;
-import com.nfsdb.misc.ByteBuffers;
-import com.nfsdb.misc.Misc;
-import com.nfsdb.misc.Numbers;
-import com.nfsdb.misc.Unsafe;
+import com.nfsdb.misc.*;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -51,9 +49,17 @@ public class Response implements Closeable, Mutable {
     private final ResponseSink sink = new ResponseSinkImpl();
     private final FixedSizeResponse fixedSize = new FixedSizeResponseImpl();
     private final ChunkedResponse chunkedResponse = new ChunkedResponseImpl();
+    private final int sz;
     private long _wPtr;
+    private ByteBuffer zout;
     private ByteBuffer _flushBuf;
     private ResponseState state;
+    private long z_streamp = 0;
+    private boolean compressed = false;
+    private long pzout;
+    private boolean header = true;
+    private int crc = 0;
+    private long total = 0;
 
     public Response(WritableByteChannel channel, int headerBufferSize, int contentBufferSize, Clock clock) {
         if (headerBufferSize <= 0) {
@@ -65,7 +71,7 @@ public class Response implements Closeable, Mutable {
         }
 
         this.channel = channel;
-        int sz = Numbers.ceilPow2(contentBufferSize);
+        this.sz = Numbers.ceilPow2(contentBufferSize);
         this.out = ByteBuffer.allocateDirect(sz);
         this.hb = new ResponseHeaderBuffer(headerBufferSize, clock);
         // size is 32bit int, as hex string max 8 bytes
@@ -81,6 +87,15 @@ public class Response implements Closeable, Mutable {
         out.clear();
         hb.clear();
         this._wPtr = outPtr;
+        if (zout != null) {
+            zout.clear();
+        }
+        if (z_streamp > 0) {
+            Zip.deflateReset(z_streamp);
+        }
+        this.crc = 0;
+        this.total = 0;
+        this.header = true;
     }
 
     @Override
@@ -88,13 +103,24 @@ public class Response implements Closeable, Mutable {
         ByteBuffers.release(out);
         ByteBuffers.release(chunkHeader);
         hb.close();
+        ByteBuffers.release(zout);
+        if (z_streamp > 0) {
+            Zip.deflateEnd(z_streamp);
+        }
     }
 
     public void resume() throws DisconnectedChannelException, SlowWritableChannelException {
-        if (state != ResponseState.DONE) {
-            machine0();
-        } else if (_flushBuf != null) {
+
+        if (_flushBuf != null) {
             flush(_flushBuf);
+        }
+
+        if (z_streamp > 0 && Zip.remainingInput(z_streamp) > 0) {
+            deflate(state == ResponseState.FLUSH);
+        }
+
+        if (state != ResponseState.DONE && state != ResponseState.FLUSH) {
+            machine0();
         }
     }
 
@@ -128,11 +154,70 @@ public class Response implements Closeable, Mutable {
         return sink;
     }
 
+    private void deflate(boolean flush) throws DisconnectedChannelException, SlowWritableChannelException {
+        final int sz = this.sz - 8;
+        long p = pzout + Zip.gzipHeaderLen;
+
+        while (true) {
+            int len = Zip.deflate(z_streamp, p, sz, flush);
+
+            if (len == 0) {
+                break;
+            }
+
+            if (len < 0) {
+                throw ZLibException.INSTANCE;
+            }
+
+            int z;
+            int l;
+            if (header) {
+                Unsafe.getUnsafe().copyMemory(Zip.gzipHeader, pzout, Zip.gzipHeaderLen);
+                header = false;
+                z = 0;
+                l = Zip.gzipHeaderLen;
+            } else {
+                z = Zip.gzipHeaderLen;
+                l = 0;
+            }
+
+            final boolean end = Zip.remainingInput(z_streamp) == 0;
+
+            if (end && flush) {
+                Unsafe.getUnsafe().putInt(p + len, crc); // crc
+                Unsafe.getUnsafe().putInt(p + len + 4, (int) total); // total
+                zout.limit(l + len + 8);
+            } else {
+                zout.limit(l + len);
+            }
+
+            zout.position(z);
+            flush(zout);
+
+            if (end) {
+                break;
+            }
+        }
+    }
+
     private void flush(ByteBuffer buf) throws DisconnectedChannelException, SlowWritableChannelException {
         this._flushBuf = buf;
         ByteBuffers.copyNonBlocking(buf, channel, IOHttpJob.SO_WRITE_RETRY_COUNT);
         buf.clear();
         this._flushBuf = null;
+    }
+
+    private void flushCompressed() throws DisconnectedChannelException, SlowWritableChannelException {
+        if (z_streamp == 0) {
+            z_streamp = Zip.deflateInit(-1, true);
+            zout = ByteBuffer.allocateDirect(sz);
+            pzout = ByteBuffers.getAddress(zout);
+        }
+        int r = out.remaining();
+        Zip.setInput(z_streamp, outPtr, r);
+        this.crc = Zip.crc32(this.crc, outPtr, r);
+        this.total += r;
+        resume();
     }
 
     private void flushSingle(ByteBuffer buf) throws DisconnectedChannelException, SlowWritableChannelException {
@@ -176,6 +261,7 @@ public class Response implements Closeable, Mutable {
                     state = ResponseState.DONE;
                     break;
                 case DONE:
+                case FLUSH:
                     return;
             }
         }
@@ -183,7 +269,7 @@ public class Response implements Closeable, Mutable {
     }
 
     private enum ResponseState {
-        CHUNK_HEAD, CHUNK_DATA, FIN, MULTI_CHUNK, END_CHUNK, DONE
+        CHUNK_HEAD, CHUNK_DATA, FIN, MULTI_CHUNK, END_CHUNK, DONE, FLUSH
     }
 
     private class SimpleResponseImpl implements SimpleResponse {
@@ -244,9 +330,17 @@ public class Response implements Closeable, Mutable {
     }
 
     private class FixedSizeResponseImpl implements FixedSizeResponse {
-        @Override
-        public void flush() {
 
+        @Override
+        public void done() throws DisconnectedChannelException, SlowWritableChannelException {
+            if (compressed && z_streamp != 0) {
+                deflate(true);
+            }
+        }
+
+        @Override
+        public void setCompressed(boolean compressed) {
+            Response.this.compressed = compressed;
         }
 
         @Override
@@ -255,13 +349,25 @@ public class Response implements Closeable, Mutable {
         }
 
         @Override
+        public void status(int status, CharSequence contentType, long len) {
+            hb.status(status, contentType, len);
+            if (compressed) {
+                hb.put("Content-Encoding: gzip").put(Misc.EOL);
+            }
+        }
+
+        @Override
         public ByteBuffer out() {
             return out;
         }
 
         @Override
-        public void sendBuf() throws DisconnectedChannelException, SlowWritableChannelException {
-            flushSingle(out);
+        public void sendChunk() throws DisconnectedChannelException, SlowWritableChannelException {
+            if (compressed) {
+                flushCompressed();
+            } else {
+                flushSingle(out);
+            }
         }
 
         @Override
@@ -269,16 +375,23 @@ public class Response implements Closeable, Mutable {
             flushSingle(hb.prepareBuffer());
         }
 
-        @Override
-        public void status(int status, CharSequence contentType, long len) {
-            hb.status(status, contentType, len);
-        }
+
     }
 
     private class ChunkedResponseImpl extends ResponseSinkImpl implements ChunkedResponse {
 
         @Override
-        public void endChunk() throws DisconnectedChannelException, SlowWritableChannelException {
+        public void flush() throws IOException {
+            sendChunk();
+        }
+
+        @Override
+        public ByteBuffer out() {
+            return out;
+        }
+
+        @Override
+        public void done() throws DisconnectedChannelException, SlowWritableChannelException {
             machine(null, ResponseState.END_CHUNK);
         }
 

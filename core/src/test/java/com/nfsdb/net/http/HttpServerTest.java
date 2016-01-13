@@ -77,6 +77,28 @@ public class HttpServerTest extends AbstractJournalTest {
     public final TemporaryFolder temp = new TemporaryFolder();
 
     @Test
+    public void testCompressedDownload() throws Exception {
+        if (Os.nativelySupported) {
+            final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/nfsdb.conf"));
+            configuration.getSslConfig().setSecure(true);
+            configuration.getSslConfig().setKeyStore(new FileInputStream(resourceFile("/keystore/singlekey.ks")), "changeit");
+
+
+            final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
+            HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
+                setDefaultHandler(new NativeStaticContentHandler(configuration.getHttpPublic(), mimeTypes));
+            }});
+            server.start();
+
+            try {
+                download(clientBuilder(true), "https://localhost:9000/upload.html", new File(temp.getRoot(), "upload.html"));
+            } finally {
+                server.halt();
+            }
+        }
+    }
+
+    @Test
     public void testConcurrentDownload() throws Exception {
         final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/nfsdb.conf"));
         configuration.getSslConfig().setSecure(false);

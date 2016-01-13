@@ -19,7 +19,12 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net.http;
+package com.nfsdb.exceptions;
 
-public interface ChunkedResponse extends ResponseSink, FragmentedResponse {
+@SuppressWarnings("ThrowableInstanceNeverThrown")
+public final class ZLibException extends RuntimeException {
+    public final static ZLibException INSTANCE = new ZLibException();
+
+    private ZLibException() {
+    }
 }

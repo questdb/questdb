@@ -68,7 +68,7 @@ public class NativeStaticContentHandler implements ContextHandler {
             return;
         }
 
-        FixedSizeResponse r = context.fixedSizeResponse();
+        FragmentedResponse r = context.fixedSizeResponse();
         ByteBuffer out = r.out();
         long wptr = ByteBuffers.getAddress(out);
         int sz = out.remaining();
@@ -80,9 +80,9 @@ public class NativeStaticContentHandler implements ContextHandler {
             }
             out.limit((int) l);
             context.bytesSent += l;
-            r.sendBuf();
+            r.sendChunk();
         }
-        r.flush();
+        r.done();
 
         // reached the end naturally?
         Files.close(context.fd);

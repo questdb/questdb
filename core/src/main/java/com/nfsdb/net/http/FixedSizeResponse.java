@@ -21,22 +21,9 @@
 
 package com.nfsdb.net.http;
 
-import com.nfsdb.exceptions.DisconnectedChannelException;
-import com.nfsdb.exceptions.SlowWritableChannelException;
-import com.nfsdb.io.sink.CharSink;
+public interface FixedSizeResponse extends FragmentedResponse {
 
-import java.nio.ByteBuffer;
-
-public interface FixedSizeResponse {
-    void flush();
-
-    CharSink headers();
-
-    ByteBuffer out();
-
-    void sendBuf() throws DisconnectedChannelException, SlowWritableChannelException;
-
-    void sendHeader() throws DisconnectedChannelException, SlowWritableChannelException;
+    void setCompressed(boolean compressed);
 
     void status(int status, CharSequence contentType, long len);
 }

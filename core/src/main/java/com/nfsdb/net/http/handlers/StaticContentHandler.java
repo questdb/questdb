@@ -64,7 +64,7 @@ public class StaticContentHandler implements ContextHandler {
             return;
         }
 
-        FixedSizeResponse r = context.fixedSizeResponse();
+        FragmentedResponse r = context.fixedSizeResponse();
         FileChannel ch = context.raf.getChannel();
         ByteBuffer out = r.out();
 
@@ -76,15 +76,15 @@ public class StaticContentHandler implements ContextHandler {
                 out.limit(l);
                 // do not refactor, placement is critical
                 context.bytesSent += l;
-                r.sendBuf();
+                r.sendChunk();
                 break;
             } else {
                 // do not refactor, placement is critical
                 context.bytesSent += l;
-                r.sendBuf();
+                r.sendChunk();
             }
         }
-        r.flush();
+        r.done();
         context.raf = Misc.free(context.raf);
     }
 
