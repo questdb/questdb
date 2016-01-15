@@ -37,19 +37,19 @@ JNIEXPORT void JNICALL Java_com_nfsdb_misc_Zip_deflateEnd
 
 /*
  * Class:     com_nfsdb_misc_Zip
+ * Method:    deflateInit
+ * Signature: ()J
+ */
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Zip_deflateInit
+        (JNIEnv *, jclass);
+
+/*
+ * Class:     com_nfsdb_misc_Zip
  * Method:    deflateReset
  * Signature: (J)I
  */
 JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Zip_deflateReset
         (JNIEnv *, jclass, jlong);
-
-/*
- * Class:     com_nfsdb_misc_Zip
- * Method:    deflateInit
- * Signature: (IZ)J
- */
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Zip_deflateInit
-        (JNIEnv *, jclass, jint, jboolean);
 
 /*
  * Class:     com_nfsdb_misc_Zip
@@ -69,6 +69,14 @@ JNIEXPORT void JNICALL Java_com_nfsdb_misc_Zip_inflateEnd
 
 /*
  * Class:     com_nfsdb_misc_Zip
+ * Method:    inflateInit
+ * Signature: (Z)J
+ */
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Zip_inflateInit
+        (JNIEnv *, jclass, jboolean);
+
+/*
+ * Class:     com_nfsdb_misc_Zip
  * Method:    inflateReset
  * Signature: (J)I
  */
@@ -77,11 +85,27 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Zip_inflateReset
 
 /*
  * Class:     com_nfsdb_misc_Zip
- * Method:    inflateInit
- * Signature: (Z)J
+ * Method:    availIn
+ * Signature: (J)I
  */
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Zip_inflateInit
-        (JNIEnv *, jclass, jboolean);
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Zip_availIn
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_nfsdb_misc_Zip
+ * Method:    availOut
+ * Signature: (J)I
+ */
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Zip_availOut
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_nfsdb_misc_Zip
+ * Method:    totalOut
+ * Signature: (J)I
+ */
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Zip_totalOut
+        (JNIEnv *, jclass, jlong);
 
 /*
  * Class:     com_nfsdb_misc_Zip

@@ -23,7 +23,5 @@ package com.nfsdb.net.http;
 
 public interface FixedSizeResponse extends FragmentedResponse {
 
-    void setCompressed(boolean compressed);
-
     void status(int status, CharSequence contentType, long len);
 }

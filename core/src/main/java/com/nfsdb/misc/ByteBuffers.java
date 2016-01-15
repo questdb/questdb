@@ -138,6 +138,7 @@ public final class ByteBuffers {
         }
     }
 
+    @SuppressWarnings("TryWithIdenticalCatches")
     public static void copyNonBlocking(ByteBuffer from, WritableByteChannel channel, int retryCount) throws DisconnectedChannelException, SlowWritableChannelException {
         int target = from.remaining();
         while (target > 0) {
@@ -145,6 +146,8 @@ public final class ByteBuffers {
 
             try {
                 result = channel.write(from);
+            } catch (SlowWritableChannelException e) {
+                throw e;
             } catch (IOException e) {
                 throw DisconnectedChannelException.INSTANCE;
             }
@@ -163,6 +166,7 @@ public final class ByteBuffers {
         }
     }
 
+    @SuppressWarnings("TryWithIdenticalCatches")
     public static void copyNonBlocking(ReadableByteChannel channel, ByteBuffer to, int retryCount) throws DisconnectedChannelException, SlowReadableChannelException {
         int r = to.remaining();
         int target = r;
@@ -170,6 +174,8 @@ public final class ByteBuffers {
             int result;
             try {
                 result = channel.read(to);
+            } catch (SlowReadableChannelException e) {
+                throw e;
             } catch (IOException e) {
                 throw DisconnectedChannelException.INSTANCE;
             }

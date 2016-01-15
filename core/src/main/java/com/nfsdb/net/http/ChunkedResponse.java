@@ -22,4 +22,9 @@
 package com.nfsdb.net.http;
 
 public interface ChunkedResponse extends ResponseSink, FragmentedResponse {
+    long bookmark();
+
+    void resetToBookmark(long bookmark);
+
+    void setCompressed(boolean compressed);
 }

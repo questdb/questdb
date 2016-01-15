@@ -123,6 +123,7 @@ public class IOHttpJob implements Job<IOWorkerContext> {
         } catch (MalformedHeaderException | DisconnectedChannelException e) {
             status = ChannelStatus.DISCONNECTED;
         } catch (SlowReadableChannelException e) {
+            System.out.println("slow read");
             status = ChannelStatus.READ;
         } catch (SlowWritableChannelException e) {
             status = ChannelStatus.WRITE;

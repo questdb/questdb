@@ -51,7 +51,7 @@ public class ZipTest {
         long in = Unsafe.getUnsafe().allocateMemory(available);
         long out = Unsafe.getUnsafe().allocateMemory(available / 2);
         try {
-            long strm = Zip.deflateInit(-1, true);
+            long strm = Zip.deflateInit();
             try {
 
                 long pIn = 0;
@@ -71,29 +71,32 @@ public class ZipTest {
                             Zip.setInput(strm, in, len);
                             crc = Zip.crc32(crc, in, len);
                             do {
-                                int have = Zip.deflate(strm, out, available, false);
-                                if (have < 0) {
-                                    throw new RuntimeException("Error in deflator: " + have);
+                                int ret;
+                                if ((ret = Zip.deflate(strm, out, available, false)) < 0) {
+                                    throw new RuntimeException("Error in deflator: " + ret);
                                 }
+
+                                int have = available - Zip.availOut(strm);
                                 if (have > 0) {
                                     Files.write(fdOut, out, have, pOut);
                                     pOut += have;
                                 }
 
-                            } while (Zip.remainingInput(strm) > 0);
+                            } while (Zip.availIn(strm) > 0);
                         }
 
+                        int ret;
                         do {
-                            int have = Zip.deflate(strm, out, available, true);
-                            if (have < 0) {
-                                throw new RuntimeException("Error in deflator: " + have);
+                            if ((ret = Zip.deflate(strm, out, available, true)) < 0) {
+                                throw new RuntimeException("Error in deflator: " + ret);
                             }
 
+                            int have = available - Zip.availOut(strm);
                             if (have > 0) {
                                 Files.write(fdOut, out, have, pOut);
                                 pOut += have;
                             }
-                        } while (Zip.remainingInput(strm) > 0);
+                        } while (ret != 1);
 
                         // write trailer
                         Unsafe.getUnsafe().putInt(out, crc);

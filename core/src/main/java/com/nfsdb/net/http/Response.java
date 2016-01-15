@@ -57,9 +57,9 @@ public class Response implements Closeable, Mutable {
     private long z_streamp = 0;
     private boolean compressed = false;
     private long pzout;
-    private boolean header = true;
     private int crc = 0;
     private long total = 0;
+    private boolean header = true;
 
     public Response(WritableByteChannel channel, int headerBufferSize, int contentBufferSize, Clock clock) {
         if (headerBufferSize <= 0) {
@@ -90,12 +90,7 @@ public class Response implements Closeable, Mutable {
         if (zout != null) {
             zout.clear();
         }
-        if (z_streamp > 0) {
-            Zip.deflateReset(z_streamp);
-        }
-        this.crc = 0;
-        this.total = 0;
-        this.header = true;
+        resetZip();
     }
 
     @Override
@@ -104,24 +99,14 @@ public class Response implements Closeable, Mutable {
         ByteBuffers.release(chunkHeader);
         hb.close();
         ByteBuffers.release(zout);
-        if (z_streamp > 0) {
+        if (z_streamp != 0) {
             Zip.deflateEnd(z_streamp);
+            z_streamp = 0;
         }
     }
 
     public void resume() throws DisconnectedChannelException, SlowWritableChannelException {
-
-        if (_flushBuf != null) {
-            flush(_flushBuf);
-        }
-
-        if (z_streamp > 0 && Zip.remainingInput(z_streamp) > 0) {
-            deflate(state == ResponseState.FLUSH);
-        }
-
-        if (state != ResponseState.DONE && state != ResponseState.FLUSH) {
-            machine0();
-        }
+        machine0();
     }
 
     private ByteBuffer _prepareBody() {
@@ -136,6 +121,19 @@ public class Response implements Closeable, Mutable {
         chunkSink.put(Misc.EOL);
         chunkHeader.limit(chunkSink.length());
         return chunkHeader;
+    }
+
+    private void _prepareCompressedBody() throws DisconnectedChannelException, SlowWritableChannelException {
+        if (z_streamp == 0) {
+            z_streamp = Zip.deflateInit();
+            zout = ByteBuffer.allocateDirect(sz);
+            pzout = ByteBuffers.getAddress(zout);
+        }
+        int r = (int) (_wPtr - outPtr);
+        Zip.setInput(z_streamp, outPtr, r);
+        this.crc = Zip.crc32(this.crc, outPtr, r);
+        this.total += r;
+        _wPtr = outPtr;
     }
 
     final ChunkedResponse asChunked() {
@@ -154,50 +152,62 @@ public class Response implements Closeable, Mutable {
         return sink;
     }
 
-    private void deflate(boolean flush) throws DisconnectedChannelException, SlowWritableChannelException {
+    private ResponseState deflate(boolean flush) throws DisconnectedChannelException, SlowWritableChannelException {
+
         final int sz = this.sz - 8;
         long p = pzout + Zip.gzipHeaderLen;
 
-        while (true) {
-            int len = Zip.deflate(z_streamp, p, sz, flush);
-
-            if (len == 0) {
-                break;
+        int ret;
+        int len;
+        int availIn;
+        // compress input until we run out of either input or output
+        do {
+            ret = Zip.deflate(z_streamp, p, sz, flush);
+            if (ret < 0) {
+                // todo: log this event
+                throw DisconnectedChannelException.INSTANCE;
             }
 
-            if (len < 0) {
-                throw ZLibException.INSTANCE;
-            }
+            len = sz - Zip.availOut(z_streamp);
+            availIn = Zip.availIn(z_streamp);
+        } while (len == 0 && availIn > 0);
 
-            int z;
-            int l;
-            if (header) {
-                Unsafe.getUnsafe().copyMemory(Zip.gzipHeader, pzout, Zip.gzipHeaderLen);
-                header = false;
-                z = 0;
-                l = Zip.gzipHeaderLen;
-            } else {
-                z = Zip.gzipHeaderLen;
-                l = 0;
-            }
+        // zip did not write anything out, nothing to send
+        // we assume that input was too small and needs flushing
 
-            final boolean end = Zip.remainingInput(z_streamp) == 0;
-
-            if (end && flush) {
-                Unsafe.getUnsafe().putInt(p + len, crc); // crc
-                Unsafe.getUnsafe().putInt(p + len + 4, (int) total); // total
-                zout.limit(l + len + 8);
-            } else {
-                zout.limit(l + len);
-            }
-
-            zout.position(z);
-            flush(zout);
-
-            if (end) {
-                break;
-            }
+        if (len == 0) {
+            return ResponseState.DONE;
         }
+
+        // this is ZLib error, can't continue
+        if (len < 0) {
+            throw ZLibException.INSTANCE;
+        }
+
+        // augment zout with header and trailer and prepare for flush
+        // header
+        if (header) {
+            Unsafe.getUnsafe().copyMemory(Zip.gzipHeader, pzout, Zip.gzipHeaderLen);
+            header = false;
+            zout.position(0);
+        } else {
+            zout.position(Zip.gzipHeaderLen);
+        }
+
+        // trailer
+        if (flush && ret == 1) {
+            Unsafe.getUnsafe().putInt(p + len, crc); // crc
+            Unsafe.getUnsafe().putInt(p + len + 4, (int) total); // total
+            zout.limit(Zip.gzipHeaderLen + len + 8);
+        } else {
+            zout.limit(Zip.gzipHeaderLen + len);
+        }
+
+        // first we need to flush chunk header
+        _flushBuf = _prepareChunk(zout.remaining());
+
+        // if there is input remaining, don't change
+        return flush && ret == 1 ? ResponseState.SEND_DEFLATED_END : ResponseState.SEND_DEFLATED_CONT;
     }
 
     private void flush(ByteBuffer buf) throws DisconnectedChannelException, SlowWritableChannelException {
@@ -205,19 +215,6 @@ public class Response implements Closeable, Mutable {
         ByteBuffers.copyNonBlocking(buf, channel, IOHttpJob.SO_WRITE_RETRY_COUNT);
         buf.clear();
         this._flushBuf = null;
-    }
-
-    private void flushCompressed() throws DisconnectedChannelException, SlowWritableChannelException {
-        if (z_streamp == 0) {
-            z_streamp = Zip.deflateInit(-1, true);
-            zout = ByteBuffer.allocateDirect(sz);
-            pzout = ByteBuffers.getAddress(zout);
-        }
-        int r = out.remaining();
-        Zip.setInput(z_streamp, outPtr, r);
-        this.crc = Zip.crc32(this.crc, outPtr, r);
-        this.total += r;
-        resume();
     }
 
     private void flushSingle(ByteBuffer buf) throws DisconnectedChannelException, SlowWritableChannelException {
@@ -240,7 +237,27 @@ public class Response implements Closeable, Mutable {
 
             switch (state) {
                 case MULTI_CHUNK:
-                    _flushBuf = _prepareBody();
+                    if (compressed) {
+                        _prepareCompressedBody();
+                        state = ResponseState.DEFLATE;
+                    } else {
+                        _flushBuf = _prepareBody();
+                        state = ResponseState.DONE;
+                    }
+                    break;
+                case DEFLATE:
+                    state = deflate(false);
+                    break;
+                case SEND_DEFLATED_END:
+                    _flushBuf = zout;
+                    state = ResponseState.END_CHUNK;
+                    break;
+                case SEND_DEFLATED_CONT:
+                    _flushBuf = zout;
+                    state = ResponseState.DONE;
+                    break;
+                case MULTI_BUF_CHUNK:
+                    _flushBuf = out;
                     state = ResponseState.DONE;
                     break;
                 case CHUNK_HEAD:
@@ -260,16 +277,35 @@ public class Response implements Closeable, Mutable {
                     _flushBuf = _prepareBody();
                     state = ResponseState.DONE;
                     break;
-                case DONE:
                 case FLUSH:
+                    state = deflate(true);
+                    break;
+                case DONE:
                     return;
             }
         }
 
     }
 
+    private void resetZip() {
+        if (z_streamp != 0) {
+            Zip.deflateReset(z_streamp);
+        }
+        this.crc = 0;
+        this.total = 0;
+    }
+
     private enum ResponseState {
-        CHUNK_HEAD, CHUNK_DATA, FIN, MULTI_CHUNK, END_CHUNK, DONE, FLUSH
+        CHUNK_HEAD,
+        CHUNK_DATA,
+        FIN, MULTI_CHUNK,
+        DEFLATE,
+        MULTI_BUF_CHUNK,
+        END_CHUNK,
+        DONE,
+        FLUSH,
+        SEND_DEFLATED_CONT,
+        SEND_DEFLATED_END
     }
 
     private class SimpleResponseImpl implements SimpleResponse {
@@ -333,9 +369,47 @@ public class Response implements Closeable, Mutable {
 
         @Override
         public void done() throws DisconnectedChannelException, SlowWritableChannelException {
-            if (compressed && z_streamp != 0) {
-                deflate(true);
-            }
+        }
+
+        @Override
+        public void status(int status, CharSequence contentType, long len) {
+            hb.status(status, contentType, len);
+        }
+
+        @Override
+        public CharSink headers() {
+            return hb;
+        }
+
+
+        @Override
+        public ByteBuffer out() {
+            return out;
+        }
+
+        @Override
+        public void sendChunk() throws DisconnectedChannelException, SlowWritableChannelException {
+            flushSingle(out);
+        }
+
+        @Override
+        public void sendHeader() throws DisconnectedChannelException, SlowWritableChannelException {
+            flushSingle(hb.prepareBuffer());
+        }
+    }
+
+    private class ChunkedResponseImpl extends ResponseSinkImpl implements ChunkedResponse {
+
+        private long bookmark = outPtr;
+
+        @Override
+        public long bookmark() {
+            return bookmark;
+        }
+
+        @Override
+        public void resetToBookmark(long bookmark) {
+            _wPtr = bookmark;
         }
 
         @Override
@@ -344,13 +418,13 @@ public class Response implements Closeable, Mutable {
         }
 
         @Override
-        public CharSink headers() {
-            return hb;
+        public void flush() throws IOException {
+            sendChunk();
         }
 
         @Override
-        public void status(int status, CharSequence contentType, long len) {
-            hb.status(status, contentType, len);
+        public void status(int status, CharSequence contentType) {
+            super.status(status, contentType);
             if (compressed) {
                 hb.put("Content-Encoding: gzip").put(Misc.EOL);
             }
@@ -362,37 +436,12 @@ public class Response implements Closeable, Mutable {
         }
 
         @Override
-        public void sendChunk() throws DisconnectedChannelException, SlowWritableChannelException {
-            if (compressed) {
-                flushCompressed();
-            } else {
-                flushSingle(out);
-            }
-        }
-
-        @Override
-        public void sendHeader() throws DisconnectedChannelException, SlowWritableChannelException {
-            flushSingle(hb.prepareBuffer());
-        }
-
-
-    }
-
-    private class ChunkedResponseImpl extends ResponseSinkImpl implements ChunkedResponse {
-
-        @Override
-        public void flush() throws IOException {
-            sendChunk();
-        }
-
-        @Override
-        public ByteBuffer out() {
-            return out;
-        }
-
-        @Override
         public void done() throws DisconnectedChannelException, SlowWritableChannelException {
-            machine(null, ResponseState.END_CHUNK);
+            if (compressed) {
+                machine(null, ResponseState.FLUSH);
+            } else {
+                machine(null, ResponseState.END_CHUNK);
+            }
         }
 
         @Override
@@ -402,7 +451,11 @@ public class Response implements Closeable, Mutable {
 
         @Override
         public void sendChunk() throws DisconnectedChannelException, SlowWritableChannelException {
-            machine(_prepareChunk((int) (_wPtr - outPtr)), ResponseState.MULTI_CHUNK);
+            if (compressed) {
+                machine(null, ResponseState.MULTI_CHUNK);
+            } else {
+                machine(_prepareChunk((int) (_wPtr - outPtr)), ResponseState.MULTI_CHUNK);
+            }
         }
 
         @Override

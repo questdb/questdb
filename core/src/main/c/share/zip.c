@@ -3,7 +3,7 @@
 #include <src/main/c/share/zip.h>
 
 JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Zip_deflateInit
-        (JNIEnv *e, jclass cl, jint level, jboolean nowrap) {
+        (JNIEnv *e, jclass cl) {
     z_streamp strm = calloc(1, sizeof(z_stream));
 
     if (strm == 0) {
@@ -11,8 +11,7 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Zip_deflateInit
     }
 
     int ret;
-    switch (ret = deflateInit2(strm, level, Z_DEFLATED, nowrap ? -MAX_WBITS : MAX_WBITS, DEF_MEM_LEVEL,
-                               Z_DEFAULT_STRATEGY)) {
+    switch (ret = deflateInit2(strm, -1, Z_DEFLATED, -MAX_WBITS, DEF_MEM_LEVEL, Z_DEFAULT_STRATEGY)) {
         case Z_OK:
             return (jlong) strm;
         default:
@@ -34,12 +33,22 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Zip_deflate
     z_streamp strm = (z_streamp) ptr;
     strm->next_out = (Bytef *) address;
     strm->avail_out = (uInt) available;
+    return deflate(strm, flush ? Z_FINISH : Z_NO_FLUSH);
+}
 
-    int ret;
-    if ((ret = deflate(strm, flush ? Z_FINISH : Z_NO_FLUSH)) < 0) {
-        return ret;
-    }
-    return (jint) (available - strm->avail_out);
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Zip_availIn
+        (JNIEnv *e, jclass cl, jlong ptr) {
+    return (jint) ((z_streamp) ptr)->avail_in;
+}
+
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Zip_availOut
+        (JNIEnv *e, jclass cl, jlong ptr) {
+    return (jint) ((z_streamp) ptr)->avail_out;
+}
+
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Zip_totalOut
+        (JNIEnv *e, jclass cl, jlong ptr) {
+    return (jint) ((z_streamp) ptr)->total_out;
 }
 
 JNIEXPORT void JNICALL Java_com_nfsdb_misc_Zip_deflateEnd

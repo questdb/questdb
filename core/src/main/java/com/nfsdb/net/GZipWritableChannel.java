@@ -41,7 +41,7 @@ public class GZipWritableChannel<T extends WritableByteChannel> implements Writa
     private long total = 0;
 
     public GZipWritableChannel() {
-        this.z_streamp = Zip.deflateInit(-1, true);
+        this.z_streamp = Zip.deflateInit();
         if (z_streamp <= 0) {
             throw new OutOfMemoryError();
         }
@@ -115,15 +115,18 @@ public class GZipWritableChannel<T extends WritableByteChannel> implements Writa
     }
 
     private void deflate(boolean flush) throws IOException {
+        int ret;
         do {
-            int len = Zip.deflate(z_streamp, outAddr, outAvail, flush);
-            if (len < 0) {
-                throw new IOException("Deflater error: " + len);
+            ret = Zip.deflate(z_streamp, outAddr, outAvail, flush);
+            if (ret < 0) {
+                throw new IOException("Deflater error: " + ret);
             }
+
+            int len = outAvail - Zip.availOut(z_streamp);
             if (len > 0) {
                 out.limit(len).position(0);
                 channel.write(out);
             }
-        } while (Zip.remainingInput(z_streamp) > 0);
+        } while (Zip.availIn(z_streamp) > 0 || (flush && ret != 1));
     }
 }
