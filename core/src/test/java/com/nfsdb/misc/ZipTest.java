@@ -39,10 +39,6 @@ public class ZipTest {
 
     @Test
     public void testGzip() throws Exception {
-        if (!Os.nativelySupported) {
-            return;
-        }
-
         Path lpsz = new Path();
         File outFile = temp.newFile("x");
         File expected = new File(ZipTest.class.getResource("/large.csv").getFile());

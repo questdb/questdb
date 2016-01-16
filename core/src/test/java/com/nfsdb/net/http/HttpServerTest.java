@@ -23,14 +23,16 @@ package com.nfsdb.net.http;
 
 import com.nfsdb.Journal;
 import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.exceptions.ResponseContentBufferTooSmallException;
+import com.nfsdb.io.sink.FileSink;
 import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Dates;
-import com.nfsdb.misc.Os;
+import com.nfsdb.misc.Misc;
+import com.nfsdb.misc.Numbers;
 import com.nfsdb.net.ha.AbstractJournalTest;
 import com.nfsdb.net.http.handlers.ImportHandler;
 import com.nfsdb.net.http.handlers.NativeStaticContentHandler;
-import com.nfsdb.net.http.handlers.StaticContentHandler;
 import com.nfsdb.net.http.handlers.UploadHandler;
 import com.nfsdb.test.tools.TestUtils;
 import org.apache.http.Header;
@@ -78,37 +80,22 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testCompressedDownload() throws Exception {
-        if (Os.nativelySupported) {
-            final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/nfsdb.conf"));
-            configuration.getSslConfig().setSecure(true);
-            configuration.getSslConfig().setKeyStore(new FileInputStream(resourceFile("/keystore/singlekey.ks")), "changeit");
-
-
-            final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
-            HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-                setDefaultHandler(new NativeStaticContentHandler(configuration.getHttpPublic(), mimeTypes));
-            }});
-            server.start();
-
-            try {
-                download(clientBuilder(true), "https://localhost:9000/upload.html", new File(temp.getRoot(), "upload.html"));
-            } finally {
-                server.halt();
-            }
-        }
-    }
-
-    @Test
-    public void testConcurrentDownload() throws Exception {
         final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/nfsdb.conf"));
-        configuration.getSslConfig().setSecure(false);
+        configuration.getSslConfig().setSecure(true);
+        configuration.getSslConfig().setKeyStore(new FileInputStream(resourceFile("/keystore/singlekey.ks")), "changeit");
+
+
         final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), mimeTypes));
+            setDefaultHandler(new NativeStaticContentHandler(configuration.getHttpPublic(), mimeTypes));
         }});
         server.start();
 
-        assertConcurrentDownload(mimeTypes, server, "http");
+        try {
+            download(clientBuilder(true), "https://localhost:9000/upload.html", new File(temp.getRoot(), "upload.html"));
+        } finally {
+            server.halt();
+        }
     }
 
     @Test
@@ -242,77 +229,90 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
-    public void testNativeConcurrentDownload() throws Exception {
-        if (Os.nativelySupported) {
-            final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/nfsdb.conf"));
-            configuration.getSslConfig().setSecure(false);
-            final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
-            HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-                setDefaultHandler(new NativeStaticContentHandler(configuration.getHttpPublic(), mimeTypes));
-            }});
-            server.start();
+    public void testLargeChunkedPlainDownload() throws Exception {
+        final int count = 3;
+        final int sz = 16 * 1026 * 1024 - 4;
+        HttpServerConfiguration conf = new HttpServerConfiguration();
+        conf.setHttpBufRespContent(sz + 4);
+        TestUtils.assertEquals(generateLarge(count, sz), downloadChunked(conf, count, sz, false, false));
+    }
 
-            assertConcurrentDownload(mimeTypes, server, "http");
-        }
+    @Test
+    public void testLargeChunkedPlainGzipDownload() throws Exception {
+        final int count = 3;
+        final int sz = 16 * 1026 * 1024 - 4;
+        HttpServerConfiguration conf = new HttpServerConfiguration();
+        conf.setHttpBufRespContent(sz + 4);
+        TestUtils.assertEquals(generateLarge(count, sz), downloadChunked(conf, count, sz, false, true));
+    }
+
+    @Test
+    public void testLargeChunkedSSLDownload() throws Exception {
+        final int count = 3;
+        final int sz = 16 * 1026 * 1024 - 4;
+        final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/nfsdb.conf"));
+        configuration.getSslConfig().setSecure(true);
+        configuration.getSslConfig().setKeyStore(new FileInputStream(resourceFile("/keystore/singlekey.ks")), "changeit");
+        configuration.setHttpBufRespContent(sz + 4);
+        TestUtils.assertEquals(generateLarge(count, sz), downloadChunked(configuration, count, sz, true, false));
+    }
+
+    @Test
+    public void testLargeChunkedSSLGzipDownload() throws Exception {
+        final int count = 3;
+        final int sz = 16 * 1026 * 1024 - 4;
+        final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/nfsdb.conf"));
+        configuration.getSslConfig().setSecure(true);
+        configuration.getSslConfig().setKeyStore(new FileInputStream(resourceFile("/keystore/singlekey.ks")), "changeit");
+        configuration.setHttpBufRespContent(sz + 4);
+        TestUtils.assertEquals(generateLarge(count, sz), downloadChunked(configuration, count, sz, true, true));
+    }
+
+    @Test
+    public void testNativeConcurrentDownload() throws Exception {
+        final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/nfsdb.conf"));
+        configuration.getSslConfig().setSecure(false);
+        final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
+        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
+            setDefaultHandler(new NativeStaticContentHandler(configuration.getHttpPublic(), mimeTypes));
+        }});
+        server.start();
+
+        assertConcurrentDownload(mimeTypes, server, "http");
     }
 
     @Test
     public void testNativeNotModified() throws Exception {
-        if (Os.nativelySupported) {
-            final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/nfsdb.conf"));
-            HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-                setDefaultHandler(new NativeStaticContentHandler(configuration.getHttpPublic(), new MimeTypes(configuration.getMimeTypes())));
-            }});
-            assertNotModified(configuration, server);
-        }
-    }
-
-    @Test
-    public void testNotModified() throws Exception {
         final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/nfsdb.conf"));
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), new MimeTypes(configuration.getMimeTypes())));
+            setDefaultHandler(new NativeStaticContentHandler(configuration.getHttpPublic(), new MimeTypes(configuration.getMimeTypes())));
         }});
         assertNotModified(configuration, server);
     }
 
     @Test
-    public void testRanges() throws Exception {
+    public void testRangesNative() throws Exception {
         final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(HttpServerTest.class.getResource("/site").getPath(), "conf/nfsdb.conf"));
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
             put("/upload", new UploadHandler(temp.getRoot()));
-            setDefaultHandler(new StaticContentHandler(temp.getRoot(), new MimeTypes(configuration.getMimeTypes())));
+            setDefaultHandler(new NativeStaticContentHandler(temp.getRoot(), new MimeTypes(configuration.getMimeTypes())));
         }});
         assertRanges(configuration, server);
     }
 
     @Test
-    public void testRangesNative() throws Exception {
-        if (Os.nativelySupported) {
-            final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(HttpServerTest.class.getResource("/site").getPath(), "conf/nfsdb.conf"));
-            HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-                put("/upload", new UploadHandler(temp.getRoot()));
-                setDefaultHandler(new NativeStaticContentHandler(temp.getRoot(), new MimeTypes(configuration.getMimeTypes())));
-            }});
-            assertRanges(configuration, server);
-        }
-    }
-
-    @Test
     public void testSslConcurrentDownload() throws Exception {
-        if (Os.nativelySupported) {
-            final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/nfsdb.conf"));
-            configuration.getSslConfig().setSecure(true);
-            configuration.getSslConfig().setKeyStore(new FileInputStream(resourceFile("/keystore/singlekey.ks")), "changeit");
+        final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/nfsdb.conf"));
+        configuration.getSslConfig().setSecure(true);
+        configuration.getSslConfig().setKeyStore(new FileInputStream(resourceFile("/keystore/singlekey.ks")), "changeit");
 
 
-            final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
-            HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-                setDefaultHandler(new NativeStaticContentHandler(configuration.getHttpPublic(), mimeTypes));
-            }});
-            server.start();
-            assertConcurrentDownload(mimeTypes, server, "https");
-        }
+        final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
+        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
+            setDefaultHandler(new NativeStaticContentHandler(configuration.getHttpPublic(), mimeTypes));
+        }});
+        server.start();
+        assertConcurrentDownload(mimeTypes, server, "https");
     }
 
     @Test
@@ -580,6 +580,68 @@ public class HttpServerTest extends AbstractJournalTest {
         }
     }
 
+    private File downloadChunked(HttpServerConfiguration conf, final int count, final int sz, boolean ssl, final boolean compressed) throws Exception {
+        HttpServer server = new HttpServer(conf, new SimpleUrlMatcher() {{
+
+            put("/test", new ContextHandler() {
+
+                private int counter = -1;
+
+                @Override
+                public void handle(IOContext context) throws IOException {
+                    ChunkedResponse r = context.chunkedResponse();
+                    r.setCompressed(compressed);
+                    r.status(200, "text/plain; charset=utf-8");
+                    r.sendHeader();
+                    counter = -1;
+                    resume(context);
+                }
+
+                @Override
+                public void resume(IOContext context) throws IOException {
+                    ChunkedResponse r = context.chunkedResponse();
+                    for (int i = counter + 1; i < count; i++) {
+                        counter = i;
+                        try {
+                            for (int k = 0; k < sz; k++) {
+                                Numbers.append(r, i);
+                            }
+                            r.put(Misc.EOL);
+                        } catch (ResponseContentBufferTooSmallException ignore) {
+                            // ignore, send as much as we can in one chunk
+                            System.out.println("small");
+                        }
+                        r.sendChunk();
+                    }
+                    r.done();
+                }
+            });
+        }});
+
+        File out = temp.newFile();
+        server.start();
+        try {
+            download(clientBuilder(ssl), (ssl ? "https" : "http") + "://localhost:9000/test", out);
+        } finally {
+            server.halt();
+        }
+
+        return out;
+    }
+
+    private File generateLarge(int count, int sz) throws IOException {
+        File file = temp.newFile();
+        try (FileSink sink = new FileSink(file)) {
+            for (int i = 0; i < count; i++) {
+                for (int k = 0; k < sz; k++) {
+                    Numbers.append(sink, i);
+                }
+                sink.put(Misc.EOL);
+            }
+        }
+        return file;
+    }
+
     private SocketChannel openChannel(String host, int port, long timeout) throws IOException {
         InetSocketAddress address = new InetSocketAddress(host, port);
         SocketChannel channel = SocketChannel.open()
@@ -603,6 +665,5 @@ public class HttpServerTest extends AbstractJournalTest {
             channel.close();
             throw e;
         }
-
     }
 }

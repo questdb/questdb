@@ -156,6 +156,10 @@ public class HttpServerConfiguration {
         return httpBufRespContent;
     }
 
+    public void setHttpBufRespContent(int httpBufRespContent) {
+        this.httpBufRespContent = httpBufRespContent;
+    }
+
     public int getHttpBufRespHeader() {
         return httpBufRespHeader;
     }

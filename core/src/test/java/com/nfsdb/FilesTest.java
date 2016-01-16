@@ -28,7 +28,6 @@ import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Files;
-import com.nfsdb.misc.Os;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -59,62 +58,58 @@ public class FilesTest {
 
     @Test
     public void testLastModified() throws IOException, NumericException {
-        if (Os.nativelySupported) {
-            Path path = new Path();
-            File f = temporaryFolder.newFile();
-            Assert.assertTrue(Files.touch(path.of(f.getAbsolutePath())));
-            long t = Dates.parseDateTime("2015-10-17T10:00:00.000Z");
-            Assert.assertTrue(Files.setLastModified(path, t));
-            Assert.assertEquals(t, Files.getLastModified(path));
-        }
+        Path path = new Path();
+        File f = temporaryFolder.newFile();
+        Assert.assertTrue(Files.touch(path.of(f.getAbsolutePath())));
+        long t = Dates.parseDateTime("2015-10-17T10:00:00.000Z");
+        Assert.assertTrue(Files.setLastModified(path, t));
+        Assert.assertEquals(t, Files.getLastModified(path));
     }
 
     @Test
     public void testWrite() throws Exception {
-        if (Os.nativelySupported) {
-            Path path = new Path();
-            File f = temporaryFolder.newFile();
-            long fd = Files.openRW(path.of(f.getAbsolutePath()));
+        Path path = new Path();
+        File f = temporaryFolder.newFile();
+        long fd = Files.openRW(path.of(f.getAbsolutePath()));
+        try {
+            Assert.assertTrue(fd > 0);
+
+            ByteBuffer buf = ByteBuffer.allocateDirect(1024).order(ByteOrder.LITTLE_ENDIAN);
             try {
-                Assert.assertTrue(fd > 0);
+                ByteBuffers.putStr(buf, "hello from java");
+                int len = buf.position();
+                Assert.assertEquals(len, Files.write(fd, ByteBuffers.getAddress(buf), len, 0));
 
-                ByteBuffer buf = ByteBuffer.allocateDirect(1024).order(ByteOrder.LITTLE_ENDIAN);
-                try {
-                    ByteBuffers.putStr(buf, "hello from java");
-                    int len = buf.position();
-                    Assert.assertEquals(len, Files.write(fd, ByteBuffers.getAddress(buf), len, 0));
+                buf.clear();
 
-                    buf.clear();
-
-                    ByteBuffers.putStr(buf, ", awesome");
-                    Files.write(fd, ByteBuffers.getAddress(buf), buf.position(), len);
-                } finally {
-                    ByteBuffers.release(buf);
-                }
+                ByteBuffers.putStr(buf, ", awesome");
+                Files.write(fd, ByteBuffers.getAddress(buf), buf.position(), len);
             } finally {
-                Files.close(fd);
+                ByteBuffers.release(buf);
             }
-
-            fd = Files.openRO(path);
-            try {
-                Assert.assertTrue(fd > 0);
-                ByteBuffer buf = ByteBuffer.allocateDirect(1024).order(ByteOrder.LITTLE_ENDIAN);
-                try {
-                    int len = (int) Files.length(path);
-                    long ptr = ByteBuffers.getAddress(buf);
-                    Assert.assertEquals(48, Files.read(fd, ptr, len, 0));
-                    DirectCharSequence cs = new DirectCharSequence().of(ptr, ptr + len);
-                    TestUtils.assertEquals("hello from java, awesome", cs);
-                } finally {
-                    ByteBuffers.release(buf);
-                }
-            } finally {
-                Files.close(fd);
-            }
-
-            Assert.assertTrue(Files.exists(path));
-            Assert.assertFalse(Files.exists(path.of("/x/yz/1/2/3")));
+        } finally {
+            Files.close(fd);
         }
+
+        fd = Files.openRO(path);
+        try {
+            Assert.assertTrue(fd > 0);
+            ByteBuffer buf = ByteBuffer.allocateDirect(1024).order(ByteOrder.LITTLE_ENDIAN);
+            try {
+                int len = (int) Files.length(path);
+                long ptr = ByteBuffers.getAddress(buf);
+                Assert.assertEquals(48, Files.read(fd, ptr, len, 0));
+                DirectCharSequence cs = new DirectCharSequence().of(ptr, ptr + len);
+                TestUtils.assertEquals("hello from java, awesome", cs);
+            } finally {
+                ByteBuffers.release(buf);
+            }
+        } finally {
+            Files.close(fd);
+        }
+
+        Assert.assertTrue(Files.exists(path));
+        Assert.assertFalse(Files.exists(path.of("/x/yz/1/2/3")));
     }
 
     @Test

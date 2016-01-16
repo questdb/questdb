@@ -21,7 +21,6 @@
 
 package com.nfsdb.net;
 
-import com.nfsdb.misc.Os;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Rule;
 import org.junit.Test;
@@ -41,10 +40,6 @@ public class GZipWritableChannelTest {
 
     @Test
     public void testGzip() throws Exception {
-        if (!Os.nativelySupported) {
-            return;
-        }
-
         File expected = new File(GZipWritableChannelTest.class.getResource("/large.csv").getFile());
         File compressed = temp.newFile();
         try (
