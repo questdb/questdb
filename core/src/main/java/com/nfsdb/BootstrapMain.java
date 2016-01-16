@@ -30,9 +30,9 @@ import com.nfsdb.net.http.MimeTypes;
 import com.nfsdb.net.http.SimpleUrlMatcher;
 import com.nfsdb.net.http.handlers.DummyHandler;
 import com.nfsdb.net.http.handlers.ImportHandler;
+import com.nfsdb.net.http.handlers.JsonHandler;
 import com.nfsdb.net.http.handlers.NativeStaticContentHandler;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-
 import java.io.File;
 import java.io.IOException;
 import java.net.URISyntaxException;
@@ -54,11 +54,6 @@ public class BootstrapMain {
             return;
         }
 
-        if (!Os.nativelySupported) {
-            LOGGER.error("Unsupported OS");
-            return;
-        }
-
         if (Os.type == Os._32Bit) {
             LOGGER.error("NFSdb requires 64-bit JVM");
             return;
@@ -75,7 +70,9 @@ public class BootstrapMain {
 
         final HttpServerConfiguration configuration = new HttpServerConfiguration(conf);
         final SimpleUrlMatcher matcher = new SimpleUrlMatcher();
-        matcher.put("/imp", new ImportHandler(new JournalFactory(configuration.getDbPath().getAbsolutePath())));
+        JournalFactory factory = new JournalFactory(configuration.getDbPath().getAbsolutePath());
+        matcher.put("/imp", new ImportHandler(factory));
+        matcher.put("/js", new JsonHandler(factory));
         matcher.put("/x", new DummyHandler());
         matcher.setDefaultHandler(new NativeStaticContentHandler(configuration.getHttpPublic(), new MimeTypes(configuration.getMimeTypes())));
 

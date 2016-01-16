@@ -147,6 +147,10 @@ public class Request implements Closeable, Mutable {
         return hb.getUrl();
     }
 
+    public CharSequence getUrlParam(CharSequence name) {
+        return hb.getUrlParam(name);
+    }
+
     public boolean isIncomplete() {
         return hb.isIncomplete();
     }
