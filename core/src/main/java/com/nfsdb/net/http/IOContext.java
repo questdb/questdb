@@ -27,17 +27,20 @@ import com.nfsdb.collections.Mutable;
 import com.nfsdb.collections.ObjectFactory;
 import com.nfsdb.exceptions.DisconnectedChannelException;
 import com.nfsdb.exceptions.SlowWritableChannelException;
+import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.parser.TextParser;
 import com.nfsdb.io.parser.listener.JournalImportListener;
 import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.misc.Files;
 import com.nfsdb.misc.Misc;
 import com.nfsdb.net.WrappedByteChannel;
+import com.nfsdb.ql.Record;
 import com.nfsdb.storage.PlainFile;
 
 import java.io.Closeable;
 import java.io.RandomAccessFile;
 import java.nio.channels.SocketChannel;
+import java.util.Iterator;
 
 public class IOContext implements Closeable, Mutable {
     public final WrappedByteChannel<SocketChannel> channel;
@@ -60,6 +63,9 @@ public class IOContext implements Closeable, Mutable {
     public long fd = -1;
     public long bytesSent;
     public long sendMax;
+    // query sending fields
+    public Iterator<? extends Record> records;
+    public RecordMetadata metadata;
 
     public IOContext(WrappedByteChannel<SocketChannel> channel, Clock clock, int reqHeaderSize, int reqContentSize, int reqMultipartHeaderSize, int respHeaderSize, int respContentSize) {
         this.channel = channel;

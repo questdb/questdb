@@ -95,6 +95,7 @@ public class ScenarioTest extends AbstractTest {
     }
 
     @Test
+    // @Ignore
     public void testSingleJournalTrickle() throws Exception {
         JournalServer server = new JournalServer(serverConfig, factory);
         JournalClient client = new JournalClient(clientConfig, factory);
