@@ -88,7 +88,7 @@
         <dependency>
             <groupId>com.lmax</groupId>
             <artifactId>disruptor</artifactId>
-            <version>3.3.2</version>
+            <version>3.3.4</version>
         </dependency>
 
         <dependency>
@@ -101,7 +101,7 @@
         <dependency>
             <groupId>com.google.code.findbugs</groupId>
             <artifactId>annotations</artifactId>
-            <version>3.0.0</version>
+            <version>3.0.1</version>
             <scope>provided</scope>
         </dependency>
 
