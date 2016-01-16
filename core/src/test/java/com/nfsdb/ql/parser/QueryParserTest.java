@@ -427,6 +427,20 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
+    public void testSingleJournalNoWhereLimit() throws Exception {
+        Statement statement = parser.parse("select x x, y y from tab limit 100");
+        Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
+        // journal name
+        Assert.assertEquals("tab", statement.getQueryModel().getJournalName().token);
+        // columns
+        Assert.assertEquals(2, statement.getQueryModel().getColumns().size());
+        Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getAlias());
+        Assert.assertEquals("y", statement.getQueryModel().getColumns().get(1).getAlias());
+        // limit
+        Assert.assertEquals("100", TestUtils.toRpn(statement.getQueryModel().getLimitLo()));
+    }
+
+    @Test
     public void testSubQuery() throws Exception {
         Statement statement = parser.parse("select x, y from (select x from tab t2 latest by x where x > 100) t1 " +
                 "where y > 0");

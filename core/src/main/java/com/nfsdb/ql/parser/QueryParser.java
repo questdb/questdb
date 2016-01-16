@@ -473,6 +473,7 @@ final class QueryParser {
         aliasStopSet.add("order");
         aliasStopSet.add("on");
         aliasStopSet.add("timestamp");
+        aliasStopSet.add("limit");
         //
         groupByStopSet.add("order");
         groupByStopSet.add(")");
