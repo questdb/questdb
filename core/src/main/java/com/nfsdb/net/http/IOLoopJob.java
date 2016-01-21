@@ -24,6 +24,7 @@ package com.nfsdb.net.http;
 import com.nfsdb.concurrent.*;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.iter.clock.Clock;
+import com.nfsdb.logging.Logger;
 import com.nfsdb.net.NonBlockingSecureSocketChannel;
 import com.nfsdb.net.PlainSocketChannel;
 
@@ -33,6 +34,7 @@ import java.nio.channels.*;
 import java.util.Set;
 
 public class IOLoopJob extends SynchronizedJob<IOWorkerContext> {
+    private static final Logger LOGGER = Logger.getLogger(IOLoopJob.class);
     private final Selector selector;
     private final SelectionKey serverKey;
     private final RingQueue<IOEvent> ioQueue;
@@ -54,7 +56,7 @@ public class IOLoopJob extends SynchronizedJob<IOWorkerContext> {
         this.ioQueue = ioQueue;
         this.ioSequence = ioSequence;
         this.interestQueue = new RingQueue<>(IOEvent.FACTORY, ioQueue.getCapacity());
-        this.interestPubSequence = new MPSequence(interestQueue.getCapacity(), null);
+        this.interestPubSequence = new MPSequence(interestQueue.getCapacity());
         this.interestPubSequence.followedBy(this.interestSubSequence);
         this.interestSubSequence.followedBy(this.interestPubSequence);
         this.clock = clock;
@@ -163,8 +165,7 @@ public class IOLoopJob extends SynchronizedJob<IOWorkerContext> {
                     }
                 }
             } catch (Throwable e) {
-                // todo: do something about this
-                e.printStackTrace();
+                LOGGER.error("Failed to process channel registrations", e);
             }
         }
 

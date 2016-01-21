@@ -40,6 +40,8 @@ public final class Files {
     private Files() {
     } // Prevent construction.
 
+    public native static long append(long fd, long address, int len);
+
     public native static int close(long fd);
 
     @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_RETURN_FALSE")
@@ -110,6 +112,10 @@ public final class Files {
         }
     }
 
+    public static long openAppend(LPSZ lpsz) {
+        return openAppend(lpsz.address());
+    }
+
     public static long openRO(LPSZ lpsz) {
         return openRO(lpsz.address());
     }
@@ -166,6 +172,8 @@ public final class Files {
     private native static long openRO(long lpszName);
 
     private native static long openRW(long lpszName);
+
+    private native static long openAppend(long lpszName);
 
     private native static boolean setLastModified(long lpszName, long millis);
 

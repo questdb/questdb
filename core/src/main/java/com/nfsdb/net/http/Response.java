@@ -31,6 +31,7 @@ import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.io.sink.DirectUnboundedAnsiSink;
 import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.misc.*;
+import com.nfsdb.net.NonBlockingSecureSocketChannel;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -212,7 +213,7 @@ public class Response implements Closeable, Mutable {
 
     private void flush(ByteBuffer buf) throws DisconnectedChannelException, SlowWritableChannelException {
         this._flushBuf = buf;
-        ByteBuffers.copyNonBlocking(buf, channel, IOHttpJob.SO_WRITE_RETRY_COUNT);
+        ByteBuffers.copyNonBlocking(buf, channel, channel instanceof NonBlockingSecureSocketChannel ? 1 : IOHttpJob.SO_WRITE_RETRY_COUNT);
         buf.clear();
         this._flushBuf = null;
     }

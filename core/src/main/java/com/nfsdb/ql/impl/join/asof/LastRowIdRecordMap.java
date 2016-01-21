@@ -47,7 +47,6 @@ public class LastRowIdRecordMap implements LastRecordMap {
     private final RecordMetadata metadata;
     private RecordCursor<? extends Record> slaveCursor;
 
-    // todo: extract config
     public LastRowIdRecordMap(
             RecordMetadata masterMetadata,
             RecordMetadata slaveMetadata,

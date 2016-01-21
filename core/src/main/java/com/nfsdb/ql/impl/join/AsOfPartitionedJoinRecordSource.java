@@ -51,7 +51,6 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
     private RecordCursor<? extends Record> slaveCursor;
     private boolean closed = false;
 
-    // todo: extract config
     public AsOfPartitionedJoinRecordSource(
             RecordSource<? extends Record> master,
             int masterTimestampIndex,

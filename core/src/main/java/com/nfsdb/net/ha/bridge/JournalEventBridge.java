@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.ha.bridge;
 
@@ -36,7 +36,7 @@ public class JournalEventBridge {
 
     public JournalEventBridge(long time, TimeUnit unit) {
         this.queue = new RingQueue<>(JournalEvent.EVENT_FACTORY, BUFFER_SIZE);
-        this.publisher = new MPSequence(BUFFER_SIZE, null);
+        this.publisher = new MPSequence(BUFFER_SIZE);
         this.fanOut = new FanOut();
         this.publisher.followedBy(fanOut);
         this.time = time;

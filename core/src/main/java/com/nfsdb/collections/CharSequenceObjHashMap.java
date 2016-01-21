@@ -26,12 +26,14 @@ import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Unsafe;
 
 import java.util.Arrays;
+import java.util.Comparator;
 
 
 public class CharSequenceObjHashMap<V> implements Mutable {
     private static final int MIN_INITIAL_CAPACITY = 16;
     private static final CharSequence noEntryValue = new NullCharSequence();
     private final double loadFactor;
+    private final ObjList<CharSequence> list;
     private CharSequence[] keys;
     private V[] values;
     private int free;
@@ -48,6 +50,7 @@ public class CharSequenceObjHashMap<V> implements Mutable {
 
     @SuppressWarnings("unchecked")
     private CharSequenceObjHashMap(int initialCapacity, double loadFactor) {
+        this.list = new ObjList<>(initialCapacity);
         int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
         capacity = capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);
         this.loadFactor = loadFactor;
@@ -61,6 +64,7 @@ public class CharSequenceObjHashMap<V> implements Mutable {
     public final void clear() {
         Arrays.fill(keys, noEntryValue);
         free = this.capacity;
+        list.clear();
     }
 
     public V get(CharSequence key) {
@@ -77,28 +81,29 @@ public class CharSequenceObjHashMap<V> implements Mutable {
         return probe(key, index);
     }
 
+    public ObjList<CharSequence> keys() {
+        return list;
+    }
+
     public void put(CharSequence key, V value) {
-        int index = Chars.hashCode(key) & mask;
-        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-            Unsafe.arrayPut(keys, index, key);
-            Unsafe.arrayPut(values, index, value);
-            free--;
+        if (put0(key, value)) {
+            list.add(key);
             if (free == 0) {
                 rehash();
             }
-            return;
         }
-
-        if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-            Unsafe.arrayPut(values, index, value);
-            return;
-        }
-
-        probeInsert(key, index, value);
     }
 
     public int size() {
-        return capacity - free;
+        return list.size();
+    }
+
+    public void sortKeys(Comparator<CharSequence> comparator) {
+        list.sort(comparator);
+    }
+
+    public V valueQuick(int index) {
+        return get(list.getQuick(index));
     }
 
     private V probe(CharSequence key, int index) {
@@ -113,24 +118,38 @@ public class CharSequenceObjHashMap<V> implements Mutable {
         } while (true);
     }
 
-    private void probeInsert(CharSequence key, int index, V value) {
+    private boolean probeInsert(CharSequence key, int index, V value) {
         do {
             index = (index + 1) & mask;
             if (Unsafe.arrayGet(keys, index) == noEntryValue) {
                 Unsafe.arrayPut(keys, index, key);
                 Unsafe.arrayPut(values, index, value);
                 free--;
-                if (free == 0) {
-                    rehash();
-                }
-                return;
+                return true;
             }
 
             if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
                 Unsafe.arrayPut(values, index, value);
-                return;
+                return false;
             }
         } while (true);
+    }
+
+    private boolean put0(CharSequence key, V value) {
+        int index = Chars.hashCode(key) & mask;
+        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
+            Unsafe.arrayPut(keys, index, key);
+            Unsafe.arrayPut(values, index, value);
+            free--;
+            return true;
+        }
+
+        if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
+            Unsafe.arrayPut(values, index, value);
+            return false;
+        }
+
+        return probeInsert(key, index, value);
     }
 
     @SuppressWarnings({"unchecked"})
@@ -147,7 +166,7 @@ public class CharSequenceObjHashMap<V> implements Mutable {
 
         for (int i = oldKeys.length; i-- > 0; ) {
             if (Unsafe.arrayGet(oldKeys, i) != noEntryValue) {
-                put(Unsafe.arrayGet(oldKeys, i), Unsafe.arrayGet(oldValues, i));
+                put0(Unsafe.arrayGet(oldKeys, i), Unsafe.arrayGet(oldValues, i));
             }
         }
     }

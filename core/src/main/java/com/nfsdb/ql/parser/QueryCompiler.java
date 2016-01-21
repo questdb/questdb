@@ -928,6 +928,7 @@ public class QueryCompiler {
                 masterKeys.add(jc.bNames.getQuick(i));
             }
 
+            // todo: extract config
             return new AsOfPartitionedJoinRecordSource(master, masterTimestampIndex, slave, slaveTimestampIndex, masterKeys, slaveKeys, 4 * 1024 * 1024);
         }
     }

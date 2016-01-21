@@ -19,40 +19,11 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.concurrent;
+package com.nfsdb.logging;
 
-public class MPSequence extends AbstractMSequence {
-    private final int cycle;
+import com.nfsdb.concurrent.RingQueue;
+import com.nfsdb.concurrent.Sequence;
 
-    public MPSequence(int cycle) {
-        this(cycle, null);
-    }
-
-    public MPSequence(int cycle, WaitStrategy waitStrategy) {
-        super(cycle, waitStrategy);
-        this.cycle = cycle;
-    }
-
-    @Override
-    public long next() {
-        long current = index.fencedGet();
-        long next = current + 1;
-        long lo = next - cycle;
-        long cached = cache.fencedGet();
-
-        if (lo > cached) {
-            long avail = barrier.availableIndex(lo);
-
-            if (avail > cached) {
-                cache.fencedSet(avail);
-                if (lo > avail) {
-                    return -1;
-                }
-            } else {
-                return -1;
-            }
-        }
-
-        return index.cas(current, next) ? next : -2;
-    }
+public interface LogWriterFactory {
+    LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq);
 }

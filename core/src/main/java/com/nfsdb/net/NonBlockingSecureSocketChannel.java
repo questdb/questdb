@@ -27,6 +27,7 @@ import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.exceptions.SlowReadableChannelException;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.misc.ByteBuffers;
+import com.nfsdb.net.http.IOHttpJob;
 
 import javax.net.ssl.*;
 import java.io.IOException;
@@ -189,7 +190,7 @@ public class NonBlockingSecureSocketChannel<T extends ByteChannel> implements Wr
         }
 
         if (out.remaining() > 0) {
-            ByteBuffers.copyNonBlocking(out, channel, 10);
+            ByteBuffers.copyNonBlocking(out, channel, IOHttpJob.SO_WRITE_RETRY_COUNT);
         }
 
         int r = src.remaining();
@@ -201,7 +202,7 @@ public class NonBlockingSecureSocketChannel<T extends ByteChannel> implements Wr
                 throw new IOException("Expected OK, got: " + result.getStatus());
             }
             out.flip();
-            ByteBuffers.copyNonBlocking(out, channel, 10);
+            ByteBuffers.copyNonBlocking(out, channel, IOHttpJob.SO_WRITE_RETRY_COUNT);
         }
         return r - src.remaining();
     }

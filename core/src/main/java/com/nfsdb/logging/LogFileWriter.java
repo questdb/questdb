@@ -19,40 +19,25 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.concurrent;
+package com.nfsdb.logging;
 
-public class MPSequence extends AbstractMSequence {
-    private final int cycle;
+import com.nfsdb.collections.Path;
+import com.nfsdb.concurrent.RingQueue;
+import com.nfsdb.concurrent.Sequence;
+import com.nfsdb.misc.Files;
 
-    public MPSequence(int cycle) {
-        this(cycle, null);
-    }
+import java.io.Closeable;
 
-    public MPSequence(int cycle, WaitStrategy waitStrategy) {
-        super(cycle, waitStrategy);
-        this.cycle = cycle;
+public class LogFileWriter extends AbstractLogWriter implements Closeable {
+    public LogFileWriter(RingQueue<LogRecordSink> ring, Sequence subSeq, CharSequence file) {
+        super(ring, subSeq);
+        this.fd = Files.openAppend(new Path(file));
     }
 
     @Override
-    public long next() {
-        long current = index.fencedGet();
-        long next = current + 1;
-        long lo = next - cycle;
-        long cached = cache.fencedGet();
-
-        if (lo > cached) {
-            long avail = barrier.availableIndex(lo);
-
-            if (avail > cached) {
-                cache.fencedSet(avail);
-                if (lo > avail) {
-                    return -1;
-                }
-            } else {
-                return -1;
-            }
+    public void close() {
+        if (this.fd != 0) {
+            Files.close(this.fd);
         }
-
-        return index.cas(current, next) ? next : -2;
     }
 }

@@ -25,22 +25,22 @@ import com.nfsdb.misc.Unsafe;
 
 public class FanOut implements Barrier {
     private static final long BARRIERS;
-    private final Barrier[] barriers;
+    private final Sequence[] barriers;
 
-    public FanOut(Barrier... barriers) {
+    public FanOut(Sequence... barriers) {
         this.barriers = barriers;
     }
 
-    public void add(Barrier barrier) {
-        Barrier[] _new;
+    public void add(Sequence barrier) {
+        Sequence[] _new;
         do {
-            Barrier[] barriers = this.barriers;
+            Sequence[] barriers = this.barriers;
             if (indexOf(barriers, barrier) > -1) {
                 return;
             }
 
             int len = barriers.length;
-            _new = new Barrier[len + 1];
+            _new = new Sequence[len + 1];
             _new[0] = barrier;
             System.arraycopy(barriers, 0, _new, 1, len);
 
@@ -59,29 +59,35 @@ public class FanOut implements Barrier {
 
     @Override
     public void signal() {
-        Barrier[] barriers = this.barriers;
+        Sequence[] barriers = this.barriers;
         for (int i = 0, n = barriers.length; i < n; i++) {
             Unsafe.arrayGet(barriers, i).signal();
         }
     }
 
-    public void remove(Barrier barrier) {
-        Barrier[] _new;
+    public void followedBy(Barrier barrier) {
+        for (int i = 0, n = barriers.length; i < n; i++) {
+            Unsafe.arrayGet(barriers, i).followedBy(barrier);
+        }
+    }
+
+    public void remove(Sequence barrier) {
+        Sequence[] _new;
         do {
-            Barrier[] barriers = this.barriers;
+            Sequence[] barriers = this.barriers;
             int index;
             if ((index = indexOf(barriers, barrier)) == -1) {
                 return;
             }
 
             int len = barriers.length;
-            _new = new Barrier[len - 1];
+            _new = new Sequence[len - 1];
             System.arraycopy(barriers, 0, _new, 0, index);
             System.arraycopy(barriers, index + 1, _new, index, len - index - 1);
         } while (!Unsafe.getUnsafe().compareAndSwapObject(this, BARRIERS, barriers, _new));
     }
 
-    private static int indexOf(Barrier[] barriers, Barrier barrier) {
+    private static int indexOf(Sequence[] barriers, Sequence barrier) {
         for (int i = 0, n = barriers.length; i < n; i++) {
             if (barrier == Unsafe.arrayGet(barriers, i)) {
                 return i;

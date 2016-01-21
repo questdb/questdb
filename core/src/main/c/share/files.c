@@ -14,6 +14,14 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_write
     return pwrite((int) fd, (void *) (address), (size_t) len, (off_t) offset);
 }
 
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_append
+        (JNIEnv *e, jclass cl,
+         jlong fd,
+         jlong address,
+         jint len) {
+    return write((int) fd, (void *) (address), (size_t) len);
+}
+
 JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_read
         (JNIEnv *e, jclass cl,
          jlong fd,
@@ -46,6 +54,11 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Files_close
 JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openRW
         (JNIEnv *e, jclass cl, jlong lpszName) {
     return open((const char *) lpszName, O_CREAT | O_RDWR);
+}
+
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openAppend
+        (JNIEnv *e, jclass cl, jlong lpszName) {
+    return open((const char *) lpszName, O_CREAT | O_RDWR | O_APPEND);
 }
 
 JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_length

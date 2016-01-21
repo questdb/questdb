@@ -58,11 +58,7 @@ public abstract class AbstractSSequence implements Sequence {
 
     @Override
     public long waitForNext() {
-        long r;
-        while ((r = next()) < 0) {
-            waitStrategy.await();
-        }
-        return r;
+        return waitStrategy == null ? next() : waitForNext0();
     }
 
     public void bully() {
@@ -74,5 +70,13 @@ public abstract class AbstractSSequence implements Sequence {
         if (waitStrategy != null) {
             waitStrategy.signal();
         }
+    }
+
+    private long waitForNext0() {
+        long r;
+        while ((r = next()) < 0) {
+            waitStrategy.await();
+        }
+        return r;
     }
 }

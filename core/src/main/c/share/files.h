@@ -17,19 +17,35 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Files_close
 
 /*
  * Class:     com_nfsdb_misc_Files
+ * Method:    read
+ * Signature: (JJIJ)J
+ */
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_read
+        (JNIEnv *, jclass, jlong, jlong, jint, jlong);
+
+/*
+ * Class:     com_nfsdb_misc_Files
+ * Method:    write
+ * Signature: (JJIJ)J
+ */
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_write
+        (JNIEnv *, jclass, jlong, jlong, jint, jlong);
+
+/*
+ * Class:     com_nfsdb_misc_Files
+ * Method:    append
+ * Signature: (JJI)J
+ */
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_append
+        (JNIEnv *, jclass, jlong, jlong, jint);
+
+/*
+ * Class:     com_nfsdb_misc_Files
  * Method:    getLastModified
  * Signature: (J)J
  */
 JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_getLastModified
         (JNIEnv *, jclass, jlong);
-
-/*
- * Class:     com_nfsdb_misc_Files
- * Method:    setLastModified
- * Signature: (JJ)Z
- */
-JNIEXPORT jboolean JNICALL Java_com_nfsdb_misc_Files_setLastModified
-        (JNIEnv *, jclass, jlong, jlong);
 
 /*
  * Class:     com_nfsdb_misc_Files
@@ -57,19 +73,19 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openRW
 
 /*
  * Class:     com_nfsdb_misc_Files
- * Method:    read
- * Signature: (JJIJ)J
+ * Method:    openAppend
+ * Signature: (J)J
  */
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_read
-        (JNIEnv *, jclass, jlong, jlong, jint, jlong);
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openAppend
+        (JNIEnv *, jclass, jlong);
 
 /*
  * Class:     com_nfsdb_misc_Files
- * Method:    write
- * Signature: (JJIJ)J
+ * Method:    setLastModified
+ * Signature: (JJ)Z
  */
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_write
-        (JNIEnv *, jclass, jlong, jlong, jint, jlong);
+JNIEXPORT jboolean JNICALL Java_com_nfsdb_misc_Files_setLastModified
+        (JNIEnv *, jclass, jlong, jlong);
 
 #ifdef __cplusplus
 }

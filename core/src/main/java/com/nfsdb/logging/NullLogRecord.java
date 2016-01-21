@@ -19,40 +19,36 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.concurrent;
+package com.nfsdb.logging;
 
-public class MPSequence extends AbstractMSequence {
-    private final int cycle;
+public final class NullLogRecord implements LogRecord {
 
-    public MPSequence(int cycle) {
-        this(cycle, null);
-    }
+    public static final NullLogRecord INSTANCE = new NullLogRecord();
 
-    public MPSequence(int cycle, WaitStrategy waitStrategy) {
-        super(cycle, waitStrategy);
-        this.cycle = cycle;
+    private NullLogRecord() {
     }
 
     @Override
-    public long next() {
-        long current = index.fencedGet();
-        long next = current + 1;
-        long lo = next - cycle;
-        long cached = cache.fencedGet();
+    public void $() {
+    }
 
-        if (lo > cached) {
-            long avail = barrier.availableIndex(lo);
+    @Override
+    public LogRecord _(CharSequence sequence) {
+        return this;
+    }
 
-            if (avail > cached) {
-                cache.fencedSet(avail);
-                if (lo > avail) {
-                    return -1;
-                }
-            } else {
-                return -1;
-            }
-        }
+    @Override
+    public LogRecord _(int x) {
+        return this;
+    }
 
-        return index.cas(current, next) ? next : -2;
+    @Override
+    public LogRecord _(char c) {
+        return this;
+    }
+
+    @Override
+    public LogRecord ts() {
+        return this;
     }
 }

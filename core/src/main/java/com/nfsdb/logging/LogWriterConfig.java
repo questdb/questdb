@@ -19,40 +19,40 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.concurrent;
+package com.nfsdb.logging;
 
-public class MPSequence extends AbstractMSequence {
-    private final int cycle;
+public class LogWriterConfig {
+    private final String scope;
+    private final LogLevel level;
+    private final LogWriterFactory factory;
+    private final int queueDepth;
+    private final int recordLength;
 
-    public MPSequence(int cycle) {
-        this(cycle, null);
+    public LogWriterConfig(String scope, LogLevel level, LogWriterFactory factory, int queueDepth, int recordLength) {
+        this.scope = scope;
+        this.level = level;
+        this.factory = factory;
+        this.queueDepth = queueDepth;
+        this.recordLength = recordLength;
     }
 
-    public MPSequence(int cycle, WaitStrategy waitStrategy) {
-        super(cycle, waitStrategy);
-        this.cycle = cycle;
+    public LogWriterFactory getFactory() {
+        return factory;
     }
 
-    @Override
-    public long next() {
-        long current = index.fencedGet();
-        long next = current + 1;
-        long lo = next - cycle;
-        long cached = cache.fencedGet();
+    public LogLevel getLevel() {
+        return level;
+    }
 
-        if (lo > cached) {
-            long avail = barrier.availableIndex(lo);
+    public int getQueueDepth() {
+        return queueDepth;
+    }
 
-            if (avail > cached) {
-                cache.fencedSet(avail);
-                if (lo > avail) {
-                    return -1;
-                }
-            } else {
-                return -1;
-            }
-        }
+    public int getRecordLength() {
+        return recordLength;
+    }
 
-        return index.cas(current, next) ? next : -2;
+    public String getScope() {
+        return scope;
     }
 }
