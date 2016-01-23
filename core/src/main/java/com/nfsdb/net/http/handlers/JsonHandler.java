@@ -56,6 +56,8 @@ public class JsonHandler implements ContextHandler {
             r.status(200, "application/json; charset=utf-8");
             r.sendHeader();
             sendQuery(r, "");
+            r.put("\"}");
+            r.sendChunk();
             r.done();
             return;
         }
@@ -69,37 +71,44 @@ public class JsonHandler implements ContextHandler {
             RecordMetadata metadata = records.getMetadata();
             context.metadata = metadata;
             context.records = records.iterator();
-//            int columnCount = metadata.getColumnCount();
-//
-//            for(int i = 0; i < columnCount; i++) {
-//                RecordColumnMetadata column = metadata.getColumn(i);
-//                r.put(column.getName());
-//
-//                if (i < columnCount - 1) {
-//                    r.put('|');
-//                }
-//            }
+
+            // List columns.
+            int columnCount = metadata.getColumnCount();
+            r.put(", \"columns\":[");
+            for(int i = 0; i < columnCount; i++) {
+                RecordColumnMetadata column = metadata.getColumn(i);
+                r.put("{\"name\":\"");
+                r.put(column.getName());
+                r.put("\",\"type\":\"");
+                r.put(column.getType().name());
+                r.put("\"}");
+                if (i < columnCount - 1) {
+                    r.put(',');
+                }
+            }
+            r.put("], \"result\":[");
+
             resume(context);
         }
         catch (ParserException pex) {
-            sendException(r, pex.getMessage(), 400);
+            sendException(r, query, pex.getMessage(), 400);
         }
         catch (JournalException jex) {
-            sendException(r, jex.getMessage(), 500);
+            sendException(r, query, jex.getMessage(), 500);
         }
     }
 
     private void sendQuery(ChunkedResponse r, CharSequence query) {
         r.put("{ \"query\": \"");
         r.put(query != null ? query : "");
-        r.put("\"}");
-        r.put("\n");
+        r.put("\"");
     }
 
-    private void sendException(ChunkedResponse r, CharSequence message, int status) throws DisconnectedChannelException, SlowWritableChannelException {
+    private void sendException(ChunkedResponse r, CharSequence query, CharSequence message, int status) throws DisconnectedChannelException, SlowWritableChannelException {
         r.status(status, "application/json; charset=utf-8");
         r.sendHeader();
-        r.put("{\"error\" : \"");
+        sendQuery(r, query);
+        r.put(", \"error\" : \"");
         r.put(message);
         r.put("\"}");
         r.sendChunk();
@@ -113,9 +122,10 @@ public class JsonHandler implements ContextHandler {
         RecordMetadata metadata = context.metadata;
         int columnCount = metadata.getColumnCount();
         int i = 0;
-        while (records.hasNext()) {
+        boolean hasNext = records.hasNext();
+        while (hasNext) {
             Record rec = records.next();
-            r.put("\n{");
+            r.put("{");
             for (int col = 0; col < columnCount; col++) {
                 r.put('\"');
                 r.put(metadata.getColumn(col).getName());
@@ -164,12 +174,16 @@ public class JsonHandler implements ContextHandler {
                 }
             }
 
-            r.put('}');
-            if (++i % PAGE_SIZE == 0) {
+            r.put("}");
+            hasNext = records.hasNext();
+            if (hasNext) {
+                r.put(",");
+            }
+            if (hasNext && ++i % PAGE_SIZE == 0) {
                 r.sendChunk();
             }
         }
-
+        r.put("] }");
         r.sendChunk();
         r.done();
     }
