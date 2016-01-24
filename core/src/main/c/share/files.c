@@ -53,12 +53,14 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Files_close
 
 JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openRW
         (JNIEnv *e, jclass cl, jlong lpszName) {
-    return open((const char *) lpszName, O_CREAT | O_RDWR);
+    umask(0);
+    return open((const char *) lpszName, O_CREAT | O_RDWR, 0644);
 }
 
 JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openAppend
         (JNIEnv *e, jclass cl, jlong lpszName) {
-    return open((const char *) lpszName, O_CREAT | O_RDWR | O_APPEND);
+    umask(0);
+    return open((const char *) lpszName, O_CREAT | O_WRONLY | O_APPEND, 0644);
 }
 
 JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_length

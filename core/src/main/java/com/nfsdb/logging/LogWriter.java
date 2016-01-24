@@ -24,4 +24,5 @@ package com.nfsdb.logging;
 import com.nfsdb.concurrent.Job;
 
 public interface LogWriter extends Job<Object> {
+    void bindProperties();
 }

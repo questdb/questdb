@@ -21,30 +21,12 @@
 
 package com.nfsdb.logging;
 
-import com.nfsdb.concurrent.RingQueue;
-import com.nfsdb.concurrent.Sequence;
-import com.nfsdb.concurrent.SynchronizedJob;
-import com.nfsdb.misc.Files;
-
-public abstract class AbstractLogWriter extends SynchronizedJob<Object> implements LogWriter {
-    private final RingQueue<LogRecordSink> ring;
-    private final Sequence subSeq;
-    protected long fd = 0;
-
-    public AbstractLogWriter(RingQueue<LogRecordSink> ring, Sequence subSeq) {
-        this.ring = ring;
-        this.subSeq = subSeq;
+public class LoggerError extends Error {
+    public LoggerError(String message) {
+        super(message);
     }
 
-    @Override
-    public boolean _run() {
-        long cursor = subSeq.next();
-        if (cursor < 0) {
-            return false;
-        }
-        final LogRecordSink sink = ring.get(cursor);
-        Files.append(fd, sink.getAddress(), sink.length());
-        subSeq.done(cursor);
-        return true;
+    public LoggerError(String message, Throwable cause) {
+        super(message, cause);
     }
 }

@@ -23,12 +23,12 @@ package com.nfsdb.logging;
 
 public class LogWriterConfig {
     private final String scope;
-    private final LogLevel level;
+    private final int level;
     private final LogWriterFactory factory;
     private final int queueDepth;
     private final int recordLength;
 
-    public LogWriterConfig(String scope, LogLevel level, LogWriterFactory factory, int queueDepth, int recordLength) {
+    public LogWriterConfig(String scope, int level, LogWriterFactory factory, int queueDepth, int recordLength) {
         this.scope = scope;
         this.level = level;
         this.factory = factory;
@@ -40,7 +40,7 @@ public class LogWriterConfig {
         return factory;
     }
 
-    public LogLevel getLevel() {
+    public int getLevel() {
         return level;
     }
 

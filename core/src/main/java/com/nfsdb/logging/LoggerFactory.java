@@ -21,140 +21,177 @@
 
 package com.nfsdb.logging;
 
-import com.nfsdb.collections.CharSequenceObjHashMap;
-import com.nfsdb.collections.ObjHashSet;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.collections.ObjectFactory;
+import com.nfsdb.collections.*;
 import com.nfsdb.concurrent.*;
-import com.nfsdb.misc.Chars;
+import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.misc.*;
 
+import java.io.Closeable;
+import java.io.IOException;
+import java.io.InputStream;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.util.Comparator;
+import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 
-public class LoggerFactory {
+public class LoggerFactory implements Closeable {
 
+    public static final LoggerFactory INSTANCE = new LoggerFactory();
+
+    public static final int LOG_LEVEL_DEBUG = 1;
+    public static final int LOG_LEVEL_INFO = 2;
+    public static final int LOG_LEVEL_ERROR = 4;
+
+    public static final int DEFAULT_QUEUE_DEPTH = 1024;
+    public static final int DEFAULT_MSG_SIZE = 4 * 1024;
+    private static final String DEFAULT_CONFIG = "/nfslog.conf";
+    private static final String EMPTY_STR = "";
+    private static final Holder NOP = new Holder();
+    private static CharSequenceHashSet reserved = new CharSequenceHashSet();
+    private static LengthDescendingComparator LDC = new LengthDescendingComparator();
     private final CharSequenceObjHashMap<Holder> debug = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<Holder> info = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<Holder> error = new CharSequenceObjHashMap<>();
-    private final ObjHashSet<Job<Object>> jobs = new ObjHashSet<>();
-    private final Holder all = new Holder();
+    private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
     private final CountDownLatch workerHaltLatch = new CountDownLatch(1);
     private Worker<Object> worker = null;
+    private boolean configured = false;
+
+    public static AsyncLogger getLogger(CharSequence key) {
+        if (!INSTANCE.configured) {
+            configureDefault();
+        }
+        return INSTANCE.create(key);
+    }
 
     public static void main(String[] args) {
-        LoggerFactory factory = new LoggerFactory();
+//        LoggerFactory factory = new LoggerFactory();
+//
+//        factory.add(new LogWriterConfig("com.nfsdb", LogLevel.ERROR, new LogWriterFactory() {
+//            @Override
+//            public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
+//                LogFileWriter w = new LogFileWriter(ring, seq);
+//                w.setLocation("x.log");
+//                w.setBufferSizeStr("1M");
+//                return w;
+//            }
+//        }, 1024, 4096));
+//
+//        factory.add(new LogWriterConfig("com", LogLevel.INFO, new LogWriterFactory() {
+//            @Override
+//            public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
+//                LogFileWriter w = new LogFileWriter(ring, seq);
+//                w.setLocation("y.log");
+//                w.setBufferSizeStr("1M");
+//                return w;
+//            }
+//        }, 1024, 4096));
+//
+//        factory.bind();
+//
+//        factory.startThread();
+//
+//        try {
+//            AsyncLogger logger = factory.create("com.nfsdb.x");
+//            long t = 0;
+//            for (int i = -1000000; i < 1000000; i++) {
+//                if (i == 0) {
+//                    t = System.currentTimeMillis();
+//                }
+//                logger.debug()._("damn: ")._(i).$();
+//            }
+//            System.out.println(System.currentTimeMillis() - t);
+//        } finally {
+//            factory.haltThread();
+//        }
+//
+//        factory.close();
 
-        factory.add(new LogWriterConfig("com.nfsdb", LogLevel.ALL, new LogWriterFactory() {
-            @Override
-            public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
-                return new LogFileWriter(ring, seq, "x.log");
+        AsyncLogger logger = LoggerFactory.getLogger("com.nfsdb.x");
+        long t = 0;
+        for (int i = -1000000; i < 1000000; i++) {
+            if (i == 0) {
+                t = System.currentTimeMillis();
             }
-        }, 1024, 4096));
+            logger.debug()._("damn: ")._(i).$();
+        }
+        System.out.println(System.currentTimeMillis() - t);
+    }
 
-        factory.add(new LogWriterConfig("com", LogLevel.INFO, new LogWriterFactory() {
-            @Override
-            public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
-                return new LogFileWriter(ring, seq, "y.log");
-            }
-        }, 1024, 4096));
+    public static void setup(LoggerFactory factory, Properties properties) {
+        String writers = properties.getProperty("writers");
 
-        factory.addDefault(new LogWriterConfig("", LogLevel.ALL, new LogWriterFactory() {
-            @Override
-            public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
-                return new LogFileWriter(ring, seq, "z.log");
+        if (writers == null) {
+            return;
+        }
+
+        for (String w : writers.split(",")) {
+            LogWriterConfig conf = createWriter(properties, w.trim());
+            if (conf != null) {
+                factory.add(conf);
             }
-        }, 1024, 4096));
+        }
 
         factory.bind();
-
-        factory.startThread();
-
-        try {
-            AsyncLogger logger = factory.getLogger("com.nfsdb.x");
-            for (int i = 0; i < 1000000; i++) {
-                logger.error()._("damn: ")._(i).$();
-            }
-        } finally {
-            factory.haltThread();
-        }
     }
 
     public void add(final LogWriterConfig config) {
-        switch (config.getLevel()) {
-            case ALL:
-                createEverywhere(config);
-                break;
-            case DEBUG:
-                createAt(config, debug);
-                break;
-            case INFO:
-                createAt(config, info);
-                break;
-            case ERROR:
-                createAt(config, error);
-                break;
-        }
-    }
 
-    public void addDefault(final LogWriterConfig config) {
-        if (all.ring == null) {
-            all.ring = new RingQueue<>(new ObjectFactory<LogRecordSink>() {
-                @Override
-                public LogRecordSink newInstance() {
-                    return new LogRecordSink(config.getQueueDepth());
-                }
-            }, config.getRecordLength());
-        }
+        checkConfigured();
 
-        if (all.lSeq == null) {
-            all.lSeq = new MPSequence(config.getQueueDepth());
-        }
+        int level = config.getLevel();
 
-        Sequence sequence = new SCSequence();
-
-        if (all.wSeq == null && all.fanOut == null) {
-            all.wSeq = sequence;
-        } else if (all.wSeq != null && all.fanOut == null) {
-            all.fanOut = new FanOut(all.wSeq, sequence);
+        if (level == 0) {
+            createEverywhere(config);
         } else {
-            all.fanOut.add(sequence);
-        }
 
-        jobs.add(config.getFactory().createLogWriter(all.ring, sequence));
+            if ((level & LOG_LEVEL_DEBUG) == LOG_LEVEL_DEBUG) {
+                createAt(config, debug);
+            }
+
+            if ((level & LOG_LEVEL_INFO) == LOG_LEVEL_INFO) {
+                createAt(config, info);
+            }
+
+            if ((level & LOG_LEVEL_ERROR) == LOG_LEVEL_ERROR) {
+                createAt(config, error);
+            }
+        }
     }
 
     public void bind() {
-        debug.sortKeys(new Comparator<CharSequence>() {
-            @Override
-            public int compare(CharSequence o1, CharSequence o2) {
-                int l1, l2;
-                if ((l1 = o1.length()) < (l2 = o2.length())) {
-                    return 1;
-                }
+        if (configured) {
+            return;
+        }
 
-                if (l1 > l2) {
-                    return -11;
-                }
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            LogWriter w = jobs.get(i);
+            w.bindProperties();
+        }
 
-                return 0;
-            }
-        });
+        debug.sortKeys(LDC);
+        info.sortKeys(LDC);
+        error.sortKeys(LDC);
 
         bindSequences(debug);
         bindSequences(info);
         bindSequences(error);
 
-        if (all.fanOut != null) {
-            all.lSeq.followedBy(all.fanOut);
-            all.fanOut.followedBy(all.lSeq);
-        } else {
-            all.lSeq.followedBy(all.wSeq);
-            all.wSeq.followedBy(all.lSeq);
-        }
-
+        configured = true;
     }
 
-    public AsyncLogger getLogger(CharSequence key) {
+    @Override
+    public void close() {
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            Misc.free(jobs.get(i));
+        }
+    }
+
+    public AsyncLogger create(CharSequence key) {
+        if (!configured) {
+            throw new LoggerError("Not configured");
+        }
         Holder inf = findHolder(key, info);
         Holder dbg = findHolder(key, debug);
         Holder err = findHolder(key, error);
@@ -176,6 +213,120 @@ public class LoggerFactory {
         worker.setDaemon(true);
         worker.setName("nfsdb-log-writer");
         worker.start();
+    }
+
+    private static void configureDefault() {
+        String conf = System.getProperty("nfslog");
+        if (conf == null) {
+            conf = DEFAULT_CONFIG;
+        }
+        try (InputStream is = LoggerFactory.class.getResourceAsStream(conf)) {
+            if (is != null) {
+                Properties properties = new Properties();
+                properties.load(is);
+                setup(INSTANCE, properties);
+            } else {
+                INSTANCE.configureDefaultWriter();
+            }
+        } catch (IOException ignore) {
+            if (!DEFAULT_CONFIG.equals(conf)) {
+                throw new LoggerError("Cannot read " + conf);
+            } else {
+                INSTANCE.configureDefaultWriter();
+            }
+        }
+        INSTANCE.startThread();
+    }
+
+    private static LogWriterConfig createWriter(final Properties properties, String w) {
+        final String writer = "w." + w + ".";
+        final String clazz = properties.getProperty(writer + "class");
+        final String levelStr = properties.getProperty(writer + "level");
+        final String scope = properties.getProperty(writer + "scope");
+        final String queueDepthStr = properties.getProperty(writer + "queueDepth");
+        final String maxMsgSizeStr = properties.getProperty(writer + "maxMsgSize");
+
+        if (clazz == null) {
+            return null;
+        }
+
+        int queueDepth;
+
+        try {
+            queueDepth = Numbers.parseInt(queueDepthStr);
+        } catch (NumericException e) {
+            queueDepth = DEFAULT_QUEUE_DEPTH;
+        }
+
+        int recordLength;
+
+        try {
+            recordLength = Numbers.parseInt(maxMsgSizeStr);
+        } catch (NumericException e) {
+            recordLength = DEFAULT_MSG_SIZE;
+        }
+
+        final Class<?> cl;
+        final Constructor constructor;
+        try {
+            cl = Class.forName(clazz);
+            constructor = cl.getDeclaredConstructor(RingQueue.class, Sequence.class);
+        } catch (ClassNotFoundException e) {
+            throw new LoggerError("Class not found " + clazz);
+        } catch (NoSuchMethodException e) {
+            throw new LoggerError("Constructor(RingQueue, Sequence) expected: " + clazz);
+        }
+
+        int level = 0;
+        if (levelStr != null) {
+            for (String s : levelStr.split(",")) {
+                switch (s.toUpperCase()) {
+                    case "DEBUG":
+                        level |= LOG_LEVEL_DEBUG;
+                        break;
+                    case "INFO":
+                        level |= LOG_LEVEL_INFO;
+                        break;
+                    case "ERROR":
+                        level |= LOG_LEVEL_ERROR;
+                        break;
+                    default:
+                        throw new LoggerError("Unknown level: " + s);
+                }
+            }
+        }
+
+        return new LogWriterConfig(scope == null ? EMPTY_STR : scope, level, new LogWriterFactory() {
+            @Override
+            public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
+                try {
+                    LogWriter w = (LogWriter) constructor.newInstance(ring, seq);
+
+                    for (String n : properties.stringPropertyNames()) {
+                        if (n.startsWith(writer)) {
+                            String p = n.substring(writer.length());
+
+                            if (reserved.contains(p)) {
+                                continue;
+                            }
+
+                            try {
+                                Field f = cl.getDeclaredField(p);
+                                if (f != null && f.getType() == String.class) {
+                                    long offset = Unsafe.getUnsafe().objectFieldOffset(f);
+                                    Unsafe.getUnsafe().putObject(w, offset, properties.getProperty(n));
+                                }
+                            } catch (Exception ignore) {
+                                throw new LoggerError("Unknown property: " + n);
+                            }
+                        }
+                    }
+                    return w;
+                } catch (Exception e) {
+                    throw new LoggerError("Error creating log writer", e);
+                }
+            }
+        }, queueDepth, recordLength);
     }
 
     private Holder addNewHolder(CharSequenceObjHashMap<Holder> map,
@@ -211,6 +362,22 @@ public class LoggerFactory {
                 h.wSeq.followedBy(h.lSeq);
             }
         }
+    }
+
+    private void checkConfigured() {
+        if (configured) {
+            throw new LoggerError("Already configured");
+        }
+    }
+
+    private void configureDefaultWriter() {
+        add(new LogWriterConfig("", LOG_LEVEL_INFO | LOG_LEVEL_ERROR, new LogWriterFactory() {
+            @Override
+            public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
+                return new StdOutWriter(ring, seq);
+            }
+        }, DEFAULT_QUEUE_DEPTH, DEFAULT_MSG_SIZE));
+        bind();
     }
 
     private void createAt(final LogWriterConfig config, CharSequenceObjHashMap<Holder> m) {
@@ -260,17 +427,34 @@ public class LoggerFactory {
         CharSequence k = null;
 
         for (int i = 0, n = keys.size(); i < n; i++) {
-            k = keys.getQuick(i);
-            if (Chars.containts(key, k)) {
+            CharSequence s = keys.getQuick(i);
+            if (Chars.startsWith(key, s)) {
+                k = s;
                 break;
             }
         }
 
         if (k == null) {
-            return all;
+            return NOP;
         }
 
         return map.get(k);
+    }
+
+    private static class LengthDescendingComparator implements Comparator<CharSequence> {
+        @Override
+        public int compare(CharSequence o1, CharSequence o2) {
+            int l1, l2;
+            if ((l1 = o1.length()) < (l2 = o2.length())) {
+                return 1;
+            }
+
+            if (l1 > l2) {
+                return -11;
+            }
+
+            return 0;
+        }
     }
 
     private static class Holder {
@@ -279,5 +463,14 @@ public class LoggerFactory {
         private Sequence lSeq;
         private FanOut fanOut;
         private LogWriter w;
+    }
+
+    static {
+        Os.init();
+        reserved.add("scope");
+        reserved.add("class");
+        reserved.add("level");
+        reserved.add("queueDepth");
+        reserved.add("maxMsgSize");
     }
 }

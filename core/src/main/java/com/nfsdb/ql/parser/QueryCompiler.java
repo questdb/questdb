@@ -140,6 +140,7 @@ public class QueryCompiler {
     }
 
     public RecordSource<? extends Record> compileSource(CharSequence query) throws ParserException, JournalException {
+        // todo: remove query from cache to avoid it being reused by another thread
         RecordSource<? extends Record> rs = cache.get(query);
         if (rs == null) {
             rs = resetAndCompile(parser.parse(query).getQueryModel(), factory);

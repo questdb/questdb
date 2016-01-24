@@ -30,5 +30,7 @@ public interface LogRecord {
 
     LogRecord _(char c);
 
+    boolean isEnabled();
+
     LogRecord ts();
 }

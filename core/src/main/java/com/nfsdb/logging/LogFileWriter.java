@@ -24,20 +24,101 @@ package com.nfsdb.logging;
 import com.nfsdb.collections.Path;
 import com.nfsdb.concurrent.RingQueue;
 import com.nfsdb.concurrent.Sequence;
+import com.nfsdb.concurrent.SynchronizedJob;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.misc.Files;
+import com.nfsdb.misc.Numbers;
+import com.nfsdb.misc.Unsafe;
 
 import java.io.Closeable;
 
-public class LogFileWriter extends AbstractLogWriter implements Closeable {
-    public LogFileWriter(RingQueue<LogRecordSink> ring, Sequence subSeq, CharSequence file) {
-        super(ring, subSeq);
-        this.fd = Files.openAppend(new Path(file));
+public class LogFileWriter extends SynchronizedJob<Object> implements Closeable, LogWriter {
+    private static final int DEFAULT_BUFFER_SIZE = 1024 * 1024;
+    private final RingQueue<LogRecordSink> ring;
+    private final Sequence subSeq;
+    private long fd = 0;
+    private long lim;
+    private long buf;
+    private long _wptr;
+    private String location;
+    private String bufferSizeStr;
+
+    public LogFileWriter(RingQueue<LogRecordSink> ring, Sequence subSeq) {
+        this.ring = ring;
+        this.subSeq = subSeq;
+    }
+
+    @Override
+    public boolean _run() {
+        long cursor = subSeq.next();
+        if (cursor < 0) {
+
+            if (_wptr > buf) {
+                flush();
+                return true;
+            }
+
+            return false;
+        }
+
+        final LogRecordSink sink = ring.get(cursor);
+        int l = sink.length();
+
+        if (_wptr + l >= lim) {
+            flush();
+        }
+
+        Unsafe.getUnsafe().copyMemory(sink.getAddress(), _wptr, l);
+        _wptr += l;
+        subSeq.done(cursor);
+        return true;
+    }
+
+    @Override
+    public void bindProperties() {
+        int bufferSize;
+        if (bufferSizeStr != null) {
+            try {
+                bufferSize = Numbers.parseIntSize(bufferSizeStr);
+            } catch (NumericException e) {
+                bufferSize = DEFAULT_BUFFER_SIZE;
+            }
+        } else {
+            bufferSize = DEFAULT_BUFFER_SIZE;
+        }
+        this.buf = _wptr = Unsafe.getUnsafe().allocateMemory(bufferSize);
+        this.lim = buf + bufferSize;
+        this.fd = Files.openAppend(new Path(location));
+        if (this.fd < 0) {
+            throw new RuntimeException("Cannot open file for append: " + location);
+        }
     }
 
     @Override
     public void close() {
+        if (buf != 0) {
+            if (_wptr > buf) {
+                flush();
+            }
+            Unsafe.getUnsafe().freeMemory(buf);
+            buf = 0;
+        }
         if (this.fd != 0) {
             Files.close(this.fd);
+            this.fd = 0;
         }
+    }
+
+    public void setBufferSizeStr(String bufferSizeStr) {
+        this.bufferSizeStr = bufferSizeStr;
+    }
+
+    public void setLocation(String location) {
+        this.location = location;
+    }
+
+    private void flush() {
+        Files.append(fd, buf, (int) (_wptr - buf));
+        _wptr = buf;
     }
 }

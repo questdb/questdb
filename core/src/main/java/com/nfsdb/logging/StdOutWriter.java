@@ -21,39 +21,41 @@
 
 package com.nfsdb.logging;
 
-public final class NullLogRecord implements LogRecord {
+import com.nfsdb.concurrent.RingQueue;
+import com.nfsdb.concurrent.Sequence;
+import com.nfsdb.concurrent.SynchronizedJob;
+import com.nfsdb.misc.Files;
 
-    public static final NullLogRecord INSTANCE = new NullLogRecord();
+import java.io.Closeable;
 
-    private NullLogRecord() {
+public class StdOutWriter extends SynchronizedJob<Object> implements Closeable, LogWriter {
+    private static final long fd = 1;
+    private final RingQueue<LogRecordSink> ring;
+    private final Sequence subSeq;
+
+    public StdOutWriter(RingQueue<LogRecordSink> ring, Sequence subSeq) {
+        this.ring = ring;
+        this.subSeq = subSeq;
     }
 
     @Override
-    public void $() {
+    public boolean _run() {
+        long cursor = subSeq.next();
+        if (cursor < 0) {
+            return false;
+        }
+
+        final LogRecordSink sink = ring.get(cursor);
+        Files.append(fd, sink.getAddress(), sink.length());
+        subSeq.done(cursor);
+        return true;
     }
 
     @Override
-    public LogRecord _(CharSequence sequence) {
-        return this;
+    public void bindProperties() {
     }
 
     @Override
-    public LogRecord _(int x) {
-        return this;
-    }
-
-    @Override
-    public LogRecord _(char c) {
-        return this;
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return false;
-    }
-
-    @Override
-    public LogRecord ts() {
-        return this;
+    public void close() {
     }
 }

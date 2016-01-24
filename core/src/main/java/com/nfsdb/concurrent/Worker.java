@@ -32,13 +32,13 @@ public class Worker<T> extends Thread {
     private final static long RUNNING_OFFSET;
     private static final long YIELD_THRESHOLD = 100000L;
     private static final long SLEEP_THRESHOLD = 30000000L;
-    private final ObjHashSet<Job<T>> jobs;
+    private final ObjHashSet<? extends Job<T>> jobs;
     private final CountDownLatch haltLatch;
     private final T context;
     @SuppressWarnings("FieldCanBeLocal")
     private volatile int running = 0;
 
-    public Worker(ObjHashSet<Job<T>> jobs, CountDownLatch haltLatch, T context) {
+    public Worker(ObjHashSet<? extends Job<T>> jobs, CountDownLatch haltLatch, T context) {
         this.jobs = jobs;
         this.haltLatch = haltLatch;
         this.context = context;

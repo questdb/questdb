@@ -77,24 +77,46 @@ public class AsyncLogger implements LogRecord {
     }
 
     @Override
+    public boolean isEnabled() {
+        return true;
+    }
+
+    @Override
     public LogRecord ts() {
         sink().putISODate(System.currentTimeMillis());
         return this;
     }
 
     public LogRecord debug() {
-        return next(debugSeq, debugRing)._("DEBUG")._(' ');
+        return xdebug()._("DEBUG")._(' ');
     }
 
     public LogRecord error() {
-        return next(errorSeq, errorRing)._("ERROR")._(' ');
+        return xerror()._("ERROR")._(' ');
     }
 
     public LogRecord info() {
-        return next(infoSeq, infoRing)._("INFO")._(' ');
+        return xinfo()._("INFO")._(' ');
+    }
+
+    public LogRecord xdebug() {
+        return next(debugSeq, debugRing);
+    }
+
+    public LogRecord xerror() {
+        return next(errorSeq, errorRing);
+    }
+
+    public LogRecord xinfo() {
+        return next(infoSeq, infoRing);
     }
 
     private LogRecord next(Sequence seq, RingQueue<LogRecordSink> ring) {
+
+        if (seq == null) {
+            return NullLogRecord.INSTANCE;
+        }
+
         long cursor = seq.next();
         if (cursor < 0) {
             return NullLogRecord.INSTANCE;
