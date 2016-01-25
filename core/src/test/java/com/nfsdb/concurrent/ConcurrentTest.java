@@ -46,6 +46,7 @@ public class ConcurrentTest {
      */
     @Test
     public void testOneToManyBusy() throws Exception {
+        System.out.println("testOneToManyBusy");
         int cycle = 1024;
         int size = 1024 * cycle;
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
@@ -95,6 +96,7 @@ public class ConcurrentTest {
 
     @Test
     public void testOneToManyWaiting() throws Exception {
+        System.out.println("testOneToManyWaiting");
         int cycle = 1024;
         int size = 1024 * cycle;
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
@@ -140,6 +142,7 @@ public class ConcurrentTest {
 
     @Test
     public void testOneToOneBusy() throws Exception {
+        System.out.println("testOneToOneBusy");
         int cycle = 1024;
         int size = 1024 * cycle;
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
@@ -180,6 +183,7 @@ public class ConcurrentTest {
 
     @Test
     public void testOneToOneWaiting() throws Exception {
+        System.out.println("testOneToOneWaiting");
         int cycle = 1024;
         int size = 1024 * cycle;
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
@@ -217,6 +221,7 @@ public class ConcurrentTest {
 
     @Test
     public void testOneToParallelMany() throws Exception {
+        System.out.println("testOneToParallelMany");
         int cycle = 1024;
         int size = 1024 * cycle;
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
@@ -266,6 +271,7 @@ public class ConcurrentTest {
 
     @Test
     public void testOneToParallelSubscriber() throws Exception {
+        System.out.println("testOneToParallelSubscriber");
         int cycle = 1024;
         int size = 1024 * cycle;
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
