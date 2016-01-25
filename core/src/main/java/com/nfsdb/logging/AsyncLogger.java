@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.logging;
 
@@ -53,25 +53,25 @@ public class AsyncLogger implements LogRecord {
 
     @Override
     public void $() {
-        _(Misc.EOL);
+        $(Misc.EOL);
         Holder h = tl.get();
         h.seq.done(h.cursor);
     }
 
     @Override
-    public LogRecord _(CharSequence sequence) {
+    public LogRecord $(CharSequence sequence) {
         sink().put(sequence);
         return this;
     }
 
     @Override
-    public LogRecord _(int x) {
+    public LogRecord $(int x) {
         sink().put(x);
         return this;
     }
 
     @Override
-    public LogRecord _(char c) {
+    public LogRecord $(char c) {
         sink().put(c);
         return this;
     }
@@ -88,15 +88,15 @@ public class AsyncLogger implements LogRecord {
     }
 
     public LogRecord debug() {
-        return xdebug().ts()._(" DEBUG ");
+        return xdebug().ts().$(" DEBUG ");
     }
 
     public LogRecord error() {
-        return xerror().ts()._(" ERROR ");
+        return xerror().ts().$(" ERROR ");
     }
 
     public LogRecord info() {
-        return xinfo().ts()._(" INFO ");
+        return xinfo().ts().$(" INFO ");
     }
 
     public LogRecord xdebug() {

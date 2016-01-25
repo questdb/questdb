@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.logging;
 
@@ -33,17 +33,17 @@ public final class NullLogRecord implements LogRecord {
     }
 
     @Override
-    public LogRecord _(CharSequence sequence) {
+    public LogRecord $(CharSequence sequence) {
         return this;
     }
 
     @Override
-    public LogRecord _(int x) {
+    public LogRecord $(int x) {
         return this;
     }
 
     @Override
-    public LogRecord _(char c) {
+    public LogRecord $(char c) {
         return this;
     }
 

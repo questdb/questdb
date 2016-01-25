@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.logging;
 
@@ -82,7 +82,7 @@ public class LoggerFactoryTest {
             try {
                 AsyncLogger logger = factory.create("x");
                 for (int i = 0; i < 100000; i++) {
-                    logger.xinfo()._("test ")._(i).$();
+                    logger.xinfo().$("test ").$(i).$();
                 }
 
                 Thread.sleep(100);
@@ -159,10 +159,10 @@ public class LoggerFactoryTest {
             factory.startThread();
 
             AsyncLogger logger = factory.create("com.nfsdb.collections.X");
-            logger.xinfo()._("this is for collections").$();
+            logger.xinfo().$("this is for collections").$();
 
             AsyncLogger logger1 = factory.create("com.nfsdb.net.Y");
-            logger1.xinfo()._("this is for network").$();
+            logger1.xinfo().$("this is for network").$();
 
             // let async writer catch up in a busy environment
             Thread.sleep(100);

@@ -96,6 +96,31 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openRW
     );
 }
 
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openAppend
+        (JNIEnv *e, jclass cl, jlong lpszName) {
+    HANDLE h = CreateFile(
+            (LPCSTR) lpszName,
+            FILE_APPEND_DATA,
+            FILE_SHARE_READ ,
+            NULL,
+            OPEN_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+            NULL
+    );
+
+    if (h != INVALID_HANDLE_VALUE) {
+        SetFilePointer(h, 0, NULL, FILE_END);
+    }
+
+    return (jlong) h;
+}
+
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_append
+        (JNIEnv *e, jclass cl, jlong fd, jlong address, jint length) {
+    DWORD count;
+    return WriteFile((HANDLE) fd, (LPCVOID) address, (DWORD) length, &count, NULL) ? count : 0;
+}
+
 JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_length
         (JNIEnv *e, jclass cl, jlong pchar) {
     struct stat st;
