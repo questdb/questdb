@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,13 +17,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
 import com.nfsdb.collections.CharSequenceObjHashMap;
 import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.collections.ObjectPool;
+import com.nfsdb.misc.Misc;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -46,7 +47,7 @@ public class UrlDecodeTest {
         String v = "x=a&&y==b";
         long p = TestUtils.toMemory(v);
         try {
-            Request.urlDecode(p, p + v.length(), map, pool);
+            Misc.urlDecode(p, p + v.length(), map, pool);
             TestUtils.assertEquals("a", map.get("x"));
             TestUtils.assertEquals("b", map.get("y"));
         } finally {
@@ -59,7 +60,7 @@ public class UrlDecodeTest {
         String v = "x=a&y=b";
         long p = TestUtils.toMemory(v);
         try {
-            Request.urlDecode(p, p + v.length(), map, pool);
+            Misc.urlDecode(p, p + v.length(), map, pool);
             TestUtils.assertEquals("a", map.get("x"));
             TestUtils.assertEquals("b", map.get("y"));
         } finally {
@@ -72,7 +73,7 @@ public class UrlDecodeTest {
         String v = "x=a&y=b&z=";
         long p = TestUtils.toMemory(v);
         try {
-            Request.urlDecode(p, p + v.length(), map, pool);
+            Misc.urlDecode(p, p + v.length(), map, pool);
             TestUtils.assertEquals("a", map.get("x"));
             TestUtils.assertEquals("b", map.get("y"));
             Assert.assertNull(map.get("z"));
@@ -86,7 +87,7 @@ public class UrlDecodeTest {
         String v = "x=a&y=b&";
         long p = TestUtils.toMemory(v);
         try {
-            Request.urlDecode(p, p + v.length(), map, pool);
+            Misc.urlDecode(p, p + v.length(), map, pool);
             TestUtils.assertEquals("a", map.get("x"));
             TestUtils.assertEquals("b", map.get("y"));
         } finally {
@@ -99,7 +100,7 @@ public class UrlDecodeTest {
         String v = "x=a&y=b+c%26&z=ab%20ba&w=2";
         long p = TestUtils.toMemory(v);
         try {
-            Request.urlDecode(p, p + v.length(), map, pool);
+            Misc.urlDecode(p, p + v.length(), map, pool);
             TestUtils.assertEquals("a", map.get("x"));
             TestUtils.assertEquals("b c&", map.get("y"));
             TestUtils.assertEquals("ab ba", map.get("z"));
@@ -114,7 +115,7 @@ public class UrlDecodeTest {
         String v = "x=a&y=b+c&z=123";
         long p = TestUtils.toMemory(v);
         try {
-            Request.urlDecode(p, p + v.length(), map, pool);
+            Misc.urlDecode(p, p + v.length(), map, pool);
             TestUtils.assertEquals("a", map.get("x"));
             TestUtils.assertEquals("b c", map.get("y"));
             TestUtils.assertEquals("123", map.get("z"));
@@ -128,7 +129,7 @@ public class UrlDecodeTest {
         String v = "x=a&y=b+c";
         long p = TestUtils.toMemory(v);
         try {
-            Request.urlDecode(p, p + v.length(), map, pool);
+            Misc.urlDecode(p, p + v.length(), map, pool);
             TestUtils.assertEquals("a", map.get("x"));
             TestUtils.assertEquals("b c", map.get("y"));
         } finally {

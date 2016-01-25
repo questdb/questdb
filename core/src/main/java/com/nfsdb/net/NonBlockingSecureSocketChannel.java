@@ -28,6 +28,7 @@ import com.nfsdb.exceptions.SlowReadableChannelException;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.net.http.IOHttpJob;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import javax.net.ssl.*;
 import java.io.IOException;
@@ -90,6 +91,7 @@ public class NonBlockingSecureSocketChannel<T extends ByteChannel> implements Wr
         }
     }
 
+    @SuppressFBWarnings("SF_SWITCH_FALLTHROUGH")
     @Override
     public int read(ByteBuffer dst) throws IOException {
 

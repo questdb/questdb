@@ -88,15 +88,15 @@ public class AsyncLogger implements LogRecord {
     }
 
     public LogRecord debug() {
-        return xdebug()._("DEBUG")._(' ');
+        return xdebug().ts()._(" DEBUG ");
     }
 
     public LogRecord error() {
-        return xerror()._("ERROR")._(' ');
+        return xerror().ts()._(" ERROR ");
     }
 
     public LogRecord info() {
-        return xinfo()._("INFO")._(' ');
+        return xinfo().ts()._(" INFO ");
     }
 
     public LogRecord xdebug() {
@@ -126,7 +126,6 @@ public class AsyncLogger implements LogRecord {
         h.seq = seq;
         h.ring = ring;
         ring.get(cursor).clear(0);
-        ts()._(' ');
         return this;
     }
 

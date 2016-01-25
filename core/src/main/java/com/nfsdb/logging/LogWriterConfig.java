@@ -28,8 +28,12 @@ public class LogWriterConfig {
     private final int queueDepth;
     private final int recordLength;
 
+    public LogWriterConfig(int level, LogWriterFactory factory, int queueDepth, int recordLength) {
+        this("", level, factory, queueDepth, recordLength);
+    }
+
     public LogWriterConfig(String scope, int level, LogWriterFactory factory, int queueDepth, int recordLength) {
-        this.scope = scope;
+        this.scope = scope == null ? "" : scope;
         this.level = level;
         this.factory = factory;
         this.queueDepth = queueDepth;

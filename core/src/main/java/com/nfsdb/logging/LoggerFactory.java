@@ -29,6 +29,7 @@ import com.nfsdb.misc.*;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.Serializable;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.util.Comparator;
@@ -48,8 +49,8 @@ public class LoggerFactory implements Closeable {
     private static final String DEFAULT_CONFIG = "/nfslog.conf";
     private static final String EMPTY_STR = "";
     private static final Holder NOP = new Holder();
-    private static CharSequenceHashSet reserved = new CharSequenceHashSet();
-    private static LengthDescendingComparator LDC = new LengthDescendingComparator();
+    private static final CharSequenceHashSet reserved = new CharSequenceHashSet();
+    private static final LengthDescendingComparator LDC = new LengthDescendingComparator();
     private final CharSequenceObjHashMap<Holder> debug = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<Holder> info = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<Holder> error = new CharSequenceObjHashMap<>();
@@ -58,71 +59,42 @@ public class LoggerFactory implements Closeable {
     private Worker<Object> worker = null;
     private boolean configured = false;
 
+    public static void configureFromSystemProperties(LoggerFactory factory) {
+        String conf = System.getProperty("nfslog");
+        if (conf == null) {
+            conf = DEFAULT_CONFIG;
+        }
+        try (InputStream is = LoggerFactory.class.getResourceAsStream(conf)) {
+            if (is != null) {
+                Properties properties = new Properties();
+                properties.load(is);
+                setup(factory, properties);
+            } else {
+                factory.configureDefaultWriter();
+            }
+        } catch (IOException e) {
+            if (!DEFAULT_CONFIG.equals(conf)) {
+                throw new LoggerError("Cannot read " + conf, e);
+            } else {
+                factory.configureDefaultWriter();
+            }
+        }
+        factory.startThread();
+    }
+
     public static AsyncLogger getLogger(CharSequence key) {
         if (!INSTANCE.configured) {
-            configureDefault();
+            configureFromSystemProperties(INSTANCE);
         }
         return INSTANCE.create(key);
     }
 
-    public static void main(String[] args) {
-//        LoggerFactory factory = new LoggerFactory();
-//
-//        factory.add(new LogWriterConfig("com.nfsdb", LogLevel.ERROR, new LogWriterFactory() {
-//            @Override
-//            public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
-//                LogFileWriter w = new LogFileWriter(ring, seq);
-//                w.setLocation("x.log");
-//                w.setBufferSizeStr("1M");
-//                return w;
-//            }
-//        }, 1024, 4096));
-//
-//        factory.add(new LogWriterConfig("com", LogLevel.INFO, new LogWriterFactory() {
-//            @Override
-//            public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
-//                LogFileWriter w = new LogFileWriter(ring, seq);
-//                w.setLocation("y.log");
-//                w.setBufferSizeStr("1M");
-//                return w;
-//            }
-//        }, 1024, 4096));
-//
-//        factory.bind();
-//
-//        factory.startThread();
-//
-//        try {
-//            AsyncLogger logger = factory.create("com.nfsdb.x");
-//            long t = 0;
-//            for (int i = -1000000; i < 1000000; i++) {
-//                if (i == 0) {
-//                    t = System.currentTimeMillis();
-//                }
-//                logger.debug()._("damn: ")._(i).$();
-//            }
-//            System.out.println(System.currentTimeMillis() - t);
-//        } finally {
-//            factory.haltThread();
-//        }
-//
-//        factory.close();
-
-        AsyncLogger logger = LoggerFactory.getLogger("com.nfsdb.x");
-        long t = 0;
-        for (int i = -1000000; i < 1000000; i++) {
-            if (i == 0) {
-                t = System.currentTimeMillis();
-            }
-            logger.debug()._("damn: ")._(i).$();
-        }
-        System.out.println(System.currentTimeMillis() - t);
-    }
-
     public static void setup(LoggerFactory factory, Properties properties) {
+
         String writers = properties.getProperty("writers");
 
         if (writers == null) {
+            factory.configured = true;
             return;
         }
 
@@ -205,41 +177,19 @@ public class LoggerFactory implements Closeable {
                 workerHaltLatch.await();
             } catch (InterruptedException ignore) {
             }
+            worker = null;
         }
     }
 
     public void startThread() {
-        Worker<Object> worker = new Worker<>(jobs, workerHaltLatch, null);
+        this.worker = new Worker<>(jobs, workerHaltLatch, null);
         worker.setDaemon(true);
         worker.setName("nfsdb-log-writer");
         worker.start();
     }
 
-    private static void configureDefault() {
-        String conf = System.getProperty("nfslog");
-        if (conf == null) {
-            conf = DEFAULT_CONFIG;
-        }
-        try (InputStream is = LoggerFactory.class.getResourceAsStream(conf)) {
-            if (is != null) {
-                Properties properties = new Properties();
-                properties.load(is);
-                setup(INSTANCE, properties);
-            } else {
-                INSTANCE.configureDefaultWriter();
-            }
-        } catch (IOException ignore) {
-            if (!DEFAULT_CONFIG.equals(conf)) {
-                throw new LoggerError("Cannot read " + conf);
-            } else {
-                INSTANCE.configureDefaultWriter();
-            }
-        }
-        INSTANCE.startThread();
-    }
-
     private static LogWriterConfig createWriter(final Properties properties, String w) {
-        final String writer = "w." + w + ".";
+        final String writer = "w." + w + '.';
         final String clazz = properties.getProperty(writer + "class");
         final String levelStr = properties.getProperty(writer + "level");
         final String scope = properties.getProperty(writer + "scope");
@@ -272,9 +222,9 @@ public class LoggerFactory implements Closeable {
             cl = Class.forName(clazz);
             constructor = cl.getDeclaredConstructor(RingQueue.class, Sequence.class);
         } catch (ClassNotFoundException e) {
-            throw new LoggerError("Class not found " + clazz);
+            throw new LoggerError("Class not found " + clazz, e);
         } catch (NoSuchMethodException e) {
-            throw new LoggerError("Constructor(RingQueue, Sequence) expected: " + clazz);
+            throw new LoggerError("Constructor(RingQueue, Sequence) expected: " + clazz, e);
         }
 
         int level = 0;
@@ -316,8 +266,8 @@ public class LoggerFactory implements Closeable {
                                     long offset = Unsafe.getUnsafe().objectFieldOffset(f);
                                     Unsafe.getUnsafe().putObject(w, offset, properties.getProperty(n));
                                 }
-                            } catch (Exception ignore) {
-                                throw new LoggerError("Unknown property: " + n);
+                            } catch (Exception e) {
+                                throw new LoggerError("Unknown property: " + n, e);
                             }
                         }
                     }
@@ -441,7 +391,7 @@ public class LoggerFactory implements Closeable {
         return map.get(k);
     }
 
-    private static class LengthDescendingComparator implements Comparator<CharSequence> {
+    private static class LengthDescendingComparator implements Comparator<CharSequence>, Serializable {
         @Override
         public int compare(CharSequence o1, CharSequence o2) {
             int l1, l2;

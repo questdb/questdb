@@ -124,7 +124,7 @@ public class Response implements Closeable, Mutable {
         return chunkHeader;
     }
 
-    private void _prepareCompressedBody() throws DisconnectedChannelException, SlowWritableChannelException {
+    private void _prepareCompressedBody() {
         if (z_streamp == 0) {
             z_streamp = Zip.deflateInit();
             zout = ByteBuffer.allocateDirect(sz);
@@ -153,7 +153,7 @@ public class Response implements Closeable, Mutable {
         return sink;
     }
 
-    private ResponseState deflate(boolean flush) throws DisconnectedChannelException, SlowWritableChannelException {
+    private ResponseState deflate(boolean flush) throws DisconnectedChannelException {
 
         final int sz = this.sz - 8;
         long p = pzout + Zip.gzipHeaderLen;
@@ -401,7 +401,7 @@ public class Response implements Closeable, Mutable {
 
     private class ChunkedResponseImpl extends ResponseSinkImpl implements ChunkedResponse {
 
-        private long bookmark = outPtr;
+        private final long bookmark = outPtr;
 
         @Override
         public long bookmark() {

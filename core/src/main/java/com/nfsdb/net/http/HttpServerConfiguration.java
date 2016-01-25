@@ -21,6 +21,7 @@
 
 package com.nfsdb.net.http;
 
+import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.misc.Numbers;
@@ -52,6 +53,7 @@ public class HttpServerConfiguration {
     public HttpServerConfiguration() {
     }
 
+    @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS")
     public HttpServerConfiguration(File nfsdbConf) throws Exception {
 
         final Properties props = new Properties();
@@ -115,17 +117,17 @@ public class HttpServerConfiguration {
         sslConfig.setSecure("true".equals(props.getProperty("http.ssl.enabled")));
         if (sslConfig.isSecure()) {
             if ((s = props.getProperty("http.ssl.keystore.location")) == null) {
-                throw new IllegalArgumentException("http.ssl.keystore.location is undefined");
+                throw new JournalConfigurationException("http.ssl.keystore.location is undefined");
             }
 
             File keystore = normalize(root, new File(s));
 
             if (!keystore.exists()) {
-                throw new IllegalArgumentException("http.ssl.keystore.location does not exist");
+                throw new JournalConfigurationException("http.ssl.keystore.location does not exist");
             }
 
             if (!keystore.isFile()) {
-                throw new IllegalArgumentException("http.ssl.keystore.location is not a file");
+                throw new JournalConfigurationException("http.ssl.keystore.location is not a file");
             }
 
             try (InputStream is = new FileInputStream(keystore)) {

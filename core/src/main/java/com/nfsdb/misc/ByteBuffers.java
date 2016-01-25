@@ -22,6 +22,7 @@
 package com.nfsdb.misc;
 
 import com.nfsdb.exceptions.*;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.IOException;
@@ -138,6 +139,7 @@ public final class ByteBuffers {
         }
     }
 
+    @SuppressFBWarnings("LEST_LOST_EXCEPTION_STACK_TRACE")
     @SuppressWarnings("TryWithIdenticalCatches")
     public static void copyNonBlocking(ByteBuffer from, WritableByteChannel channel, int retryCount) throws DisconnectedChannelException, SlowWritableChannelException {
         int target = from.remaining();
@@ -166,6 +168,7 @@ public final class ByteBuffers {
         }
     }
 
+    @SuppressFBWarnings("LEST_LOST_EXCEPTION_STACK_TRACE")
     @SuppressWarnings("TryWithIdenticalCatches")
     public static void copyNonBlocking(ReadableByteChannel channel, ByteBuffer to, int retryCount) throws DisconnectedChannelException, SlowReadableChannelException {
         int r = to.remaining();

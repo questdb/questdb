@@ -49,9 +49,8 @@ public class FanOut implements Barrier {
 
     @Override
     public long availableIndex(long lo) {
-        Barrier[] barriers = this.barriers;
-        for (int i = 0, n = barriers.length; i < n; i++) {
-            long cursor = Unsafe.arrayGet(barriers, i).availableIndex(lo);
+        for (int i = 0, n = this.barriers.length; i < n; i++) {
+            long cursor = Unsafe.arrayGet(this.barriers, i).availableIndex(lo);
             lo = lo < cursor ? lo : cursor;
         }
         return lo;

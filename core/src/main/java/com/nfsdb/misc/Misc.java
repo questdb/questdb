@@ -21,6 +21,10 @@
 
 package com.nfsdb.misc;
 
+import com.nfsdb.collections.CharSequenceObjHashMap;
+import com.nfsdb.collections.DirectByteCharSequence;
+import com.nfsdb.collections.ObjectPool;
+import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.logging.Logger;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -45,5 +49,57 @@ public final class Misc {
             }
         }
         return object;
+    }
+
+    public static void urlDecode(long lo, long hi, CharSequenceObjHashMap<CharSequence> map, ObjectPool<DirectByteCharSequence> pool) {
+        long _lo = lo;
+        long rp = lo;
+        long wp = lo;
+        final DirectByteCharSequence temp = pool.next();
+
+        CharSequence name = null;
+
+        while (rp < hi) {
+            char b = (char) Unsafe.getUnsafe().getByte(rp++);
+
+            switch (b) {
+                case '=':
+                    if (_lo < wp) {
+                        name = pool.next().of(_lo, wp);
+                    }
+                    _lo = rp;
+                    wp = rp - 1;
+                    break;
+                case '&':
+                    if (name != null) {
+                        map.put(name, pool.next().of(_lo, wp));
+                        name = null;
+                    }
+                    _lo = rp;
+                    wp = rp - 1;
+                    break;
+                case '+':
+                    Unsafe.getUnsafe().putByte(wp, (byte) ' ');
+                    break;
+                case '%':
+                    try {
+                        if (rp + 1 < hi) {
+                            Unsafe.getUnsafe().putByte(wp++, (byte) Numbers.parseHexInt(temp.of(rp, rp += 2)));
+                            continue;
+                        }
+                    } catch (NumericException ignore) {
+                    }
+                    name = null;
+                    break;
+                default:
+                    Unsafe.getUnsafe().putByte(wp, (byte) b);
+                    break;
+            }
+            wp++;
+        }
+
+        if (_lo < wp && name != null) {
+            map.put(name, pool.next().of(_lo, wp));
+        }
     }
 }
