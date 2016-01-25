@@ -22,6 +22,7 @@
 package com.nfsdb.ql.parser;
 
 import com.nfsdb.JournalWriter;
+import com.nfsdb.collections.ObjectPool;
 import com.nfsdb.exceptions.ParserException;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Interval;
@@ -38,7 +39,8 @@ import org.junit.Test;
 public class QueryFilterAnalyserTest extends AbstractTest {
 
     private final RpnBuilder rpn = new RpnBuilder();
-    private final ExprParser p = new ExprParser();
+    private final ObjectPool<ExprNode> exprNodeObjectPool = new ObjectPool<>(ExprNode.FACTORY, 128);
+    private final ExprParser p = new ExprParser(exprNodeObjectPool);
     private final ExprAstBuilder ast = new ExprAstBuilder();
     private final QueryFilterAnalyser e = new QueryFilterAnalyser();
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
@@ -53,6 +55,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     @Before
     public void setUp() throws Exception {
         w = factory.writer(Quote.class);
+        exprNodeObjectPool.clear();
     }
 
     @Test

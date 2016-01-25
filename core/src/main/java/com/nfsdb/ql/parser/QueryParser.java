@@ -40,20 +40,21 @@ final class QueryParser {
     private static final CharSequenceHashSet aliasStopSet = new CharSequenceHashSet();
     private static final CharSequenceHashSet groupByStopSet = new CharSequenceHashSet();
     private static final CharSequenceObjHashMap<QueryModel.JoinType> joinStartSet = new CharSequenceObjHashMap<>();
-    private final Lexer toks = new Lexer();
-    private final ExprParser exprParser = new ExprParser(toks);
+    private final ObjectPool<ExprNode> exprNodePool = new ObjectPool<>(ExprNode.FACTORY, 128);
+    private final Lexer lexer = new Lexer();
+    private final ExprParser exprParser = new ExprParser(lexer, exprNodePool);
     private final ExprAstBuilder astBuilder = new ExprAstBuilder();
     private final ObjectPool<QueryModel> queryModelPool = new ObjectPool<>(QueryModel.FACTORY, 8);
     private final ObjectPool<QueryColumn> queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 64);
 
     private ParserException err(String msg) {
-        return new ParserException(toks.position(), msg);
+        return new ParserException(lexer.position(), msg);
     }
 
     private ExprNode expectExpr() throws ParserException {
         ExprNode n = expr();
         if (n == null) {
-            throw new ParserException(toks.position(), "Expression expected");
+            throw new ParserException(lexer.position(), "Expression expected");
         }
         return n;
     }
@@ -75,6 +76,14 @@ final class QueryParser {
         return Chars.equals(tok, ')') || Chars.equals(tok, ',');
     }
 
+    private ExprNode literal() {
+        CharSequence tok = optionTok();
+        if (tok == null) {
+            return null;
+        }
+        return exprNodePool.next().of(ExprNode.NodeType.LITERAL, Chars.stripQuotes(tok.toString()), 0, lexer.position());
+    }
+
     private String notTermTok() throws ParserException {
         CharSequence tok = tok();
         if (isFieldTerm(tok)) {
@@ -84,8 +93,8 @@ final class QueryParser {
     }
 
     private CharSequence optionTok() {
-        while (toks.hasNext()) {
-            CharSequence cs = toks.next();
+        while (lexer.hasNext()) {
+            CharSequence cs = lexer.next();
             if (!Chars.equals(cs, ' ')) {
                 return cs;
             }
@@ -96,6 +105,7 @@ final class QueryParser {
     Statement parse(CharSequence query) throws ParserException {
         queryModelPool.clear();
         queryColumnPool.clear();
+        exprNodePool.clear();
         return parseInternal(query);
     }
 
@@ -147,13 +157,13 @@ final class QueryParser {
     }
 
     Statement parseInternal(CharSequence query) throws ParserException {
-        toks.setContent(query);
+        lexer.setContent(query);
         CharSequence tok = tok();
         if (Chars.equals(tok, "create")) {
             return parseCreateStatement();
         }
 
-        toks.unparse();
+        lexer.unparse();
         return new Statement(StatementType.QUERY_JOURNAL, parseQuery(false));
     }
 
@@ -171,29 +181,29 @@ final class QueryParser {
             joinModel.setNestedModel(parseQuery(true));
             expectTok(tok(), ")");
         } else {
-            toks.unparse();
+            lexer.unparse();
             joinModel.setJournalName(expr());
         }
 
         tok = optionTok();
 
         if (tok != null && !aliasStopSet.contains(tok)) {
-            toks.unparse();
+            lexer.unparse();
             joinModel.setAlias(expr());
         } else {
-            toks.unparse();
+            lexer.unparse();
         }
 
         tok = optionTok();
 
         if (type == QueryModel.JoinType.CROSS && tok != null && Chars.equals(tok, "on")) {
-            throw new ParserException(toks.position(), "Cross joins cannot have join clauses");
+            throw new ParserException(lexer.position(), "Cross joins cannot have join clauses");
         }
 
         switch (type) {
             case ASOF:
                 if (tok == null || !Chars.equals("on", tok)) {
-                    toks.unparse();
+                    lexer.unparse();
                     break;
                 }
                 // intentional fall through
@@ -202,12 +212,12 @@ final class QueryParser {
                 expectTok(tok, "on");
                 ExprNode expr = expr();
                 if (expr == null) {
-                    throw new ParserException(toks.position(), "Expression expected");
+                    throw new ParserException(lexer.position(), "Expression expected");
                 }
                 joinModel.setJoinCriteria(expr);
                 break;
             default:
-                toks.unparse();
+                lexer.unparse();
         }
 //
 //        if (type != QueryModel.JoinType.INNER) {
@@ -312,8 +322,8 @@ final class QueryParser {
             // check if tok is not "where" - should be alias
 
             if (tok != null && !aliasStopSet.contains(tok)) {
-                toks.unparse();
-                model.setAlias(expr());
+                lexer.unparse();
+                model.setAlias(literal());
                 tok = optionTok();
             }
 
@@ -322,21 +332,17 @@ final class QueryParser {
             tok = parseTimestamp(tok, model);
         } else {
 
-            toks.unparse();
+            lexer.unparse();
 
             // expect (journal name)
 
-            model.setJournalName(expr());
+            model.setJournalName(literal());
 
             tok = optionTok();
 
             if (tok != null && !aliasStopSet.contains(tok)) {
-                toks.unparse();
-                ExprNode alias = expr();
-                if (alias != null && alias.type != ExprNode.NodeType.LITERAL) {
-                    throw err("Missing where clause?");
-                }
-                model.setAlias(alias);
+                lexer.unparse();
+                model.setAlias(literal());
                 tok = optionTok();
             }
 
@@ -386,7 +392,7 @@ final class QueryParser {
                     throw err("Expression expected");
                 }
 
-                toks.unparse();
+                lexer.unparse();
                 model.addOrderBy(expr());
                 tok = optionTok();
             } while (tok != null && Chars.equals(tok, ","));
@@ -406,7 +412,7 @@ final class QueryParser {
         }
 
         if (subQuery) {
-            toks.unparse();
+            lexer.unparse();
         } else if (tok != null) {
             throw err("Unexpected token: " + tok);
         }
@@ -458,7 +464,7 @@ final class QueryParser {
     }
 
     private CharSequence tok() throws ParserException {
-        CharSequence tok = toks.optionTok();
+        CharSequence tok = lexer.optionTok();
         if (tok == null) {
             throw err("Unexpected end of input");
         }
@@ -478,6 +484,7 @@ final class QueryParser {
         aliasStopSet.add("on");
         aliasStopSet.add("timestamp");
         aliasStopSet.add("limit");
+        aliasStopSet.add(")");
         //
         groupByStopSet.add("order");
         groupByStopSet.add(")");

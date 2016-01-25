@@ -35,6 +35,27 @@ public class QueryParserTest extends AbstractTest {
     private final QueryParser parser = new QueryParser();
 
     @Test
+    public void testAliasWithSpace() throws Exception {
+        Statement statement = parser.parse("x 'b a' where x > 1");
+        Assert.assertEquals("b a", statement.getQueryModel().getAlias().token);
+    }
+
+    @Test
+    public void testAliasWithSpace2() throws Exception {
+        Statement statement = parser.parse("(x where a > 1) 'b a' where x > 1");
+        Assert.assertEquals("b a", statement.getQueryModel().getAlias().token);
+    }
+
+    @Test
+    public void testAliasWithSpacex() throws Exception {
+        try {
+            parser.parse("from x 'a b' where x > 1");
+        } catch (ParserException e) {
+            Assert.assertEquals(7, e.getPosition());
+        }
+    }
+
+    @Test
     public void testCrossJoin() throws Exception {
         try {
             parser.parse("select x from a a cross join b on b.x = a.x");
@@ -281,8 +302,7 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select id, x + 10, x from tab id ~ 'HBRO'");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertEquals(35, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("issing where"));
+            Assert.assertEquals(33, e.getPosition());
         }
     }
 
@@ -393,6 +413,13 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getAlias());
         Assert.assertEquals("+", statement.getQueryModel().getColumns().get(0).getAst().token);
         Assert.assertEquals("t", statement.getQueryModel().getJournalName().token);
+    }
+
+    @Test
+    public void testSimpleSubquery() throws Exception {
+        Statement statement = parser.parse("(x) where x > 1");
+        Assert.assertNotNull(statement.getQueryModel().getNestedModel());
+        Assert.assertEquals("x", statement.getQueryModel().getNestedModel().getJournalName().token);
     }
 
     @Test

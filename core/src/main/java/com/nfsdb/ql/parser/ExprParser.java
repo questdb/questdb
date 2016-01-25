@@ -35,33 +35,32 @@ import java.util.Deque;
 public class ExprParser {
 
     private static final IntHashSet nonLiteralBranches = new IntHashSet();
-    private final Lexer toks;
+    private final Lexer lexer;
     private final Deque<ExprNode> opStack = new ArrayDeque<>();
     private final IntStack paramCountStack = new IntStack();
-    private final ObjectPool<ExprNode> exprNodePool = new ObjectPool<>(ExprNode.FACTORY, 128);
+    private final ObjectPool<ExprNode> exprNodePool;
 
-    public ExprParser(Lexer toks) {
-        this.toks = toks;
-        toks.defineSymbol(" ");
-        toks.defineSymbol("(");
-        toks.defineSymbol(")");
-        toks.defineSymbol(",");
+    public ExprParser(Lexer lexer, ObjectPool<ExprNode> exprNodePool) {
+        this.lexer = lexer;
+        this.exprNodePool = exprNodePool;
+        lexer.defineSymbol(" ");
+        lexer.defineSymbol("(");
+        lexer.defineSymbol(")");
+        lexer.defineSymbol(",");
         for (int i = 0, k = ExprOperator.operators.size(); i < k; i++) {
             ExprOperator op = ExprOperator.operators.getQuick(i);
             if (op.symbol) {
-                toks.defineSymbol(op.token);
+                lexer.defineSymbol(op.token);
             }
         }
     }
 
-    @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
-    public ExprParser() {
-        this(new Lexer());
+    public ExprParser(ObjectPool<ExprNode> exprNodePool) {
+        this(new Lexer(), exprNodePool);
     }
 
     public void parseExpr(CharSequence in, ExprListener listener) throws ParserException {
-        exprNodePool.clear();
-        toks.setContent(in);
+        lexer.setContent(in);
         parseExpr(listener);
     }
 
@@ -82,7 +81,7 @@ public class ExprParser {
         Branch thisBranch = Branch.NONE;
 
         OUT:
-        while ((tok = toks.optionTok()) != null) {
+        while ((tok = lexer.optionTok()) != null) {
             prevChar = thisChar;
             thisChar = tok.charAt(0);
             prevBranch = thisBranch;
@@ -91,12 +90,12 @@ public class ExprParser {
                 case ',':
                     thisBranch = Branch.COMMA;
                     if (prevChar == ',') {
-                        throw new ParserException(toks.position(), "Missing argument");
+                        throw new ParserException(lexer.position(), "Missing argument");
                     }
 
                     if (braceCount == 0) {
                         // comma outside of braces
-                        toks.unparse();
+                        lexer.unparse();
                         break OUT;
                     }
 
@@ -122,15 +121,15 @@ public class ExprParser {
                     // If the token is a left parenthesis, then push it onto the stack.
                     paramCountStack.push(paramCount);
                     paramCount = 0;
-                    opStack.push(exprNodePool.next().of(ExprNode.NodeType.CONTROL, "(", Integer.MAX_VALUE, toks.position()));
+                    opStack.push(exprNodePool.next().of(ExprNode.NodeType.CONTROL, "(", Integer.MAX_VALUE, lexer.position()));
                     break;
 
                 case ')':
                     if (prevChar == ',') {
-                        throw new ParserException(toks.position(), "Missing argument");
+                        throw new ParserException(lexer.position(), "Missing argument");
                     }
                     if (braceCount == 0) {
-                        toks.unparse();
+                        lexer.unparse();
                         break OUT;
                     }
 
@@ -159,7 +158,7 @@ public class ExprParser {
                 case '`':
                     thisBranch = Branch.LAMBDA;
                     // If the token is a number, then add it to the output queue.
-                    listener.onNode(exprNodePool.next().of(ExprNode.NodeType.LAMBDA, tok.toString(), 0, toks.position()));
+                    listener.onNode(exprNodePool.next().of(ExprNode.NodeType.LAMBDA, tok.toString(), 0, lexer.position()));
                     break;
                 case '0':
                 case '1':
@@ -178,7 +177,7 @@ public class ExprParser {
                     if ((thisChar != 'N' && thisChar != 'n') || Chars.equals("NaN", tok) || Chars.equals("null", tok)) {
                         thisBranch = Branch.CONSTANT;
                         // If the token is a number, then add it to the output queue.
-                        listener.onNode(exprNodePool.next().of(ExprNode.NodeType.CONSTANT, tok.toString(), 0, toks.position()));
+                        listener.onNode(exprNodePool.next().of(ExprNode.NodeType.CONSTANT, tok.toString(), 0, lexer.position()));
                         break;
                     }
                 default:
@@ -225,7 +224,7 @@ public class ExprParser {
                                 op.type == ExprOperator.OperatorType.SET ? ExprNode.NodeType.SET_OPERATION : ExprNode.NodeType.OPERATION,
                                 op.token,
                                 op.precedence,
-                                toks.position()
+                                lexer.position()
                         );
                         switch (type) {
                             case UNARY:
@@ -238,11 +237,11 @@ public class ExprParser {
                     } else if (!nonLiteralBranches.contains(thisBranch.ordinal())) {
                         thisBranch = Branch.LITERAL;
                         // If the token is a function token, then push it onto the stack.
-                        opStack.push(exprNodePool.next().of(ExprNode.NodeType.LITERAL, Chars.toString(tok), Integer.MIN_VALUE, toks.position()));
+                        opStack.push(exprNodePool.next().of(ExprNode.NodeType.LITERAL, Chars.toString(tok), Integer.MIN_VALUE, lexer.position()));
                     } else {
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input
-                        toks.unparse();
+                        lexer.unparse();
                         break OUT;
                     }
             }

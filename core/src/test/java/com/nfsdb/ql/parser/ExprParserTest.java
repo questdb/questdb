@@ -21,14 +21,23 @@
 
 package com.nfsdb.ql.parser;
 
+import com.nfsdb.collections.ObjectPool;
 import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ql.model.ExprNode;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 public class ExprParserTest {
 
-    private final ExprParser parser = new ExprParser();
+    private final ObjectPool<ExprNode> exprNodeObjectPool = new ObjectPool<>(ExprNode.FACTORY, 128);
+    private final ExprParser parser = new ExprParser(exprNodeObjectPool);
+
+    @Before
+    public void setUp() throws Exception {
+        exprNodeObjectPool.clear();
+    }
 
     @Test
     public void testCommaExit() throws Exception {
@@ -58,18 +67,21 @@ public class ExprParserTest {
     @Test
     public void testIn() throws Exception {
         x("abcin", "a in (b,c)");
-
     }
 
     @Test
     public void testInOperator() throws Exception {
         x("a10=bxyinand", "a = 10 and b in (x,y)");
-
     }
 
     @Test
     public void testLambda() throws Exception {
         x("a`blah blah`inyand", "a in (`blah blah`) and y");
+    }
+
+    @Test
+    public void testLiteralAndConstant() throws Exception {
+        x("'a b'x", "x 'a b'");
     }
 
     @Test
