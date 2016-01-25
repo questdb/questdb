@@ -23,6 +23,7 @@ package com.nfsdb.concurrent;
 
 import com.nfsdb.collections.ObjectFactory;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -270,6 +271,7 @@ public class ConcurrentTest {
     }
 
     @Test
+    @Ignore
     public void testOneToParallelSubscriber() throws Exception {
         System.out.println("testOneToParallelSubscriber");
         int cycle = 1024;
