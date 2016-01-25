@@ -85,6 +85,7 @@ public class LoggerFactoryTest {
                     logger.xinfo()._("test ")._(i).$();
                 }
 
+                Thread.sleep(100);
                 Assert.assertTrue(x.length() > 0);
                 TestUtils.assertEquals(x, y);
             } finally {
@@ -162,6 +163,9 @@ public class LoggerFactoryTest {
 
             AsyncLogger logger1 = factory.create("com.nfsdb.net.Y");
             logger1.xinfo()._("this is for network").$();
+
+            // let async writer catch up in a busy environment
+            Thread.sleep(100);
 
             Assert.assertEquals("this is for network" + Misc.EOL, Files.readStringFromFile(a));
             Assert.assertEquals("this is for collections" + Misc.EOL, Files.readStringFromFile(b));

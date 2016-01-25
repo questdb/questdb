@@ -22,6 +22,7 @@
 package com.nfsdb.concurrent;
 
 import com.nfsdb.misc.Unsafe;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class FanOut implements Barrier {
     private static final long BARRIERS;
@@ -47,10 +48,15 @@ public class FanOut implements Barrier {
         } while (!Unsafe.getUnsafe().compareAndSwapObject(this, BARRIERS, barriers, _new));
     }
 
+    @SuppressFBWarnings("CVAA_CONTRAVARIANT_ELEMENT_ASSIGNMENT")
+    // this is firebug bug, the code does not write to array elements
+    // it has to take a copy of this.barriers as this reference can change while
+    // loop is in flight
     @Override
     public long availableIndex(long lo) {
-        for (int i = 0, n = this.barriers.length; i < n; i++) {
-            long cursor = Unsafe.arrayGet(this.barriers, i).availableIndex(lo);
+        Barrier[] barriers = this.barriers;
+        for (int i = 0, n = barriers.length; i < n; i++) {
+            long cursor = Unsafe.arrayGet(barriers, i).availableIndex(lo);
             lo = lo < cursor ? lo : cursor;
         }
         return lo;
