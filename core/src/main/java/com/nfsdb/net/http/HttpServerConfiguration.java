@@ -21,7 +21,6 @@
 
 package com.nfsdb.net.http;
 
-import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.logging.Logger;
 import com.nfsdb.misc.Numbers;
@@ -49,11 +48,13 @@ public class HttpServerConfiguration {
     private File dbPath = new File("db");
     private File mimeTypes = new File("conf/mime.types");
     private File httpPublic = new File("public");
+    private File accessLog = new File("log/access.log");
+    private File errorLog = new File("log/error.log");
 
     public HttpServerConfiguration() {
     }
 
-    @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS")
+    @SuppressFBWarnings({"CC_CYCLOMATIC_COMPLEXITY", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
     public HttpServerConfiguration(File nfsdbConf) throws Exception {
 
         final Properties props = new Properties();
@@ -113,21 +114,36 @@ public class HttpServerConfiguration {
             this.httpPublic = mkdirs(normalize(root, this.httpPublic));
         }
 
+        if ((s = props.getProperty("http.log.access")) != null) {
+            this.accessLog = normalize(root, new File(s));
+        } else {
+            this.accessLog = normalize(root, this.accessLog);
+        }
+        mkdirs(this.accessLog.getParentFile());
+
+        if ((s = props.getProperty("http.log.error")) != null) {
+            this.errorLog = normalize(root, new File(s));
+        } else {
+            this.errorLog = normalize(root, this.errorLog);
+        }
+        mkdirs(this.accessLog.getParentFile());
+
+
         // SSL section
         sslConfig.setSecure("true".equals(props.getProperty("http.ssl.enabled")));
         if (sslConfig.isSecure()) {
             if ((s = props.getProperty("http.ssl.keystore.location")) == null) {
-                throw new JournalConfigurationException("http.ssl.keystore.location is undefined");
+                throw new IllegalArgumentException("http.ssl.keystore.location is undefined");
             }
 
             File keystore = normalize(root, new File(s));
 
             if (!keystore.exists()) {
-                throw new JournalConfigurationException("http.ssl.keystore.location does not exist");
+                throw new IllegalArgumentException("http.ssl.keystore.location does not exist");
             }
 
             if (!keystore.isFile()) {
-                throw new JournalConfigurationException("http.ssl.keystore.location is not a file");
+                throw new IllegalArgumentException("http.ssl.keystore.location is not a file");
             }
 
             try (InputStream is = new FileInputStream(keystore)) {
@@ -138,8 +154,16 @@ public class HttpServerConfiguration {
         }
     }
 
+    public File getAccessLog() {
+        return accessLog;
+    }
+
     public File getDbPath() {
         return dbPath;
+    }
+
+    public File getErrorLog() {
+        return errorLog;
     }
 
     public int getHttpBufReqContent() {

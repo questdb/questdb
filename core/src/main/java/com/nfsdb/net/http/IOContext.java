@@ -25,6 +25,7 @@ import com.nfsdb.collections.AssociativeCache;
 import com.nfsdb.collections.FlyweightCharSequence;
 import com.nfsdb.collections.Mutable;
 import com.nfsdb.collections.ObjectFactory;
+import com.nfsdb.concurrent.WorkerContext;
 import com.nfsdb.exceptions.DisconnectedChannelException;
 import com.nfsdb.exceptions.SlowWritableChannelException;
 import com.nfsdb.factory.configuration.RecordMetadata;
@@ -47,7 +48,7 @@ public class IOContext implements Closeable, Mutable {
     public final Request request;
     public final FlyweightCharSequence ext = new FlyweightCharSequence();
     private final Response response;
-    public IOWorkerContext threadContext;
+    public WorkerContext threadContext;
     // multipart generic
     public boolean chunky = false;
     // file upload fields

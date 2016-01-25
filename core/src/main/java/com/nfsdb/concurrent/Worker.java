@@ -28,20 +28,19 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.locks.LockSupport;
 
-public class Worker<T> extends Thread {
+public class Worker extends Thread {
     private final static long RUNNING_OFFSET;
     private static final long YIELD_THRESHOLD = 100000L;
     private static final long SLEEP_THRESHOLD = 30000000L;
-    private final ObjHashSet<? extends Job<T>> jobs;
+    private final ObjHashSet<? extends Job> jobs;
     private final CountDownLatch haltLatch;
-    private final T context;
+    private final WorkerContext context = new WorkerContext();
     @SuppressWarnings("FieldCanBeLocal")
     private volatile int running = 0;
 
-    public Worker(ObjHashSet<? extends Job<T>> jobs, CountDownLatch haltLatch, T context) {
+    public Worker(ObjHashSet<? extends Job> jobs, CountDownLatch haltLatch) {
         this.jobs = jobs;
         this.haltLatch = haltLatch;
-        this.context = context;
     }
 
     public void halt() {

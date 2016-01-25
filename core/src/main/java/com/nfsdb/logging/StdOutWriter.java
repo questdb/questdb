@@ -28,7 +28,7 @@ import com.nfsdb.misc.Files;
 
 import java.io.Closeable;
 
-public class StdOutWriter extends SynchronizedJob<Object> implements Closeable, LogWriter {
+public class StdOutWriter extends SynchronizedJob implements Closeable, LogWriter {
     private static final long fd = 1;
     private final RingQueue<LogRecordSink> ring;
     private final Sequence subSeq;

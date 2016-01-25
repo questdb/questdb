@@ -33,7 +33,7 @@ import java.net.StandardSocketOptions;
 import java.nio.channels.*;
 import java.util.Set;
 
-public class IOLoopJob extends SynchronizedJob<IOWorkerContext> {
+public class IOLoopJob extends SynchronizedJob {
     private static final Logger LOGGER = Logger.getLogger(IOLoopJob.class);
     private final Selector selector;
     private final SelectionKey serverKey;

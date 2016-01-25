@@ -35,6 +35,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.net.SocketAddress;
 import java.net.StandardSocketOptions;
 import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
@@ -89,6 +90,14 @@ public class Request implements Closeable, Mutable {
         return multipartParser;
     }
 
+    public SocketAddress getSocketAddress() {
+        try {
+            return channel.getChannel().getRemoteAddress();
+        } catch (IOException ignore) {
+            return null;
+        }
+    }
+
     public CharSequence getUrl() {
         return hb.getUrl();
     }
@@ -133,7 +142,6 @@ public class Request implements Closeable, Mutable {
         in.clear();
         ByteBuffers.copyNonBlocking(channel, in, SO_READ_RETRY_COUNT);
         in.flip();
-//        ByteBuffers.dump(in);
     }
 
     private void readHeaders() throws HeadersTooLargeException, IOException, MalformedHeaderException {

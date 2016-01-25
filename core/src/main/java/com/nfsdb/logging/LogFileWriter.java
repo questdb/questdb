@@ -32,7 +32,7 @@ import com.nfsdb.misc.Unsafe;
 
 import java.io.Closeable;
 
-public class LogFileWriter extends SynchronizedJob<Object> implements Closeable, LogWriter {
+public class LogFileWriter extends SynchronizedJob implements Closeable, LogWriter {
     private static final int DEFAULT_BUFFER_SIZE = 1024 * 1024;
     private final RingQueue<LogRecordSink> ring;
     private final Sequence subSeq;

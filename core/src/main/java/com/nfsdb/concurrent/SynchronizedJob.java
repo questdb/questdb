@@ -23,14 +23,14 @@ package com.nfsdb.concurrent;
 
 import com.nfsdb.misc.Unsafe;
 
-public abstract class SynchronizedJob<T> implements Job<T> {
+public abstract class SynchronizedJob implements Job {
     private static final long LOCKED_OFFSET;
 
     @SuppressWarnings({"unused", "FieldCanBeLocal"})
     private volatile int locked = 0;
 
     @Override
-    public boolean run(T context) {
+    public boolean run(WorkerContext context) {
         if (Unsafe.getUnsafe().compareAndSwapInt(this, LOCKED_OFFSET, 0, 1)) {
             try {
                 return _run();

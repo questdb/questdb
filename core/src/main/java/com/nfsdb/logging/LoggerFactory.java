@@ -56,7 +56,7 @@ public class LoggerFactory implements Closeable {
     private final CharSequenceObjHashMap<Holder> error = new CharSequenceObjHashMap<>();
     private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
     private final CountDownLatch workerHaltLatch = new CountDownLatch(1);
-    private Worker<Object> worker = null;
+    private Worker worker = null;
     private boolean configured = false;
 
     public static void configureFromSystemProperties(LoggerFactory factory) {
@@ -132,6 +132,18 @@ public class LoggerFactory implements Closeable {
         }
     }
 
+    public void add(String scope, int level, LogWriterFactory factory) {
+        add(new LogWriterConfig(scope, level, factory, DEFAULT_QUEUE_DEPTH, DEFAULT_MSG_SIZE));
+    }
+
+    public void add(int level, LogWriterFactory factory) {
+        add(new LogWriterConfig(level, factory, DEFAULT_QUEUE_DEPTH, DEFAULT_MSG_SIZE));
+    }
+
+    public void add(LogWriterFactory factory) {
+        add(new LogWriterConfig(0, factory, DEFAULT_QUEUE_DEPTH, DEFAULT_MSG_SIZE));
+    }
+
     public void bind() {
         if (configured) {
             return;
@@ -170,6 +182,10 @@ public class LoggerFactory implements Closeable {
         return new AsyncLogger(dbg.ring, dbg.lSeq, inf.ring, inf.lSeq, err.ring, err.lSeq);
     }
 
+    public ObjHashSet<LogWriter> getJobs() {
+        return jobs;
+    }
+
     public void haltThread() {
         if (worker != null) {
             worker.halt();
@@ -182,7 +198,7 @@ public class LoggerFactory implements Closeable {
     }
 
     public void startThread() {
-        this.worker = new Worker<>(jobs, workerHaltLatch, null);
+        this.worker = new Worker(jobs, workerHaltLatch);
         worker.setDaemon(true);
         worker.setName("nfsdb-log-writer");
         worker.start();
@@ -321,12 +337,12 @@ public class LoggerFactory implements Closeable {
     }
 
     private void configureDefaultWriter() {
-        add(new LogWriterConfig("", LOG_LEVEL_INFO | LOG_LEVEL_ERROR, new LogWriterFactory() {
+        add(LOG_LEVEL_INFO | LOG_LEVEL_ERROR, new LogWriterFactory() {
             @Override
             public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
                 return new StdOutWriter(ring, seq);
             }
-        }, DEFAULT_QUEUE_DEPTH, DEFAULT_MSG_SIZE));
+        });
         bind();
     }
 

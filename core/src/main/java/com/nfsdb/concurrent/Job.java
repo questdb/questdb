@@ -21,6 +21,6 @@
 
 package com.nfsdb.concurrent;
 
-public interface Job<T> {
-    boolean run(T context);
+public interface Job {
+    boolean run(WorkerContext context);
 }

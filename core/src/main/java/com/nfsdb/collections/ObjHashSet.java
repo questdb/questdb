@@ -70,6 +70,12 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
         clear();
     }
 
+    public void addAll(ObjHashSet<T> that) {
+        for (int i = 0, n = that.size(); i < n; i++) {
+            this.add(that.get(i));
+        }
+    }
+
     public T get(int index) {
         return list.getQuick(index);
     }

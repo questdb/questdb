@@ -24,15 +24,18 @@ package com.nfsdb.net.http;
 import com.nfsdb.concurrent.Job;
 import com.nfsdb.concurrent.RingQueue;
 import com.nfsdb.concurrent.Sequence;
+import com.nfsdb.concurrent.WorkerContext;
 import com.nfsdb.exceptions.*;
+import com.nfsdb.logging.AsyncLogger;
+import com.nfsdb.logging.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.channels.SelectionKey;
 
-public class IOHttpJob implements Job<IOWorkerContext> {
+public class IOHttpJob implements Job {
     // todo: extract config
     public static final int SO_WRITE_RETRY_COUNT = 10;
-
+    private final static AsyncLogger ACCESS = LoggerFactory.getLogger("access");
     private final RingQueue<IOEvent> ioQueue;
     private final Sequence ioSequence;
     private final IOLoopJob loop;
@@ -46,7 +49,7 @@ public class IOHttpJob implements Job<IOWorkerContext> {
     }
 
     @Override
-    public boolean run(IOWorkerContext context) {
+    public boolean run(WorkerContext context) {
         long cursor = ioSequence.next();
         if (cursor < 0) {
             return false;
@@ -80,6 +83,7 @@ public class IOHttpJob implements Job<IOWorkerContext> {
         ChannelStatus status = ChannelStatus.READ;
         try {
 
+            boolean log = r.isIncomplete();
             if ((op & SelectionKey.OP_READ) != 0) {
                 r.read();
             }
@@ -87,6 +91,11 @@ public class IOHttpJob implements Job<IOWorkerContext> {
             if (r.getUrl() == null) {
                 sr.send(400);
             } else {
+
+                if (log && !r.isIncomplete()) {
+                    ACCESS.xinfo().$(r.getSocketAddress().toString()).$(" - ").$(r.getUrl()).$();
+                }
+
                 ContextHandler handler = urlMatcher.get(r.getUrl());
                 if (handler != null) {
 

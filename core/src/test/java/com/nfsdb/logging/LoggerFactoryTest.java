@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.logging;
 
@@ -55,26 +55,24 @@ public class LoggerFactoryTest {
         try (LoggerFactory factory = new LoggerFactory()) {
 
             factory.add(
-                    new LogWriterConfig(LoggerFactory.LOG_LEVEL_INFO, new LogWriterFactory() {
+                    LoggerFactory.LOG_LEVEL_INFO, new LogWriterFactory() {
                         @Override
                         public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
                             LogFileWriter w = new LogFileWriter(ring, seq);
                             w.setLocation(x.getAbsolutePath());
                             return w;
                         }
-                    }, LoggerFactory.DEFAULT_QUEUE_DEPTH, LoggerFactory.DEFAULT_MSG_SIZE)
+                    }
             );
 
-            factory.add(
-                    new LogWriterConfig(LoggerFactory.LOG_LEVEL_INFO, new LogWriterFactory() {
-                        @Override
-                        public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
-                            LogFileWriter w = new LogFileWriter(ring, seq);
-                            w.setLocation(y.getAbsolutePath());
-                            return w;
-                        }
-                    }, LoggerFactory.DEFAULT_QUEUE_DEPTH, LoggerFactory.DEFAULT_MSG_SIZE)
-            );
+            factory.add(LoggerFactory.LOG_LEVEL_INFO, new LogWriterFactory() {
+                @Override
+                public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
+                    LogFileWriter w = new LogFileWriter(ring, seq);
+                    w.setLocation(y.getAbsolutePath());
+                    return w;
+                }
+            });
 
             factory.bind();
             factory.startThread();
@@ -134,25 +132,25 @@ public class LoggerFactoryTest {
 
         try (LoggerFactory factory = new LoggerFactory()) {
             factory.add(
-                    new LogWriterConfig("com.nfsdb", LoggerFactory.LOG_LEVEL_INFO, new LogWriterFactory() {
+                    "com.nfsdb", LoggerFactory.LOG_LEVEL_INFO, new LogWriterFactory() {
                         @Override
                         public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
                             LogFileWriter w = new LogFileWriter(ring, seq);
                             w.setLocation(a.getAbsolutePath());
                             return w;
                         }
-                    }, LoggerFactory.DEFAULT_QUEUE_DEPTH, LoggerFactory.DEFAULT_MSG_SIZE)
+                    }
             );
 
             factory.add(
-                    new LogWriterConfig("com.nfsdb.collections", LoggerFactory.LOG_LEVEL_INFO, new LogWriterFactory() {
+                    "com.nfsdb.collections", LoggerFactory.LOG_LEVEL_INFO, new LogWriterFactory() {
                         @Override
                         public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
                             LogFileWriter w = new LogFileWriter(ring, seq);
                             w.setLocation(b.getAbsolutePath());
                             return w;
                         }
-                    }, LoggerFactory.DEFAULT_QUEUE_DEPTH, LoggerFactory.DEFAULT_MSG_SIZE)
+                    }
             );
 
             factory.bind();
@@ -175,14 +173,12 @@ public class LoggerFactoryTest {
     @Test
     public void testProgrammaticConfig() throws Exception {
         try (LoggerFactory factory = new LoggerFactory()) {
-            factory.add(
-                    new LogWriterConfig(LoggerFactory.LOG_LEVEL_INFO | LoggerFactory.LOG_LEVEL_DEBUG, new LogWriterFactory() {
-                        @Override
-                        public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
-                            return new StdOutWriter(ring, seq);
-                        }
-                    }, LoggerFactory.DEFAULT_QUEUE_DEPTH, LoggerFactory.DEFAULT_MSG_SIZE)
-            );
+            factory.add(LoggerFactory.LOG_LEVEL_INFO | LoggerFactory.LOG_LEVEL_DEBUG, new LogWriterFactory() {
+                @Override
+                public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
+                    return new StdOutWriter(ring, seq);
+                }
+            });
 
             factory.bind();
 
@@ -224,14 +220,12 @@ public class LoggerFactoryTest {
     @Test
     public void testZeroLevel() throws Exception {
         try (LoggerFactory factory = new LoggerFactory()) {
-            factory.add(
-                    new LogWriterConfig(0, new LogWriterFactory() {
-                        @Override
-                        public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
-                            return new StdOutWriter(ring, seq);
-                        }
-                    }, LoggerFactory.DEFAULT_QUEUE_DEPTH, LoggerFactory.DEFAULT_MSG_SIZE)
-            );
+            factory.add(new LogWriterFactory() {
+                @Override
+                public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
+                    return new StdOutWriter(ring, seq);
+                }
+            });
 
             factory.bind();
 

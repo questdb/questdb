@@ -38,7 +38,7 @@ import java.util.concurrent.CountDownLatch;
 public class HttpServer {
     private final static int ioQueueSize = 1024;
     private final InetSocketAddress address;
-    private final ObjList<Worker<IOWorkerContext>> workers;
+    private final ObjList<Worker> workers;
     private final CountDownLatch haltLatch;
     private final int workerCount;
     private final CountDownLatch startComplete = new CountDownLatch(1);
@@ -76,6 +76,10 @@ public class HttpServer {
     }
 
     public void start() throws IOException {
+        start(null);
+    }
+
+    public void start(ObjHashSet<? extends Job> extraJobs) throws IOException {
         this.running = true;
         this.channel = ServerSocketChannel.open();
         this.channel.bind(address);
@@ -93,13 +97,16 @@ public class HttpServer {
         IOLoopJob ioLoop = new IOLoopJob(selector, channel.register(selector, SelectionKey.OP_ACCEPT), ioQueue, ioPubSequence, clock, configuration);
         IOHttpJob ioHttp = new IOHttpJob(ioQueue, ioSubSequence, ioLoop, urlMatcher);
 
-        ObjHashSet<Job<IOWorkerContext>> jobs = new ObjHashSet<>();
+        ObjHashSet<Job> jobs = new ObjHashSet<>();
         jobs.add(ioLoop);
         jobs.add(ioHttp);
+        if (extraJobs != null) {
+            jobs.addAll(extraJobs);
+        }
 
         for (int i = 0; i < workerCount; i++) {
-            Worker<IOWorkerContext> w;
-            workers.add(w = new Worker<>(jobs, haltLatch, new IOWorkerContext()));
+            Worker w;
+            workers.add(w = new Worker(jobs, haltLatch));
             w.start();
         }
 

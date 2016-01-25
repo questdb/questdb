@@ -21,8 +21,10 @@
 
 package com.nfsdb;
 
+import com.nfsdb.concurrent.RingQueue;
+import com.nfsdb.concurrent.Sequence;
 import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.*;
 import com.nfsdb.misc.Os;
 import com.nfsdb.net.http.HttpServer;
 import com.nfsdb.net.http.HttpServerConfiguration;
@@ -33,6 +35,7 @@ import com.nfsdb.net.http.handlers.ImportHandler;
 import com.nfsdb.net.http.handlers.JsonHandler;
 import com.nfsdb.net.http.handlers.NativeStaticContentHandler;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+
 import java.io.File;
 import java.io.IOException;
 import java.net.URISyntaxException;
@@ -69,6 +72,8 @@ public class BootstrapMain {
         }
 
         final HttpServerConfiguration configuration = new HttpServerConfiguration(conf);
+        configureLoggers(configuration);
+
         final SimpleUrlMatcher matcher = new SimpleUrlMatcher();
         JournalFactory factory = new JournalFactory(configuration.getDbPath().getAbsolutePath());
         matcher.put("/imp", new ImportHandler(factory));
@@ -77,7 +82,7 @@ public class BootstrapMain {
         matcher.setDefaultHandler(new NativeStaticContentHandler(configuration.getHttpPublic(), new MimeTypes(configuration.getMimeTypes())));
 
         HttpServer server = new HttpServer(configuration, matcher);
-        server.start();
+        server.start(LoggerFactory.INSTANCE.getJobs());
 
         StringBuilder welcome = new StringBuilder();
         welcome.append("Server started on port: ").append(configuration.getHttpPort());
@@ -86,6 +91,29 @@ public class BootstrapMain {
         }
 
         LOGGER.info(welcome);
+    }
+
+    private static void configureLoggers(final HttpServerConfiguration configuration) {
+        LoggerFactory.INSTANCE.add("access", 0, new LogWriterFactory() {
+            @Override
+            public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
+                LogFileWriter w = new LogFileWriter(ring, seq);
+                w.setLocation(configuration.getAccessLog().getAbsolutePath());
+                return w;
+            }
+        });
+
+        LoggerFactory.INSTANCE.add(LoggerFactory.LOG_LEVEL_INFO | LoggerFactory.LOG_LEVEL_ERROR,
+                new LogWriterFactory() {
+                    @Override
+                    public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
+                        LogFileWriter w = new LogFileWriter(ring, seq);
+                        w.setLocation(configuration.getAccessLog().getAbsolutePath());
+                        return w;
+                    }
+                });
+
+        LoggerFactory.INSTANCE.bind();
     }
 
     private static void extractSite(String dir) throws URISyntaxException, IOException {

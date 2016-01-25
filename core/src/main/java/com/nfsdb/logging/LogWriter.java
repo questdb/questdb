@@ -23,6 +23,6 @@ package com.nfsdb.logging;
 
 import com.nfsdb.concurrent.Job;
 
-public interface LogWriter extends Job<Object> {
+public interface LogWriter extends Job {
     void bindProperties();
 }
