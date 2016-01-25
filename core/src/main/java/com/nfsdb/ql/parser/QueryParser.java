@@ -332,7 +332,11 @@ final class QueryParser {
 
             if (tok != null && !aliasStopSet.contains(tok)) {
                 toks.unparse();
-                model.setAlias(expr());
+                ExprNode alias = expr();
+                if (alias != null && alias.type != ExprNode.NodeType.LITERAL) {
+                    throw err("Missing where clause?");
+                }
+                model.setAlias(alias);
                 tok = optionTok();
             }
 

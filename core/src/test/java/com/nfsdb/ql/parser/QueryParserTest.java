@@ -276,6 +276,17 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
+    public void testMissingWhere() throws Exception {
+        try {
+            parser.parse("select id, x + 10, x from tab id ~ 'HBRO'");
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(35, e.getPosition());
+            Assert.assertTrue(e.getMessage().contains("issing where"));
+        }
+    }
+
+    @Test
     public void testMixedFieldsSubQuery() throws Exception {
         Statement statement = parser.parse("select x, y from (select z from tab t2 latest by x where x > 100) t1 " +
                 "where y > 0");
