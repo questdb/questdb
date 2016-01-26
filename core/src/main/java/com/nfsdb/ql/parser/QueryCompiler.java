@@ -632,11 +632,6 @@ public class QueryCompiler {
     @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT", "CC_CYCLOMATIC_COMPLEXITY"})
     private RecordSource<? extends Record> compileSingleJournal(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
 
-        // analyse limit first as it is easy win
-        if (model.getLimitLo() != null || model.getLimitHi() != null) {
-            analyseLimit(model);
-        }
-
         RecordMetadata metadata = model.getMetadata();
         JournalMetadata journalMetadata;
 
@@ -810,6 +805,11 @@ public class QueryCompiler {
     }
 
     private RecordSource<? extends Record> compileSingleOrSubQuery(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+        // analyse limit first as it is easy win
+        if (model.getLimitLo() != null || model.getLimitHi() != null) {
+            analyseLimit(model);
+        }
+
         return model.getJournalName() != null ? compileSingleJournal(model, factory) : compileSubQuery(model, factory);
     }
 

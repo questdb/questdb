@@ -57,7 +57,6 @@ import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
 import org.apache.http.ssl.SSLContextBuilder;
 import org.apache.http.ssl.TrustStrategy;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -241,6 +240,24 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
+    public void testJsonEncodeControlChars() throws Exception {
+        generateJournal();
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            put("/js", new JsonHandler(factory));
+        }});
+        server.start();
+        try {
+            String newLineStr = "string with with new line";
+            String query = "select '" + newLineStr + "' id from tab \n limit 1";
+            QueryResponse queryResponse = download("select '" + newLineStr + "' id from tab \n limit 1");
+            Assert.assertEquals(query, queryResponse.query);
+            Assert.assertEquals(newLineStr, queryResponse.result[0].id);
+        } finally {
+            server.halt();
+        }
+    }
+
+    @Test
     public void testLargeChunkedPlainDownload() throws Exception {
         final int count = 3;
         final int sz = 16 * 1026 * 1024 - 4;
@@ -310,25 +327,6 @@ public class HttpServerTest extends AbstractJournalTest {
             setDefaultHandler(new NativeStaticContentHandler(temp.getRoot(), new MimeTypes(configuration.getMimeTypes())));
         }});
         assertRanges(configuration, server);
-    }
-
-    @Test
-    @Ignore
-    public void testJsonEncodeControlChars() throws Exception {
-        generateJournal();
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", new JsonHandler(factory));
-        }});
-        server.start();
-        try {
-            String newLineStr = "string with with new line";
-            String query = "select '" + newLineStr + "' id from tab limit 1";
-            QueryResponse queryResponse = download("select '" + newLineStr + "' id from tab \n limit 1");
-            Assert.assertEquals(query, queryResponse.query);
-            Assert.assertEquals(newLineStr, queryResponse.result[0].id);
-        } finally {
-            server.halt();
-        }
     }
 
     @Test

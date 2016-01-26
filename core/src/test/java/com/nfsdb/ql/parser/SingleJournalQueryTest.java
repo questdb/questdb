@@ -1866,6 +1866,20 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
+    public void testNewLine() throws Exception {
+        createTabWithNaNs2();
+        final String expected = "YDVRVNGSTEQODRZ\t-99\n";
+        assertThat(expected, "select id, z from (tab where not(id in 'GMPLUCFTLNKYTSZ')) \n limit 1");
+    }
+
+    @Test
+    public void testNewLine2() throws Exception {
+        createTabWithNaNs2();
+        final String expected = "YDVRVNGSTEQODRZ\t-513.075195312500\tNaN\t-99\t7\t2015-03-12T01:00:00.000Z\n";
+        assertThat(expected, "tab where not(id in 'GMPLUCFTLNKYTSZ') \n limit 1");
+    }
+
+    @Test
     public void testNoColumns() throws Exception {
         createTabWithNaNs2();
 
