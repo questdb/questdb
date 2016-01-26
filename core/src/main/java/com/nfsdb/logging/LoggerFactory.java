@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.logging;
 
@@ -299,8 +299,7 @@ public class LoggerFactory implements Closeable {
                                 final LogWriterConfig config,
                                 RingQueue<LogRecordSink> ring,
                                 Sequence wSeq,
-                                Sequence lSeq,
-                                LogWriter w) {
+                                Sequence lSeq) {
         Holder h = new Holder();
         h.ring = ring != null ? ring : new RingQueue<>(new ObjectFactory<LogRecordSink>() {
             @Override
@@ -310,7 +309,6 @@ public class LoggerFactory implements Closeable {
         }, config.getRecordLength());
         h.wSeq = wSeq != null ? wSeq : new SCSequence();
         h.lSeq = lSeq != null ? lSeq : new MPSequence(config.getQueueDepth());
-        jobs.add(h.w = (w != null ? w : config.getFactory().createLogWriter(h.ring, h.wSeq)));
         map.put(config.getScope(), h);
         return h;
     }
@@ -350,42 +348,41 @@ public class LoggerFactory implements Closeable {
         final Sequence sequence = new SCSequence();
         Holder h = m.get(config.getScope());
         if (h == null) {
-            addNewHolder(m, config, null, null, null, null);
+            h = addNewHolder(m, config, null, sequence, null);
         } else {
             if (h.fanOut == null) {
                 h.fanOut = new FanOut(h.wSeq, sequence);
             } else {
                 h.fanOut.add(sequence);
             }
-            jobs.add(config.getFactory().createLogWriter(h.ring, sequence));
         }
+        jobs.add(config.getFactory().createLogWriter(h.ring, sequence));
     }
 
     private void createEverywhere(final LogWriterConfig config) {
         Sequence wSeq = null;
         Sequence lSeq = null;
         RingQueue<LogRecordSink> ring = null;
-        LogWriter w = null;
 
         if (debug.get(config.getScope()) == null) {
-            Holder h = addNewHolder(debug, config, null, null, null, null);
+            Holder h = addNewHolder(debug, config, null, null, null);
             wSeq = h.wSeq;
             lSeq = h.lSeq;
             ring = h.ring;
-            w = h.w;
         }
 
         if (info.get(config.getScope()) == null) {
-            Holder h = addNewHolder(info, config, ring, wSeq, lSeq, w);
+            Holder h = addNewHolder(info, config, ring, wSeq, lSeq);
             wSeq = h.wSeq;
             lSeq = h.lSeq;
             ring = h.ring;
-            w = h.w;
         }
 
         if (error.get(config.getScope()) == null) {
-            addNewHolder(error, config, ring, wSeq, lSeq, w);
+            addNewHolder(error, config, ring, wSeq, lSeq);
         }
+        jobs.add(config.getFactory().createLogWriter(ring, wSeq));
+
     }
 
     private Holder findHolder(CharSequence key, CharSequenceObjHashMap<Holder> map) {
@@ -428,7 +425,6 @@ public class LoggerFactory implements Closeable {
         private Sequence wSeq;
         private Sequence lSeq;
         private FanOut fanOut;
-        private LogWriter w;
     }
 
     static {

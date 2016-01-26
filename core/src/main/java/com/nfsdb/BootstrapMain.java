@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb;
 
@@ -103,15 +103,17 @@ public class BootstrapMain {
             }
         });
 
+/*
         LoggerFactory.INSTANCE.add(LoggerFactory.LOG_LEVEL_INFO | LoggerFactory.LOG_LEVEL_ERROR,
                 new LogWriterFactory() {
                     @Override
                     public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
                         LogFileWriter w = new LogFileWriter(ring, seq);
-                        w.setLocation(configuration.getAccessLog().getAbsolutePath());
+                        w.setLocation(configuration.getErrorLog().getAbsolutePath());
                         return w;
                     }
                 });
+*/
 
         LoggerFactory.INSTANCE.bind();
     }

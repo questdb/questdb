@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.logging;
 
@@ -90,7 +90,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
         this.lim = buf + bufferSize;
         this.fd = Files.openAppend(new Path(location));
         if (this.fd < 0) {
-            throw new RuntimeException("Cannot open file for append: " + location);
+            throw new LoggerError("Cannot open file for append: " + location);
         }
     }
 
