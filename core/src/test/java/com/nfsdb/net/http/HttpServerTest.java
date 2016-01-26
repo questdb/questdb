@@ -21,7 +21,6 @@
 
 package com.nfsdb.net.http;
 
-import com.google.gson.Gson;
 import com.nfsdb.Journal;
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
@@ -57,11 +56,9 @@ import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
 import org.apache.http.ssl.SSLContextBuilder;
 import org.apache.http.ssl.TrustStrategy;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
-import sun.misc.IOUtils;
 
 import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.SSLContext;
@@ -83,6 +80,13 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
+
+    public static HttpResponse get(String url) throws IOException {
+        HttpGet post = new HttpGet(url);
+        try (CloseableHttpClient client = HttpClients.createDefault()) {
+            return client.execute(post);
+        }
+    }
 
     @Test
     public void testCompressedDownload() throws Exception {
@@ -307,6 +311,31 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
+    public void testSimpleJson() throws Exception {
+        generateJournal();
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            put("/js", new JsonHandler(factory));
+        }});
+        server.start();
+        final String expected = "{ \"query\": \"select 1 col from tab limit 1\", \"columns\":[{\"name\":\"col\",\"type\":\"INT\"}], \"result\":[{\"col\":1}] }";
+        try {
+            File f = temp.newFile();
+            download(clientBuilder(false), "http://localhost:9000/js?query=" + URLEncoder.encode("select 1 col from tab limit 1", "UTF-8"), f);
+            Assert.assertEquals(expected, Files.readStringFromFile(f));
+
+//            HttpResponse response = get("http://localhost:9000/js?query=" + URLEncoder.encode("select 1 col from tab limit 1", "UTF-8"));
+//            Assert.assertEquals(200, response.getStatusLine().getStatusCode());
+//            String body = getBody(response);
+//            Gson gson = new Gson();
+//            QueryResponse queryResponse = gson.fromJson(body, QueryResponse.class);
+//            Assert.assertEquals(10, queryResponse.records.length);
+
+        } finally {
+            server.halt();
+        }
+    }
+
+    @Test
     public void testSslConcurrentDownload() throws Exception {
         final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/nfsdb.conf"));
         configuration.getSslConfig().setSecure(true);
@@ -342,73 +371,6 @@ public class HttpServerTest extends AbstractJournalTest {
 
         TestUtils.assertEquals(expected, actual);
         server.halt();
-    }
-
-    @Test
-    @Ignore
-    public void testSimpleJson() throws Exception {
-        generateJournal();
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", new JsonHandler(factory));
-        }});
-        try {
-            server.start();
-            HttpResponse response = get("http://localhost:9000/js?query=" + URLEncoder.encode("select 1 col from tab limit 1", "UTF-8"));
-            Assert.assertEquals(200, response.getStatusLine().getStatusCode());
-            String body = getBody(response);
-            Gson gson = new Gson();
-            QueryResponse queryResponse = gson.fromJson(body, QueryResponse.class);
-            Assert.assertEquals(10, queryResponse.records.length);
-        }
-        finally {
-            server.halt();
-        }
-    }
-
-    private String getBody(HttpResponse response) throws IOException {
-        StringBuilder sb = new StringBuilder();
-        BufferedReader reader = new BufferedReader(new InputStreamReader(response.getEntity().getContent(), "UTF-8"), 65728);
-        String line;
-        while ((line = reader.readLine()) != null) {
-            sb.append(line);
-        }
-        return sb.toString();
-    }
-
-    private void generateJournal() throws JournalException, NumericException {
-        JournalWriter w = factory.writer(
-                new JournalStructure("tab").
-                        $str("id").
-                        $double("x").
-                        $double("y").
-                        $long("z").
-                        $int("w").
-                        $ts()
-
-        );
-
-        Rnd rnd = new Rnd();
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
-
-        for (int i = 0; i < 1000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putStr(0, "id" + i);
-            ew.putDouble(1, rnd.nextDouble());
-            if (rnd.nextPositiveInt() % 10 == 0) {
-                ew.putNull(2);
-            } else {
-                ew.putDouble(2, rnd.nextDouble());
-            }
-            if (rnd.nextPositiveInt() % 10 == 0) {
-                ew.putNull(3);
-            } else {
-                ew.putLong(3, rnd.nextLong() % 500);
-            }
-            ew.putInt(4, rnd.nextInt() % 500);
-            ew.putDate(5, t += 10);
-            ew.append();
-        }
-        w.commit();
     }
 
     private static HttpClientBuilder clientBuilder(boolean ssl) throws Exception {
@@ -448,13 +410,6 @@ public class HttpServerTest extends AbstractJournalTest {
         b.setConnectionManager(new PoolingHttpClientConnectionManager(socketFactoryRegistry));
 
         return b;
-    }
-
-    public static HttpResponse get(String url) throws IOException {
-        HttpGet post = new HttpGet(url);
-        try (CloseableHttpClient client = HttpClients.createDefault()) {
-            return client.execute(post);
-        }
     }
 
     private static int upload(String resource, String url) throws IOException {
@@ -709,6 +664,42 @@ public class HttpServerTest extends AbstractJournalTest {
         return out;
     }
 
+    private void generateJournal() throws JournalException, NumericException {
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $str("id").
+                        $double("x").
+                        $double("y").
+                        $long("z").
+                        $int("w").
+                        $ts()
+
+        );
+
+        Rnd rnd = new Rnd();
+        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+        for (int i = 0; i < 1000; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            ew.putStr(0, "id" + i);
+            ew.putDouble(1, rnd.nextDouble());
+            if (rnd.nextPositiveInt() % 10 == 0) {
+                ew.putNull(2);
+            } else {
+                ew.putDouble(2, rnd.nextDouble());
+            }
+            if (rnd.nextPositiveInt() % 10 == 0) {
+                ew.putNull(3);
+            } else {
+                ew.putLong(3, rnd.nextLong() % 500);
+            }
+            ew.putInt(4, rnd.nextInt() % 500);
+            ew.putDate(5, t += 10);
+            ew.append();
+        }
+        w.commit();
+    }
+
     private File generateLarge(int count, int sz) throws IOException {
         File file = temp.newFile();
         try (FileSink sink = new FileSink(file)) {
@@ -720,6 +711,16 @@ public class HttpServerTest extends AbstractJournalTest {
             }
         }
         return file;
+    }
+
+    private String getBody(HttpResponse response) throws IOException {
+        StringBuilder sb = new StringBuilder();
+        BufferedReader reader = new BufferedReader(new InputStreamReader(response.getEntity().getContent(), "UTF-8"), 65728);
+        String line;
+        while ((line = reader.readLine()) != null) {
+            sb.append(line);
+        }
+        return sb.toString();
     }
 
     private SocketChannel openChannel(String host, int port, long timeout) throws IOException {
