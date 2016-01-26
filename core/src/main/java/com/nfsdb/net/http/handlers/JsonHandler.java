@@ -47,6 +47,7 @@ import com.nfsdb.exceptions.SlowWritableChannelException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
+import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.net.http.ChunkedResponse;
@@ -119,7 +120,7 @@ public class JsonHandler implements ContextHandler {
 
     private void sendQuery(ChunkedResponse r, CharSequence query) {
         r.put("{ \"query\": \"");
-        r.put(query != null ? query : "");
+        stringToJson(r, query != null ? query : "");
         r.put("\"");
     }
 
@@ -128,7 +129,7 @@ public class JsonHandler implements ContextHandler {
         r.sendHeader();
         sendQuery(r, query);
         r.put(", \"error\" : \"");
-        r.put(message);
+        stringToJson(r, message);
         r.put("\"}");
         r.sendChunk();
         r.done();
@@ -175,7 +176,7 @@ public class JsonHandler implements ContextHandler {
                     case SYMBOL:
                     case STRING:
                         r.put('\"');
-                        r.put(rec.getStr(col));
+                        stringToJson(r, rec.getStr(col));
                         r.put('\"');
                         break;
                     case BINARY:
@@ -204,5 +205,41 @@ public class JsonHandler implements ContextHandler {
         r.put("] }");
         r.sendChunk();
         r.done();
+    }
+
+    private void stringToJson(CharSink r, CharSequence str) {
+        for(int i = 0; i < str.length(); i++) {
+            char c = str.charAt(i);
+            if (c != '\"' && c != '\\' && c != '/' && c != '\b' && c != '\f'  && c != '\n' && c != '\r' && c != '\t') {
+                r.put(str.charAt(i));
+            }
+            else {
+                encodeControl(r, c);
+            }
+        }
+    }
+
+    private void encodeControl(CharSink r, char c) {
+        if (c == '\"' ||  c == '\\' || c == '/') {
+            r.put("\\");
+            r.put(c);
+            return;
+        }
+
+        if (c == '\b') {
+            r.put("\\b");
+        }
+        else if (c == '\f') {
+            r.put("\\f");
+        }
+        else if (c == '\n') {
+            r.put("\\n");
+        }
+        else if (c == '\r') {
+            r.put("\\r");
+        }
+        else if (c == '\t') {
+            r.put("\\t");
+        }
     }
 }

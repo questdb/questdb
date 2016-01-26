@@ -21,6 +21,7 @@
 
 package com.nfsdb.net.http;
 
+import com.google.gson.Gson;
 import com.nfsdb.Journal;
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
@@ -311,25 +312,33 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
+    public void testJsonEncodeControlChars() throws Exception {
+        generateJournal();
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            put("/js", new JsonHandler(factory));
+        }});
+        server.start();
+        try {
+            String newLineStr = "string with \n with new line";
+            String query = "select '" + newLineStr + "' id from tab limit 1";
+            QueryResponse queryResponse = download("select '" + newLineStr + "' id from tab \nlimit 1");
+            Assert.assertEquals(query, queryResponse.query);
+            Assert.assertEquals(newLineStr, queryResponse.result[0].id);
+        } finally {
+            server.halt();
+        }
+    }
+
+    @Test
     public void testSimpleJson() throws Exception {
         generateJournal();
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
             put("/js", new JsonHandler(factory));
         }});
         server.start();
-        final String expected = "{ \"query\": \"select 1 col from tab limit 1\", \"columns\":[{\"name\":\"col\",\"type\":\"INT\"}], \"result\":[{\"col\":1}] }";
         try {
-            File f = temp.newFile();
-            download(clientBuilder(false), "http://localhost:9000/js?query=" + URLEncoder.encode("select 1 col from tab limit 1", "UTF-8"), f);
-            Assert.assertEquals(expected, Files.readStringFromFile(f));
-
-//            HttpResponse response = get("http://localhost:9000/js?query=" + URLEncoder.encode("select 1 col from tab limit 1", "UTF-8"));
-//            Assert.assertEquals(200, response.getStatusLine().getStatusCode());
-//            String body = getBody(response);
-//            Gson gson = new Gson();
-//            QueryResponse queryResponse = gson.fromJson(body, QueryResponse.class);
-//            Assert.assertEquals(10, queryResponse.records.length);
-
+            QueryResponse queryResponse = download("select 1 z from tab limit 10");
+            Assert.assertEquals(10, queryResponse.result.length);
         } finally {
             server.halt();
         }
@@ -603,6 +612,15 @@ public class HttpServerTest extends AbstractJournalTest {
         while ((l = is.read(buf)) > 0) {
             os.write(buf, 0, l);
         }
+    }
+
+    private QueryResponse download(String queryUrl) throws Exception {
+        File f = temp.newFile();
+        download(clientBuilder(false), "http://localhost:9000/js?query=" + URLEncoder.encode(queryUrl, "UTF-8"), f);
+        Gson gson = new Gson();
+        String body = Files.readStringFromFile(f);
+        f.deleteOnExit();
+        return gson.fromJson(body, QueryResponse.class);
     }
 
     private void download(HttpClientBuilder b, String url, File out) throws IOException {

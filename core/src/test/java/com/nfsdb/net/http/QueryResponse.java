@@ -32,5 +32,5 @@ public class QueryResponse {
 
     public String error;
     public String query;
-    public Tab[] records;
+    public Tab[] result;
 }
