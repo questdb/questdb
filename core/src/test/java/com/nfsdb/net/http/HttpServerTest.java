@@ -21,17 +21,20 @@
 
 package com.nfsdb.net.http;
 
+import com.google.gson.Gson;
 import com.nfsdb.Journal;
+import com.nfsdb.JournalEntryWriter;
+import com.nfsdb.JournalWriter;
+import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.exceptions.ResponseContentBufferTooSmallException;
+import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.sink.FileSink;
 import com.nfsdb.iter.clock.Clock;
-import com.nfsdb.misc.ByteBuffers;
-import com.nfsdb.misc.Dates;
-import com.nfsdb.misc.Misc;
-import com.nfsdb.misc.Numbers;
+import com.nfsdb.misc.*;
 import com.nfsdb.net.ha.AbstractJournalTest;
 import com.nfsdb.net.http.handlers.ImportHandler;
+import com.nfsdb.net.http.handlers.JsonHandler;
 import com.nfsdb.net.http.handlers.NativeStaticContentHandler;
 import com.nfsdb.net.http.handlers.UploadHandler;
 import com.nfsdb.test.tools.TestUtils;
@@ -54,9 +57,11 @@ import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
 import org.apache.http.ssl.SSLContextBuilder;
 import org.apache.http.ssl.TrustStrategy;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import sun.misc.IOUtils;
 
 import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.SSLContext;
@@ -64,6 +69,7 @@ import javax.net.ssl.SSLSession;
 import java.io.*;
 import java.net.InetSocketAddress;
 import java.net.StandardSocketOptions;
+import java.net.URLEncoder;
 import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
 import java.security.cert.CertificateException;
@@ -338,6 +344,73 @@ public class HttpServerTest extends AbstractJournalTest {
         server.halt();
     }
 
+    @Test
+    @Ignore
+    public void testSimpleJson() throws Exception {
+        generateJournal();
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            put("/js", new JsonHandler(factory));
+        }});
+        try {
+            server.start();
+            HttpResponse response = get("http://localhost:9000/js?query=" + URLEncoder.encode("select 1 col from tab limit 1", "UTF-8"));
+            Assert.assertEquals(200, response.getStatusLine().getStatusCode());
+            String body = getBody(response);
+            Gson gson = new Gson();
+            QueryResponse queryResponse = gson.fromJson(body, QueryResponse.class);
+            Assert.assertEquals(10, queryResponse.records.length);
+        }
+        finally {
+            server.halt();
+        }
+    }
+
+    private String getBody(HttpResponse response) throws IOException {
+        StringBuilder sb = new StringBuilder();
+        BufferedReader reader = new BufferedReader(new InputStreamReader(response.getEntity().getContent(), "UTF-8"), 65728);
+        String line;
+        while ((line = reader.readLine()) != null) {
+            sb.append(line);
+        }
+        return sb.toString();
+    }
+
+    private void generateJournal() throws JournalException, NumericException {
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $str("id").
+                        $double("x").
+                        $double("y").
+                        $long("z").
+                        $int("w").
+                        $ts()
+
+        );
+
+        Rnd rnd = new Rnd();
+        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+        for (int i = 0; i < 1000; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            ew.putStr(0, "id" + i);
+            ew.putDouble(1, rnd.nextDouble());
+            if (rnd.nextPositiveInt() % 10 == 0) {
+                ew.putNull(2);
+            } else {
+                ew.putDouble(2, rnd.nextDouble());
+            }
+            if (rnd.nextPositiveInt() % 10 == 0) {
+                ew.putNull(3);
+            } else {
+                ew.putLong(3, rnd.nextLong() % 500);
+            }
+            ew.putInt(4, rnd.nextInt() % 500);
+            ew.putDate(5, t += 10);
+            ew.append();
+        }
+        w.commit();
+    }
+
     private static HttpClientBuilder clientBuilder(boolean ssl) throws Exception {
         return (ssl ? createHttpClient_AcceptsUntrustedCerts() : HttpClientBuilder.create());
     }
@@ -375,6 +448,13 @@ public class HttpServerTest extends AbstractJournalTest {
         b.setConnectionManager(new PoolingHttpClientConnectionManager(socketFactoryRegistry));
 
         return b;
+    }
+
+    public static HttpResponse get(String url) throws IOException {
+        HttpGet post = new HttpGet(url);
+        try (CloseableHttpClient client = HttpClients.createDefault()) {
+            return client.execute(post);
+        }
     }
 
     private static int upload(String resource, String url) throws IOException {
