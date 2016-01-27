@@ -2,7 +2,6 @@
 #include <sys/stat.h>
 #include <sys/fcntl.h>
 #include <sys/time.h>
-#include <utime.h>
 #include "files.h"
 
 JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_write

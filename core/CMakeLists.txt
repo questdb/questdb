@@ -8,26 +8,39 @@ if ($ENV{JAVA_HOME})
     FILE(TO_CMAKE_PATH $ENV{JAVA_HOME} JAVA_HOME)
 endif ($ENV{JAVA_HOME})
 
-set(HEADERS
+set(SOURCE_FILES
         src/main/c/share/files.h
+        src/main/c/share/zip.h
+        src/main/c/share/net.h
+        src/main/c/share/zip.c
+        src/main/c/share/net.c
         )
 
 # JNI includes
 include_directories(${JAVA_HOME}/include/)
+
 if (APPLE)
     include_directories(${JAVA_HOME}/include/darwin/)
     set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/osx)
-    set(SOURCE_FILES ${HEADERS} src/main/c/share/files.c src/main/c/share/zip.c src/main/c/share/zip.h)
+    set(SOURCE_FILES ${SOURCE_FILES}
+            src/main/c/osx/kqueue.h
+            src/main/c/osx/kqueue.c)
 elseif (UNIX)
     include_directories(${JAVA_HOME}/include/linux/)
     set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/linux)
-    set(SOURCE_FILES ${HEADERS} src/main/c/share/files.c src/main/c/share/zip.c src/main/c/share/zip.h)
 endif (APPLE)
 
 if (WIN32)
     include_directories(${JAVA_HOME}/include/win32/)
     set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/windows)
-    set(SOURCE_FILES ${HEADERS} src/main/c/windows/files.c src/main/c/share/zip.c src/main/c/share/zip.h)
+    set(SOURCE_FILES ${SOURCE_FILES}
+            src/main/c/windows/files.c
+            )
+else ()
+    set(SOURCE_FILES
+            ${SOURCE_FILES}
+            src/main/c/share/files.c
+            )
 endif (WIN32)
 
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${OUTPUT})
