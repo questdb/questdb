@@ -40,7 +40,6 @@ final class QueryParser {
     private static final CharSequenceHashSet aliasStopSet = new CharSequenceHashSet();
     private static final CharSequenceHashSet groupByStopSet = new CharSequenceHashSet();
     private static final CharSequenceObjHashMap<QueryModel.JoinType> joinStartSet = new CharSequenceObjHashMap<>();
-    private static final CharSequenceHashSet whitespace = new CharSequenceHashSet();
     private final ObjectPool<ExprNode> exprNodePool = new ObjectPool<>(ExprNode.FACTORY, 128);
     private final Lexer lexer = new Lexer();
     private final ExprParser exprParser = new ExprParser(lexer, exprNodePool);
@@ -94,13 +93,7 @@ final class QueryParser {
     }
 
     private CharSequence optionTok() {
-        while (lexer.hasNext()) {
-            CharSequence cs = lexer.next();
-            if (!whitespace.contains(cs)) {
-                return cs;
-            }
-        }
-        return null;
+        return lexer.optionTok();
     }
 
     Statement parse(CharSequence query) throws ParserException {
@@ -496,10 +489,5 @@ final class QueryParser {
         joinStartSet.put("outer", QueryModel.JoinType.OUTER);
         joinStartSet.put("cross", QueryModel.JoinType.CROSS);
         joinStartSet.put("asof", QueryModel.JoinType.ASOF);
-
-        whitespace.add(" ");
-        whitespace.add("\t");
-        whitespace.add("\n");
-        whitespace.add("\r");
     }
 }

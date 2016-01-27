@@ -1880,6 +1880,13 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
+    public void testNewLine3() throws Exception {
+        createTabWithNaNs2();
+        final String expected = "1\t2\n";
+        assertThat(expected, "select 1 col, 2 col2 from tab\nlimit 1");
+    }
+
+    @Test
     public void testNoColumns() throws Exception {
         createTabWithNaNs2();
 

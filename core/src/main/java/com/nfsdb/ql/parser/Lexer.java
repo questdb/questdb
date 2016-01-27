@@ -23,8 +23,8 @@ package com.nfsdb.ql.parser;
 
 import com.nfsdb.collections.AbstractCharSequence;
 import com.nfsdb.collections.AbstractImmutableIterator;
+import com.nfsdb.collections.CharSequenceHashSet;
 import com.nfsdb.collections.IntObjHashMap;
-import com.nfsdb.misc.Chars;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayList;
@@ -33,6 +33,7 @@ import java.util.Comparator;
 import java.util.List;
 
 class Lexer extends AbstractImmutableIterator<CharSequence> {
+    private static final CharSequenceHashSet whitespace = new CharSequenceHashSet();
     private final IntObjHashMap<List<CharSequence>> symbols = new IntObjHashMap<>();
     private final CharSequence floatingSequence = new FloatingSequence();
     private final LenComparator comparator = new LenComparator();
@@ -44,6 +45,12 @@ class Lexer extends AbstractImmutableIterator<CharSequence> {
     private CharSequence content;
     private CharSequence unparsed;
     private CharSequence last;
+
+    public Lexer() {
+        for (int i = 0, n = whitespace.size(); i < n; i++) {
+            defineSymbol(whitespace.get(i).toString());
+        }
+    }
 
     public void defineSymbol(String token) {
         char c0 = token.charAt(0);
@@ -151,7 +158,7 @@ class Lexer extends AbstractImmutableIterator<CharSequence> {
     public CharSequence optionTok() {
         while (hasNext()) {
             CharSequence cs = next();
-            if (!Chars.equals(cs, ' ')) {
+            if (!whitespace.contains(cs)) {
                 return cs;
             }
         }
@@ -232,5 +239,12 @@ class Lexer extends AbstractImmutableIterator<CharSequence> {
         public char charAt(int index) {
             return content.charAt(_lo + index);
         }
+    }
+
+    static {
+        whitespace.add(" ");
+        whitespace.add("\t");
+        whitespace.add("\n");
+        whitespace.add("\r");
     }
 }

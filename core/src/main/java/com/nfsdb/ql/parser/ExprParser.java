@@ -43,7 +43,6 @@ public class ExprParser {
     public ExprParser(Lexer lexer, ObjectPool<ExprNode> exprNodePool) {
         this.lexer = lexer;
         this.exprNodePool = exprNodePool;
-        lexer.defineSymbol(" ");
         lexer.defineSymbol("(");
         lexer.defineSymbol(")");
         lexer.defineSymbol(",");
