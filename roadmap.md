@@ -27,10 +27,14 @@ __server__
 - [ ] result set serialization (binary, json? - for javascript grid or chart)
 - [x] flow control on file upload (park upload if client is not sending file)
 - [x] flow control on query executions (do not execute until client is ready to read, park streaming if client is not ready to read)
+- [x] SSL support
+- [x] http compression
+- [ ] __high-performance logging (in progress)__
 - [ ] manage parked uploads and downloads (timeout with resource cleanup)
 - [ ] C layer for windows (io completion ports)
 - [ ] C layer for linux (epoll)
-- [ ] C layer for mac/bsd (kqueue)
+- [ ] __C layer for mac/bsd (kqueue) (in progress)__
+- [ ] MySQL wire protocol implementation
 
 __misc__
 
@@ -39,15 +43,8 @@ __misc__
 
 __clients__
 
-- [ ] client for python
-- [ ] client for R
-- [ ] client for Ruby
-- [ ] client for JVM
-- [ ] client for .Net
-- [ ] client for C (link to other lnaguges like D, Julia, Rust, Nim)
-- [ ] build fail-over in all clients
 - [ ] grafana integration
-- [ ] web query UI (ipython style)
+- [ ] __web query UI (in progress)__
 
 __core__
 
