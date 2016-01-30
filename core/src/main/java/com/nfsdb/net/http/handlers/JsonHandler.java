@@ -52,7 +52,6 @@ import com.nfsdb.net.http.IOContext;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.parser.QueryCompiler;
-import sun.misc.FloatingDecimal;
 import sun.nio.cs.ArrayEncoder;
 
 import java.io.IOException;
@@ -352,12 +351,13 @@ public class JsonHandler implements ContextHandler {
     }
 
     private static void putDouble(ChunkedResponse r, double d, StringBuilder stringBuilder) {
-        stringBuilder.setLength(0);
-        FloatingDecimal.BinaryToASCIIConverter converter = FloatingDecimal.getBinaryToASCIIConverter(d);
-        converter.appendTo(stringBuilder);
-        for(int i = 0; i < stringBuilder.length(); i++){
-            r.put(stringBuilder.charAt(i));
-        }
+        Numbers.append(r, d, 100);
+//        stringBuilder.setLength(0);
+//        FloatingDecimal.BinaryToASCIIConverter converter = FloatingDecimal.getBinaryToASCIIConverter(d);
+//        converter.appendTo(stringBuilder);
+//        for(int i = 0; i < stringBuilder.length(); i++){
+//            r.put(stringBuilder.charAt(i));
+//        }
     }
 
     private static void stringToJson(CharSink r, CharSequence str, char[] charSource, byte[] encoded) {

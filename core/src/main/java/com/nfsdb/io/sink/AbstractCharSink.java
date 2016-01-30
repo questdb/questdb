@@ -24,8 +24,6 @@ package com.nfsdb.io.sink;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Numbers;
 
-import java.io.IOException;
-
 public abstract class AbstractCharSink implements CharSink {
     @Override
     public CharSink put(int value) {
@@ -68,25 +66,4 @@ public abstract class AbstractCharSink implements CharSink {
         Numbers.appendTrim(this, value, scale);
         return this;
     }
-
-    @Override
-    public Appendable append(CharSequence csq) throws IOException {
-        put(csq);
-        return this;
-    }
-
-    @Override
-    public Appendable append(CharSequence csq, int start, int end) throws IOException {
-        for(int i = start; i < end; i++) {
-            put(csq.charAt(i));
-        }
-        return this;
-    }
-
-    @Override
-    public Appendable append(char c) throws IOException {
-        put(c);
-        return this;
-    }
-
 }
