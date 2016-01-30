@@ -23,7 +23,43 @@ package com.nfsdb.logging;
 
 import com.nfsdb.concurrent.RingQueue;
 import com.nfsdb.concurrent.Sequence;
+import com.nfsdb.concurrent.SynchronizedJob;
+import com.nfsdb.misc.Files;
 
-public interface LogWriterFactory {
-    LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq, int level);
+import java.io.Closeable;
+
+public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogWriter {
+    private static final long fd = 1;
+    private final RingQueue<LogRecordSink> ring;
+    private final Sequence subSeq;
+    private final int level;
+
+    public LogConsoleWriter(RingQueue<LogRecordSink> ring, Sequence subSeq, int level) {
+        this.ring = ring;
+        this.subSeq = subSeq;
+        this.level = level;
+    }
+
+    @Override
+    public boolean _run() {
+        long cursor = subSeq.next();
+        if (cursor < 0) {
+            return false;
+        }
+
+        final LogRecordSink sink = ring.get(cursor);
+        if ((sink.getLevel() & this.level) != 0) {
+            Files.append(fd, sink.getAddress(), sink.length());
+        }
+        subSeq.done(cursor);
+        return true;
+    }
+
+    @Override
+    public void bindProperties() {
+    }
+
+    @Override
+    public void close() {
+    }
 }

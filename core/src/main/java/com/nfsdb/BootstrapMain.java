@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
@@ -82,7 +82,7 @@ public class BootstrapMain {
         matcher.setDefaultHandler(new NativeStaticContentHandler(configuration.getHttpPublic(), new MimeTypes(configuration.getMimeTypes())));
 
         HttpServer server = new HttpServer(configuration, matcher);
-        server.start(LoggerFactory.INSTANCE.getJobs());
+        server.start(LogFactory.INSTANCE.getJobs());
 
         StringBuilder welcome = new StringBuilder();
         welcome.append("Server started on port: ").append(configuration.getHttpPort());
@@ -94,17 +94,17 @@ public class BootstrapMain {
     }
 
     private static void configureLoggers(final HttpServerConfiguration configuration) {
-        LoggerFactory.INSTANCE.add("access", 0, new LogWriterFactory() {
+        LogFactory.INSTANCE.add(new LogWriterConfig("access", 0, new LogWriterFactory() {
             @Override
-            public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
-                LogFileWriter w = new LogFileWriter(ring, seq);
+            public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq, int level) {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
                 w.setLocation(configuration.getAccessLog().getAbsolutePath());
                 return w;
             }
-        });
+        }));
 
 /*
-        LoggerFactory.INSTANCE.add(LoggerFactory.LOG_LEVEL_INFO | LoggerFactory.LOG_LEVEL_ERROR,
+        LogFactory.INSTANCE.add(LogFactory.LOG_LEVEL_INFO | LogFactory.LOG_LEVEL_ERROR,
                 new LogWriterFactory() {
                     @Override
                     public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
@@ -115,7 +115,7 @@ public class BootstrapMain {
                 });
 */
 
-        LoggerFactory.INSTANCE.bind();
+        LogFactory.INSTANCE.bind();
     }
 
     private static void extractSite(String dir) throws URISyntaxException, IOException {

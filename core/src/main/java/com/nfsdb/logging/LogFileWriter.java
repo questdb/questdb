@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.logging;
 
@@ -36,16 +36,20 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
     private static final int DEFAULT_BUFFER_SIZE = 1024 * 1024;
     private final RingQueue<LogRecordSink> ring;
     private final Sequence subSeq;
+    private final int level;
     private long fd = 0;
     private long lim;
     private long buf;
     private long _wptr;
     private String location;
-    private String bufferSizeStr;
+    // can be set via reflection
+    private String bufferSize;
+    private int bufSize;
 
-    public LogFileWriter(RingQueue<LogRecordSink> ring, Sequence subSeq) {
+    public LogFileWriter(RingQueue<LogRecordSink> ring, Sequence subSeq, int level) {
         this.ring = ring;
         this.subSeq = subSeq;
+        this.level = level;
     }
 
     @Override
@@ -62,35 +66,36 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
         }
 
         final LogRecordSink sink = ring.get(cursor);
-        int l = sink.length();
+        if ((sink.getLevel() & this.level) != 0) {
+            int l = sink.length();
 
-        if (_wptr + l >= lim) {
-            flush();
+            if (_wptr + l >= lim) {
+                flush();
+            }
+
+            Unsafe.getUnsafe().copyMemory(sink.getAddress(), _wptr, l);
+            _wptr += l;
         }
-
-        Unsafe.getUnsafe().copyMemory(sink.getAddress(), _wptr, l);
-        _wptr += l;
         subSeq.done(cursor);
         return true;
     }
 
     @Override
     public void bindProperties() {
-        int bufferSize;
-        if (bufferSizeStr != null) {
+        if (this.bufferSize != null) {
             try {
-                bufferSize = Numbers.parseIntSize(bufferSizeStr);
+                bufSize = Numbers.parseIntSize(this.bufferSize);
             } catch (NumericException e) {
-                bufferSize = DEFAULT_BUFFER_SIZE;
+                throw new LogError("Invalid value for bufferSize");
             }
         } else {
-            bufferSize = DEFAULT_BUFFER_SIZE;
+            bufSize = DEFAULT_BUFFER_SIZE;
         }
-        this.buf = _wptr = Unsafe.getUnsafe().allocateMemory(bufferSize);
-        this.lim = buf + bufferSize;
+        this.buf = _wptr = Unsafe.getUnsafe().allocateMemory(bufSize);
+        this.lim = buf + bufSize;
         this.fd = Files.openAppend(new Path(location));
         if (this.fd < 0) {
-            throw new LoggerError("Cannot open file for append: " + location);
+            throw new LogError("Cannot open file for append: " + location);
         }
     }
 
@@ -109,8 +114,8 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
         }
     }
 
-    public void setBufferSizeStr(String bufferSizeStr) {
-        this.bufferSizeStr = bufferSizeStr;
+    public int getBufSize() {
+        return bufSize;
     }
 
     public void setLocation(String location) {

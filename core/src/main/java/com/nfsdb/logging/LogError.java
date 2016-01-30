@@ -21,41 +21,12 @@
 
 package com.nfsdb.logging;
 
-import com.nfsdb.concurrent.RingQueue;
-import com.nfsdb.concurrent.Sequence;
-import com.nfsdb.concurrent.SynchronizedJob;
-import com.nfsdb.misc.Files;
-
-import java.io.Closeable;
-
-public class StdOutWriter extends SynchronizedJob implements Closeable, LogWriter {
-    private static final long fd = 1;
-    private final RingQueue<LogRecordSink> ring;
-    private final Sequence subSeq;
-
-    public StdOutWriter(RingQueue<LogRecordSink> ring, Sequence subSeq) {
-        this.ring = ring;
-        this.subSeq = subSeq;
+public class LogError extends Error {
+    public LogError(String message) {
+        super(message);
     }
 
-    @Override
-    public boolean _run() {
-        long cursor = subSeq.next();
-        if (cursor < 0) {
-            return false;
-        }
-
-        final LogRecordSink sink = ring.get(cursor);
-        Files.append(fd, sink.getAddress(), sink.length());
-        subSeq.done(cursor);
-        return true;
-    }
-
-    @Override
-    public void bindProperties() {
-    }
-
-    @Override
-    public void close() {
+    public LogError(String message, Throwable cause) {
+        super(message, cause);
     }
 }

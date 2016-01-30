@@ -26,8 +26,8 @@ import com.nfsdb.concurrent.RingQueue;
 import com.nfsdb.concurrent.Sequence;
 import com.nfsdb.concurrent.WorkerContext;
 import com.nfsdb.exceptions.*;
-import com.nfsdb.logging.AsyncLogger;
-import com.nfsdb.logging.LoggerFactory;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
 
 import java.io.IOException;
 import java.nio.channels.SelectionKey;
@@ -35,7 +35,7 @@ import java.nio.channels.SelectionKey;
 public class IOHttpJob implements Job {
     // todo: extract config
     public static final int SO_WRITE_RETRY_COUNT = 10;
-    private final static AsyncLogger ACCESS = LoggerFactory.getLogger("access");
+    private final static Log ACCESS = LogFactory.getLogger("access");
     private final RingQueue<IOEvent> ioQueue;
     private final Sequence ioSequence;
     private final IOLoopJob loop;

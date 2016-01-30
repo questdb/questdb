@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.logging;
 
@@ -26,7 +26,7 @@ import com.nfsdb.concurrent.Sequence;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.misc.Misc;
 
-public class AsyncLogger implements LogRecord {
+public class Log implements LogRecord {
     private final RingQueue<LogRecordSink> debugRing;
     private final Sequence debugSeq;
     private final RingQueue<LogRecordSink> infoRing;
@@ -35,7 +35,7 @@ public class AsyncLogger implements LogRecord {
     private final Sequence errorSeq;
     private final ThreadLocalCursor tl = new ThreadLocalCursor();
 
-    public AsyncLogger(
+    public Log(
             RingQueue<LogRecordSink> debugRing,
             Sequence debugSeq,
             RingQueue<LogRecordSink> infoRing,
@@ -100,18 +100,18 @@ public class AsyncLogger implements LogRecord {
     }
 
     public LogRecord xdebug() {
-        return next(debugSeq, debugRing);
+        return next(debugSeq, debugRing, LogLevel.LOG_LEVEL_DEBUG);
     }
 
     public LogRecord xerror() {
-        return next(errorSeq, errorRing);
+        return next(errorSeq, errorRing, LogLevel.LOG_LEVEL_ERROR);
     }
 
     public LogRecord xinfo() {
-        return next(infoSeq, infoRing);
+        return next(infoSeq, infoRing, LogLevel.LOG_LEVEL_INFO);
     }
 
-    private LogRecord next(Sequence seq, RingQueue<LogRecordSink> ring) {
+    private LogRecord next(Sequence seq, RingQueue<LogRecordSink> ring, int level) {
 
         if (seq == null) {
             return NullLogRecord.INSTANCE;
@@ -125,7 +125,9 @@ public class AsyncLogger implements LogRecord {
         h.cursor = cursor;
         h.seq = seq;
         h.ring = ring;
-        ring.get(cursor).clear(0);
+        LogRecordSink r = ring.get(cursor);
+        r.setLevel(level);
+        r.clear(0);
         return this;
     }
 

@@ -21,12 +21,12 @@
 
 package com.nfsdb.logging;
 
-public class LoggerError extends Error {
-    public LoggerError(String message) {
-        super(message);
-    }
+public final class LogLevel {
+    public static final int LOG_LEVEL_DEBUG = 1;
+    public static final int LOG_LEVEL_INFO = 2;
+    public static final int LOG_LEVEL_ERROR = 4;
+    public static final int LOG_LEVEL_ALL = LOG_LEVEL_DEBUG | LOG_LEVEL_INFO | LOG_LEVEL_ERROR;
 
-    public LoggerError(String message, Throwable cause) {
-        super(message, cause);
+    private LogLevel() {
     }
 }

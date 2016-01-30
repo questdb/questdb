@@ -25,19 +25,15 @@ public class LogWriterConfig {
     private final String scope;
     private final int level;
     private final LogWriterFactory factory;
-    private final int queueDepth;
-    private final int recordLength;
 
-    public LogWriterConfig(int level, LogWriterFactory factory, int queueDepth, int recordLength) {
-        this("", level, factory, queueDepth, recordLength);
+    public LogWriterConfig(int level, LogWriterFactory factory) {
+        this("", level, factory);
     }
 
-    public LogWriterConfig(String scope, int level, LogWriterFactory factory, int queueDepth, int recordLength) {
+    public LogWriterConfig(String scope, int level, LogWriterFactory factory) {
         this.scope = scope == null ? "" : scope;
         this.level = level;
         this.factory = factory;
-        this.queueDepth = queueDepth;
-        this.recordLength = recordLength;
     }
 
     public LogWriterFactory getFactory() {
@@ -46,14 +42,6 @@ public class LogWriterConfig {
 
     public int getLevel() {
         return level;
-    }
-
-    public int getQueueDepth() {
-        return queueDepth;
-    }
-
-    public int getRecordLength() {
-        return recordLength;
     }
 
     public String getScope() {

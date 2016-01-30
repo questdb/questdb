@@ -30,6 +30,7 @@ public class LogRecordSink extends AbstractCharSink {
     private final long address;
     private final long lim;
     private long _wptr;
+    private int level;
 
     public LogRecordSink(int capacity) {
         int c = Numbers.ceilPow2(capacity);
@@ -68,6 +69,14 @@ public class LogRecordSink extends AbstractCharSink {
 
     public long getAddress() {
         return address;
+    }
+
+    public int getLevel() {
+        return level;
+    }
+
+    public void setLevel(int level) {
+        this.level = level;
     }
 
     public int length() {
