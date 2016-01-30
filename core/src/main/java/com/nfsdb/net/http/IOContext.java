@@ -67,6 +67,10 @@ public class IOContext implements Closeable, Mutable {
     // query sending fields
     public Iterator<? extends Record> records;
     public RecordMetadata metadata;
+    public long count;
+    public long skip;
+    public long stop;
+    public Record current;
 
     public IOContext(WrappedByteChannel<SocketChannel> channel, Clock clock, int reqHeaderSize, int reqContentSize, int reqMultipartHeaderSize, int respHeaderSize, int respContentSize) {
         this.channel = channel;

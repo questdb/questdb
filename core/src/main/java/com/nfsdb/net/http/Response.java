@@ -401,16 +401,21 @@ public class Response implements Closeable, Mutable {
 
     private class ChunkedResponseImpl extends ResponseSinkImpl implements ChunkedResponse {
 
-        private final long bookmark = outPtr;
+        private long bookmark = outPtr;
+        private boolean bookmarked = false;
 
         @Override
-        public long bookmark() {
-            return bookmark;
+        public void bookmark() {
+            bookmark = outPtr;
+            bookmarked = true;
         }
 
         @Override
-        public void resetToBookmark(long bookmark) {
+        public boolean resetToBookmark() {
+            boolean sb = bookmarked;
+            bookmarked = false;
             _wPtr = bookmark;
+            return sb;
         }
 
         @Override

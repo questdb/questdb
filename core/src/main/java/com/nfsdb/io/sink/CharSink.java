@@ -23,7 +23,7 @@ package com.nfsdb.io.sink;
 
 import java.io.IOException;
 
-public interface CharSink {
+public interface CharSink extends Appendable {
     void flush() throws IOException;
 
     CharSink put(CharSequence cs);

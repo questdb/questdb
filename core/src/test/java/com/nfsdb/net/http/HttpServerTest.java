@@ -22,6 +22,7 @@
 package com.nfsdb.net.http;
 
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.nfsdb.Journal;
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
@@ -57,6 +58,7 @@ import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
 import org.apache.http.ssl.SSLContextBuilder;
 import org.apache.http.ssl.TrustStrategy;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -72,6 +74,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
+import java.util.Date;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -241,17 +244,100 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testJsonEncodeControlChars() throws Exception {
+        java.lang.StringBuilder allChars = new java.lang.StringBuilder();
+        for(char c = Character.MIN_VALUE;  c < 0xD800; c++) { //
+            allChars.append(c);
+        }
+
+        String allCharString = allChars.toString();
+        generateJournal(allCharString, 1.900232E-10, 2.598E20, Long.MAX_VALUE, Integer.MIN_VALUE, -102023);
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            put("/js", new JsonHandler(factory));
+        }});
+        server.start();
+        try {
+            String query = "select id from tab \n limit 1";
+            QueryResponse queryResponse = download(query);
+            Assert.assertEquals(query, queryResponse.query);
+            for(int i = 0; i < allCharString.length(); i++) {
+                Assert.assertTrue("result len is less than " + i, i < queryResponse.result[0].id.length());
+                Assert.assertEquals(i + "", allCharString.charAt(i), queryResponse.result[0].id.charAt(i));
+            }
+        } finally {
+            server.halt();
+        }
+    }
+
+    @Test
+    public void testJsonEncodeNumbers() throws Exception {
+        generateJournal(null, 1.900232E-10, Double.MAX_VALUE, Long.MAX_VALUE, Integer.MIN_VALUE, 10);
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            put("/js", new JsonHandler(factory));
+        }});
+        server.start();
+        try {
+            String query = "tab limit 1";
+            QueryResponse queryResponse = download(query);
+            Assert.assertEquals(1.900232E-10, queryResponse.result[0].x, 1E-6);
+            Assert.assertEquals(Double.MAX_VALUE, queryResponse.result[0].y, 1E-6);
+            Assert.assertEquals(Long.MAX_VALUE, queryResponse.result[0].z);
+            Assert.assertEquals(0, queryResponse.result[0].w);
+            Assert.assertEquals(10, queryResponse.result[0].timestamp);
+            Assert.assertEquals(false, queryResponse.moreExist);
+        } finally {
+            server.halt();
+        }
+    }
+
+    @Test
+    public void testJsonLimits() throws Exception {
         generateJournal();
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
             put("/js", new JsonHandler(factory));
         }});
         server.start();
         try {
-            String newLineStr = "string with with new line";
-            String query = "select '" + newLineStr + "' id from tab \n limit 1";
-            QueryResponse queryResponse = download("select '" + newLineStr + "' id from tab \n limit 1");
-            Assert.assertEquals(query, queryResponse.query);
-            Assert.assertEquals(newLineStr, queryResponse.result[0].id);
+            String query = "tab";
+            QueryResponse queryResponse = download(query, 2, 4);
+            Assert.assertEquals(2, queryResponse.result.length);
+            Assert.assertEquals(true, queryResponse.moreExist);
+            Assert.assertEquals("id2", queryResponse.result[0].id);
+            Assert.assertEquals("id3", queryResponse.result[1].id);
+        } finally {
+            server.halt();
+        }
+    }
+
+    @Test
+    public void testJsonTakeLimit() throws Exception {
+        generateJournal();
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            put("/js", new JsonHandler(factory));
+        }});
+        server.start();
+        try {
+            String query = "tab limit 10";
+            QueryResponse queryResponse = download(query, 2, -1);
+            Assert.assertEquals(2, queryResponse.result.length);
+            Assert.assertEquals(true, queryResponse.moreExist);
+        } finally {
+            server.halt();
+        }
+    }
+
+    @Test
+    @Ignore
+    public void testJsonChunkOverflow() throws Exception {
+        int count = (int) 1E6;
+        generateJournal(count);
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            put("/js", new JsonHandler(factory));
+        }});
+        server.start();
+        try {
+            String query = "tab";
+            QueryResponse queryResponse = download(query);
+            Assert.assertEquals(count, queryResponse.result.length);
         } finally {
             server.halt();
         }
@@ -615,11 +701,24 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     private QueryResponse download(String queryUrl) throws Exception {
+        return download(queryUrl, -1, -1);
+    }
+
+    private QueryResponse download(String queryUrl, int limitFrom, int limitTo) throws Exception {
         File f = temp.newFile();
-        download(clientBuilder(false), "http://localhost:9000/js?query=" + URLEncoder.encode(queryUrl, "UTF-8"), f);
-        Gson gson = new Gson();
+        String url = "http://localhost:9000/js?query=" + URLEncoder.encode(queryUrl, "UTF-8");
+        if (limitFrom >=0) {
+            url += "&limit=" + limitFrom;
+        }
+        if (limitTo >= 0) {
+            url += "," + limitTo;
+        }
+        download(clientBuilder(false), url, f);
+        Gson gson = new GsonBuilder()
+                .setDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").create();
         String body = Files.readStringFromFile(f);
         f.deleteOnExit();
+
         return gson.fromJson(body, QueryResponse.class);
     }
 
@@ -682,7 +781,27 @@ public class HttpServerTest extends AbstractJournalTest {
         return out;
     }
 
+
+    private void generateJournal(String id, double x, double y, long z, int w, long timestamp) throws JournalException, NumericException {
+        QueryResponse.Tab record = new QueryResponse.Tab();
+        record.id = id;
+        record.x = x;
+        record.y = y;
+        record.z = z;
+        record.w = w;
+        record.timestamp = timestamp;
+        generateJournal(new QueryResponse.Tab[] { record }, 1000);
+    }
+
     private void generateJournal() throws JournalException, NumericException {
+        generateJournal(new QueryResponse.Tab[0], 1000);
+    }
+
+    private void generateJournal(int count) throws JournalException, NumericException {
+        generateJournal(new QueryResponse.Tab[0], count);
+    }
+
+    private void generateJournal(QueryResponse.Tab[] recs, int count) throws JournalException, NumericException {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").
                         $str("id").
@@ -697,22 +816,29 @@ public class HttpServerTest extends AbstractJournalTest {
         Rnd rnd = new Rnd();
         long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
 
-        for (int i = 0; i < 1000; i++) {
+        for (int i = 0; i < count; i++) {
             JournalEntryWriter ew = w.entryWriter();
-            ew.putStr(0, "id" + i);
-            ew.putDouble(1, rnd.nextDouble());
-            if (rnd.nextPositiveInt() % 10 == 0) {
-                ew.putNull(2);
-            } else {
-                ew.putDouble(2, rnd.nextDouble());
+            ew.putStr(0, recs.length > i ? recs[i].id : "id" + i);
+            ew.putDouble(1, recs.length > i ? recs[i].x : rnd.nextDouble());
+            if (recs.length > i){
+                ew.putDouble(2, recs[i].y);
+                ew.putLong(3, recs[i].z);
             }
-            if (rnd.nextPositiveInt() % 10 == 0) {
-                ew.putNull(3);
-            } else {
-                ew.putLong(3, rnd.nextLong() % 500);
+            else {
+                if (rnd.nextPositiveInt() % 10 == 0) {
+                    ew.putNull(2);
+                } else {
+                    ew.putDouble(2, rnd.nextDouble());
+                }
+                if (rnd.nextPositiveInt() % 10 == 0) {
+                    ew.putNull(3);
+                } else {
+                    ew.putLong(3, rnd.nextLong() % 500);
+                }
             }
-            ew.putInt(4, rnd.nextInt() % 500);
-            ew.putDate(5, t += 10);
+            ew.putInt(4, recs.length > i ? recs[i].w : rnd.nextInt() % 500);
+            ew.putDate(5, recs.length > i ? recs[i].timestamp : t);
+            t += 10;
             ew.append();
         }
         w.commit();
@@ -729,16 +855,6 @@ public class HttpServerTest extends AbstractJournalTest {
             }
         }
         return file;
-    }
-
-    private String getBody(HttpResponse response) throws IOException {
-        StringBuilder sb = new StringBuilder();
-        BufferedReader reader = new BufferedReader(new InputStreamReader(response.getEntity().getContent(), "UTF-8"), 65728);
-        String line;
-        while ((line = reader.readLine()) != null) {
-            sb.append(line);
-        }
-        return sb.toString();
     }
 
     private SocketChannel openChannel(String host, int port, long timeout) throws IOException {

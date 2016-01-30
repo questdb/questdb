@@ -33,4 +33,5 @@ public class QueryResponse {
     public String error;
     public String query;
     public Tab[] result;
+    public boolean moreExist;
 }
