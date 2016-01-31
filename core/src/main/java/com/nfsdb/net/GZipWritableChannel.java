@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -91,13 +91,6 @@ public class GZipWritableChannel<T extends WritableByteChannel> implements Writa
         return this;
     }
 
-    public void reset() {
-        Zip.deflateReset(z_streamp);
-        crc = 0;
-        total = 0;
-        flushed = false;
-    }
-
     @Override
     public int write(ByteBuffer src) throws IOException {
         if (!(src instanceof DirectBuffer)) {
@@ -128,5 +121,12 @@ public class GZipWritableChannel<T extends WritableByteChannel> implements Writa
                 channel.write(out);
             }
         } while (Zip.availIn(z_streamp) > 0 || (flush && ret != 1));
+    }
+
+    private void reset() {
+        Zip.deflateReset(z_streamp);
+        crc = 0;
+        total = 0;
+        flushed = false;
     }
 }

@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 
 public final class ImportManager {
-    public static final int SAMPLE_SIZE = 100;
+    private static final int SAMPLE_SIZE = 100;
 
     private ImportManager() {
     }
