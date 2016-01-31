@@ -22,7 +22,7 @@
 package com.nfsdb.factory;
 
 import com.nfsdb.*;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;

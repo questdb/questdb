@@ -22,7 +22,7 @@
 package com.nfsdb.printer;
 
 
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.printer.appender.Appender;
 import com.nfsdb.printer.appender.StdOutAppender;

@@ -21,11 +21,11 @@
 
 package com.nfsdb.io.parser;
 
-import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.io.parser.listener.Listener;
-import com.nfsdb.logging.Log;
-import com.nfsdb.logging.LogFactory;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.Unsafe;
+import com.nfsdb.std.DirectByteCharSequence;
 
 public abstract class AbstractTextParser implements TextParser {
     private final static Log LOG = LogFactory.getLog(AbstractTextParser.class);

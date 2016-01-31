@@ -21,14 +21,14 @@
 
 package com.nfsdb.ql.ops.count;
 
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.ops.AbstractUnaryAggregator;
 import com.nfsdb.ql.ops.Function;
 import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.VariableColumn;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.ColumnType;
+import com.nfsdb.store.VariableColumn;
 
 public final class CountStrAggregator extends AbstractUnaryAggregator {
 

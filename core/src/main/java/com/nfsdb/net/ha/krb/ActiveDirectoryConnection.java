@@ -21,8 +21,8 @@
 
 package com.nfsdb.net.ha.krb;
 
-import com.nfsdb.logging.Log;
-import com.nfsdb.logging.LogFactory;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import org.ietf.jgss.*;
 
 import javax.security.auth.Subject;

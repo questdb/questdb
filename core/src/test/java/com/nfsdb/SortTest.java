@@ -21,8 +21,8 @@
 
 package com.nfsdb;
 
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.model.TestEntity;
 import com.nfsdb.query.OrderedResultSet;

@@ -21,10 +21,10 @@
 
 package com.nfsdb.ql.model;
 
-import com.nfsdb.collections.Mutable;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.collections.ObjectFactory;
 import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.std.Mutable;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.std.ObjectFactory;
 
 public class ExprNode implements Mutable {
 

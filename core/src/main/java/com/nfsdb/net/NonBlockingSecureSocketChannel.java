@@ -21,12 +21,12 @@
 
 package com.nfsdb.net;
 
-import com.nfsdb.exceptions.DisconnectedChannelException;
-import com.nfsdb.exceptions.JournalNetworkException;
-import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.exceptions.SlowReadableChannelException;
-import com.nfsdb.logging.Log;
-import com.nfsdb.logging.LogFactory;
+import com.nfsdb.ex.DisconnectedChannelException;
+import com.nfsdb.ex.JournalNetworkException;
+import com.nfsdb.ex.JournalRuntimeException;
+import com.nfsdb.ex.SlowReadableChannelException;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.net.http.IOHttpJob;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;

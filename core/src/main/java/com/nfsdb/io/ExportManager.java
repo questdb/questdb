@@ -21,7 +21,7 @@
 
 package com.nfsdb.io;
 
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.io.sink.FileSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;

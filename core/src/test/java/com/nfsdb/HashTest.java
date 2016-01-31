@@ -21,10 +21,10 @@
 
 package com.nfsdb;
 
-import com.nfsdb.collections.IntHashSet;
 import com.nfsdb.misc.Hash;
 import com.nfsdb.misc.Rnd;
 import com.nfsdb.misc.Unsafe;
+import com.nfsdb.std.IntHashSet;
 import org.junit.Assert;
 import org.junit.Test;
 

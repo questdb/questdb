@@ -21,12 +21,12 @@
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.collections.CharSequenceHashSet;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.std.CharSequenceHashSet;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.ColumnType;
 
 public class StrInOperator extends AbstractVirtualColumn implements Function {
 

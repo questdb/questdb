@@ -21,13 +21,13 @@
 
 package com.nfsdb.net.http;
 
-import com.nfsdb.collections.IntObjHashMap;
-import com.nfsdb.collections.Mutable;
-import com.nfsdb.exceptions.ResponseHeaderBufferTooSmallException;
+import com.nfsdb.ex.ResponseHeaderBufferTooSmallException;
 import com.nfsdb.io.sink.AbstractCharSink;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.misc.*;
+import com.nfsdb.std.IntObjHashMap;
+import com.nfsdb.std.Mutable;
 
 import java.io.Closeable;
 import java.nio.ByteBuffer;

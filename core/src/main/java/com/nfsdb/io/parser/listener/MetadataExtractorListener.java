@@ -21,10 +21,6 @@
 
 package com.nfsdb.io.parser.listener;
 
-import com.nfsdb.collections.IntList;
-import com.nfsdb.collections.Mutable;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.collections.ObjectFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.io.ImportSchema;
@@ -34,7 +30,11 @@ import com.nfsdb.io.parser.listener.probe.*;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.ql.impl.CollectionRecordMetadata;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.std.IntList;
+import com.nfsdb.std.Mutable;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.std.ObjectFactory;
+import com.nfsdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"PL_PARALLEL_LISTS", "LII_LIST_INDEXED_ITERATING"})

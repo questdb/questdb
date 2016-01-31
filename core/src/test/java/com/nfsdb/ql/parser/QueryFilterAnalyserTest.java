@@ -22,14 +22,14 @@
 package com.nfsdb.ql.parser;
 
 import com.nfsdb.JournalWriter;
-import com.nfsdb.collections.ObjectPool;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Interval;
 import com.nfsdb.model.Quote;
 import com.nfsdb.ql.model.ExprNode;
 import com.nfsdb.ql.model.IntrinsicModel;
 import com.nfsdb.ql.model.IntrinsicValue;
+import com.nfsdb.std.ObjectPool;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;

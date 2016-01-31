@@ -21,8 +21,8 @@
 
 package com.nfsdb.io.parser.listener;
 
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.io.ImportedColumnMetadata;
+import com.nfsdb.std.ObjList;
 
 public interface InputAnalysisListener extends Listener {
     void onMetadata(ObjList<ImportedColumnMetadata> metadata);

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,11 +17,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.ha.comsumer;
 
-import com.nfsdb.storage.VariableColumn;
+import com.nfsdb.store.VariableColumn;
 
 public class VariableColumnDeltaConsumer extends ChannelConsumerGroup {
     public VariableColumnDeltaConsumer(VariableColumn column) {

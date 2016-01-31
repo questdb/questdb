@@ -21,8 +21,8 @@
 
 package com.nfsdb.net.ha.mcast;
 
-import com.nfsdb.logging.Log;
-import com.nfsdb.logging.LogFactory;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.net.ha.config.ClientConfig;
 import com.nfsdb.net.ha.config.ServerNode;
 

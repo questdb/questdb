@@ -22,11 +22,10 @@
 package com.nfsdb.ql.parser;
 
 import com.nfsdb.JournalKey;
-import com.nfsdb.collections.*;
-import com.nfsdb.exceptions.InvalidColumnException;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.NumericException;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.InvalidColumnException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.NumericException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
@@ -59,7 +58,8 @@ import com.nfsdb.ql.ops.FunctionFactories;
 import com.nfsdb.ql.ops.Signature;
 import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.ql.ops.constant.LongConstant;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.std.*;
+import com.nfsdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;

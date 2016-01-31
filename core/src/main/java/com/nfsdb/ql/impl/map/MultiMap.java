@@ -21,8 +21,7 @@
 
 package com.nfsdb.ql.impl.map;
 
-import com.nfsdb.collections.*;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.misc.Hash;
@@ -30,6 +29,7 @@ import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
+import com.nfsdb.std.*;
 
 public class MultiMap extends DirectMemoryStructure implements Mutable {
 

@@ -21,7 +21,7 @@
 
 package com.nfsdb;
 
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 
 import java.io.InputStream;
 import java.io.OutputStream;

@@ -23,7 +23,7 @@ package org.nfsdb.examples.query;
 
 import com.nfsdb.Journal;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.misc.Files;
 import com.nfsdb.query.api.QueryHeadBuilder;

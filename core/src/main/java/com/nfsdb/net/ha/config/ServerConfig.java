@@ -21,9 +21,9 @@
 
 package com.nfsdb.net.ha.config;
 
-import com.nfsdb.exceptions.JournalNetworkException;
-import com.nfsdb.logging.Log;
-import com.nfsdb.logging.LogFactory;
+import com.nfsdb.ex.JournalNetworkException;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;

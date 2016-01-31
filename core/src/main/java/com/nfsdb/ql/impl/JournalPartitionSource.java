@@ -22,15 +22,15 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.Journal;
-import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.PartitionCursor;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.PartitionSource;
 import com.nfsdb.ql.StorageFacade;
+import com.nfsdb.std.AbstractImmutableIterator;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})

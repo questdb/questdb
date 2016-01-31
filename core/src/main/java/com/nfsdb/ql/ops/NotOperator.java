@@ -21,9 +21,9 @@
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.ColumnType;
 
 public class NotOperator extends AbstractUnaryOperator {
 

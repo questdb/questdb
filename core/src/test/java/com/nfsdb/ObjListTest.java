@@ -21,8 +21,8 @@
 
 package com.nfsdb;
 
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.misc.Rnd;
+import com.nfsdb.std.ObjList;
 import org.junit.Assert;
 import org.junit.Test;
 

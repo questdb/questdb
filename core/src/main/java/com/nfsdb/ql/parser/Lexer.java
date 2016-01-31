@@ -21,10 +21,10 @@
 
 package com.nfsdb.ql.parser;
 
-import com.nfsdb.collections.AbstractCharSequence;
-import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.collections.CharSequenceHashSet;
-import com.nfsdb.collections.IntObjHashMap;
+import com.nfsdb.std.AbstractCharSequence;
+import com.nfsdb.std.AbstractImmutableIterator;
+import com.nfsdb.std.CharSequenceHashSet;
+import com.nfsdb.std.IntObjHashMap;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayList;

@@ -21,7 +21,7 @@
 
 package com.nfsdb.misc;
 
-import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.ex.NumericException;
 import com.nfsdb.net.Kqueue;
 
 public final class Net {

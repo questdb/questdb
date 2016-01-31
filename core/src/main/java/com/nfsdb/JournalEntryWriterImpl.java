@@ -21,12 +21,12 @@
 
 package com.nfsdb;
 
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.misc.Hash;
 import com.nfsdb.misc.Unsafe;
-import com.nfsdb.storage.*;
+import com.nfsdb.store.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.InputStream;

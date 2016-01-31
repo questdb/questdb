@@ -22,16 +22,16 @@
 package com.nfsdb.factory.configuration;
 
 import com.nfsdb.PartitionType;
-import com.nfsdb.collections.CharSequenceIntHashMap;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.JournalConfigurationException;
-import com.nfsdb.logging.Log;
-import com.nfsdb.logging.LogFactory;
+import com.nfsdb.ex.JournalConfigurationException;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Unsafe;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.std.CharSequenceIntHashMap;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;

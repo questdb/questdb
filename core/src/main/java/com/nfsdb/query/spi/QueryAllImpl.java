@@ -23,9 +23,8 @@ package com.nfsdb.query.spi;
 
 import com.nfsdb.Journal;
 import com.nfsdb.Partition;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.iter.*;
 import com.nfsdb.misc.Interval;
 import com.nfsdb.misc.Rows;
@@ -33,6 +32,7 @@ import com.nfsdb.query.OrderedResultSet;
 import com.nfsdb.query.OrderedResultSetBuilder;
 import com.nfsdb.query.api.QueryAll;
 import com.nfsdb.query.api.QueryAllBuilder;
+import com.nfsdb.std.ObjList;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.Iterator;

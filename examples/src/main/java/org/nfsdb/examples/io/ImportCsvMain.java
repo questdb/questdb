@@ -22,7 +22,7 @@
 package org.nfsdb.examples.io;
 
 import com.nfsdb.Journal;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.io.ImportManager;
 import com.nfsdb.io.ImportSchema;

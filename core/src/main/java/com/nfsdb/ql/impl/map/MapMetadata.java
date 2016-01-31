@@ -21,14 +21,14 @@
 
 package com.nfsdb.ql.impl.map;
 
-import com.nfsdb.collections.CharSequenceIntHashMap;
-import com.nfsdb.collections.ObjHashSet;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.collections.Transient;
 import com.nfsdb.factory.configuration.AbstractRecordMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.misc.Unsafe;
+import com.nfsdb.std.CharSequenceIntHashMap;
+import com.nfsdb.std.ObjHashSet;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.std.Transient;
 
 public final class MapMetadata extends AbstractRecordMetadata {
 

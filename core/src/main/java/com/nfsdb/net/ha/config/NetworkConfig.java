@@ -21,9 +21,9 @@
 
 package com.nfsdb.net.ha.config;
 
-import com.nfsdb.collections.IntIntHashMap;
-import com.nfsdb.exceptions.JournalNetworkException;
+import com.nfsdb.ex.JournalNetworkException;
 import com.nfsdb.net.SslConfig;
+import com.nfsdb.std.IntIntHashMap;
 
 import java.io.IOException;
 import java.net.*;

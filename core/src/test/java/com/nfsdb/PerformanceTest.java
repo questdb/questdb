@@ -21,13 +21,12 @@
 
 package com.nfsdb;
 
-import com.nfsdb.collections.LongList;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.NumericException;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.NumericException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.factory.JournalCachingFactory;
-import com.nfsdb.logging.Log;
-import com.nfsdb.logging.LogFactory;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Interval;
 import com.nfsdb.model.Quote;
@@ -36,7 +35,8 @@ import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.parser.QueryCompiler;
 import com.nfsdb.query.api.QueryAllBuilder;
 import com.nfsdb.query.api.QueryHeadBuilder;
-import com.nfsdb.storage.KVIndex;
+import com.nfsdb.std.LongList;
+import com.nfsdb.store.KVIndex;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;

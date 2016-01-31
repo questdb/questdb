@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,12 +17,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.ha.config;
 
-import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.ex.JournalRuntimeException;
+import com.nfsdb.ex.NumericException;
 import com.nfsdb.misc.Numbers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;

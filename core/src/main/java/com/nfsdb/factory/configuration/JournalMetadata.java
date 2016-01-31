@@ -23,12 +23,12 @@ package com.nfsdb.factory.configuration;
 
 import com.nfsdb.JournalKey;
 import com.nfsdb.PartitionType;
-import com.nfsdb.collections.CharSequenceIntHashMap;
-import com.nfsdb.exceptions.JournalConfigurationException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalConfigurationException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Unsafe;
-import com.nfsdb.storage.UnstructuredFile;
+import com.nfsdb.std.CharSequenceIntHashMap;
+import com.nfsdb.store.UnstructuredFile;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.lang.StringBuilder;

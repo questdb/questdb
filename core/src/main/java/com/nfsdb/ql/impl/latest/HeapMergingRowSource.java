@@ -21,13 +21,13 @@
 
 package com.nfsdb.ql.impl.latest;
 
-import com.nfsdb.collections.IntLongPriorityQueue;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.RowCursor;
 import com.nfsdb.ql.RowSource;
 import com.nfsdb.ql.StorageFacade;
+import com.nfsdb.std.IntLongPriorityQueue;
 
 public class HeapMergingRowSource implements RowSource, RowCursor {
     private final RowSource[] sources;

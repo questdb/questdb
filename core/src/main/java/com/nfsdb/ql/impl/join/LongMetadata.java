@@ -22,7 +22,7 @@
 package com.nfsdb.ql.impl.join;
 
 import com.nfsdb.factory.configuration.ColumnMetadata;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.store.ColumnType;
 
 public final class LongMetadata extends ColumnMetadata {
 

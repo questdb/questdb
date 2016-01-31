@@ -23,14 +23,14 @@ package com.nfsdb.query;
 
 import com.nfsdb.Journal;
 import com.nfsdb.Partition;
-import com.nfsdb.collections.LongList;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.misc.Rnd;
 import com.nfsdb.misc.Rows;
 import com.nfsdb.query.iterator.ResultSetBufferedIterator;
 import com.nfsdb.query.iterator.ResultSetIterator;
-import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.std.LongList;
+import com.nfsdb.store.SymbolTable;
 
 import java.util.Iterator;
 

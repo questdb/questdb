@@ -23,12 +23,12 @@ package com.nfsdb.ql;
 
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Rnd;
 import com.nfsdb.ql.parser.AbstractOptimiserTest;
+import com.nfsdb.std.ObjList;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;

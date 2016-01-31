@@ -21,8 +21,8 @@
 
 package com.nfsdb.factory.configuration;
 
-import com.nfsdb.collections.ObjObjHashMap;
-import com.nfsdb.exceptions.JournalConfigurationException;
+import com.nfsdb.ex.JournalConfigurationException;
+import com.nfsdb.std.ObjObjHashMap;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;

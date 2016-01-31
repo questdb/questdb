@@ -24,7 +24,7 @@ package com.nfsdb.ql.impl.unused;
 import com.nfsdb.ql.KeyCursor;
 import com.nfsdb.ql.KeySource;
 import com.nfsdb.ql.ops.NLGlue;
-import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.store.SymbolTable;
 
 public class SymLookupKeySource implements KeySource, KeyCursor {
 

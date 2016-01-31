@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,13 +17,13 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.ha.producer;
 
-import com.nfsdb.exceptions.JournalNetworkException;
+import com.nfsdb.ex.JournalNetworkException;
 import com.nfsdb.misc.ByteBuffers;
-import com.nfsdb.storage.AbstractColumn;
+import com.nfsdb.store.AbstractColumn;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;

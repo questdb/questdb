@@ -21,11 +21,11 @@
 
 package com.nfsdb;
 
-import com.nfsdb.exceptions.JournalConfigurationException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalConfigurationException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.logging.Log;
-import com.nfsdb.logging.LogFactory;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.Files;
 import com.nfsdb.misc.Rnd;
 import com.nfsdb.test.tools.JournalTestFactory;

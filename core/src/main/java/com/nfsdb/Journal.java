@@ -21,23 +21,23 @@
 
 package com.nfsdb;
 
-import com.nfsdb.collections.LongList;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.collections.ObjObjHashMap;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
+import com.nfsdb.ex.NumericException;
 import com.nfsdb.factory.JournalClosingListener;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.Constants;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.logging.Log;
-import com.nfsdb.logging.LogFactory;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.*;
 import com.nfsdb.query.AbstractResultSetBuilder;
 import com.nfsdb.query.api.Query;
 import com.nfsdb.query.spi.QueryImpl;
-import com.nfsdb.storage.*;
+import com.nfsdb.std.LongList;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.std.ObjObjHashMap;
+import com.nfsdb.store.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
@@ -236,7 +236,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      * Get the highest global row id of the Journal.
      *
      * @return the highest global row id of the Journal
-     * @throws com.nfsdb.exceptions.JournalException if there is an error
+     * @throws com.nfsdb.ex.JournalException if there is an error
      */
     public long getMaxRowID() throws JournalException {
         Partition<T> p = getLastPartition();
@@ -424,7 +424,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      * Read an object by global row id
      *
      * @param rowID the global row id to read
-     * @throws com.nfsdb.exceptions.JournalException if there is an error
+     * @throws com.nfsdb.ex.JournalException if there is an error
      */
     public void read(long rowID, T obj) throws JournalException {
         getPartition(Rows.toPartitionIndex(rowID), true).read(Rows.toLocalRowID(rowID), obj);
@@ -435,7 +435,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      *
      * @param rowIDs the global row ids to read
      * @return some objects
-     * @throws com.nfsdb.exceptions.JournalException if there is an error
+     * @throws com.nfsdb.ex.JournalException if there is an error
      */
     @SuppressWarnings("unchecked")
     public T[] read(LongList rowIDs) throws JournalException {
@@ -451,7 +451,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      *
      * @param rowID the global row id to read
      * @return an object
-     * @throws com.nfsdb.exceptions.JournalException if there is an error
+     * @throws com.nfsdb.ex.JournalException if there is an error
      */
     public T read(long rowID) throws JournalException {
         return getPartition(Rows.toPartitionIndex(rowID), true).read(Rows.toLocalRowID(rowID));

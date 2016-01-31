@@ -22,11 +22,8 @@
 package com.nfsdb.ql.impl.lambda;
 
 import com.nfsdb.Partition;
-import com.nfsdb.collections.CharSequenceHashSet;
-import com.nfsdb.collections.IntList;
-import com.nfsdb.collections.LongList;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Hash;
@@ -34,9 +31,12 @@ import com.nfsdb.ql.*;
 import com.nfsdb.ql.impl.AbstractRowSource;
 import com.nfsdb.ql.impl.JournalRecord;
 import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.storage.IndexCursor;
-import com.nfsdb.storage.KVIndex;
-import com.nfsdb.storage.VariableColumn;
+import com.nfsdb.std.CharSequenceHashSet;
+import com.nfsdb.std.IntList;
+import com.nfsdb.std.LongList;
+import com.nfsdb.store.IndexCursor;
+import com.nfsdb.store.KVIndex;
+import com.nfsdb.store.VariableColumn;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public abstract class KvIndexStrLambdaHeadRowSource extends AbstractRowSource {

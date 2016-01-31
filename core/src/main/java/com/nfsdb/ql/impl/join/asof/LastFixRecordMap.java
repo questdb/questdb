@@ -21,8 +21,7 @@
 
 package com.nfsdb.ql.impl.join.asof;
 
-import com.nfsdb.collections.*;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.misc.Numbers;
@@ -33,8 +32,9 @@ import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.impl.join.LongMetadata;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.impl.map.MultiMap;
-import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.std.*;
+import com.nfsdb.store.ColumnType;
+import com.nfsdb.store.SymbolTable;
 
 public class LastFixRecordMap implements LastRecordMap {
     private static final ObjList<RecordColumnMetadata> valueMetadata = new ObjList<>();

@@ -23,7 +23,7 @@ package org.nfsdb.examples.reporting;
 
 import com.nfsdb.Journal;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.misc.Dates;

@@ -21,13 +21,13 @@
 
 package com.nfsdb.ql.impl.map;
 
-import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.StorageFacade;
+import com.nfsdb.std.AbstractImmutableIterator;
+import com.nfsdb.std.ObjList;
 
 public final class MapRecordSource extends AbstractImmutableIterator<Record> implements RecordCursor<Record> {
     private final MapRecord record;

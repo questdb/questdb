@@ -21,15 +21,15 @@
 
 package com.nfsdb.ql.impl.latest;
 
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.ql.PartitionSlice;
 import com.nfsdb.ql.RowCursor;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.impl.AbstractRowSource;
-import com.nfsdb.storage.IndexCursor;
-import com.nfsdb.storage.KVIndex;
+import com.nfsdb.store.IndexCursor;
+import com.nfsdb.store.KVIndex;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})

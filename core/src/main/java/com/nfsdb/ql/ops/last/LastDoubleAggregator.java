@@ -21,13 +21,13 @@
 
 package com.nfsdb.ql.ops.last;
 
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.ops.AbstractUnaryAggregator;
 import com.nfsdb.ql.ops.Function;
 import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.ColumnType;
 
 public final class LastDoubleAggregator extends AbstractUnaryAggregator {
 

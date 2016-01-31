@@ -22,7 +22,7 @@
 package com.nfsdb.query;
 
 import com.nfsdb.Journal;
-import com.nfsdb.collections.LongList;
+import com.nfsdb.std.LongList;
 
 /**
  * Unordered result set does not guarantee ROWIDs to be in ascending order.

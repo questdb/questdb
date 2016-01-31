@@ -22,10 +22,8 @@
 package com.nfsdb.ql;
 
 import com.nfsdb.JournalWriter;
-import com.nfsdb.collections.IntList;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.JournalConfigurationException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalConfigurationException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
@@ -38,6 +36,8 @@ import com.nfsdb.ql.impl.JournalPartitionSource;
 import com.nfsdb.ql.impl.JournalSource;
 import com.nfsdb.ql.impl.join.HashJoinRecordSource;
 import com.nfsdb.ql.impl.select.SelectedColumnsRecordSource;
+import com.nfsdb.std.IntList;
+import com.nfsdb.std.ObjList;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.*;

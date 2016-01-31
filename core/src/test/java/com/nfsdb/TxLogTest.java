@@ -21,13 +21,13 @@
 
 package com.nfsdb;
 
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.io.sink.DelimitedCharSink;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.misc.Rows;
 import com.nfsdb.model.Quote;
-import com.nfsdb.storage.Tx;
-import com.nfsdb.storage.TxLog;
+import com.nfsdb.store.Tx;
+import com.nfsdb.store.TxLog;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;

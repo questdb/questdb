@@ -21,13 +21,13 @@
 
 package com.nfsdb.ql.impl.select;
 
-import com.nfsdb.collections.DirectInputStream;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.collections.Transient;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.AbstractRecord;
 import com.nfsdb.ql.Record;
+import com.nfsdb.std.DirectInputStream;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.std.Transient;
 
 import java.io.OutputStream;
 

@@ -21,7 +21,7 @@
 
 package com.nfsdb.io.sink;
 
-import com.nfsdb.collections.Mutable;
+import com.nfsdb.std.Mutable;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
 

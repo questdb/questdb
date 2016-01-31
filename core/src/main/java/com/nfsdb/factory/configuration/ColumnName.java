@@ -21,8 +21,8 @@
 
 package com.nfsdb.factory.configuration;
 
-import com.nfsdb.collections.FlyweightCharSequence;
 import com.nfsdb.misc.Chars;
+import com.nfsdb.std.FlyweightCharSequence;
 import org.jetbrains.annotations.NotNull;
 
 class ColumnName implements CharSequence {

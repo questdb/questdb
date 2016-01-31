@@ -21,10 +21,10 @@
 
 package com.nfsdb.ql.impl.join.asof;
 
-import com.nfsdb.collections.DirectCharSequence;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.misc.Unsafe;
+import com.nfsdb.std.DirectCharSequence;
 
 public abstract class AbstractVarMemRecord extends AbstractMemRecord {
 

@@ -21,12 +21,12 @@
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.collections.IntHashSet;
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
-import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.std.IntHashSet;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.ColumnType;
+import com.nfsdb.store.SymbolTable;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;

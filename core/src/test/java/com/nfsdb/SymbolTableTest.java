@@ -21,9 +21,9 @@
 
 package com.nfsdb;
 
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalInvalidSymbolValueException;
-import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalInvalidSymbolValueException;
+import com.nfsdb.store.SymbolTable;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.After;

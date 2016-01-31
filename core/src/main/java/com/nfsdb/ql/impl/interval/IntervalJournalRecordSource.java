@@ -21,8 +21,7 @@
 
 package com.nfsdb.ql.impl.interval;
 
-import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.misc.Interval;
@@ -30,6 +29,7 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
+import com.nfsdb.std.AbstractImmutableIterator;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class IntervalJournalRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record> {

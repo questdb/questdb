@@ -26,8 +26,8 @@ import com.nfsdb.misc.Chars;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.ops.AbstractVirtualColumn;
-import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.VariableColumn;
+import com.nfsdb.store.ColumnType;
+import com.nfsdb.store.VariableColumn;
 
 public class StrConstant extends AbstractVirtualColumn {
     private final String value;

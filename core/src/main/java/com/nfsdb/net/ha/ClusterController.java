@@ -22,11 +22,11 @@
 package com.nfsdb.net.ha;
 
 import com.nfsdb.JournalWriter;
-import com.nfsdb.exceptions.JournalNetworkException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalNetworkException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.logging.Log;
-import com.nfsdb.logging.LogFactory;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.net.ha.config.ClientConfig;
 import com.nfsdb.net.ha.config.ServerConfig;
 import com.nfsdb.net.ha.config.ServerNode;

@@ -23,11 +23,11 @@ package com.nfsdb.factory.configuration;
 
 import com.nfsdb.JournalKey;
 import com.nfsdb.JournalMode;
-import com.nfsdb.collections.ObjObjHashMap;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalMetadataException;
-import com.nfsdb.storage.TxLog;
-import com.nfsdb.storage.UnstructuredFile;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalMetadataException;
+import com.nfsdb.std.ObjObjHashMap;
+import com.nfsdb.store.TxLog;
+import com.nfsdb.store.UnstructuredFile;
 
 import javax.annotation.concurrent.Immutable;
 import java.io.File;

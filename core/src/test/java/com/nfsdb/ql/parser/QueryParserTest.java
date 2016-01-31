@@ -21,7 +21,7 @@
 
 package com.nfsdb.ql.parser;
 
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.ql.model.ExprNode;
 import com.nfsdb.ql.model.QueryModel;
 import com.nfsdb.ql.model.Statement;

@@ -21,8 +21,8 @@
 
 package com.nfsdb.ql;
 
-import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.factory.configuration.RecordMetadata;
+import com.nfsdb.std.DirectInputStream;
 
 import java.io.OutputStream;
 

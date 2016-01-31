@@ -22,7 +22,7 @@
 package com.nfsdb.factory.configuration;
 
 import com.nfsdb.misc.Numbers;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings("CD_CIRCULAR_DEPENDENCY")

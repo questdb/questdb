@@ -21,8 +21,8 @@
 
 package com.nfsdb;
 
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.NumericException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.misc.Dates;
@@ -32,8 +32,8 @@ import com.nfsdb.misc.Rows;
 import com.nfsdb.model.Quote;
 import com.nfsdb.model.TestEntity;
 import com.nfsdb.query.ResultSet;
-import com.nfsdb.storage.SymbolTable;
-import com.nfsdb.storage.TxListener;
+import com.nfsdb.store.SymbolTable;
+import com.nfsdb.store.TxListener;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestData;
 import com.nfsdb.test.tools.TestUtils;

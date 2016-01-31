@@ -21,12 +21,12 @@
 
 package com.nfsdb.ql.impl.join;
 
-import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.ql.AbstractRecord;
 import com.nfsdb.ql.Record;
+import com.nfsdb.std.DirectInputStream;
 
 import java.io.OutputStream;
 

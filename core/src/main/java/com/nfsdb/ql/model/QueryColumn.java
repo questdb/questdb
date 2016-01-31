@@ -21,8 +21,8 @@
 
 package com.nfsdb.ql.model;
 
-import com.nfsdb.collections.Mutable;
-import com.nfsdb.collections.ObjectFactory;
+import com.nfsdb.std.Mutable;
+import com.nfsdb.std.ObjectFactory;
 
 public final class QueryColumn implements Mutable {
     public final static ObjectFactory<QueryColumn> FACTORY = new ObjectFactory<QueryColumn>() {

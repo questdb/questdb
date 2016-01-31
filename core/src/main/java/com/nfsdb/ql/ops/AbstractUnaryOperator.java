@@ -21,9 +21,9 @@
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.ql.StorageFacade;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.store.ColumnType;
 
 public abstract class AbstractUnaryOperator extends AbstractVirtualColumn implements Function {
     protected VirtualColumn value;

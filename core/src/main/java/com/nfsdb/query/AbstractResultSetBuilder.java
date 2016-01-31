@@ -23,10 +23,10 @@ package com.nfsdb.query;
 
 import com.nfsdb.Journal;
 import com.nfsdb.Partition;
-import com.nfsdb.collections.LongList;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.misc.Interval;
-import com.nfsdb.storage.BSearchType;
+import com.nfsdb.std.LongList;
+import com.nfsdb.store.BSearchType;
 
 public abstract class AbstractResultSetBuilder<T, X> {
     protected final LongList result = new LongList();

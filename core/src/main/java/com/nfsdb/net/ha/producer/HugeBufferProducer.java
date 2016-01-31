@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,18 +17,18 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.ha.producer;
 
 import com.nfsdb.JournalMode;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalNetworkException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalNetworkException;
 import com.nfsdb.factory.configuration.Constants;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.net.ha.ChannelProducer;
-import com.nfsdb.storage.UnstructuredFile;
+import com.nfsdb.store.UnstructuredFile;
 
 import java.io.Closeable;
 import java.io.File;

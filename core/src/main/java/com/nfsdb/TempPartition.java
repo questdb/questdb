@@ -21,10 +21,10 @@
 
 package com.nfsdb;
 
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.misc.Interval;
-import com.nfsdb.storage.Lock;
-import com.nfsdb.storage.LockManager;
+import com.nfsdb.store.Lock;
+import com.nfsdb.store.LockManager;
 
 import java.io.File;
 

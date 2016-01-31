@@ -21,7 +21,7 @@
 
 package com.nfsdb;
 
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.model.Quote;
 import com.nfsdb.query.ResultSet;

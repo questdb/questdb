@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,14 +17,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
-import com.nfsdb.collections.DirectByteCharSequence;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.collections.ObjectPool;
 import com.nfsdb.misc.Unsafe;
+import com.nfsdb.std.DirectByteCharSequence;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.std.ObjectPool;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;

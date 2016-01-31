@@ -21,13 +21,13 @@
 
 package com.nfsdb.ql.ops.conv;
 
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractUnaryOperator;
 import com.nfsdb.ql.ops.Function;
 import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.ColumnType;
 
 public class AtoIFunction extends AbstractUnaryOperator {
 

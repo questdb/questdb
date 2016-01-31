@@ -24,7 +24,7 @@ package com.nfsdb.io.parser.listener.probe;
 import com.nfsdb.io.ImportedColumnMetadata;
 import com.nfsdb.io.ImportedColumnType;
 import com.nfsdb.misc.Chars;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.store.ColumnType;
 
 public class BooleanProbe implements TypeProbe {
 

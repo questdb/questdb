@@ -21,7 +21,7 @@
 
 package com.nfsdb.iter;
 
-import com.nfsdb.collections.ImmutableIterator;
+import com.nfsdb.std.ImmutableIterator;
 
 public interface PeekingIterator<T> extends ImmutableIterator<T> {
     boolean isEmpty();

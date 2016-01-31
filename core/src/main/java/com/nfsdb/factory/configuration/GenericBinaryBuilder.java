@@ -21,7 +21,7 @@
 
 package com.nfsdb.factory.configuration;
 
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.store.ColumnType;
 
 public class GenericBinaryBuilder extends AbstractGenericMetadataBuilder {
 

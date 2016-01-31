@@ -21,14 +21,14 @@
 
 package com.nfsdb.ql.ops.neg;
 
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.ops.AbstractVirtualColumn;
 import com.nfsdb.ql.ops.Function;
 import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.ColumnType;
 
 public class DoubleNegativeOperator extends AbstractVirtualColumn implements Function {
 

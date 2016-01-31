@@ -21,9 +21,9 @@
 
 package com.nfsdb.factory.configuration;
 
-import com.nfsdb.exceptions.JournalConfigurationException;
+import com.nfsdb.ex.JournalConfigurationException;
 import com.nfsdb.misc.Numbers;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.store.ColumnType;
 
 public class SymbolBuilder<T> extends AbstractMetadataBuilder<T> {
     public SymbolBuilder(JournalMetadataBuilder<T> parent, ColumnMetadata meta) {

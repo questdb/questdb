@@ -22,7 +22,7 @@
 package com.nfsdb.iter;
 
 import com.nfsdb.Journal;
-import com.nfsdb.collections.ImmutableIterator;
+import com.nfsdb.std.ImmutableIterator;
 
 public interface JournalIterator<T> extends ImmutableIterator<T> {
     Journal<T> getJournal();

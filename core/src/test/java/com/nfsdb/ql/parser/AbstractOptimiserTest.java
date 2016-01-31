@@ -21,8 +21,8 @@
 
 package com.nfsdb.ql.parser;
 
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.misc.Files;

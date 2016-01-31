@@ -24,7 +24,7 @@ package com.nfsdb;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.factory.configuration.JournalMetadataBuilder;
 import com.nfsdb.model.Quote;
-import com.nfsdb.storage.UnstructuredFile;
+import com.nfsdb.store.UnstructuredFile;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;

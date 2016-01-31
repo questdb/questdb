@@ -21,7 +21,6 @@
 
 package com.nfsdb;
 
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.io.RecordSourcePrinter;
@@ -34,7 +33,8 @@ import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.impl.CollectionRecordMetadata;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.impl.map.MultiMap;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.ColumnType;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;

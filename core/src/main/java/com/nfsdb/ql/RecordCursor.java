@@ -21,8 +21,8 @@
 
 package com.nfsdb.ql;
 
-import com.nfsdb.collections.ImmutableIterator;
 import com.nfsdb.factory.configuration.RecordMetadata;
+import com.nfsdb.std.ImmutableIterator;
 
 public interface RecordCursor<T extends Record> extends ImmutableIterator<T> {
     T getByRowId(long rowId);

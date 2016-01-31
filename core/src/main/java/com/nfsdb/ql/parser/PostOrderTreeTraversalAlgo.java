@@ -21,9 +21,9 @@
 
 package com.nfsdb.ql.parser;
 
-import com.nfsdb.collections.IntStack;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.ql.model.ExprNode;
+import com.nfsdb.std.IntStack;
 
 import java.util.ArrayDeque;
 

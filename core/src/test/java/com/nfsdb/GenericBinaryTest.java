@@ -21,8 +21,8 @@
 
 package com.nfsdb;
 
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.misc.Rnd;
 import com.nfsdb.ql.Record;

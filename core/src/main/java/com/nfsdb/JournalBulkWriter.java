@@ -21,7 +21,7 @@
 
 package com.nfsdb;
 
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.configuration.JournalMetadata;
 
 public class JournalBulkWriter<T> extends JournalWriter<T> {

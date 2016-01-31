@@ -21,11 +21,11 @@
 
 package com.nfsdb;
 
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.misc.Misc;
-import com.nfsdb.storage.KVIndex;
+import com.nfsdb.store.KVIndex;
 
 import java.io.Closeable;
 import java.io.File;

@@ -21,13 +21,13 @@
 
 package com.nfsdb;
 
-import com.nfsdb.collections.DirectCharSequence;
-import com.nfsdb.collections.Path;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.NumericException;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Files;
+import com.nfsdb.std.DirectCharSequence;
+import com.nfsdb.std.Path;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;

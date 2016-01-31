@@ -21,8 +21,8 @@
 
 package org.nfsdb.examples.io;
 
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.io.ExportManager;
 import com.nfsdb.io.TextFileFormat;

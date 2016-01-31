@@ -21,7 +21,7 @@
 
 package com.nfsdb.net.ha.protocol.commands;
 
-import com.nfsdb.exceptions.JournalNetworkException;
+import com.nfsdb.ex.JournalNetworkException;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.net.ha.ChannelProducer;
 

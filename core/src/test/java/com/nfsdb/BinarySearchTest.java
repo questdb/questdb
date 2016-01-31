@@ -21,9 +21,9 @@
 
 package com.nfsdb;
 
-import com.nfsdb.storage.BSearchType;
-import com.nfsdb.storage.FixedColumn;
-import com.nfsdb.storage.MemoryFile;
+import com.nfsdb.store.BSearchType;
+import com.nfsdb.store.FixedColumn;
+import com.nfsdb.store.MemoryFile;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 

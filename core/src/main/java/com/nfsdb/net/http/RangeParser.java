@@ -21,10 +21,10 @@
 
 package com.nfsdb.net.http;
 
-import com.nfsdb.collections.ObjectFactory;
-import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.ex.NumericException;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Numbers;
+import com.nfsdb.std.ObjectFactory;
 
 public class RangeParser {
     public static final ObjectFactory<RangeParser> FACTORY = new ObjectFactory<RangeParser>() {

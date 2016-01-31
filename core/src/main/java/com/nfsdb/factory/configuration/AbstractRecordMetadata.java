@@ -21,7 +21,7 @@
 
 package com.nfsdb.factory.configuration;
 
-import com.nfsdb.exceptions.NoSuchColumnException;
+import com.nfsdb.ex.NoSuchColumnException;
 
 public abstract class AbstractRecordMetadata implements RecordMetadata {
     private String alias;

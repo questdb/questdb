@@ -21,10 +21,9 @@
 
 package com.nfsdb.ql.parser;
 
-import com.nfsdb.collections.*;
-import com.nfsdb.exceptions.InvalidColumnException;
-import com.nfsdb.exceptions.NumericException;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.InvalidColumnException;
+import com.nfsdb.ex.NumericException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.misc.Chars;
@@ -37,6 +36,7 @@ import com.nfsdb.ql.impl.interval.YearIntervalSource;
 import com.nfsdb.ql.model.ExprNode;
 import com.nfsdb.ql.model.IntrinsicModel;
 import com.nfsdb.ql.model.IntrinsicValue;
+import com.nfsdb.std.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;

@@ -22,12 +22,12 @@
 package com.nfsdb.query.iterator;
 
 import com.nfsdb.Journal;
-import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.iter.JournalIterator;
 import com.nfsdb.iter.PeekingIterator;
 import com.nfsdb.query.ResultSet;
+import com.nfsdb.std.AbstractImmutableIterator;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})

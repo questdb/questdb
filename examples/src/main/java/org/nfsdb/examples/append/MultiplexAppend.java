@@ -23,7 +23,7 @@ package org.nfsdb.examples.append;
 
 import com.lmax.disruptor.*;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.misc.Files;
 import com.nfsdb.misc.Rnd;
@@ -43,7 +43,7 @@ public class MultiplexAppend {
      * Appends 2 million quotes to two journals simultaneously.
      *
      * @param args factory directory
-     * @throws com.nfsdb.exceptions.JournalException
+     * @throws com.nfsdb.ex.JournalException
      */
     public static void main(String[] args) throws JournalException, InterruptedException {
 

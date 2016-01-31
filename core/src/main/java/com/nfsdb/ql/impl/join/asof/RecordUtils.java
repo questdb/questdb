@@ -21,12 +21,12 @@
 
 package com.nfsdb.ql.impl.join.asof;
 
-import com.nfsdb.collections.IntHashSet;
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.impl.map.MultiMap;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.std.IntHashSet;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT", "SF_SWITCH_NO_DEFAULT"})

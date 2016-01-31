@@ -21,7 +21,7 @@
 
 package com.nfsdb.query.api;
 
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.iter.ConcurrentIterator;
 import com.nfsdb.iter.JournalIterator;
 import com.nfsdb.iter.JournalPeekingIterator;

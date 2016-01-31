@@ -24,7 +24,7 @@ package com.nfsdb.ql.ops.col;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.ops.AbstractVirtualColumn;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.store.ColumnType;
 
 public class BoolRecordSourceColumn extends AbstractVirtualColumn {
     private final int index;

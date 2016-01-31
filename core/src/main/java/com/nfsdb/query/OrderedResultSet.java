@@ -22,9 +22,9 @@
 package com.nfsdb.query;
 
 import com.nfsdb.Journal;
-import com.nfsdb.collections.LongList;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.misc.Rows;
+import com.nfsdb.std.LongList;
 
 public class OrderedResultSet<T> extends ResultSet<T> {
     public OrderedResultSet(Journal<T> journal, LongList rowIDs) {

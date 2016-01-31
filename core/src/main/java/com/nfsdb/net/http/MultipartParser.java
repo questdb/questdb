@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,16 +17,16 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
-import com.nfsdb.collections.DirectByteCharSequence;
-import com.nfsdb.collections.Mutable;
-import com.nfsdb.collections.ObjectPool;
-import com.nfsdb.exceptions.HeadersTooLargeException;
-import com.nfsdb.exceptions.MalformedHeaderException;
+import com.nfsdb.ex.HeadersTooLargeException;
+import com.nfsdb.ex.MalformedHeaderException;
 import com.nfsdb.misc.Unsafe;
+import com.nfsdb.std.DirectByteCharSequence;
+import com.nfsdb.std.Mutable;
+import com.nfsdb.std.ObjectPool;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;

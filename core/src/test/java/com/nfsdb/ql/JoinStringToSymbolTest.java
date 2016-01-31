@@ -22,9 +22,8 @@
 package com.nfsdb.ql;
 
 import com.nfsdb.JournalWriter;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.JournalConfigurationException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalConfigurationException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
@@ -45,6 +44,7 @@ import com.nfsdb.ql.ops.col.StrRecordSourceColumn;
 import com.nfsdb.ql.ops.col.SymRecordSourceColumn;
 import com.nfsdb.ql.ops.constant.StrConstant;
 import com.nfsdb.ql.ops.eq.StrEqualsOperator;
+import com.nfsdb.std.ObjList;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;

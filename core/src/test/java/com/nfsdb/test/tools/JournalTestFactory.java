@@ -22,8 +22,8 @@
 package com.nfsdb.test.tools;
 
 import com.nfsdb.*;
-import com.nfsdb.exceptions.JournalConfigurationException;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalConfigurationException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.JournalClosingListener;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.JournalConfiguration;

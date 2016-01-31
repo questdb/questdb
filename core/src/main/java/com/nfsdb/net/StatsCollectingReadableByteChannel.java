@@ -21,8 +21,8 @@
 
 package com.nfsdb.net;
 
-import com.nfsdb.logging.Log;
-import com.nfsdb.logging.LogFactory;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 
 import java.io.IOException;
 import java.net.SocketAddress;

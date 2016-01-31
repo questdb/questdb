@@ -24,7 +24,7 @@ package org.nfsdb.examples.query;
 import com.nfsdb.Journal;
 import com.nfsdb.JournalIterators;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.misc.Files;

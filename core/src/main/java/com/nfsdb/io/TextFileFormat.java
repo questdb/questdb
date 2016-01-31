@@ -21,7 +21,7 @@
 
 package com.nfsdb.io;
 
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.io.parser.CsvParser;
 import com.nfsdb.io.parser.PipeParser;
 import com.nfsdb.io.parser.TabParser;

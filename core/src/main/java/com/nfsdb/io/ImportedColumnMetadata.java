@@ -21,8 +21,8 @@
 
 package com.nfsdb.io;
 
-import com.nfsdb.collections.ObjectFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.std.ObjectFactory;
 
 public class ImportedColumnMetadata extends ColumnMetadata {
     public static final ObjectFactory<ImportedColumnMetadata> FACTORY = new ObjectFactory<ImportedColumnMetadata>() {

@@ -22,7 +22,7 @@
 package org.nfsdb.examples.query;
 
 import com.nfsdb.Journal;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import org.nfsdb.examples.model.Price;
 

@@ -21,9 +21,6 @@
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.collections.CharSequenceHashSet;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.collections.ObjObjHashMap;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.ql.ops.conv.*;
 import com.nfsdb.ql.ops.count.*;
@@ -71,7 +68,10 @@ import com.nfsdb.ql.ops.plus.StrConcatOperator;
 import com.nfsdb.ql.ops.sum.SumDoubleAggregator;
 import com.nfsdb.ql.ops.sum.SumIntAggregator;
 import com.nfsdb.ql.ops.sum.SumLongAggregator;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.std.CharSequenceHashSet;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.std.ObjObjHashMap;
+import com.nfsdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public final class FunctionFactories {

@@ -20,7 +20,8 @@
  ******************************************************************************/
 
 package com.nfsdb.net.http.handlers;
-import com.nfsdb.exceptions.*;
+
+import com.nfsdb.ex.*;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;

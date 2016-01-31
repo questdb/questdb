@@ -24,7 +24,7 @@ package com.nfsdb.factory;
 import com.nfsdb.Journal;
 import com.nfsdb.JournalBulkReader;
 import com.nfsdb.JournalKey;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
 

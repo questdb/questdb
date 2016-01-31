@@ -21,11 +21,11 @@
 
 package com.nfsdb.ql.impl.select;
 
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.StorageFacade;
-import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.SymbolTable;
 
 public class SelectedColumnsStorageFacade implements StorageFacade {
 

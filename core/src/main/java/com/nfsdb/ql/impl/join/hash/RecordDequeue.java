@@ -21,14 +21,14 @@
 
 package com.nfsdb.ql.impl.join.hash;
 
-import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.collections.Mutable;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.StorageFacade;
-import com.nfsdb.storage.SequentialMemory;
+import com.nfsdb.std.AbstractImmutableIterator;
+import com.nfsdb.std.Mutable;
+import com.nfsdb.store.SequentialMemory;
 
 import java.io.Closeable;
 import java.io.IOException;

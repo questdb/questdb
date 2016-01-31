@@ -23,18 +23,18 @@ package com.nfsdb.query.spi;
 
 import com.nfsdb.Journal;
 import com.nfsdb.Partition;
-import com.nfsdb.collections.IntList;
-import com.nfsdb.collections.LongList;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.misc.Interval;
 import com.nfsdb.misc.Rows;
 import com.nfsdb.query.UnorderedResultSet;
 import com.nfsdb.query.UnorderedResultSetBuilder;
 import com.nfsdb.query.api.QueryHeadBuilder;
-import com.nfsdb.storage.IndexCursor;
-import com.nfsdb.storage.KVIndex;
-import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.std.IntList;
+import com.nfsdb.std.LongList;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.IndexCursor;
+import com.nfsdb.store.KVIndex;
+import com.nfsdb.store.SymbolTable;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"PL_PARALLEL_LISTS"})

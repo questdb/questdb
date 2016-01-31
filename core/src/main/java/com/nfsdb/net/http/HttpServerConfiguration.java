@@ -21,9 +21,9 @@
 
 package com.nfsdb.net.http;
 
-import com.nfsdb.exceptions.NumericException;
-import com.nfsdb.logging.Log;
-import com.nfsdb.logging.LogFactory;
+import com.nfsdb.ex.NumericException;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.net.SslConfig;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;

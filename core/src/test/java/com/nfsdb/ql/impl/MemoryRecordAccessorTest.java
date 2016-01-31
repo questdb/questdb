@@ -22,19 +22,19 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.JournalWriter;
-import com.nfsdb.collections.DirectInputStream;
-import com.nfsdb.collections.LongList;
-import com.nfsdb.exceptions.JournalConfigurationException;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.JournalConfigurationException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.misc.Files;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.impl.join.hash.MemoryRecordAccessor;
 import com.nfsdb.ql.parser.QueryCompiler;
-import com.nfsdb.storage.SequentialMemory;
+import com.nfsdb.std.DirectInputStream;
+import com.nfsdb.std.LongList;
+import com.nfsdb.store.SequentialMemory;
 import com.nfsdb.test.tools.JournalTestFactory;
 import org.junit.Assert;
 import org.junit.Rule;

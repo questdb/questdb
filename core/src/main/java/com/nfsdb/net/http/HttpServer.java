@@ -21,11 +21,11 @@
 
 package com.nfsdb.net.http;
 
-import com.nfsdb.collections.ObjHashSet;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.concurrent.*;
 import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.iter.clock.MilliClock;
+import com.nfsdb.mp.*;
+import com.nfsdb.std.ObjHashSet;
+import com.nfsdb.std.ObjList;
 
 import java.io.IOException;
 import java.lang.reflect.Field;

@@ -21,9 +21,9 @@
 
 package com.nfsdb.ql.parser;
 
-import com.nfsdb.collections.ObjectPool;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.ql.model.ExprNode;
+import com.nfsdb.std.ObjectPool;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;

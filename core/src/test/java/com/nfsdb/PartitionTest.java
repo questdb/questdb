@@ -21,12 +21,12 @@
 
 package com.nfsdb;
 
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.NumericException;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Interval;
 import com.nfsdb.model.Quote;
-import com.nfsdb.storage.BSearchType;
+import com.nfsdb.store.BSearchType;
 import com.nfsdb.test.tools.AbstractTest;
 import org.junit.Assert;
 import org.junit.Test;

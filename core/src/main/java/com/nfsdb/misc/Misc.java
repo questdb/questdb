@@ -21,10 +21,10 @@
 
 package com.nfsdb.misc;
 
-import com.nfsdb.collections.CharSequenceObjHashMap;
-import com.nfsdb.collections.DirectByteCharSequence;
-import com.nfsdb.collections.ObjectPool;
-import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.ex.NumericException;
+import com.nfsdb.std.CharSequenceObjHashMap;
+import com.nfsdb.std.DirectByteCharSequence;
+import com.nfsdb.std.ObjectPool;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;

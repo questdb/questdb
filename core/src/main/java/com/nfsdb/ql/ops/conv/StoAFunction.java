@@ -21,14 +21,14 @@
 
 package com.nfsdb.ql.ops.conv;
 
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractUnaryOperator;
 import com.nfsdb.ql.ops.Function;
 import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.VariableColumn;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.ColumnType;
+import com.nfsdb.store.VariableColumn;
 
 public class StoAFunction extends AbstractUnaryOperator {
 

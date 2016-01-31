@@ -21,8 +21,8 @@
 
 package com.nfsdb.iter;
 
-import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.collections.ImmutableIterator;
+import com.nfsdb.std.AbstractImmutableIterator;
+import com.nfsdb.std.ImmutableIterator;
 
 import java.util.Comparator;
 import java.util.Iterator;

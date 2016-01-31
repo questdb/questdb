@@ -22,13 +22,13 @@
 package com.nfsdb.query.spi;
 
 import com.nfsdb.Journal;
-import com.nfsdb.collections.IntList;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.misc.Interval;
 import com.nfsdb.query.UnorderedResultSet;
 import com.nfsdb.query.api.QueryAllBuilder;
-import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.std.IntList;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.SymbolTable;
 
 public class QueryAllBuilderImpl<T> implements QueryAllBuilder<T> {
 

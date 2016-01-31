@@ -21,8 +21,8 @@
 
 package com.nfsdb.ql.impl.aggregation;
 
-import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.ex.JournalRuntimeException;
+import com.nfsdb.ex.NumericException;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Numbers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;

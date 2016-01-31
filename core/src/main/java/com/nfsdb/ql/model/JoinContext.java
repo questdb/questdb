@@ -21,7 +21,7 @@
 
 package com.nfsdb.ql.model;
 
-import com.nfsdb.collections.*;
+import com.nfsdb.std.*;
 
 public class JoinContext implements Mutable {
     public static final ObjectFactory<JoinContext> FACTORY = new ObjectFactory<JoinContext>() {

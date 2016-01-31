@@ -22,8 +22,8 @@
 package com.nfsdb.misc;
 
 import com.nfsdb.PartitionType;
-import com.nfsdb.exceptions.JournalUnsupportedTypeException;
-import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.ex.JournalUnsupportedTypeException;
+import com.nfsdb.ex.NumericException;
 import com.nfsdb.io.sink.StringSink;
 
 public class Interval {

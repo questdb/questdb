@@ -21,7 +21,6 @@
 
 package com.nfsdb.ql.ops.count;
 
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.AggregatorFunction;
 import com.nfsdb.ql.Record;
@@ -30,7 +29,8 @@ import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.ops.AbstractVirtualColumn;
 import com.nfsdb.ql.ops.Function;
 import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.ColumnType;
 
 public final class CountAggregator extends AbstractVirtualColumn implements AggregatorFunction, Function {
 

@@ -21,7 +21,7 @@
 
 package com.nfsdb.ql;
 
-import com.nfsdb.collections.ImmutableIterator;
+import com.nfsdb.std.ImmutableIterator;
 
 public interface PartitionCursor extends ImmutableIterator<PartitionSlice> {
     StorageFacade getStorageFacade();

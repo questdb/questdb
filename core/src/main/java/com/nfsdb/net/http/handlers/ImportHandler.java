@@ -21,11 +21,8 @@
 
 package com.nfsdb.net.http.handlers;
 
-import com.nfsdb.collections.ByteSequence;
-import com.nfsdb.collections.DirectByteCharSequence;
-import com.nfsdb.collections.LongList;
-import com.nfsdb.exceptions.DisconnectedChannelException;
-import com.nfsdb.exceptions.SlowWritableChannelException;
+import com.nfsdb.ex.DisconnectedChannelException;
+import com.nfsdb.ex.SlowWritableChannelException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
@@ -41,6 +38,9 @@ import com.nfsdb.misc.Misc;
 import com.nfsdb.net.http.IOContext;
 import com.nfsdb.net.http.RequestHeaderBuffer;
 import com.nfsdb.net.http.ResponseSink;
+import com.nfsdb.std.ByteSequence;
+import com.nfsdb.std.DirectByteCharSequence;
+import com.nfsdb.std.LongList;
 
 import java.io.IOException;
 

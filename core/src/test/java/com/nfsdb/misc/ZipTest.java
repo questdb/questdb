@@ -21,7 +21,7 @@
 
 package com.nfsdb.misc;
 
-import com.nfsdb.collections.Path;
+import com.nfsdb.std.Path;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Rule;
 import org.junit.Test;

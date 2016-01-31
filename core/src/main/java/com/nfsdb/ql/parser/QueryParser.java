@@ -22,17 +22,17 @@
 package com.nfsdb.ql.parser;
 
 import com.nfsdb.PartitionType;
-import com.nfsdb.collections.CharSequenceHashSet;
-import com.nfsdb.collections.CharSequenceObjHashMap;
-import com.nfsdb.collections.ObjectPool;
-import com.nfsdb.exceptions.NumericException;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.NumericException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.factory.configuration.GenericIntBuilder;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.ql.model.*;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.std.CharSequenceHashSet;
+import com.nfsdb.std.CharSequenceObjHashMap;
+import com.nfsdb.std.ObjectPool;
+import com.nfsdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 final class QueryParser {

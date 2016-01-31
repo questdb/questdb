@@ -21,7 +21,7 @@
 
 package com.nfsdb.net.ha.bridge;
 
-import com.nfsdb.concurrent.*;
+import com.nfsdb.mp.*;
 
 import java.util.concurrent.TimeUnit;
 

@@ -21,8 +21,8 @@
 
 package com.nfsdb.factory.configuration;
 
-import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.store.ColumnType;
+import com.nfsdb.store.SymbolTable;
 
 public interface RecordColumnMetadata {
     int getBucketCount();

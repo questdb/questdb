@@ -22,7 +22,7 @@
 package com.nfsdb.factory.configuration;
 
 import com.nfsdb.misc.Numbers;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.store.ColumnType;
 
 public class GenericSymbolBuilder extends AbstractGenericMetadataBuilder {
     public GenericSymbolBuilder(JournalStructure parent, ColumnMetadata meta) {

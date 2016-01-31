@@ -23,7 +23,7 @@ package org.nfsdb.examples.blob;
 
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.JournalStructure;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;

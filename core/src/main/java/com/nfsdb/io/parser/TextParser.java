@@ -21,8 +21,8 @@
 
 package com.nfsdb.io.parser;
 
-import com.nfsdb.collections.Mutable;
 import com.nfsdb.io.parser.listener.Listener;
+import com.nfsdb.std.Mutable;
 
 import java.io.Closeable;
 

@@ -23,11 +23,11 @@ package org.nfsdb.examples.query;
 
 import com.nfsdb.Journal;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.misc.Files;
-import com.nfsdb.storage.KVIndex;
-import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.store.KVIndex;
+import com.nfsdb.store.SymbolTable;
 import org.nfsdb.examples.model.ModelConfiguration;
 import org.nfsdb.examples.model.Quote;
 import org.nfsdb.examples.support.QuoteGenerator;

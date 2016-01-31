@@ -24,8 +24,8 @@ package org.nfsdb.examples.messaging;
 import com.lmax.disruptor.EventHandler;
 import com.lmax.disruptor.LifecycleAware;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.JournalFactory;
 
 import java.util.concurrent.CountDownLatch;

@@ -21,7 +21,7 @@
 
 package com.nfsdb.net;
 
-import com.nfsdb.exceptions.JournalNetworkException;
+import com.nfsdb.ex.JournalNetworkException;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import javax.net.ssl.KeyManagerFactory;

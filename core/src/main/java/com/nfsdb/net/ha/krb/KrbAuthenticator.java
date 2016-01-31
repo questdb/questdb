@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,13 +17,13 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.ha.krb;
 
 import com.nfsdb.JournalKey;
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.net.ha.auth.AuthorizationHandler;
+import com.nfsdb.std.ObjList;
 
 public class KrbAuthenticator implements AuthorizationHandler {
 

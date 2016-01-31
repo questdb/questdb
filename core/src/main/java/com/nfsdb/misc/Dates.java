@@ -21,7 +21,7 @@
 
 package com.nfsdb.misc;
 
-import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.ex.NumericException;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.io.sink.StringSink;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;

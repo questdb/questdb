@@ -21,7 +21,7 @@
 
 package com.nfsdb.io;
 
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.JournalWriterFactory;
 import com.nfsdb.io.parser.TextParser;
 import com.nfsdb.io.parser.listener.InputAnalysisListener;

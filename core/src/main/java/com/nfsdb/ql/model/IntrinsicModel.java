@@ -21,12 +21,12 @@
 
 package com.nfsdb.ql.model;
 
-import com.nfsdb.collections.CharSequenceHashSet;
-import com.nfsdb.collections.IntList;
-import com.nfsdb.collections.Mutable;
-import com.nfsdb.collections.ObjectFactory;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.ql.impl.interval.IntervalSource;
+import com.nfsdb.std.CharSequenceHashSet;
+import com.nfsdb.std.IntList;
+import com.nfsdb.std.Mutable;
+import com.nfsdb.std.ObjectFactory;
 
 public class IntrinsicModel implements Mutable {
     public static final IntrinsicModelFactory FACTORY = new IntrinsicModelFactory();

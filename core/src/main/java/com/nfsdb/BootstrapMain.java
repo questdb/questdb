@@ -21,11 +21,11 @@
 
 package com.nfsdb;
 
-import com.nfsdb.concurrent.RingQueue;
-import com.nfsdb.concurrent.Sequence;
 import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.logging.*;
+import com.nfsdb.log.*;
 import com.nfsdb.misc.Os;
+import com.nfsdb.mp.RingQueue;
+import com.nfsdb.mp.Sequence;
 import com.nfsdb.net.http.HttpServer;
 import com.nfsdb.net.http.HttpServerConfiguration;
 import com.nfsdb.net.http.MimeTypes;
@@ -102,17 +102,15 @@ class BootstrapMain {
             }
         }));
 
-/*
-        LogFactory.INSTANCE.add(LogFactory.LOG_LEVEL_INFO | LogFactory.LOG_LEVEL_ERROR,
+        LogFactory.INSTANCE.add(new LogWriterConfig(LogLevel.LOG_LEVEL_ERROR | LogLevel.LOG_LEVEL_INFO,
                 new LogWriterFactory() {
                     @Override
-                    public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
-                        LogFileWriter w = new LogFileWriter(ring, seq);
+                    public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq, int level) {
+                        LogFileWriter w = new LogFileWriter(ring, seq, level);
                         w.setLocation(configuration.getErrorLog().getAbsolutePath());
                         return w;
                     }
-                });
-*/
+                }));
 
         LogFactory.INSTANCE.bind();
     }

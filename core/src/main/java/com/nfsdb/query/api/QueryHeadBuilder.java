@@ -21,7 +21,7 @@
 
 package com.nfsdb.query.api;
 
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.misc.Interval;
 import com.nfsdb.query.UnorderedResultSet;
 

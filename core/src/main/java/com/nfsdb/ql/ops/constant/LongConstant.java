@@ -24,7 +24,7 @@ package com.nfsdb.ql.ops.constant;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.ops.AbstractVirtualColumn;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.store.ColumnType;
 
 public class LongConstant extends AbstractVirtualColumn {
     private final long value;

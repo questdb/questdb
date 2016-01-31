@@ -21,11 +21,11 @@
 
 package com.nfsdb.ql.impl.unused;
 
-import com.nfsdb.collections.IntIntHashMap;
 import com.nfsdb.ql.KeyCursor;
 import com.nfsdb.ql.KeySource;
 import com.nfsdb.ql.ops.SymGlue;
-import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.std.IntIntHashMap;
+import com.nfsdb.store.SymbolTable;
 
 public class SymBySymCachingLookupKeySource implements KeySource, KeyCursor {
 

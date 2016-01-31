@@ -21,11 +21,11 @@
 
 package com.nfsdb.io.parser;
 
-import com.nfsdb.collections.IntList;
-import com.nfsdb.collections.IntLongPriorityQueue;
-import com.nfsdb.collections.ObjectFactory;
 import com.nfsdb.io.TextFileFormat;
 import com.nfsdb.misc.Unsafe;
+import com.nfsdb.std.IntList;
+import com.nfsdb.std.IntLongPriorityQueue;
+import com.nfsdb.std.ObjectFactory;
 
 public class FormatParser {
     public static final ObjectFactory<FormatParser> FACTORY = new ObjectFactory<FormatParser>() {

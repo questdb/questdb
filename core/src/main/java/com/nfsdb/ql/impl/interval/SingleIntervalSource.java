@@ -21,8 +21,8 @@
 
 package com.nfsdb.ql.impl.interval;
 
-import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.misc.Interval;
+import com.nfsdb.std.AbstractImmutableIterator;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class SingleIntervalSource extends AbstractImmutableIterator<Interval> implements IntervalSource {

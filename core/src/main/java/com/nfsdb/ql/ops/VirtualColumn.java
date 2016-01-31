@@ -21,11 +21,11 @@
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
+import com.nfsdb.std.DirectInputStream;
 
 import java.io.OutputStream;
 

@@ -21,10 +21,10 @@
 
 package com.nfsdb.ql.impl.join.hash;
 
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.impl.map.MultiMap;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.store.ColumnType;
 
 final public class KeyWriterHelper {
     private KeyWriterHelper() {

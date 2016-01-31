@@ -21,10 +21,10 @@
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.collections.IntList;
-import com.nfsdb.collections.Mutable;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.std.IntList;
+import com.nfsdb.std.Mutable;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public final class Signature implements Mutable {

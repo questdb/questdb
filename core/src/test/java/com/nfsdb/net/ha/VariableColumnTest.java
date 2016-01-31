@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,19 +17,19 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.ha;
 
 import com.nfsdb.JournalMode;
-import com.nfsdb.collections.DirectInputStream;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.misc.Rnd;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.net.ha.comsumer.VariableColumnDeltaConsumer;
 import com.nfsdb.net.ha.producer.VariableColumnDeltaProducer;
-import com.nfsdb.storage.MemoryFile;
-import com.nfsdb.storage.VariableColumn;
+import com.nfsdb.std.DirectInputStream;
+import com.nfsdb.store.MemoryFile;
+import com.nfsdb.store.VariableColumn;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 

@@ -22,7 +22,7 @@
 package com.nfsdb.ql;
 
 import com.nfsdb.factory.JournalReaderFactory;
-import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.store.SymbolTable;
 
 public interface StorageFacade {
 

@@ -21,12 +21,12 @@
 
 package com.nfsdb.ql.parser;
 
-import com.nfsdb.collections.IntHashSet;
-import com.nfsdb.collections.IntStack;
-import com.nfsdb.collections.ObjectPool;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.ql.model.ExprNode;
+import com.nfsdb.std.IntHashSet;
+import com.nfsdb.std.IntStack;
+import com.nfsdb.std.ObjectPool;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;

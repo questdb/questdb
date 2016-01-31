@@ -21,17 +21,17 @@
 
 package com.nfsdb.net.http;
 
-import com.nfsdb.collections.Mutable;
-import com.nfsdb.exceptions.DisconnectedChannelException;
-import com.nfsdb.exceptions.ResponseContentBufferTooSmallException;
-import com.nfsdb.exceptions.SlowWritableChannelException;
-import com.nfsdb.exceptions.ZLibException;
+import com.nfsdb.ex.DisconnectedChannelException;
+import com.nfsdb.ex.ResponseContentBufferTooSmallException;
+import com.nfsdb.ex.SlowWritableChannelException;
+import com.nfsdb.ex.ZLibException;
 import com.nfsdb.io.sink.AbstractCharSink;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.io.sink.DirectUnboundedAnsiSink;
 import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.misc.*;
 import com.nfsdb.net.NonBlockingSecureSocketChannel;
+import com.nfsdb.std.Mutable;
 
 import java.io.Closeable;
 import java.io.IOException;

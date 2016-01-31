@@ -21,11 +21,11 @@
 
 package com.nfsdb.net.http;
 
-import com.nfsdb.concurrent.*;
-import com.nfsdb.exceptions.JournalNetworkException;
+import com.nfsdb.ex.JournalNetworkException;
 import com.nfsdb.iter.clock.Clock;
-import com.nfsdb.logging.Log;
-import com.nfsdb.logging.LogFactory;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
+import com.nfsdb.mp.*;
 import com.nfsdb.net.NonBlockingSecureSocketChannel;
 import com.nfsdb.net.PlainSocketChannel;
 

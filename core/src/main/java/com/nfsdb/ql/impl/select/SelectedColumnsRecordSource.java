@@ -21,16 +21,16 @@
 
 package com.nfsdb.ql.impl.select;
 
-import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.collections.CharSequenceHashSet;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
+import com.nfsdb.std.AbstractImmutableIterator;
+import com.nfsdb.std.CharSequenceHashSet;
+import com.nfsdb.std.ObjList;
 
 public class SelectedColumnsRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record> {
     private final RecordSource<? extends Record> recordSource;

@@ -21,13 +21,13 @@
 
 package com.nfsdb.net.http;
 
-import com.nfsdb.concurrent.Job;
-import com.nfsdb.concurrent.RingQueue;
-import com.nfsdb.concurrent.Sequence;
-import com.nfsdb.concurrent.WorkerContext;
-import com.nfsdb.exceptions.*;
-import com.nfsdb.logging.Log;
-import com.nfsdb.logging.LogFactory;
+import com.nfsdb.ex.*;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
+import com.nfsdb.mp.Job;
+import com.nfsdb.mp.RingQueue;
+import com.nfsdb.mp.Sequence;
+import com.nfsdb.mp.WorkerContext;
 
 import java.io.IOException;
 import java.nio.channels.SelectionKey;

@@ -21,12 +21,12 @@
 
 package com.nfsdb.ql.impl;
 
-import com.nfsdb.collections.ObjHashSet;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.configuration.AbstractRecordMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.misc.Chars;
+import com.nfsdb.std.ObjHashSet;
+import com.nfsdb.std.ObjList;
 
 public class CollectionRecordMetadata extends AbstractRecordMetadata {
     private final ObjList<RecordColumnMetadata> columns = new ObjList<>();

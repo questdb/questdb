@@ -21,10 +21,8 @@
 
 package com.nfsdb.ql.impl.join;
 
-import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.collections.CharSequenceHashSet;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.misc.Misc;
@@ -33,6 +31,8 @@ import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.impl.join.asof.*;
+import com.nfsdb.std.AbstractImmutableIterator;
+import com.nfsdb.std.CharSequenceHashSet;
 
 import java.io.Closeable;
 import java.io.IOException;

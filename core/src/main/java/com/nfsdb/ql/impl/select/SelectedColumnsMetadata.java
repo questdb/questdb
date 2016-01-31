@@ -21,15 +21,15 @@
 
 package com.nfsdb.ql.impl.select;
 
-import com.nfsdb.collections.CharSequenceHashSet;
-import com.nfsdb.collections.CharSequenceIntHashMap;
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.AbstractRecordMetadata;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.misc.Unsafe;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.std.CharSequenceHashSet;
+import com.nfsdb.std.CharSequenceIntHashMap;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.ColumnType;
 
 import java.util.Arrays;
 

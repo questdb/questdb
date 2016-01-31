@@ -22,10 +22,10 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.Partition;
-import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.AbstractRecord;
+import com.nfsdb.std.DirectInputStream;
 
 import java.io.OutputStream;
 

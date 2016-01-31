@@ -23,8 +23,7 @@ package com.nfsdb.ql;
 
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.collections.CharSequenceHashSet;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.misc.Dates;
@@ -33,6 +32,7 @@ import com.nfsdb.ql.impl.NoRowidSource;
 import com.nfsdb.ql.impl.join.AsOfJoinRecordSource;
 import com.nfsdb.ql.impl.join.AsOfPartitionedJoinRecordSource;
 import com.nfsdb.ql.parser.AbstractOptimiserTest;
+import com.nfsdb.std.CharSequenceHashSet;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;

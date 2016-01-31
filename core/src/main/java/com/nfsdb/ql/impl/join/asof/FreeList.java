@@ -21,8 +21,8 @@
 
 package com.nfsdb.ql.impl.join.asof;
 
-import com.nfsdb.collections.IntList;
-import com.nfsdb.collections.LongList;
+import com.nfsdb.std.IntList;
+import com.nfsdb.std.LongList;
 
 public class FreeList {
     private final IntList sizes = new IntList();

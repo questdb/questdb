@@ -21,18 +21,18 @@
 
 package com.nfsdb;
 
-import com.nfsdb.collections.DirectInputStream;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.iter.PartitionBufferedIterator;
-import com.nfsdb.logging.Log;
-import com.nfsdb.logging.LogFactory;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.*;
-import com.nfsdb.storage.*;
+import com.nfsdb.std.DirectInputStream;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
@@ -601,7 +601,7 @@ public class Partition<T> implements Closeable {
      * Rebuild the index of a column using the default keyCountHint and recordCountHint values.
      *
      * @param columnIndex the column index
-     * @throws com.nfsdb.exceptions.JournalException if the operation fails
+     * @throws com.nfsdb.ex.JournalException if the operation fails
      */
     private void rebuildIndex(int columnIndex) throws JournalException {
         JournalMetadata<T> meta = journal.getMetadata();
@@ -617,7 +617,7 @@ public class Partition<T> implements Closeable {
      * @param columnIndex     the column index
      * @param keyCountHint    the key count hint override
      * @param recordCountHint the record count hint override
-     * @throws com.nfsdb.exceptions.JournalException if the operation fails
+     * @throws com.nfsdb.ex.JournalException if the operation fails
      */
     private void rebuildIndex(int columnIndex, int keyCountHint, int recordCountHint, int txCountHint) throws JournalException {
         final long time = System.nanoTime();

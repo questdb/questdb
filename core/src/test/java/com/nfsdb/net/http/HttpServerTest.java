@@ -26,9 +26,9 @@ import com.google.gson.GsonBuilder;
 import com.nfsdb.Journal;
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.NumericException;
-import com.nfsdb.exceptions.ResponseContentBufferTooSmallException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.NumericException;
+import com.nfsdb.ex.ResponseContentBufferTooSmallException;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.sink.FileSink;
 import com.nfsdb.iter.clock.Clock;
@@ -237,8 +237,11 @@ public class HttpServerTest extends AbstractJournalTest {
             put("/imp", new ImportHandler(factory));
         }});
         server.start();
-        Assert.assertEquals(400, upload("/com/nfsdb/collections/AssociativeCache.class", "http://localhost:9000/imp"));
-        server.halt();
+        try {
+            Assert.assertEquals(400, upload("/com/nfsdb/std/AssociativeCache.class", "http://localhost:9000/imp"));
+        } finally {
+            server.halt();
+        }
     }
 
     @Test

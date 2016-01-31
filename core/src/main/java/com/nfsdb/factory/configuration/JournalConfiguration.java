@@ -22,7 +22,7 @@
 package com.nfsdb.factory.configuration;
 
 import com.nfsdb.JournalKey;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 
 import java.io.File;
 

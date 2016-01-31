@@ -21,14 +21,14 @@
 
 package com.nfsdb.ql.ops.plus;
 
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.collections.SplitCharSequence;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractBinaryOperator;
 import com.nfsdb.ql.ops.Function;
 import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.std.SplitCharSequence;
+import com.nfsdb.store.ColumnType;
 
 public class StrConcatOperator extends AbstractBinaryOperator {
     public final static StrConcatOperator FACTORY = new StrConcatOperator();

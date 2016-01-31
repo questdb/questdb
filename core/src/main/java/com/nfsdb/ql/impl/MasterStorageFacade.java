@@ -24,7 +24,7 @@ package com.nfsdb.ql.impl;
 import com.nfsdb.Journal;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.ql.StorageFacade;
-import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.store.SymbolTable;
 
 public class MasterStorageFacade implements StorageFacade {
     private Journal journal;

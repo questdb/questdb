@@ -21,12 +21,10 @@
 
 package com.nfsdb.ql.parser;
 
-import com.nfsdb.collections.CharSequenceIntHashMap;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.InvalidColumnException;
-import com.nfsdb.exceptions.NoSuchColumnException;
-import com.nfsdb.exceptions.NumericException;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.InvalidColumnException;
+import com.nfsdb.ex.NoSuchColumnException;
+import com.nfsdb.ex.NumericException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Numbers;
@@ -34,6 +32,8 @@ import com.nfsdb.ql.model.ExprNode;
 import com.nfsdb.ql.ops.*;
 import com.nfsdb.ql.ops.col.*;
 import com.nfsdb.ql.ops.constant.*;
+import com.nfsdb.std.CharSequenceIntHashMap;
+import com.nfsdb.std.ObjList;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;

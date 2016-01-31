@@ -25,8 +25,8 @@ import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.ops.AbstractVirtualColumn;
-import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.VariableColumn;
+import com.nfsdb.store.ColumnType;
+import com.nfsdb.store.VariableColumn;
 
 public class NullConstant extends AbstractVirtualColumn {
 

@@ -21,12 +21,12 @@
 
 package com.nfsdb.ql.impl.virtual;
 
-import com.nfsdb.collections.CharSequenceIntHashMap;
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.AbstractRecordMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.ops.VirtualColumn;
+import com.nfsdb.std.CharSequenceIntHashMap;
+import com.nfsdb.std.ObjList;
 
 public class VirtualRecordMetadata extends AbstractRecordMetadata {
     private final RecordMetadata delegate;

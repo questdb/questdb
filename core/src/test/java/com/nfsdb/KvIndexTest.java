@@ -21,11 +21,11 @@
 
 package com.nfsdb;
 
-import com.nfsdb.collections.LongList;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.storage.IndexCursor;
-import com.nfsdb.storage.KVIndex;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
+import com.nfsdb.std.LongList;
+import com.nfsdb.store.IndexCursor;
+import com.nfsdb.store.KVIndex;
 import com.nfsdb.test.tools.AbstractTest;
 import org.junit.Assert;
 import org.junit.Before;

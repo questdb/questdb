@@ -22,11 +22,7 @@
 package com.nfsdb.ql.impl.aggregation;
 
 
-import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.collections.ObjHashSet;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.collections.Transient;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
@@ -37,6 +33,10 @@ import com.nfsdb.ql.impl.join.hash.KeyWriterHelper;
 import com.nfsdb.ql.impl.map.MapRecordValueInterceptor;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.impl.map.MultiMap;
+import com.nfsdb.std.AbstractImmutableIterator;
+import com.nfsdb.std.ObjHashSet;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.std.Transient;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;

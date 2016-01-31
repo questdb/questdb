@@ -21,7 +21,7 @@
 
 package com.nfsdb.net.http.handlers;
 
-import com.nfsdb.exceptions.ResponseContentBufferTooSmallException;
+import com.nfsdb.ex.ResponseContentBufferTooSmallException;
 import com.nfsdb.misc.Misc;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.net.http.ChunkedResponse;

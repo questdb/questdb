@@ -21,9 +21,9 @@
 
 package com.nfsdb.ql.impl.join.hash;
 
-import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.misc.Unsafe;
-import com.nfsdb.storage.SequentialMemory;
+import com.nfsdb.std.DirectInputStream;
+import com.nfsdb.store.SequentialMemory;
 
 import java.io.IOException;
 

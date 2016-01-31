@@ -21,10 +21,6 @@
 
 package com.nfsdb.ql.impl.join.hash;
 
-import com.nfsdb.collections.Mutable;
-import com.nfsdb.collections.ObjHashSet;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.collections.Transient;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
@@ -33,7 +29,11 @@ import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.impl.map.MultiMap;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.std.Mutable;
+import com.nfsdb.std.ObjHashSet;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.std.Transient;
+import com.nfsdb.store.ColumnType;
 
 import java.io.Closeable;
 import java.io.IOException;

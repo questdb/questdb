@@ -21,8 +21,8 @@
 
 package com.nfsdb;
 
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalMetadataException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalMetadataException;
 import com.nfsdb.factory.configuration.JournalMetadataBuilder;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.ql.Record;

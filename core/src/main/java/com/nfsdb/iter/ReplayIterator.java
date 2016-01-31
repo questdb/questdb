@@ -22,10 +22,10 @@
 package com.nfsdb.iter;
 
 import com.nfsdb.Journal;
-import com.nfsdb.collections.AbstractImmutableIterator;
 import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.iter.clock.MilliClock;
 import com.nfsdb.misc.Unsafe;
+import com.nfsdb.std.AbstractImmutableIterator;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.Iterator;

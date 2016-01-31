@@ -21,7 +21,7 @@
 
 package com.nfsdb.misc;
 
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalRuntimeException;
 
 public final class Chars {
     private final static ThreadLocal<char[]> builder = new ThreadLocal<>();

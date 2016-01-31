@@ -21,11 +21,11 @@
 
 package com.nfsdb.ql.impl.join.hash;
 
-import com.nfsdb.collections.DirectInputStream;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.AbstractRecord;
 import com.nfsdb.ql.impl.CollectionRecordMetadata;
 import com.nfsdb.ql.impl.join.LongMetadata;
+import com.nfsdb.std.DirectInputStream;
 
 import java.io.OutputStream;
 

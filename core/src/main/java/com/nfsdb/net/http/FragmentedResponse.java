@@ -21,8 +21,8 @@
 
 package com.nfsdb.net.http;
 
-import com.nfsdb.exceptions.DisconnectedChannelException;
-import com.nfsdb.exceptions.SlowWritableChannelException;
+import com.nfsdb.ex.DisconnectedChannelException;
+import com.nfsdb.ex.SlowWritableChannelException;
 import com.nfsdb.io.sink.CharSink;
 
 import java.nio.ByteBuffer;

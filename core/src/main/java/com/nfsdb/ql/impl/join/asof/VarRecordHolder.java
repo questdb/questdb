@@ -21,16 +21,16 @@
 
 package com.nfsdb.ql.impl.join.asof;
 
-import com.nfsdb.collections.IntList;
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.StorageFacade;
-import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.std.IntList;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.ColumnType;
+import com.nfsdb.store.SymbolTable;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolder {

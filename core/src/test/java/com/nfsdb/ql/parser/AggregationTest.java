@@ -23,7 +23,7 @@ package com.nfsdb.ql.parser;
 
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Rnd;

@@ -21,8 +21,8 @@
 
 package com.nfsdb;
 
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.NumericException;
 import com.nfsdb.iter.ConcurrentIterator;
 import com.nfsdb.iter.JournalIterator;
 import com.nfsdb.misc.Dates;

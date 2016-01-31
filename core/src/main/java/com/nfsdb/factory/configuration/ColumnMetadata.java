@@ -21,9 +21,9 @@
 
 package com.nfsdb.factory.configuration;
 
-import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.SymbolTable;
-import com.nfsdb.storage.UnstructuredFile;
+import com.nfsdb.store.ColumnType;
+import com.nfsdb.store.SymbolTable;
+import com.nfsdb.store.UnstructuredFile;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})

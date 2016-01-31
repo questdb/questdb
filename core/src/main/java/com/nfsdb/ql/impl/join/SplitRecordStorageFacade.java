@@ -24,7 +24,7 @@ package com.nfsdb.ql.impl.join;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.StorageFacade;
-import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.store.SymbolTable;
 
 public class SplitRecordStorageFacade implements StorageFacade {
     private final RecordMetadata metadata;

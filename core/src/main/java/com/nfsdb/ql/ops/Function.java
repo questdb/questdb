@@ -21,7 +21,7 @@
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.ParserException;
 
 public interface Function extends VirtualColumn, FunctionFactory {
     void setArg(int pos, VirtualColumn arg) throws ParserException;

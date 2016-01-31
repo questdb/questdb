@@ -21,11 +21,11 @@
 
 package com.nfsdb.net.http;
 
-import com.nfsdb.collections.CharSequenceObjHashMap;
-import com.nfsdb.collections.DirectByteCharSequence;
-import com.nfsdb.collections.ObjectPool;
 import com.nfsdb.misc.Misc;
 import com.nfsdb.misc.Unsafe;
+import com.nfsdb.std.CharSequenceObjHashMap;
+import com.nfsdb.std.DirectByteCharSequence;
+import com.nfsdb.std.ObjectPool;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;

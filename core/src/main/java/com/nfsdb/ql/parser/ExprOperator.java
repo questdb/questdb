@@ -21,8 +21,8 @@
 
 package com.nfsdb.ql.parser;
 
-import com.nfsdb.collections.CharSequenceObjHashMap;
-import com.nfsdb.collections.ObjList;
+import com.nfsdb.std.CharSequenceObjHashMap;
+import com.nfsdb.std.ObjList;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
