@@ -9,6 +9,14 @@ extern "C" {
 #endif
 /*
  * Class:     com_nfsdb_misc_Files
+ * Method:    append
+ * Signature: (JJI)J
+ */
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_append
+        (JNIEnv *, jclass, jlong, jlong, jint);
+
+/*
+ * Class:     com_nfsdb_misc_Files
  * Method:    close
  * Signature: (J)I
  */
@@ -30,14 +38,6 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_read
  */
 JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_write
         (JNIEnv *, jclass, jlong, jlong, jint, jlong);
-
-/*
- * Class:     com_nfsdb_misc_Files
- * Method:    append
- * Signature: (JJI)J
- */
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_append
-        (JNIEnv *, jclass, jlong, jlong, jint);
 
 /*
  * Class:     com_nfsdb_misc_Files
@@ -86,6 +86,14 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openAppend
  */
 JNIEXPORT jboolean JNICALL Java_com_nfsdb_misc_Files_setLastModified
         (JNIEnv *, jclass, jlong, jlong);
+
+/*
+ * Class:     com_nfsdb_misc_Files
+ * Method:    getStdOutFd
+ * Signature: ()J
+ */
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_getStdOutFd
+        (JNIEnv *, jclass);
 
 #ifdef __cplusplus
 }

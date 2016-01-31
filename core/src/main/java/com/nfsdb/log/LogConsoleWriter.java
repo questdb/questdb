@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.log;
 
@@ -30,7 +30,7 @@ import com.nfsdb.mp.SynchronizedJob;
 import java.io.Closeable;
 
 public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogWriter {
-    private static final long fd = 1;
+    private final long fd = Files.getStdOutFd();
     private final RingQueue<LogRecordSink> ring;
     private final Sequence subSeq;
     private final int level;

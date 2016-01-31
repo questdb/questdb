@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.log;
 
@@ -185,6 +185,8 @@ public class LogFactoryTest {
                     logger.xinfo().$("test ").$(i).$();
                 }
 
+                Thread.sleep(100);
+
                 Assert.assertEquals(9890, x.length());
                 Assert.assertEquals(9890, y.length());
 
@@ -263,7 +265,7 @@ public class LogFactoryTest {
                 "recordLength=4096\n" +
                 "queueDepth=1024\n" +
                 "w.file.class=com.nfsdb.log.LogFileWriter\n" +
-                "w.file.location=" + out.getAbsolutePath() + "\n" +
+                "w.file.location=" + out.getAbsolutePath().replaceAll("\\\\", "/") + "\n" +
                 "w.file.level=INFO,ERROR\n" +
                 "w.file.bufferSize=4M"
         );

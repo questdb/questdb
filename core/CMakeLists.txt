@@ -13,7 +13,6 @@ set(SOURCE_FILES
         src/main/c/share/zip.h
         src/main/c/share/net.h
         src/main/c/share/zip.c
-        src/main/c/share/net.c
         )
 
 # JNI includes
@@ -24,7 +23,9 @@ if (APPLE)
     set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/osx)
     set(SOURCE_FILES ${SOURCE_FILES}
             src/main/c/osx/kqueue.h
-            src/main/c/osx/kqueue.c)
+            src/main/c/osx/kqueue.c
+            src/main/c/share/net.c
+            )
 elseif (UNIX)
     include_directories(${JAVA_HOME}/include/linux/)
     set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/linux)
