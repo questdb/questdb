@@ -40,6 +40,8 @@ public interface CharSink {
 
     CharSink put(boolean value);
 
+    CharSink put(Throwable e);
+
     CharSink putISODate(long value);
 
     CharSink putTrim(double value, int scale);

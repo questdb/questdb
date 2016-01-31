@@ -62,7 +62,7 @@ public abstract class AbstractJournalTest extends AbstractTest {
         channel = new MockByteChannel();
     }
 
-    protected void executeSequence(boolean expectContent) throws JournalNetworkException, JournalException {
+    void executeSequence(boolean expectContent) throws JournalNetworkException, JournalException {
         slave.refresh();
         journalClientStateProducer.write(channel, new IndexedJournal(0, slave));
         journalClientStateConsumer.read(channel);

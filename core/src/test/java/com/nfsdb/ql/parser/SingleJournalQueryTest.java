@@ -3111,13 +3111,13 @@ public class SingleJournalQueryTest extends AbstractTest {
         assertThat(expected, "select id, x, y from tab where id = null and x > 120 and y < -400");
     }
 
-    protected void assertThat(String expected, String query, boolean header) throws ParserException, JournalException, IOException {
+    private void assertThat(String expected, String query, boolean header) throws ParserException, JournalException, IOException {
         sink.clear();
         printer.printCursor(compiler.compile(query), header);
         TestUtils.assertEquals(expected, sink);
     }
 
-    protected void assertThat(String expected, String query) throws JournalException, ParserException, IOException {
+    private void assertThat(String expected, String query) throws JournalException, ParserException, IOException {
         assertThat(expected, query, false);
         assertThat(expected, query, false);
     }
@@ -3292,7 +3292,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         w.commit();
     }
 
-    protected ObjHashSet<String> getNames(Rnd r, int n) {
+    private ObjHashSet<String> getNames(Rnd r, int n) {
         ObjHashSet<String> names = new ObjHashSet<>();
         for (int i = 0; i < n; i++) {
             names.add(r.nextString(15));

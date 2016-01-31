@@ -49,7 +49,7 @@ public class GenericStringBuilder extends AbstractGenericMetadataBuilder {
         return this;
     }
 
-    public final GenericStringBuilder size(int size) {
+    private GenericStringBuilder size(int size) {
         this.meta.avgSize = size;
         this.meta.size = size + 4;
         return this;

@@ -257,7 +257,7 @@ public class JsonHandler implements ContextHandler {
             case DOUBLE:
                 double d = rec.getDouble(col);
                 if (d == Double.NaN) {
-                    r.put(null);
+                    r.put((CharSequence) null);
                     break;
                 }
 
@@ -273,7 +273,7 @@ public class JsonHandler implements ContextHandler {
             case FLOAT:
                 float f = rec.getFloat(col);
                 if (f == Float.NaN) {
-                    r.put(null);
+                    r.put((CharSequence) null);
                     break;
                 }
 

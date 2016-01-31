@@ -24,11 +24,11 @@ package com.nfsdb.factory.configuration;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public abstract class AbstractGenericMetadataBuilder {
-    protected final ColumnMetadata meta;
-    protected final JournalStructure parent;
+    final ColumnMetadata meta;
+    final JournalStructure parent;
 
     @SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
-    public AbstractGenericMetadataBuilder(JournalStructure parent, ColumnMetadata meta) {
+    AbstractGenericMetadataBuilder(JournalStructure parent, ColumnMetadata meta) {
         this.parent = parent;
         this.meta = meta;
     }

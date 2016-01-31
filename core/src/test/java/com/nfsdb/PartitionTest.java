@@ -33,23 +33,6 @@ import org.junit.Test;
 
 public class PartitionTest extends AbstractTest {
 
-    public <T> Partition<T> getPartitionForTimestamp(Journal<T> journal, long timestamp) throws JournalException {
-        int sz = journal.getPartitionCount();
-        for (int i = 0; i < sz; i++) {
-            Partition<T> result = journal.getPartition(i, false);
-            Interval interval = result.getInterval();
-            if (interval == null || interval.contains(timestamp)) {
-                return result;
-            }
-        }
-
-        if (journal.getPartition(0, false).getInterval().isAfter(timestamp)) {
-            return journal.getPartition(0, false);
-        } else {
-            return journal.getPartition(sz - 1, false);
-        }
-    }
-
     @Test
     public void testIndexOf() throws JournalException, NumericException {
         JournalWriter<Quote> journal = factory.writer(Quote.class);
@@ -101,6 +84,23 @@ public class PartitionTest extends AbstractTest {
         Partition<Quote> p = journal.openOrCreateLagPartition();
         long result = p.indexOf(Dates.parseDateTime("2012-06-15T00:00:00.000"), BSearchType.OLDER_OR_SAME);
         Assert.assertEquals(-1, result);
+    }
+
+    private <T> Partition<T> getPartitionForTimestamp(Journal<T> journal, long timestamp) throws JournalException {
+        int sz = journal.getPartitionCount();
+        for (int i = 0; i < sz; i++) {
+            Partition<T> result = journal.getPartition(i, false);
+            Interval interval = result.getInterval();
+            if (interval == null || interval.contains(timestamp)) {
+                return result;
+            }
+        }
+
+        if (journal.getPartition(0, false).getInterval().isAfter(timestamp)) {
+            return journal.getPartition(0, false);
+        } else {
+            return journal.getPartition(sz - 1, false);
+        }
     }
 
 }

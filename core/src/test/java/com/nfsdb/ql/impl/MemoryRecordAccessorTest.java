@@ -47,7 +47,7 @@ import java.nio.ByteBuffer;
 public class MemoryRecordAccessorTest {
     @Rule
     public final JournalTestFactory factory;
-    public final QueryCompiler compiler;
+    private final QueryCompiler compiler;
 
     public MemoryRecordAccessorTest() {
         try {
@@ -59,17 +59,6 @@ public class MemoryRecordAccessorTest {
         } catch (JournalConfigurationException e) {
             throw new JournalRuntimeException(e);
         }
-    }
-
-    public static void assertEquals(ByteBuffer expected, DirectInputStream actual) {
-        int sz = (int) actual.size();
-        long address = Unsafe.getUnsafe().allocateMemory(sz);
-        long p = address;
-        actual.copyTo(address, 0, sz);
-        for (long i = 0; i < sz; i++) {
-            Assert.assertEquals(expected.get(), Unsafe.getUnsafe().getByte(p++));
-        }
-        Unsafe.getUnsafe().freeMemory(address);
     }
 
     @Test
@@ -232,7 +221,18 @@ public class MemoryRecordAccessorTest {
                 });
     }
 
-    public <T> void writeAndReadRecords(JournalWriter<T> journal, int count, int pageSize, RecordGenerator<T> generator) throws IOException, JournalException, ParserException {
+    private static void assertEquals(ByteBuffer expected, DirectInputStream actual) {
+        int sz = (int) actual.size();
+        long address = Unsafe.getUnsafe().allocateMemory(sz);
+        long p = address;
+        actual.copyTo(address, 0, sz);
+        for (long i = 0; i < sz; i++) {
+            Assert.assertEquals(expected.get(), Unsafe.getUnsafe().getByte(p++));
+        }
+        Unsafe.getUnsafe().freeMemory(address);
+    }
+
+    private <T> void writeAndReadRecords(JournalWriter<T> journal, int count, int pageSize, RecordGenerator<T> generator) throws IOException, JournalException, ParserException {
         for (int i = 0; i < count; i++) {
             journal.append(generator.generate(i));
         }

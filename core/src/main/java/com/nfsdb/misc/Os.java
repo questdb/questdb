@@ -35,7 +35,6 @@ public final class Os {
     public static final int WINDOWS = 3;
     public static final int _32Bit = -2;
     public static final int type;
-    public static final boolean nativelySupported;
     private static final int OSX = 1;
     private static final int LINUX = 2;
     private static final int UNKNOWN = -1;
@@ -90,22 +89,17 @@ public final class Os {
             if (osName.contains("Linux")) {
                 type = LINUX;
                 loadLib("/binaries/linux/libnfsdb.so");
-                nativelySupported = true;
             } else if (osName.contains("Mac")) {
                 type = OSX;
                 loadLib("/binaries/osx/libnfsdb.dylib");
-                nativelySupported = true;
             } else if (osName.contains("Windows")) {
                 type = WINDOWS;
                 loadLib("/binaries/windows/libnfsdb.dll");
-                nativelySupported = true;
             } else {
                 type = UNKNOWN;
-                nativelySupported = false;
             }
         } else {
             type = _32Bit;
-            nativelySupported = false;
         }
     }
 }

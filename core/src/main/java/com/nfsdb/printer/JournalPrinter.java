@@ -55,59 +55,6 @@ public class JournalPrinter implements Closeable {
         configured = false;
     }
 
-    public void configure() {
-        if (configured) {
-            return;
-        }
-
-        try {
-            for (int i1 = 0, k = ff.size(); i1 < k; i1++) {
-                Field f = ff.get(i1);
-                // value field
-                if (f.name == null) {
-                    f.fromType = getType(f.typeTemplateIndex);
-                    f.offset = OBJECT_VALUE_OFFSET;
-                } else if (f.typeTemplateIndex == -1) {
-                    // reference field without explicit type index
-
-                    // find which type contains this field name
-                    // first type in typeTemplate array wins
-                    for (int i = 0; i < typeTemplate.length; i++) {
-                        Class clazz = typeTemplate[i];
-                        java.lang.reflect.Field[] declaredFields = clazz.getDeclaredFields();
-                        for (int i2 = 0; i2 < declaredFields.length; i2++) {
-                            if (f.name.equals(declaredFields[i2].getName())) {
-                                f.fromType = declaredFields[i2].getType();
-                                f.typeTemplateIndex = i;
-                                break;
-                            }
-                        }
-                        // found type
-                        if (f.typeTemplateIndex != -1) {
-                            break;
-                        }
-                    }
-
-                    // finished loop without finding type
-                    if (f.typeTemplateIndex == -1) {
-                        throw new RuntimeException("No such field: " + f.name);
-                    }
-                    f.offset = Unsafe.getUnsafe().objectFieldOffset(getType(f.typeTemplateIndex).getDeclaredField(f.name));
-                } else {
-                    // reference field with known type template index
-                    Class t = getType(f.typeTemplateIndex);
-                    f.fromType = t.getDeclaredField(f.name).getType();
-                    f.offset = Unsafe.getUnsafe().objectFieldOffset(t.getDeclaredField(f.name));
-                }
-
-                setConverter(f);
-            }
-            configured = true;
-        } catch (NoSuchFieldException e) {
-            throw new JournalRuntimeException(e);
-        }
-    }
-
     public Field f(String name) {
         Field field = new Field(name, this);
         ff.add(field);
@@ -177,6 +124,59 @@ public class JournalPrinter implements Closeable {
         Field field = new Field(typeIndex, this);
         ff.add(field);
         return field;
+    }
+
+    private void configure() {
+        if (configured) {
+            return;
+        }
+
+        try {
+            for (int i1 = 0, k = ff.size(); i1 < k; i1++) {
+                Field f = ff.get(i1);
+                // value field
+                if (f.name == null) {
+                    f.fromType = getType(f.typeTemplateIndex);
+                    f.offset = OBJECT_VALUE_OFFSET;
+                } else if (f.typeTemplateIndex == -1) {
+                    // reference field without explicit type index
+
+                    // find which type contains this field name
+                    // first type in typeTemplate array wins
+                    for (int i = 0; i < typeTemplate.length; i++) {
+                        Class clazz = typeTemplate[i];
+                        java.lang.reflect.Field[] declaredFields = clazz.getDeclaredFields();
+                        for (int i2 = 0; i2 < declaredFields.length; i2++) {
+                            if (f.name.equals(declaredFields[i2].getName())) {
+                                f.fromType = declaredFields[i2].getType();
+                                f.typeTemplateIndex = i;
+                                break;
+                            }
+                        }
+                        // found type
+                        if (f.typeTemplateIndex != -1) {
+                            break;
+                        }
+                    }
+
+                    // finished loop without finding type
+                    if (f.typeTemplateIndex == -1) {
+                        throw new RuntimeException("No such field: " + f.name);
+                    }
+                    f.offset = Unsafe.getUnsafe().objectFieldOffset(getType(f.typeTemplateIndex).getDeclaredField(f.name));
+                } else {
+                    // reference field with known type template index
+                    Class t = getType(f.typeTemplateIndex);
+                    f.fromType = t.getDeclaredField(f.name).getType();
+                    f.offset = Unsafe.getUnsafe().objectFieldOffset(t.getDeclaredField(f.name));
+                }
+
+                setConverter(f);
+            }
+            configured = true;
+        } catch (NoSuchFieldException e) {
+            throw new JournalRuntimeException(e);
+        }
     }
 
     private Class getType(int typeIndex) {

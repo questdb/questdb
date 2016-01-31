@@ -32,10 +32,6 @@ public final class Net {
 
     public native static boolean bind(int fd, int address, int port);
 
-    public static boolean bind(int fd, CharSequence address, int port) {
-        return bind(fd, parseIPv4(address), port);
-    }
-
     public native static void listen(int fd, int backlog);
 
     public static void main(String[] args) {
@@ -58,7 +54,13 @@ public final class Net {
         System.out.println("ok");
     }
 
-    public static int parseIPv4(CharSequence address) {
+    public native static int socketTcp(boolean blocking);
+
+    private static boolean bind(int fd, CharSequence address, int port) {
+        return bind(fd, parseIPv4(address), port);
+    }
+
+    private static int parseIPv4(CharSequence address) {
         int ip = 0;
         int count = 0;
         int lo = 0;
@@ -80,6 +82,4 @@ public final class Net {
             throw new RuntimeException("bad dog");
         }
     }
-
-    public native static int socketTcp(boolean blocking);
 }

@@ -23,6 +23,8 @@ package com.nfsdb.net.http.handlers;
 
 import com.nfsdb.ex.NumericException;
 import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.*;
 import com.nfsdb.net.http.*;
 import com.nfsdb.std.LPSZ;
@@ -34,6 +36,8 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 
 public class NativeStaticContentHandler implements ContextHandler {
+
+    private static final Log LOG = LogFactory.getLog(NativeStaticContentHandler.class);
 
     private final MimeTypes mimeTypes;
     private final ObjectFactory<PrefixedPath> ppFactory;
@@ -85,11 +89,13 @@ public class NativeStaticContentHandler implements ContextHandler {
         r.done();
 
         // reached the end naturally?
-        Files.close(context.fd);
+        if (Files.close(context.fd) != 0) {
+            LOG.error().$("Could not close file").$();
+        }
         context.fd = -1;
     }
 
-    public void send(IOContext context, LPSZ path, boolean asAttachment) throws IOException {
+    private void send(IOContext context, LPSZ path, boolean asAttachment) throws IOException {
         int n = Chars.lastIndexOf(path, '.');
         if (n == -1) {
             context.simpleResponse().send(404);

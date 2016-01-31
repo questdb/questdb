@@ -33,7 +33,7 @@ import java.util.concurrent.TimeUnit;
 
 public class GenericAppendPerfTest extends AbstractTest {
 
-    public static final int TEST_DATA_SIZE = 2000000;
+    private static final int TEST_DATA_SIZE = 2000000;
     private static final Log LOG = LogFactory.getLog(GenericAppendPerfTest.class);
 
     @Test

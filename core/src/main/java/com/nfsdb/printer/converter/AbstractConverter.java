@@ -23,14 +23,14 @@ package com.nfsdb.printer.converter;
 
 import com.nfsdb.printer.JournalPrinter;
 
-public abstract class AbstractConverter implements Converter {
+abstract class AbstractConverter implements Converter {
     private final JournalPrinter printer;
 
-    protected AbstractConverter(JournalPrinter printer) {
+    AbstractConverter(JournalPrinter printer) {
         this.printer = printer;
     }
 
-    public JournalPrinter getPrinter() {
+    JournalPrinter getPrinter() {
         return printer;
     }
 }

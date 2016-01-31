@@ -127,6 +127,7 @@ public class JournalServer {
         return factory;
     }
 
+    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS", "PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     public void halt(long timeout, TimeUnit unit) {
         if (!running.compareAndSet(true, false)) {
             return;

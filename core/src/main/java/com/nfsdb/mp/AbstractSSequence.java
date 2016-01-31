@@ -61,15 +61,15 @@ public abstract class AbstractSSequence implements Sequence {
         return waitStrategy == null ? next() : waitForNext0();
     }
 
-    public void bully() {
-        this.barrier.signal();
-    }
-
     @Override
     public void signal() {
         if (waitStrategy != null) {
             waitStrategy.signal();
         }
+    }
+
+    private void bully() {
+        this.barrier.signal();
     }
 
     private long waitForNext0() {

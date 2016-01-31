@@ -282,20 +282,6 @@ public final class TestUtils {
         }
     }
 
-    public static void configure(JournalPrinter p, JournalMetadata meta) {
-        p.types(meta.getModelClass());
-
-        for (int i = 0; i < meta.getColumnCount(); i++) {
-            ColumnMetadata m = meta.getColumn(i);
-            if (m.offset != 0) {
-                JournalPrinter.Field f = p.f(m.name);
-                if (m.type == ColumnType.DATE) {
-                    f.c(new DateConverter(p));
-                }
-            }
-        }
-    }
-
     public static void generateQuoteData(JournalWriter<Quote> w, int count) throws JournalException, NumericException {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
         long timestamps[] = {Dates.parseDateTime("2013-09-04T10:00:00.000Z"), Dates.parseDateTime("2013-10-04T10:00:00.000Z"), Dates.parseDateTime("2013-11-04T10:00:00.000Z")};
@@ -437,6 +423,20 @@ public final class TestUtils {
                     result = toRpn(node.args.getQuick(i)) + result;
                 }
                 return result + node.token;
+        }
+    }
+
+    private static void configure(JournalPrinter p, JournalMetadata meta) {
+        p.types(meta.getModelClass());
+
+        for (int i = 0; i < meta.getColumnCount(); i++) {
+            ColumnMetadata m = meta.getColumn(i);
+            if (m.offset != 0) {
+                JournalPrinter.Field f = p.f(m.name);
+                if (m.type == ColumnType.DATE) {
+                    f.c(new DateConverter(p));
+                }
+            }
         }
     }
 

@@ -30,7 +30,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.WritableByteChannel;
 
 public class FlexBufferSink extends AbstractCharSink implements Closeable {
-    protected WritableByteChannel channel;
+    WritableByteChannel channel;
     private ByteBuffer buffer;
     private int capacity;
 
@@ -39,7 +39,7 @@ public class FlexBufferSink extends AbstractCharSink implements Closeable {
         this.channel = channel;
     }
 
-    public FlexBufferSink() {
+    FlexBufferSink() {
         this(1024);
     }
 

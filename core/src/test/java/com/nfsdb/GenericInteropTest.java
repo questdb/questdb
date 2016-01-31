@@ -466,7 +466,7 @@ public class GenericInteropTest extends AbstractTest {
         }
     }
 
-    public static class WrongType {
+    private static class WrongType {
         private String sym;
         private long created;
         private int bid;

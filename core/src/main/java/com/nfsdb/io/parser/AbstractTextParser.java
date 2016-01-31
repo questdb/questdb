@@ -29,16 +29,16 @@ import com.nfsdb.std.DirectByteCharSequence;
 
 public abstract class AbstractTextParser implements TextParser {
     private final static Log LOG = LogFactory.getLog(AbstractTextParser.class);
-    protected boolean inQuote;
-    protected boolean delayedOutQuote;
-    protected boolean eol;
-    protected int fieldIndex;
-    protected long fieldLo;
-    protected long fieldHi;
-    protected int lineCount;
-    protected boolean useLineRollBuf = false;
-    protected long lineRollBufCur;
-    protected boolean ignoreEolOnce;
+    boolean inQuote;
+    boolean delayedOutQuote;
+    boolean eol;
+    int fieldIndex;
+    long fieldLo;
+    long fieldHi;
+    int lineCount;
+    boolean useLineRollBuf = false;
+    long lineRollBufCur;
+    boolean ignoreEolOnce;
     private Listener listener;
     private DirectByteCharSequence fields[];
     private boolean calcFields;
@@ -48,7 +48,7 @@ public abstract class AbstractTextParser implements TextParser {
     private boolean header;
     private long lastQuotePos = -1;
 
-    public AbstractTextParser() {
+    AbstractTextParser() {
         clear();
     }
 
@@ -130,7 +130,7 @@ public abstract class AbstractTextParser implements TextParser {
         lineRollBufLen = len;
     }
 
-    protected void ignoreEolOnce() {
+    void ignoreEolOnce() {
         eol = true;
         fieldIndex = 0;
         ignoreEolOnce = false;
@@ -138,14 +138,14 @@ public abstract class AbstractTextParser implements TextParser {
 
     protected abstract void parse(long lo, long len, int lim);
 
-    protected void putToRollBuf(byte c) {
+    void putToRollBuf(byte c) {
         if (lineRollBufCur - lineRollBufPtr == lineRollBufLen) {
             growRollBuf(lineRollBufLen << 2);
         }
         Unsafe.getUnsafe().putByte(lineRollBufCur++, c);
     }
 
-    protected void quote() {
+    void quote() {
         if (inQuote) {
             delayedOutQuote = !delayedOutQuote;
             lastQuotePos = this.fieldHi;
@@ -155,7 +155,7 @@ public abstract class AbstractTextParser implements TextParser {
         }
     }
 
-    protected void rollLine(long lo, long hi) {
+    void rollLine(long lo, long hi) {
         long l = hi - lo - lastLineStart;
         if (l >= lineRollBufLen) {
             growRollBuf(l << 2);
@@ -177,7 +177,7 @@ public abstract class AbstractTextParser implements TextParser {
         }
     }
 
-    protected void stashField() {
+    void stashField() {
         if (calcFields) {
             calcField();
         }
@@ -201,7 +201,7 @@ public abstract class AbstractTextParser implements TextParser {
         this.fieldLo = this.fieldHi;
     }
 
-    protected void triggerLine(long ptr) {
+    void triggerLine(long ptr) {
         if (calcFields) {
             calcFields = false;
             listener.onFieldCount(fields.length);
@@ -228,7 +228,7 @@ public abstract class AbstractTextParser implements TextParser {
         }
     }
 
-    protected void uneol(long lo) {
+    void uneol(long lo) {
         eol = false;
         this.lastLineStart = this.fieldLo - lo;
     }

@@ -35,6 +35,8 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.Closeable;
 
 public class LogFileWriter extends SynchronizedJob implements Closeable, LogWriter {
+    private static final Log LOG = LogFactory.getLog(LogFileWriter.class);
+
     private static final int DEFAULT_BUFFER_SIZE = 1024 * 1024;
     private final RingQueue<LogRecordSink> ring;
     private final Sequence subSeq;
@@ -112,7 +114,9 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
             buf = 0;
         }
         if (this.fd != 0) {
-            Files.close(this.fd);
+            if (Files.close(this.fd) != 0) {
+                LOG.error().$("Could not close file: ").$(location).$();
+            }
             this.fd = 0;
         }
     }

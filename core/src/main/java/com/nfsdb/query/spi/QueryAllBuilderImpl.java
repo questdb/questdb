@@ -69,10 +69,6 @@ public class QueryAllBuilderImpl<T> implements QueryAllBuilder<T> {
         return this;
     }
 
-    public void setInterval(Interval interval) {
-        this.interval = interval;
-    }
-
     public void setSymbol(String symbol, String... values) {
         this.symbol = symbol;
         SymbolTable symbolTable = journal.getSymbolTable(symbol);
@@ -83,5 +79,9 @@ public class QueryAllBuilderImpl<T> implements QueryAllBuilder<T> {
                 symbolKeys.add(key);
             }
         }
+    }
+
+    private void setInterval(Interval interval) {
+        this.interval = interval;
     }
 }

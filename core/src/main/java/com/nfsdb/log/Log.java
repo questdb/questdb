@@ -95,6 +95,9 @@ public class Log implements LogRecord {
 
     @Override
     public LogRecord $(Throwable e) {
+        if (e != null) {
+            sink().put(Misc.EOL).put(e);
+        }
         return this;
     }
 

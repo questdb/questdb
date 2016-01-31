@@ -27,6 +27,8 @@ import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.parser.TextParser;
 import com.nfsdb.io.parser.listener.JournalImportListener;
 import com.nfsdb.iter.clock.Clock;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.Files;
 import com.nfsdb.misc.Misc;
 import com.nfsdb.mp.WorkerContext;
@@ -44,6 +46,8 @@ import java.nio.channels.SocketChannel;
 import java.util.Iterator;
 
 public class IOContext implements Closeable, Mutable {
+    private static final Log LOG = LogFactory.getLog(IOContext.class);
+
     public final WrappedByteChannel<SocketChannel> channel;
     public final Request request;
     public final FlyweightCharSequence ext = new FlyweightCharSequence();
@@ -130,7 +134,9 @@ public class IOContext implements Closeable, Mutable {
         textParser = Misc.free(textParser);
         importer = Misc.free(importer);
         if (fd != -1) {
-            Files.close(fd);
+            if (Files.close(fd) != 0) {
+                LOG.error().$("Could not close file");
+            }
         }
     }
 }

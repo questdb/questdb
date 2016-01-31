@@ -39,7 +39,7 @@ public class SSOServiceTokenEncoder implements Closeable {
     private final String osName = System.getProperty("os.name");
     private final String osArch = System.getProperty("os.arch");
 
-    public SSOServiceTokenEncoder(File dir) {
+    private SSOServiceTokenEncoder(File dir) {
         this.temp = dir;
         clean = false;
     }

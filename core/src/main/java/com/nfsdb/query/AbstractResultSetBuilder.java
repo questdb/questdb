@@ -31,14 +31,14 @@ import com.nfsdb.store.BSearchType;
 public abstract class AbstractResultSetBuilder<T, X> {
     protected final LongList result = new LongList();
     protected Partition<T> partition;
-    protected Journal<T> journal;
+    Journal<T> journal;
     private Interval interval = null;
 
-    protected AbstractResultSetBuilder(Interval interval) {
+    AbstractResultSetBuilder(Interval interval) {
         this.interval = interval;
     }
 
-    protected AbstractResultSetBuilder() {
+    AbstractResultSetBuilder() {
     }
 
     public Accept accept(Partition<T> partition) throws JournalException {

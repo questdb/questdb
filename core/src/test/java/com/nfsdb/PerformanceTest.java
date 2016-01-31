@@ -49,7 +49,7 @@ import java.util.concurrent.TimeUnit;
 
 public class PerformanceTest extends AbstractTest {
 
-    public static final int TEST_DATA_SIZE = 1000000;
+    private static final int TEST_DATA_SIZE = 1000000;
     private static final Log LOG = LogFactory.getLog(PerformanceTest.class);
     private static boolean enabled = false;
 

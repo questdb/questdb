@@ -134,14 +134,6 @@ public class ResultSet<T> implements Iterable<T> {
         return sort(order, getColumnIndexes(columnNames));
     }
 
-    public ResultSet<T> sort(Order order, int... columnIndices) throws JournalException {
-        int size = size();
-        if (size > 0) {
-            quickSort(order, 0, size - 1, columnIndices);
-        }
-        return this;
-    }
-
     public ResultSet<T> sort() {
         rowIDs.sort();
         return this;
@@ -284,7 +276,7 @@ public class ResultSet<T> implements Iterable<T> {
         return columnIndices;
     }
 
-    void quickSort(Order order, int lo, int hi, int... columnIndices) throws JournalException {
+    private void quickSort(Order order, int lo, int hi, int... columnIndices) throws JournalException {
 
         if (lo >= hi) {
             return;
@@ -322,6 +314,14 @@ public class ResultSet<T> implements Iterable<T> {
         }
         quickSort(order, lo, j, columnIndices);
         quickSort(order, i, hi, columnIndices);
+    }
+
+    private ResultSet<T> sort(Order order, int... columnIndices) throws JournalException {
+        int size = size();
+        if (size > 0) {
+            quickSort(order, 0, size - 1, columnIndices);
+        }
+        return this;
     }
 
     public enum Order {
