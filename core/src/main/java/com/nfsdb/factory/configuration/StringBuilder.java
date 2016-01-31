@@ -40,7 +40,7 @@ public class StringBuilder<T> extends AbstractMetadataBuilder<T> {
         return this;
     }
 
-    public final StringBuilder<T> size(int size) {
+    private StringBuilder<T> size(int size) {
         this.meta.avgSize = size;
         this.meta.size = size + 4;
         return this;

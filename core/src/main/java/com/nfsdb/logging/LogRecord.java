@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,9 +17,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.logging;
+
+import java.io.File;
 
 public interface LogRecord {
     void $();
@@ -28,7 +30,21 @@ public interface LogRecord {
 
     LogRecord $(int x);
 
+    LogRecord $(double x);
+
+    LogRecord $(long x);
+
     LogRecord $(char c);
+
+    LogRecord $(Throwable e);
+
+    LogRecord $(File x);
+
+    LogRecord $(Enum e);
+
+    LogRecord $(Object x);
+
+    LogRecord $ts(long x);
 
     boolean isEnabled();
 

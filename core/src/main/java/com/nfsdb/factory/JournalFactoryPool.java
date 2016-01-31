@@ -23,7 +23,8 @@ package com.nfsdb.factory;
 
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
@@ -32,7 +33,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 @SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
 public class JournalFactoryPool implements Closeable {
-    private static final Logger LOGGER = Logger.getLogger(JournalFactoryPool.class);
+    private static final Log LOG = LogFactory.getLog(JournalFactoryPool.class);
 
     private final ArrayBlockingQueue<JournalCachingFactory> pool;
     private final AtomicBoolean running = new AtomicBoolean(true);
@@ -69,7 +70,7 @@ public class JournalFactoryPool implements Closeable {
         try {
             pool.put(factory);
         } catch (InterruptedException e) {
-            LOGGER.error("Cannot return factory to pool", e);
+            LOG.error().$("Cannot return factory to pool").$(e).$();
         }
     }
 }

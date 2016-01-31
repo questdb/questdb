@@ -24,7 +24,8 @@ package com.nfsdb.storage;
 import com.nfsdb.JournalMode;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Files;
 import com.nfsdb.misc.Misc;
@@ -41,7 +42,7 @@ import java.nio.channels.FileChannel;
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS", "EXS_EXCEPTION_SOFTENING_HAS_CHECKED"})
 public class PlainFile implements Closeable {
 
-    private static final Logger LOGGER = Logger.getLogger(PlainFile.class);
+    private static final Log LOGGER = LogFactory.getLog(PlainFile.class);
     private final File file;
     private final JournalMode mode;
     private final int bitHint;
@@ -55,7 +56,7 @@ public class PlainFile implements Closeable {
         this.file = file;
         this.mode = mode;
         if (bitHint < 2) {
-            LOGGER.warn("BitHint is too small for %s", file);
+            LOGGER.info().$("BitHint is too small for ").$(file).$();
         }
         this.bitHint = bitHint;
         open();
@@ -80,7 +81,7 @@ public class PlainFile implements Closeable {
         close();
         openInternal("rw");
         try {
-            LOGGER.debug("Compacting %s to %d bytes", this, size);
+            LOGGER.debug().$("Compacting ").$(this).$(" to ").$(size).$(" bytes").$();
             channel.truncate(size).close();
         } finally {
             close();
@@ -90,19 +91,6 @@ public class PlainFile implements Closeable {
     public void delete() {
         close();
         Files.delete(file);
-    }
-
-    public final void open() throws IOException {
-        String m;
-        switch (mode) {
-            case READ:
-            case BULK_READ:
-                m = "r";
-                break;
-            default:
-                m = "rw";
-        }
-        openInternal(m);
     }
 
     public int pageRemaining(long offset) {
@@ -184,6 +172,19 @@ public class PlainFile implements Closeable {
         } catch (IOException e) {
             throw new JournalRuntimeException("Failed to memory map: %s", e, file.getAbsolutePath());
         }
+    }
+
+    private void open() throws IOException {
+        String m;
+        switch (mode) {
+            case READ:
+            case BULK_READ:
+                m = "r";
+                break;
+            default:
+                m = "rw";
+        }
+        openInternal(m);
     }
 
     private void openInternal(String mode) throws IOException {

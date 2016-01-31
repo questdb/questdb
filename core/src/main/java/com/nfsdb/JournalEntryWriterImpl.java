@@ -181,10 +181,6 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
         skip(index);
     }
 
-    public void putBin0(int index, InputStream value) {
-        varCol(index).putBin(value);
-    }
-
     private void assertType(int index, ColumnType t) {
         if (meta[index].type != t) {
             throw new JournalRuntimeException("Expected type: " + meta[index].type);
@@ -197,6 +193,10 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
 
     private ColumnMetadata meta(int index) {
         return Unsafe.arrayGet(meta, index);
+    }
+
+    private void putBin0(int index, InputStream value) {
+        varCol(index).putBin(value);
     }
 
     private void putInt0(int index, int value) {

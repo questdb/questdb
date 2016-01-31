@@ -52,7 +52,7 @@ class Lexer extends AbstractImmutableIterator<CharSequence> {
         }
     }
 
-    public void defineSymbol(String token) {
+    public final void defineSymbol(String token) {
         char c0 = token.charAt(0);
         List<CharSequence> l = symbols.get(c0);
         if (l == null) {

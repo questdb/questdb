@@ -22,7 +22,8 @@
 package com.nfsdb;
 
 import com.nfsdb.factory.configuration.JournalStructure;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
@@ -33,7 +34,7 @@ import java.util.concurrent.TimeUnit;
 public class GenericAppendPerfTest extends AbstractTest {
 
     public static final int TEST_DATA_SIZE = 2000000;
-    private static final Logger LOGGER = Logger.getLogger(GenericAppendPerfTest.class);
+    private static final Log LOG = LogFactory.getLog(GenericAppendPerfTest.class);
 
     @Test
     public void testAppend() throws Exception {
@@ -56,6 +57,6 @@ public class GenericAppendPerfTest extends AbstractTest {
         TestUtils.generateQuoteDataGeneric(wg, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
         wg.commit();
         long result = System.nanoTime() - t;
-        LOGGER.info("generic append (1M): " + TimeUnit.NANOSECONDS.toMillis(result) / 2 + "ms");
+        LOG.info().$("generic append (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result) / 2).$("ms").$();
     }
 }

@@ -78,7 +78,7 @@ public class Worker extends Thread {
                 }
 
                 if (uselessCounter > SLEEP_THRESHOLD) {
-                    LockSupport.parkNanos(1);
+                    LockSupport.parkNanos(1000);
                 }
             }
         }

@@ -26,7 +26,8 @@ import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.io.parser.CsvParser;
 import com.nfsdb.io.parser.listener.Listener;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Unsafe;
@@ -42,7 +43,7 @@ import java.nio.channels.FileChannel;
 @SuppressFBWarnings({"CLI_CONSTANT_LIST_INDEX"})
 public class ImportSchema {
 
-    private static final Logger LOGGER = Logger.getLogger(ImportSchema.class);
+    private static final Log LOG = LogFactory.getLog(ImportSchema.class);
 
     private static final CharSequenceObjHashMap<ImportedColumnType> importedTypeLookup = new CharSequenceObjHashMap<ImportedColumnType>() {{
         put("YYYY-MM-DDThh:mm:ss", ImportedColumnType.DATE_ISO);
@@ -87,7 +88,7 @@ public class ImportSchema {
             parser.parse(lo, len, Integer.MAX_VALUE, new Listener() {
                 @Override
                 public void onError(int line) {
-                    LOGGER.warn("Error on schema line " + line);
+                    LOG.info().$("Error on schema line ").$(line).$();
                 }
 
                 @Override
@@ -99,7 +100,7 @@ public class ImportSchema {
                 @Override
                 public void onFields(int line, CharSequence[] values, int hi) {
                     if (hi < 1) {
-                        LOGGER.warn("Ignoring schema line " + line);
+                        LOG.info().$("Ignoring schema line ").$(line).$();
                         return;
                     }
 
@@ -110,7 +111,7 @@ public class ImportSchema {
                         meta.columnIndex = Numbers.parseInt(values[0].toString().trim());
                         meta.type = ColumnType.valueOf(values[1].toString().toUpperCase().trim());
                         if (meta.type == null) {
-                            LOGGER.error("Invalid column type: " + values[1]);
+                            LOG.error().$("Invalid column type: ").$(values[1]).$();
                             return;
                         }
                         meta.size = meta.type.size();
@@ -118,7 +119,7 @@ public class ImportSchema {
                         if (values[2].length() > 0) {
                             meta.importedType = importedTypeLookup.get(values[2]);
                             if (meta.importedType == null) {
-                                LOGGER.error("Unsupported format: " + values[2]);
+                                LOG.error().$("Unsupported format: ").$(values[2]).$();
                             }
                         }
 
@@ -128,7 +129,7 @@ public class ImportSchema {
 
                         metadata.add(meta);
                     } catch (NumericException e) {
-                        LOGGER.error("Ignoring schema line " + line);
+                        LOG.error().$("Ignoring schema line ").$(line).$();
                     }
 
                 }

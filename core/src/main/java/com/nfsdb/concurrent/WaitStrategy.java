@@ -21,7 +21,7 @@
 
 package com.nfsdb.concurrent;
 
-public interface WaitStrategy {
+interface WaitStrategy {
     void alert();
 
     void await();

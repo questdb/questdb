@@ -32,7 +32,7 @@ public abstract class AbstractUnaryAggregator extends AbstractUnaryOperator impl
     private final RecordColumnMetadata[] metadata = {this};
     protected int valueIndex;
 
-    public AbstractUnaryAggregator(ColumnType type) {
+    protected AbstractUnaryAggregator(ColumnType type) {
         super(type);
     }
 

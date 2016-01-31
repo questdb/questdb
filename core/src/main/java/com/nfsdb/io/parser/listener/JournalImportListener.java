@@ -31,7 +31,8 @@ import com.nfsdb.factory.JournalWriterFactory;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.ImportedColumnMetadata;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
 import com.nfsdb.misc.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -39,7 +40,7 @@ import java.io.Closeable;
 
 @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
 public class JournalImportListener implements InputAnalysisListener, Closeable {
-    private static final Logger LOGGER = Logger.getLogger(JournalImportListener.class);
+    private static final Log LOG = LogFactory.getLog(JournalImportListener.class);
     private final JournalWriterFactory factory;
     private final String location;
     private final LongList errors = new LongList();
@@ -141,7 +142,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
                     }
                 } catch (Exception e) {
                     errors.increment(i);
-                    LOGGER.debug("Error at (%d,%d) as %s: %s", line, i, metadata.getQuick(i).type, e.getMessage());
+                    LOG.debug().$("Error at (").$(line).$(',').$(i).$(") as ").$(metadata.getQuick(i).type).$(": ").$(e.getMessage()).$();
                     append = false;
                     break;
                 }

@@ -35,7 +35,7 @@ import java.nio.channels.SelectionKey;
 public class IOHttpJob implements Job {
     // todo: extract config
     public static final int SO_WRITE_RETRY_COUNT = 10;
-    private final static Log ACCESS = LogFactory.getLogger("access");
+    private final static Log ACCESS = LogFactory.getLog("access");
     private final RingQueue<IOEvent> ioQueue;
     private final Sequence ioSequence;
     private final IOLoopJob loop;

@@ -25,7 +25,7 @@ import com.nfsdb.collections.FlyweightCharSequence;
 import com.nfsdb.misc.Chars;
 import org.jetbrains.annotations.NotNull;
 
-public class ColumnName implements CharSequence {
+class ColumnName implements CharSequence {
     private final FlyweightCharSequence alias = new FlyweightCharSequence();
     private final FlyweightCharSequence name = new FlyweightCharSequence();
     private CharSequence underlying;

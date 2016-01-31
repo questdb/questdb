@@ -36,7 +36,8 @@ import com.nfsdb.io.sink.FlexBufferSink;
 import com.nfsdb.iter.ConcurrentIterator;
 import com.nfsdb.iter.MergingIterator;
 import com.nfsdb.iter.PeekingIterator;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
 import com.nfsdb.misc.*;
 import com.nfsdb.query.ResultSet;
 import com.nfsdb.storage.*;
@@ -58,7 +59,7 @@ import java.util.concurrent.TimeUnit;
 
 @SuppressFBWarnings({"PATH_TRAVERSAL_IN", "EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
 public class JournalWriter<T> extends Journal<T> {
-    private static final Logger LOGGER = Logger.getLogger(JournalWriter.class);
+    private static final Log LOG = LogFactory.getLog(JournalWriter.class);
     private final long lagMillis;
     private final long lagSwellMillis;
     private final boolean checkOrder;
@@ -520,7 +521,7 @@ public class JournalWriter<T> extends Journal<T> {
             try {
                 txListener.onError();
             } catch (Throwable e) {
-                LOGGER.error("Error in listener", e);
+                LOG.error().$("Error in listener").$(e).$();
             }
         }
     }
@@ -701,7 +702,7 @@ public class JournalWriter<T> extends Journal<T> {
         }
 
         if (writeDiscard) {
-            LOGGER.info("Journal %s is rolling back to transaction #%d, timestamp %s", metadata.getLocation(), tx.txn, Dates.toString(tx.timestamp));
+            LOG.info().$("Journal").$(metadata.getLocation()).$(" is rolling back to transaction ").$(tx.txn).$(", timestamp ").$ts(tx.timestamp).$();
             writeDiscardFile(tx.journalMaxRowID);
         }
 
@@ -974,13 +975,13 @@ public class JournalWriter<T> extends Journal<T> {
                                                 Lock lock = LockManager.lockExclusive(files[i]);
                                                 try {
                                                     if (lock != null && lock.isValid()) {
-                                                        LOGGER.trace("Purging : %s", files[i]);
+                                                        LOG.debug().$("Purging :").$(files[i].getAbsolutePath()).$();
 
                                                         if (!Files.delete(files[i])) {
-                                                            LOGGER.trace("Could not purge: %s", files[i]);
+                                                            LOG.debug().$("Could not purge: ").$(files[i].getAbsolutePath()).$();
                                                         }
                                                     } else {
-                                                        LOGGER.trace("Partition in use: %s", files[i]);
+                                                        LOG.debug().$("Partition in use: ").$(files[i].getAbsolutePath()).$();
                                                     }
                                                 } finally {
                                                     LockManager.release(lock);

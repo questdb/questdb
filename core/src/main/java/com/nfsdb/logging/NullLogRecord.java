@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,9 +17,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.logging;
+
+import java.io.File;
 
 public final class NullLogRecord implements LogRecord {
 
@@ -43,7 +45,42 @@ public final class NullLogRecord implements LogRecord {
     }
 
     @Override
+    public LogRecord $(double x) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $(long x) {
+        return this;
+    }
+
+    @Override
     public LogRecord $(char c) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $(Throwable e) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $(File x) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $(Enum e) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $(Object x) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $ts(long x) {
         return this;
     }
 

@@ -23,7 +23,7 @@ package com.nfsdb.concurrent;
 
 import com.nfsdb.misc.Unsafe;
 
-public class PLong {
+class PLong {
     private static final long INITIAL_VALUE = -1;
     private final static long VALUE_OFFSET = Unsafe.LONG_OFFSET + 4 * Unsafe.LONG_SCALE;
     private final long value[] = new long[7];
@@ -32,7 +32,7 @@ public class PLong {
         this(INITIAL_VALUE);
     }
 
-    public PLong(final long initialValue) {
+    private PLong(final long initialValue) {
         Unsafe.getUnsafe().putOrderedLong(value, VALUE_OFFSET, initialValue);
     }
 

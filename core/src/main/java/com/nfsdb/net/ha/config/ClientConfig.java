@@ -22,7 +22,8 @@
 package com.nfsdb.net.ha.config;
 
 import com.nfsdb.exceptions.JournalNetworkException;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
 import com.nfsdb.net.ha.mcast.OnDemandAddressPoller;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -39,7 +40,7 @@ import java.util.concurrent.locks.LockSupport;
 @SuppressFBWarnings("CD_CIRCULAR_DEPENDENCY")
 public class ClientConfig extends NetworkConfig {
 
-    private static final Logger LOGGER = Logger.getLogger(ClientConfig.class);
+    private static final Log LOG = LogFactory.getLog(ClientConfig.class);
     private final ClientReconnectPolicy reconnectPolicy = new ClientReconnectPolicy();
     private int soSndBuf = 8192;
     private boolean keepAlive = true;
@@ -67,40 +68,8 @@ public class ClientConfig extends NetworkConfig {
         this.connectionTimeout = connectionTimeout;
     }
 
-    public boolean getKeepAlive() {
-        return keepAlive;
-    }
-
-    public void setKeepAlive(boolean keepAlive) {
-        this.keepAlive = keepAlive;
-    }
-
-    public int getLinger() {
-        return linger;
-    }
-
-    public void setLinger(int linger) {
-        this.linger = linger;
-    }
-
     public ClientReconnectPolicy getReconnectPolicy() {
         return reconnectPolicy;
-    }
-
-    public int getSoSndBuf() {
-        return soSndBuf;
-    }
-
-    public void setSoSndBuf(int soSndBuf) {
-        this.soSndBuf = soSndBuf;
-    }
-
-    public boolean isTcpNoDelay() {
-        return tcpNoDelay;
-    }
-
-    public void setTcpNoDelay(boolean tcpNoDelay) {
-        this.tcpNoDelay = tcpNoDelay;
     }
 
     public DatagramChannelWrapper openDatagramChannel() throws JournalNetworkException {
@@ -124,7 +93,7 @@ public class ClientConfig extends NetworkConfig {
             try {
                 return openSocketChannel0(node);
             } catch (UnresolvedAddressException | IOException e) {
-                LOGGER.info("Node %s is unavailable [%s]", node, e.getMessage());
+                LOG.info().$("Node ").$(node).$(" is unavailable [").$(e.getMessage()).$(']').$();
             }
         }
 
@@ -139,6 +108,22 @@ public class ClientConfig extends NetworkConfig {
         }
     }
 
+    private boolean getKeepAlive() {
+        return keepAlive;
+    }
+
+    public void setKeepAlive(boolean keepAlive) {
+        this.keepAlive = keepAlive;
+    }
+
+    private int getLinger() {
+        return linger;
+    }
+
+    public void setLinger(int linger) {
+        this.linger = linger;
+    }
+
     @SuppressFBWarnings({"MDM_INETADDRESS_GETLOCALHOST"})
     private NetworkInterface getMultiCastInterface() throws JournalNetworkException {
         try {
@@ -150,6 +135,22 @@ public class ClientConfig extends NetworkConfig {
         } catch (IOException e) {
             throw new JournalNetworkException(e);
         }
+    }
+
+    private int getSoSndBuf() {
+        return soSndBuf;
+    }
+
+    public void setSoSndBuf(int soSndBuf) {
+        this.soSndBuf = soSndBuf;
+    }
+
+    private boolean isTcpNoDelay() {
+        return tcpNoDelay;
+    }
+
+    public void setTcpNoDelay(boolean tcpNoDelay) {
+        this.tcpNoDelay = tcpNoDelay;
     }
 
     private SocketChannel openSocketChannel0(ServerNode node) throws IOException {
@@ -175,7 +176,7 @@ public class ClientConfig extends NetworkConfig {
 
             channel.configureBlocking(true);
 
-            LOGGER.info("Connected to %s [%s]", node, channel.getLocalAddress());
+            LOG.info().$("Connected to ").$(node).$(" [").$(channel.getLocalAddress()).$(']').$();
             return channel;
         } catch (IOException e) {
             channel.close();

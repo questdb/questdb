@@ -59,13 +59,13 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
         this(1024 * 1024, 4 * 1024 * 1024, 0.5f, keySourceMetadata, keyNames, valueColumns, interceptors);
     }
 
-    public MultiMap(int capacity,
-                    long dataSize,
-                    float loadFactor,
-                    @Transient RecordMetadata keySourceMetadata,
-                    @Transient ObjHashSet<String> keyNames,
-                    @Transient ObjList<RecordColumnMetadata> valueColumns,
-                    ObjList<MapRecordValueInterceptor> interceptors) {
+    private MultiMap(int capacity,
+                     long dataSize,
+                     float loadFactor,
+                     @Transient RecordMetadata keySourceMetadata,
+                     @Transient ObjHashSet<String> keyNames,
+                     @Transient ObjList<RecordColumnMetadata> valueColumns,
+                     ObjList<MapRecordValueInterceptor> interceptors) {
         if (dataSize <= 0) {
             throw new IllegalArgumentException("dataSize must be > 0");
         }

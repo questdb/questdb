@@ -31,7 +31,8 @@ import com.nfsdb.factory.JournalClosingListener;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.Constants;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
 import com.nfsdb.misc.*;
 import com.nfsdb.query.AbstractResultSetBuilder;
 import com.nfsdb.query.api.Query;
@@ -52,7 +53,7 @@ import java.util.Iterator;
 public class Journal<T> implements Iterable<T>, Closeable {
 
     public static final long TX_LIMIT_EVAL = -1L;
-    private static final Logger LOGGER = Logger.getLogger(Journal.class);
+    private static final Log LOG = LogFactory.getLog(Journal.class);
     final ObjList<Partition<T>> partitions = new ObjList<>();
     // empty container for current transaction
     final Tx tx = new Tx();
@@ -72,7 +73,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         }
     };
     private final BitSet inactiveColumns;
-    protected TxLog txLog;
+    TxLog txLog;
     boolean open;
     private volatile Partition<T> irregularPartition;
     private JournalClosingListener closeListener;
@@ -596,7 +597,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
                         partitions.add(new Partition<>(this, interval, partitionIndex++, txLimit, indexTxAddresses));
                     }
                 } catch (NumericException e) {
-                    LOGGER.warn("Foreign directory: %s", f.getName());
+                    LOG.info().$("Foreign directory: ").$(f.getName()).$();
                 }
             }
         }

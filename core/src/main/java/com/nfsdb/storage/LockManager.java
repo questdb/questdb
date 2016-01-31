@@ -22,7 +22,8 @@
 package com.nfsdb.storage;
 
 import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
 
 import java.io.File;
 import java.util.Map;
@@ -30,7 +31,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class LockManager {
 
-    private static final Logger LOGGER = Logger.getLogger(LockManager.class);
+    private static final Log LOG = LogFactory.getLog(LockManager.class);
     private static final Map<String, Lock> locks = new ConcurrentHashMap<>();
 
     private LockManager() {
@@ -48,7 +49,7 @@ public final class LockManager {
         locks.put(exclusiveKey, lock);
 
         lock.incrementRefCount();
-        LOGGER.trace("Exclusive lock successful: %s", lock);
+        LOG.debug().$("Exclusive lock successful: ").$(lock).$();
         return lock;
     }
 
@@ -70,7 +71,7 @@ public final class LockManager {
         }
 
         lock.incrementRefCount();
-        LOGGER.trace("Shared lock was successful: %s", lock);
+        LOG.debug().$("Shared lock was successful: ").$(lock).$();
         return lock;
     }
 
@@ -89,7 +90,7 @@ public final class LockManager {
             if (lock.getRefCount() < 1) {
                 lock.release();
                 locks.remove(sharedKey);
-                LOGGER.trace("Shared lock released: %s", lock);
+                LOG.debug().$("Shared lock released: ").$(lock).$();
             }
         }
 
@@ -100,7 +101,7 @@ public final class LockManager {
                 lock.release();
                 lock.delete();
                 locks.remove(exclusiveKey);
-                LOGGER.trace("Exclusive lock released: %s", lock);
+                LOG.debug().$("Exclusive lock released: ").$(lock).$();
             }
         }
     }

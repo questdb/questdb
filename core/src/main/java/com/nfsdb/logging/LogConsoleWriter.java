@@ -25,6 +25,7 @@ import com.nfsdb.concurrent.RingQueue;
 import com.nfsdb.concurrent.Sequence;
 import com.nfsdb.concurrent.SynchronizedJob;
 import com.nfsdb.misc.Files;
+import com.nfsdb.misc.Os;
 
 import java.io.Closeable;
 
@@ -61,5 +62,9 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
 
     @Override
     public void close() {
+    }
+
+    static {
+        Os.init();
     }
 }

@@ -32,7 +32,7 @@ public class DoubleGreaterOrEqualOperator extends AbstractBinaryOperator {
 
     public final static DoubleGreaterOrEqualOperator FACTORY = new DoubleGreaterOrEqualOperator();
 
-    public DoubleGreaterOrEqualOperator() {
+    private DoubleGreaterOrEqualOperator() {
         super(ColumnType.BOOLEAN);
     }
 

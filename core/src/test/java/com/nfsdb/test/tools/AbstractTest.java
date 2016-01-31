@@ -30,5 +30,5 @@ public abstract class AbstractTest {
     @Rule
     public final JournalTestFactory factory = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
 
-    public final QueryCompiler compiler = new QueryCompiler(factory);
+    protected final QueryCompiler compiler = new QueryCompiler(factory);
 }

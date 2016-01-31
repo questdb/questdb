@@ -270,22 +270,23 @@ public class LogFactoryTest {
 
         System.setProperty("nfslog", conf.getAbsolutePath());
 
-        LogFactory factory = new LogFactory();
-        LogFactory.configureFromSystemProperties(factory);
+        try (LogFactory factory = new LogFactory()) {
+            LogFactory.configureFromSystemProperties(factory);
 
-        Log log = factory.create("xyz");
+            Log log = factory.create("xyz");
 
-        log.xinfo().$("hello").$();
+            log.xinfo().$("hello").$();
 
-        Assert.assertEquals(1, factory.getJobs().size());
-        Assert.assertTrue(factory.getJobs().get(0) instanceof LogFileWriter);
+            Assert.assertEquals(1, factory.getJobs().size());
+            Assert.assertTrue(factory.getJobs().get(0) instanceof LogFileWriter);
 
-        LogFileWriter w = (LogFileWriter) factory.getJobs().get(0);
+            LogFileWriter w = (LogFileWriter) factory.getJobs().get(0);
 
-        Assert.assertEquals(4 * 1024 * 1024, w.getBufSize());
+            Assert.assertEquals(4 * 1024 * 1024, w.getBufSize());
 
-        Assert.assertEquals(1024, factory.getQueueDepth());
-        Assert.assertEquals(4096, factory.getRecordLength());
+            Assert.assertEquals(1024, factory.getQueueDepth());
+            Assert.assertEquals(4096, factory.getRecordLength());
+        }
     }
 
     @Test
@@ -305,15 +306,6 @@ public class LogFactoryTest {
             assertDisabled(logger1.info());
             assertDisabled(logger1.error());
         }
-    }
-
-    @Test
-    public void testStaticRouting() throws Exception {
-        System.getProperties().remove("nfslog");
-        Log logger = LogFactory.getLogger("x");
-        assertEnabled(logger.info());
-        assertEnabled(logger.error());
-        assertDisabled(logger.debug());
     }
 
     private static void assertEnabled(LogRecord r) {

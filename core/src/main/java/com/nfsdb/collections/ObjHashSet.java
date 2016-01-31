@@ -51,7 +51,7 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
     }
 
     @SuppressWarnings("unchecked")
-    public ObjHashSet(int initialCapacity, double loadFactor, double hashFactor) {
+    private ObjHashSet(int initialCapacity, double loadFactor, double hashFactor) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }

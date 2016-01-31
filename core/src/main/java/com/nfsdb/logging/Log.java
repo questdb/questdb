@@ -26,7 +26,10 @@ import com.nfsdb.concurrent.Sequence;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.misc.Misc;
 
+import java.io.File;
+
 public class Log implements LogRecord {
+    private final CharSequence name;
     private final RingQueue<LogRecordSink> debugRing;
     private final Sequence debugSeq;
     private final RingQueue<LogRecordSink> infoRing;
@@ -36,6 +39,7 @@ public class Log implements LogRecord {
     private final ThreadLocalCursor tl = new ThreadLocalCursor();
 
     public Log(
+            CharSequence name,
             RingQueue<LogRecordSink> debugRing,
             Sequence debugSeq,
             RingQueue<LogRecordSink> infoRing,
@@ -43,6 +47,7 @@ public class Log implements LogRecord {
             RingQueue<LogRecordSink> errorRing,
             Sequence errorSeq
     ) {
+        this.name = name;
         this.debugRing = debugRing;
         this.debugSeq = debugSeq;
         this.infoRing = infoRing;
@@ -71,8 +76,49 @@ public class Log implements LogRecord {
     }
 
     @Override
+    public LogRecord $(double x) {
+        sink().put(x, 2);
+        return this;
+    }
+
+    @Override
+    public LogRecord $(long x) {
+        sink().put(x);
+        return this;
+    }
+
+    @Override
     public LogRecord $(char c) {
         sink().put(c);
+        return this;
+    }
+
+    @Override
+    public LogRecord $(Throwable e) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $(File x) {
+        sink().put(x == null ? "null" : x.getAbsolutePath());
+        return this;
+    }
+
+    @Override
+    public LogRecord $(Enum e) {
+        sink().put(e != null ? e.name() : "null");
+        return this;
+    }
+
+    @Override
+    public LogRecord $(Object x) {
+        sink().put(x == null ? "null" : x.toString());
+        return this;
+    }
+
+    @Override
+    public LogRecord $ts(long x) {
+        sink().putISODate(x);
         return this;
     }
 
@@ -88,19 +134,19 @@ public class Log implements LogRecord {
     }
 
     public LogRecord debug() {
-        return xdebug().ts().$(" DEBUG ");
+        return xdebug().ts().$(" DEBUG ").$(name);
     }
 
     public LogRecord error() {
-        return xerror().ts().$(" ERROR ");
+        return xerror().ts().$(" ERROR ").$(name);
     }
 
     public LogRecord info() {
-        return xinfo().ts().$(" INFO ");
+        return xinfo().ts().$(" INFO ").$(name);
     }
 
-    public LogRecord xdebug() {
-        return next(debugSeq, debugRing, LogLevel.LOG_LEVEL_DEBUG);
+    public boolean isDebugEnabled() {
+        return debugSeq != null;
     }
 
     public LogRecord xerror() {
@@ -134,6 +180,10 @@ public class Log implements LogRecord {
     private CharSink sink() {
         Holder h = tl.get();
         return h.ring.get(h.cursor);
+    }
+
+    private LogRecord xdebug() {
+        return next(debugSeq, debugRing, LogLevel.LOG_LEVEL_DEBUG);
     }
 
     private static class Holder {

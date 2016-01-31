@@ -74,7 +74,6 @@ import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
-import java.util.Date;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -243,6 +242,24 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
+    @Ignore
+    public void testJsonChunkOverflow() throws Exception {
+        int count = (int) 1E6;
+        generateJournal(count);
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            put("/js", new JsonHandler(factory));
+        }});
+        server.start();
+        try {
+            String query = "tab";
+            QueryResponse queryResponse = download(query);
+            Assert.assertEquals(count, queryResponse.result.length);
+        } finally {
+            server.halt();
+        }
+    }
+
+    @Test
     public void testJsonEncodeControlChars() throws Exception {
         java.lang.StringBuilder allChars = new java.lang.StringBuilder();
         for(char c = Character.MIN_VALUE;  c < 0xD800; c++) { //
@@ -323,24 +340,6 @@ public class HttpServerTest extends AbstractJournalTest {
             QueryResponse queryResponse = download(query, 2, -1);
             Assert.assertEquals(2, queryResponse.result.length);
             Assert.assertEquals(true, queryResponse.moreExist);
-        } finally {
-            server.halt();
-        }
-    }
-
-    @Test
-    @Ignore
-    public void testJsonChunkOverflow() throws Exception {
-        int count = (int) 1E6;
-        generateJournal(count);
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", new JsonHandler(factory));
-        }});
-        server.start();
-        try {
-            String query = "tab";
-            QueryResponse queryResponse = download(query);
-            Assert.assertEquals(count, queryResponse.result.length);
         } finally {
             server.halt();
         }

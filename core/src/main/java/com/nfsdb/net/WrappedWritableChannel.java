@@ -23,6 +23,6 @@ package com.nfsdb.net;
 
 import java.nio.channels.WritableByteChannel;
 
-public interface WrappedWritableChannel<T> extends WritableByteChannel {
+interface WrappedWritableChannel<T> extends WritableByteChannel {
     T getChannel();
 }

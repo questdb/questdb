@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,14 +17,13 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.ha;
 
 import com.nfsdb.Journal;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.logging.Logger;
 import com.nfsdb.misc.Files;
 import com.nfsdb.model.Quote;
 import com.nfsdb.net.ha.config.ClientConfig;
@@ -40,8 +39,6 @@ import java.util.concurrent.TimeUnit;
 
 public class SSLTest {
 
-    private static final Logger LOGGER = Logger.getLogger(SSLTest.class);
-
     @Rule
     public final JournalTestFactory factory = new JournalTestFactory(new JournalConfigurationBuilder() {{
         $(Quote.class).recordCountHint(2000)
@@ -55,8 +52,6 @@ public class SSLTest {
 
     @Test
     public void testAuthBothCertsMissing() throws Exception {
-
-        LOGGER.info("testAuthBothCertsMissing()");
 
         JournalServer server = new JournalServer(new ServerConfig() {{
             setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
@@ -93,14 +88,10 @@ public class SSLTest {
         Thread.sleep(500);
         Assert.assertEquals(0, server.getConnectedClients());
         server.halt();
-        LOGGER.info("-------------");
     }
 
     @Test
     public void testClientAuth() throws Exception {
-
-        LOGGER.info("testClientAuth()");
-
         int size = 2000;
 
         JournalServer server = new JournalServer(new ServerConfig() {{
@@ -141,14 +132,10 @@ public class SSLTest {
         server.halt();
         Journal<Quote> local = factory.reader(Quote.class, "local");
         TestUtils.assertDataEquals(remote, local);
-        LOGGER.info("-------------");
     }
 
     @Test
     public void testNoCertTrustAllSSL() throws Exception {
-
-        LOGGER.info("testNoCertTrustAllSSL()");
-
         int size = 2000;
 
         JournalServer server = new JournalServer(new ServerConfig() {{
@@ -180,14 +167,10 @@ public class SSLTest {
         server.halt();
         Journal<Quote> local = factory.reader(Quote.class, "local");
         TestUtils.assertDataEquals(remote, local);
-        LOGGER.info("-------------");
     }
 
     @Test
     public void testNonAuthClientTrustMissing() throws Exception {
-
-        LOGGER.info("testNonAuthClientTrustMissing()");
-
         JournalServer server = new JournalServer(new ServerConfig() {{
             setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
             getSslConfig().setSecure(true);
@@ -218,14 +201,10 @@ public class SSLTest {
         Thread.sleep(1000);
         Assert.assertEquals(0, server.getConnectedClients());
         server.halt();
-        LOGGER.info("-------------");
     }
 
     @Test
     public void testServerTrustMissing() throws Exception {
-
-        LOGGER.info("testServerTrustMissing()");
-
         JournalServer server = new JournalServer(new ServerConfig() {{
             setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
             getSslConfig().setSecure(true);
@@ -265,14 +244,10 @@ public class SSLTest {
 
         Assert.assertEquals(0, server.getConnectedClients());
         server.halt();
-        LOGGER.info("-------------");
     }
 
     @Test
     public void testSingleKeySSL() throws Exception {
-
-        LOGGER.info("testSingleKeySSL()");
-
         int size = 1000;
 
         JournalServer server = new JournalServer(new ServerConfig() {{
@@ -307,6 +282,5 @@ public class SSLTest {
         server.halt();
         Journal<Quote> local = factory.reader(Quote.class, "local");
         TestUtils.assertDataEquals(remote, local);
-        LOGGER.info("-------------");
     }
 }

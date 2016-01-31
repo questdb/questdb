@@ -32,15 +32,13 @@ import java.lang.management.ManagementFactory;
 
 @SuppressFBWarnings({"IICU_INCORRECT_INTERNAL_CLASS_USE"})
 public final class Os {
-    public static final int OSX = 1;
-    public static final int LINUX = 2;
     public static final int WINDOWS = 3;
-    public static final int UNKNOWN = -1;
     public static final int _32Bit = -2;
-
     public static final int type;
-
     public static final boolean nativelySupported;
+    private static final int OSX = 1;
+    private static final int LINUX = 2;
+    private static final int UNKNOWN = -1;
     private static final OperatingSystemMXBean bean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
 
     private Os() {

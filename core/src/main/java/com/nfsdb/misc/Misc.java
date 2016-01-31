@@ -25,7 +25,6 @@ import com.nfsdb.collections.CharSequenceObjHashMap;
 import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.collections.ObjectPool;
 import com.nfsdb.exceptions.NumericException;
-import com.nfsdb.logging.Logger;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
@@ -33,7 +32,6 @@ import java.io.IOException;
 
 public final class Misc {
     public static final String EOL = "\r\n";
-    private final static Logger LOGGER = Logger.getLogger(Misc.class);
 
     private Misc() {
     }
@@ -45,7 +43,7 @@ public final class Misc {
                 ((Closeable) object).close();
                 return null;
             } catch (IOException e) {
-                LOGGER.error("Failed to close", e);
+                throw new Error(e);
             }
         }
         return object;

@@ -25,7 +25,8 @@ import com.nfsdb.exceptions.DisconnectedChannelException;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.exceptions.SlowReadableChannelException;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.net.http.IOHttpJob;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -38,7 +39,7 @@ import java.nio.channels.ByteChannel;
 
 public class NonBlockingSecureSocketChannel<T extends ByteChannel> implements WrappedByteChannel<T> {
 
-    private static final Logger LOGGER = Logger.getLogger(NonBlockingSecureSocketChannel.class);
+    private static final Log LOG = LogFactory.getLog(NonBlockingSecureSocketChannel.class);
 
     private final T channel;
     private final SSLEngine engine;
@@ -243,7 +244,7 @@ public class NonBlockingSecureSocketChannel<T extends ByteChannel> implements Wr
                     try {
                         handshakeStatus = engine.wrap(unwrapped, out).getHandshakeStatus();
                     } catch (SSLException e) {
-                        LOGGER.error("Server SSL handshake failed: %s", e.getMessage());
+                        LOG.error().$("Server SSL handshake failed: ").$(e.getMessage()).$();
                         closureOnException();
                         throw e;
                     }
@@ -276,7 +277,7 @@ public class NonBlockingSecureSocketChannel<T extends ByteChannel> implements Wr
                                 throw new IOException("Did not expect CLOSED");
                         }
                     } catch (SSLException e) {
-                        LOGGER.error("Client SSL handshake failed: %s", e.getMessage());
+                        LOG.error().$("Client SSL handshake failed: ").$(e.getMessage()).$();
                         throw e;
                     }
                     break;

@@ -24,7 +24,8 @@ package com.nfsdb;
 import com.nfsdb.exceptions.JournalConfigurationException;
 import com.nfsdb.exceptions.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
 import com.nfsdb.misc.Files;
 import com.nfsdb.misc.Rnd;
 import com.nfsdb.test.tools.JournalTestFactory;
@@ -37,7 +38,7 @@ public class HugeTableTest {
 
     @ClassRule
     public static final JournalTestFactory factory;
-    private static final Logger LOGGER = Logger.getLogger(HugeTableTest.class);
+    private static final Log LOG = LogFactory.getLog(HugeTableTest.class);
 
     @Test
     public void testLargeSymbolTable() throws Exception {
@@ -57,7 +58,7 @@ public class HugeTableTest {
         }
         w.commit();
 
-        LOGGER.info("Appended 2M symbols in " + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t) + "ms");
+        LOG.info().$("Appended 2M symbols in ").$(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t)).$("ms").$();
     }
 
     public static class Name {

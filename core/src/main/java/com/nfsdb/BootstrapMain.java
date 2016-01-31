@@ -48,8 +48,7 @@ import static java.nio.file.FileVisitResult.CONTINUE;
 import static java.nio.file.StandardCopyOption.COPY_ATTRIBUTES;
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
-public class BootstrapMain {
-    private static final Logger LOGGER = Logger.getLogger(BootstrapMain.class);
+class BootstrapMain {
 
     @SuppressFBWarnings("PATH_TRAVERSAL_IN")
     public static void main(String[] args) throws Exception {
@@ -58,7 +57,7 @@ public class BootstrapMain {
         }
 
         if (Os.type == Os._32Bit) {
-            LOGGER.error("NFSdb requires 64-bit JVM");
+            System.out.println("NFSdb requires 64-bit JVM");
             return;
         }
 
@@ -67,7 +66,7 @@ public class BootstrapMain {
         File conf = new File(dir, "conf/nfsdb.conf");
 
         if (!conf.exists()) {
-            LOGGER.error("Configuration file does not exist: " + conf);
+            System.out.println("Configuration file does not exist: " + conf);
             return;
         }
 
@@ -90,7 +89,7 @@ public class BootstrapMain {
             welcome.append(" [HTTPS]");
         }
 
-        LOGGER.info(welcome);
+        System.out.println(welcome);
     }
 
     private static void configureLoggers(final HttpServerConfiguration configuration) {

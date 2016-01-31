@@ -32,7 +32,7 @@ public class DoubleNotEqualsNanOperator extends AbstractBinaryOperator {
 
     public final static DoubleNotEqualsNanOperator FACTORY = new DoubleNotEqualsNanOperator();
 
-    public DoubleNotEqualsNanOperator() {
+    private DoubleNotEqualsNanOperator() {
         super(ColumnType.BOOLEAN);
     }
 

@@ -28,7 +28,7 @@ public class MPSequence extends AbstractMSequence {
         this(cycle, null);
     }
 
-    public MPSequence(int cycle, WaitStrategy waitStrategy) {
+    private MPSequence(int cycle, WaitStrategy waitStrategy) {
         super(cycle, waitStrategy);
         this.cycle = cycle;
     }

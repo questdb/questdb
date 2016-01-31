@@ -23,7 +23,8 @@ package com.nfsdb.storage;
 
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
@@ -36,7 +37,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public final class Lock {
 
-    private static final Logger LOGGER = Logger.getLogger(Lock.class);
+    private static final Log LOG = LogFactory.getLog(Lock.class);
 
     private final AtomicInteger refCount = new AtomicInteger(0);
     private RandomAccessFile file;
@@ -90,7 +91,7 @@ public final class Lock {
 
     synchronized void delete() {
         if (!lockName.delete()) {
-            LOGGER.error("Could not delete lock: %s", lockName);
+            LOG.error().$("Could not delete lock: ").$(lockName).$();
 //            throw new JournalRuntimeException("Could not delete lock: %s", lockName);
         }
     }

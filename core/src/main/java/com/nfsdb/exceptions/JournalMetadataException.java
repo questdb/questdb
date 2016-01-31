@@ -23,35 +23,35 @@ package com.nfsdb.exceptions;
 
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
+import com.nfsdb.logging.LogRecord;
 
 public class JournalMetadataException extends JournalException {
-    private static final Logger LOGGER = Logger.getLogger(JournalMetadataException.class);
+    private static final Log LOG = LogFactory.getLog(JournalMetadataException.class);
     private static final int FIRST_COL_PAD = 15;
     private static final int DEFAULT_COL_PAD = 40;
 
-    private final StringBuilder b = new StringBuilder();
-
-
     public JournalMetadataException(JournalMetadata mo, JournalMetadata mn) {
         super("Checksum mismatch. Check log for details");
-        b.append("Metadata mismatch for journal:\n");
-        b.append("Location: ").append(mo.getLocation()).append('\n');
-        sep();
-        b();
-        pad(FIRST_COL_PAD, "column#");
-        pad("OLD");
-        pad("NEW");
-        e();
-        sep();
+        LogRecord b = LOG.error();
+        b.$("Metadata mismatch for journal:\n");
+        b.$("Location: ").$(mo.getLocation()).$('\n');
+        sep(b);
+        b(b);
+        pad(b, FIRST_COL_PAD, "column#");
+        pad(b, "OLD");
+        pad(b, "NEW");
+        e(b);
+        sep(b);
 
-        b();
+        b(b);
         boolean diff = mo.getPartitionType() != mn.getPartitionType();
-        pad(FIRST_COL_PAD, (diff ? "*" : "") + "Partition by");
-        pad(mo.getPartitionType().name());
-        pad(mn.getPartitionType().name());
-        e();
-        sep();
+        pad(b, FIRST_COL_PAD, (diff ? "*" : "") + "Partition by");
+        pad(b, mo.getPartitionType().name());
+        pad(b, mn.getPartitionType().name());
+        e(b);
+        sep(b);
 
         int i = 0;
         while (true) {
@@ -69,61 +69,61 @@ public class JournalMetadataException extends JournalException {
             diff = diff || cmo.distinctCountHint != cmn.distinctCountHint;
             diff = diff || (cmo.sameAs == null && cmn.sameAs != null) || (cmo.sameAs != null && !cmo.sameAs.equals(cmn.sameAs));
 
-            b();
+            b(b);
 
-            pad(FIRST_COL_PAD, (diff ? "*" : "") + i);
+            pad(b, FIRST_COL_PAD, (diff ? "*" : "") + i);
 
             if (cmo != null) {
-                col(cmo);
+                col(b, cmo);
             } else {
-                skip();
+                skip(b);
             }
 
             if (cmn != null) {
-                col(cmn);
+                col(b, cmn);
             } else {
-                skip();
+                skip(b);
             }
             i++;
-            e();
+            e(b);
         }
-        sep();
-        LOGGER.error(b.toString());
+        sep(b);
+        b.$();
     }
 
-    private void b() {
-        b.append('|');
+    private void b(LogRecord r) {
+        r.$('|');
     }
 
-    private void col(ColumnMetadata m) {
-        pad((m.distinctCountHint > 0 ? m.distinctCountHint + " ~ " : "") + (m.indexed ? '#' : "") + m.name + (m.sameAs != null ? " -> " + m.sameAs : "") + ' ' + m.type.name() + '(' + m.size + ')');
+    private void col(LogRecord r, ColumnMetadata m) {
+        pad(r, (m.distinctCountHint > 0 ? m.distinctCountHint + " ~ " : "") + (m.indexed ? '#' : "") + m.name + (m.sameAs != null ? " -> " + m.sameAs : "") + ' ' + m.type.name() + '(' + m.size + ')');
     }
 
-    private void e() {
-        b.append('\n');
+    private void e(LogRecord r) {
+        r.$('\n');
     }
 
-    private void pad(int w, String value) {
+    private void pad(LogRecord b, int w, String value) {
         int pad = value == null ? w : w - value.length();
         for (int i = 0; i < pad; i++) {
-            b.append(' ');
+            b.$(' ');
         }
         if (value != null) {
-            b.append(value);
+            b.$(value);
         }
 
-        b.append("  |");
+        b.$("  |");
     }
 
-    private void pad(String value) {
-        pad(DEFAULT_COL_PAD, value);
+    private void pad(LogRecord r, String value) {
+        pad(r, DEFAULT_COL_PAD, value);
     }
 
-    private void sep() {
-        b.append("+-------------------------------------------------------------------------------------------------------+\n");
+    private void sep(LogRecord b) {
+        b.$("+-------------------------------------------------------------------------------------------------------+\n");
     }
 
-    private void skip() {
-        pad("");
+    private void skip(LogRecord r) {
+        pad(r, "");
     }
 }

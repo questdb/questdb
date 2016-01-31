@@ -23,11 +23,12 @@ package com.nfsdb.io.parser;
 
 import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.io.parser.listener.Listener;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
 import com.nfsdb.misc.Unsafe;
 
 public abstract class AbstractTextParser implements TextParser {
-    private final static Logger LOGGER = Logger.getLogger(AbstractTextParser.class);
+    private final static Log LOG = LogFactory.getLog(AbstractTextParser.class);
     protected boolean inQuote;
     protected boolean delayedOutQuote;
     protected boolean eol;
@@ -116,7 +117,7 @@ public abstract class AbstractTextParser implements TextParser {
     }
 
     private void growRollBuf(long len) {
-        LOGGER.warn("Resizing line roll buffer: " + lineRollBufLen + " -> " + len);
+        LOG.info().$("Resizing line roll buffer: ").$(lineRollBufLen).$(" -> ").$(len).$();
         long p = Unsafe.getUnsafe().allocateMemory(len);
         long l = lineRollBufCur - lineRollBufPtr;
         if (l > 0) {

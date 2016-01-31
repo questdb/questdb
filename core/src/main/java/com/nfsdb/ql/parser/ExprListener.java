@@ -23,6 +23,6 @@ package com.nfsdb.ql.parser;
 
 import com.nfsdb.ql.model.ExprNode;
 
-public interface ExprListener {
+interface ExprListener {
     void onNode(ExprNode node);
 }

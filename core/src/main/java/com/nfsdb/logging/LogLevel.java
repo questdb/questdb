@@ -21,7 +21,7 @@
 
 package com.nfsdb.logging;
 
-public final class LogLevel {
+final class LogLevel {
     public static final int LOG_LEVEL_DEBUG = 1;
     public static final int LOG_LEVEL_INFO = 2;
     public static final int LOG_LEVEL_ERROR = 4;

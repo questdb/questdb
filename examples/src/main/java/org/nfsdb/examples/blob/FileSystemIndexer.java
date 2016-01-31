@@ -53,7 +53,7 @@ public class FileSystemIndexer {
         System.out.println("Added " + count + " files in " + (System.currentTimeMillis() - t) + " ms.");
     }
 
-    public static int processDir(JournalWriter writer, File dir) throws JournalException, IOException {
+    private static int processDir(JournalWriter writer, File dir) throws JournalException, IOException {
         int count = 0;
         File[] files = dir.listFiles();
         if (files != null) {

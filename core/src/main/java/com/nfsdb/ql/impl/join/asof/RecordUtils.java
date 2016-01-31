@@ -30,7 +30,7 @@ import com.nfsdb.storage.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT", "SF_SWITCH_NO_DEFAULT"})
-public final class RecordUtils {
+final class RecordUtils {
     private RecordUtils() {
     }
 

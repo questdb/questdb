@@ -66,13 +66,23 @@ public class TxIterator extends AbstractImmutableIterator<Tx> {
         }
     }
 
-    public void print(WritableByteChannel channel) throws IOException {
+    public void print(File file) throws IOException {
+        try (FileOutputStream fos = new FileOutputStream(file)) {
+            print(fos.getChannel());
+        }
+    }
+
+    public final void reset() {
+        txAddress = txLog.readCurrentTxAddress();
+    }
+
+    private void print(WritableByteChannel channel) throws IOException {
         try (DelimitedCharSink sink = new DelimitedCharSink(new FlexBufferSink(channel, 1024), '\t', "\n")) {
             print(sink);
         }
     }
 
-    public void print(DelimitedCharSink sink) throws IOException {
+    private void print(DelimitedCharSink sink) throws IOException {
         reset();
 
         sink.put("addr").put("prev").put("txn").put("txPin").put("timestamp").put("rowid").put("part timestamp").put("lag size").put("lag name");
@@ -94,15 +104,5 @@ public class TxIterator extends AbstractImmutableIterator<Tx> {
         }
 
         sink.flush();
-    }
-
-    public void print(File file) throws IOException {
-        try (FileOutputStream fos = new FileOutputStream(file)) {
-            print(fos.getChannel());
-        }
-    }
-
-    public final void reset() {
-        txAddress = txLog.readCurrentTxAddress();
     }
 }

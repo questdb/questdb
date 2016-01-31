@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,13 +17,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.ha.mcast;
 
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.net.ha.config.DatagramChannelWrapper;
 import com.nfsdb.net.ha.config.ServerConfig;
@@ -41,7 +42,7 @@ import java.util.concurrent.CountDownLatch;
 @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public abstract class AbstractOnDemandSender {
 
-    private static final Logger LOGGER = Logger.getLogger(AbstractOnDemandSender.class);
+    private static final Log LOG = LogFactory.getLog(AbstractOnDemandSender.class);
     final int instance;
     private final ServerConfig serverConfig;
     private final int inMessageCode;
@@ -97,7 +98,7 @@ public abstract class AbstractOnDemandSender {
         try {
             try (DatagramChannelWrapper dcw = serverConfig.openDatagramChannel(instance)) {
                 DatagramChannel dc = dcw.getChannel();
-                LOGGER.info("Sending to %s on [%s] ", dcw.getGroup(), dc.getOption(StandardSocketOptions.IP_MULTICAST_IF).getName());
+                LOG.info().$("Sending to ").$(dcw.getGroup()).$(" on [").$(dc.getOption(StandardSocketOptions.IP_MULTICAST_IF).getName()).$(']').$();
 
                 selector = Selector.open();
                 selecting = true;
@@ -121,7 +122,7 @@ public abstract class AbstractOnDemandSender {
                                 if (sa != null) {
                                     buf.flip();
                                     if (buf.remaining() >= 4 && inMessageCode == buf.getInt(0)) {
-                                        LOGGER.debug("Sending server information [%s] to [%s] ", inMessageCode, sa);
+                                        LOG.debug().$("Sending server information [").$(inMessageCode).$("] to [").$(sa).$(']').$();
                                         buf.clear();
                                         buf.putInt(outMessageCode);
                                         prepareBuffer(buf);
@@ -136,7 +137,7 @@ public abstract class AbstractOnDemandSender {
                 }
             }
         } catch (Throwable e) {
-            LOGGER.error("Multicast sender crashed", e);
+            LOG.error().$("Multicast sender crashed").$(e).$();
         } finally {
             latch.countDown();
         }

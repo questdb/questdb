@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,12 +17,13 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.ha.config;
 
 import com.nfsdb.exceptions.JournalNetworkException;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;
@@ -35,7 +36,7 @@ import java.util.concurrent.TimeUnit;
 public class ServerConfig extends NetworkConfig {
     public static final long SYNC_TIMEOUT = TimeUnit.SECONDS.toMillis(15);
     private static final long DEFAULT_HEARTBEAT_FREQUENCY = TimeUnit.SECONDS.toMillis(5);
-    private static final Logger LOGGER = Logger.getLogger(ServerConfig.class);
+    private static final Log LOG = LogFactory.getLog(ServerConfig.class);
 
     private long heartbeatFrequency = DEFAULT_HEARTBEAT_FREQUENCY;
 
@@ -103,7 +104,7 @@ public class ServerConfig extends NetworkConfig {
         try {
             address = getSocketAddress(instance);
             ServerSocketChannel channel = ServerSocketChannel.open().bind(address).setOption(StandardSocketOptions.SO_RCVBUF, getSoRcvBuf());
-            LOGGER.info("Server is now listening on %s", address);
+            LOG.info().$("Server is now listening on ").$(address).$();
             return channel;
         } catch (IOException e) {
 

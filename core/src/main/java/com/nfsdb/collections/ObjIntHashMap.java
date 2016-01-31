@@ -45,12 +45,12 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
         this(8);
     }
 
-    public ObjIntHashMap(int initialCapacity) {
+    private ObjIntHashMap(int initialCapacity) {
         this(initialCapacity, 0.5, -1);
     }
 
     @SuppressWarnings("unchecked")
-    public ObjIntHashMap(int initialCapacity, double loadFactor, int noKeyValue) {
+    private ObjIntHashMap(int initialCapacity, double loadFactor, int noKeyValue) {
         int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
         capacity = capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);
         this.loadFactor = loadFactor;

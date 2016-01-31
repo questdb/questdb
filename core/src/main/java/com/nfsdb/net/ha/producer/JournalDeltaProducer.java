@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.ha.producer;
 
@@ -26,7 +26,8 @@ import com.nfsdb.Partition;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNetworkException;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
 import com.nfsdb.misc.Rows;
 import com.nfsdb.net.ha.ChannelProducer;
 import com.nfsdb.net.ha.model.JournalServerState;
@@ -37,7 +38,7 @@ import java.nio.channels.WritableByteChannel;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class JournalDeltaProducer implements ChannelProducer {
-    private static final Logger LOGGER = Logger.getLogger(JournalDeltaProducer.class);
+    private static final Log LOG = LogFactory.getLog(JournalDeltaProducer.class);
     private final Journal journal;
     private final JournalServerState journalServerState = new JournalServerState();
     private final JournalServerStateProducer journalServerStateProducer = new JournalServerStateProducer();
@@ -119,8 +120,8 @@ public class JournalDeltaProducer implements ChannelProducer {
 
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     private void configure0(Tx tx) throws JournalException {
-        if (LOGGER.isDebugEnabled()) {
-            LOGGER.debug("Journal %s size: %d", journal.getLocation(), journal.size());
+        if (LOG.isDebugEnabled()) {
+            LOG.debug().$("Journal ").$(journal.getLocation()).$(" size: ").$(journal.size()).$();
         }
 
         int startPartitionIndex;

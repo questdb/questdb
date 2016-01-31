@@ -42,9 +42,9 @@ import java.nio.channels.SocketChannel;
 
 @SuppressFBWarnings("CD_CIRCULAR_DEPENDENCY")
 public class Request implements Closeable, Mutable {
-    public static final int SO_RCVBUF_UPLOAD = 4 * 1024 * 1024;
     public static final int SO_RVCBUF_DOWNLD = 128 * 1024;
-    public static final int SO_READ_RETRY_COUNT = 1000;
+    private static final int SO_RCVBUF_UPLOAD = 4 * 1024 * 1024;
+    private static final int SO_READ_RETRY_COUNT = 1000;
 
     private final ByteBuffer in;
     private final long inAddr;
@@ -78,16 +78,8 @@ public class Request implements Closeable, Mutable {
         augmenter.close();
     }
 
-    public DirectByteCharSequence getBoundary() {
-        return augmenter.of(hb.getBoundary());
-    }
-
     public CharSequence getHeader(CharSequence name) {
         return hb.get(name);
-    }
-
-    public MultipartParser getMultipartParser() {
-        return multipartParser;
     }
 
     public SocketAddress getSocketAddress() {
@@ -142,6 +134,14 @@ public class Request implements Closeable, Mutable {
         in.clear();
         ByteBuffers.copyNonBlocking(channel, in, SO_READ_RETRY_COUNT);
         in.flip();
+    }
+
+    private DirectByteCharSequence getBoundary() {
+        return augmenter.of(hb.getBoundary());
+    }
+
+    private MultipartParser getMultipartParser() {
+        return multipartParser;
     }
 
     private void readHeaders() throws HeadersTooLargeException, IOException, MalformedHeaderException {

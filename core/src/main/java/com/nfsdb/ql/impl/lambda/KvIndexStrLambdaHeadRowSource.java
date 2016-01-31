@@ -52,7 +52,7 @@ public abstract class KvIndexStrLambdaHeadRowSource extends AbstractRowSource {
     private int buckets;
     private int columnIndex;
 
-    protected KvIndexStrLambdaHeadRowSource(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
+    KvIndexStrLambdaHeadRowSource(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
         this.column = column;
         this.recordSource = recordSource;
         this.recordSourceColumn = recordSourceColumn;

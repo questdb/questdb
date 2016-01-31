@@ -75,9 +75,7 @@ public final class Net {
                 throw new RuntimeException("bad dog");
             }
 
-            ip = (ip << 8) | Numbers.parseInt(address, lo, address.length());
-
-            return ip;
+            return (ip << 8) | Numbers.parseInt(address, lo, address.length());
         } catch (NumericException e) {
             throw new RuntimeException("bad dog");
         }

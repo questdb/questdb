@@ -24,7 +24,11 @@ package com.nfsdb.logging;
 import com.nfsdb.collections.*;
 import com.nfsdb.concurrent.*;
 import com.nfsdb.exceptions.NumericException;
-import com.nfsdb.misc.*;
+import com.nfsdb.misc.Chars;
+import com.nfsdb.misc.Misc;
+import com.nfsdb.misc.Numbers;
+import com.nfsdb.misc.Unsafe;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.*;
 import java.lang.reflect.Constructor;
@@ -37,8 +41,8 @@ public class LogFactory implements Closeable {
 
     public static final LogFactory INSTANCE = new LogFactory();
 
-    public static final int DEFAULT_QUEUE_DEPTH = 1024;
-    public static final int DEFAULT_MSG_SIZE = 4 * 1024;
+    private static final int DEFAULT_QUEUE_DEPTH = 1024;
+    private static final int DEFAULT_MSG_SIZE = 4 * 1024;
     private static final String DEFAULT_CONFIG = "/nfslog.conf";
     private static final String EMPTY_STR = "";
     private static final CharSequenceHashSet reserved = new CharSequenceHashSet();
@@ -52,6 +56,7 @@ public class LogFactory implements Closeable {
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
 
+    @SuppressFBWarnings("PATH_TRAVERSAL_IN")
     public static void configureFromSystemProperties(LogFactory factory) {
         String conf = System.getProperty("nfslog");
         if (conf == null) {
@@ -84,14 +89,121 @@ public class LogFactory implements Closeable {
         factory.startThread();
     }
 
-    public static Log getLogger(CharSequence key) {
+    public static Log getLog(Class clazz) {
+        return getLog(clazz.getName());
+    }
+
+    public static Log getLog(CharSequence key) {
         if (!INSTANCE.configured) {
             configureFromSystemProperties(INSTANCE);
         }
         return INSTANCE.create(key);
     }
 
-    public static void setup(LogFactory factory, Properties properties) {
+    public void add(final LogWriterConfig config) {
+        ScopeConfiguration scopeConf = scopeConfigMap.get(config.getScope());
+        if (scopeConf == null) {
+            scopeConfigMap.put(config.getScope(), scopeConf = new ScopeConfiguration(3));
+            scopeConfigs.add(scopeConf);
+        }
+        scopeConf.add(config);
+    }
+
+    public void bind() {
+        if (configured) {
+            return;
+        }
+
+        for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
+            ScopeConfiguration conf = scopeConfigs.get(i);
+            conf.bind(jobs, queueDepth, recordLength);
+
+        }
+
+        scopeConfigMap.sortKeys(LDC);
+
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            LogWriter w = jobs.get(i);
+            w.bindProperties();
+        }
+
+        configured = true;
+    }
+
+    @Override
+    public void close() {
+        haltThread();
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            Misc.free(jobs.get(i));
+        }
+    }
+
+    public Log create(CharSequence key) {
+        if (!configured) {
+            throw new LogError("Not configured");
+        }
+
+        ScopeConfiguration scopeConfiguration = find(key);
+        if (scopeConfiguration == null) {
+            return new Log(compressScope(key), null, null, null, null, null, null);
+        }
+        Holder inf = scopeConfiguration.getHolder(Numbers.msb(LogLevel.LOG_LEVEL_INFO));
+        Holder dbg = scopeConfiguration.getHolder(Numbers.msb(LogLevel.LOG_LEVEL_DEBUG));
+        Holder err = scopeConfiguration.getHolder(Numbers.msb(LogLevel.LOG_LEVEL_ERROR));
+        return new Log(
+                compressScope(key),
+                dbg == null ? null : dbg.ring,
+                dbg == null ? null : dbg.lSeq,
+                inf == null ? null : inf.ring,
+                inf == null ? null : inf.lSeq,
+                err == null ? null : err.ring,
+                err == null ? null : err.lSeq
+        );
+    }
+
+    public ObjHashSet<LogWriter> getJobs() {
+        return jobs;
+    }
+
+    public int getQueueDepth() {
+        return queueDepth;
+    }
+
+    private void setQueueDepth(int queueDepth) {
+        this.queueDepth = queueDepth;
+    }
+
+    public int getRecordLength() {
+        return recordLength;
+    }
+
+    private void setRecordLength(int recordLength) {
+        this.recordLength = recordLength;
+    }
+
+    public void haltThread() {
+        if (worker != null) {
+            worker.halt();
+            try {
+                workerHaltLatch.await();
+            } catch (InterruptedException ignore) {
+            }
+            worker = null;
+        }
+    }
+
+    public void startThread() {
+        if (this.worker != null) {
+            return;
+        }
+        this.worker = new Worker(jobs, workerHaltLatch);
+        worker.setDaemon(true);
+        worker.setName("nfsdb-log-writer");
+        worker.start();
+    }
+
+    @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE", "LEST_LOST_EXCEPTION_STACK_TRACE"})
+    private static void setup(LogFactory factory, Properties properties) {
 
         String writers = properties.getProperty("writers");
 
@@ -128,103 +240,6 @@ public class LogFactory implements Closeable {
         }
 
         factory.bind();
-    }
-
-    public void add(final LogWriterConfig config) {
-        ScopeConfiguration scopeConf = scopeConfigMap.get(config.getScope());
-        if (scopeConf == null) {
-            scopeConfigMap.put(config.getScope(), scopeConf = new ScopeConfiguration(3));
-            scopeConfigs.add(scopeConf);
-        }
-        scopeConf.add(config);
-    }
-
-    public void bind() {
-        if (configured) {
-            return;
-        }
-
-        for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
-            ScopeConfiguration conf = scopeConfigs.get(i);
-            conf.bind(jobs, queueDepth, recordLength);
-
-        }
-
-        scopeConfigMap.sortKeys(LDC);
-
-        for (int i = 0, n = jobs.size(); i < n; i++) {
-            LogWriter w = jobs.get(i);
-            w.bindProperties();
-        }
-
-        configured = true;
-    }
-
-    @Override
-    public void close() {
-        for (int i = 0, n = jobs.size(); i < n; i++) {
-            Misc.free(jobs.get(i));
-        }
-    }
-
-    public Log create(CharSequence key) {
-        if (!configured) {
-            throw new LogError("Not configured");
-        }
-
-        ScopeConfiguration scopeConfiguration = find(key);
-        if (scopeConfiguration == null) {
-            return new Log(null, null, null, null, null, null);
-        }
-        Holder inf = scopeConfiguration.getHolder(Numbers.msb(LogLevel.LOG_LEVEL_INFO));
-        Holder dbg = scopeConfiguration.getHolder(Numbers.msb(LogLevel.LOG_LEVEL_DEBUG));
-        Holder err = scopeConfiguration.getHolder(Numbers.msb(LogLevel.LOG_LEVEL_ERROR));
-        return new Log(
-                dbg == null ? null : dbg.ring,
-                dbg == null ? null : dbg.lSeq,
-                inf == null ? null : inf.ring,
-                inf == null ? null : inf.lSeq,
-                err == null ? null : err.ring,
-                err == null ? null : err.lSeq
-        );
-    }
-
-    public ObjHashSet<LogWriter> getJobs() {
-        return jobs;
-    }
-
-    public int getQueueDepth() {
-        return queueDepth;
-    }
-
-    public void setQueueDepth(int queueDepth) {
-        this.queueDepth = queueDepth;
-    }
-
-    public int getRecordLength() {
-        return recordLength;
-    }
-
-    public void setRecordLength(int recordLength) {
-        this.recordLength = recordLength;
-    }
-
-    public void haltThread() {
-        if (worker != null) {
-            worker.halt();
-            try {
-                workerHaltLatch.await();
-            } catch (InterruptedException ignore) {
-            }
-            worker = null;
-        }
-    }
-
-    public void startThread() {
-        this.worker = new Worker(jobs, workerHaltLatch);
-        worker.setDaemon(true);
-        worker.setName("nfsdb-log-writer");
-        worker.start();
     }
 
     private static LogWriterConfig createWriter(final Properties properties, String w) {
@@ -297,6 +312,34 @@ public class LogFactory implements Closeable {
                 }
             }
         });
+    }
+
+    private static CharSequence compressScope(CharSequence key) {
+        StringBuilder builder = new StringBuilder();
+        char c = 0;
+        boolean pick = true;
+        int z = 0;
+        for (int i = 0, n = key.length(); i < n; i++) {
+            char a = key.charAt(i);
+            if (a == '.') {
+                if (!pick) {
+                    builder.append(c).append('.');
+                    pick = true;
+                }
+            } else if (pick) {
+                c = a;
+                z = i;
+                pick = false;
+            }
+        }
+
+        for (; z < key.length(); z++) {
+            builder.append(key.charAt(z));
+        }
+
+        builder.append(' ');
+
+        return builder;
     }
 
     private void configureDefaultWriter() {
@@ -441,9 +484,9 @@ public class LogFactory implements Closeable {
     }
 
     private static class Holder {
-        private RingQueue<LogRecordSink> ring;
+        private final RingQueue<LogRecordSink> ring;
+        private final Sequence lSeq;
         private Sequence wSeq;
-        private Sequence lSeq;
         private FanOut fanOut;
 
         public Holder(int queueDepth, final int recordLength) {
@@ -458,7 +501,6 @@ public class LogFactory implements Closeable {
     }
 
     static {
-        Os.init();
         reserved.add("scope");
         reserved.add("class");
         reserved.add("level");

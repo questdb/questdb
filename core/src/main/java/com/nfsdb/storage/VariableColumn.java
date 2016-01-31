@@ -144,34 +144,6 @@ public class VariableColumn extends AbstractColumn {
         getBin(localRowID, s, getBinLen(localRowID));
     }
 
-    public void getBin(long localRowID, OutputStream s, int len) {
-        initStreamBuf();
-
-        long offset = getOffset(localRowID) + 4; // skip size
-
-        int blockRemaining = 0;
-        long blockAddress = 0;
-
-        try {
-            while (len > 0) {
-                if (blockRemaining == 0) {
-                    blockAddress = mappedFile.addressOf(offset, 1);
-                    blockRemaining = mappedFile.pageRemaining(offset);
-                }
-
-                int l = len > blockRemaining ? blockRemaining : len;
-                Unsafe.getUnsafe().copyMemory(null, blockAddress, streamBuf, Unsafe.BYTE_OFFSET, l);
-                offset += l;
-                blockRemaining -= l;
-                len -= l;
-                blockAddress += l;
-                s.write(streamBuf, 0, l);
-            }
-        } catch (IOException e) {
-            throw new JournalRuntimeException(e);
-        }
-    }
-
     public DirectInputStream getBin(long localRowID) {
         binIn.reset(getOffset(localRowID));
         return binIn;
@@ -324,6 +296,34 @@ public class VariableColumn extends AbstractColumn {
     private long commitAppend(long offset, int size) {
         preCommit(offset + size);
         return indexColumn.putLong(offset);
+    }
+
+    private void getBin(long localRowID, OutputStream s, int len) {
+        initStreamBuf();
+
+        long offset = getOffset(localRowID) + 4; // skip size
+
+        int blockRemaining = 0;
+        long blockAddress = 0;
+
+        try {
+            while (len > 0) {
+                if (blockRemaining == 0) {
+                    blockAddress = mappedFile.addressOf(offset, 1);
+                    blockRemaining = mappedFile.pageRemaining(offset);
+                }
+
+                int l = len > blockRemaining ? blockRemaining : len;
+                Unsafe.getUnsafe().copyMemory(null, blockAddress, streamBuf, Unsafe.BYTE_OFFSET, l);
+                offset += l;
+                blockRemaining -= l;
+                len -= l;
+                blockAddress += l;
+                s.write(streamBuf, 0, l);
+            }
+        } catch (IOException e) {
+            throw new JournalRuntimeException(e);
+        }
     }
 
     private String getStr0(long address, int len) {

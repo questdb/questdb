@@ -28,7 +28,9 @@ import com.nfsdb.concurrent.SynchronizedJob;
 import com.nfsdb.exceptions.NumericException;
 import com.nfsdb.misc.Files;
 import com.nfsdb.misc.Numbers;
+import com.nfsdb.misc.Os;
 import com.nfsdb.misc.Unsafe;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 
@@ -80,6 +82,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
         return true;
     }
 
+    @SuppressFBWarnings("LEST_LOST_EXCEPTION_STACK_TRACE")
     @Override
     public void bindProperties() {
         if (this.bufferSize != null) {
@@ -118,6 +121,10 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
         return bufSize;
     }
 
+    public void setBufferSize(String bufferSize) {
+        this.bufferSize = bufferSize;
+    }
+
     public void setLocation(String location) {
         this.location = location;
     }
@@ -125,5 +132,9 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
     private void flush() {
         Files.append(fd, buf, (int) (_wptr - buf));
         _wptr = buf;
+    }
+
+    static {
+        Os.init();
     }
 }

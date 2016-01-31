@@ -31,7 +31,7 @@ public class IntPriorityQueue {
         this(8);
     }
 
-    public IntPriorityQueue(int size) {
+    private IntPriorityQueue(int size) {
         this.buffer = new int[size];
         this.limit = 0;
     }

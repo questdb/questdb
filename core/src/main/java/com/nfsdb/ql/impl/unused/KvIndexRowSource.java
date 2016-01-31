@@ -52,7 +52,7 @@ public class KvIndexRowSource extends AbstractRowSource {
         this(symbol, keySource, false);
     }
 
-    public KvIndexRowSource(String symbol, KeySource keySource, boolean newCursor) {
+    private KvIndexRowSource(String symbol, KeySource keySource, boolean newCursor) {
         this.symbol = symbol;
         this.keySource = keySource;
         this.newCursor = newCursor;

@@ -86,10 +86,6 @@ public class Rnd {
         return (s1 = l1 ^ l0 ^ (l1 >> 17) ^ (l0 >> 26)) + l0;
     }
 
-    public long nextLong(int bits) {
-        return nextLong() >>> (64 - bits);
-    }
-
     public int nextPositiveInt() {
         int n = (int) nextLong();
         return n > 0 ? n : -n;
@@ -106,5 +102,9 @@ public class Rnd {
             chars[i] = (char) (nextPositiveInt() % 25 + 66);
         }
         return new String(chars);
+    }
+
+    private long nextLong(int bits) {
+        return nextLong() >>> (64 - bits);
     }
 }

@@ -28,7 +28,7 @@ import com.nfsdb.storage.ColumnType;
 public abstract class AbstractUnaryOperator extends AbstractVirtualColumn implements Function {
     protected VirtualColumn value;
 
-    public AbstractUnaryOperator(ColumnType type) {
+    protected AbstractUnaryOperator(ColumnType type) {
         super(type);
     }
 
@@ -46,14 +46,10 @@ public abstract class AbstractUnaryOperator extends AbstractVirtualColumn implem
     public void setArg(int pos, VirtualColumn arg) throws ParserException {
         switch (pos) {
             case 0:
-                setValue(arg);
+                this.value = arg;
                 break;
             default:
                 throw new ParserException(0, "Too many arguments");
         }
-    }
-
-    public void setValue(VirtualColumn value) {
-        this.value = value;
     }
 }

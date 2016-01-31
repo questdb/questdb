@@ -26,7 +26,7 @@ public class SPSequence extends AbstractSSequence {
     private volatile long index = -1;
     private volatile long cache = -1;
 
-    public SPSequence(int cycle, WaitStrategy waitStrategy) {
+    private SPSequence(int cycle, WaitStrategy waitStrategy) {
         super(waitStrategy);
         this.cycle = cycle;
     }

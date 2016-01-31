@@ -21,12 +21,12 @@
 
 package com.nfsdb.logging;
 
-public class LogError extends Error {
-    public LogError(String message) {
+class LogError extends Error {
+    LogError(String message) {
         super(message);
     }
 
-    public LogError(String message, Throwable cause) {
+    LogError(String message, Throwable cause) {
         super(message, cause);
     }
 }

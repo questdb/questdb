@@ -26,7 +26,8 @@ import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalException;
 import com.nfsdb.exceptions.JournalNoSuchFileException;
 import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Files;
 import com.nfsdb.misc.Misc;
@@ -41,7 +42,7 @@ import java.nio.channels.FileChannel;
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS", "EXS_EXCEPTION_SOFTENING_HAS_CHECKED"})
 public class MemoryFile implements Closeable {
 
-    private static final Logger LOGGER = Logger.getLogger(MemoryFile.class);
+    private static final Log LOG = LogFactory.getLog(MemoryFile.class);
     // reserve first 8 bytes in the file for storing pointer to logical end of file
     // so the actual data begins from "DATA_OFFSET"
     private final static int DATA_OFFSET = 8;
@@ -63,7 +64,7 @@ public class MemoryFile implements Closeable {
         this.file = file;
         this.mode = mode;
         if (bitHint < 2) {
-            LOGGER.warn("BitHint is too small for %s", file);
+            LOG.info().$("BitHint is too small for ").$(file).$();
         }
         this.bitHint = bitHint;
         open();
@@ -92,7 +93,7 @@ public class MemoryFile implements Closeable {
             try {
                 long newSize = getAppendOffset() + DATA_OFFSET;
                 offsetBuffer = ByteBuffers.release(offsetBuffer);
-                LOGGER.debug("Compacting %s to %d bytes", this, newSize);
+                LOG.debug().$("Compacting ").$(this).$(" to ").$(newSize).$(" bytes").$();
                 channel.truncate(newSize).close();
             } catch (IOException e) {
                 throw new JournalException("Could not compact %s to %d bytes", e, getFullFileName(), getAppendOffset());

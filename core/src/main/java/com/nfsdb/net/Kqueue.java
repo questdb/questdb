@@ -60,7 +60,7 @@ public final class Kqueue {
     }
 
     public void readFD(int index, int fd) {
-        final long p = eventList + SIZEOF_KEVENT * index;
+        final long p = eventList + SIZEOF_KEVENT * (long) index;
         Unsafe.getUnsafe().putLong(p + FD_OFFSET, fd);
         Unsafe.getUnsafe().putInt(p + FILTER_OFFSET, EVFILT_READ);
         Unsafe.getUnsafe().putInt(p + FLAGS_OFFSET, EV_ADD);
@@ -71,7 +71,7 @@ public final class Kqueue {
     }
 
     public void writeFD(int index, int fd) {
-        final long p = eventList + SIZEOF_KEVENT * index;
+        final long p = eventList + SIZEOF_KEVENT * (long) index;
         Unsafe.getUnsafe().putLong(p + FD_OFFSET, fd);
         Unsafe.getUnsafe().putInt(p + FILTER_OFFSET, EVFILT_WRITE);
         Unsafe.getUnsafe().putInt(p + FLAGS_OFFSET, EV_ADD | EV_ONESHOT);

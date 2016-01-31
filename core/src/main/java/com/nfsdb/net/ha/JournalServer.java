@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.ha;
 
@@ -27,7 +27,8 @@ import com.nfsdb.collections.ObjIntHashMap;
 import com.nfsdb.exceptions.JournalDisconnectedChannelException;
 import com.nfsdb.exceptions.JournalNetworkException;
 import com.nfsdb.factory.JournalReaderFactory;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
 import com.nfsdb.misc.NamedDaemonThreadFactory;
 import com.nfsdb.net.SecureSocketChannel;
 import com.nfsdb.net.ha.auth.AuthorizationHandler;
@@ -56,7 +57,7 @@ import java.util.concurrent.locks.LockSupport;
 
 public class JournalServer {
 
-    private static final Logger LOGGER = Logger.getLogger(JournalServer.class);
+    private static final Log LOG = LogFactory.getLog(JournalServer.class);
     private final AtomicInteger writerIdGenerator = new AtomicInteger(0);
     private final ObjIntHashMap<JournalWriter> writers = new ObjIntHashMap<>();
     private final JournalReaderFactory factory;
@@ -130,42 +131,42 @@ public class JournalServer {
         if (!running.compareAndSet(true, false)) {
             return;
         }
-        LOGGER.info("Stopping agent services %d", uid);
+        LOG.info().$("Stopping agent services ").$(uid).$();
         service.shutdown();
 
-        LOGGER.info("Stopping acceptor");
+        LOG.info().$("Stopping acceptor").$();
         try {
             serverSocketChannel.close();
         } catch (IOException e) {
-            LOGGER.debug("Error closing socket", e);
+            LOG.debug().$("Error closing socket").$(e).$();
         }
 
 
         if (timeout > 0) {
             try {
-                LOGGER.info("Waiting for %s agent services to complete data exchange on %s", service.getActiveCount(), uid);
+                LOG.info().$("Waiting for ").$(service.getActiveCount()).$(" agent services to complete data exchange on ").$(uid).$();
                 service.awaitTermination(timeout, unit);
             } catch (InterruptedException e) {
-                LOGGER.debug("Interrupted wait", e);
+                LOG.debug().$("Interrupted wait").$(e).$();
             }
         }
 
         if (addressSender != null) {
-            LOGGER.info("Stopping mcast sender on %d", uid);
+            LOG.info().$("Stopping mcast sender on %d").$(uid).$();
             addressSender.halt();
         }
 
-        LOGGER.info("Closing channels on %d", uid);
+        LOG.info().$("Closing channels on %d").$(uid).$();
         closeChannels();
 
         try {
             if (timeout > 0) {
-                LOGGER.info("Waiting for %s  agent services to stop on %s", service.getActiveCount(), uid);
+                LOG.info().$("Waiting for ").$(service.getActiveCount()).$(" agent services to stop on ").$(uid).$();
                 service.awaitTermination(timeout, unit);
             }
-            LOGGER.info("Server %d is shutdown", uid);
+            LOG.info().$("Server %d is shutdown").$(uid).$();
         } catch (InterruptedException e) {
-            LOGGER.info("Server %d is shutdown, but some connections are still lingering.", uid);
+            LOG.info().$("Server ").$(uid).$(" is shutdown, but some connections are still lingering.").$();
         }
 
     }
@@ -217,15 +218,15 @@ public class JournalServer {
             try {
                 if (holder.socketAddress != null) {
                     if (force) {
-                        LOGGER.info("Server node %d: Client forced out: %s", uid, holder.socketAddress);
+                        LOG.info().$("Server node ").$(uid).$(": Client forced out: ").$(holder.socketAddress.toString()).$();
                     } else {
-                        LOGGER.info("Server node %d: Client disconnected: %s", uid, holder.socketAddress);
+                        LOG.info().$("Server node ").$(uid).$(": Client disconnected: ").$(holder.socketAddress.toString()).$();
                     }
                 }
                 holder.byteChannel.close();
 
             } catch (IOException e) {
-                LOGGER.error("Server node %d: Cannot close channel [%s]: %s", uid, holder.byteChannel, e.getMessage());
+                LOG.error().$("Server node ").$(uid).$(": Cannot close channel [").$(holder.byteChannel).$("]: ").$(e.getMessage()).$();
             }
         }
     }
@@ -277,7 +278,7 @@ public class JournalServer {
                 }
             } else if (leader) {
                 if (!activeNotified && clusterStatusListener != null) {
-                    LOGGER.info("%d is THE LEADER", ourUuid);
+                    LOG.info().$(ourUuid).$(" is THE LEADER").$();
                     clusterStatusListener.goActive();
                     activeNotified = true;
                 }
@@ -297,7 +298,7 @@ public class JournalServer {
             if (leader && theirUid != ourUid) {
                 // if it is ELECTION message and we are the leader
                 // cry foul and attempt to curb the thread by sending ELECTED message wit our uid
-                LOGGER.info("%d is insisting on leadership", ourUid);
+                LOG.info().$(ourUid).$(" is insisting on leadership").$();
                 fwdElectionMessage(ElectionMessageReason.R4, ourUid, Command.ELECTED, 0);
             } else if (theirUid > ourUid) {
                 // if theirUid is greater than ours - forward message on
@@ -347,7 +348,7 @@ public class JournalServer {
 
             channel.configureBlocking(true);
 
-            LOGGER.info("Connected to %s [%s]", node, channel.getLocalAddress());
+            LOG.info().$("Connected to ").$(node).$(" [").$(channel.getLocalAddress()).$(']').$();
             return channel;
         } catch (IOException e) {
             channel.close();
@@ -394,14 +395,14 @@ public class JournalServer {
                     commandProducer.write(channel, command);
                     intResponseProducer.write(channel, uid);
                     intResponseProducer.write(channel, count);
-                    LOGGER.info("%s> %s [%d]{%d} %d -> %d", reason, command, uid, count, JournalServer.this.uid, node.getId());
+                    LOG.info().$(reason).$("> ").$(command).$(" [").$(uid).$("]{").$(count).$("} ").$(JournalServer.this.uid).$(" -> ").$(node.getId()).$();
                     if (intResponseConsumer.getValue(channel) == 0xfc) {
                         break;
                     } else {
-                        LOGGER.info("Node %d is shutting down", peer);
+                        LOG.info().$("Node ").$(peer).$(" is shutting down").$();
                     }
                 } catch (Exception e) {
-                    LOGGER.info("Dead node %d: %s", peer, e.getMessage());
+                    LOG.info().$("Dead node ").$(peer).$(": ").$(e.getMessage()).$();
                 }
             }
         }
@@ -424,18 +425,19 @@ public class JournalServer {
                         addChannel(holder);
                         try {
                             service.submit(new Handler(holder));
-                            LOGGER.info("Server node %d: Connected %s", uid, holder.socketAddress);
+                            LOG.info().$("Server node ").$(uid).$(": Connected ").$(holder.socketAddress).$();
                         } catch (RejectedExecutionException e) {
-                            LOGGER.info("Node %d ignoring connection from %s. Server is shutting down.", uid, holder.socketAddress);
+//                            LOG.info("Node %d ignoring connection from %s. Server is shutting down.", uid, holder.socketAddress);
+                            LOG.info().$("Node ").$(uid).$(" ignoring connection from ").$(holder.socketAddress).$(". Server is shutting down.").$();
                         }
                     }
                 }
             } catch (Exception e) {
                 if (running.get()) {
-                    LOGGER.error("Acceptor dying", e);
+                    LOG.error().$("Acceptor dying").$(e).$();
                 }
             }
-            LOGGER.info("Acceptor shutdown on %s", uid);
+            LOG.info().$("Acceptor shutdown on ").$(uid).$();
         }
     }
 
@@ -462,15 +464,11 @@ public class JournalServer {
                         break;
                     } catch (JournalNetworkException e) {
                         if (running.get()) {
-                            if (LOGGER.isDebugEnabled()) {
-                                LOGGER.debug("Client died", e);
-                            } else {
-                                LOGGER.info("Server node %d: Client died %s: %s", uid, holder.socketAddress, e.getMessage());
-                            }
+                            LOG.info().$("Server node ").$(uid).$(": Client died ").$(holder.socketAddress).$(": ").$(e.getMessage()).$();
                         }
                         break;
                     } catch (Throwable e) {
-                        LOGGER.error("Unhandled exception in server process", e);
+                        LOG.error().$("Unhandled exception in server process").$(e).$();
                         if (e instanceof Error) {
                             throw e;
                         }

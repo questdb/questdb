@@ -35,7 +35,7 @@ public class DoubleNegativeOperator extends AbstractVirtualColumn implements Fun
     public static final DoubleNegativeOperator FACTORY = new DoubleNegativeOperator();
     private VirtualColumn value;
 
-    public DoubleNegativeOperator() {
+    private DoubleNegativeOperator() {
         super(ColumnType.DOUBLE);
     }
 

@@ -25,7 +25,8 @@ import com.nfsdb.PartitionType;
 import com.nfsdb.collections.CharSequenceIntHashMap;
 import com.nfsdb.collections.ObjList;
 import com.nfsdb.exceptions.JournalConfigurationException;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Numbers;
@@ -44,7 +45,7 @@ import java.util.concurrent.TimeUnit;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class JournalStructure implements MetadataBuilder<Object> {
-    private static final Logger LOGGER = Logger.getLogger(JournalStructure.class);
+    private static final Log LOG = LogFactory.getLog(JournalStructure.class);
     private final List<ColumnMetadata> metadata = new ArrayList<>();
     private final CharSequenceIntHashMap nameToIndexMap = new CharSequenceIntHashMap();
     private String location;
@@ -255,7 +256,7 @@ public class JournalStructure implements MetadataBuilder<Object> {
 
             int index = nameToIndexMap.get(f.getName());
             if (index == -1) {
-                LOGGER.warn("Unusable member field: " + clazz.getName() + '.' + f.getName());
+                LOG.info().$("Unusable member field: ").$(clazz.getName()).$('.').$(f.getName()).$();
                 continue;
             }
 
@@ -326,7 +327,7 @@ public class JournalStructure implements MetadataBuilder<Object> {
             ColumnMetadata m = metadata.get(i);
             if (m.offset == 0) {
                 mappingMissing = true;
-                LOGGER.warn("Unmapped data column: %s", m.name);
+                LOG.info().$("Unmapped data column: ").$(m.name).$();
             }
         }
 

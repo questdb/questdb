@@ -59,8 +59,6 @@ public class IOContext implements Closeable, Mutable {
     public boolean dataFormatValid = false;
     public TextParser textParser;
     public JournalImportListener importer;
-    // static sending fields
-    public RandomAccessFile raf;
     public long fd = -1;
     public long bytesSent;
     public long sendMax;
@@ -71,6 +69,8 @@ public class IOContext implements Closeable, Mutable {
     public long skip;
     public long stop;
     public Record current;
+    // static sending fields
+    private RandomAccessFile raf;
 
     public IOContext(WrappedByteChannel<SocketChannel> channel, Clock clock, int reqHeaderSize, int reqContentSize, int reqMultipartHeaderSize, int respHeaderSize, int respContentSize) {
         this.channel = channel;

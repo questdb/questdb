@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.ha.protocol.commands;
 
@@ -48,14 +48,14 @@ public class IntResponseProducer implements ChannelProducer {
         ByteBuffers.copy(buffer, channel);
     }
 
-    public void setValue(int value) {
-        buffer.rewind();
-        buffer.putInt(value);
-        buffer.flip();
-    }
-
     public void write(WritableByteChannel channel, int value) throws JournalNetworkException {
         setValue(value);
         write(channel);
+    }
+
+    private void setValue(int value) {
+        buffer.rewind();
+        buffer.putInt(value);
+        buffer.flip();
     }
 }

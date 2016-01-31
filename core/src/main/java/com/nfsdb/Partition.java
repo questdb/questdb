@@ -29,7 +29,8 @@ import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.iter.PartitionBufferedIterator;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
 import com.nfsdb.misc.*;
 import com.nfsdb.storage.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -43,7 +44,7 @@ import java.util.concurrent.TimeUnit;
 
 @SuppressFBWarnings({"PL_PARALLEL_LISTS", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public class Partition<T> implements Closeable {
-    private static final Logger LOGGER = Logger.getLogger(Partition.class);
+    private static final Log LOG = LogFactory.getLog(Partition.class);
     private final Journal<T> journal;
     private final ObjList<SymbolIndexProxy<T>> indexProxies = new ObjList<>();
     private final Interval interval;
@@ -95,7 +96,7 @@ public class Partition<T> implements Closeable {
                 Misc.free(Unsafe.arrayGet(columns, i));
             }
             columns = null;
-            LOGGER.trace("Partition %s closed", partitionDir);
+            LOG.debug().$("Partition").$(partitionDir).$(" is closed").$();
         }
 
         for (int i = 0, k = indexProxies.size(); i < k; i++) {
@@ -619,7 +620,7 @@ public class Partition<T> implements Closeable {
      * @throws com.nfsdb.exceptions.JournalException if the operation fails
      */
     private void rebuildIndex(int columnIndex, int keyCountHint, int recordCountHint, int txCountHint) throws JournalException {
-        final long time = LOGGER.isInfoEnabled() ? System.nanoTime() : 0L;
+        final long time = System.nanoTime();
 
         getIndexForColumn(columnIndex).close();
 
@@ -634,7 +635,7 @@ public class Partition<T> implements Closeable {
             index.commit();
         }
 
-        LOGGER.debug("REBUILT %s [%dms]", base, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - time));
+        LOG.debug().$("REBUILT ").$(base).$(" in ").$(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - time)).$("ms").$();
     }
 
     final void setPartitionDir(File partitionDir, long[] indexTxAddresses) {

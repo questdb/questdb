@@ -46,7 +46,7 @@ public abstract class KvIndexSymLambdaHeadRowSource extends AbstractRowSource {
     private JournalRecord rec;
     private int cursor;
 
-    protected KvIndexSymLambdaHeadRowSource(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
+    KvIndexSymLambdaHeadRowSource(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
         this.column = column;
         this.recordSource = recordSource;
         this.recordSourceColumn = recordSourceColumn;

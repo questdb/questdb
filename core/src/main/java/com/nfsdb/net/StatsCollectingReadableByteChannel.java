@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,11 +17,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net;
 
-import com.nfsdb.logging.Logger;
+import com.nfsdb.logging.Log;
+import com.nfsdb.logging.LogFactory;
 
 import java.io.IOException;
 import java.net.SocketAddress;
@@ -30,7 +31,7 @@ import java.nio.channels.ReadableByteChannel;
 
 public class StatsCollectingReadableByteChannel implements ReadableByteChannel {
 
-    private final static Logger LOGGER = Logger.getLogger(StatsCollectingReadableByteChannel.class);
+    private final static Log LOG = LogFactory.getLog(StatsCollectingReadableByteChannel.class);
 
     private final SocketAddress socketAddress;
     private ReadableByteChannel delegate;
@@ -55,7 +56,7 @@ public class StatsCollectingReadableByteChannel implements ReadableByteChannel {
     public void logStats() {
         if (byteCount > 10) {
             long endTime = System.currentTimeMillis();
-            LOGGER.info("received %d bytes @ %f MB/s from: %s [%d calls]", byteCount, (double) (byteCount * 1000) / ((endTime - startTime)) / 1024 / 1024, socketAddress, callCount);
+            LOG.info().$("received").$(byteCount).$(" bytes @ ").$((double) (byteCount * 1000) / ((endTime - startTime)) / 1024 / 1024).$(" MB/s from: ").$(socketAddress.toString()).$(" [").$(callCount).$(" calls]").$();
         }
     }
 
