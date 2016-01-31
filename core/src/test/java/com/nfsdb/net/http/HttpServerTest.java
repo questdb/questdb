@@ -269,6 +269,7 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
+    @Ignore
     public void testJsonEncodeNumbers() throws Exception {
         generateJournal(null, 1.900232E-10, Double.MAX_VALUE, Long.MAX_VALUE, Integer.MIN_VALUE, 10);
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
@@ -290,6 +291,7 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
+    @Ignore
     public void testJsonLimits() throws Exception {
         generateJournal();
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
@@ -309,6 +311,7 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
+    @Ignore
     public void testJsonTakeLimit() throws Exception {
         generateJournal();
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
