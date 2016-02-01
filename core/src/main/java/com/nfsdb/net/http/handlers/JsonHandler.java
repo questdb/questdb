@@ -219,6 +219,9 @@ public class JsonHandler implements ContextHandler {
                             }
 
                             r.put("}");
+                            if (context.count % 1000 == 0) {
+                                System.out.printf("out %d rows\n", context.count);
+                            }
                         }
                         context.current = null;
                     }
@@ -230,6 +233,7 @@ public class JsonHandler implements ContextHandler {
                 r.put('}');
                 r.sendChunk();
                 r.done();
+                return;
             } catch (ResponseContentBufferTooSmallException ex) {
                 if (!r.resetToBookmark()){
                     // Nowhere to reset!
@@ -351,7 +355,8 @@ public class JsonHandler implements ContextHandler {
     }
 
     private static void putDouble(ChunkedResponse r, double d, StringBuilder stringBuilder) {
-        Numbers.append(r, d, 100);
+        Numbers.append(r, d, 10);
+        //new Double(d).toString()
 //        stringBuilder.setLength(0);
 //        FloatingDecimal.BinaryToASCIIConverter converter = FloatingDecimal.getBinaryToASCIIConverter(d);
 //        converter.appendTo(stringBuilder);

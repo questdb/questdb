@@ -131,6 +131,7 @@ public class IOHttpJob implements Job {
             status = ChannelStatus.READ;
         } catch (MalformedHeaderException | DisconnectedChannelException e) {
             status = ChannelStatus.DISCONNECTED;
+            e.printStackTrace();
         } catch (SlowReadableChannelException e) {
             System.out.println("slow read");
             status = ChannelStatus.READ;

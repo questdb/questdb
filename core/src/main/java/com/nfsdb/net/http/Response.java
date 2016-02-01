@@ -406,7 +406,7 @@ public class Response implements Closeable, Mutable {
 
         @Override
         public void bookmark() {
-            bookmark = outPtr;
+            bookmark = _wPtr;
             bookmarked = true;
         }
 
