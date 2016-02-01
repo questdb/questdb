@@ -1,10 +1,10 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,20 +17,18 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.ha;
 
 import com.nfsdb.Journal;
 import com.nfsdb.JournalKey;
-import com.nfsdb.collections.IntIntHashMap;
-import com.nfsdb.collections.IntList;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.JournalDisconnectedChannelException;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalNetworkException;
+import com.nfsdb.ex.JournalDisconnectedChannelException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalNetworkException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.net.ha.auth.AuthorizationHandler;
 import com.nfsdb.net.ha.bridge.JournalEventHandler;
 import com.nfsdb.net.ha.bridge.JournalEventProcessor;
@@ -45,6 +43,9 @@ import com.nfsdb.net.ha.protocol.CommandConsumer;
 import com.nfsdb.net.ha.protocol.CommandProducer;
 import com.nfsdb.net.ha.protocol.Version;
 import com.nfsdb.net.ha.protocol.commands.*;
+import com.nfsdb.std.IntIntHashMap;
+import com.nfsdb.std.IntList;
+import com.nfsdb.std.ObjList;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
@@ -55,7 +56,7 @@ import java.nio.channels.WritableByteChannel;
 @SuppressFBWarnings({"PL_PARALLEL_LISTS", "LII_LIST_INDEXED_ITERATING", "LII_LIST_INDEXED_ITERATING"})
 public class JournalServerAgent {
 
-    private final static Logger LOGGER = Logger.getLogger(JournalServerAgent.class);
+    private final static Log LOG = LogFactory.getLog(JournalServerAgent.class);
 
     private static final byte JOURNAL_INDEX_NOT_FOUND = -1;
     private final IntIntHashMap writerToReaderMap = new IntIntHashMap();
@@ -112,7 +113,7 @@ public class JournalServerAgent {
                 break;
             case DELTA_REQUEST_CMD:
                 checkAuthorized(channel);
-                LOGGER.trace("{1} DeltaRequest command received", socketAddress);
+                LOG.debug().$(socketAddress).$(" DeltaRequest command received").$();
                 journalClientStateConsumer.read(channel);
                 storeDeltaRequest(channel, journalClientStateConsumer.getValue());
                 break;
@@ -160,7 +161,7 @@ public class JournalServerAgent {
                 }
                 authorized = authorizationHandler.isAuthorized(value, keys);
             } catch (Throwable e) {
-                LOGGER.error("{1} Exception in authorization handler:", e, socketAddress);
+                LOG.error().$(socketAddress).$(" Exception in authorization handler:").$(e).$();
                 authorized = false;
             }
         }
@@ -234,7 +235,7 @@ public class JournalServerAgent {
             }
             return dataSent;
         } catch (Exception e) {
-            LOGGER.debug("{1} Client appears to be refusing new data from server, corrupt client", e, socketAddress);
+            LOG.debug().$(socketAddress).$(" Client appears to be refusing new data from server, corrupt client").$(e).$();
             return false;
         }
     }
@@ -248,7 +249,7 @@ public class JournalServerAgent {
 
         journalDeltaProducer.configure(txn, txPin);
         if (journalDeltaProducer.hasContent()) {
-            LOGGER.debug("{1} Sending data", socketAddress);
+            LOG.debug().$(socketAddress).$(" Sending data").$();
             commandProducer.write(channel, Command.JOURNAL_DELTA_CMD);
             intResponseProducer.write(channel, index);
             journalDeltaProducer.write(channel);
@@ -264,7 +265,7 @@ public class JournalServerAgent {
 
     private void error(WritableByteChannel channel, String message, Exception e) throws JournalNetworkException {
         stringResponseProducer.write(channel, message);
-        LOGGER.info(message, e, socketAddress);
+        LOG.info().$(socketAddress).$(' ').$(message).$(e).$();
     }
 
     private JournalDeltaProducer getProducer(int index) {
@@ -297,7 +298,7 @@ public class JournalServerAgent {
             if (dataSent) {
                 commandProducer.write(channel, Command.SERVER_READY_CMD);
             } else if (blocking) {
-                LOGGER.info("{1} Client appears to be refusing new data from server, corrupt client", socketAddress);
+                LOG.info().$(socketAddress).$(" Client appears to be refusing new data from server, corrupt client").$();
             }
         } else {
             if (server.isRunning()) {
@@ -317,7 +318,7 @@ public class JournalServerAgent {
 
     @SuppressWarnings("unchecked")
     private void setClientKey(ByteChannel channel) throws JournalNetworkException {
-        LOGGER.trace("{1} SetKey command received", socketAddress);
+        LOG.debug().$(socketAddress).$(" SetKey command received").$();
         setKeyRequestConsumer.read(channel);
         IndexedJournalKey indexedKey = setKeyRequestConsumer.getValue();
 

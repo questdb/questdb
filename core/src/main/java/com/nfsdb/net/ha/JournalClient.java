@@ -1,10 +1,10 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,22 +17,21 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.ha;
 
 import com.nfsdb.JournalKey;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.PartitionType;
-import com.nfsdb.collections.IntList;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.IncompatibleJournalException;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalNetworkException;
+import com.nfsdb.ex.IncompatibleJournalException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalNetworkException;
 import com.nfsdb.factory.JournalWriterFactory;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.factory.configuration.JournalStructure;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Files;
 import com.nfsdb.misc.NamedDaemonThreadFactory;
@@ -54,7 +53,9 @@ import com.nfsdb.net.ha.protocol.CommandConsumer;
 import com.nfsdb.net.ha.protocol.CommandProducer;
 import com.nfsdb.net.ha.protocol.Version;
 import com.nfsdb.net.ha.protocol.commands.*;
-import com.nfsdb.storage.TxListener;
+import com.nfsdb.std.IntList;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.TxListener;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
@@ -69,7 +70,7 @@ import java.util.concurrent.locks.LockSupport;
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class JournalClient {
     private static final AtomicInteger counter = new AtomicInteger(0);
-    private static final Logger LOGGER = Logger.getLogger(JournalClient.class);
+    private static final Log LOG = LogFactory.getLog(JournalClient.class);
     private final static ThreadFactory CLIENT_THREAD_FACTORY = new NamedDaemonThreadFactory("journal-client", false);
     private final ObjList<JournalKey> remoteKeys = new ObjList<>();
     private final ObjList<JournalKey> localKeys = new ObjList<>();
@@ -121,7 +122,7 @@ public class JournalClient {
                 try {
                     handlerFuture.get();
                 } catch (InterruptedException | ExecutionException e) {
-                    LOGGER.error("Exception while waiting for client to shutdown gracefully", e);
+                    LOG.error().$("Exception while waiting for client to shutdown gracefully").$(e).$();
                 } finally {
                     handlerFuture = null;
                 }
@@ -152,28 +153,9 @@ public class JournalClient {
         subscribe(clazz, (TxListener) null);
     }
 
-    /**
-     * Configures client to subscribe given journal class when client is started
-     * and connected. Journals of given class at default location are opened on
-     * both client and server. Optionally provided listener will be called back
-     * when client journal is committed. Listener is called synchronously with
-     * client thread, so callback implementation must be fast.
-     *
-     * @param clazz      journal class on both client and server
-     * @param txListener callback listener to get receive commit notifications.
-     * @param <T>        generics to comply with Journal API.
-     */
-    public <T> void subscribe(Class<T> clazz, TxListener txListener) {
-        subscribe(new JournalKey<>(clazz), new JournalKey<>(clazz), txListener);
-    }
-
     @SuppressWarnings("unused")
     public <T> void subscribe(Class<T> clazz, String location) {
         subscribe(clazz, location, (TxListener) null);
-    }
-
-    public <T> void subscribe(Class<T> clazz, String location, TxListener txListener) {
-        subscribe(new JournalKey<>(clazz, location), new JournalKey<>(clazz, location), txListener);
     }
 
     public <T> void subscribe(Class<T> clazz, String remote, String local) {
@@ -245,7 +227,7 @@ public class JournalClient {
             try {
                 channel.close();
             } catch (IOException e) {
-                LOGGER.error("Error closing channel", e);
+                LOG.error().$("Error closing channel").$(e).$();
             } finally {
                 channel = null;
             }
@@ -355,7 +337,7 @@ public class JournalClient {
 
     private void sendReady() throws JournalNetworkException {
         commandProducer.write(channel, Command.CLIENT_READY_CMD);
-        LOGGER.debug("Client ready: " + channel);
+        LOG.debug().$("Client ready: ").$(channel.toString()).$();
     }
 
     private void sendState() throws JournalNetworkException {
@@ -379,6 +361,25 @@ public class JournalClient {
         }
     }
 
+    /**
+     * Configures client to subscribe given journal class when client is started
+     * and connected. Journals of given class at default location are opened on
+     * both client and server. Optionally provided listener will be called back
+     * when client journal is committed. Listener is called synchronously with
+     * client thread, so callback implementation must be fast.
+     *
+     * @param clazz      journal class on both client and server
+     * @param txListener callback listener to get receive commit notifications.
+     * @param <T>        generics to comply with Journal API.
+     */
+    private <T> void subscribe(Class<T> clazz, TxListener txListener) {
+        subscribe(new JournalKey<>(clazz), new JournalKey<>(clazz), txListener);
+    }
+
+    private <T> void subscribe(Class<T> clazz, String location, TxListener txListener) {
+        subscribe(new JournalKey<>(clazz, location), new JournalKey<>(clazz, location), txListener);
+    }
+
     public enum DisconnectReason {
         UNKNOWN, CLIENT_HALT, CLIENT_EXCEPTION, BROKEN_CHANNEL, CLIENT_ERROR, INCOMPATIBLE_JOURNAL
     }
@@ -400,14 +401,14 @@ public class JournalClient {
                     while (running.get() && !connected && retryCount-- > 0 && loginRetryCount > 0) {
                         try {
                             LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(config.getReconnectPolicy().getSleepBetweenRetriesMillis()));
-                            LOGGER.info("Retrying reconnect ... [" + (retryCount + 1) + ']');
+                            LOG.info().$("Retrying reconnect ... [").$(retryCount + 1).$(']').$();
                             close0();
                             handshake();
                             connected = true;
                         } catch (AuthConfigurationException | AuthFailureException e) {
                             loginRetryCount--;
-                        } catch (JournalNetworkException ignored) {
-                            LOGGER.warn("Error during disconnect", ignored);
+                        } catch (JournalNetworkException e) {
+                            LOG.info().$("Error during disconnect").$(e).$();
                         }
                     }
 
@@ -423,7 +424,7 @@ public class JournalClient {
         }
 
         private void disconnect(DisconnectReason reason) {
-            LOGGER.info("Client disconnecting");
+            LOG.info().$("Client disconnecting").$();
             counter.decrementAndGet();
             running.set(false);
             // set future to null to prevent deadlock
@@ -475,18 +476,18 @@ public class JournalClient {
                             reason = DisconnectReason.BROKEN_CHANNEL;
                             break OUT;
                         default:
-                            LOGGER.warn("Unknown command: ", commandConsumer.getValue());
+                            LOG.info().$("Unknown command: ").$(commandConsumer.getValue()).$();
                     }
                 }
             } catch (IncompatibleJournalException e) {
-                LOGGER.error(e.getMessage());
+                LOG.error().$(e.getMessage()).$();
                 reason = DisconnectReason.INCOMPATIBLE_JOURNAL;
             } catch (JournalNetworkException e) {
-                LOGGER.error("Network error. Server died?");
-                LOGGER.debug("Network error details:", e);
+                LOG.error().$("Network error. Server died?").$();
+                LOG.debug().$("Network error details: ").$(e).$();
                 reason = DisconnectReason.BROKEN_CHANNEL;
             } catch (Throwable e) {
-                LOGGER.error("Unhandled exception in client", e);
+                LOG.error().$("Unhandled exception in client").$(e).$();
                 if (e instanceof Error) {
                     reason = DisconnectReason.CLIENT_ERROR;
                     throw e;

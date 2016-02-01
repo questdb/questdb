@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,12 +23,12 @@ package com.nfsdb.factory.configuration;
 
 import com.nfsdb.JournalKey;
 import com.nfsdb.PartitionType;
-import com.nfsdb.collections.CharSequenceIntHashMap;
-import com.nfsdb.exceptions.JournalConfigurationException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalConfigurationException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Unsafe;
-import com.nfsdb.storage.UnstructuredFile;
+import com.nfsdb.std.CharSequenceIntHashMap;
+import com.nfsdb.store.UnstructuredFile;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.lang.StringBuilder;

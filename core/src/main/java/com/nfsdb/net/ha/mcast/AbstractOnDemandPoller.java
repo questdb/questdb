@@ -1,10 +1,10 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,12 +17,13 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.ha.mcast;
 
-import com.nfsdb.exceptions.JournalNetworkException;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.ex.JournalNetworkException;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.net.ha.config.ClientConfig;
 import com.nfsdb.net.ha.config.DatagramChannelWrapper;
@@ -41,7 +42,7 @@ import java.util.concurrent.TimeUnit;
 
 @SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
 public abstract class AbstractOnDemandPoller<T> {
-    private static final Logger LOGGER = Logger.getLogger(AbstractOnDemandPoller.class);
+    private static final Log LOG = LogFactory.getLog(AbstractOnDemandPoller.class);
     private final ClientConfig networkConfig;
     private final int inMessageCode;
     private final int outMessageCode;
@@ -55,7 +56,7 @@ public abstract class AbstractOnDemandPoller<T> {
     public T poll(int retryCount, long timeout, TimeUnit timeUnit) throws JournalNetworkException {
         try (DatagramChannelWrapper dcw = networkConfig.openDatagramChannel()) {
             DatagramChannel dc = dcw.getChannel();
-            LOGGER.info("Polling on %s [%s]", dcw.getGroup(), dc.getOption(StandardSocketOptions.IP_MULTICAST_IF).getName());
+            LOG.info().$("Polling on").$(dcw.getGroup()).$(" [").$(dc.getOption(StandardSocketOptions.IP_MULTICAST_IF).getName()).$(']').$();
 
             Selector selector = Selector.open();
             dc.configureBlocking(false);
@@ -106,7 +107,7 @@ public abstract class AbstractOnDemandPoller<T> {
                         if (sa != null) {
                             buf.flip();
                             if (buf.remaining() >= 4 && inMessageCode == buf.getInt()) {
-                                LOGGER.info("Receiving server information from: " + sa);
+                                LOG.info().$("Receiving server information from: ").$(sa).$();
                                 return sa;
                             }
                         }

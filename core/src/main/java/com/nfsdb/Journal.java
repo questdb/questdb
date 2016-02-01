@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,22 +21,23 @@
 
 package com.nfsdb;
 
-import com.nfsdb.collections.LongList;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.collections.ObjObjHashMap;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
+import com.nfsdb.ex.NumericException;
 import com.nfsdb.factory.JournalClosingListener;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.Constants;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.*;
 import com.nfsdb.query.AbstractResultSetBuilder;
 import com.nfsdb.query.api.Query;
 import com.nfsdb.query.spi.QueryImpl;
-import com.nfsdb.storage.*;
+import com.nfsdb.std.LongList;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.std.ObjObjHashMap;
+import com.nfsdb.store.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
@@ -52,7 +53,7 @@ import java.util.Iterator;
 public class Journal<T> implements Iterable<T>, Closeable {
 
     public static final long TX_LIMIT_EVAL = -1L;
-    private static final Logger LOGGER = Logger.getLogger(Journal.class);
+    private static final Log LOG = LogFactory.getLog(Journal.class);
     final ObjList<Partition<T>> partitions = new ObjList<>();
     // empty container for current transaction
     final Tx tx = new Tx();
@@ -72,7 +73,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         }
     };
     private final BitSet inactiveColumns;
-    protected TxLog txLog;
+    TxLog txLog;
     boolean open;
     private volatile Partition<T> irregularPartition;
     private JournalClosingListener closeListener;
@@ -235,7 +236,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      * Get the highest global row id of the Journal.
      *
      * @return the highest global row id of the Journal
-     * @throws com.nfsdb.exceptions.JournalException if there is an error
+     * @throws com.nfsdb.ex.JournalException if there is an error
      */
     public long getMaxRowID() throws JournalException {
         Partition<T> p = getLastPartition();
@@ -423,7 +424,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      * Read an object by global row id
      *
      * @param rowID the global row id to read
-     * @throws com.nfsdb.exceptions.JournalException if there is an error
+     * @throws com.nfsdb.ex.JournalException if there is an error
      */
     public void read(long rowID, T obj) throws JournalException {
         getPartition(Rows.toPartitionIndex(rowID), true).read(Rows.toLocalRowID(rowID), obj);
@@ -434,7 +435,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      *
      * @param rowIDs the global row ids to read
      * @return some objects
-     * @throws com.nfsdb.exceptions.JournalException if there is an error
+     * @throws com.nfsdb.ex.JournalException if there is an error
      */
     @SuppressWarnings("unchecked")
     public T[] read(LongList rowIDs) throws JournalException {
@@ -450,7 +451,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      *
      * @param rowID the global row id to read
      * @return an object
-     * @throws com.nfsdb.exceptions.JournalException if there is an error
+     * @throws com.nfsdb.ex.JournalException if there is an error
      */
     public T read(long rowID) throws JournalException {
         return getPartition(Rows.toPartitionIndex(rowID), true).read(Rows.toLocalRowID(rowID));
@@ -596,7 +597,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
                         partitions.add(new Partition<>(this, interval, partitionIndex++, txLimit, indexTxAddresses));
                     }
                 } catch (NumericException e) {
-                    LOGGER.warn("Foreign directory: %s", f.getName());
+                    LOG.info().$("Foreign directory: ").$(f.getName()).$();
                 }
             }
         }

@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,12 +23,12 @@ package com.nfsdb.ql;
 
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Rnd;
 import com.nfsdb.ql.parser.AbstractOptimiserTest;
+import com.nfsdb.std.ObjList;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;

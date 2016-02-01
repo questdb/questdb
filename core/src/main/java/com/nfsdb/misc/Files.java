@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,9 +21,9 @@
 
 package com.nfsdb.misc;
 
-import com.nfsdb.collections.LPSZ;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
+import com.nfsdb.std.LPSZ;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
@@ -80,6 +80,8 @@ public final class Files {
     public static long getLastModified(LPSZ lpsz) {
         return getLastModified(lpsz.address());
     }
+
+    public native static long getStdOutFd();
 
     public static long length(LPSZ lpsz) {
         return length(lpsz.address());
@@ -144,7 +146,9 @@ public final class Files {
     public static boolean touch(LPSZ lpsz) {
         long fd = openRW(lpsz);
         boolean result = fd > 0;
-        close(fd);
+        if (result) {
+            close(fd);
+        }
         return result;
     }
 

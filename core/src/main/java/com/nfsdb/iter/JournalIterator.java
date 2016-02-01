@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@
 package com.nfsdb.iter;
 
 import com.nfsdb.Journal;
-import com.nfsdb.collections.ImmutableIterator;
+import com.nfsdb.std.ImmutableIterator;
 
 public interface JournalIterator<T> extends ImmutableIterator<T> {
     Journal<T> getJournal();

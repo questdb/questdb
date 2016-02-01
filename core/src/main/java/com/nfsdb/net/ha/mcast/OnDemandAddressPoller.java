@@ -1,10 +1,10 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,11 +17,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.ha.mcast;
 
-import com.nfsdb.logging.Logger;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.net.ha.config.ClientConfig;
 import com.nfsdb.net.ha.config.ServerNode;
 
@@ -32,7 +33,7 @@ import java.nio.ByteBuffer;
 
 public class OnDemandAddressPoller extends AbstractOnDemandPoller<ServerNode> {
 
-    private static final Logger LOGGER = Logger.getLogger(OnDemandAddressPoller.class);
+    private static final Log LOG = LogFactory.getLog(OnDemandAddressPoller.class);
 
     public OnDemandAddressPoller(ClientConfig clientConfig, int inMessageCode, int outMessageCode) {
         super(clientConfig, inMessageCode, outMessageCode);
@@ -53,7 +54,7 @@ public class OnDemandAddressPoller extends AbstractOnDemandPoller<ServerNode> {
                 return new ServerNode(0, sa.getAddress().getHostAddress(), port);
             }
         } catch (UnknownHostException e) {
-            LOGGER.error("Got bad address [%s] from %s", addr, sa);
+            LOG.error().$("Got bad address [").$(addr).$("] from: ").$(sa).$();
         }
         return new ServerNode(0, addr, port);
     }

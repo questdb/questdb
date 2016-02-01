@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,9 +22,9 @@
 package com.nfsdb.query;
 
 import com.nfsdb.Journal;
-import com.nfsdb.collections.LongList;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.misc.Rows;
+import com.nfsdb.std.LongList;
 
 public class OrderedResultSet<T> extends ResultSet<T> {
     public OrderedResultSet(Journal<T> journal, LongList rowIDs) {

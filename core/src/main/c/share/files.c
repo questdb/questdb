@@ -2,6 +2,7 @@
 #include <sys/stat.h>
 #include <sys/fcntl.h>
 #include <sys/time.h>
+#include <utime.h>
 #include "files.h"
 
 JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_write
@@ -91,3 +92,7 @@ JNIEXPORT jboolean JNICALL Java_com_nfsdb_misc_Files_setLastModified
 
 #endif
 
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_getStdOutFd
+        (JNIEnv *e, jclass cl) {
+    return (jlong) 1;
+}

@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,16 +21,16 @@
 
 package com.nfsdb.ql.impl.join.asof;
 
-import com.nfsdb.collections.IntHashSet;
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.impl.map.MultiMap;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.std.IntHashSet;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT", "SF_SWITCH_NO_DEFAULT"})
-public final class RecordUtils {
+final class RecordUtils {
     private RecordUtils() {
     }
 

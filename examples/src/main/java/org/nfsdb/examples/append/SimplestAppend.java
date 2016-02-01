@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@
 package org.nfsdb.examples.append;
 
 import com.nfsdb.JournalWriter;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.misc.Files;
 import org.nfsdb.examples.model.ModelConfiguration;
@@ -36,7 +36,7 @@ public class SimplestAppend {
      * Appends 1 million rows.
      *
      * @param args factory directory
-     * @throws com.nfsdb.exceptions.JournalException
+     * @throws com.nfsdb.ex.JournalException
      */
     public static void main(String[] args) throws JournalException {
         try (JournalFactory factory = new JournalFactory(ModelConfiguration.CONFIG.build(args[0]))) {

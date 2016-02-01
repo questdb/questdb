@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,23 +23,24 @@ package com.nfsdb.io.parser.listener;
 
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.collections.LongList;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.JournalWriterFactory;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.ImportedColumnMetadata;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.*;
+import com.nfsdb.std.LongList;
+import com.nfsdb.std.ObjList;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 
 @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
 public class JournalImportListener implements InputAnalysisListener, Closeable {
-    private static final Logger LOGGER = Logger.getLogger(JournalImportListener.class);
+    private static final Log LOG = LogFactory.getLog(JournalImportListener.class);
     private final JournalWriterFactory factory;
     private final String location;
     private final LongList errors = new LongList();
@@ -141,7 +142,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
                     }
                 } catch (Exception e) {
                     errors.increment(i);
-                    LOGGER.debug("Error at (%d,%d) as %s: %s", line, i, metadata.getQuick(i).type, e.getMessage());
+                    LOG.debug().$("Error at (").$(line).$(',').$(i).$(") as ").$(metadata.getQuick(i).type).$(": ").$(e.getMessage()).$();
                     append = false;
                     break;
                 }

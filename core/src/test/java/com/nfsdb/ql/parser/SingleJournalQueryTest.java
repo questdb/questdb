@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,11 +23,10 @@ package com.nfsdb.ql.parser;
 
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.collections.ObjHashSet;
-import com.nfsdb.exceptions.InvalidColumnException;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.NumericException;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.InvalidColumnException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.NumericException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
@@ -35,6 +34,7 @@ import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Rnd;
 import com.nfsdb.model.Quote;
+import com.nfsdb.std.ObjHashSet;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -3111,13 +3111,13 @@ public class SingleJournalQueryTest extends AbstractTest {
         assertThat(expected, "select id, x, y from tab where id = null and x > 120 and y < -400");
     }
 
-    protected void assertThat(String expected, String query, boolean header) throws ParserException, JournalException, IOException {
+    private void assertThat(String expected, String query, boolean header) throws ParserException, JournalException, IOException {
         sink.clear();
         printer.printCursor(compiler.compile(query), header);
         TestUtils.assertEquals(expected, sink);
     }
 
-    protected void assertThat(String expected, String query) throws JournalException, ParserException, IOException {
+    private void assertThat(String expected, String query) throws JournalException, ParserException, IOException {
         assertThat(expected, query, false);
         assertThat(expected, query, false);
     }
@@ -3292,7 +3292,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         w.commit();
     }
 
-    protected ObjHashSet<String> getNames(Rnd r, int n) {
+    private ObjHashSet<String> getNames(Rnd r, int n) {
         ObjHashSet<String> names = new ObjHashSet<>();
         for (int i = 0; i < n; i++) {
             names.add(r.nextString(15));

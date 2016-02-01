@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,8 +24,8 @@ package org.nfsdb.examples.messaging;
 import com.lmax.disruptor.EventHandler;
 import com.lmax.disruptor.LifecycleAware;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.JournalFactory;
 
 import java.util.concurrent.CountDownLatch;

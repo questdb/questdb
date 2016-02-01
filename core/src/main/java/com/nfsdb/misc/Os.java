@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,15 +32,12 @@ import java.lang.management.ManagementFactory;
 
 @SuppressFBWarnings({"IICU_INCORRECT_INTERNAL_CLASS_USE"})
 public final class Os {
-    public static final int OSX = 1;
-    public static final int LINUX = 2;
     public static final int WINDOWS = 3;
-    public static final int UNKNOWN = -1;
     public static final int _32Bit = -2;
-
     public static final int type;
-
-    public static final boolean nativelySupported;
+    private static final int OSX = 1;
+    private static final int LINUX = 2;
+    private static final int UNKNOWN = -1;
     private static final OperatingSystemMXBean bean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
 
     private Os() {
@@ -92,22 +89,17 @@ public final class Os {
             if (osName.contains("Linux")) {
                 type = LINUX;
                 loadLib("/binaries/linux/libnfsdb.so");
-                nativelySupported = true;
             } else if (osName.contains("Mac")) {
                 type = OSX;
                 loadLib("/binaries/osx/libnfsdb.dylib");
-                nativelySupported = true;
             } else if (osName.contains("Windows")) {
                 type = WINDOWS;
                 loadLib("/binaries/windows/libnfsdb.dll");
-                nativelySupported = true;
             } else {
                 type = UNKNOWN;
-                nativelySupported = false;
             }
         } else {
             type = _32Bit;
-            nativelySupported = false;
         }
     }
 }

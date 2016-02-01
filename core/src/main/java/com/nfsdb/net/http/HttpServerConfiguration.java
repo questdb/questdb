@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,8 +21,9 @@
 
 package com.nfsdb.net.http;
 
-import com.nfsdb.exceptions.NumericException;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.ex.NumericException;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.net.SslConfig;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -36,7 +37,7 @@ import java.util.Properties;
 
 @SuppressFBWarnings("PATH_TRAVERSAL_IN")
 public class HttpServerConfiguration {
-    private static final Logger LOGGER = Logger.getLogger(HttpServerConfiguration.class);
+    private static final Log LOG = LogFactory.getLog(HttpServerConfiguration.class);
     private final SslConfig sslConfig = new SslConfig();
     private int httpPort = 9000;
     private int httpBufReqHeader = 64 * 1024;
@@ -244,7 +245,7 @@ public class HttpServerConfiguration {
             try {
                 return Numbers.parseInt(val);
             } catch (NumericException e) {
-                LOGGER.error(name + ": invalid value");
+                LOG.error().$(name).$(": invalid value").$();
             }
         }
         return -1;
@@ -256,7 +257,7 @@ public class HttpServerConfiguration {
             try {
                 return Numbers.parseIntSize(val);
             } catch (NumericException e) {
-                LOGGER.error(name + ": invalid value");
+                LOG.error().$(name).$(": invalid value").$();
             }
         }
         return -1;

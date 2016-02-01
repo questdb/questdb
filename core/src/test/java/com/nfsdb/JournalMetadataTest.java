@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ package com.nfsdb;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.factory.configuration.JournalMetadataBuilder;
 import com.nfsdb.model.Quote;
-import com.nfsdb.storage.UnstructuredFile;
+import com.nfsdb.store.UnstructuredFile;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;

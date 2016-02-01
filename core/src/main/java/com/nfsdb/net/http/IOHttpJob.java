@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,13 +21,13 @@
 
 package com.nfsdb.net.http;
 
-import com.nfsdb.concurrent.Job;
-import com.nfsdb.concurrent.RingQueue;
-import com.nfsdb.concurrent.Sequence;
-import com.nfsdb.concurrent.WorkerContext;
-import com.nfsdb.exceptions.*;
-import com.nfsdb.logging.AsyncLogger;
-import com.nfsdb.logging.LoggerFactory;
+import com.nfsdb.ex.*;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
+import com.nfsdb.mp.Job;
+import com.nfsdb.mp.RingQueue;
+import com.nfsdb.mp.Sequence;
+import com.nfsdb.mp.WorkerContext;
 
 import java.io.IOException;
 import java.nio.channels.SelectionKey;
@@ -35,7 +35,7 @@ import java.nio.channels.SelectionKey;
 public class IOHttpJob implements Job {
     // todo: extract config
     public static final int SO_WRITE_RETRY_COUNT = 10;
-    private final static AsyncLogger ACCESS = LoggerFactory.getLogger("access");
+    private final static Log ACCESS = LogFactory.getLog("access");
     private final RingQueue<IOEvent> ioQueue;
     private final Sequence ioSequence;
     private final IOLoopJob loop;

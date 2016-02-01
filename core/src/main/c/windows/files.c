@@ -128,3 +128,9 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_length
     int r = stat((const char *) pchar, &st);
     return r == 0 ? st.st_size : r;
 }
+
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_getStdOutFd
+        (JNIEnv *e, jclass cl) {
+    return (jlong) GetStdHandle(STD_OUTPUT_HANDLE);
+}
+

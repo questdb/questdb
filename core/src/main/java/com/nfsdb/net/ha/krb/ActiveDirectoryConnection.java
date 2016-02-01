@@ -1,10 +1,10 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,11 +17,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.ha.krb;
 
-import com.nfsdb.logging.Logger;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import org.ietf.jgss.*;
 
 import javax.security.auth.Subject;
@@ -35,7 +36,7 @@ import java.security.PrivilegedExceptionAction;
 
 public class ActiveDirectoryConnection implements Closeable {
 
-    private final static Logger LOGGER = Logger.getLogger(ActiveDirectoryConnection.class);
+    private final static Log LOG = LogFactory.getLog(ActiveDirectoryConnection.class);
     private static final String JAAS_CONF = "/jaas.conf";
     private static final byte[] BYTES = new byte[0];
     private final Oid krb5MechOid;
@@ -54,7 +55,7 @@ public class ActiveDirectoryConnection implements Closeable {
         System.setProperty("java.security.krb5.conf", krb5Conf);
         System.setProperty("nfskrb.principal", principal);
         System.setProperty("nfskrb.keytab", keytab);
-        System.setProperty("sun.security.krb5.debug", LOGGER.isDebugEnabled() ? "true" : "false");
+        System.setProperty("sun.security.krb5.debug", LOG.isDebugEnabled() ? "true" : "false");
         try {
             loginContext = new LoginContext("Krb5KeyTabLoginContext");
             loginContext.login();

@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,11 +24,11 @@ package com.nfsdb.factory.configuration;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public abstract class AbstractGenericMetadataBuilder {
-    protected final ColumnMetadata meta;
-    protected final JournalStructure parent;
+    final ColumnMetadata meta;
+    final JournalStructure parent;
 
     @SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
-    public AbstractGenericMetadataBuilder(JournalStructure parent, ColumnMetadata meta) {
+    AbstractGenericMetadataBuilder(JournalStructure parent, ColumnMetadata meta) {
         this.parent = parent;
         this.meta = meta;
     }

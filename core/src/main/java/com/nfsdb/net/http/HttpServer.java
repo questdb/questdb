@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,11 +21,11 @@
 
 package com.nfsdb.net.http;
 
-import com.nfsdb.collections.ObjHashSet;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.concurrent.*;
 import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.iter.clock.MilliClock;
+import com.nfsdb.mp.*;
+import com.nfsdb.std.ObjHashSet;
+import com.nfsdb.std.ObjList;
 
 import java.io.IOException;
 import java.lang.reflect.Field;

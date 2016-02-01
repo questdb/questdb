@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,34 +21,17 @@
 
 package com.nfsdb;
 
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.NumericException;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Interval;
 import com.nfsdb.model.Quote;
-import com.nfsdb.storage.BSearchType;
+import com.nfsdb.store.BSearchType;
 import com.nfsdb.test.tools.AbstractTest;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class PartitionTest extends AbstractTest {
-
-    public <T> Partition<T> getPartitionForTimestamp(Journal<T> journal, long timestamp) throws JournalException {
-        int sz = journal.getPartitionCount();
-        for (int i = 0; i < sz; i++) {
-            Partition<T> result = journal.getPartition(i, false);
-            Interval interval = result.getInterval();
-            if (interval == null || interval.contains(timestamp)) {
-                return result;
-            }
-        }
-
-        if (journal.getPartition(0, false).getInterval().isAfter(timestamp)) {
-            return journal.getPartition(0, false);
-        } else {
-            return journal.getPartition(sz - 1, false);
-        }
-    }
 
     @Test
     public void testIndexOf() throws JournalException, NumericException {
@@ -101,6 +84,23 @@ public class PartitionTest extends AbstractTest {
         Partition<Quote> p = journal.openOrCreateLagPartition();
         long result = p.indexOf(Dates.parseDateTime("2012-06-15T00:00:00.000"), BSearchType.OLDER_OR_SAME);
         Assert.assertEquals(-1, result);
+    }
+
+    private <T> Partition<T> getPartitionForTimestamp(Journal<T> journal, long timestamp) throws JournalException {
+        int sz = journal.getPartitionCount();
+        for (int i = 0; i < sz; i++) {
+            Partition<T> result = journal.getPartition(i, false);
+            Interval interval = result.getInterval();
+            if (interval == null || interval.contains(timestamp)) {
+                return result;
+            }
+        }
+
+        if (journal.getPartition(0, false).getInterval().isAfter(timestamp)) {
+            return journal.getPartition(0, false);
+        } else {
+            return journal.getPartition(sz - 1, false);
+        }
     }
 
 }

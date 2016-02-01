@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,17 +21,18 @@
 
 package com.nfsdb;
 
-import com.nfsdb.collections.DirectInputStream;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.iter.PartitionBufferedIterator;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.*;
-import com.nfsdb.storage.*;
+import com.nfsdb.std.DirectInputStream;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
@@ -43,7 +44,7 @@ import java.util.concurrent.TimeUnit;
 
 @SuppressFBWarnings({"PL_PARALLEL_LISTS", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public class Partition<T> implements Closeable {
-    private static final Logger LOGGER = Logger.getLogger(Partition.class);
+    private static final Log LOG = LogFactory.getLog(Partition.class);
     private final Journal<T> journal;
     private final ObjList<SymbolIndexProxy<T>> indexProxies = new ObjList<>();
     private final Interval interval;
@@ -95,7 +96,7 @@ public class Partition<T> implements Closeable {
                 Misc.free(Unsafe.arrayGet(columns, i));
             }
             columns = null;
-            LOGGER.trace("Partition %s closed", partitionDir);
+            LOG.debug().$("Partition").$(partitionDir).$(" is closed").$();
         }
 
         for (int i = 0, k = indexProxies.size(); i < k; i++) {
@@ -600,7 +601,7 @@ public class Partition<T> implements Closeable {
      * Rebuild the index of a column using the default keyCountHint and recordCountHint values.
      *
      * @param columnIndex the column index
-     * @throws com.nfsdb.exceptions.JournalException if the operation fails
+     * @throws com.nfsdb.ex.JournalException if the operation fails
      */
     private void rebuildIndex(int columnIndex) throws JournalException {
         JournalMetadata<T> meta = journal.getMetadata();
@@ -616,10 +617,10 @@ public class Partition<T> implements Closeable {
      * @param columnIndex     the column index
      * @param keyCountHint    the key count hint override
      * @param recordCountHint the record count hint override
-     * @throws com.nfsdb.exceptions.JournalException if the operation fails
+     * @throws com.nfsdb.ex.JournalException if the operation fails
      */
     private void rebuildIndex(int columnIndex, int keyCountHint, int recordCountHint, int txCountHint) throws JournalException {
-        final long time = LOGGER.isInfoEnabled() ? System.nanoTime() : 0L;
+        final long time = System.nanoTime();
 
         getIndexForColumn(columnIndex).close();
 
@@ -634,7 +635,7 @@ public class Partition<T> implements Closeable {
             index.commit();
         }
 
-        LOGGER.debug("REBUILT %s [%dms]", base, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - time));
+        LOG.debug().$("REBUILT ").$(base).$(" in ").$(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - time)).$("ms").$();
     }
 
     final void setPartitionDir(File partitionDir, long[] indexTxAddresses) {

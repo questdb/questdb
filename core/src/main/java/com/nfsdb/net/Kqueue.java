@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -60,7 +60,7 @@ public final class Kqueue {
     }
 
     public void readFD(int index, int fd) {
-        final long p = eventList + SIZEOF_KEVENT * index;
+        final long p = eventList + SIZEOF_KEVENT * (long) index;
         Unsafe.getUnsafe().putLong(p + FD_OFFSET, fd);
         Unsafe.getUnsafe().putInt(p + FILTER_OFFSET, EVFILT_READ);
         Unsafe.getUnsafe().putInt(p + FLAGS_OFFSET, EV_ADD);
@@ -71,7 +71,7 @@ public final class Kqueue {
     }
 
     public void writeFD(int index, int fd) {
-        final long p = eventList + SIZEOF_KEVENT * index;
+        final long p = eventList + SIZEOF_KEVENT * (long) index;
         Unsafe.getUnsafe().putLong(p + FD_OFFSET, fd);
         Unsafe.getUnsafe().putInt(p + FILTER_OFFSET, EVFILT_WRITE);
         Unsafe.getUnsafe().putInt(p + FLAGS_OFFSET, EV_ADD | EV_ONESHOT);

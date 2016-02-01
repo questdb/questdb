@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ package org.nfsdb.examples.blob;
 
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.JournalStructure;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -53,7 +53,7 @@ public class FileSystemIndexer {
         System.out.println("Added " + count + " files in " + (System.currentTimeMillis() - t) + " ms.");
     }
 
-    public static int processDir(JournalWriter writer, File dir) throws JournalException, IOException {
+    private static int processDir(JournalWriter writer, File dir) throws JournalException, IOException {
         int count = 0;
         File[] files = dir.listFiles();
         if (files != null) {

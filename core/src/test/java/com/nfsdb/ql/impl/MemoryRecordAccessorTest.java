@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,19 +22,19 @@
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.JournalWriter;
-import com.nfsdb.collections.DirectInputStream;
-import com.nfsdb.collections.LongList;
-import com.nfsdb.exceptions.JournalConfigurationException;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.JournalConfigurationException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
 import com.nfsdb.misc.Files;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.impl.join.hash.MemoryRecordAccessor;
 import com.nfsdb.ql.parser.QueryCompiler;
-import com.nfsdb.storage.SequentialMemory;
+import com.nfsdb.std.DirectInputStream;
+import com.nfsdb.std.LongList;
+import com.nfsdb.store.SequentialMemory;
 import com.nfsdb.test.tools.JournalTestFactory;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -47,7 +47,7 @@ import java.nio.ByteBuffer;
 public class MemoryRecordAccessorTest {
     @Rule
     public final JournalTestFactory factory;
-    public final QueryCompiler compiler;
+    private final QueryCompiler compiler;
 
     public MemoryRecordAccessorTest() {
         try {
@@ -59,17 +59,6 @@ public class MemoryRecordAccessorTest {
         } catch (JournalConfigurationException e) {
             throw new JournalRuntimeException(e);
         }
-    }
-
-    public static void assertEquals(ByteBuffer expected, DirectInputStream actual) {
-        int sz = (int) actual.size();
-        long address = Unsafe.getUnsafe().allocateMemory(sz);
-        long p = address;
-        actual.copyTo(address, 0, sz);
-        for (long i = 0; i < sz; i++) {
-            Assert.assertEquals(expected.get(), Unsafe.getUnsafe().getByte(p++));
-        }
-        Unsafe.getUnsafe().freeMemory(address);
     }
 
     @Test
@@ -232,7 +221,18 @@ public class MemoryRecordAccessorTest {
                 });
     }
 
-    public <T> void writeAndReadRecords(JournalWriter<T> journal, int count, int pageSize, RecordGenerator<T> generator) throws IOException, JournalException, ParserException {
+    private static void assertEquals(ByteBuffer expected, DirectInputStream actual) {
+        int sz = (int) actual.size();
+        long address = Unsafe.getUnsafe().allocateMemory(sz);
+        long p = address;
+        actual.copyTo(address, 0, sz);
+        for (long i = 0; i < sz; i++) {
+            Assert.assertEquals(expected.get(), Unsafe.getUnsafe().getByte(p++));
+        }
+        Unsafe.getUnsafe().freeMemory(address);
+    }
+
+    private <T> void writeAndReadRecords(JournalWriter<T> journal, int count, int pageSize, RecordGenerator<T> generator) throws IOException, JournalException, ParserException {
         for (int i = 0; i < count; i++) {
             journal.append(generator.generate(i));
         }

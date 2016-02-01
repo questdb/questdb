@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@
 
 package com.nfsdb.misc;
 
-import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.ex.NumericException;
 import com.nfsdb.io.sink.CharSink;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -380,8 +380,72 @@ public final class Numbers {
         return parseDouble(sequence, 0, sequence.length());
     }
 
+    public static float parseFloat(CharSequence sequence) throws NumericException {
+        return parseFloat(sequence, 0, sequence.length());
+    }
+
+    public static int parseHexInt(CharSequence sequence) throws NumericException {
+        return parseHexInt(sequence, 0, sequence.length());
+    }
+
+    public static int parseInt(CharSequence sequence) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+
+        return parseInt0(sequence, 0, sequence.length());
+    }
+
+    public static int parseInt(CharSequence sequence, int p, int lim) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        return parseInt0(sequence, p, lim);
+    }
+
+    public static int parseIntQuiet(CharSequence sequence) {
+        try {
+            if (sequence == null || Chars.equals("NaN", sequence)) {
+                return Integer.MIN_VALUE;
+            }
+            return parseInt0(sequence, 0, sequence.length());
+        } catch (NumericException e) {
+            return Integer.MIN_VALUE;
+        }
+
+    }
+
+    public static int parseIntSize(CharSequence sequence) throws NumericException {
+        return parseIntSize(sequence, 0, sequence.length());
+    }
+
+    public static long parseLong(CharSequence sequence) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        return parseLong0(sequence, 0, sequence.length());
+    }
+
+    public static long parseLong(CharSequence sequence, int p, int lim) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        return parseLong0(sequence, p, lim);
+    }
+
+    public static long parseLongQuiet(CharSequence sequence) {
+        if (sequence == null) {
+            return Long.MIN_VALUE;
+        }
+        try {
+            return parseLong0(sequence, 0, sequence.length());
+        } catch (NumericException e) {
+            return Long.MIN_VALUE;
+        }
+    }
+
     @SuppressWarnings("Duplicates")
-    public static double parseDouble(CharSequence sequence, int p, int lim) throws NumericException {
+    private static double parseDouble(CharSequence sequence, int p, int lim) throws NumericException {
 
         if (lim == p) {
             throw NumericException.INSTANCE;
@@ -451,12 +515,8 @@ public final class Numbers {
         }
     }
 
-    public static float parseFloat(CharSequence sequence) throws NumericException {
-        return parseFloat(sequence, 0, sequence.length());
-    }
-
     @SuppressWarnings("Duplicates")
-    public static float parseFloat(CharSequence sequence, int p, int lim) throws NumericException {
+    private static float parseFloat(CharSequence sequence, int p, int lim) throws NumericException {
 
         if (lim == p) {
             throw NumericException.INSTANCE;
@@ -526,12 +586,8 @@ public final class Numbers {
         }
     }
 
-    public static int parseHexInt(CharSequence sequence) throws NumericException {
-        return parseHexInt(sequence, 0, sequence.length());
-    }
-
     @SuppressFBWarnings("CC_CYCLOMATIC_COMPLEXITY")
-    public static int parseHexInt(CharSequence sequence, int p, int lim) throws NumericException {
+    private static int parseHexInt(CharSequence sequence, int p, int lim) throws NumericException {
 
         if (lim == p) {
             throw NumericException.INSTANCE;
@@ -595,38 +651,7 @@ public final class Numbers {
         return val;
     }
 
-    public static int parseInt(CharSequence sequence) throws NumericException {
-        if (sequence == null) {
-            throw NumericException.INSTANCE;
-        }
-
-        return parseInt0(sequence, 0, sequence.length());
-    }
-
-    public static int parseInt(CharSequence sequence, int p, int lim) throws NumericException {
-        if (sequence == null) {
-            throw NumericException.INSTANCE;
-        }
-        return parseInt0(sequence, p, lim);
-    }
-
-    public static int parseIntQuiet(CharSequence sequence) {
-        try {
-            if (sequence == null || Chars.equals("NaN", sequence)) {
-                return Integer.MIN_VALUE;
-            }
-            return parseInt0(sequence, 0, sequence.length());
-        } catch (NumericException e) {
-            return Integer.MIN_VALUE;
-        }
-
-    }
-
-    public static int parseIntSize(CharSequence sequence) throws NumericException {
-        return parseIntSize(sequence, 0, sequence.length());
-    }
-
-    public static int parseIntSize(CharSequence sequence, int p, int lim) throws NumericException {
+    private static int parseIntSize(CharSequence sequence, int p, int lim) throws NumericException {
 
         if (lim == p) {
             throw NumericException.INSTANCE;
@@ -674,31 +699,6 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
         return negative ? val : -val;
-    }
-
-    public static long parseLong(CharSequence sequence) throws NumericException {
-        if (sequence == null) {
-            throw NumericException.INSTANCE;
-        }
-        return parseLong0(sequence, 0, sequence.length());
-    }
-
-    public static long parseLong(CharSequence sequence, int p, int lim) throws NumericException {
-        if (sequence == null) {
-            throw NumericException.INSTANCE;
-        }
-        return parseLong0(sequence, p, lim);
-    }
-
-    public static long parseLongQuiet(CharSequence sequence) {
-        if (sequence == null) {
-            return Long.MIN_VALUE;
-        }
-        try {
-            return parseLong0(sequence, 0, sequence.length());
-        } catch (NumericException e) {
-            return Long.MIN_VALUE;
-        }
     }
 
     private static void appendLong11(CharSink sink, long i) {

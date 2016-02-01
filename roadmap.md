@@ -29,7 +29,7 @@ __server__
 - [x] flow control on query executions (do not execute until client is ready to read, park streaming if client is not ready to read)
 - [x] SSL support
 - [x] http compression
-- [ ] __high-performance logging (in progress)__
+- [x] high-performance logging
 - [ ] manage parked uploads and downloads (timeout with resource cleanup)
 - [ ] C layer for windows (io completion ports)
 - [ ] C layer for linux (epoll)

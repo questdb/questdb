@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,14 +22,14 @@
 package com.nfsdb.net.http.handlers;
 
 import com.nfsdb.JournalMode;
-import com.nfsdb.collections.ByteSequence;
-import com.nfsdb.collections.DirectByteCharSequence;
 import com.nfsdb.misc.Misc;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.net.http.IOContext;
 import com.nfsdb.net.http.RequestHeaderBuffer;
 import com.nfsdb.net.http.ResponseSink;
-import com.nfsdb.storage.PlainFile;
+import com.nfsdb.std.ByteSequence;
+import com.nfsdb.std.DirectByteCharSequence;
+import com.nfsdb.store.PlainFile;
 
 import java.io.File;
 import java.io.IOException;

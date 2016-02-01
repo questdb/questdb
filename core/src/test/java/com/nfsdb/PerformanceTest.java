@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,12 +21,12 @@
 
 package com.nfsdb;
 
-import com.nfsdb.collections.LongList;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.NumericException;
-import com.nfsdb.exceptions.ParserException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.NumericException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.factory.JournalCachingFactory;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Interval;
 import com.nfsdb.model.Quote;
@@ -35,7 +35,8 @@ import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.parser.QueryCompiler;
 import com.nfsdb.query.api.QueryAllBuilder;
 import com.nfsdb.query.api.QueryHeadBuilder;
-import com.nfsdb.storage.KVIndex;
+import com.nfsdb.std.LongList;
+import com.nfsdb.store.KVIndex;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -48,8 +49,8 @@ import java.util.concurrent.TimeUnit;
 
 public class PerformanceTest extends AbstractTest {
 
-    public static final int TEST_DATA_SIZE = 1000000;
-    private static final Logger LOGGER = Logger.getLogger(PerformanceTest.class);
+    private static final int TEST_DATA_SIZE = 1000000;
+    private static final Log LOG = LogFactory.getLog(PerformanceTest.class);
     private static boolean enabled = false;
 
     @BeforeClass
@@ -75,7 +76,7 @@ public class PerformanceTest extends AbstractTest {
                 }
                 builder.asResultSet();
             }
-            LOGGER.info("journal.query().all().withKeys(\"LLOY.L\").slice(interval) (query only) latency: " + (System.nanoTime() - t) / count / 1000 + "μs");
+            LOG.info().$("journal.query().all().withKeys(\"LLOY.L\").slice(interval) (query only) latency: ").$((System.nanoTime() - t) / count / 1000).$("μs").$();
         }
     }
 
@@ -99,7 +100,7 @@ public class PerformanceTest extends AbstractTest {
             for (Record r : compiler.compile("quote where timestamp = '2013-10-05T10:00:00.000Z;10d' and sym = 'LLOY.L'")) {
             }
         }
-        LOGGER.info("NEW journal.query().all().withKeys(\"LLOY.L\").slice(interval) (query only) latency: " + (System.nanoTime() - t) / count / 1000 + "μs");
+        LOG.info().$("NEW journal.query().all().withKeys(\"LLOY.L\").slice(interval) (query only) latency: ").$((System.nanoTime() - t) / count / 1000).$("μs").$();
 
         cf.close();
     }
@@ -124,7 +125,7 @@ public class PerformanceTest extends AbstractTest {
             Assert.assertEquals(count, index.size());
             // make sure that ~20M items appended in under 1s
             t = System.nanoTime() - t;
-            LOGGER.info("index append latency: " + t / totalValues + "ns");
+            LOG.info().$("index append latency: ").$(t / totalValues).$("ns").$();
             if (enabled) {
                 Assert.assertTrue("~20M items must be appended under 1s: " + TimeUnit.NANOSECONDS.toMillis(t), TimeUnit.NANOSECONDS.toMillis(t) < 1000);
             }
@@ -136,7 +137,7 @@ public class PerformanceTest extends AbstractTest {
                 index.getValueCount(1025);
             }
             t = System.nanoTime() - t;
-            LOGGER.info("index value count lookup latency: " + t / 10 + "ns");
+            LOG.info().$("index value count lookup latency: ").$(+t / 10).$("ns").$();
             if (enabled) {
                 Assert.assertTrue("Count lookup must be under 150ns: " + t, t / 10 < 150);
             }
@@ -149,7 +150,7 @@ public class PerformanceTest extends AbstractTest {
                 index.getValues(13567 + i, list);
             }
             t = System.nanoTime() - t;
-            LOGGER.info("index values lookup latency: " + t / 10 + "ns");
+            LOG.info().$("index values lookup latency: ").$(+t / 10).$("ns").$();
             if (enabled) {
                 Assert.assertTrue("Values lookup must be under 1.5μs: " + t / 10, t / 10 < 1500);
             }
@@ -172,7 +173,7 @@ public class PerformanceTest extends AbstractTest {
 
 
         long result = System.nanoTime() - t;
-        LOGGER.info("append (1M): " + TimeUnit.NANOSECONDS.toMillis(result / count) + "ms");
+        LOG.info().$("append (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result / count)).$("ms").$();
         if (enabled) {
             Assert.assertTrue("Append speed must be under 400ms (" + TimeUnit.NANOSECONDS.toMillis(result) + ")", TimeUnit.NANOSECONDS.toMillis(result) < 400);
         }
@@ -190,7 +191,7 @@ public class PerformanceTest extends AbstractTest {
             Assert.assertEquals(TEST_DATA_SIZE, cnt);
         }
         result = System.nanoTime() - t;
-        LOGGER.info("read (1M): " + TimeUnit.NANOSECONDS.toMillis(result / count) + "ms");
+        LOG.info().$("read (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result / count)).$("ms").$();
         if (enabled) {
             Assert.assertTrue("Read speed must be under 120ms (" + TimeUnit.NANOSECONDS.toMillis(result) + ")", TimeUnit.NANOSECONDS.toMillis(result) < 120);
         }
@@ -215,7 +216,7 @@ public class PerformanceTest extends AbstractTest {
             Assert.assertEquals(TEST_DATA_SIZE, cnt);
         }
         result = System.nanoTime() - t;
-        LOGGER.info("generic read (1M): " + TimeUnit.NANOSECONDS.toMillis(result / count) + "ms");
+        LOG.info().$("generic read (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result / count)).$("ms").$();
         if (enabled) {
             Assert.assertTrue("Read speed must be under 60ms (" + TimeUnit.NANOSECONDS.toMillis(result) + ")", TimeUnit.NANOSECONDS.toMillis(result) < 60);
         }
@@ -238,7 +239,7 @@ public class PerformanceTest extends AbstractTest {
                 }
                 qhb.asResultSet().read();
             }
-            LOGGER.info("journal.query().head().withKeys() (query+read) latency: " + (System.nanoTime() - t) / count + "ns");
+            LOG.info().$("journal.query().head().withKeys() (query+read) latency: ").$((System.nanoTime() - t) / count).$("ns").$();
         }
     }
 }

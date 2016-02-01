@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,27 +20,8 @@
  ******************************************************************************/
 
 package com.nfsdb.net.http.handlers;
-/*
- *  _  _ ___ ___     _ _
- * | \| | __/ __| __| | |__
- * | .` | _|\__ \/ _` | '_ \
- * |_|\_|_| |___/\__,_|_.__/
- *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-import com.nfsdb.exceptions.*;
+
+import com.nfsdb.ex.*;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
@@ -61,7 +42,6 @@ import java.nio.charset.UnsupportedCharsetException;
 import java.util.Iterator;
 
 public class JsonHandler implements ContextHandler {
-    private JournalReaderFactory factory;
     private static final int PAGE_SIZE = 100;
     private static final ArrayEncoder UTF8Encoder;
     private static final ThreadLocal threadLocalCharBuffer = new ThreadLocal() {
@@ -79,16 +59,7 @@ public class JsonHandler implements ContextHandler {
             return new StringBuilder(20);
         }
     };
-
-    static {
-        CharsetEncoder encoder = Charset.forName("utf-8").newEncoder();
-        if (encoder instanceof ArrayEncoder) {
-            UTF8Encoder = (ArrayEncoder)encoder;
-        }
-        else {
-            UTF8Encoder = null;
-        }
-    }
+    private JournalReaderFactory factory;
 
     public JsonHandler(JournalReaderFactory journalFactory) {
         this.factory = journalFactory;
@@ -219,9 +190,6 @@ public class JsonHandler implements ContextHandler {
                             }
 
                             r.put("}");
-                            if (context.count % 1000 == 0) {
-                                System.out.printf("out %d rows\n", context.count);
-                            }
                         }
                         context.current = null;
                     }
@@ -233,7 +201,7 @@ public class JsonHandler implements ContextHandler {
                 r.put('}');
                 r.sendChunk();
                 r.done();
-                return;
+                break;
             } catch (ResponseContentBufferTooSmallException ex) {
                 if (!r.resetToBookmark()){
                     // Nowhere to reset!
@@ -289,7 +257,7 @@ public class JsonHandler implements ContextHandler {
             case DOUBLE:
                 double d = rec.getDouble(col);
                 if (d == Double.NaN) {
-                    r.put(null);
+                    r.put((CharSequence) null);
                     break;
                 }
 
@@ -305,7 +273,7 @@ public class JsonHandler implements ContextHandler {
             case FLOAT:
                 float f = rec.getFloat(col);
                 if (f == Float.NaN) {
-                    r.put(null);
+                    r.put((CharSequence) null);
                     break;
                 }
 
@@ -356,7 +324,6 @@ public class JsonHandler implements ContextHandler {
 
     private static void putDouble(ChunkedResponse r, double d, StringBuilder stringBuilder) {
         Numbers.append(r, d, 10);
-        //new Double(d).toString()
 //        stringBuilder.setLength(0);
 //        FloatingDecimal.BinaryToASCIIConverter converter = FloatingDecimal.getBinaryToASCIIConverter(d);
 //        converter.appendTo(stringBuilder);
@@ -417,6 +384,15 @@ public class JsonHandler implements ContextHandler {
         }
         else if (c == '\t') {
             r.put("\\t");
+        }
+    }
+
+    static {
+        CharsetEncoder encoder = Charset.forName("utf-8").newEncoder();
+        if (encoder instanceof ArrayEncoder) {
+            UTF8Encoder = (ArrayEncoder) encoder;
+        } else {
+            UTF8Encoder = null;
         }
     }
 }

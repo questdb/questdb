@@ -1,10 +1,10 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,16 +17,16 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.ha.producer;
 
 import com.nfsdb.Partition;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalNetworkException;
-import com.nfsdb.storage.AbstractColumn;
-import com.nfsdb.storage.VariableColumn;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalNetworkException;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.AbstractColumn;
+import com.nfsdb.store.VariableColumn;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.nio.channels.WritableByteChannel;

@@ -1,10 +1,10 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,11 +17,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net;
 
-import com.nfsdb.exceptions.JournalNetworkException;
+import com.nfsdb.ex.JournalNetworkException;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import javax.net.ssl.KeyManagerFactory;
@@ -93,24 +93,8 @@ public class SslConfig {
         this.setKeyStore("JKS", stream, password);
     }
 
-    public void setKeyStore(String type, InputStream stream, String password) throws UnrecoverableKeyException, CertificateException, NoSuchAlgorithmException, KeyStoreException, IOException {
-        this.setKeyStore(type, stream, password, null, password);
-    }
-
-    public void setKeyStore(String type, InputStream stream, String password, String alias, String aliasPassword) throws KeyStoreException, CertificateException, NoSuchAlgorithmException, IOException, UnrecoverableKeyException {
-        KeyStore keyStore = loadKeyStore(type, stream, password, alias);
-        keyManagerFactory = KeyManagerFactory.getInstance("SunX509");
-        keyManagerFactory.init(keyStore, aliasPassword == null ? null : aliasPassword.toCharArray());
-    }
-
     public void setTrustStore(InputStream stream, String password) throws KeyStoreException, CertificateException, NoSuchAlgorithmException, IOException {
         setTrustStore("JKS", stream, password, null);
-    }
-
-    public void setTrustStore(String type, InputStream stream, String password, String alias) throws KeyStoreException, CertificateException, NoSuchAlgorithmException, IOException {
-        KeyStore keyStore = loadKeyStore(type, stream, password, alias);
-        trustManagerFactory = TrustManagerFactory.getInstance("SunX509");
-        trustManagerFactory.init(keyStore);
     }
 
     private SSLContext createSSLContext() throws JournalNetworkException {
@@ -150,6 +134,22 @@ public class SslConfig {
         }
 
         return keyStore;
+    }
+
+    private void setKeyStore(String type, InputStream stream, String password) throws UnrecoverableKeyException, CertificateException, NoSuchAlgorithmException, KeyStoreException, IOException {
+        this.setKeyStore(type, stream, password, null, password);
+    }
+
+    private void setKeyStore(String type, InputStream stream, String password, String alias, String aliasPassword) throws KeyStoreException, CertificateException, NoSuchAlgorithmException, IOException, UnrecoverableKeyException {
+        KeyStore keyStore = loadKeyStore(type, stream, password, alias);
+        keyManagerFactory = KeyManagerFactory.getInstance("SunX509");
+        keyManagerFactory.init(keyStore, aliasPassword == null ? null : aliasPassword.toCharArray());
+    }
+
+    private void setTrustStore(String type, InputStream stream, String password, String alias) throws KeyStoreException, CertificateException, NoSuchAlgorithmException, IOException {
+        KeyStore keyStore = loadKeyStore(type, stream, password, alias);
+        trustManagerFactory = TrustManagerFactory.getInstance("SunX509");
+        trustManagerFactory.init(keyStore);
     }
 
     @SuppressFBWarnings({"WEAK_TRUST_MANAGER", "BED_BOGUS_EXCEPTION_DECLARATION"})

@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,11 +21,12 @@
 
 package com.nfsdb.net;
 
-import com.nfsdb.exceptions.DisconnectedChannelException;
-import com.nfsdb.exceptions.JournalNetworkException;
-import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.exceptions.SlowReadableChannelException;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.ex.DisconnectedChannelException;
+import com.nfsdb.ex.JournalNetworkException;
+import com.nfsdb.ex.JournalRuntimeException;
+import com.nfsdb.ex.SlowReadableChannelException;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.net.http.IOHttpJob;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -38,7 +39,7 @@ import java.nio.channels.ByteChannel;
 
 public class NonBlockingSecureSocketChannel<T extends ByteChannel> implements WrappedByteChannel<T> {
 
-    private static final Logger LOGGER = Logger.getLogger(NonBlockingSecureSocketChannel.class);
+    private static final Log LOG = LogFactory.getLog(NonBlockingSecureSocketChannel.class);
 
     private final T channel;
     private final SSLEngine engine;
@@ -243,7 +244,7 @@ public class NonBlockingSecureSocketChannel<T extends ByteChannel> implements Wr
                     try {
                         handshakeStatus = engine.wrap(unwrapped, out).getHandshakeStatus();
                     } catch (SSLException e) {
-                        LOGGER.error("Server SSL handshake failed: %s", e.getMessage());
+                        LOG.error().$("Server SSL handshake failed: ").$(e.getMessage()).$();
                         closureOnException();
                         throw e;
                     }
@@ -276,7 +277,7 @@ public class NonBlockingSecureSocketChannel<T extends ByteChannel> implements Wr
                                 throw new IOException("Did not expect CLOSED");
                         }
                     } catch (SSLException e) {
-                        LOGGER.error("Client SSL handshake failed: %s", e.getMessage());
+                        LOG.error().$("Client SSL handshake failed: ").$(e.getMessage()).$();
                         throw e;
                     }
                     break;

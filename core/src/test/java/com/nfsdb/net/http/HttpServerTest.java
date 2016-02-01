@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,9 +26,9 @@ import com.google.gson.GsonBuilder;
 import com.nfsdb.Journal;
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.NumericException;
-import com.nfsdb.exceptions.ResponseContentBufferTooSmallException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.NumericException;
+import com.nfsdb.ex.ResponseContentBufferTooSmallException;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.sink.FileSink;
 import com.nfsdb.iter.clock.Clock;
@@ -74,7 +74,6 @@ import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
-import java.util.Date;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -238,8 +237,29 @@ public class HttpServerTest extends AbstractJournalTest {
             put("/imp", new ImportHandler(factory));
         }});
         server.start();
-        Assert.assertEquals(400, upload("/com/nfsdb/collections/AssociativeCache.class", "http://localhost:9000/imp"));
-        server.halt();
+        try {
+            Assert.assertEquals(400, upload("/com/nfsdb/std/AssociativeCache.class", "http://localhost:9000/imp"));
+        } finally {
+            server.halt();
+        }
+    }
+
+    @Test
+    @Ignore
+    public void testJsonChunkOverflow() throws Exception {
+        int count = (int) 1E6;
+        generateJournal(count);
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            put("/js", new JsonHandler(factory));
+        }});
+        server.start();
+        try {
+            String query = "tab";
+            QueryResponse queryResponse = download(query);
+            Assert.assertEquals(count, queryResponse.result.length);
+        } finally {
+            server.halt();
+        }
     }
 
     @Test
@@ -321,24 +341,6 @@ public class HttpServerTest extends AbstractJournalTest {
             QueryResponse queryResponse = download(query, 2, -1);
             Assert.assertEquals(2, queryResponse.result.length);
             Assert.assertEquals(true, queryResponse.moreExist);
-        } finally {
-            server.halt();
-        }
-    }
-
-    @Test
-    @Ignore
-    public void testJsonChunkOverflow() throws Exception {
-        int count = (int) 1E6;
-        generateJournal(count);
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", new JsonHandler(factory));
-        }});
-        server.start();
-        try {
-            String query = "tab";
-            QueryResponse queryResponse = download(query);
-            Assert.assertEquals(count, queryResponse.result.length);
         } finally {
             server.halt();
         }

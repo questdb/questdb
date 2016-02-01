@@ -1,10 +1,10 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,13 +17,13 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.ha.config;
 
-import com.nfsdb.collections.IntIntHashMap;
-import com.nfsdb.exceptions.JournalNetworkException;
+import com.nfsdb.ex.JournalNetworkException;
 import com.nfsdb.net.SslConfig;
+import com.nfsdb.std.IntIntHashMap;
 
 import java.io.IOException;
 import java.net.*;
@@ -34,8 +34,8 @@ import java.util.List;
 
 public class NetworkConfig {
     public static final int DEFAULT_DATA_PORT = 7075;
-    protected static final String DEFAULT_MULTICAST_ADDRESS_IPV4 = "230.100.12.4";
-    protected static final String DEFAULT_MULTICAST_ADDRESS_IPV6_1 = "FF02:231::4500";
+    private static final String DEFAULT_MULTICAST_ADDRESS_IPV4 = "230.100.12.4";
+    private static final String DEFAULT_MULTICAST_ADDRESS_IPV6_1 = "FF02:231::4500";
 
     private static final int DEFAULT_MULTICAST_PORT = 4446;
     private static final int DEFAULT_SO_RCVBUF = 1024 * 1024;
@@ -43,16 +43,12 @@ public class NetworkConfig {
     private final IntIntHashMap nodeLookup = new IntIntHashMap();
 
     private final SslConfig sslConfig = new SslConfig();
-    protected InetAddress multiCastAddress;
+    private InetAddress multiCastAddress;
     private int multiCastPort = DEFAULT_MULTICAST_PORT;
     private int soRcvBuf = DEFAULT_SO_RCVBUF;
     private boolean enableMultiCast = true;
     private String ifName = null;
     private NetworkInterface defaultInterface = null;
-
-    public static boolean isInet6(InetAddress address) {
-        return address instanceof Inet6Address;
-    }
 
     public void addNode(ServerNode node) {
         nodes2.add(node);
@@ -64,7 +60,43 @@ public class NetworkConfig {
         nodeLookup.clear();
     }
 
-    public NetworkInterface findExternalNic() throws JournalNetworkException {
+    public ServerNode getNodeByPosition(int pos) {
+        return nodes2.get(pos);
+    }
+
+    public ServerNode getNodeByUID(int uid) {
+        int pos = getNodePosition(uid);
+        if (pos == -1) {
+            return null;
+        }
+        return nodes2.get(pos);
+    }
+
+    public int getNodeCount() {
+        return nodes2.size();
+    }
+
+    public int getNodePosition(int uid) {
+        return nodeLookup.get(uid);
+    }
+
+    public SslConfig getSslConfig() {
+        return sslConfig;
+    }
+
+    public boolean isMultiCastEnabled() {
+        return enableMultiCast;
+    }
+
+    public void setEnableMultiCast(boolean enableMultiCast) {
+        this.enableMultiCast = enableMultiCast;
+    }
+
+    private static boolean isInet6(InetAddress address) {
+        return address instanceof Inet6Address;
+    }
+
+    NetworkInterface findExternalNic() throws JournalNetworkException {
         if (defaultInterface != null) {
             return defaultInterface;
         }
@@ -91,83 +123,7 @@ public class NetworkConfig {
 
     }
 
-    public String getIfName() {
-        return ifName;
-    }
-
-    public void setIfName(String ifName) {
-        this.ifName = ifName;
-    }
-
-    public InetAddress getMultiCastAddress() {
-        return multiCastAddress;
-    }
-
-    public void setMultiCastAddress(InetAddress multiCastAddress) {
-        this.multiCastAddress = multiCastAddress;
-    }
-
-    public int getMultiCastPort() {
-        return multiCastPort;
-    }
-
-    public void setMultiCastPort(int multiCastPort) {
-        this.multiCastPort = multiCastPort;
-    }
-
-    public ServerNode getNodeByPosition(int pos) {
-        return nodes2.get(pos);
-    }
-
-    public ServerNode getNodeByUID(int uid) {
-        int pos = getNodePosition(uid);
-        if (pos == -1) {
-            return null;
-        }
-        return nodes2.get(pos);
-    }
-
-    public int getNodeCount() {
-        return nodes2.size();
-    }
-
-    public int getNodePosition(int uid) {
-        return nodeLookup.get(uid);
-    }
-
-    public List<ServerNode> getNodes() {
-        return nodes2;
-    }
-
-    public int getSoRcvBuf() {
-        return soRcvBuf;
-    }
-
-    public void setSoRcvBuf(int soRcvBuf) {
-        this.soRcvBuf = soRcvBuf;
-    }
-
-    public SslConfig getSslConfig() {
-        return sslConfig;
-    }
-
-    public boolean isMultiCastEnabled() {
-        return enableMultiCast;
-    }
-
-    public void parseNodes(String nodes) {
-        clearNodes();
-        String parts[] = nodes.split(",");
-        for (int i = 0; i < parts.length; i++) {
-            addNode(new ServerNode(i, parts[i]));
-        }
-    }
-
-    public void setEnableMultiCast(boolean enableMultiCast) {
-        this.enableMultiCast = enableMultiCast;
-    }
-
-    protected InetAddress getDefaultMultiCastAddress(NetworkInterface ifn) throws JournalNetworkException {
+    private InetAddress getDefaultMultiCastAddress(NetworkInterface ifn) throws JournalNetworkException {
         try {
             if (!ifn.supportsMulticast()) {
                 throw new JournalNetworkException("Multicast is not supported on " + ifn.getName());
@@ -187,7 +143,43 @@ public class NetworkConfig {
         }
     }
 
-    protected DatagramChannelWrapper openDatagramChannel(NetworkInterface ifn) throws JournalNetworkException {
+    String getIfName() {
+        return ifName;
+    }
+
+    public void setIfName(String ifName) {
+        this.ifName = ifName;
+    }
+
+    private InetAddress getMultiCastAddress() {
+        return multiCastAddress;
+    }
+
+    public void setMultiCastAddress(InetAddress multiCastAddress) {
+        this.multiCastAddress = multiCastAddress;
+    }
+
+    private int getMultiCastPort() {
+        return multiCastPort;
+    }
+
+    public void setMultiCastPort(int multiCastPort) {
+        this.multiCastPort = multiCastPort;
+    }
+
+    List<ServerNode> getNodes() {
+        return nodes2;
+    }
+
+    int getSoRcvBuf() {
+        return soRcvBuf;
+    }
+
+    public void setSoRcvBuf(int soRcvBuf) {
+        this.soRcvBuf = soRcvBuf;
+    }
+
+    DatagramChannelWrapper openDatagramChannel(NetworkInterface ifn) throws JournalNetworkException {
         InetAddress address = getMultiCastAddress();
         if (address == null) {
             address = getDefaultMultiCastAddress(ifn);
@@ -204,6 +196,14 @@ public class NetworkConfig {
             return new DatagramChannelWrapper(dc, new InetSocketAddress(address, getMultiCastPort()));
         } catch (IOException e) {
             throw new JournalNetworkException(e);
+        }
+    }
+
+    void parseNodes(String nodes) {
+        clearNodes();
+        String parts[] = nodes.split(",");
+        for (int i = 0; i < parts.length; i++) {
+            addNode(new ServerNode(i, parts[i]));
         }
     }
 

@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,9 +21,10 @@
 
 package com.nfsdb.net;
 
-import com.nfsdb.exceptions.JournalNetworkException;
-import com.nfsdb.exceptions.JournalRuntimeException;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.ex.JournalNetworkException;
+import com.nfsdb.ex.JournalRuntimeException;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.ByteBuffers;
 
 import javax.net.ssl.*;
@@ -34,7 +35,7 @@ import java.nio.channels.SocketChannel;
 
 public class SecureSocketChannel implements WrappedByteChannel {
 
-    private static final Logger LOGGER = Logger.getLogger(SecureSocketChannel.class);
+    private static final Log LOG = LogFactory.getLog(SecureSocketChannel.class);
 
     private final SocketChannel socketChannel;
     private final SSLEngine engine;
@@ -201,7 +202,7 @@ public class SecureSocketChannel implements WrappedByteChannel {
                     try {
                         handshakeStatus = engine.wrap(swapBuf, outBuf).getHandshakeStatus();
                     } catch (SSLException e) {
-                        LOGGER.error("Server SSL handshake failed: %s", e.getMessage());
+                        LOG.error().$("Server SSL handshake failed: ").$(e.getMessage()).$();
                         closureOnException();
                         throw e;
                     }
@@ -234,7 +235,7 @@ public class SecureSocketChannel implements WrappedByteChannel {
                                 throw new IOException("Did not expect CLOSED");
                         }
                     } catch (SSLException e) {
-                        LOGGER.error("Client SSL handshake failed: %s", e.getMessage());
+                        LOG.error().$("Client SSL handshake failed: ").$(e.getMessage()).$();
                         throw e;
                     }
                     break;
@@ -254,7 +255,7 @@ public class SecureSocketChannel implements WrappedByteChannel {
         // make sure swapBuf starts by having remaining() == false
         swapBuf.position(swapBuf.limit());
 
-        LOGGER.info("Handshake SSL complete: %s", client ? "CLIENT" : "SERVER");
+        LOG.info().$("Handshake SSL complete: ").$(client ? "CLIENT" : "SERVER").$();
     }
 
     private boolean unwrap(ByteBuffer dst) throws IOException {

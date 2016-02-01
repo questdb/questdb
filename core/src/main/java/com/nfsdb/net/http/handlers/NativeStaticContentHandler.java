@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,19 +21,23 @@
 
 package com.nfsdb.net.http.handlers;
 
-import com.nfsdb.collections.LPSZ;
-import com.nfsdb.collections.ObjectFactory;
-import com.nfsdb.collections.PrefixedPath;
-import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.ex.NumericException;
 import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.*;
 import com.nfsdb.net.http.*;
+import com.nfsdb.std.LPSZ;
+import com.nfsdb.std.ObjectFactory;
+import com.nfsdb.std.PrefixedPath;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
 public class NativeStaticContentHandler implements ContextHandler {
+
+    private static final Log LOG = LogFactory.getLog(NativeStaticContentHandler.class);
 
     private final MimeTypes mimeTypes;
     private final ObjectFactory<PrefixedPath> ppFactory;
@@ -85,11 +89,13 @@ public class NativeStaticContentHandler implements ContextHandler {
         r.done();
 
         // reached the end naturally?
-        Files.close(context.fd);
+        if (Files.close(context.fd) != 0) {
+            LOG.error().$("Could not close file").$();
+        }
         context.fd = -1;
     }
 
-    public void send(IOContext context, LPSZ path, boolean asAttachment) throws IOException {
+    private void send(IOContext context, LPSZ path, boolean asAttachment) throws IOException {
         int n = Chars.lastIndexOf(path, '.');
         if (n == -1) {
             context.simpleResponse().send(404);

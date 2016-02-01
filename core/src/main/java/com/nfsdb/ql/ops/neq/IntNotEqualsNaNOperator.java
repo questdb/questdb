@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,13 +21,13 @@
 
 package com.nfsdb.ql.ops.neq;
 
-import com.nfsdb.collections.ObjList;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractBinaryOperator;
 import com.nfsdb.ql.ops.Function;
 import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.ColumnType;
 
 public class IntNotEqualsNaNOperator extends AbstractBinaryOperator {
 

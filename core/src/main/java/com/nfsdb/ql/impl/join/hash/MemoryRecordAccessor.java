@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,9 +21,7 @@
 
 package com.nfsdb.ql.impl.join.hash;
 
-import com.nfsdb.collections.DirectCharSequence;
-import com.nfsdb.collections.DirectInputStream;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.misc.Chars;
@@ -31,8 +29,10 @@ import com.nfsdb.misc.Unsafe;
 import com.nfsdb.ql.AbstractRecord;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
-import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.SequentialMemory;
+import com.nfsdb.std.DirectCharSequence;
+import com.nfsdb.std.DirectInputStream;
+import com.nfsdb.store.ColumnType;
+import com.nfsdb.store.SequentialMemory;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
 

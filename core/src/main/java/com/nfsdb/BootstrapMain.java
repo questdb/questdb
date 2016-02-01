@@ -1,10 +1,10 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,15 +17,15 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
-import com.nfsdb.concurrent.RingQueue;
-import com.nfsdb.concurrent.Sequence;
 import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.logging.*;
+import com.nfsdb.log.*;
 import com.nfsdb.misc.Os;
+import com.nfsdb.mp.RingQueue;
+import com.nfsdb.mp.Sequence;
 import com.nfsdb.net.http.HttpServer;
 import com.nfsdb.net.http.HttpServerConfiguration;
 import com.nfsdb.net.http.MimeTypes;
@@ -48,8 +48,7 @@ import static java.nio.file.FileVisitResult.CONTINUE;
 import static java.nio.file.StandardCopyOption.COPY_ATTRIBUTES;
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
-public class BootstrapMain {
-    private static final Logger LOGGER = Logger.getLogger(BootstrapMain.class);
+class BootstrapMain {
 
     @SuppressFBWarnings("PATH_TRAVERSAL_IN")
     public static void main(String[] args) throws Exception {
@@ -58,7 +57,7 @@ public class BootstrapMain {
         }
 
         if (Os.type == Os._32Bit) {
-            LOGGER.error("NFSdb requires 64-bit JVM");
+            System.out.println("NFSdb requires 64-bit JVM");
             return;
         }
 
@@ -67,7 +66,7 @@ public class BootstrapMain {
         File conf = new File(dir, "conf/nfsdb.conf");
 
         if (!conf.exists()) {
-            LOGGER.error("Configuration file does not exist: " + conf);
+            System.out.println("Configuration file does not exist: " + conf);
             return;
         }
 
@@ -82,7 +81,7 @@ public class BootstrapMain {
         matcher.setDefaultHandler(new NativeStaticContentHandler(configuration.getHttpPublic(), new MimeTypes(configuration.getMimeTypes())));
 
         HttpServer server = new HttpServer(configuration, matcher);
-        server.start(LoggerFactory.INSTANCE.getJobs());
+        server.start(LogFactory.INSTANCE.getJobs());
 
         StringBuilder welcome = new StringBuilder();
         welcome.append("Server started on port: ").append(configuration.getHttpPort());
@@ -90,32 +89,30 @@ public class BootstrapMain {
             welcome.append(" [HTTPS]");
         }
 
-        LOGGER.info(welcome);
+        System.out.println(welcome);
     }
 
     private static void configureLoggers(final HttpServerConfiguration configuration) {
-        LoggerFactory.INSTANCE.add("access", 0, new LogWriterFactory() {
+        LogFactory.INSTANCE.add(new LogWriterConfig("access", 0, new LogWriterFactory() {
             @Override
-            public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
-                LogFileWriter w = new LogFileWriter(ring, seq);
+            public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq, int level) {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
                 w.setLocation(configuration.getAccessLog().getAbsolutePath());
                 return w;
             }
-        });
+        }));
 
-/*
-        LoggerFactory.INSTANCE.add(LoggerFactory.LOG_LEVEL_INFO | LoggerFactory.LOG_LEVEL_ERROR,
+        LogFactory.INSTANCE.add(new LogWriterConfig(LogLevel.LOG_LEVEL_ERROR | LogLevel.LOG_LEVEL_INFO,
                 new LogWriterFactory() {
                     @Override
-                    public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq) {
-                        LogFileWriter w = new LogFileWriter(ring, seq);
+                    public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq, int level) {
+                        LogFileWriter w = new LogFileWriter(ring, seq, level);
                         w.setLocation(configuration.getErrorLog().getAbsolutePath());
                         return w;
                     }
-                });
-*/
+                }));
 
-        LoggerFactory.INSTANCE.bind();
+        LogFactory.INSTANCE.bind();
     }
 
     private static void extractSite(String dir) throws URISyntaxException, IOException {

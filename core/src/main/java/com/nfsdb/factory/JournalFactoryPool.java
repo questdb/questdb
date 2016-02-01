@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,9 +21,10 @@
 
 package com.nfsdb.factory;
 
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
@@ -32,7 +33,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 @SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
 public class JournalFactoryPool implements Closeable {
-    private static final Logger LOGGER = Logger.getLogger(JournalFactoryPool.class);
+    private static final Log LOG = LogFactory.getLog(JournalFactoryPool.class);
 
     private final ArrayBlockingQueue<JournalCachingFactory> pool;
     private final AtomicBoolean running = new AtomicBoolean(true);
@@ -69,7 +70,7 @@ public class JournalFactoryPool implements Closeable {
         try {
             pool.put(factory);
         } catch (InterruptedException e) {
-            LOGGER.error("Cannot return factory to pool", e);
+            LOG.error().$("Cannot return factory to pool").$(e).$();
         }
     }
 }

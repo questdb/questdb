@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,10 +21,10 @@
 
 package com.nfsdb;
 
-import com.nfsdb.collections.IntLongPriorityQueue;
 import com.nfsdb.misc.Rnd;
-import com.nfsdb.storage.IndexCursor;
-import com.nfsdb.storage.KVIndex;
+import com.nfsdb.std.IntLongPriorityQueue;
+import com.nfsdb.store.IndexCursor;
+import com.nfsdb.store.KVIndex;
 import com.nfsdb.test.tools.AbstractTest;
 import org.junit.Assert;
 import org.junit.Before;

@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,14 +21,9 @@
 
 package com.nfsdb;
 
-import com.nfsdb.collections.PeekingListIterator;
-import com.nfsdb.concurrent.BlockingWaitStrategy;
-import com.nfsdb.concurrent.SCSequence;
-import com.nfsdb.concurrent.SPSequence;
-import com.nfsdb.concurrent.Sequence;
-import com.nfsdb.exceptions.IncompatibleJournalException;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.IncompatibleJournalException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.configuration.Constants;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
@@ -36,10 +31,16 @@ import com.nfsdb.io.sink.FlexBufferSink;
 import com.nfsdb.iter.ConcurrentIterator;
 import com.nfsdb.iter.MergingIterator;
 import com.nfsdb.iter.PeekingIterator;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.*;
+import com.nfsdb.mp.BlockingWaitStrategy;
+import com.nfsdb.mp.SCSequence;
+import com.nfsdb.mp.SPSequence;
+import com.nfsdb.mp.Sequence;
 import com.nfsdb.query.ResultSet;
-import com.nfsdb.storage.*;
+import com.nfsdb.std.PeekingListIterator;
+import com.nfsdb.store.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
@@ -58,7 +59,7 @@ import java.util.concurrent.TimeUnit;
 
 @SuppressFBWarnings({"PATH_TRAVERSAL_IN", "EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
 public class JournalWriter<T> extends Journal<T> {
-    private static final Logger LOGGER = Logger.getLogger(JournalWriter.class);
+    private static final Log LOG = LogFactory.getLog(JournalWriter.class);
     private final long lagMillis;
     private final long lagSwellMillis;
     private final boolean checkOrder;
@@ -99,7 +100,7 @@ public class JournalWriter<T> extends Journal<T> {
      * Add an object to the end of the Journal.
      *
      * @param obj the object to add
-     * @throws com.nfsdb.exceptions.JournalException if there is an error
+     * @throws com.nfsdb.ex.JournalException if there is an error
      */
     public void append(T obj) throws JournalException {
 
@@ -134,7 +135,7 @@ public class JournalWriter<T> extends Journal<T> {
      * Add objects to the end of the Journal.
      *
      * @param objects objects to add
-     * @throws com.nfsdb.exceptions.JournalException if there is an error
+     * @throws com.nfsdb.ex.JournalException if there is an error
      */
     @SafeVarargs
     public final void append(T... objects) throws JournalException {
@@ -147,7 +148,7 @@ public class JournalWriter<T> extends Journal<T> {
      * Copy the objects corresponding to the specified ids to the end of the Journal.
      *
      * @param resultSet the global row ids
-     * @throws com.nfsdb.exceptions.JournalException if there is an error
+     * @throws com.nfsdb.ex.JournalException if there is an error
      */
     public void append(ResultSet<T> resultSet) throws JournalException {
         if (isCompatible(resultSet.getJournal())) {
@@ -292,7 +293,7 @@ public class JournalWriter<T> extends Journal<T> {
     /**
      * Deletes entire Journal.
      *
-     * @throws com.nfsdb.exceptions.JournalException if the Journal is open (must be closed)
+     * @throws com.nfsdb.ex.JournalException if the Journal is open (must be closed)
      */
     public void delete() throws JournalException {
         if (isOpen()) {
@@ -351,7 +352,7 @@ public class JournalWriter<T> extends Journal<T> {
      * this will always be rejected.
      *
      * @return max timestamp older then which append is impossible.
-     * @throws com.nfsdb.exceptions.JournalException if journal cannot calculate timestamp.
+     * @throws com.nfsdb.ex.JournalException if journal cannot calculate timestamp.
      */
     public long getAppendTimestampLo() throws JournalException {
         if (appendTimestampLo == -1) {
@@ -520,7 +521,7 @@ public class JournalWriter<T> extends Journal<T> {
             try {
                 txListener.onError();
             } catch (Throwable e) {
-                LOGGER.error("Error in listener", e);
+                LOG.error().$("Error in listener").$(e).$();
             }
         }
     }
@@ -530,7 +531,7 @@ public class JournalWriter<T> extends Journal<T> {
      * have lag partitions.
      *
      * @return Lag partition instance.
-     * @throws com.nfsdb.exceptions.JournalException
+     * @throws com.nfsdb.ex.JournalException
      */
     public Partition<T> openOrCreateLagPartition() throws JournalException {
         Partition<T> result = getIrregularPartition();
@@ -701,7 +702,7 @@ public class JournalWriter<T> extends Journal<T> {
         }
 
         if (writeDiscard) {
-            LOGGER.info("Journal %s is rolling back to transaction #%d, timestamp %s", metadata.getLocation(), tx.txn, Dates.toString(tx.timestamp));
+            LOG.info().$("Journal").$(metadata.getLocation()).$(" is rolling back to transaction ").$(tx.txn).$(", timestamp ").$ts(tx.timestamp).$();
             writeDiscardFile(tx.journalMaxRowID);
         }
 
@@ -974,13 +975,13 @@ public class JournalWriter<T> extends Journal<T> {
                                                 Lock lock = LockManager.lockExclusive(files[i]);
                                                 try {
                                                     if (lock != null && lock.isValid()) {
-                                                        LOGGER.trace("Purging : %s", files[i]);
+                                                        LOG.debug().$("Purging :").$(files[i].getAbsolutePath()).$();
 
                                                         if (!Files.delete(files[i])) {
-                                                            LOGGER.trace("Could not purge: %s", files[i]);
+                                                            LOG.debug().$("Could not purge: ").$(files[i].getAbsolutePath()).$();
                                                         }
                                                     } else {
-                                                        LOGGER.trace("Partition in use: %s", files[i]);
+                                                        LOG.debug().$("Partition in use: ").$(files[i].getAbsolutePath()).$();
                                                     }
                                                 } finally {
                                                     LockManager.release(lock);

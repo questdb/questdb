@@ -1,10 +1,10 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,15 +17,16 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.ha;
 
 import com.nfsdb.JournalWriter;
-import com.nfsdb.exceptions.JournalNetworkException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalNetworkException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.net.ha.config.ClientConfig;
 import com.nfsdb.net.ha.config.ServerConfig;
 import com.nfsdb.net.ha.config.ServerNode;
@@ -36,7 +37,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ClusterController {
 
-    private final Logger LOGGER = Logger.getLogger(ClusterController.class);
+    private final Log LOG = LogFactory.getLog(ClusterController.class);
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final ClusterStatusListener listener;
     private final JournalFactory factory;
@@ -130,7 +131,7 @@ public class ClusterController {
                 clientConfig.addNode(activeNode);
 
                 client = new JournalClient(clientConfig, factory);
-                LOGGER.info("%s Subscribing journals", thisNode);
+                LOG.info().$(thisNode.toString()).$(" Subscribing journals").$();
                 for (int i = 0, sz = writers.size(); i < sz; i++) {
                     JournalWriter w = writers.get(i);
                     client.subscribe(w.getKey(), w, null);
@@ -160,7 +161,7 @@ public class ClusterController {
                     }
 
                 } catch (JournalNetworkException e) {
-                    LOGGER.error("Failed to start client", e);
+                    LOG.error().$("Failed to start client").$(e).$();
                     haltClient();
                     server.joinCluster(statusListener);
                 }

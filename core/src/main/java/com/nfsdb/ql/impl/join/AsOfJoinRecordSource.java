@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,9 +21,8 @@
 
 package com.nfsdb.ql.impl.join;
 
-import com.nfsdb.collections.AbstractImmutableIterator;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.misc.Misc;
@@ -35,6 +34,7 @@ import com.nfsdb.ql.impl.join.asof.FixRecordHolder;
 import com.nfsdb.ql.impl.join.asof.RecordHolder;
 import com.nfsdb.ql.impl.join.asof.RowidRecordHolder;
 import com.nfsdb.ql.impl.join.asof.VarRecordHolder;
+import com.nfsdb.std.AbstractImmutableIterator;
 
 import java.io.Closeable;
 import java.io.IOException;

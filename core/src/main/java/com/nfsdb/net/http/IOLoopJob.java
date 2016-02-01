@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,10 +21,11 @@
 
 package com.nfsdb.net.http;
 
-import com.nfsdb.concurrent.*;
-import com.nfsdb.exceptions.JournalNetworkException;
+import com.nfsdb.ex.JournalNetworkException;
 import com.nfsdb.iter.clock.Clock;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
+import com.nfsdb.mp.*;
 import com.nfsdb.net.NonBlockingSecureSocketChannel;
 import com.nfsdb.net.PlainSocketChannel;
 
@@ -34,7 +35,7 @@ import java.nio.channels.*;
 import java.util.Set;
 
 public class IOLoopJob extends SynchronizedJob {
-    private static final Logger LOGGER = Logger.getLogger(IOLoopJob.class);
+    private static final Log LOG = LogFactory.getLog(IOLoopJob.class);
     private final Selector selector;
     private final SelectionKey serverKey;
     private final RingQueue<IOEvent> ioQueue;
@@ -165,7 +166,7 @@ public class IOLoopJob extends SynchronizedJob {
                     }
                 }
             } catch (Throwable e) {
-                LOGGER.error("Failed to process channel registrations", e);
+                LOG.error().$("Failed to process channel registrations").$(e).$();
             }
         }
 

@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,16 +21,17 @@
 
 package com.nfsdb.io;
 
-import com.nfsdb.collections.CharSequenceObjHashMap;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.ex.NumericException;
 import com.nfsdb.io.parser.CsvParser;
 import com.nfsdb.io.parser.listener.Listener;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Unsafe;
-import com.nfsdb.storage.ColumnType;
+import com.nfsdb.std.CharSequenceObjHashMap;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
@@ -42,7 +43,7 @@ import java.nio.channels.FileChannel;
 @SuppressFBWarnings({"CLI_CONSTANT_LIST_INDEX"})
 public class ImportSchema {
 
-    private static final Logger LOGGER = Logger.getLogger(ImportSchema.class);
+    private static final Log LOG = LogFactory.getLog(ImportSchema.class);
 
     private static final CharSequenceObjHashMap<ImportedColumnType> importedTypeLookup = new CharSequenceObjHashMap<ImportedColumnType>() {{
         put("YYYY-MM-DDThh:mm:ss", ImportedColumnType.DATE_ISO);
@@ -87,7 +88,7 @@ public class ImportSchema {
             parser.parse(lo, len, Integer.MAX_VALUE, new Listener() {
                 @Override
                 public void onError(int line) {
-                    LOGGER.warn("Error on schema line " + line);
+                    LOG.info().$("Error on schema line ").$(line).$();
                 }
 
                 @Override
@@ -99,7 +100,7 @@ public class ImportSchema {
                 @Override
                 public void onFields(int line, CharSequence[] values, int hi) {
                     if (hi < 1) {
-                        LOGGER.warn("Ignoring schema line " + line);
+                        LOG.info().$("Ignoring schema line ").$(line).$();
                         return;
                     }
 
@@ -110,7 +111,7 @@ public class ImportSchema {
                         meta.columnIndex = Numbers.parseInt(values[0].toString().trim());
                         meta.type = ColumnType.valueOf(values[1].toString().toUpperCase().trim());
                         if (meta.type == null) {
-                            LOGGER.error("Invalid column type: " + values[1]);
+                            LOG.error().$("Invalid column type: ").$(values[1]).$();
                             return;
                         }
                         meta.size = meta.type.size();
@@ -118,7 +119,7 @@ public class ImportSchema {
                         if (values[2].length() > 0) {
                             meta.importedType = importedTypeLookup.get(values[2]);
                             if (meta.importedType == null) {
-                                LOGGER.error("Unsupported format: " + values[2]);
+                                LOG.error().$("Unsupported format: ").$(values[2]).$();
                             }
                         }
 
@@ -128,7 +129,7 @@ public class ImportSchema {
 
                         metadata.add(meta);
                     } catch (NumericException e) {
-                        LOGGER.error("Ignoring schema line " + line);
+                        LOG.error().$("Ignoring schema line ").$(line).$();
                     }
 
                 }

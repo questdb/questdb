@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@
 
 package com.nfsdb.misc;
 
-import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.ex.NumericException;
 import com.nfsdb.net.Kqueue;
 
 public final class Net {
@@ -31,10 +31,6 @@ public final class Net {
     public native static int accept(int fd);
 
     public native static boolean bind(int fd, int address, int port);
-
-    public static boolean bind(int fd, CharSequence address, int port) {
-        return bind(fd, parseIPv4(address), port);
-    }
 
     public native static void listen(int fd, int backlog);
 
@@ -58,7 +54,13 @@ public final class Net {
         System.out.println("ok");
     }
 
-    public static int parseIPv4(CharSequence address) {
+    public native static int socketTcp(boolean blocking);
+
+    private static boolean bind(int fd, CharSequence address, int port) {
+        return bind(fd, parseIPv4(address), port);
+    }
+
+    private static int parseIPv4(CharSequence address) {
         int ip = 0;
         int count = 0;
         int lo = 0;
@@ -75,13 +77,9 @@ public final class Net {
                 throw new RuntimeException("bad dog");
             }
 
-            ip = (ip << 8) | Numbers.parseInt(address, lo, address.length());
-
-            return ip;
+            return (ip << 8) | Numbers.parseInt(address, lo, address.length());
         } catch (NumericException e) {
             throw new RuntimeException("bad dog");
         }
     }
-
-    public native static int socketTcp(boolean blocking);
 }

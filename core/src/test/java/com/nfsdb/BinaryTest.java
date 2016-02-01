@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,8 @@
 
 package com.nfsdb;
 
-import com.nfsdb.logging.Logger;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.Rnd;
 import com.nfsdb.model.Band;
 import com.nfsdb.test.tools.AbstractTest;
@@ -34,7 +35,7 @@ import java.util.concurrent.TimeUnit;
 
 public class BinaryTest extends AbstractTest {
 
-    private static final Logger LOGGER = Logger.getLogger(BinaryTest.class);
+    private static final Log LOGGER = LogFactory.getLog(BinaryTest.class);
 
     @Test
     public void testBinaryAppend() throws Exception {
@@ -81,6 +82,6 @@ public class BinaryTest extends AbstractTest {
             writer.append(band);
         }
         writer.commit();
-        LOGGER.info("Appended " + count + " 10k blobs in " + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t) + "ms.");
+        LOGGER.info().$("Appended ").$(count).$(" 10k blobs in ").$(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t)).$("ms.").$();
     }
 }

@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,21 +22,21 @@
 package com.nfsdb.iter;
 
 import com.nfsdb.Journal;
-import com.nfsdb.collections.ObjList;
-import com.nfsdb.collections.ObjectFactory;
-import com.nfsdb.concurrent.RingQueue;
-import com.nfsdb.concurrent.SCSequence;
-import com.nfsdb.concurrent.SPSequence;
-import com.nfsdb.concurrent.Sequence;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.misc.NamedDaemonThreadFactory;
 import com.nfsdb.misc.Rows;
+import com.nfsdb.mp.RingQueue;
+import com.nfsdb.mp.SCSequence;
+import com.nfsdb.mp.SPSequence;
+import com.nfsdb.mp.Sequence;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.std.ObjectFactory;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-public class JournalConcurrentIterator<T> extends com.nfsdb.collections.AbstractImmutableIterator<T>
+public class JournalConcurrentIterator<T> extends com.nfsdb.std.AbstractImmutableIterator<T>
         implements ObjectFactory<JournalConcurrentIterator.Holder<T>>, ConcurrentIterator<T> {
     private final Journal<T> journal;
     private final ObjList<JournalIteratorRange> ranges;

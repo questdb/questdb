@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,10 +21,11 @@
 
 package com.nfsdb;
 
-import com.nfsdb.exceptions.JournalConfigurationException;
-import com.nfsdb.exceptions.JournalRuntimeException;
+import com.nfsdb.ex.JournalConfigurationException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.logging.Logger;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.Files;
 import com.nfsdb.misc.Rnd;
 import com.nfsdb.test.tools.JournalTestFactory;
@@ -37,7 +38,7 @@ public class HugeTableTest {
 
     @ClassRule
     public static final JournalTestFactory factory;
-    private static final Logger LOGGER = Logger.getLogger(HugeTableTest.class);
+    private static final Log LOG = LogFactory.getLog(HugeTableTest.class);
 
     @Test
     public void testLargeSymbolTable() throws Exception {
@@ -57,7 +58,7 @@ public class HugeTableTest {
         }
         w.commit();
 
-        LOGGER.info("Appended 2M symbols in " + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t) + "ms");
+        LOG.info().$("Appended 2M symbols in ").$(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t)).$("ms").$();
     }
 
     public static class Name {

@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,22 +23,22 @@ package com.nfsdb.query;
 
 import com.nfsdb.Journal;
 import com.nfsdb.Partition;
-import com.nfsdb.collections.LongList;
-import com.nfsdb.exceptions.JournalException;
+import com.nfsdb.ex.JournalException;
 import com.nfsdb.misc.Interval;
-import com.nfsdb.storage.BSearchType;
+import com.nfsdb.std.LongList;
+import com.nfsdb.store.BSearchType;
 
 public abstract class AbstractResultSetBuilder<T, X> {
     protected final LongList result = new LongList();
     protected Partition<T> partition;
-    protected Journal<T> journal;
+    Journal<T> journal;
     private Interval interval = null;
 
-    protected AbstractResultSetBuilder(Interval interval) {
+    AbstractResultSetBuilder(Interval interval) {
         this.interval = interval;
     }
 
-    protected AbstractResultSetBuilder() {
+    AbstractResultSetBuilder() {
     }
 
     public Accept accept(Partition<T> partition) throws JournalException {

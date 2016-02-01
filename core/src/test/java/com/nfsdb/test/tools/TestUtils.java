@@ -4,7 +4,7 @@
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
  *
- * Copyright (c) 2014-2015. The NFSdb project and its contributors.
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,10 +25,8 @@ import com.nfsdb.Journal;
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.Partition;
-import com.nfsdb.collections.IntList;
-import com.nfsdb.collections.LongList;
-import com.nfsdb.exceptions.JournalException;
-import com.nfsdb.exceptions.NumericException;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.NumericException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.iter.JournalIterator;
@@ -40,9 +38,11 @@ import com.nfsdb.printer.appender.AssertingAppender;
 import com.nfsdb.printer.converter.DateConverter;
 import com.nfsdb.ql.model.ExprNode;
 import com.nfsdb.query.ResultSet;
-import com.nfsdb.storage.ColumnType;
-import com.nfsdb.storage.KVIndex;
-import com.nfsdb.storage.SymbolTable;
+import com.nfsdb.std.IntList;
+import com.nfsdb.std.LongList;
+import com.nfsdb.store.ColumnType;
+import com.nfsdb.store.KVIndex;
+import com.nfsdb.store.SymbolTable;
 import org.junit.Assert;
 
 import java.io.File;
@@ -282,20 +282,6 @@ public final class TestUtils {
         }
     }
 
-    public static void configure(JournalPrinter p, JournalMetadata meta) {
-        p.types(meta.getModelClass());
-
-        for (int i = 0; i < meta.getColumnCount(); i++) {
-            ColumnMetadata m = meta.getColumn(i);
-            if (m.offset != 0) {
-                JournalPrinter.Field f = p.f(m.name);
-                if (m.type == ColumnType.DATE) {
-                    f.c(new DateConverter(p));
-                }
-            }
-        }
-    }
-
     public static void generateQuoteData(JournalWriter<Quote> w, int count) throws JournalException, NumericException {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
         long timestamps[] = {Dates.parseDateTime("2013-09-04T10:00:00.000Z"), Dates.parseDateTime("2013-10-04T10:00:00.000Z"), Dates.parseDateTime("2013-11-04T10:00:00.000Z")};
@@ -437,6 +423,20 @@ public final class TestUtils {
                     result = toRpn(node.args.getQuick(i)) + result;
                 }
                 return result + node.token;
+        }
+    }
+
+    private static void configure(JournalPrinter p, JournalMetadata meta) {
+        p.types(meta.getModelClass());
+
+        for (int i = 0; i < meta.getColumnCount(); i++) {
+            ColumnMetadata m = meta.getColumn(i);
+            if (m.offset != 0) {
+                JournalPrinter.Field f = p.f(m.name);
+                if (m.type == ColumnType.DATE) {
+                    f.c(new DateConverter(p));
+                }
+            }
         }
     }
 
