@@ -60,7 +60,7 @@ public final class Os {
         }
 
         try {
-            File tempLib;
+            File tempLib = null;
             try {
                 tempLib = File.createTempFile(lib, ".so");
                 // copy to tempLib
@@ -78,7 +78,7 @@ public final class Os {
                 }
                 System.load(tempLib.getAbsolutePath());
             } catch (IOException e) {
-                throw new Error("Internal error: cannot unpack " + lib, e);
+                throw new Error("Internal error: cannot unpack " + tempLib, e);
             }
         } finally {
             Misc.free(is);
