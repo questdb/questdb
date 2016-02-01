@@ -23,6 +23,8 @@ package com.nfsdb.net.http;
 
 import com.nfsdb.ex.HeadersTooLargeException;
 import com.nfsdb.ex.MalformedHeaderException;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Misc;
 import com.nfsdb.misc.Numbers;
@@ -36,6 +38,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.Closeable;
 
 public class RequestHeaderBuffer implements Mutable, Closeable {
+    private static final Log LOG = LogFactory.getLog(RequestHeaderBuffer.class);
     private final ObjectPool<DirectByteCharSequence> pool;
     private final CharSequenceObjHashMap<CharSequence> headers = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<CharSequence> urlParams = new CharSequenceObjHashMap<>();
@@ -186,6 +189,7 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
     private static DirectByteCharSequence unquote(DirectByteCharSequence that) throws MalformedHeaderException {
         int len = that.length();
         if (len == 0) {
+            LOG.error().$("Zero-length mandatory field").$();
             // zero length mandatory field
             throw MalformedHeaderException.INSTANCE;
         }
@@ -194,6 +198,7 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
             if (that.charAt(len - 1) == '"') {
                 return that.of(that.getLo() + 1, that.getHi() - 1);
             } else {
+                LOG.error().$("Unclosed quote").$();
                 // unclosed quote
                 throw MalformedHeaderException.INSTANCE;
             }
@@ -233,6 +238,7 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
                 }
 
                 if (name == null) {
+                    LOG.error().$("Malformed content-disposition header").$();
                     throw MalformedHeaderException.INSTANCE;
                 }
 
@@ -291,6 +297,7 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
                 }
 
                 if (name == null) {
+                    LOG.error().$("Malformed content-type header").$();
                     throw MalformedHeaderException.INSTANCE;
                 }
 

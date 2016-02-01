@@ -36,6 +36,8 @@ public class IOHttpJob implements Job {
     // todo: extract config
     public static final int SO_WRITE_RETRY_COUNT = 10;
     private final static Log ACCESS = LogFactory.getLog("access");
+    private final static Log LOG = LogFactory.getLog(IOHttpJob.class);
+
     private final RingQueue<IOEvent> ioQueue;
     private final Sequence ioSequence;
     private final IOLoopJob loop;
@@ -128,21 +130,21 @@ public class IOHttpJob implements Job {
             context.clear();
         } catch (HeadersTooLargeException ignored) {
             silent(sr, 431, null);
+            LOG.info().$("Headers too large").$();
             status = ChannelStatus.READ;
         } catch (MalformedHeaderException | DisconnectedChannelException e) {
             status = ChannelStatus.DISCONNECTED;
         } catch (SlowReadableChannelException e) {
-            System.out.println("slow read");
             status = ChannelStatus.READ;
         } catch (SlowWritableChannelException e) {
             status = ChannelStatus.WRITE;
         } catch (IOException e) {
             status = ChannelStatus.DISCONNECTED;
-            e.printStackTrace();
+            LOG.error().$("Unexpected IOException: ").$(e).$();
         } catch (Throwable e) {
             silent(sr, 500, e.getMessage());
             status = ChannelStatus.DISCONNECTED;
-            e.printStackTrace();
+            LOG.error().$("Internal error: ").$(e).$();
         }
 
         if (status != ChannelStatus.DISCONNECTED) {

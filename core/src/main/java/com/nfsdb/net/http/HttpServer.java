@@ -23,6 +23,8 @@ package com.nfsdb.net.http;
 
 import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.iter.clock.MilliClock;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.mp.*;
 import com.nfsdb.std.ObjHashSet;
 import com.nfsdb.std.ObjList;
@@ -36,6 +38,7 @@ import java.nio.channels.ServerSocketChannel;
 import java.util.concurrent.CountDownLatch;
 
 public class HttpServer {
+    private static final Log LOG = LogFactory.getLog(HttpServer.class);
     private final static int ioQueueSize = 1024;
     private final InetSocketAddress address;
     private final ObjList<Worker> workers;
@@ -133,7 +136,7 @@ public class HttpServer {
             publicSelectedKeys.set(this.selector, set);
 
         } catch (NoSuchFieldException | IllegalAccessException | ClassNotFoundException e) {
-            e.printStackTrace();
+            LOG.error().$("Failed to instrument selector: ").$(e).$();
         }
     }
 }

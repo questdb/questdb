@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.log;
 
@@ -118,7 +118,6 @@ public class LogFactory implements Closeable {
         for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
             ScopeConfiguration conf = scopeConfigs.get(i);
             conf.bind(jobs, queueDepth, recordLength);
-
         }
 
         scopeConfigMap.sortKeys(LDC);
@@ -315,6 +314,13 @@ public class LogFactory implements Closeable {
         });
     }
 
+    /**
+     * Converts fully qualified class name into an abbreviated form:
+     * com.nfsdb.mp.Sequence -> c.n.m.Sequence
+     *
+     * @param key typically class name
+     * @return abbreviated form of key
+     */
     private static CharSequence compressScope(CharSequence key) {
         StringBuilder builder = new StringBuilder();
         char c = 0;
@@ -433,6 +439,41 @@ public class LogFactory implements Closeable {
             }
         }
 
+        /**
+         * Aggregates channels into set of queues. Consumer interest is represented by
+         * level, where consumer sets bits corresponding to channel indexes is it interested in.
+         * <p/>
+         * Consumer 1 requires channels D & E. So its interest looks like {1,0,1}
+         * Consumer 2 requires channel I, so its interest is {0,1,0}
+         * <p/>
+         * This method combines these interests as follows:
+         * <p/>
+         * channels = {1,2,1}
+         * <p/>
+         * which means that there will be need to 2 queues (1 and 2) and that Consumer 1
+         * will be using queue 1 and consumer 2 will be using queue 2.
+         * <p/>
+         * More complex scenario where consumer interests overlap, for example:
+         * <p/>
+         * consumer 1 {1,1,0}
+         * consumer 2 {0,1,1}
+         * <p/>
+         * these interests will be combined as follows:
+         * <p/>
+         * channels = {1,1,1}
+         * <p/>
+         * which means that both consumers will be sharing same queue and they will have to
+         * filter applicable messages as they get them.
+         * <p/>
+         * Algorithm iterates over set of bits in "level" twice. First pass is to establish
+         * minimum number of channel[] element out of those entries where bit in level is set.
+         * Additionally this pass will set channel[] elements to current consumer index where
+         * channel[] element is zero.
+         * <p/>
+         * Second pass sets channel[] element to min value found on first pass.
+         *
+         * @param conf LogWriterConfig
+         */
         private void add(LogWriterConfig conf) {
             int mask = conf.getLevel();
             int min = Integer.MAX_VALUE;

@@ -23,6 +23,8 @@ package com.nfsdb.net.http;
 
 import com.nfsdb.ex.HeadersTooLargeException;
 import com.nfsdb.ex.MalformedHeaderException;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.std.DirectByteCharSequence;
 import com.nfsdb.std.Mutable;
@@ -34,6 +36,8 @@ import java.io.IOException;
 
 @SuppressFBWarnings("SF_SWITCH_FALLTHROUGH")
 public class MultipartParser implements Closeable, Mutable {
+
+    private final Log LOG = LogFactory.getLog(MultipartParser.class);
 
     private final RequestHeaderBuffer hb;
     private final DirectByteCharSequence bytes = new DirectByteCharSequence();
@@ -92,6 +96,7 @@ public class MultipartParser implements Closeable, Mutable {
                             ptr += consumedBoundaryLen;
                             break;
                         default:
+                            LOG.error().$("Malformed start boundary").$();
                             throw MalformedHeaderException.INSTANCE;
                     }
                     break;
