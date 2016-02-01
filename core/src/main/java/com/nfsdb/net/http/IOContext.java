@@ -73,6 +73,7 @@ public class IOContext implements Closeable, Mutable {
     public long skip;
     public long stop;
     public Record current;
+    public boolean includeCount;
     // static sending fields
     private RandomAccessFile raf;
 
