@@ -21,6 +21,7 @@
 
 package com.nfsdb.log;
 
+import com.nfsdb.ex.LogError;
 import com.nfsdb.misc.Files;
 import com.nfsdb.misc.Misc;
 import com.nfsdb.mp.RingQueue;

@@ -13,7 +13,7 @@ set(SOURCE_FILES
         src/main/c/share/zip.h
         src/main/c/share/net.h
         src/main/c/share/zip.c
-        )
+        src/main/c/share/os.h)
 
 # JNI includes
 include_directories(${JAVA_HOME}/include/)
@@ -36,7 +36,7 @@ if (WIN32)
     set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/windows)
     set(SOURCE_FILES ${SOURCE_FILES}
             src/main/c/windows/files.c
-            )
+            src/main/c/windows/os.c)
 else ()
     set(SOURCE_FILES
             ${SOURCE_FILES}
