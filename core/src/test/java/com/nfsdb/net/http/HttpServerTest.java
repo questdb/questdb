@@ -67,9 +67,7 @@ import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSession;
 import java.io.*;
-import java.net.InetSocketAddress;
-import java.net.StandardSocketOptions;
-import java.net.URLEncoder;
+import java.net.*;
 import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
 import java.security.cert.CertificateException;
@@ -81,6 +79,15 @@ import java.util.concurrent.locks.LockSupport;
 
 public class HttpServerTest extends AbstractJournalTest {
 
+    private final static String request = "GET /imp?x=1&z=2 HTTP/1.1\r\n" +
+            "Host: localhost:80\r\n" +
+            "Connection: keep-alive\r\n" +
+            "Cache-Control: max-age=0\r\n" +
+            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+            "User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+            "Accept-Language: en-US,en;q=0.8\r\n" +
+            "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+            "\r\n";
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
 
@@ -181,15 +188,6 @@ public class HttpServerTest extends AbstractJournalTest {
         try (SocketChannel channel = openChannel("localhost", 9000, 5000)) {
             ByteBuffer buf = ByteBuffer.allocate(1024);
             ByteBuffer out = ByteBuffer.allocate(1024);
-            final String request = "GET /imp?x=1&z=2 HTTP/1.1\r\n" +
-                    "Host: localhost:80\r\n" +
-                    "Connection: keep-alive\r\n" +
-                    "Cache-Control: max-age=0\r\n" +
-                    "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
-                    "User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
-                    "Accept-Language: en-US,en;q=0.8\r\n" +
-                    "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
-                    "\r\n";
 
             int n = 5;
             for (int i = 0; i < n; i++) {
@@ -232,6 +230,41 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
+    public void testIdleTimeout() throws Exception {
+        final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/nfsdb.conf"));
+        final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
+        // 500ms timeout
+        configuration.setHttpTimeout(500);
+        configuration.getSslConfig().setSecure(false);
+        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
+            setDefaultHandler(new NativeStaticContentHandler(configuration.getHttpPublic(), mimeTypes));
+
+        }});
+        server.start();
+
+        try {
+            Socket socket = new Socket(InetAddress.getLocalHost(), 9000);
+            OutputStream os = socket.getOutputStream();
+            Thread.sleep(600);
+
+            try {
+                os.write(request.getBytes());
+
+                for (int i = 0; i < 4096; i++) {
+                    os.write('c');
+                }
+                os.flush();
+
+                Assert.fail("Expected exception due to connection timeout");
+            } catch (SocketException ignored) {
+
+            }
+        } finally {
+            server.halt();
+        }
+    }
+
+    @Test
     public void testImportUnknownFormat() throws Exception {
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
             put("/imp", new ImportHandler(factory));
@@ -265,7 +298,7 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testJsonEncodeControlChars() throws Exception {
         java.lang.StringBuilder allChars = new java.lang.StringBuilder();
-        for(char c = Character.MIN_VALUE;  c < 0xD800; c++) { //
+        for (char c = Character.MIN_VALUE; c < 0xD800; c++) { //
             allChars.append(c);
         }
 
@@ -279,7 +312,7 @@ public class HttpServerTest extends AbstractJournalTest {
             String query = "select id from tab \n limit 1";
             QueryResponse queryResponse = download(query);
             Assert.assertEquals(query, queryResponse.query);
-            for(int i = 0; i < allCharString.length(); i++) {
+            for (int i = 0; i < allCharString.length(); i++) {
                 Assert.assertTrue("result len is less than " + i, i < queryResponse.result[0].id.length());
                 Assert.assertEquals(i + "", allCharString.charAt(i), queryResponse.result[0].id.charAt(i));
             }
@@ -386,6 +419,30 @@ public class HttpServerTest extends AbstractJournalTest {
         configuration.getSslConfig().setKeyStore(new FileInputStream(resourceFile("/keystore/singlekey.ks")), "changeit");
         configuration.setHttpBufRespContent(sz + 4);
         TestUtils.assertEquals(generateLarge(count, sz), downloadChunked(configuration, count, sz, true, true));
+    }
+
+    @Test
+    public void testMaxConnections() throws Exception {
+        final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/nfsdb.conf"));
+        final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
+        configuration.setHttpMaxConnections(1);
+        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
+            setDefaultHandler(new NativeStaticContentHandler(configuration.getHttpPublic(), mimeTypes));
+
+        }});
+        server.start();
+
+        try {
+            Assert.assertNotNull(clientBuilder(true).build().execute(new HttpGet("https://localhost:9000/upload.html")));
+            try {
+                clientBuilder(true).build().execute(new HttpGet("https://localhost:9000/upload.html"));
+                Assert.fail("Expected server to reject connection");
+            } catch (Exception ignored) {
+
+            }
+        } finally {
+            server.halt();
+        }
     }
 
     @Test
@@ -712,7 +769,7 @@ public class HttpServerTest extends AbstractJournalTest {
     private QueryResponse download(String queryUrl, int limitFrom, int limitTo) throws Exception {
         File f = temp.newFile();
         String url = "http://localhost:9000/js?query=" + URLEncoder.encode(queryUrl, "UTF-8");
-        if (limitFrom >=0) {
+        if (limitFrom >= 0) {
             url += "&limit=" + limitFrom;
         }
         if (limitTo >= 0) {
@@ -795,7 +852,7 @@ public class HttpServerTest extends AbstractJournalTest {
         record.z = z;
         record.w = w;
         record.timestamp = timestamp;
-        generateJournal(new QueryResponse.Tab[] { record }, 1000);
+        generateJournal(new QueryResponse.Tab[]{record}, 1000);
     }
 
     private void generateJournal() throws JournalException, NumericException {
@@ -825,11 +882,10 @@ public class HttpServerTest extends AbstractJournalTest {
             JournalEntryWriter ew = w.entryWriter();
             ew.putStr(0, recs.length > i ? recs[i].id : "id" + i);
             ew.putDouble(1, recs.length > i ? recs[i].x : rnd.nextDouble());
-            if (recs.length > i){
+            if (recs.length > i) {
                 ew.putDouble(2, recs[i].y);
                 ew.putLong(3, recs[i].z);
-            }
-            else {
+            } else {
                 if (rnd.nextPositiveInt() % 10 == 0) {
                     ew.putNull(2);
                 } else {

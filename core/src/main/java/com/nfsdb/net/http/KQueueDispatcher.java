@@ -175,6 +175,7 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
         connectionCount++;
 
         if (connectionCount > maxConnections) {
+            LOG.info().$("Too many connections, kicking out ").$(_fd).$();
             Files.close(_fd);
             connectionCount--;
             return -1;

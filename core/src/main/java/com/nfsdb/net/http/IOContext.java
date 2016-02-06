@@ -134,7 +134,7 @@ public class IOContext implements Closeable, Mutable {
         importer = Misc.free(importer);
         if (fd != -1) {
             if (Files.close(fd) != 0) {
-                LOG.error().$("Could not close file");
+                LOG.error().$("Could not close file").$();
             }
         }
     }

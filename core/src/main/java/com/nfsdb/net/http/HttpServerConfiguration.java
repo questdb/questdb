@@ -202,6 +202,10 @@ public class HttpServerConfiguration {
         return httpMaxConnections;
     }
 
+    public void setHttpMaxConnections(int httpMaxConnections) {
+        this.httpMaxConnections = httpMaxConnections;
+    }
+
     public int getHttpPort() {
         return httpPort;
     }
@@ -216,6 +220,10 @@ public class HttpServerConfiguration {
 
     public int getHttpTimeout() {
         return httpTimeout;
+    }
+
+    public void setHttpTimeout(int httpTimeout) {
+        this.httpTimeout = httpTimeout;
     }
 
     public File getMimeTypes() {
