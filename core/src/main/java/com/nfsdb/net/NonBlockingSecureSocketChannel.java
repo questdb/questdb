@@ -22,7 +22,6 @@
 package com.nfsdb.net;
 
 import com.nfsdb.ex.DisconnectedChannelException;
-import com.nfsdb.ex.JournalNetworkException;
 import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.ex.SlowReadableChannelException;
 import com.nfsdb.log.Log;
@@ -35,23 +34,22 @@ import javax.net.ssl.*;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.channels.ByteChannel;
 
-public class NonBlockingSecureSocketChannel<T extends ByteChannel> implements WrappedByteChannel<T> {
+public class NonBlockingSecureSocketChannel implements NetworkChannel {
 
     private static final Log LOG = LogFactory.getLog(NonBlockingSecureSocketChannel.class);
 
-    private final T channel;
+    private final NetworkChannel channel;
     private final SSLEngine engine;
     private final ByteBuffer in;
     private final ByteBuffer out;
     private final int sslDataLimit;
+    private final ByteBuffer unwrapped;
     private boolean inData = false;
     private SSLEngineResult.HandshakeStatus handshakeStatus = SSLEngineResult.HandshakeStatus.NEED_WRAP;
-    private ByteBuffer unwrapped;
     private ReadState readState = ReadState.READ_CLEAN_CHANNEL;
 
-    public NonBlockingSecureSocketChannel(T channel, SslConfig sslConfig) throws JournalNetworkException {
+    public NonBlockingSecureSocketChannel(NetworkChannel channel, SslConfig sslConfig) {
         this.channel = channel;
         SSLContext sslc = sslConfig.getSslContext();
         this.engine = sslc.createSSLEngine();
@@ -65,8 +63,9 @@ public class NonBlockingSecureSocketChannel<T extends ByteChannel> implements Wr
         unwrapped = ByteBuffer.allocateDirect(sslDataLimit * 2).order(ByteOrder.BIG_ENDIAN);
     }
 
-    public T getChannel() {
-        return channel;
+    @Override
+    public long getFd() {
+        return channel.getFd();
     }
 
     @Override

@@ -21,15 +21,10 @@
 
 package com.nfsdb.net.http;
 
-import com.nfsdb.std.ObjectFactory;
+import com.nfsdb.mp.Job;
 
-public class IOEvent {
-    public static final ObjectFactory<IOEvent> FACTORY = new ObjectFactory<IOEvent>() {
-        @Override
-        public IOEvent newInstance() {
-            return new IOEvent();
-        }
-    };
-    public ChannelStatus status;
-    public IOContext context;
+import java.io.Closeable;
+
+interface IODispatcher extends Closeable, Job {
+    void registerChannel(IOContext context, ChannelStatus status);
 }

@@ -89,6 +89,14 @@ JNIEXPORT jshort JNICALL Java_com_nfsdb_net_Kqueue_getEvOneshot
 JNIEXPORT jshort JNICALL Java_com_nfsdb_net_Kqueue_getFlagsOffset
         (JNIEnv *, jclass);
 
+
+/*
+ * Class:     com_nfsdb_net_Kqueue
+ * Method:    getDataOffset
+ * Signature: ()S
+ */
+JNIEXPORT jshort JNICALL Java_com_nfsdb_net_Kqueue_getDataOffset
+        (JNIEnv *, jclass);
 #ifdef __cplusplus
 }
 #endif

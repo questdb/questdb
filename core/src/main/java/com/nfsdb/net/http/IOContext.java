@@ -32,7 +32,7 @@ import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.Files;
 import com.nfsdb.misc.Misc;
 import com.nfsdb.mp.WorkerContext;
-import com.nfsdb.net.WrappedByteChannel;
+import com.nfsdb.net.NetworkChannel;
 import com.nfsdb.ql.Record;
 import com.nfsdb.std.AssociativeCache;
 import com.nfsdb.std.FlyweightCharSequence;
@@ -42,13 +42,12 @@ import com.nfsdb.store.PlainFile;
 
 import java.io.Closeable;
 import java.io.RandomAccessFile;
-import java.nio.channels.SocketChannel;
 import java.util.Iterator;
 
 public class IOContext implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(IOContext.class);
 
-    public final WrappedByteChannel<SocketChannel> channel;
+    public final NetworkChannel channel;
     public final Request request;
     public final FlyweightCharSequence ext = new FlyweightCharSequence();
     private final Response response;
@@ -76,7 +75,7 @@ public class IOContext implements Closeable, Mutable {
     // static sending fields
     private RandomAccessFile raf;
 
-    public IOContext(WrappedByteChannel<SocketChannel> channel, Clock clock, int reqHeaderSize, int reqContentSize, int reqMultipartHeaderSize, int respHeaderSize, int respContentSize) {
+    public IOContext(NetworkChannel channel, Clock clock, int reqHeaderSize, int reqContentSize, int reqMultipartHeaderSize, int respHeaderSize, int respContentSize) {
         this.channel = channel;
         this.request = new Request(channel, reqHeaderSize, reqContentSize, reqMultipartHeaderSize);
         this.response = new Response(channel, respHeaderSize, respContentSize, clock);

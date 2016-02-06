@@ -25,6 +25,9 @@ extern "C" {
 JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Os_getPid
         (JNIEnv *, jclass);
 
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Os_errno
+        (JNIEnv *, jclass);
+
 #ifdef __cplusplus
 }
 #endif

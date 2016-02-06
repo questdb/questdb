@@ -35,7 +35,7 @@ public class ExprParserTest {
     private final ExprParser parser = new ExprParser(exprNodeObjectPool);
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         exprNodeObjectPool.clear();
     }
 

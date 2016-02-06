@@ -23,22 +23,15 @@ package com.nfsdb.net.http;
 
 import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.iter.clock.MilliClock;
-import com.nfsdb.log.Log;
-import com.nfsdb.log.LogFactory;
 import com.nfsdb.mp.*;
 import com.nfsdb.std.ObjHashSet;
 import com.nfsdb.std.ObjList;
 
 import java.io.IOException;
-import java.lang.reflect.Field;
 import java.net.InetSocketAddress;
-import java.nio.channels.SelectionKey;
-import java.nio.channels.Selector;
-import java.nio.channels.ServerSocketChannel;
 import java.util.concurrent.CountDownLatch;
 
 public class HttpServer {
-    private static final Log LOG = LogFactory.getLog(HttpServer.class);
     private final static int ioQueueSize = 1024;
     private final InetSocketAddress address;
     private final ObjList<Worker> workers;
@@ -47,10 +40,9 @@ public class HttpServer {
     private final CountDownLatch startComplete = new CountDownLatch(1);
     private final UrlMatcher urlMatcher;
     private final HttpServerConfiguration configuration;
-    private ServerSocketChannel channel;
-    private Selector selector;
     private volatile boolean running = true;
     private Clock clock = MilliClock.INSTANCE;
+    private IODispatcher dispatcher;
 
     public HttpServer(HttpServerConfiguration configuration, UrlMatcher urlMatcher) {
         this.address = new InetSocketAddress(configuration.getHttpPort());
@@ -69,8 +61,7 @@ public class HttpServer {
                 workers.getQuick(i).halt();
             }
             haltLatch.await();
-            selector.close();
-            channel.close();
+            dispatcher.close();
         }
     }
 
@@ -78,30 +69,23 @@ public class HttpServer {
         this.clock = clock;
     }
 
-    public void start() throws IOException {
+    public void start() {
         start(null);
     }
 
-    public void start(ObjHashSet<? extends Job> extraJobs) throws IOException {
+    public void start(ObjHashSet<? extends Job> extraJobs) {
         this.running = true;
-        this.channel = ServerSocketChannel.open();
-        this.channel.bind(address);
-        this.channel.configureBlocking(false);
-        this.selector = Selector.open();
-
-        instrumentSelector();
-
         RingQueue<IOEvent> ioQueue = new RingQueue<>(IOEvent.FACTORY, ioQueueSize);
         SPSequence ioPubSequence = new SPSequence(ioQueueSize);
         MCSequence ioSubSequence = new MCSequence(ioQueueSize, null);
         ioPubSequence.followedBy(ioSubSequence);
         ioSubSequence.followedBy(ioPubSequence);
 
-        IOLoopJob ioLoop = new IOLoopJob(selector, channel.register(selector, SelectionKey.OP_ACCEPT), ioQueue, ioPubSequence, clock, configuration);
-        IOHttpJob ioHttp = new IOHttpJob(ioQueue, ioSubSequence, ioLoop, urlMatcher);
+        this.dispatcher = new KQueueDispatcher("0.0.0.0", address.getPort(), ioQueue, ioPubSequence, clock, configuration);
+        IOHttpJob ioHttp = new IOHttpJob(ioQueue, ioSubSequence, this.dispatcher, urlMatcher);
 
         ObjHashSet<Job> jobs = new ObjHashSet<>();
-        jobs.add(ioLoop);
+        jobs.add(this.dispatcher);
         jobs.add(ioHttp);
         if (extraJobs != null) {
             jobs.addAll(extraJobs);
@@ -114,29 +98,5 @@ public class HttpServer {
         }
 
         startComplete.countDown();
-    }
-
-    private void instrumentSelector() {
-        try {
-            Class<?> impl = Class.forName("sun.nio.ch.SelectorImpl", false, ClassLoader.getSystemClassLoader());
-
-            if (!impl.isAssignableFrom(selector.getClass())) {
-                return;
-            }
-
-            Field selectedKeys = impl.getDeclaredField("selectedKeys");
-            Field publicSelectedKeys = impl.getDeclaredField("publicSelectedKeys");
-
-            selectedKeys.setAccessible(true);
-            publicSelectedKeys.setAccessible(true);
-
-            ObjHashSet<SelectionKey> set = new ObjHashSet<>();
-
-            selectedKeys.set(this.selector, set);
-            publicSelectedKeys.set(this.selector, set);
-
-        } catch (NoSuchFieldException | IllegalAccessException | ClassNotFoundException e) {
-            LOG.error().$("Failed to instrument selector: ").$(e).$();
-        }
     }
 }

@@ -185,6 +185,7 @@ public final class ByteBuffers {
 
             // disconnected
             if (result == -1) {
+                System.out.println("Disconnected code");
                 throw DisconnectedChannelException.INSTANCE;
             }
 

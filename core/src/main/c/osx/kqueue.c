@@ -29,6 +29,11 @@ JNIEXPORT jshort JNICALL Java_com_nfsdb_net_Kqueue_getFilterOffset
     return (short) offsetof(struct kevent, filter);
 }
 
+JNIEXPORT jshort JNICALL Java_com_nfsdb_net_Kqueue_getDataOffset
+        (JNIEnv *e, jclass cl) {
+    return (short) offsetof(struct kevent, udata);
+}
+
 JNIEXPORT jshort JNICALL Java_com_nfsdb_net_Kqueue_getFlagsOffset
         (JNIEnv *e, jclass cl) {
     return (short) offsetof(struct kevent, flags);

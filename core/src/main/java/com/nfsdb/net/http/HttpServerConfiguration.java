@@ -46,6 +46,8 @@ public class HttpServerConfiguration {
     private int httpBufRespHeader = 1024;
     private int httpBufRespContent = 1024 * 1024;
     private int httpThreads = 2;
+    private int httpTimeout = 10000;
+    private int httpMaxConnections = 128;
     private File dbPath = new File("db");
     private File mimeTypes = new File("conf/mime.types");
     private File httpPublic = new File("public");
@@ -73,6 +75,14 @@ public class HttpServerConfiguration {
 
         if ((n = parseInt(props, "http.threads")) > -1) {
             this.httpThreads = n;
+        }
+
+        if ((n = parseInt(props, "http.timeout")) > -1) {
+            this.httpTimeout = n;
+        }
+
+        if ((n = parseInt(props, "http.max.connections")) > -1) {
+            this.httpMaxConnections = n;
         }
 
         if ((n = parseSize(props, "http.buf.req.header")) > -1) {
@@ -191,6 +201,10 @@ public class HttpServerConfiguration {
         return httpBufRespHeader;
     }
 
+    public int getHttpMaxConnections() {
+        return httpMaxConnections;
+    }
+
     public int getHttpPort() {
         return httpPort;
     }
@@ -201,6 +215,10 @@ public class HttpServerConfiguration {
 
     public int getHttpThreads() {
         return httpThreads;
+    }
+
+    public int getHttpTimeout() {
+        return httpTimeout;
     }
 
     public File getMimeTypes() {

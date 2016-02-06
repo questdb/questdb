@@ -19,17 +19,10 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net.http;
+package com.nfsdb.net;
 
-import com.nfsdb.std.ObjectFactory;
+import java.nio.channels.ByteChannel;
 
-public class IOEvent {
-    public static final ObjectFactory<IOEvent> FACTORY = new ObjectFactory<IOEvent>() {
-        @Override
-        public IOEvent newInstance() {
-            return new IOEvent();
-        }
-    };
-    public ChannelStatus status;
-    public IOContext context;
+public interface NetworkChannel extends ByteChannel {
+    long getFd();
 }

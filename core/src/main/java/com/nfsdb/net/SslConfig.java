@@ -22,6 +22,7 @@
 package com.nfsdb.net;
 
 import com.nfsdb.ex.JournalNetworkException;
+import com.nfsdb.ex.NetworkError;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import javax.net.ssl.KeyManagerFactory;
@@ -50,7 +51,7 @@ public class SslConfig {
     private boolean client = false;
     private boolean trustAll = false;
 
-    public SSLContext getSslContext() throws JournalNetworkException {
+    public SSLContext getSslContext() {
         if (sslContext == null) {
             sslContext = createSSLContext();
         }
@@ -77,7 +78,7 @@ public class SslConfig {
         return secure;
     }
 
-    public void setSecure(boolean secure) {
+    public void setSecure(boolean secure) throws JournalNetworkException {
         this.secure = secure;
     }
 
@@ -97,7 +98,7 @@ public class SslConfig {
         setTrustStore("JKS", stream, password, null);
     }
 
-    private SSLContext createSSLContext() throws JournalNetworkException {
+    private SSLContext createSSLContext() {
         try {
             SSLContext sslContext = SSLContext.getInstance("TLS");
             SecureRandom sr = new SecureRandom();
@@ -106,7 +107,7 @@ public class SslConfig {
                     , trustManagerFactory != null ? trustManagerFactory.getTrustManagers() : (trustAll ? allowAllTrustManagers : null), sr);
             return sslContext;
         } catch (Exception e) {
-            throw new JournalNetworkException(e);
+            throw new NetworkError(e);
         }
     }
 

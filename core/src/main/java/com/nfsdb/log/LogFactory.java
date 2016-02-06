@@ -282,6 +282,10 @@ public class LogFactory implements Closeable {
             }
         }
 
+        if (System.getProperty("dbg") != null) {
+            level = level | LogLevel.LOG_LEVEL_DEBUG;
+        }
+
         return new LogWriterConfig(scope == null ? EMPTY_STR : scope, level, new LogWriterFactory() {
             @Override
             public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq, int level) {
@@ -350,7 +354,11 @@ public class LogFactory implements Closeable {
     }
 
     private void configureDefaultWriter() {
-        add(new LogWriterConfig(LogLevel.LOG_LEVEL_INFO | LogLevel.LOG_LEVEL_ERROR, new LogWriterFactory() {
+        int level = LogLevel.LOG_LEVEL_INFO | LogLevel.LOG_LEVEL_ERROR;
+        if (System.getProperty("dbg") != null) {
+            level = level | LogLevel.LOG_LEVEL_DEBUG;
+        }
+        add(new LogWriterConfig(level, new LogWriterFactory() {
             @Override
             public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq, int level) {
                 return new LogConsoleWriter(ring, seq, level);

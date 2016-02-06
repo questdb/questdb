@@ -43,12 +43,12 @@ public class SecureSocketChannel implements WrappedByteChannel {
     private final ByteBuffer outBuf;
     private final int sslDataLimit;
     private final boolean client;
+    private final ByteBuffer swapBuf;
     private boolean inData = false;
     private SSLEngineResult.HandshakeStatus handshakeStatus = SSLEngineResult.HandshakeStatus.NEED_WRAP;
-    private ByteBuffer swapBuf;
     private boolean fillInBuf = true;
 
-    public SecureSocketChannel(SocketChannel socketChannel, SslConfig sslConfig) throws JournalNetworkException {
+    public SecureSocketChannel(SocketChannel socketChannel, SslConfig sslConfig) {
         this.socketChannel = socketChannel;
         SSLContext sslc = sslConfig.getSslContext();
         this.engine = sslc.createSSLEngine();

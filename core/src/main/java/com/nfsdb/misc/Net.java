@@ -21,8 +21,9 @@
 
 package com.nfsdb.misc;
 
+import com.nfsdb.ex.NetworkError;
 import com.nfsdb.ex.NumericException;
-import com.nfsdb.net.Kqueue;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public final class Net {
     private Net() {
@@ -32,34 +33,21 @@ public final class Net {
 
     public native static boolean bind(int fd, int address, int port);
 
-    public native static void listen(int fd, int backlog);
-
-    public static void main(String[] args) {
-        Os.init();
-        int fd = socketTcp(false);
-        System.out.println(fd);
-        System.out.println(bind(fd, "127.0.0.1", 5000));
-//        System.out.println(accept(fd));
-
-        listen(fd, 1024);
-        Kqueue kqueue = new Kqueue();
-        kqueue.readFD(0, fd);
-        System.out.println(kqueue.register(1));
-
-        System.out.println(kqueue.getFlags(0));
-
-        while (kqueue.poll() == 0) {
-            Thread.yield();
-        }
-        System.out.println("ok");
-    }
-
-    public native static int socketTcp(boolean blocking);
-
-    private static boolean bind(int fd, CharSequence address, int port) {
+    public static boolean bind(int fd, CharSequence address, int port) {
         return bind(fd, parseIPv4(address), port);
     }
 
+    public static native int configureNonBlocking(long fd);
+
+    public native static void listen(int fd, int backlog);
+
+    public static native int recv(long fd, long ptr, int len);
+
+    public static native int send(long fd, long ptr, int len);
+
+    public native static int socketTcp(boolean blocking);
+
+    @SuppressFBWarnings("LEST_LOST_EXCEPTION_STACK_TRACE")
     private static int parseIPv4(CharSequence address) {
         int ip = 0;
         int count = 0;
@@ -74,12 +62,12 @@ public final class Net {
             }
 
             if (count != 3) {
-                throw new RuntimeException("bad dog");
+                throw new NetworkError("Invalid ip address: " + address);
             }
 
             return (ip << 8) | Numbers.parseInt(address, lo, address.length());
         } catch (NumericException e) {
-            throw new RuntimeException("bad dog");
+            throw new NetworkError("Invalid ip address: " + address);
         }
     }
 }

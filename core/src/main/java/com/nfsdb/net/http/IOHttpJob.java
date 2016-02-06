@@ -30,7 +30,6 @@ import com.nfsdb.mp.Sequence;
 import com.nfsdb.mp.WorkerContext;
 
 import java.io.IOException;
-import java.nio.channels.SelectionKey;
 
 public class IOHttpJob implements Job {
     // todo: extract config
@@ -40,13 +39,13 @@ public class IOHttpJob implements Job {
 
     private final RingQueue<IOEvent> ioQueue;
     private final Sequence ioSequence;
-    private final IOLoopJob loop;
+    private final IODispatcher ioDispatcher;
     private final UrlMatcher urlMatcher;
 
-    public IOHttpJob(RingQueue<IOEvent> ioQueue, Sequence ioSequence, IOLoopJob loop, UrlMatcher urlMatcher) {
+    public IOHttpJob(RingQueue<IOEvent> ioQueue, Sequence ioSequence, IODispatcher ioDispatcher, UrlMatcher urlMatcher) {
         this.ioQueue = ioQueue;
         this.ioSequence = ioSequence;
-        this.loop = loop;
+        this.ioDispatcher = ioDispatcher;
         this.urlMatcher = urlMatcher;
     }
 
@@ -60,7 +59,7 @@ public class IOHttpJob implements Job {
         IOEvent evt = ioQueue.get(cursor);
 
         final IOContext ioContext = evt.context;
-        final int op = evt.op;
+        final ChannelStatus op = evt.status;
 
         ioSequence.done(cursor);
 
@@ -78,15 +77,14 @@ public class IOHttpJob implements Job {
         }
     }
 
-    private void process(IOContext context, int op) {
+    private void process(IOContext context, ChannelStatus status) {
         final Request r = context.request;
         final SimpleResponse sr = context.simpleResponse();
 
-        ChannelStatus status = ChannelStatus.READ;
         try {
 
             boolean log = r.isIncomplete();
-            if ((op & SelectionKey.OP_READ) != 0) {
+            if (status == ChannelStatus.READ) {
                 r.read();
             }
 
@@ -95,39 +93,41 @@ public class IOHttpJob implements Job {
             } else {
 
                 if (log && !r.isIncomplete()) {
-                    ACCESS.xinfo().$(r.getSocketAddress().toString()).$(" - ").$(r.getUrl()).$();
+                    ACCESS.xinfo().$(" - ").$(r.getUrl()).$();
                 }
 
                 ContextHandler handler = urlMatcher.get(r.getUrl());
                 if (handler != null) {
-
-                    // write what's left to
-                    if ((op & SelectionKey.OP_WRITE) != 0) {
-                        context.resume();
-                        handler.resume(context);
-                    }
-
-                    if ((op & SelectionKey.OP_READ) != 0) {
-                        if (r.isMultipart()) {
-                            if (handler instanceof MultipartListener) {
-                                r.parseMultipart(context, (MultipartListener) handler);
-                                handler.handle(context);
+                    switch (status) {
+                        case WRITE:
+                            context.resume();
+                            handler.resume(context);
+                            break;
+                        case READ:
+                            if (r.isMultipart()) {
+                                if (handler instanceof MultipartListener) {
+                                    r.parseMultipart(context, (MultipartListener) handler);
+                                    handler.handle(context);
+                                } else {
+                                    sr.send(400);
+                                }
                             } else {
-                                sr.send(400);
+                                if (handler instanceof MultipartListener) {
+                                    sr.send(400);
+                                } else {
+                                    handler.handle(context);
+                                }
                             }
-                        } else {
-                            if (handler instanceof MultipartListener) {
-                                sr.send(400);
-                            } else {
-                                handler.handle(context);
-                            }
-                        }
+                            break;
+                        default:
+                            LOG.error().$("Unexpected status: ").$(status).$();
                     }
                 } else {
                     sr.send(404);
                 }
             }
             context.clear();
+            status = ChannelStatus.READ;
         } catch (HeadersTooLargeException ignored) {
             silent(sr, 431, null);
             LOG.info().$("Headers too large").$();
@@ -135,8 +135,10 @@ public class IOHttpJob implements Job {
         } catch (MalformedHeaderException | DisconnectedChannelException e) {
             status = ChannelStatus.DISCONNECTED;
         } catch (SlowReadableChannelException e) {
+            LOG.info().$("Slow read").$();
             status = ChannelStatus.READ;
         } catch (SlowWritableChannelException e) {
+            LOG.info().$("Slow write").$();
             status = ChannelStatus.WRITE;
         } catch (IOException e) {
             status = ChannelStatus.DISCONNECTED;
@@ -146,11 +148,6 @@ public class IOHttpJob implements Job {
             status = ChannelStatus.DISCONNECTED;
             LOG.error().$("Internal error: ").$(e).$();
         }
-
-        if (status != ChannelStatus.DISCONNECTED) {
-            loop.registerChannel(context, status == ChannelStatus.WRITE ? SelectionKey.OP_WRITE : SelectionKey.OP_READ);
-        } else {
-            context.close();
-        }
+        ioDispatcher.registerChannel(context, status);
     }
 }

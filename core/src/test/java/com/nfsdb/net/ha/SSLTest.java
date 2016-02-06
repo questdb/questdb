@@ -261,11 +261,11 @@ public class SSLTest {
         }}, factory);
 
         JournalClient client = new JournalClient(new ClientConfig("localhost") {{
-            getSslConfig().setSecure(true);
             setTcpNoDelay(false);
             try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                 getSslConfig().setTrustStore(is, "changeit");
             }
+            getSslConfig().setSecure(true);
         }}, factory);
 
         JournalWriter<Quote> remote = factory.writer(Quote.class, "remote");

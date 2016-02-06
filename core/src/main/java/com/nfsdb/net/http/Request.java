@@ -27,7 +27,7 @@ import com.nfsdb.misc.ByteBuffers;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Unsafe;
-import com.nfsdb.net.WrappedByteChannel;
+import com.nfsdb.net.NetworkChannel;
 import com.nfsdb.std.DirectByteCharSequence;
 import com.nfsdb.std.Mutable;
 import com.nfsdb.std.ObjectPool;
@@ -35,10 +35,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.net.SocketAddress;
-import java.net.StandardSocketOptions;
 import java.nio.ByteBuffer;
-import java.nio.channels.SocketChannel;
 
 @SuppressFBWarnings("CD_CIRCULAR_DEPENDENCY")
 public class Request implements Closeable, Mutable {
@@ -52,9 +49,9 @@ public class Request implements Closeable, Mutable {
     private final RequestHeaderBuffer hb;
     private final MultipartParser multipartParser;
     private final BoundaryAugmenter augmenter = new BoundaryAugmenter();
-    private final WrappedByteChannel<SocketChannel> channel;
+    private final NetworkChannel channel;
 
-    public Request(WrappedByteChannel<SocketChannel> channel, int headerBufferSize, int contentBufferSize, int multipartHeaderBufferSize) {
+    public Request(NetworkChannel channel, int headerBufferSize, int contentBufferSize, int multipartHeaderBufferSize) {
         this.channel = channel;
         this.hb = new RequestHeaderBuffer(headerBufferSize, pool);
         this.in = ByteBuffer.allocateDirect(Numbers.ceilPow2(contentBufferSize));
@@ -82,13 +79,13 @@ public class Request implements Closeable, Mutable {
         return hb.get(name);
     }
 
-    public SocketAddress getSocketAddress() {
-        try {
-            return channel.getChannel().getRemoteAddress();
-        } catch (IOException ignore) {
-            return null;
-        }
-    }
+//    public SocketAddress getSocketAddress() {
+//        try {
+//            return channel.getChannel().getRemoteAddress();
+//        } catch (IOException ignore) {
+//            return null;
+//        }
+//    }
 
     public CharSequence getUrl() {
         return hb.getUrl();
@@ -108,7 +105,8 @@ public class Request implements Closeable, Mutable {
 
     public void parseMultipart(IOContext context, MultipartListener handler)
             throws HeadersTooLargeException, IOException, MalformedHeaderException {
-        channel.getChannel().setOption(StandardSocketOptions.SO_RCVBUF, SO_RCVBUF_UPLOAD);
+        //todo: add support for socket options
+//        channel.getChannel().setOption(StandardSocketOptions.SO_RCVBUF, SO_RCVBUF_UPLOAD);
         try {
             MultipartParser parser = getMultipartParser().of(getBoundary());
             while (true) {
@@ -119,7 +117,7 @@ public class Request implements Closeable, Mutable {
                 drainChannel();
             }
         } finally {
-            channel.getChannel().setOption(StandardSocketOptions.SO_RCVBUF, SO_RVCBUF_DOWNLD);
+//            channel.getChannel().setOption(StandardSocketOptions.SO_RCVBUF, SO_RVCBUF_DOWNLD);
         }
     }
 

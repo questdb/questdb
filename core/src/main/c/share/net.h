@@ -39,6 +39,17 @@ JNIEXPORT void JNICALL Java_com_nfsdb_misc_Net_listen
 JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_socketTcp
         (JNIEnv *, jclass, jboolean);
 
+
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_send
+        (JNIEnv *, jclass, jlong, jlong, jint);
+
+
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_recv
+        (JNIEnv *, jclass, jlong, jlong, jint);
+
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_configureNonBlocking
+        (JNIEnv *, jclass, jlong);
+
 #ifdef __cplusplus
 }
 #endif

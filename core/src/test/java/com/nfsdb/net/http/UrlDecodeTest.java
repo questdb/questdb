@@ -37,7 +37,7 @@ public class UrlDecodeTest {
     private final CharSequenceObjHashMap<CharSequence> map = new CharSequenceObjHashMap<>();
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         pool.clear();
         map.clear();
     }

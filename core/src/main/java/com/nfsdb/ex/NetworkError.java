@@ -19,17 +19,14 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.net.http;
+package com.nfsdb.ex;
 
-import com.nfsdb.std.ObjectFactory;
+public class NetworkError extends Error {
+    public NetworkError(String message) {
+        super(message);
+    }
 
-public class IOEvent {
-    public static final ObjectFactory<IOEvent> FACTORY = new ObjectFactory<IOEvent>() {
-        @Override
-        public IOEvent newInstance() {
-            return new IOEvent();
-        }
-    };
-    public ChannelStatus status;
-    public IOContext context;
+    public NetworkError(Throwable cause) {
+        super(cause);
+    }
 }
