@@ -45,6 +45,10 @@ public final class Net {
 
     public static native int send(long fd, long ptr, int len);
 
+    public native static int setRcvBuf(long fd, int size);
+
+    public native static int setSndBuf(long fd, int size);
+
     public native static int socketTcp(boolean blocking);
 
     @SuppressFBWarnings("LEST_LOST_EXCEPTION_STACK_TRACE")

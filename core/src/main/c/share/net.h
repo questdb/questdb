@@ -50,6 +50,12 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_recv
 JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_configureNonBlocking
         (JNIEnv *, jclass, jlong);
 
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_setSndBuf
+        (JNIEnv *, jclass, jlong, jint);
+
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_setRcvBuf
+        (JNIEnv *, jclass, jlong, jint);
+
 #ifdef __cplusplus
 }
 #endif

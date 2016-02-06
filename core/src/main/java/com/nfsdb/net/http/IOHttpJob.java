@@ -32,7 +32,6 @@ import com.nfsdb.mp.WorkerContext;
 import java.io.IOException;
 
 public class IOHttpJob implements Job {
-    // todo: extract config
     public static final int SO_WRITE_RETRY_COUNT = 10;
     private final static Log ACCESS = LogFactory.getLog("access");
     private final static Log LOG = LogFactory.getLog(IOHttpJob.class);
@@ -135,10 +134,10 @@ public class IOHttpJob implements Job {
         } catch (MalformedHeaderException | DisconnectedChannelException e) {
             status = ChannelStatus.DISCONNECTED;
         } catch (SlowReadableChannelException e) {
-            LOG.info().$("Slow read").$();
+            LOG.debug().$("Slow read").$();
             status = ChannelStatus.READ;
         } catch (SlowWritableChannelException e) {
-            LOG.info().$("Slow write").$();
+            LOG.debug().$("Slow write").$();
             status = ChannelStatus.WRITE;
         } catch (IOException e) {
             status = ChannelStatus.DISCONNECTED;

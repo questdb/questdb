@@ -23,10 +23,9 @@ package com.nfsdb.net.http;
 
 import com.nfsdb.ex.HeadersTooLargeException;
 import com.nfsdb.ex.MalformedHeaderException;
-import com.nfsdb.misc.ByteBuffers;
-import com.nfsdb.misc.Chars;
-import com.nfsdb.misc.Numbers;
-import com.nfsdb.misc.Unsafe;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
+import com.nfsdb.misc.*;
 import com.nfsdb.net.NetworkChannel;
 import com.nfsdb.std.DirectByteCharSequence;
 import com.nfsdb.std.Mutable;
@@ -42,7 +41,7 @@ public class Request implements Closeable, Mutable {
     public static final int SO_RVCBUF_DOWNLD = 128 * 1024;
     private static final int SO_RCVBUF_UPLOAD = 4 * 1024 * 1024;
     private static final int SO_READ_RETRY_COUNT = 1000;
-
+    private final static Log LOG = LogFactory.getLog(Request.class);
     private final ByteBuffer in;
     private final long inAddr;
     private final ObjectPool<DirectByteCharSequence> pool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 64);
@@ -79,14 +78,6 @@ public class Request implements Closeable, Mutable {
         return hb.get(name);
     }
 
-//    public SocketAddress getSocketAddress() {
-//        try {
-//            return channel.getChannel().getRemoteAddress();
-//        } catch (IOException ignore) {
-//            return null;
-//        }
-//    }
-
     public CharSequence getUrl() {
         return hb.getUrl();
     }
@@ -105,8 +96,10 @@ public class Request implements Closeable, Mutable {
 
     public void parseMultipart(IOContext context, MultipartListener handler)
             throws HeadersTooLargeException, IOException, MalformedHeaderException {
-        //todo: add support for socket options
-//        channel.getChannel().setOption(StandardSocketOptions.SO_RCVBUF, SO_RCVBUF_UPLOAD);
+        final long fd = channel.getFd();
+        if (Net.setRcvBuf(fd, SO_RCVBUF_UPLOAD) != 0) {
+            LOG.error().$("Could not set SO_RCVBUF on ").$(fd).$();
+        }
         try {
             MultipartParser parser = getMultipartParser().of(getBoundary());
             while (true) {
@@ -117,7 +110,9 @@ public class Request implements Closeable, Mutable {
                 drainChannel();
             }
         } finally {
-//            channel.getChannel().setOption(StandardSocketOptions.SO_RCVBUF, SO_RVCBUF_DOWNLD);
+            if (Net.setRcvBuf(fd, SO_RVCBUF_DOWNLD) != 0) {
+                LOG.error().$("Could not reset SO_RCVBUF on ").$(fd).$();
+            }
         }
     }
 
