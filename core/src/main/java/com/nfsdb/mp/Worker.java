@@ -31,7 +31,7 @@ import java.util.concurrent.locks.LockSupport;
 public class Worker extends Thread {
     private final static long RUNNING_OFFSET;
     private static final long YIELD_THRESHOLD = 100000L;
-    private static final long SLEEP_THRESHOLD = 30000000L;
+    private static final long SLEEP_THRESHOLD = 10000000L;
     private final ObjHashSet<? extends Job> jobs;
     private final CountDownLatch haltLatch;
     private final WorkerContext context = new WorkerContext();
@@ -78,7 +78,7 @@ public class Worker extends Thread {
                 }
 
                 if (uselessCounter > SLEEP_THRESHOLD) {
-                    LockSupport.parkNanos(1000);
+                    LockSupport.parkNanos(1000000);
                 }
             }
         }

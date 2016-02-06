@@ -38,7 +38,7 @@ import java.nio.ByteBuffer;
 
 @SuppressFBWarnings("CD_CIRCULAR_DEPENDENCY")
 public class Request implements Closeable, Mutable {
-    public static final int SO_RVCBUF_DOWNLD = 128 * 1024;
+    private static final int SO_RVCBUF_DOWNLD = 128 * 1024;
     private static final int SO_RCVBUF_UPLOAD = 4 * 1024 * 1024;
     private static final int SO_READ_RETRY_COUNT = 1000;
     private final static Log LOG = LogFactory.getLog(Request.class);

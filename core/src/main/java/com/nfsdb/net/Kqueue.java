@@ -92,8 +92,8 @@ public final class Kqueue implements Closeable {
         Unsafe.getUnsafe().putShort(p + FLAGS_OFFSET, (short) (EV_ADD | EV_ONESHOT));
     }
 
-    public int register(int n) {
-        return kevent(kq, eventList, n, 0, 0);
+    public void register(int n) {
+        kevent(kq, eventList, n, 0, 0);
     }
 
     public void writeFD(int index, int fd, long data) {

@@ -21,7 +21,6 @@
 
 package com.nfsdb.net;
 
-import com.nfsdb.ex.JournalNetworkException;
 import com.nfsdb.ex.NetworkError;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -78,7 +77,7 @@ public class SslConfig {
         return secure;
     }
 
-    public void setSecure(boolean secure) throws JournalNetworkException {
+    public void setSecure(boolean secure) {
         this.secure = secure;
     }
 

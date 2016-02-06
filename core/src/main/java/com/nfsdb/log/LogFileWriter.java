@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.log;
 
@@ -36,7 +36,6 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.Closeable;
 
 public class LogFileWriter extends SynchronizedJob implements Closeable, LogWriter {
-    private static final Log LOG = LogFactory.getLog(LogFileWriter.class);
 
     private static final int DEFAULT_BUFFER_SIZE = 1024 * 1024;
     private final RingQueue<LogRecordSink> ring;
@@ -115,9 +114,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
             buf = 0;
         }
         if (this.fd != 0) {
-            if (Files.close(this.fd) != 0) {
-                LOG.error().$("Could not close file: ").$(location).$();
-            }
+            Files.close(this.fd);
             this.fd = 0;
         }
     }

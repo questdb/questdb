@@ -93,7 +93,7 @@ class BootstrapMain {
     }
 
     private static void configureLoggers(final HttpServerConfiguration configuration) {
-        LogFactory.INSTANCE.add(new LogWriterConfig("access", 0, new LogWriterFactory() {
+        LogFactory.INSTANCE.add(new LogWriterConfig("access", LogLevel.LOG_LEVEL_ALL, new LogWriterFactory() {
             @Override
             public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq, int level) {
                 LogFileWriter w = new LogFileWriter(ring, seq, level);

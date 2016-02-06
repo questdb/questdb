@@ -22,8 +22,6 @@
 package com.nfsdb.net.http;
 
 import com.nfsdb.ex.NumericException;
-import com.nfsdb.log.Log;
-import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.net.SslConfig;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -37,7 +35,6 @@ import java.util.Properties;
 
 @SuppressFBWarnings("PATH_TRAVERSAL_IN")
 public class HttpServerConfiguration {
-    private static final Log LOG = LogFactory.getLog(HttpServerConfiguration.class);
     private final SslConfig sslConfig = new SslConfig();
     private int httpPort = 9000;
     private int httpBufReqHeader = 64 * 1024;
@@ -263,7 +260,7 @@ public class HttpServerConfiguration {
             try {
                 return Numbers.parseInt(val);
             } catch (NumericException e) {
-                LOG.error().$(name).$(": invalid value").$();
+                System.out.println(name + ": invalid value");
             }
         }
         return -1;
@@ -275,7 +272,7 @@ public class HttpServerConfiguration {
             try {
                 return Numbers.parseIntSize(val);
             } catch (NumericException e) {
-                LOG.error().$(name).$(": invalid value").$();
+                System.out.println(name + ": invalid value");
             }
         }
         return -1;
