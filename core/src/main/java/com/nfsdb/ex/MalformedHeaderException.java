@@ -23,7 +23,6 @@ package com.nfsdb.ex;
 
 @SuppressWarnings("ThrowableInstanceNeverThrown")
 public final class MalformedHeaderException extends Exception {
-    //todo: log additional information with all instances where this exception is thrown
     public final static MalformedHeaderException INSTANCE = new MalformedHeaderException();
 
     private MalformedHeaderException() {

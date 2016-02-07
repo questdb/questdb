@@ -29,6 +29,9 @@ import com.nfsdb.io.sink.AbstractCharSink;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.io.sink.DirectUnboundedAnsiSink;
 import com.nfsdb.iter.clock.Clock;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
+import com.nfsdb.log.LogRecord;
 import com.nfsdb.misc.*;
 import com.nfsdb.net.NonBlockingSecureSocketChannel;
 import com.nfsdb.std.Mutable;
@@ -39,6 +42,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.WritableByteChannel;
 
 public class Response implements Closeable, Mutable {
+    private static final Log LOG = LogFactory.getLog(Response.class);
     private final ByteBuffer out;
     private final long outPtr;
     private final long limit;
@@ -165,7 +169,7 @@ public class Response implements Closeable, Mutable {
         do {
             ret = Zip.deflate(z_streamp, p, sz, flush);
             if (ret < 0) {
-                // todo: log this event
+                LOG.error().$("ZLib error: ").$(ret).$();
                 throw DisconnectedChannelException.INSTANCE;
             }
 
@@ -317,6 +321,13 @@ public class Response implements Closeable, Mutable {
 
         @Override
         public void send(int code, CharSequence message) throws DisconnectedChannelException, SlowWritableChannelException {
+
+            final LogRecord log = LOG.info().$("Sending ").$(code);
+            if (message != null) {
+                log.$(": ").$(message);
+            }
+            log.$();
+
             final String std = hb.status(code, "text/html; charset=utf-8", -1L);
             sink.put(message == null ? std : message).put(Misc.EOL);
             machine(hb.prepareBuffer(), ResponseState.CHUNK_HEAD);
