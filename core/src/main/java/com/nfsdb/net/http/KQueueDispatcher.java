@@ -37,7 +37,7 @@ import java.io.IOException;
 
 public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
     private static final Log LOG = LogFactory.getLog(KQueueDispatcher.class);
-    private final int socketFd;
+    private final long socketFd;
     private final RingQueue<IOEvent> ioQueue;
     private final Sequence ioSequence;
     private final RingQueue<IOEvent> interestQueue;
@@ -109,7 +109,7 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
                 int fd = kqueue.getFd(i);
                 // this is server socket, accept if there aren't too many already
                 if (fd == socketFd) {
-                    int _fd = accept();
+                    long _fd = accept();
                     if (_fd < 0) {
                         continue;
                     }
@@ -156,8 +156,8 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
         return processRegistrations(timestamp) || useful;
     }
 
-    private int accept() {
-        int _fd = Net.accept(socketFd);
+    private long accept() {
+        long _fd = Net.accept(socketFd);
         LOG.debug().$(" Connected ").$(_fd).$();
 
         // something not right
@@ -184,7 +184,7 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
         return _fd;
     }
 
-    private void addPending(int _fd, long timestamp) {
+    private void addPending(long _fd, long timestamp) {
         // append to pending
         // all rows below watermark will be registered with kqueue
         int r = pending.addRow();

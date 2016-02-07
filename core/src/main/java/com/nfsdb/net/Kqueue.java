@@ -75,7 +75,7 @@ public final class Kqueue implements Closeable {
         return Unsafe.getUnsafe().getShort(offset(index) + FLAGS_OFFSET);
     }
 
-    public void listen(int sfd) {
+    public void listen(long sfd) {
         final long p = commonFd(0, sfd, 0);
         Unsafe.getUnsafe().putShort(p + FILTER_OFFSET, EVFILT_READ);
         Unsafe.getUnsafe().putShort(p + FLAGS_OFFSET, EV_ADD);
@@ -122,7 +122,7 @@ public final class Kqueue implements Closeable {
 
     private static native short getDataOffset();
 
-    private long commonFd(int index, int fd, long data) {
+    private long commonFd(int index, long fd, long data) {
         final long p = offset(index);
         Unsafe.getUnsafe().putLong(p + FD_OFFSET, fd);
         Unsafe.getUnsafe().putLong(p + DATA_OFFSET, data);

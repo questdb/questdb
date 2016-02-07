@@ -29,17 +29,17 @@ public final class Net {
     private Net() {
     }
 
-    public native static int accept(int fd);
+    public native static long accept(long fd);
 
-    public native static boolean bind(int fd, int address, int port);
+    public native static boolean bind(long fd, int address, int port);
 
-    public static boolean bind(int fd, CharSequence address, int port) {
+    public static boolean bind(long fd, CharSequence address, int port) {
         return bind(fd, parseIPv4(address), port);
     }
 
     public static native int configureNonBlocking(long fd);
 
-    public native static void listen(int fd, int backlog);
+    public native static void listen(long fd, int backlog);
 
     public static native int recv(long fd, long ptr, int len);
 
@@ -49,7 +49,7 @@ public final class Net {
 
     public native static int setSndBuf(long fd, int size);
 
-    public native static int socketTcp(boolean blocking);
+    public native static long socketTcp(boolean blocking);
 
     @SuppressFBWarnings("LEST_LOST_EXCEPTION_STACK_TRACE")
     private static int parseIPv4(CharSequence address) {
