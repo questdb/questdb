@@ -26,6 +26,7 @@ import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.net.http.ChunkedResponse;
 import com.nfsdb.net.http.ContextHandler;
@@ -34,7 +35,6 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.parser.QueryCompiler;
 import sun.nio.cs.ArrayEncoder;
-
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.nio.charset.CharsetEncoder;
@@ -42,7 +42,6 @@ import java.nio.charset.UnsupportedCharsetException;
 import java.util.Iterator;
 
 public class JsonHandler implements ContextHandler {
-    private static final int PAGE_SIZE = 100;
     private static final ArrayEncoder UTF8Encoder;
     private static final ThreadLocal threadLocalCharBuffer = new ThreadLocal() {
         protected char[] initialValue() {
@@ -52,11 +51,6 @@ public class JsonHandler implements ContextHandler {
     private static final ThreadLocal threadLocalByteBuffer = new ThreadLocal() {
         protected byte[] initialValue() {
             return new byte[4];
-        }
-    };
-    private static final ThreadLocal threadLocalStringBuilder = new ThreadLocal() {
-        protected StringBuilder initialValue() {
-            return new StringBuilder(20);
         }
     };
     private JournalReaderFactory factory;
@@ -71,13 +65,24 @@ public class JsonHandler implements ContextHandler {
         final byte[] encoded = (byte[])threadLocalByteBuffer.get();
         final char[] encodingChar = (char[])threadLocalCharBuffer.get();
 
+        // Query text.
         ChunkedResponse r = context.chunkedResponse();
         CharSequence query = context.request.getUrlParam("query");
+        if (query == null || query.length() == 0) {
+            r.status(200, "application/json; charset=utf-8");
+            r.sendHeader();
+            sendQuery(r, "", null, null);
+            r.put("\"}");
+            r.sendChunk();
+            r.done();
+            return;
+        }
+
+        // Url Params.
         long skip = 0;
-        long stop = -1;
+        long stop = Long.MAX_VALUE;
 
         CharSequence limit = context.request.getUrlParam("limit");
-
         if (limit != null) {
             int sepPos = separatorPos(limit);
             try {
@@ -91,21 +96,16 @@ public class JsonHandler implements ContextHandler {
                     stop = Numbers.parseLong(limit);
                 }
             } catch (NumericException ex) {
+                // Skip or stop will have default value.
             }
         }
 
-        if (query == null || query.length() == 0) {
-            r.status(200, "application/json; charset=utf-8");
-            r.sendHeader();
-            sendQuery(r, "", null, null);
-            r.put("\"}");
-            r.sendChunk();
-            r.done();
-            return;
-        }
+        CharSequence withCount =  context.request.getUrlParam("withCount");
+        context.includeCount = withCount != null && Chars.equalsIgnoreCase(withCount, "true");
 
-        QueryCompiler qc = new QueryCompiler(factory);
         try {
+            // Prepare Context.
+            QueryCompiler qc = new QueryCompiler(factory);
             RecordCursor<? extends Record> records = qc.compile(query);
             r.status(200, "application/json; charset=utf-8");
             r.sendHeader();
@@ -120,6 +120,7 @@ public class JsonHandler implements ContextHandler {
             // List columns.
             int columnCount = metadata.getColumnCount();
             r.put(", \"columns\":[");
+
             for(int i = 0; i < columnCount; i++) {
                 RecordColumnMetadata column = metadata.getColumn(i);
                 r.put("{\"name\":\"");
@@ -133,6 +134,7 @@ public class JsonHandler implements ContextHandler {
             }
             r.put("], \"result\":[");
 
+            // Send records.
             resume(context);
         }
         catch (ParserException pex) {
@@ -148,67 +150,78 @@ public class JsonHandler implements ContextHandler {
         // Reused for UTF-8 encoding. Thread local
         final byte[] encoded = (byte[]) threadLocalByteBuffer.get();
         final char[] encodingChar = (char[]) threadLocalCharBuffer.get();
-        final StringBuilder sb = (StringBuilder) threadLocalStringBuilder.get();
         ChunkedResponse r = context.chunkedResponse();
 
-        while (true) {
-            try {
-                // Ditch check that we're not kicked out after sending last record.
-                boolean moreExists = context.stop >= 0 && context.count > context.stop;
-                if (!moreExists) {
-                    Iterator<? extends Record> records = context.records;
-                    RecordMetadata metadata = context.metadata;
-                    int columnCount = metadata.getColumnCount();
+        try {
+            Iterator<? extends Record> records = context.records;
+            RecordMetadata metadata = context.metadata;
+            int columnCount = metadata.getColumnCount();
 
-                    while (context.current != null || records.hasNext()) {
-                        if (context.current == null) {
-                            context.current = records.next();
-                            context.count++;
+            if (context.current == null && records.hasNext()) {
+                context.current = records.next();
+                context.count++;
+            }
+
+            while (context.current != null) {
+                r.bookmark();
+
+                if (context.count > context.skip) {
+                    if (context.count > context.stop && !context.includeCount) {
+                        break;
+                    }
+
+                    if (context.count <= context.stop) {
+                        if (context.count > context.skip + 1) {
+                            // Record separator.
+                            r.put(',');
                         }
+                        r.put("{");
 
-                        if (context.count > context.skip) {
-                            if (context.stop >= 0 && context.count > context.stop) {
-                                moreExists = true;
-                                break;
-                            }
+                        // Columns.
+                        for (int col = 0; col < columnCount; col++) {
+                            r.put('\"');
+                            stringToJson(r, metadata.getColumn(col).getName(), encodingChar, encoded);
+                            r.put("\":");
+                            putValue(encoded, encodingChar, r, metadata, context.current, col);
 
-                            r.bookmark();
-                            if (context.count > context.skip + 1) {
-                                // Record separator.
+                            if (col < columnCount - 1) {
                                 r.put(',');
                             }
-                            r.put("{");
-                            for (int col = 0; col < columnCount; col++) {
-                                r.put('\"');
-                                stringToJson(r, metadata.getColumn(col).getName(), encodingChar, encoded);
-                                r.put("\":");
-                                putValue(encoded, encodingChar, sb, r, metadata, context.current, col);
-
-                                if (col < columnCount - 1) {
-                                    r.put(',');
-                                }
-                            }
-
-                            r.put("}");
                         }
-                        context.current = null;
+                        r.put("}");
+                        r.sendChunk();
                     }
                 }
-                r.put(']');
-                if (moreExists) {
-                    r.put(",\"moreExist\":true");
+
+                if (records.hasNext()) {
+                    context.current = records.next();
+                    context.count++;
+                } else {
+                    context.current = null;
                 }
-                r.put('}');
-                r.sendChunk();
-                r.done();
-                break;
-            } catch (ResponseContentBufferTooSmallException ex) {
-                if (!r.resetToBookmark()){
-                    // Nowhere to reset!
-                    throw ex;
-                }
-                r.sendChunk();
             }
+            r.bookmark();
+
+            // Finita.
+            r.put(']');
+            if (context.count > context.stop) {
+                r.put(",\"moreExist\":true");
+            }
+
+            if (context.includeCount) {
+                r.put(",\"totalCount\":");
+                r.put(context.count);
+            }
+            r.put('}');
+            r.sendChunk();
+            r.done();
+
+        } catch (ResponseContentBufferTooSmallException ex) {
+            if (!r.resetToBookmark()) {
+                // Nowhere to reset!
+                throw ex;
+            }
+            r.sendChunk();
         }
     }
 
@@ -239,7 +252,7 @@ public class JsonHandler implements ContextHandler {
         r.done();
     }
 
-    private static void putValue(byte[] encoded, char[] encodingChar, StringBuilder sb, ChunkedResponse r, RecordMetadata metadata, Record rec, int col) {
+    private static void putValue(byte[] encoded, char[] encodingChar, ChunkedResponse r, RecordMetadata metadata, Record rec, int col) {
         RecordColumnMetadata column = metadata.getColumn(col);
         switch (column.getType()) {
             case BOOLEAN:
@@ -256,8 +269,8 @@ public class JsonHandler implements ContextHandler {
                 break;
             case DOUBLE:
                 double d = rec.getDouble(col);
-                if (d == Double.NaN) {
-                    r.put((CharSequence) null);
+                if (Double.isNaN(d)) {
+                    r.put("null");
                     break;
                 }
 
@@ -267,13 +280,13 @@ public class JsonHandler implements ContextHandler {
                 else if (d == Double.NEGATIVE_INFINITY) {
                     d = Double.MIN_VALUE;
                 }
-                putDouble(r, d, sb);
+                putDouble(r, d);
                 break;
 
             case FLOAT:
                 float f = rec.getFloat(col);
-                if (f == Float.NaN) {
-                    r.put((CharSequence) null);
+                if (Float.isNaN(f)) {
+                    r.put("null");
                     break;
                 }
 
@@ -283,7 +296,7 @@ public class JsonHandler implements ContextHandler {
                 else if (f == Float.NEGATIVE_INFINITY) {
                    f = Float.MIN_VALUE;
                 }
-                putDouble(r, f, sb);
+                putDouble(r, f);
                 break;
             case INT:
                 int iint = rec.getInt(col);
@@ -295,6 +308,11 @@ public class JsonHandler implements ContextHandler {
                 break;
             case LONG:
             case DATE:
+                long ll = rec.getLong(col);
+                if (ll == Long.MIN_VALUE) {
+                    r.put("null");
+                    break;
+                }
                 Numbers.append(r, rec.getLong(col));
                 break;
             case SHORT:
@@ -322,14 +340,8 @@ public class JsonHandler implements ContextHandler {
         }
     }
 
-    private static void putDouble(ChunkedResponse r, double d, StringBuilder stringBuilder) {
+    private static void putDouble(ChunkedResponse r, double d) {
         Numbers.append(r, d, 10);
-//        stringBuilder.setLength(0);
-//        FloatingDecimal.BinaryToASCIIConverter converter = FloatingDecimal.getBinaryToASCIIConverter(d);
-//        converter.appendTo(stringBuilder);
-//        for(int i = 0; i < stringBuilder.length(); i++){
-//            r.put(stringBuilder.charAt(i));
-//        }
     }
 
     private static void stringToJson(CharSink r, CharSequence str, char[] charSource, byte[] encoded) {

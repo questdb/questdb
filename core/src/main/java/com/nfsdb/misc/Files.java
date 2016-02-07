@@ -132,11 +132,7 @@ public final class Files {
         try {
             try (FileInputStream fis = new FileInputStream(file)) {
                 byte buffer[] = new byte[(int) fis.getChannel().size()];
-                byte b;
-                int index = 0;
-                while ((b = (byte) fis.read()) != -1) {
-                    buffer[index++] = b;
-                }
+                fis.read(buffer);
                 return new String(buffer, UTF_8);
             }
         } catch (IOException e) {

@@ -417,7 +417,7 @@ public class Response implements Closeable, Mutable {
 
         @Override
         public void bookmark() {
-            bookmark = outPtr;
+            bookmark = _wPtr;
             bookmarked = true;
         }
 
@@ -468,10 +468,12 @@ public class Response implements Closeable, Mutable {
 
         @Override
         public void sendChunk() throws DisconnectedChannelException, SlowWritableChannelException {
-            if (compressed) {
-                machine(null, ResponseState.MULTI_CHUNK);
-            } else {
-                machine(_prepareChunk((int) (_wPtr - outPtr)), ResponseState.MULTI_CHUNK);
+            if (outPtr != _wPtr) {
+                if (compressed) {
+                    machine(null, ResponseState.MULTI_CHUNK);
+                } else {
+                    machine(_prepareChunk((int) (_wPtr - outPtr)), ResponseState.MULTI_CHUNK);
+                }
             }
         }
 

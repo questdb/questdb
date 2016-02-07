@@ -278,9 +278,8 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
-    @Ignore
     public void testJsonChunkOverflow() throws Exception {
-        int count = (int) 1E6;
+        int count = (int) 1E4;
         generateJournal(count);
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
             put("/js", new JsonHandler(factory));
@@ -290,6 +289,38 @@ public class HttpServerTest extends AbstractJournalTest {
             String query = "tab";
             QueryResponse queryResponse = download(query);
             Assert.assertEquals(count, queryResponse.result.length);
+        } finally {
+            server.halt();
+        }
+    }
+
+    @Test
+    public void testJsonEmpty() throws Exception {
+        generateJournal();
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            put("/js", new JsonHandler(factory));
+        }});
+        server.start();
+        try {
+            String query = "tab";
+            QueryResponse queryResponse = download(query, 0, 0);
+            Assert.assertEquals(0, queryResponse.result.length);
+        } finally {
+            server.halt();
+        }
+    }
+
+    @Test
+    public void testJsonEmpty0() throws Exception {
+        generateJournal();
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            put("/js", new JsonHandler(factory));
+        }});
+        server.start();
+        try {
+            String query = "tab where 1 = 2";
+            QueryResponse queryResponse = download(query, 0, 0);
+            Assert.assertEquals(0, queryResponse.result.length);
         } finally {
             server.halt();
         }
@@ -322,7 +353,6 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
-    @Ignore
     public void testJsonEncodeNumbers() throws Exception {
         generateJournal(null, 1.900232E-10, Double.MAX_VALUE, Long.MAX_VALUE, Integer.MIN_VALUE, 10);
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
@@ -330,7 +360,7 @@ public class HttpServerTest extends AbstractJournalTest {
         }});
         server.start();
         try {
-            String query = "tab limit 1";
+            String query = "tab limit 20";
             QueryResponse queryResponse = download(query);
             Assert.assertEquals(1.900232E-10, queryResponse.result[0].x, 1E-6);
             Assert.assertEquals(Double.MAX_VALUE, queryResponse.result[0].y, 1E-6);
@@ -344,7 +374,6 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
-    @Ignore
     public void testJsonLimits() throws Exception {
         generateJournal();
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
@@ -364,7 +393,6 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
-    @Ignore
     public void testJsonTakeLimit() throws Exception {
         generateJournal();
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
