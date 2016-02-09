@@ -355,10 +355,6 @@ public class JsonHandler implements ContextHandler {
     }
 
     private static void encodeUnicode(CharSink r, char[] charSource, byte[] encoded, char c) {
-        if (UTF8Encoder == null) {
-            r.put("?");
-            return;
-        }
         // Encode utf-8
         charSource[0] = c;
         int len = UTF8Encoder.encode(charSource, 0, 1, encoded);
