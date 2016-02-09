@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.misc;
 
@@ -154,12 +154,13 @@ public final class ByteBuffers {
                 throw DisconnectedChannelException.INSTANCE;
             }
 
-            // disconnected
-            if (result == -1) {
-                throw DisconnectedChannelException.INSTANCE;
-            }
+//            // disconnected
+//            if (result == -1) {
+//                throw DisconnectedChannelException.INSTANCE;
+//            }
 
             if (result == 0) {
+
                 if (--retryCount < 0) {
                     throw SlowWritableChannelException.INSTANCE;
                 }

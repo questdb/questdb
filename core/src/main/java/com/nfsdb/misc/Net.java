@@ -31,6 +31,8 @@ public final class Net {
 
     public native static long accept(long fd);
 
+    public native static long available(long fd);
+
     public native static boolean bind(long fd, int address, int port);
 
     public static boolean bind(long fd, CharSequence address, int port) {

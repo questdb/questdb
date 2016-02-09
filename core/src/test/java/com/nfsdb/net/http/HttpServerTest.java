@@ -169,6 +169,48 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
+    public void testConnectionCount() throws Exception {
+        final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/nfsdb.conf"));
+        final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
+        configuration.setHttpMaxConnections(10);
+        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
+            setDefaultHandler(new NativeStaticContentHandler(configuration.getHttpPublic(), mimeTypes));
+
+        }});
+        server.start();
+
+        try {
+            CloseableHttpClient c1 = clientBuilder(true).build();
+            CloseableHttpClient c2 = clientBuilder(true).build();
+            CloseableHttpClient c3 = clientBuilder(true).build();
+            CloseableHttpClient c4 = clientBuilder(true).build();
+            Assert.assertNotNull(c1.execute(new HttpGet("https://localhost:9000/upload.html")));
+            Assert.assertEquals(1, server.getConnectionCount());
+
+            Assert.assertNotNull(c2.execute(new HttpGet("https://localhost:9000/upload.html")));
+            Assert.assertEquals(2, server.getConnectionCount());
+
+            Assert.assertNotNull(c3.execute(new HttpGet("https://localhost:9000/upload.html")));
+            Assert.assertEquals(3, server.getConnectionCount());
+
+            Assert.assertNotNull(c4.execute(new HttpGet("https://localhost:9000/upload.html")));
+            Assert.assertEquals(4, server.getConnectionCount());
+
+            c1.close();
+            c2.close();
+            Thread.sleep(100);
+            Assert.assertEquals(2, server.getConnectionCount());
+
+            c3.close();
+            c4.close();
+            Thread.sleep(100);
+            Assert.assertEquals(0, server.getConnectionCount());
+        } finally {
+            server.halt();
+        }
+    }
+
+    @Test
     public void testFragmentedUrl() throws Exception {
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher());
         server.setClock(new Clock() {
@@ -807,8 +849,6 @@ public class HttpServerTest extends AbstractJournalTest {
                 .setDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").create();
         String body = Files.readStringFromFile(f);
         f.deleteOnExit();
-
-        System.out.println(body);
         return gson.fromJson(body, QueryResponse.class);
     }
 

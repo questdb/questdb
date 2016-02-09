@@ -79,6 +79,9 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_setSndBuf
 JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_socketTcp
         (JNIEnv *, jclass, jboolean);
 
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_available
+        (JNIEnv *, jclass, jlong);
+
 #ifdef __cplusplus
 }
 #endif

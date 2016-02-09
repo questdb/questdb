@@ -50,7 +50,7 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
     private final int timeout;
     private final LongMatrix<IOContext> pending = new LongMatrix<>(2);
     private final int maxConnections;
-    private int connectionCount = 0;
+    private volatile int connectionCount = 0;
 
     public KQueueDispatcher(
             CharSequence ip,
@@ -96,6 +96,11 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
         evt.status = status;
         LOG.debug().$("Re-queuing ").$(context.channel.getFd()).$();
         interestPubSequence.done(cursor);
+    }
+
+    @Override
+    public int getConnectionCount() {
+        return connectionCount;
     }
 
     @Override

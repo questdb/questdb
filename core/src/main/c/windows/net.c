@@ -103,3 +103,11 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_setRcvBuf
     jint sz = size;
     return setsockopt((SOCKET) fd, SOL_SOCKET, SO_RCVBUF, (char *) &sz, sizeof(sz));
 }
+
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_available
+        (JNIEnv *e, jclass cl, jlong fd) {
+    unsigned long avail;
+
+    ioctlsocket((SOCKET) fd, FIONREAD, &avail);
+    return avail;
+}

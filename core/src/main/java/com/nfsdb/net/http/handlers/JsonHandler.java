@@ -1,23 +1,23 @@
-/*******************************************************************************
- * _  _ ___ ___     _ _
+/*
+ *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- * <p/>
+ *
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- * <p/>
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * <p/>
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * <p/>
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.net.http.handlers;
 
@@ -147,7 +147,7 @@ public class JsonHandler implements ContextHandler {
         // Reused for UTF-8 encoding. Thread local
         final byte[] encoded = (byte[]) threadLocalByteBuffer.get();
         final char[] encodingChar = (char[]) threadLocalCharBuffer.get();
-        ChunkedResponse r = context.chunkedResponse();
+        final ChunkedResponse r = context.chunkedResponse();
 
         try {
             Iterator<? extends Record> records = context.records;
@@ -198,7 +198,6 @@ public class JsonHandler implements ContextHandler {
                 }
             }
             r.bookmark();
-
             // Finita.
             r.put(']');
             if (context.count > context.stop) {
@@ -210,9 +209,9 @@ public class JsonHandler implements ContextHandler {
                 r.put(context.count);
             }
             r.put('}');
+            context.current = null;
             r.sendChunk();
             r.done();
-
         } catch (ResponseContentBufferTooSmallException ex) {
             if (!r.resetToBookmark()) {
                 // Nowhere to reset!

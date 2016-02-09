@@ -54,6 +54,10 @@ public class HttpServer {
         this.configuration = configuration;
     }
 
+    public int getConnectionCount() {
+        return this.dispatcher.getConnectionCount();
+    }
+
     public void halt() throws IOException, InterruptedException {
         if (running) {
             running = false;
@@ -68,10 +72,6 @@ public class HttpServer {
 
     public void setClock(Clock clock) {
         this.clock = clock;
-    }
-
-    public void start() {
-        start(null);
     }
 
     public void start(ObjHashSet<? extends Job> extraJobs) {
@@ -99,6 +99,10 @@ public class HttpServer {
         }
 
         startComplete.countDown();
+    }
+
+    public void start() {
+        start(null);
     }
 
     private IODispatcher createDispatcher(

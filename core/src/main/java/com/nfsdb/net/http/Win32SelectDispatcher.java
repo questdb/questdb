@@ -61,7 +61,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
     private final LongMatrix<IOContext> pending = new LongMatrix<>(4);
     private final int maxConnections;
     private final IntIntHashMap fds = new IntIntHashMap();
-    private int connectionCount = 0;
+    private volatile int connectionCount = 0;
 
     public Win32SelectDispatcher(
             CharSequence ip,
@@ -109,12 +109,17 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
     }
 
     @Override
+    public int getConnectionCount() {
+        return connectionCount;
+    }
+
+    @Override
     public void registerChannel(IOContext context, ChannelStatus status) {
         long cursor = interestPubSequence.nextBully();
         IOEvent evt = interestQueue.get(cursor);
         evt.context = context;
         evt.status = status;
-        LOG.debug().$("Re-queuing ").$(context.channel.getFd()).$();
+        LOG.debug().$("Re-queuing ").$(status).$(" on ").$(context.channel.getFd()).$();
         interestPubSequence.done(cursor);
     }
 
@@ -133,35 +138,11 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
             return false;
         }
 
-        // collect reads into hash map
         fds.clear();
 
+        // collect reads into hash map
         if (count > 0) {
-
-            for (int i = 0, n = readFdSet.getCount(); i < n; i++) {
-                long fd = readFdSet.get(i);
-
-                if (fd == socketFd) {
-                    long _fd = accept();
-                    if (_fd < 0) {
-                        continue;
-                    }
-                    addPending(_fd, timestamp);
-                } else {
-                    fds.put((int) fd, FD_READ);
-                }
-            }
-
-            // collect writes into hash map
-            for (int i = 0, n = writeFdSet.getCount(); i < n; i++) {
-                long fd = writeFdSet.get(i);
-                int op = fds.get((int) fd);
-                if (op == -1) {
-                    fds.put((int) fd, FD_WRITE);
-                } else {
-                    fds.put((int) fd, FD_READ | FD_WRITE);
-                }
-            }
+            queryFdSets(timestamp);
         }
 
         // process returned fds
@@ -174,45 +155,56 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
         writeFdSet.reset();
         long deadline = timestamp - timeout;
         for (int i = 0, n = pending.size(); i < n; ) {
-            long fd = pending.get(i, M_FD);
             long ts = pending.get(i, M_TIMESTAMP);
+            long fd = pending.get(i, M_FD);
             int _new_op = fds.get((int) fd);
 
-            // expired
-            if (ts < deadline && fd != socketFd) {
-                disconnect(pending.get(i), KQueueDispatcher.DisconnectReason.IDLE);
-                pending.deleteRow(i);
-                n--;
-                continue;
-            }
-
             if (_new_op == -1) {
+
+                // check if expired
+                if (ts < deadline && fd != socketFd) {
+                    disconnect(pending.get(i), KQueueDispatcher.DisconnectReason.IDLE);
+                    pending.deleteRow(i);
+                    n--;
+                    continue;
+                }
+
                 // not fired, simply re-arm
                 ChannelStatus op = ChannelStatus.values()[(int) pending.get(i, M_OPERATION)];
                 switch (op) {
                     case READ:
                         readFdSet.add(fd);
                         readFdCount++;
+                        i++;
                         break;
                     case WRITE:
                         writeFdSet.add(fd);
                         writeFdCount++;
+                        i++;
                         break;
                     case DISCONNECTED:
                         disconnect(pending.get(i), KQueueDispatcher.DisconnectReason.SILLY);
+                        pending.deleteRow(i);
+                        n--;
                         break;
                 }
-                i++;
             } else {
                 // this fd just has fired
                 // publish event
                 // and remove from pending
-                long cursor = ioSequence.nextBully();
-                IOEvent evt = ioQueue.get(cursor);
-                evt.context = pending.get(i);
-                evt.status = _new_op == FD_READ ? ChannelStatus.READ : ChannelStatus.WRITE;
-                ioSequence.done(cursor);
-                LOG.debug().$("Queuing ").$(_new_op).$(" on ").$(fd).$();
+                final IOContext context = pending.get(i);
+
+                if ((_new_op & FD_READ) > 0 && Net.available(fd) == 0) {
+                    disconnect(context, KQueueDispatcher.DisconnectReason.PEER);
+                } else {
+                    if ((_new_op & FD_READ) > 0) {
+                        enqueue(context, ChannelStatus.READ);
+                    }
+
+                    if ((_new_op & FD_WRITE) > 0) {
+                        enqueue(context, ChannelStatus.WRITE);
+                    }
+                }
                 pending.deleteRow(i);
                 n--;
             }
@@ -220,7 +212,6 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
 
         readFdSet.setCount(readFdCount);
         writeFdSet.setCount(writeFdCount);
-
         return true;
     }
 
@@ -279,6 +270,16 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
         connectionCount--;
     }
 
+    private void enqueue(IOContext context, ChannelStatus status) {
+        long cursor = ioSequence.nextBully();
+        IOEvent evt = ioQueue.get(cursor);
+        evt.context = context;
+        evt.status = status;
+        ioSequence.done(cursor);
+        LOG.debug().$("Queuing ").$(status).$(" on ").$(context.channel.getFd()).$();
+
+    }
+
     private boolean processRegistrations(long timestamp) {
         long cursor;
         boolean useful = false;
@@ -297,6 +298,33 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
         }
 
         return useful;
+    }
+
+    private void queryFdSets(long timestamp) {
+        for (int i = 0, n = readFdSet.getCount(); i < n; i++) {
+            long fd = readFdSet.get(i);
+
+            if (fd == socketFd) {
+                long _fd = accept();
+                if (_fd < 0) {
+                    continue;
+                }
+                addPending(_fd, timestamp);
+            } else {
+                fds.put((int) fd, FD_READ);
+            }
+        }
+
+        // collect writes into hash map
+        for (int i = 0, n = writeFdSet.getCount(); i < n; i++) {
+            long fd = writeFdSet.get(i);
+            int op = fds.get((int) fd);
+            if (op == -1) {
+                fds.put((int) fd, FD_WRITE);
+            } else {
+                fds.put((int) fd, FD_READ | FD_WRITE);
+            }
+        }
     }
 
     private static class FDSet {

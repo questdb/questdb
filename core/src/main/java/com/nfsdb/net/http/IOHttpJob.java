@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.net.http;
 
@@ -32,7 +32,7 @@ import com.nfsdb.mp.WorkerContext;
 import java.io.IOException;
 
 public class IOHttpJob implements Job {
-    public static final int SO_WRITE_RETRY_COUNT = 10;
+    public static final int SO_WRITE_RETRY_COUNT = 1000;
     private final static Log ACCESS = LogFactory.getLog("access");
     private final static Log LOG = LogFactory.getLog(IOHttpJob.class);
 
