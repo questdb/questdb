@@ -32,7 +32,7 @@ import com.nfsdb.misc.Unsafe;
 import com.nfsdb.mp.*;
 import com.nfsdb.net.NetworkChannelImpl;
 import com.nfsdb.net.NonBlockingSecureSocketChannel;
-import com.nfsdb.std.IntIntHashMap;
+import com.nfsdb.std.LongIntHashMap;
 import com.nfsdb.std.LongMatrix;
 
 import java.io.IOException;
@@ -60,7 +60,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
     private final int timeout;
     private final LongMatrix<IOContext> pending = new LongMatrix<>(4);
     private final int maxConnections;
-    private final IntIntHashMap fds = new IntIntHashMap();
+    private final LongIntHashMap fds = new LongIntHashMap();
     private volatile int connectionCount = 0;
 
     public Win32SelectDispatcher(
@@ -159,7 +159,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
         for (int i = 0, n = pending.size(); i < n; ) {
             long ts = pending.get(i, M_TIMESTAMP);
             long fd = pending.get(i, M_FD);
-            int _new_op = fds.get((int) fd);
+            int _new_op = fds.get(fd);
 
             if (_new_op == -1) {
 
@@ -315,18 +315,18 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
                 }
                 addPending(_fd, timestamp);
             } else {
-                fds.put((int) fd, FD_READ);
+                fds.put(fd, FD_READ);
             }
         }
 
         // collect writes into hash map
         for (int i = 0, n = writeFdSet.getCount(); i < n; i++) {
             long fd = writeFdSet.get(i);
-            int op = fds.get((int) fd);
+            int op = fds.get(fd);
             if (op == -1) {
-                fds.put((int) fd, FD_WRITE);
+                fds.put(fd, FD_WRITE);
             } else {
-                fds.put((int) fd, FD_READ | FD_WRITE);
+                fds.put(fd, FD_READ | FD_WRITE);
             }
         }
     }
