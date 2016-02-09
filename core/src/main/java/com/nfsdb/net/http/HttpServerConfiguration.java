@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.net.http;
 
@@ -43,7 +43,7 @@ public class HttpServerConfiguration {
     private int httpBufRespHeader = 1024;
     private int httpBufRespContent = 1024 * 1024;
     private int httpThreads = 2;
-    private int httpTimeout = 10000;
+    private int httpTimeout = 10000000;
     private int httpMaxConnections = 128;
     private File dbPath = new File("db");
     private File mimeTypes = new File("conf/mime.types");

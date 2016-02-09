@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.net.http;
 
@@ -37,6 +37,7 @@ import java.io.IOException;
 
 public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
     private static final Log LOG = LogFactory.getLog(KQueueDispatcher.class);
+
     private final long socketFd;
     private final RingQueue<IOEvent> ioQueue;
     private final Sequence ioSequence;
@@ -52,7 +53,7 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
     private int connectionCount = 0;
 
     public KQueueDispatcher(
-            CharSequence address,
+            CharSequence ip,
             int port,
             RingQueue<IOEvent> ioQueue,
             Sequence ioSequence,
@@ -73,7 +74,7 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
         // bind socket
         this.kqueue = new Kqueue();
         this.socketFd = Net.socketTcp(false);
-        if (!Net.bind(this.socketFd, address, port)) {
+        if (!Net.bind(this.socketFd, ip, port)) {
             throw new NetworkError("Failed to find socket");
         }
         Net.listen(this.socketFd, 128);

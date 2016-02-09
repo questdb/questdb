@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.misc;
 
@@ -35,8 +35,8 @@ public final class Os {
     public static final int WINDOWS = 3;
     public static final int _32Bit = -2;
     public static final int type;
-    private static final int OSX = 1;
-    private static final int LINUX = 2;
+    public static final int OSX = 1;
+    public static final int LINUX = 2;
     private static final int UNKNOWN = -1;
     private static final OperatingSystemMXBean bean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
 

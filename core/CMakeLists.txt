@@ -36,7 +36,8 @@ if (WIN32)
     set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/windows)
     set(SOURCE_FILES ${SOURCE_FILES}
             src/main/c/windows/files.c
-            src/main/c/windows/os.c)
+            src/main/c/windows/os.c
+            src/main/c/windows/net.c src/main/c/windows/select.h src/main/c/windows/select.c)
 else ()
     set(SOURCE_FILES
             ${SOURCE_FILES}
@@ -53,3 +54,7 @@ set(ZLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/zlib-1.2.8)
 include(${ZLIB_SOURCE_DIR}/CMakeLists.txt)
 
 add_library(nfsdb SHARED ${SOURCE_FILES} ${ZLIB_SRCS})
+
+if (WIN32)
+    target_link_libraries(nfsdb wsock32 ws2_32)
+endif (WIN32)

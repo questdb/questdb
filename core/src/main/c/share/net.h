@@ -10,9 +10,9 @@ extern "C" {
 /*
  * Class:     com_nfsdb_misc_Net
  * Method:    accept
- * Signature: (J)I
+ * Signature: (J)J
  */
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_accept
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_accept
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -78,6 +78,10 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_setSndBuf
  */
 JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_socketTcp
         (JNIEnv *, jclass, jboolean);
+
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_close
+        (JNIEnv *, jclass, jlong);
+
 
 #ifdef __cplusplus
 }

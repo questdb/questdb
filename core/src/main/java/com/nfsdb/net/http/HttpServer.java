@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,12 +17,13 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.net.http;
 
 import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.iter.clock.MilliClock;
+import com.nfsdb.misc.Os;
 import com.nfsdb.mp.*;
 import com.nfsdb.std.ObjHashSet;
 import com.nfsdb.std.ObjList;
@@ -81,7 +82,7 @@ public class HttpServer {
         ioPubSequence.followedBy(ioSubSequence);
         ioSubSequence.followedBy(ioPubSequence);
 
-        this.dispatcher = new KQueueDispatcher("0.0.0.0", address.getPort(), ioQueue, ioPubSequence, clock, configuration);
+        this.dispatcher = createDispatcher("0.0.0.0", address.getPort(), ioQueue, ioPubSequence, clock, configuration);
         IOHttpJob ioHttp = new IOHttpJob(ioQueue, ioSubSequence, this.dispatcher, urlMatcher);
 
         ObjHashSet<Job> jobs = new ObjHashSet<>();
@@ -98,5 +99,24 @@ public class HttpServer {
         }
 
         startComplete.countDown();
+    }
+
+    private IODispatcher createDispatcher(
+            CharSequence ip,
+            int port,
+            RingQueue<IOEvent> ioQueue,
+            Sequence ioSequence,
+            Clock clock,
+            HttpServerConfiguration configuration
+    ) {
+
+        switch (Os.type) {
+            case Os.OSX:
+                return new KQueueDispatcher(ip, port, ioQueue, ioSequence, clock, configuration);
+            case Os.WINDOWS:
+                return new Win32SelectDispatcher(ip, port, ioQueue, ioSequence, clock, configuration);
+            default:
+                throw new RuntimeException("Unsupported operating system");
+        }
     }
 }

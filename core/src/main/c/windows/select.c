@@ -19,18 +19,24 @@
  * limitations under the License.
  ******************************************************************************/
 
-#include <processthreadsapi.h>
-#include <errhandlingapi.h>
-#include "../share/os.h"
+#include <winsock2.h>
+#include <stddef.h>
+#include "select.h"
 
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Os_getPid
-        (JNIEnv *e, jclass cl) {
-    return GetCurrentProcessId();
+JNIEXPORT jint JNICALL Java_com_nfsdb_net_http_Win32SelectDispatcher_select
+        (JNIEnv *e, jclass cl, jlong readfds, jlong writefds, jlong exceptfds) {
+    struct timeval tv = {0, 0};
+    int n = select(0, (fd_set *) readfds, (fd_set *) writefds, (fd_set *) exceptfds, &tv);
+    return n;
 }
 
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Os_errno
+JNIEXPORT jint JNICALL Java_com_nfsdb_net_http_Win32SelectDispatcher_arrayOffset
         (JNIEnv *e, jclass cl) {
-    return GetLastError();
+    return offsetof(struct fd_set, fd_array[0]);
 }
 
+JNIEXPORT jint JNICALL Java_com_nfsdb_net_http_Win32SelectDispatcher_countOffset
+        (JNIEnv *e, jclass cl) {
+    return offsetof(struct fd_set, fd_count);
+}
 
