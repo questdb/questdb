@@ -131,22 +131,24 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
 
     @Override
     protected boolean _run() {
-        final long timestamp = System.currentTimeMillis();
         int count = select(readFdSet.address, writeFdSet.address, 0);
         if (count < 0) {
             LOG.error().$("Error in select(): ").$(Os.errno()).$();
             return false;
         }
 
+        final long timestamp = System.currentTimeMillis();
+        boolean useful = false;
         fds.clear();
 
         // collect reads into hash map
         if (count > 0) {
             queryFdSets(timestamp);
+            useful = true;
         }
 
         // process returned fds
-        processRegistrations(timestamp);
+        useful = processRegistrations(timestamp) | useful;
 
         // re-arm select() fds
         int readFdCount = 0;
@@ -166,6 +168,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
                     disconnect(pending.get(i), KQueueDispatcher.DisconnectReason.IDLE);
                     pending.deleteRow(i);
                     n--;
+                    useful = true;
                     continue;
                 }
 
@@ -186,6 +189,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
                         disconnect(pending.get(i), KQueueDispatcher.DisconnectReason.SILLY);
                         pending.deleteRow(i);
                         n--;
+                        useful = true;
                         break;
                 }
             } else {
@@ -212,7 +216,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
 
         readFdSet.setCount(readFdCount);
         writeFdSet.setCount(writeFdCount);
-        return true;
+        return useful;
     }
 
     private long accept() {
