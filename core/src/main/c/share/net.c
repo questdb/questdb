@@ -58,7 +58,7 @@ JNIEXPORT jboolean JNICALL Java_com_nfsdb_misc_Net_bind
     return (jboolean) (bind((int) fd, (struct sockaddr *) &addr, sizeof(addr)) == 0);
 }
 
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_accept
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_accept
         (JNIEnv *e, jobject cl, jlong fd) {
     return accept((int) fd, NULL, NULL);
 }
