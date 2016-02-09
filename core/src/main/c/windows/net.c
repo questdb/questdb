@@ -103,8 +103,3 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_setRcvBuf
     jint sz = size;
     return setsockopt((SOCKET) fd, SOL_SOCKET, SO_RCVBUF, (char *) &sz, sizeof(sz));
 }
-
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_close
-        (JNIEnv *e, jclass cl, jlong fd) {
-    closesocket((SOCKET) fd);
-}

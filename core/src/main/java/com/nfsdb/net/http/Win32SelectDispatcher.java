@@ -85,7 +85,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
         // bind socket
         this.socketFd = Net.socketTcp(false);
         if (!Net.bind(this.socketFd, ip, port)) {
-            throw new NetworkError("Failed to find socket. System error " + Os.errno());
+            throw new NetworkError("Failed to bind socket. System error " + Os.errno());
         }
         Net.listen(this.socketFd, 128);
         int r = pending.addRow();
@@ -100,10 +100,9 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
     public void close() throws IOException {
         readFdSet.close();
         writeFdSet.close();
-        Net.close(socketFd);
 
         for (int i = 0, n = pending.size(); i < n; i++) {
-            Net.close(pending.get(i, M_FD));
+            Files.close(pending.get(i, M_FD));
         }
 
         pending.zapTop(pending.size());
@@ -181,6 +180,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
 
             // expired
             if (ts < deadline && fd != socketFd) {
+                disconnect(pending.get(i), KQueueDispatcher.DisconnectReason.IDLE);
                 pending.deleteRow(i);
                 n--;
                 continue;
@@ -197,6 +197,9 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
                     case WRITE:
                         writeFdSet.add(fd);
                         writeFdCount++;
+                        break;
+                    case DISCONNECTED:
+                        disconnect(pending.get(i), KQueueDispatcher.DisconnectReason.SILLY);
                         break;
                 }
                 i++;
@@ -268,6 +271,12 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
                         configuration.getHttpBufRespContent()
                 )
         );
+    }
+
+    private void disconnect(IOContext context, KQueueDispatcher.DisconnectReason reason) {
+        LOG.debug().$("Disconnected ").$(context.channel.getFd()).$(": ").$(reason).$();
+        context.close();
+        connectionCount--;
     }
 
     private boolean processRegistrations(long timestamp) {

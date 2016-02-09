@@ -308,7 +308,7 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
         return -1;
     }
 
-    private enum DisconnectReason {
+    public enum DisconnectReason {
         PEER, IDLE, SILLY
     }
 }

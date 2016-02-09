@@ -37,8 +37,6 @@ public final class Net {
         return bind(fd, parseIPv4(address), port);
     }
 
-    public native static void close(long fd);
-
     public static native int configureNonBlocking(long fd);
 
     public native static void listen(long fd, int backlog);

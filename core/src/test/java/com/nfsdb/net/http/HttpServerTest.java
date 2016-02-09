@@ -808,6 +808,7 @@ public class HttpServerTest extends AbstractJournalTest {
         String body = Files.readStringFromFile(f);
         f.deleteOnExit();
 
+        System.out.println(body);
         return gson.fromJson(body, QueryResponse.class);
     }
 
