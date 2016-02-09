@@ -131,8 +131,14 @@ public final class Files {
     public static String readStringFromFile(File file) throws JournalException {
         try {
             try (FileInputStream fis = new FileInputStream(file)) {
-                byte buffer[] = new byte[(int) fis.getChannel().size()];
-                fis.read(buffer);
+                byte buffer[]
+                        = new byte[(int) fis.getChannel().size()];
+                int totalRead = 0;
+                int read;
+                while (totalRead < buffer.length
+                        && (read = fis.read(buffer, totalRead, buffer.length - totalRead)) > 0) {
+                    totalRead += read;
+                }
                 return new String(buffer, UTF_8);
             }
         } catch (IOException e) {

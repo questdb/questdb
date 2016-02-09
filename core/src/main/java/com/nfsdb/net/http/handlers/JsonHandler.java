@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p/>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p/>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p/>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -35,10 +35,10 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.parser.QueryCompiler;
 import sun.nio.cs.ArrayEncoder;
+
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.nio.charset.CharsetEncoder;
-import java.nio.charset.UnsupportedCharsetException;
 import java.util.Iterator;
 
 public class JsonHandler implements ContextHandler {
@@ -62,8 +62,8 @@ public class JsonHandler implements ContextHandler {
     @Override
     public void handle(IOContext context) throws IOException {
         // Reused for UTF-8 encoding.
-        final byte[] encoded = (byte[])threadLocalByteBuffer.get();
-        final char[] encodingChar = (char[])threadLocalCharBuffer.get();
+        final byte[] encoded = (byte[]) threadLocalByteBuffer.get();
+        final char[] encodingChar = (char[]) threadLocalCharBuffer.get();
 
         // Query text.
         ChunkedResponse r = context.chunkedResponse();
@@ -91,8 +91,7 @@ public class JsonHandler implements ContextHandler {
                     if (sepPos + 1 < limit.length()) {
                         stop = Numbers.parseLong(limit, sepPos + 1, limit.length());
                     }
-                }
-                else {
+                } else {
                     stop = Numbers.parseLong(limit);
                 }
             } catch (NumericException ex) {
@@ -100,7 +99,7 @@ public class JsonHandler implements ContextHandler {
             }
         }
 
-        CharSequence withCount =  context.request.getUrlParam("withCount");
+        CharSequence withCount = context.request.getUrlParam("withCount");
         context.includeCount = withCount != null && Chars.equalsIgnoreCase(withCount, "true");
 
         try {
@@ -121,7 +120,7 @@ public class JsonHandler implements ContextHandler {
             int columnCount = metadata.getColumnCount();
             r.put(", \"columns\":[");
 
-            for(int i = 0; i < columnCount; i++) {
+            for (int i = 0; i < columnCount; i++) {
                 RecordColumnMetadata column = metadata.getColumn(i);
                 r.put("{\"name\":\"");
                 r.put(column.getName());
@@ -136,11 +135,9 @@ public class JsonHandler implements ContextHandler {
 
             // Send records.
             resume(context);
-        }
-        catch (ParserException pex) {
+        } catch (ParserException pex) {
             sendException(r, query, pex.getMessage(), 400, encodingChar, encoded);
-        }
-        catch (JournalException jex) {
+        } catch (JournalException jex) {
             sendException(r, query, jex.getMessage(), 500, encodingChar, encoded);
         }
     }
@@ -225,9 +222,9 @@ public class JsonHandler implements ContextHandler {
         }
     }
 
-    private static int separatorPos(CharSequence str){
+    private static int separatorPos(CharSequence str) {
         if (str == null) return -1;
-        for(int i =0; i < str.length();i++){
+        for (int i = 0; i < str.length(); i++) {
             if (str.charAt(i) == ',') {
                 return i;
             }
@@ -262,8 +259,7 @@ public class JsonHandler implements ContextHandler {
                 byte b = rec.get(col);
                 if (b == Byte.MIN_VALUE) {
                     r.put("null");
-                }
-                else {
+                } else {
                     Numbers.append(r, b);
                 }
                 break;
@@ -276,8 +272,7 @@ public class JsonHandler implements ContextHandler {
 
                 if (d == Double.POSITIVE_INFINITY) {
                     d = Double.MAX_VALUE;
-                }
-                else if (d == Double.NEGATIVE_INFINITY) {
+                } else if (d == Double.NEGATIVE_INFINITY) {
                     d = Double.MIN_VALUE;
                 }
                 putDouble(r, d);
@@ -290,11 +285,10 @@ public class JsonHandler implements ContextHandler {
                     break;
                 }
 
-               if (f == Float.POSITIVE_INFINITY) {
-                   f = Float.MAX_VALUE;
-                }
-                else if (f == Float.NEGATIVE_INFINITY) {
-                   f = Float.MIN_VALUE;
+                if (f == Float.POSITIVE_INFINITY) {
+                    f = Float.MAX_VALUE;
+                } else if (f == Float.NEGATIVE_INFINITY) {
+                    f = Float.MIN_VALUE;
                 }
                 putDouble(r, f);
                 break;
@@ -323,8 +317,7 @@ public class JsonHandler implements ContextHandler {
                 CharSequence str = rec.getStr(col);
                 if (str == null) {
                     r.put("null");
-                }
-                else {
+                } else {
                     r.put('\"');
                     stringToJson(r, rec.getStr(col), encodingChar, encoded);
                     r.put('\"');
@@ -336,7 +329,7 @@ public class JsonHandler implements ContextHandler {
                 break;
 
             default:
-                throw new IllegalArgumentException(String.format("Column type %s not supported",column.getType()));
+                throw new IllegalArgumentException(String.format("Column type %s not supported", column.getType()));
         }
     }
 
@@ -345,7 +338,7 @@ public class JsonHandler implements ContextHandler {
     }
 
     private static void stringToJson(CharSink r, CharSequence str, char[] charSource, byte[] encoded) {
-        for(int i = 0; i < str.length(); i++) {
+        for (int i = 0; i < str.length(); i++) {
             char c = str.charAt(i);
             if (c < 128) {
                 if (c != '\"' && c != '\\' && c != '/' && c != '\b' && c != '\f' && c != '\n' && c != '\r' && c != '\t') {
@@ -353,30 +346,25 @@ public class JsonHandler implements ContextHandler {
                 } else {
                     encodeControl(r, c);
                 }
-            }
-            else if (c < 0xD800) {
+            } else if (c < 0xD800) {
                 encodeUnicode(r, charSource, encoded, c);
-            }
-            else {
-                throw new UnsupportedCharsetException("UTF-18 characters up to 0xD800 are supported only ");
+            } else {
+                r.put("?");
             }
         }
     }
 
     private static void encodeUnicode(CharSink r, char[] charSource, byte[] encoded, char c) {
-        if (UTF8Encoder == null) {
-            throw new UnsupportedCharsetException("UTF-18 characters up to 0x80 are supported only.");
-        }
         // Encode utf-8
         charSource[0] = c;
         int len = UTF8Encoder.encode(charSource, 0, 1, encoded);
-        for(int j = 0; j < len; j++){
-            r.put((char)encoded[j]);
+        for (int j = 0; j < len; j++) {
+            r.put((char) encoded[j]);
         }
     }
 
     private static void encodeControl(CharSink r, char c) {
-        if (c == '\"' ||  c == '\\' || c == '/') {
+        if (c == '\"' || c == '\\' || c == '/') {
             r.put('\\');
             r.put(c);
             return;
@@ -384,17 +372,13 @@ public class JsonHandler implements ContextHandler {
 
         if (c == '\b') {
             r.put("\\b");
-        }
-        else if (c == '\f') {
+        } else if (c == '\f') {
             r.put("\\f");
-        }
-        else if (c == '\n') {
+        } else if (c == '\n') {
             r.put("\\n");
-        }
-        else if (c == '\r') {
+        } else if (c == '\r') {
             r.put("\\r");
-        }
-        else if (c == '\t') {
+        } else if (c == '\t') {
             r.put("\\t");
         }
     }
