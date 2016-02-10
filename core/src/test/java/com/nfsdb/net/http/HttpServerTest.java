@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p/>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p/>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p/>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -58,7 +58,6 @@ import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
 import org.apache.http.ssl.SSLContextBuilder;
 import org.apache.http.ssl.TrustStrategy;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -296,7 +295,7 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testJsonEncodeControlChars() throws Exception {
         java.lang.StringBuilder allChars = new java.lang.StringBuilder();
-        for(char c = Character.MIN_VALUE;  c < 0xD800; c++) { //
+        for (char c = Character.MIN_VALUE; c < 0xD800; c++) { //
             allChars.append(c);
         }
 
@@ -310,7 +309,7 @@ public class HttpServerTest extends AbstractJournalTest {
             String query = "select id from tab \n limit 1";
             QueryResponse queryResponse = download(query);
             Assert.assertEquals(query, queryResponse.query);
-            for(int i = 0; i < allCharString.length(); i++) {
+            for (int i = 0; i < allCharString.length(); i++) {
                 Assert.assertTrue("result len is less than " + i, i < queryResponse.result[0].id.length());
                 Assert.assertEquals(i + "", allCharString.charAt(i), queryResponse.result[0].id.charAt(i));
             }
@@ -740,7 +739,7 @@ public class HttpServerTest extends AbstractJournalTest {
     private QueryResponse download(String queryUrl, int limitFrom, int limitTo) throws Exception {
         File f = temp.newFile();
         String url = "http://localhost:9000/js?query=" + URLEncoder.encode(queryUrl, "UTF-8");
-        if (limitFrom >=0) {
+        if (limitFrom >= 0) {
             url += "&limit=" + limitFrom;
         }
         if (limitTo >= 0) {
@@ -823,7 +822,7 @@ public class HttpServerTest extends AbstractJournalTest {
         record.z = z;
         record.w = w;
         record.timestamp = timestamp;
-        generateJournal(new QueryResponse.Tab[] { record }, 1000);
+        generateJournal(new QueryResponse.Tab[]{record}, 1000);
     }
 
     private void generateJournal() throws JournalException, NumericException {
@@ -853,11 +852,10 @@ public class HttpServerTest extends AbstractJournalTest {
             JournalEntryWriter ew = w.entryWriter();
             ew.putStr(0, recs.length > i ? recs[i].id : "id" + i);
             ew.putDouble(1, recs.length > i ? recs[i].x : rnd.nextDouble());
-            if (recs.length > i){
+            if (recs.length > i) {
                 ew.putDouble(2, recs[i].y);
                 ew.putLong(3, recs[i].z);
-            }
-            else {
+            } else {
                 if (rnd.nextPositiveInt() % 10 == 0) {
                     ew.putNull(2);
                 } else {
