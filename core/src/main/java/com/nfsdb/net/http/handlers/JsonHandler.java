@@ -1,23 +1,23 @@
-/*
- *  _  _ ___ ___     _ _
+/*******************************************************************************
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p/>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p/>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p/>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http.handlers;
 
@@ -43,16 +43,6 @@ import java.util.Iterator;
 
 public class JsonHandler implements ContextHandler {
     private static final ArrayEncoder UTF8Encoder;
-    private static final ThreadLocal threadLocalCharBuffer = new ThreadLocal() {
-        protected char[] initialValue() {
-            return new char[1];
-        }
-    };
-    private static final ThreadLocal threadLocalByteBuffer = new ThreadLocal() {
-        protected byte[] initialValue() {
-            return new byte[4];
-        }
-    };
     private JournalReaderFactory factory;
 
     public JsonHandler(JournalReaderFactory journalFactory) {
@@ -62,8 +52,8 @@ public class JsonHandler implements ContextHandler {
     @Override
     public void handle(IOContext context) throws IOException {
         // Reused for UTF-8 encoding.
-        final byte[] encoded = (byte[]) threadLocalByteBuffer.get();
-        final char[] encodingChar = (char[]) threadLocalCharBuffer.get();
+        final byte[] encoded = context.encoded;
+        final char[] encodingChar = context.encodingChar;
 
         // Query text.
         ChunkedResponse r = context.chunkedResponse();
@@ -97,6 +87,13 @@ public class JsonHandler implements ContextHandler {
             } catch (NumericException ex) {
                 // Skip or stop will have default value.
             }
+        }
+        if (stop < 0) {
+            stop = 0;
+        }
+
+        if (skip < 0) {
+            skip = 0;
         }
 
         CharSequence withCount = context.request.getUrlParam("withCount");
@@ -145,9 +142,9 @@ public class JsonHandler implements ContextHandler {
     @Override
     public void resume(IOContext context) throws IOException {
         // Reused for UTF-8 encoding. Thread local
-        final byte[] encoded = (byte[]) threadLocalByteBuffer.get();
-        final char[] encodingChar = (char[]) threadLocalCharBuffer.get();
-        final ChunkedResponse r = context.chunkedResponse();
+        final byte[] encoded = context.encoded;
+        final char[] encodingChar = context.encodingChar;
+        ChunkedResponse r = context.chunkedResponse();
 
         try {
             Iterator<? extends Record> records = context.records;
@@ -197,21 +194,25 @@ public class JsonHandler implements ContextHandler {
                     context.current = null;
                 }
             }
-            r.bookmark();
-            // Finita.
-            r.put(']');
-            if (context.count > context.stop) {
-                r.put(",\"moreExist\":true");
-            }
+            if (context.count >= 0) {
+                // Finita.
+                r.bookmark();
 
-            if (context.includeCount) {
-                r.put(",\"totalCount\":");
-                r.put(context.count);
+                r.put(']');
+                if (context.count > context.stop) {
+                    r.put(",\"moreExist\":true");
+                }
+
+                if (context.includeCount) {
+                    r.put(",\"totalCount\":");
+                    r.put(context.count);
+                }
+                r.put('}');
+                context.count = -1;
+                r.sendChunk();
             }
-            r.put('}');
-            context.current = null;
-            r.sendChunk();
             r.done();
+
         } catch (ResponseContentBufferTooSmallException ex) {
             if (!r.resetToBookmark()) {
                 // Nowhere to reset!
@@ -313,12 +314,12 @@ public class JsonHandler implements ContextHandler {
                 break;
             case SYMBOL:
             case STRING:
-                CharSequence str = rec.getStr(col);
+                CharSequence str = rec.getFlyweightStr(col);
                 if (str == null) {
                     r.put("null");
                 } else {
                     r.put('\"');
-                    stringToJson(r, rec.getStr(col), encodingChar, encoded);
+                    stringToJson(r, str, encodingChar, encoded);
                     r.put('\"');
                 }
                 break;
@@ -340,11 +341,7 @@ public class JsonHandler implements ContextHandler {
         for (int i = 0; i < str.length(); i++) {
             char c = str.charAt(i);
             if (c < 128) {
-                if (c != '\"' && c != '\\' && c != '/' && c != '\b' && c != '\f' && c != '\n' && c != '\r' && c != '\t') {
-                    r.put(c);
-                } else {
-                    encodeControl(r, c);
-                }
+                encodeControl(r, c);
             } else if (c < 0xD800) {
                 encodeUnicode(r, charSource, encoded, c);
             } else {
@@ -363,22 +360,31 @@ public class JsonHandler implements ContextHandler {
     }
 
     private static void encodeControl(CharSink r, char c) {
-        if (c == '\"' || c == '\\' || c == '/') {
-            r.put('\\');
-            r.put(c);
-            return;
-        }
-
-        if (c == '\b') {
-            r.put("\\b");
-        } else if (c == '\f') {
-            r.put("\\f");
-        } else if (c == '\n') {
-            r.put("\\n");
-        } else if (c == '\r') {
-            r.put("\\r");
-        } else if (c == '\t') {
-            r.put("\\t");
+        switch (c) {
+            case '\"':
+            case '\\':
+            case '/':
+                r.put('\\');
+                r.put(c);
+                break;
+            case '\b':
+                r.put("\\b");
+                break;
+            case '\f':
+                r.put("\\f");
+                break;
+            case '\n':
+                r.put("\\n");
+                break;
+            case '\r':
+                r.put("\\r");
+                break;
+            case '\t':
+                r.put("\\t");
+                break;
+            default:
+                r.put(c);
+                break;
         }
     }
 

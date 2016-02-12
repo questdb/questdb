@@ -30,10 +30,10 @@ __server__
 - [x] SSL support
 - [x] http compression
 - [x] high-performance logging
-- [ ] manage parked uploads and downloads (timeout with resource cleanup)
-- [ ] C layer for windows (io completion ports)
-- [ ] C layer for linux (epoll)
-- [ ] __C layer for mac/bsd (kqueue) (in progress)__
+- [x] manage parked uploads and downloads (timeout with resource cleanup)
+- [x] C layer for windows
+- [ ] __C layer for linux (epoll) (in progress)__
+- [x] C layer for mac/bsd (kqueue)
 - [ ] MySQL wire protocol implementation
 
 __misc__

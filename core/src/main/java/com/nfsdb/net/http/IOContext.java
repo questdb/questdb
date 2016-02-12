@@ -73,6 +73,8 @@ public class IOContext implements Closeable, Mutable {
     public long stop;
     public Record current;
     public boolean includeCount;
+    public byte[] encoded = new byte[4];
+    public char[] encodingChar = new char[1];
     // static sending fields
     private RandomAccessFile raf;
 
