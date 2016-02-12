@@ -26,7 +26,14 @@ import com.nfsdb.ex.NumericException;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public final class Net {
+
+    private static final int EOF;
+
     private Net() {
+    }
+
+    public static boolean EOF() {
+        return Os.errno() == EOF;
     }
 
     public native static long accept(long fd);
@@ -53,6 +60,8 @@ public final class Net {
 
     public native static long socketTcp(boolean blocking);
 
+    private native static int getEof();
+
     @SuppressFBWarnings("LEST_LOST_EXCEPTION_STACK_TRACE")
     private static int parseIPv4(CharSequence address) {
         int ip = 0;
@@ -75,5 +84,9 @@ public final class Net {
         } catch (NumericException e) {
             throw new NetworkError("Invalid ip address: " + address);
         }
+    }
+
+    static {
+        EOF = getEof();
     }
 }

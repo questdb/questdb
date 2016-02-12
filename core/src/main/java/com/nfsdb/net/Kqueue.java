@@ -31,11 +31,10 @@ import java.io.Closeable;
 
 public final class Kqueue implements Closeable {
     public static final short EVFILT_READ;
-    public static final int EV_EOF = -32751;
     public static final int NUM_KEVENTS = 1024;
+    public static final short SIZEOF_KEVENT;
     private static final short EVFILT_WRITE;
     private static final Log LOG = LogFactory.getLog(Kqueue.class);
-    private static final short SIZEOF_KEVENT;
     private static final short FD_OFFSET;
     private static final short FILTER_OFFSET;
     private static final short FLAGS_OFFSET;
@@ -44,9 +43,10 @@ public final class Kqueue implements Closeable {
     private static final short EV_ONESHOT;
     private final long eventList;
     private final int kq;
+    private long _rPtr;
 
     public Kqueue() {
-        this.eventList = Unsafe.getUnsafe().allocateMemory(SIZEOF_KEVENT * NUM_KEVENTS);
+        this.eventList = this._rPtr = Unsafe.getUnsafe().allocateMemory(SIZEOF_KEVENT * NUM_KEVENTS);
         this.kq = kqueue();
     }
 
@@ -59,26 +59,23 @@ public final class Kqueue implements Closeable {
         }
     }
 
-    public long getData(int index) {
-        return Unsafe.getUnsafe().getLong(offset(index) + DATA_OFFSET);
+    public long getData() {
+        return Unsafe.getUnsafe().getLong(_rPtr + DATA_OFFSET);
     }
 
-    public int getFd(int index) {
-        return (int) Unsafe.getUnsafe().getLong(offset(index) + FD_OFFSET);
+    public int getFd() {
+        return (int) Unsafe.getUnsafe().getLong(_rPtr + FD_OFFSET);
     }
 
-    public int getFilter(int index) {
-        return Unsafe.getUnsafe().getShort(offset(index) + FILTER_OFFSET);
-    }
-
-    public int getFlags(int index) {
-        return Unsafe.getUnsafe().getShort(offset(index) + FLAGS_OFFSET);
+    public int getFilter() {
+        return Unsafe.getUnsafe().getShort(_rPtr + FILTER_OFFSET);
     }
 
     public void listen(long sfd) {
-        final long p = commonFd(0, sfd, 0);
-        Unsafe.getUnsafe().putShort(p + FILTER_OFFSET, EVFILT_READ);
-        Unsafe.getUnsafe().putShort(p + FLAGS_OFFSET, EV_ADD);
+        _rPtr = eventList;
+        commonFd(sfd, 0);
+        Unsafe.getUnsafe().putShort(_rPtr + FILTER_OFFSET, EVFILT_READ);
+        Unsafe.getUnsafe().putShort(_rPtr + FLAGS_OFFSET, EV_ADD);
         register(1);
     }
 
@@ -86,20 +83,24 @@ public final class Kqueue implements Closeable {
         return kevent(kq, 0, 0, eventList, NUM_KEVENTS);
     }
 
-    public void readFD(int index, int fd, long data) {
-        final long p = commonFd(index, fd, data);
-        Unsafe.getUnsafe().putShort(p + FILTER_OFFSET, EVFILT_READ);
-        Unsafe.getUnsafe().putShort(p + FLAGS_OFFSET, (short) (EV_ADD | EV_ONESHOT));
+    public void readFD(int fd, long data) {
+        commonFd(fd, data);
+        Unsafe.getUnsafe().putShort(_rPtr + FILTER_OFFSET, EVFILT_READ);
+        Unsafe.getUnsafe().putShort(_rPtr + FLAGS_OFFSET, (short) (EV_ADD | EV_ONESHOT));
     }
 
     public void register(int n) {
         kevent(kq, eventList, n, 0, 0);
     }
 
-    public void writeFD(int index, int fd, long data) {
-        final long p = commonFd(index, fd, data);
-        Unsafe.getUnsafe().putShort(p + FILTER_OFFSET, EVFILT_WRITE);
-        Unsafe.getUnsafe().putShort(p + FLAGS_OFFSET, (short) (EV_ADD | EV_ONESHOT));
+    public void setOffset(int offset) {
+        this._rPtr = eventList + offset;
+    }
+
+    public void writeFD(int fd, long data) {
+        commonFd(fd, data);
+        Unsafe.getUnsafe().putShort(_rPtr + FILTER_OFFSET, EVFILT_WRITE);
+        Unsafe.getUnsafe().putShort(_rPtr + FLAGS_OFFSET, (short) (EV_ADD | EV_ONESHOT));
     }
 
     private static native int kqueue();
@@ -122,15 +123,9 @@ public final class Kqueue implements Closeable {
 
     private static native short getDataOffset();
 
-    private long commonFd(int index, long fd, long data) {
-        final long p = offset(index);
-        Unsafe.getUnsafe().putLong(p + FD_OFFSET, fd);
-        Unsafe.getUnsafe().putLong(p + DATA_OFFSET, data);
-        return p;
-    }
-
-    private long offset(int index) {
-        return eventList + SIZEOF_KEVENT * (long) index;
+    private void commonFd(long fd, long data) {
+        Unsafe.getUnsafe().putLong(_rPtr + FD_OFFSET, fd);
+        Unsafe.getUnsafe().putLong(_rPtr + DATA_OFFSET, data);
     }
 
     static {

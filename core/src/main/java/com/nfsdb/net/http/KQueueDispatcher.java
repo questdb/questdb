@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
@@ -89,6 +89,11 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
     }
 
     @Override
+    public int getConnectionCount() {
+        return connectionCount;
+    }
+
+    @Override
     public void registerChannel(IOContext context, ChannelStatus status) {
         long cursor = interestPubSequence.nextBully();
         IOEvent evt = interestQueue.get(cursor);
@@ -99,20 +104,18 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
     }
 
     @Override
-    public int getConnectionCount() {
-        return connectionCount;
-    }
-
-    @Override
     protected boolean _run() {
         boolean useful = false;
         final int n = kqueue.poll();
         int watermark = pending.size();
         final long timestamp = clock.getTicks();
+        int offset = 0;
         if (n > 0) {
             // check all activated FDs
             for (int i = 0; i < n; i++) {
-                int fd = kqueue.getFd(i);
+                kqueue.setOffset(offset);
+                offset += Kqueue.SIZEOF_KEVENT;
+                int fd = kqueue.getFd();
                 // this is server socket, accept if there aren't too many already
                 if (fd == socketFd) {
                     long _fd = accept();
@@ -124,22 +127,18 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
                     // find row in pending for two reasons:
                     // 1. find payload
                     // 2. remove row from pending, remaining rows will be timed out
-                    int row = findPending(fd, kqueue.getData(i));
+                    int row = findPending(fd, kqueue.getData());
                     if (row < 0) {
                         LOG.error().$("Internal error: unknown FD: ").$(fd).$();
                         continue;
                     }
 
-                    if (kqueue.getFlags(i) == Kqueue.EV_EOF) {
-                        disconnect(pending.get(row), DisconnectReason.PEER);
-                    } else {
-                        long cursor = ioSequence.nextBully();
-                        IOEvent evt = ioQueue.get(cursor);
-                        evt.context = pending.get(row);
-                        evt.status = kqueue.getFilter(i) == Kqueue.EVFILT_READ ? ChannelStatus.READ : ChannelStatus.WRITE;
-                        ioSequence.done(cursor);
-                        LOG.debug().$("Queuing ").$(kqueue.getFilter(i)).$(" on ").$(fd).$();
-                    }
+                    long cursor = ioSequence.nextBully();
+                    IOEvent evt = ioQueue.get(cursor);
+                    evt.context = pending.get(row);
+                    evt.status = kqueue.getFilter() == Kqueue.EVFILT_READ ? ChannelStatus.READ : ChannelStatus.WRITE;
+                    ioSequence.done(cursor);
+                    LOG.debug().$("Queuing ").$(kqueue.getFilter()).$(" on ").$(fd).$();
                     pending.deleteRow(row);
                     watermark--;
                 }
@@ -220,10 +219,11 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
 
     private void enqueuePending(int watermark) {
         int index = 0;
-        for (int i = watermark, sz = pending.size(); i < sz; i++) {
-            kqueue.readFD(index++, (int) pending.get(i, 1), pending.get(i, 0));
+        for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += Kqueue.SIZEOF_KEVENT) {
+            kqueue.setOffset(offset);
+            kqueue.readFD((int) pending.get(i, 1), pending.get(i, 0));
             LOG.debug().$("kqueued ").$(pending.get(i, 1)).$(" as ").$(index - 1).$();
-            if (index > Kqueue.NUM_KEVENTS - 1) {
+            if (++index > Kqueue.NUM_KEVENTS - 1) {
                 kqueue.register(index);
                 index = 0;
             }
@@ -259,6 +259,7 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
         long cursor;
         boolean useful = false;
         int count = 0;
+        int offset = 0;
         while ((cursor = interestSubSequence.next()) > -1) {
             useful = true;
             IOEvent evt = interestQueue.get(cursor);
@@ -268,12 +269,15 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
 
             int fd = (int) context.channel.getFd();
             LOG.debug().$("Registering ").$(fd).$(" status ").$(op).$();
+            kqueue.setOffset(offset);
+            offset += Kqueue.SIZEOF_KEVENT;
+            count++;
             switch (op) {
                 case READ:
-                    kqueue.readFD(count++, fd, timestamp);
+                    kqueue.readFD(fd, timestamp);
                     break;
                 case WRITE:
-                    kqueue.writeFD(count++, fd, timestamp);
+                    kqueue.writeFD(fd, timestamp);
                     break;
                 case DISCONNECTED:
                     disconnect(context, DisconnectReason.SILLY);

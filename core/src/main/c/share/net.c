@@ -26,6 +26,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <sys/errno.h>
 #include "net.h"
 
 JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_socketTcp
@@ -105,4 +106,9 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_setRcvBuf
         (JNIEnv *e, jclass cl, jlong fd, jint size) {
     jint sz = size;
     return setsockopt((int) fd, SOL_SOCKET, SO_RCVBUF, (char *) &sz, sizeof(sz));
+}
+
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_getEof
+        (JNIEnv *e, jclass cl) {
+    return ENOENT;
 }
