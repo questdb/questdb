@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.misc;
 
@@ -42,18 +42,6 @@ public final class Net {
     public static native int configureNonBlocking(long fd);
 
     public native static void listen(long fd, int backlog);
-
-    public static void main(String[] args) {
-        Os.init();
-        long fd;
-        System.out.println(fd = Net.socketTcp(true));
-        System.out.println(Net.bind(fd, 0, 9000));
-        listen(fd, 1024);
-        Net.configureNonBlocking(fd);
-        System.out.println(Net.setRcvBuf(fd, 4096));
-        System.out.println(Net.setSndBuf(fd, 4096));
-        accept(fd);
-    }
 
     public static native int recv(long fd, long ptr, int len);
 
