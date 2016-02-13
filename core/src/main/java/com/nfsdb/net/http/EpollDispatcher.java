@@ -122,11 +122,7 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
                 long id = epoll.getData();
                 // this is server socket, accept if there aren't too many already
                 if (id == 0) {
-                    long _fd = accept();
-                    if (_fd < 0) {
-                        continue;
-                    }
-                    addPending(_fd, timestamp);
+                    accept(timestamp);
                 } else {
                     // find row in pending for two reasons:
                     // 1. find payload
@@ -166,32 +162,35 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
         return processRegistrations(timestamp) || useful;
     }
 
-    private long accept() {
-        long _fd = Net.accept(socketFd);
-        LOG.debug().$(" Connected ").$(_fd).$();
+    private void accept(long timestamp) {
+        while (true) {
+            long _fd = Net.accept(socketFd);
 
-        // something not right
-        if (_fd < 0) {
-            LOG.error().$("Error in accept: ").$(_fd).$();
-            return -1;
+            if (_fd < 0) {
+                if (Os.errno() != Net.EWOULDBLOCK) {
+                    LOG.error().$("Error in accept(): ").$(Os.errno()).$();
+                }
+                break;
+            }
+
+            LOG.debug().$(" Connected ").$(_fd).$();
+
+            if (Net.configureNonBlocking(_fd) < 0) {
+                LOG.error().$("Cannot make FD non-blocking").$();
+                Files.close(_fd);
+            }
+
+            connectionCount++;
+
+            if (connectionCount > maxConnections) {
+                LOG.info().$("Too many connections, kicking out ").$(_fd).$();
+                Files.close(_fd);
+                connectionCount--;
+                return;
+            }
+
+            addPending(_fd, timestamp);
         }
-
-        if (Net.configureNonBlocking(_fd) < 0) {
-            LOG.error().$("Cannot make FD non-blocking").$();
-            Files.close(_fd);
-            return -1;
-        }
-
-        connectionCount++;
-
-        if (connectionCount > maxConnections) {
-            LOG.info().$("Too many connections, kicking out ").$(_fd).$();
-            Files.close(_fd);
-            connectionCount--;
-            return -1;
-        }
-
-        return _fd;
     }
 
     private void addPending(long _fd, long timestamp) {
@@ -261,17 +260,16 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
             final long id = fdid++;
             switch (op) {
                 case READ:
-                    if (epoll.epollCtl(fd, id, 3, Epoll.EPOLLIN) < 0) {
-                        System.out.println("error " + Os.errno());
-                    }
+                    epoll.epollCtl(fd, id, Epoll.EPOLL_CTL_MOD, Epoll.EPOLLIN);
                     break;
                 case WRITE:
-                    if (epoll.epollCtl(fd, id, 3, Epoll.EPOLLOUT) < 0) {
-                        System.out.println("error 2: " + Os.errno());
-                    }
+                    epoll.epollCtl(fd, id, Epoll.EPOLL_CTL_MOD, Epoll.EPOLLOUT);
                     break;
                 case DISCONNECTED:
                     disconnect(context, DisconnectReason.SILLY);
+                    continue;
+                case EOF:
+                    disconnect(context, DisconnectReason.PEER);
                     continue;
             }
 

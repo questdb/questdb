@@ -13,6 +13,7 @@ public final class Epoll implements Closeable {
     public static final int EPOLLIN;
     public static final int EPOLLOUT;
     public static final int EPOLL_CTL_ADD;
+    public static final int EPOLL_CTL_MOD;
     private static final short DATA_OFFSET;
     private static final short EVENTS_OFFSET;
     private static final int EPOLLONESHOT;
@@ -86,7 +87,7 @@ public final class Epoll implements Closeable {
     }
 
     public void listen(long sfd) {
-        Unsafe.getUnsafe().putInt(events + EVENTS_OFFSET, EPOLLIN);
+        Unsafe.getUnsafe().putInt(events + EVENTS_OFFSET, EPOLLIN | EPOLLET);
         Unsafe.getUnsafe().putLong(events + DATA_OFFSET, 0);
 
         if (epollCtl(epfd, EPOLL_CTL_ADD, sfd, events) < 0) {
@@ -124,6 +125,8 @@ public final class Epoll implements Closeable {
 
     private static native int getCtlAdd();
 
+    private static native int getCtlMod();
+
     static {
         Os.init();
         DATA_OFFSET = getDataOffset();
@@ -134,5 +137,6 @@ public final class Epoll implements Closeable {
         EPOLLOUT = getEPOLLOUT();
         EPOLLONESHOT = getEPOLLONESHOT();
         EPOLL_CTL_ADD = getCtlAdd();
+        EPOLL_CTL_MOD = getCtlMod();
     }
 }

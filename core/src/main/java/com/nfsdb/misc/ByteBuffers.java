@@ -171,7 +171,8 @@ public final class ByteBuffers {
 
     @SuppressFBWarnings("LEST_LOST_EXCEPTION_STACK_TRACE")
     @SuppressWarnings("TryWithIdenticalCatches")
-    public static void copyNonBlocking(ReadableByteChannel channel, ByteBuffer to, int retryCount) throws DisconnectedChannelException, SlowReadableChannelException {
+    public static void copyNonBlocking(ReadableByteChannel channel, ByteBuffer to, int retryCount)
+            throws DisconnectedChannelException, SlowReadableChannelException, EndOfChannelException {
         int r = to.remaining();
         int target = r;
         while (target > 0) {
@@ -186,8 +187,7 @@ public final class ByteBuffers {
 
             // disconnected
             if (result == 0 && target == r && Net.EOF()) {
-                System.out.println("gracelful: " + Os.errno());
-                throw DisconnectedChannelException.INSTANCE;
+                throw EndOfChannelException.INSTANCE;
             }
 
             if (result == 0 && target < r) {

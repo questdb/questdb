@@ -35,14 +35,14 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
-public class NativeStaticContentHandler implements ContextHandler {
+public class StaticContentHandler implements ContextHandler {
 
-    private static final Log LOG = LogFactory.getLog(NativeStaticContentHandler.class);
+    private static final Log LOG = LogFactory.getLog(StaticContentHandler.class);
 
     private final MimeTypes mimeTypes;
     private final ObjectFactory<PrefixedPath> ppFactory;
 
-    public NativeStaticContentHandler(final File publicDir, MimeTypes mimeTypes) {
+    public StaticContentHandler(final File publicDir, MimeTypes mimeTypes) {
         this.mimeTypes = mimeTypes;
         this.ppFactory = new ObjectFactory<PrefixedPath>() {
             @Override
@@ -61,7 +61,6 @@ public class NativeStaticContentHandler implements ContextHandler {
             PrefixedPath path = context.getThreadLocal(IOWorkerContextKey.PP.name(), ppFactory);
             if (Files.exists(path.of(url))) {
                 send(context, path, false);
-                System.out.println("sent: " + path);
             } else {
                 context.simpleResponse().send(404);
             }

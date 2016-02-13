@@ -27,6 +27,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public final class Net {
 
+    public static final int EWOULDBLOCK;
     private static final int EOF;
 
     private Net() {
@@ -62,6 +63,8 @@ public final class Net {
 
     private native static int getEof();
 
+    private native static int getEwouldblock();
+
     @SuppressFBWarnings("LEST_LOST_EXCEPTION_STACK_TRACE")
     private static int parseIPv4(CharSequence address) {
         int ip = 0;
@@ -88,5 +91,6 @@ public final class Net {
 
     static {
         EOF = getEof();
+        EWOULDBLOCK = getEwouldblock();
     }
 }

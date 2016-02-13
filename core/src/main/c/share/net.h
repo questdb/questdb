@@ -86,6 +86,9 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_available
 JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_getEof
         (JNIEnv *, jclass);
 
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_getEwouldblock
+        (JNIEnv *, jclass);
+
 #ifdef __cplusplus
 }
 #endif

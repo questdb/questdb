@@ -33,7 +33,7 @@ import com.nfsdb.net.http.SimpleUrlMatcher;
 import com.nfsdb.net.http.handlers.DummyHandler;
 import com.nfsdb.net.http.handlers.ImportHandler;
 import com.nfsdb.net.http.handlers.JsonHandler;
-import com.nfsdb.net.http.handlers.NativeStaticContentHandler;
+import com.nfsdb.net.http.handlers.StaticContentHandler;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
@@ -78,7 +78,7 @@ class BootstrapMain {
         matcher.put("/imp", new ImportHandler(factory));
         matcher.put("/js", new JsonHandler(factory));
         matcher.put("/x", new DummyHandler());
-        matcher.setDefaultHandler(new NativeStaticContentHandler(configuration.getHttpPublic(), new MimeTypes(configuration.getMimeTypes())));
+        matcher.setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), new MimeTypes(configuration.getMimeTypes())));
 
         HttpServer server = new HttpServer(configuration, matcher);
         server.start(LogFactory.INSTANCE.getJobs());

@@ -79,3 +79,8 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_net_Epoll_getCtlAdd
         (JNIEnv *e, jclass cl) {
     return EPOLL_CTL_ADD;
 }
+
+JNIEXPORT jint JNICALL Java_com_nfsdb_net_Epoll_getCtlMod
+        (JNIEnv *e, jclass cl) {
+    return EPOLL_CTL_MOD;
+}

@@ -50,6 +50,8 @@ public class IOContext implements Closeable, Mutable {
     public final NetworkChannel channel;
     public final Request request;
     public final FlyweightCharSequence ext = new FlyweightCharSequence();
+    public final byte[] encoded = new byte[4];
+    public final char[] encodingChar = new char[1];
     private final Response response;
     public WorkerContext threadContext;
     // multipart generic
@@ -73,8 +75,6 @@ public class IOContext implements Closeable, Mutable {
     public long stop;
     public Record current;
     public boolean includeCount;
-    public byte[] encoded = new byte[4];
-    public char[] encodingChar = new char[1];
     // static sending fields
     private RandomAccessFile raf;
 

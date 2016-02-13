@@ -111,3 +111,8 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_getEof
         (JNIEnv *e, jclass cl) {
     return ENOENT;
 }
+
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_getEwouldblock
+        (JNIEnv *e, jclass cl) {
+    return EWOULDBLOCK;
+}

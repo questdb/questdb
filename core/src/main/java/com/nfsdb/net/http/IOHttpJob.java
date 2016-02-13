@@ -133,6 +133,8 @@ public class IOHttpJob implements Job {
             status = ChannelStatus.READ;
         } catch (MalformedHeaderException | DisconnectedChannelException e) {
             status = ChannelStatus.DISCONNECTED;
+        } catch (EndOfChannelException e) {
+            status = ChannelStatus.EOF;
         } catch (SlowReadableChannelException e) {
             LOG.debug().$("Slow read").$();
             status = ChannelStatus.READ;
