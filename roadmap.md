@@ -32,7 +32,7 @@ __server__
 - [x] high-performance logging
 - [x] manage parked uploads and downloads (timeout with resource cleanup)
 - [x] C layer for windows
-- [ ] __C layer for linux (epoll) (in progress)__
+- [x] C layer for linux (epoll)
 - [x] C layer for mac/bsd (kqueue)
 - [ ] MySQL wire protocol implementation
 
