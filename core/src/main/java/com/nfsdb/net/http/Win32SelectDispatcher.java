@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
@@ -165,7 +165,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
 
                 // check if expired
                 if (ts < deadline && fd != socketFd) {
-                    disconnect(pending.get(i), KQueueDispatcher.DisconnectReason.IDLE);
+                    disconnect(pending.get(i), DisconnectReason.IDLE);
                     pending.deleteRow(i);
                     n--;
                     useful = true;
@@ -186,7 +186,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
                         i++;
                         break;
                     case DISCONNECTED:
-                        disconnect(pending.get(i), KQueueDispatcher.DisconnectReason.SILLY);
+                        disconnect(pending.get(i), DisconnectReason.SILLY);
                         pending.deleteRow(i);
                         n--;
                         useful = true;
@@ -199,7 +199,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
                 final IOContext context = pending.get(i);
 
                 if ((_new_op & FD_READ) > 0 && Net.available(fd) == 0) {
-                    disconnect(context, KQueueDispatcher.DisconnectReason.PEER);
+                    disconnect(context, DisconnectReason.PEER);
                 } else {
                     if ((_new_op & FD_READ) > 0) {
                         enqueue(context, ChannelStatus.READ);
@@ -268,7 +268,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
         );
     }
 
-    private void disconnect(IOContext context, KQueueDispatcher.DisconnectReason reason) {
+    private void disconnect(IOContext context, DisconnectReason reason) {
         LOG.debug().$("Disconnected ").$(context.channel.getFd()).$(": ").$(reason).$();
         context.close();
         connectionCount--;

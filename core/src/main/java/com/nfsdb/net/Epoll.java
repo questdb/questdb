@@ -1,11 +1,32 @@
+/*******************************************************************************
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
+ *
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ ******************************************************************************/
+
 package com.nfsdb.net;
 
 import com.nfsdb.ex.NetworkError;
 import com.nfsdb.misc.Files;
-import com.nfsdb.misc.Net;
 import com.nfsdb.misc.Os;
 import com.nfsdb.misc.Unsafe;
-import com.sun.xml.internal.ws.Closeable;
+
+import java.io.Closeable;
 
 public final class Epoll implements Closeable {
     public static final int NUM_KEVENTS = 1024;
@@ -26,36 +47,6 @@ public final class Epoll implements Closeable {
     public Epoll() {
         this.events = _rPtr = Unsafe.getUnsafe().allocateMemory(SIZEOF_EVENT * NUM_KEVENTS);
         this.epfd = epollCreate();
-    }
-
-    public static void main(String... args) {
-        System.out.println(SIZEOF_EVENT);
-
-        long fd;
-        System.out.println(fd = Net.socketTcp(true));
-
-
-        System.out.println(Net.bind(fd, 0, 9000));
-        Net.listen(fd, 1024);
-        Net.configureNonBlocking(fd);
-        System.out.println(Net.setRcvBuf(fd, 4096));
-        System.out.println(Net.setSndBuf(fd, 4096));
-
-        long epfd = epollCreate();
-        System.out.println(epfd);
-
-        long mem = Unsafe.getUnsafe().allocateMemory(SIZEOF_EVENT);
-        Unsafe.getUnsafe().putInt(mem + EVENTS_OFFSET, EPOLLIN | EPOLLET);
-        Unsafe.getUnsafe().putLong(mem + DATA_OFFSET, 11111111);
-        System.out.println(epollCtl(epfd, EPOLL_CTL_ADD, fd, mem));
-
-        epollWait(epfd, mem, 1, -1);
-        System.out.println(Unsafe.getUnsafe().getByte(mem + 4));
-        System.out.println(Unsafe.getUnsafe().getByte(mem + 5));
-        System.out.println(Unsafe.getUnsafe().getByte(mem + 6));
-        System.out.println(Unsafe.getUnsafe().getByte(mem + 7));
-
-        System.out.println(Unsafe.getUnsafe().getLong(mem + DATA_OFFSET));
     }
 
     @Override

@@ -282,6 +282,9 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
                 case DISCONNECTED:
                     disconnect(context, DisconnectReason.SILLY);
                     continue;
+                case EOF:
+                    disconnect(context, DisconnectReason.PEER);
+                    continue;
             }
 
             int r = pending.addRow();
@@ -315,9 +318,5 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
             }
         }
         return -1;
-    }
-
-    public enum DisconnectReason {
-        PEER, IDLE, SILLY
     }
 }
