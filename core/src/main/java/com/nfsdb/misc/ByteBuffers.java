@@ -186,6 +186,7 @@ public final class ByteBuffers {
 
             // disconnected
             if (result == 0 && target == r && Net.EOF()) {
+                System.out.println("gracelful: " + Os.errno());
                 throw DisconnectedChannelException.INSTANCE;
             }
 

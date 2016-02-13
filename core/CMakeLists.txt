@@ -29,6 +29,9 @@ if (APPLE)
 elseif (UNIX)
     include_directories(${JAVA_HOME}/include/linux/)
     set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/linux)
+    set(SOURCE_FILES ${SOURCE_FILES}
+            src/main/c/share/net.c
+            src/main/c/linux/epoll.h src/main/c/linux/epoll.c)
 endif (APPLE)
 
 if (WIN32)
@@ -37,7 +40,9 @@ if (WIN32)
     set(SOURCE_FILES ${SOURCE_FILES}
             src/main/c/windows/files.c
             src/main/c/windows/os.c
-            src/main/c/windows/net.c src/main/c/windows/select.h src/main/c/windows/select.c)
+            src/main/c/windows/net.c
+            src/main/c/windows/select.h
+            src/main/c/windows/select.c)
 else ()
     set(SOURCE_FILES
             ${SOURCE_FILES}

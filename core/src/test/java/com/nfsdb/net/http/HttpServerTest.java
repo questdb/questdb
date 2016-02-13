@@ -687,6 +687,7 @@ public class HttpServerTest extends AbstractJournalTest {
                     try {
                         barrier.await();
                         download(clientBuilder("https".equals(proto)), proto + "://localhost:9000/get.html", actual1);
+                        System.out.println("done 1");
                     } catch (Exception e) {
                         counter.incrementAndGet();
                         e.printStackTrace();
@@ -703,6 +704,7 @@ public class HttpServerTest extends AbstractJournalTest {
                     try {
                         barrier.await();
                         download(clientBuilder("https".equals(proto)), proto + "://localhost:9000/post.html", actual2);
+                        System.out.println("done 2");
                     } catch (Exception e) {
                         counter.incrementAndGet();
                         e.printStackTrace();
@@ -718,6 +720,7 @@ public class HttpServerTest extends AbstractJournalTest {
                     try {
                         barrier.await();
                         download(clientBuilder("https".equals(proto)), proto + "://localhost:9000/upload.html", actual3);
+                        System.out.println("done 3");
                     } catch (Exception e) {
                         counter.incrementAndGet();
                         e.printStackTrace();

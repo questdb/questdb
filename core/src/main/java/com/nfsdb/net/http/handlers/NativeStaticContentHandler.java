@@ -61,6 +61,7 @@ public class NativeStaticContentHandler implements ContextHandler {
             PrefixedPath path = context.getThreadLocal(IOWorkerContextKey.PP.name(), ppFactory);
             if (Files.exists(path.of(url))) {
                 send(context, path, false);
+                System.out.println("sent: " + path);
             } else {
                 context.simpleResponse().send(404);
             }

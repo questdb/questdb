@@ -119,6 +119,8 @@ public class HttpServer {
                 return new KQueueDispatcher(ip, port, ioQueue, ioSequence, clock, configuration);
             case Os.WINDOWS:
                 return new Win32SelectDispatcher(ip, port, ioQueue, ioSequence, clock, configuration);
+            case Os.LINUX:
+                return new EpollDispatcher(ip, port, ioQueue, ioSequence, clock, configuration);
             default:
                 throw new RuntimeException("Unsupported operating system");
         }

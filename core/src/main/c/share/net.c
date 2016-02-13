@@ -19,7 +19,6 @@
  * limitations under the License.
  ******************************************************************************/
 
-#include <darwin/jni_md.h>
 #include <jni.h>
 #include <sys/socket.h>
 #include <sys/fcntl.h>
