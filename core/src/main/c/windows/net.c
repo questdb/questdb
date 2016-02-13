@@ -111,3 +111,13 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_available
     ioctlsocket((SOCKET) fd, FIONREAD, &avail);
     return avail;
 }
+
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_getEof
+        (JNIEnv *e, jclass cl) {
+    return  WSAENOTCONN;
+}
+
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_getEwouldblock
+        (JNIEnv *e, jclass cl) {
+    return WSAEWOULDBLOCK;
+}

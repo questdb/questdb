@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.net.http;
 
@@ -191,6 +191,12 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
                         n--;
                         useful = true;
                         break;
+                    case EOF:
+                        disconnect(pending.get(i), DisconnectReason.PEER);
+                        pending.deleteRow(i);
+                        n--;
+                        useful = true;
+                        break;
                 }
             } else {
                 // this fd just has fired
@@ -198,16 +204,12 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
                 // and remove from pending
                 final IOContext context = pending.get(i);
 
-                if ((_new_op & FD_READ) > 0 && Net.available(fd) == 0) {
-                    disconnect(context, DisconnectReason.PEER);
-                } else {
-                    if ((_new_op & FD_READ) > 0) {
-                        enqueue(context, ChannelStatus.READ);
-                    }
+                if ((_new_op & FD_READ) > 0) {
+                    enqueue(context, ChannelStatus.READ);
+                }
 
-                    if ((_new_op & FD_WRITE) > 0) {
-                        enqueue(context, ChannelStatus.WRITE);
-                    }
+                if ((_new_op & FD_WRITE) > 0) {
+                    enqueue(context, ChannelStatus.WRITE);
                 }
                 pending.deleteRow(i);
                 n--;
