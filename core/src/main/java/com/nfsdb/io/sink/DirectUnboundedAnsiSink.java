@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.io.sink;
 
@@ -35,6 +35,9 @@ public class DirectUnboundedAnsiSink extends AbstractCharSink {
         _wptr = address + len;
     }
 
+    /**
+     * This is an unbuffered in-memory sink, any data put into it is flushed immediately.
+     */
     @Override
     public void flush() {
     }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.factory;
 
@@ -29,9 +29,7 @@ import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.factory.configuration.MetadataBuilder;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-import java.io.Closeable;
-
-public class JournalFactory extends AbstractJournalReaderFactory implements JournalReaderFactory, JournalWriterFactory, Closeable {
+public class JournalFactory extends AbstractJournalReaderFactory implements JournalReaderFactory, JournalWriterFactory {
 
     @SuppressFBWarnings({"SCII_SPOILED_CHILD_INTERFACE_IMPLEMENTOR"})
     public JournalFactory(String journalBase) {
@@ -109,6 +107,10 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
         return new JournalWriter<>(metadata, metadata.getKey());
     }
 
+    /**
+     * Inherited method, this implementation does not own created journals
+     * and has nothing to close.
+     */
     @Override
     public void close() {
     }

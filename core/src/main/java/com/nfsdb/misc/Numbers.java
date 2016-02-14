@@ -302,7 +302,8 @@ public final class Numbers {
         }
     }
 
-    public static void appendTrim(CharSink sink, double d, final int inScale) {
+    public static void appendTrim(CharSink sink, double value, final int inScale) {
+        double d = value;
         int scale = inScale;
         if (d == Double.POSITIVE_INFINITY) {
             sink.put("Infinity");
@@ -528,8 +529,9 @@ public final class Numbers {
     }
 
     @SuppressWarnings("Duplicates")
-    private static float parseFloat(CharSequence sequence, int p, int lim) throws NumericException {
+    private static float parseFloat(CharSequence sequence, int lo, int lim) throws NumericException {
 
+        int p = lo;
         if (lim == p) {
             throw NumericException.INSTANCE;
         }
