@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
@@ -33,7 +33,7 @@ import java.io.IOException;
 
 public class IOHttpJob implements Job {
     public static final int SO_WRITE_RETRY_COUNT = 1000;
-    private final static Log ACCESS = LogFactory.getLog("access");
+    //    private final static Log ACCESS = LogFactory.getLog("access");
     private final static Log LOG = LogFactory.getLog(IOHttpJob.class);
 
     private final RingQueue<IOEvent> ioQueue;
@@ -82,7 +82,7 @@ public class IOHttpJob implements Job {
 
         try {
 
-            boolean log = r.isIncomplete();
+//            boolean log = r.isIncomplete();
             if (status == ChannelStatus.READ) {
                 r.read();
             }
@@ -121,8 +121,8 @@ public class IOHttpJob implements Job {
                     sr.send(404);
                 }
 
-                if (log && !r.isIncomplete()) {
-                    //todo: implement native method on linux & osx
+//                if (log && !r.isIncomplete()) {
+                //todo: implement native method on linux & osx
 /*
                     ACCESS.xinfo().
                             $ip(Net.getPeerIP(context.channel.getFd())).
@@ -136,7 +136,7 @@ public class IOHttpJob implements Job {
                             $(' ').$(context.channel.getTotalWrittenAndReset()).
                             $();
 */
-                }
+//                }
             }
             context.clear();
             status = ChannelStatus.READ;

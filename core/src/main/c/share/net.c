@@ -116,3 +116,34 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_getEwouldblock
         (JNIEnv *e, jclass cl) {
     return EWOULDBLOCK;
 }
+
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_getPeerIP
+        (JNIEnv *e, jclass cl, jlong fd) {
+    struct sockaddr peer;
+    socklen_t nameLen = sizeof(peer);
+
+    if (getpeername((int) fd, &peer, &nameLen) == 0) {
+        if (peer.sa_family == AF_INET) {
+            return inet_addr(inet_ntoa(((struct sockaddr_in *)&peer)->sin_addr));
+        } else {
+            return -2;
+        }
+    }
+    return -1;
+
+}
+
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_getPeerPort
+        (JNIEnv *e, jclass cl, jlong fd) {
+    struct sockaddr peer;
+    socklen_t nameLen = sizeof(peer);
+
+    if (getpeername((int) fd, &peer, &nameLen) == 0) {
+        if (peer.sa_family == AF_INET) {
+            return ntohs(((struct sockaddr_in *)&peer)->sin_port);
+        } else {
+            return -2;
+        }
+    }
+    return -1;
+}

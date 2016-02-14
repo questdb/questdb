@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
@@ -92,6 +92,10 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
         throw ResponseHeaderBufferTooSmallException.INSTANCE;
     }
 
+    public int getCode() {
+        return code;
+    }
+
     public boolean isChunky() {
         return chunky;
     }
@@ -119,10 +123,6 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
         }
 
         return status;
-    }
-
-    int getCode() {
-        return code;
     }
 
     ByteBuffer prepareBuffer() {
