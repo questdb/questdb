@@ -118,11 +118,10 @@ public class IntervalJournalRecordSource extends AbstractImmutableIterator<Recor
             if (interval.getLo() > t) {
                 needRecord = true;
                 needInterval = false;
-                continue;
+            } else {
+                needRecord = true;
+                return true;
             }
-
-            needRecord = true;
-            return true;
         }
     }
 

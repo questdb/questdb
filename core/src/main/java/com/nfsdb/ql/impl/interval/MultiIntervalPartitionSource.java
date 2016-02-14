@@ -78,6 +78,8 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
     public boolean hasNext() {
         long sliceRowLo;
         long sliceRowHi;
+        long sliceLo;
+        long sliceHi;
 
         while (true) {
 
@@ -107,9 +109,6 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
                 sliceRowHi = slice.calcHi ? slice.partition.size() - 1 : slice.hi;
             }
 
-            long sliceLo;
-            long sliceHi;
-
             // interval is fully above notional partition interval, skip to next interval
             if (interval.getHi() < slice.partition.getInterval().getLo() || interval.getHi() < (sliceLo = timestampColumn.getLong(sliceRowLo))) {
                 needPartition = false;
@@ -121,31 +120,32 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
             if (interval.getLo() > slice.partition.getInterval().getHi() || interval.getLo() > (sliceHi = timestampColumn.getLong(sliceRowHi))) {
                 needPartition = true;
                 needInterval = false;
-                continue;
-            }
-
-            this.result.partition = slice.partition;
-
-            if (interval.getLo() > sliceLo) {
-                this.result.lo = slice.partition.indexOf(interval.getLo(), BSearchType.NEWER_OR_SAME);
             } else {
-                this.result.lo = sliceRowLo;
+                break;
             }
-
-            if (interval.getHi() < sliceHi) {
-                this.result.hi = slice.partition.indexOf(interval.getHi(), BSearchType.OLDER_OR_SAME, this.result.lo, sliceRowHi);
-                needPartition = false;
-                needInterval = true;
-            } else {
-                this.result.hi = sliceRowHi;
-                needPartition = true;
-                needInterval = interval.getHi() == sliceHi;
-            }
-
-            nextRowLo = result.hi + 1;
-
-            return true;
         }
+
+        this.result.partition = slice.partition;
+
+        if (interval.getLo() > sliceLo) {
+            this.result.lo = slice.partition.indexOf(interval.getLo(), BSearchType.NEWER_OR_SAME);
+        } else {
+            this.result.lo = sliceRowLo;
+        }
+
+        if (interval.getHi() < sliceHi) {
+            this.result.hi = slice.partition.indexOf(interval.getHi(), BSearchType.OLDER_OR_SAME, this.result.lo, sliceRowHi);
+            needPartition = false;
+            needInterval = true;
+        } else {
+            this.result.hi = sliceRowHi;
+            needPartition = true;
+            needInterval = interval.getHi() == sliceHi;
+        }
+
+        nextRowLo = result.hi + 1;
+
+        return true;
     }
 
     @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})

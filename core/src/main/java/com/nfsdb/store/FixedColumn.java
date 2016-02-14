@@ -99,10 +99,7 @@ public class FixedColumn extends AbstractColumn {
 
     @Override
     public void truncate(long size) {
-        if (size < 0) {
-            size = 0;
-        }
-        preCommit(size * width);
+        preCommit(size <= 0 ? 0 : size * width);
     }
 
     public short getShort(long localRowID) {

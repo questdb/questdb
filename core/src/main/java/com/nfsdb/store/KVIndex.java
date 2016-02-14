@@ -426,17 +426,16 @@ public class KVIndex implements Closeable {
     }
 
     private long allocateRowBlock(long address, long rowBlockOffset) {
-        long prevBlockOffset = rowBlockOffset;
-        rowBlockOffset = rData.getAppendOffset() + rowBlockSize;
-        rData.setAppendOffset(rowBlockOffset);
-        Unsafe.getUnsafe().putLong(rData.addressOf(rowBlockOffset - 8, 8), prevBlockOffset);
-        Unsafe.getUnsafe().putLong(address, rowBlockOffset);
-        if (prevBlockOffset == 0) {
-            Unsafe.getUnsafe().putLong(address + 16, rowBlockOffset);
+        long offset = rData.getAppendOffset() + rowBlockSize;
+        rData.setAppendOffset(offset);
+        Unsafe.getUnsafe().putLong(rData.addressOf(offset - 8, 8), rowBlockOffset);
+        Unsafe.getUnsafe().putLong(address, offset);
+        if (rowBlockOffset == 0) {
+            Unsafe.getUnsafe().putLong(address + 16, offset);
         } else {
-            Unsafe.getUnsafe().putLong(rData.addressOf(prevBlockOffset - 16, 8), rowBlockOffset);
+            Unsafe.getUnsafe().putLong(rData.addressOf(rowBlockOffset - 16, 8), offset);
         }
-        return rowBlockOffset;
+        return offset;
     }
 
     private long getKeyOffset(long key) {
@@ -595,7 +594,6 @@ public class KVIndex implements Closeable {
             }
             return v;
         }
-
 
 
         public long size() {

@@ -108,18 +108,16 @@ public final class ImportManager {
         }
     }
 
-    public static void parse(File file, TextParser parser, long bufSize, boolean header, Listener listener) throws IOException {
+    public static void parse(File file, TextParser parser, final long bufSize, boolean header, Listener listener) throws IOException {
         parser.clear();
         parser.setHeader(header);
         try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
             try (FileChannel channel = raf.getChannel()) {
                 long size = channel.size();
-                if (bufSize == -1) {
-                    bufSize = ByteBuffers.getMaxMappedBufferSize(size);
-                }
+                long bufSz = bufSize == -1 ? ByteBuffers.getMaxMappedBufferSize(size) : bufSize;
                 long p = 0;
                 while (p < size) {
-                    MappedByteBuffer buf = channel.map(FileChannel.MapMode.READ_ONLY, p, size - p < bufSize ? size - p : bufSize);
+                    MappedByteBuffer buf = channel.map(FileChannel.MapMode.READ_ONLY, p, size - p < bufSz ? size - p : bufSz);
                     try {
                         p += buf.remaining();
                         parser.parse(ByteBuffers.getAddress(buf), buf.remaining(), Integer.MAX_VALUE, listener);
