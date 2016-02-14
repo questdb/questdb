@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -24,6 +24,7 @@ package com.nfsdb.net.http;
 import com.nfsdb.ex.*;
 import com.nfsdb.log.Log;
 import com.nfsdb.log.LogFactory;
+import com.nfsdb.misc.Net;
 import com.nfsdb.mp.Job;
 import com.nfsdb.mp.RingQueue;
 import com.nfsdb.mp.Sequence;
@@ -33,7 +34,7 @@ import java.io.IOException;
 
 public class IOHttpJob implements Job {
     public static final int SO_WRITE_RETRY_COUNT = 1000;
-    //    private final static Log ACCESS = LogFactory.getLog("access");
+    private final static Log ACCESS = LogFactory.getLog("access");
     private final static Log LOG = LogFactory.getLog(IOHttpJob.class);
 
     private final RingQueue<IOEvent> ioQueue;
@@ -61,8 +62,6 @@ public class IOHttpJob implements Job {
         final ChannelStatus op = evt.status;
 
         ioSequence.done(cursor);
-
-
         ioContext.threadContext = context;
         process(ioContext, op);
 
@@ -82,7 +81,7 @@ public class IOHttpJob implements Job {
 
         try {
 
-//            boolean log = r.isIncomplete();
+            boolean log = r.isIncomplete();
             if (status == ChannelStatus.READ) {
                 r.read();
             }
@@ -122,9 +121,8 @@ public class IOHttpJob implements Job {
                     sr.send(404);
                 }
 
-//                if (log && !r.isIncomplete()) {
-                //todo: implement native method on linux & osx
-/*
+                if (log && !r.isIncomplete()) {
+                    //todo: implement native method on linux & osx
                     ACCESS.xinfo().
                             $ip(Net.getPeerIP(context.channel.getFd())).
                             $(" -").
@@ -136,8 +134,7 @@ public class IOHttpJob implements Job {
                             $(' ').$(context.getResponseCode()).
                             $(' ').$(context.channel.getTotalWrittenAndReset()).
                             $();
-*/
-//                }
+                }
             }
             context.clear();
             status = ChannelStatus.READ;
