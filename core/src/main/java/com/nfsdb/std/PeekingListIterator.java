@@ -30,9 +30,6 @@ public class PeekingListIterator<T> extends AbstractImmutableIterator<T> impleme
     private List<T> delegate;
     private Iterator<T> iterator;
 
-    public PeekingListIterator() {
-    }
-
     @Override
     public boolean hasNext() {
         return iterator.hasNext();

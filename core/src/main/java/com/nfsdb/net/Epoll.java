@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net;
 
@@ -59,7 +59,7 @@ public final class Epoll implements Closeable {
         closed = true;
     }
 
-    public int epollCtl(long fd, long id, int cmd, int event) {
+    public int control(long fd, long id, int cmd, int event) {
         Unsafe.getUnsafe().putInt(events + EVENTS_OFFSET, event | EPOLLET | EPOLLONESHOT);
         Unsafe.getUnsafe().putLong(events + DATA_OFFSET, id);
         return epollCtl(epfd, cmd, fd, events);

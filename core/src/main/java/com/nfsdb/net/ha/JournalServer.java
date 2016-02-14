@@ -277,12 +277,10 @@ public class JournalServer {
                 } else {
                     fwdElectionMessage(ElectionMessageReason.R3, ourUuid, Command.ELECTION, 0);
                 }
-            } else if (leader) {
-                if (!activeNotified && clusterStatusListener != null) {
-                    LOG.info().$(ourUuid).$(" is THE LEADER").$();
-                    clusterStatusListener.goActive();
-                    activeNotified = true;
-                }
+            } else if (leader && !activeNotified && clusterStatusListener != null) {
+                LOG.info().$(ourUuid).$(" is THE LEADER").$();
+                clusterStatusListener.goActive();
+                activeNotified = true;
             }
             intResponseProducer.write(channel, 0xfc);
         } else {

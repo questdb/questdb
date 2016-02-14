@@ -139,14 +139,12 @@ public class MetadataExtractorListener implements Listener, Mutable {
         // try calculate types counting all rows
         // if all types come up as strings, reduce count by one and retry
         // if some fields come up as non-string after subtracting row - we have a header
-        if (calcTypes(count, true)) {
-            if (!calcTypes(count - 1, false)) {
-                // copy headers
-                for (int i = 0; i < fieldCount; i++) {
-                    _metadata.getQuick(i).name = _headers.getQuick(i);
-                }
-                header = true;
+        if (calcTypes(count, true) && !calcTypes(count - 1, false)) {
+            // copy headers
+            for (int i = 0; i < fieldCount; i++) {
+                _metadata.getQuick(i).name = _headers.getQuick(i);
             }
+            header = true;
         }
 
         // make up field names if there is no header

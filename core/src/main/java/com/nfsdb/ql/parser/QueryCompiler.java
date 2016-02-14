@@ -629,7 +629,7 @@ public class QueryCompiler {
     }
 
     @SuppressWarnings("ConstantConditions")
-    @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT", "CC_CYCLOMATIC_COMPLEXITY"})
+    @SuppressFBWarnings({"CC_CYCLOMATIC_COMPLEXITY"})
     private RecordSource<? extends Record> compileSingleJournal(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
 
         RecordMetadata metadata = model.getMetadata();
@@ -731,6 +731,9 @@ public class QueryCompiler {
                                 break;
                             case INT:
                                 rs = buildRowSourceForInt(im);
+                                break;
+                            default:
+                                break;
                         }
                     }
 
@@ -787,6 +790,9 @@ public class QueryCompiler {
                                 } else {
                                     throw new ParserException(latestByNode.position, "Filter on int column expected");
                                 }
+                                break;
+                            default:
+                                break;
                         }
                     }
                 }
@@ -1009,10 +1015,8 @@ public class QueryCompiler {
                 if (c != null && c.parents.size() > 0) {
                     m.setJoinType(QueryModel.JoinType.INNER);
                 }
-            } else if (m.getJoinType() != QueryModel.JoinType.ASOF) {
-                if (c == null || c.parents.size() == 0) {
-                    m.setJoinType(QueryModel.JoinType.CROSS);
-                }
+            } else if (m.getJoinType() != QueryModel.JoinType.ASOF && (c == null || c.parents.size() == 0)) {
+                m.setJoinType(QueryModel.JoinType.CROSS);
             }
         }
     }

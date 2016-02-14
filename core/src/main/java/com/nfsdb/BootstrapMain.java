@@ -44,7 +44,6 @@ import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.EnumSet;
 
-import static java.nio.file.FileVisitResult.CONTINUE;
 import static java.nio.file.StandardCopyOption.COPY_ATTRIBUTES;
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
@@ -139,18 +138,18 @@ class BootstrapMain {
                         return FileVisitResult.SKIP_SUBTREE;
                     }
                 }
-                return CONTINUE;
+                return FileVisitResult.CONTINUE;
             }
 
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
                 Files.copy(file, target.resolve(source.relativize(file)), copyOptions);
-                return CONTINUE;
+                return FileVisitResult.CONTINUE;
             }
 
             @Override
             public FileVisitResult visitFileFailed(Path file, IOException exc) {
-                return CONTINUE;
+                return FileVisitResult.CONTINUE;
             }
 
             @Override

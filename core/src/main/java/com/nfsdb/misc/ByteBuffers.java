@@ -113,10 +113,11 @@ public final class ByteBuffers {
         }
     }
 
-    public static void copyGreedyNonBlocking(ReadableByteChannel channel, ByteBuffer to, int retryCount) throws IOException {
+    public static void copyGreedyNonBlocking(ReadableByteChannel channel, ByteBuffer to, final int retryCount) throws IOException {
         try {
             int r = to.remaining();
             int target = r;
+            int retriesRemaining = retryCount;
             while (target > 0) {
                 int result = channel.read(to);
 
@@ -125,7 +126,7 @@ public final class ByteBuffers {
                     throw DisconnectedChannelException.INSTANCE;
                 }
 
-                if (result == 0 && --retryCount < 0) {
+                if (result == 0 && --retriesRemaining < 0) {
                     if (target == r) {
                         throw SlowReadableChannelException.INSTANCE;
                     }
@@ -141,8 +142,10 @@ public final class ByteBuffers {
 
     @SuppressFBWarnings("LEST_LOST_EXCEPTION_STACK_TRACE")
     @SuppressWarnings("TryWithIdenticalCatches")
-    public static void copyNonBlocking(ByteBuffer from, WritableByteChannel channel, int retryCount) throws DisconnectedChannelException, SlowWritableChannelException {
+    public static void copyNonBlocking(ByteBuffer from, WritableByteChannel channel, final int retryCount)
+            throws DisconnectedChannelException, SlowWritableChannelException {
         int target = from.remaining();
+        int retriesRemaining = retryCount;
         while (target > 0) {
             int result;
 
@@ -154,16 +157,8 @@ public final class ByteBuffers {
                 throw DisconnectedChannelException.INSTANCE;
             }
 
-//            // disconnected
-//            if (result == -1) {
-//                throw DisconnectedChannelException.INSTANCE;
-//            }
-
-            if (result == 0) {
-
-                if (--retryCount < 0) {
-                    throw SlowWritableChannelException.INSTANCE;
-                }
+            if (result == 0 && --retriesRemaining < 0) {
+                throw SlowWritableChannelException.INSTANCE;
             }
             target -= result;
         }
@@ -171,10 +166,11 @@ public final class ByteBuffers {
 
     @SuppressFBWarnings("LEST_LOST_EXCEPTION_STACK_TRACE")
     @SuppressWarnings("TryWithIdenticalCatches")
-    public static void copyNonBlocking(ReadableByteChannel channel, ByteBuffer to, int retryCount)
+    public static void copyNonBlocking(ReadableByteChannel channel, ByteBuffer to, final int retryCount)
             throws DisconnectedChannelException, SlowReadableChannelException, EndOfChannelException {
         int r = to.remaining();
         int target = r;
+        int retriesRemaining = retryCount;
         while (target > 0) {
             int result;
             try {
@@ -192,7 +188,7 @@ public final class ByteBuffers {
 
             if (result == 0 && target < r) {
                 break;
-            } else if (--retryCount < 0) {
+            } else if (--retriesRemaining < 0) {
                 throw SlowReadableChannelException.INSTANCE;
             }
 

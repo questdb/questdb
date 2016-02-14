@@ -602,10 +602,8 @@ final class QueryFilterAnalyser {
         tempK.clear();
         tempP.clear();
         for (int i = 0, k = tempKeys.size(); i < k; i++) {
-            if (model.keyValues.contains(tempKeys.get(i))) {
-                if (tempK.add(tempKeys.get(i))) {
-                    tempP.add(tempPos.get(i));
-                }
+            if (model.keyValues.contains(tempKeys.get(i)) && tempK.add(tempKeys.get(i))) {
+                tempP.add(tempPos.get(i));
             }
         }
 

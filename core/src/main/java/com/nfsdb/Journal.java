@@ -99,10 +99,8 @@ public class Journal<T> implements Iterable<T>, Closeable {
     public void close() {
         if (open) {
 
-            if (closeListener != null) {
-                if (!closeListener.closing(this)) {
-                    return;
-                }
+            if (closeListener != null && !closeListener.closing(this)) {
+                return;
             }
 
             closePartitions();

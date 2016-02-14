@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
@@ -227,7 +227,7 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
     private void enqueuePending(int watermark) {
         for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += Epoll.SIZEOF_EVENT) {
             epoll.setOffset(offset);
-            if (epoll.epollCtl((int) pending.get(i, M_FD), pending.get(i, M_ID), Epoll.EPOLL_CTL_ADD, Epoll.EPOLLIN) < 0) {
+            if (epoll.control((int) pending.get(i, M_FD), pending.get(i, M_ID), Epoll.EPOLL_CTL_ADD, Epoll.EPOLLIN) < 0) {
                 LOG.debug().$("epoll_ctl failure ").$(Os.errno()).$();
             } else {
                 LOG.debug().$("epoll_ctl ").$(pending.get(i, M_FD)).$(" as ").$(pending.get(i, M_ID)).$();
@@ -261,10 +261,10 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
             final long id = fdid++;
             switch (op) {
                 case READ:
-                    epoll.epollCtl(fd, id, Epoll.EPOLL_CTL_MOD, Epoll.EPOLLIN);
+                    epoll.control(fd, id, Epoll.EPOLL_CTL_MOD, Epoll.EPOLLIN);
                     break;
                 case WRITE:
-                    epoll.epollCtl(fd, id, Epoll.EPOLL_CTL_MOD, Epoll.EPOLLOUT);
+                    epoll.control(fd, id, Epoll.EPOLL_CTL_MOD, Epoll.EPOLLOUT);
                     break;
                 case DISCONNECTED:
                     disconnect(context, DisconnectReason.SILLY);

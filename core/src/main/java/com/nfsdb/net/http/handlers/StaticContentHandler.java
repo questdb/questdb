@@ -111,18 +111,19 @@ public class StaticContentHandler implements ContextHandler {
         }
 
         int l;
-        if ((val = context.request.getHeader("If-None-Match")) != null) {
-            if ((l = val.length()) > 2 && val.charAt(0) == '"' && val.charAt(l - 1) == '"') {
-                try {
-                    long that = Numbers.parseLong(val, 1, l - 1);
-                    if (that == Files.getLastModified(path)) {
-                        context.simpleResponse().sendEmptyBody(304);
-                        return;
-                    }
-                } catch (NumericException e) {
-                    context.simpleResponse().send(400);
+        if ((val = context.request.getHeader("If-None-Match")) != null
+                && (l = val.length()) > 2
+                && val.charAt(0) == '"'
+                && val.charAt(l - 1) == '"') {
+            try {
+                long that = Numbers.parseLong(val, 1, l - 1);
+                if (that == Files.getLastModified(path)) {
+                    context.simpleResponse().sendEmptyBody(304);
                     return;
                 }
+            } catch (NumericException e) {
+                context.simpleResponse().send(400);
+                return;
             }
         }
 

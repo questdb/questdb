@@ -46,9 +46,6 @@ public class JournalPrinter implements Closeable {
     private String nullString;
     private boolean configured = false;
 
-    public JournalPrinter() {
-    }
-
     public void close() throws IOException {
         appender.close();
         ff.clear();

@@ -75,6 +75,7 @@ public class DoubleScaledEqualsOperator extends AbstractVirtualColumn implements
                 break;
             default:
                 scale = arg;
+                break;
         }
     }
 }
