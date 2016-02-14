@@ -573,6 +573,7 @@ public final class Numbers {
                     } else if (dpe == lim) {
                         dpe = i;
                     }
+                    break;
             }
         }
 

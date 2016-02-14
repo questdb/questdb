@@ -264,6 +264,8 @@ public class Response implements Closeable, Mutable {
                     break;
                 case DONE:
                     return;
+                default:
+                    break;
             }
         }
 

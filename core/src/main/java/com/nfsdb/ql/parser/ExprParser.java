@@ -207,6 +207,9 @@ public class ExprParser {
                                     default:
                                         break;
                                 }
+                                break;
+                            default:
+                                break;
                         }
 
                         ExprNode other;
@@ -234,6 +237,7 @@ public class ExprParser {
                                 break;
                             default:
                                 node.paramCount = 2;
+                                break;
                         }
                         opStack.push(node);
                     } else if (!nonLiteralBranches.contains(thisBranch.ordinal())) {

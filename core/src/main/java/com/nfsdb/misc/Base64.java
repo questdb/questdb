@@ -36,7 +36,7 @@ public class Base64 {
      *             A benchmark showed that taking {@link String} is faster, presumably
      *             because JIT can inline a lot of string access (with data of 1K chars, it was twice as fast)
      */
-    public static byte[] _parseBase64Binary(String text) {
+    public static byte[] parseBase64Binary(String text) {
         final int buflen = guessLength(text);
         final byte[] out = new byte[buflen];
         int o = 0;

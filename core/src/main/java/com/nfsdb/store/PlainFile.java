@@ -139,6 +139,9 @@ public class PlainFile implements Closeable {
                             ByteBuffers.release(b);
                         }
                     }
+                    break;
+                default:
+                    break;
             }
         }
         buffer.position(bufferPos);

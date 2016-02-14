@@ -295,6 +295,7 @@ public class MemoryFile implements Closeable {
                 break;
             default:
                 m = "rw";
+                break;
         }
         openInternal(m);
     }

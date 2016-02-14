@@ -420,6 +420,7 @@ public class JournalClient {
                     break;
                 default:
                     disconnect(reason);
+                    break;
             }
         }
 

@@ -159,6 +159,8 @@ public class MultipartParser implements Closeable, Mutable {
                             listener.onChunk(context, hb, bytes.of(boundary.getLo(), boundary.getLo() + p), true);
                             state = State.BODY_BROKEN;
                             break;
+                        default:
+                            break;
                     }
                     break;
                 default:

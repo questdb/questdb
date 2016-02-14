@@ -156,6 +156,8 @@ public class NonBlockingSecureSocketChannel implements NetworkChannel {
                             break;
                         case CLOSED:
                             throw DisconnectedChannelException.INSTANCE;
+                        default:
+                            break;
                     }
                     break;
                 case UNWRAP_CLEAN_CACHED:
@@ -180,6 +182,8 @@ public class NonBlockingSecureSocketChannel implements NetworkChannel {
                             break;
                         case CLOSED:
                             throw DisconnectedChannelException.INSTANCE;
+                        default:
+                            break;
                     }
                     unwrapped.flip();
                     ByteBuffers.copy(unwrapped, dst);
@@ -281,6 +285,8 @@ public class NonBlockingSecureSocketChannel implements NetworkChannel {
                                 break;
                             case CLOSED:
                                 throw new IOException("Did not expect CLOSED");
+                            default:
+                                break;
                         }
                     } catch (SSLException e) {
                         LOG.error().$("Client SSL handshake failed: ").$(e.getMessage()).$();

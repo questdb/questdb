@@ -379,6 +379,8 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
                     needMethod = false;
                     this._lo = _wptr;
                     return (int) (p - lo);
+                default:
+                    break;
             }
         }
         return (int) (p - lo);

@@ -78,7 +78,7 @@ public class SSOServiceTokenEncoder implements Closeable {
             if (!response.startsWith(OK_RESPONSE)) {
                 throw new IOException(response);
             }
-            return Base64._parseBase64Binary(response.substring(OK_RESPONSE.length()));
+            return Base64.parseBase64Binary(response.substring(OK_RESPONSE.length()));
         }
     }
 
