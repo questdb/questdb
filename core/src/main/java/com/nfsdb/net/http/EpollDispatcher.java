@@ -108,61 +108,6 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
         interestPubSequence.done(cursor);
     }
 
-    @Override
-    protected boolean _run() {
-        boolean useful = false;
-        final int n = epoll.poll();
-        int watermark = pending.size();
-        final long timestamp = clock.getTicks();
-        int offset = 0;
-        if (n > 0) {
-            // check all activated FDs
-            for (int i = 0; i < n; i++) {
-                epoll.setOffset(offset);
-                offset += Epoll.SIZEOF_EVENT;
-                long id = epoll.getData();
-                // this is server socket, accept if there aren't too many already
-                if (id == 0) {
-                    accept(timestamp);
-                } else {
-                    // find row in pending for two reasons:
-                    // 1. find payload
-                    // 2. remove row from pending, remaining rows will be timed out
-                    int row = pending.binarySearch(id);
-                    if (row < 0) {
-                        LOG.error().$("Internal error: unknown ID: ").$(id).$();
-                        continue;
-                    }
-
-                    final IOContext context = pending.get(row);
-                    long cursor = ioSequence.nextBully();
-                    IOEvent evt = ioQueue.get(cursor);
-                    evt.context = context;
-                    evt.status = (epoll.getEvent() & Epoll.EPOLLIN) > 0 ? ChannelStatus.READ : ChannelStatus.WRITE;
-                    ioSequence.done(cursor);
-                    LOG.debug().$("Queuing ").$(id).$(" on ").$(context.channel.getFd()).$();
-                    pending.deleteRow(row);
-                    watermark--;
-                }
-            }
-
-            // process rows over watermark
-            if (watermark < pending.size()) {
-                enqueuePending(watermark);
-            }
-            useful = true;
-        }
-
-        // process timed out connections
-        long deadline = timestamp - timeout;
-        if (pending.size() > 0 && pending.get(0, M_TIMESTAMP) < deadline) {
-            processIdleConnections(deadline);
-            useful = true;
-        }
-
-        return processRegistrations(timestamp) || useful;
-    }
-
     private void accept(long timestamp) {
         while (true) {
             long _fd = Net.accept(socketFd);
@@ -272,6 +217,8 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
                 case EOF:
                     disconnect(context, DisconnectReason.PEER);
                     continue;
+                default:
+                    break;
             }
 
             int r = pending.addRow();
@@ -282,6 +229,61 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
         }
 
         return useful;
+    }
+
+    @Override
+    protected boolean runSerially() {
+        boolean useful = false;
+        final int n = epoll.poll();
+        int watermark = pending.size();
+        final long timestamp = clock.getTicks();
+        int offset = 0;
+        if (n > 0) {
+            // check all activated FDs
+            for (int i = 0; i < n; i++) {
+                epoll.setOffset(offset);
+                offset += Epoll.SIZEOF_EVENT;
+                long id = epoll.getData();
+                // this is server socket, accept if there aren't too many already
+                if (id == 0) {
+                    accept(timestamp);
+                } else {
+                    // find row in pending for two reasons:
+                    // 1. find payload
+                    // 2. remove row from pending, remaining rows will be timed out
+                    int row = pending.binarySearch(id);
+                    if (row < 0) {
+                        LOG.error().$("Internal error: unknown ID: ").$(id).$();
+                        continue;
+                    }
+
+                    final IOContext context = pending.get(row);
+                    long cursor = ioSequence.nextBully();
+                    IOEvent evt = ioQueue.get(cursor);
+                    evt.context = context;
+                    evt.status = (epoll.getEvent() & Epoll.EPOLLIN) > 0 ? ChannelStatus.READ : ChannelStatus.WRITE;
+                    ioSequence.done(cursor);
+                    LOG.debug().$("Queuing ").$(id).$(" on ").$(context.channel.getFd()).$();
+                    pending.deleteRow(row);
+                    watermark--;
+                }
+            }
+
+            // process rows over watermark
+            if (watermark < pending.size()) {
+                enqueuePending(watermark);
+            }
+            useful = true;
+        }
+
+        // process timed out connections
+        long deadline = timestamp - timeout;
+        if (pending.size() > 0 && pending.get(0, M_TIMESTAMP) < deadline) {
+            processIdleConnections(deadline);
+            useful = true;
+        }
+
+        return processRegistrations(timestamp) || useful;
     }
 
 }

@@ -24,6 +24,7 @@ package com.nfsdb.net.ha;
 import com.nfsdb.Journal;
 import com.nfsdb.JournalKey;
 import com.nfsdb.JournalWriter;
+import com.nfsdb.ex.FatalError;
 import com.nfsdb.ex.JournalException;
 import com.nfsdb.ex.JournalNetworkException;
 import com.nfsdb.ex.NumericException;
@@ -149,7 +150,7 @@ public class AuthorizationTest extends AbstractTest {
                 new AuthorizationHandler() {
                     @Override
                     public boolean isAuthorized(byte[] token, ObjList<JournalKey> requestedKeys) {
-                        throw new RuntimeException("BANG!");
+                        throw new FatalError("BANG!");
                     }
                 });
 

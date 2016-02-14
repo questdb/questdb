@@ -27,11 +27,9 @@ import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;
 
-@SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT"})
 public class RecordSourcePrinter {
     private final CharSink sink;
     private final char delimiter;
@@ -114,8 +112,8 @@ public class RecordSourcePrinter {
             case BOOLEAN:
                 sink.put(r.getBool(i) ? "true" : "false");
                 break;
-//                default:
-//                    throw new JournalRuntimeException("Unsupported type: " + r.getColumnType(i));
+            default:
+                break;
         }
     }
 }

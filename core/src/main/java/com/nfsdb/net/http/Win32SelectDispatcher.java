@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
@@ -130,100 +130,6 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
 
     private static native int arrayOffset();
 
-    @Override
-    protected boolean _run() {
-        int count = select(readFdSet.address, writeFdSet.address, 0);
-        if (count < 0) {
-            LOG.error().$("Error in select(): ").$(Os.errno()).$();
-            return false;
-        }
-
-        final long timestamp = System.currentTimeMillis();
-        boolean useful = false;
-        fds.clear();
-
-        // collect reads into hash map
-        if (count > 0) {
-            queryFdSets(timestamp);
-            useful = true;
-        }
-
-        // process returned fds
-        useful = processRegistrations(timestamp) | useful;
-
-        // re-arm select() fds
-        int readFdCount = 0;
-        int writeFdCount = 0;
-        readFdSet.reset();
-        writeFdSet.reset();
-        long deadline = timestamp - timeout;
-        for (int i = 0, n = pending.size(); i < n; ) {
-            long ts = pending.get(i, M_TIMESTAMP);
-            long fd = pending.get(i, M_FD);
-            int _new_op = fds.get(fd);
-
-            if (_new_op == -1) {
-
-                // check if expired
-                if (ts < deadline && fd != socketFd) {
-                    disconnect(pending.get(i), DisconnectReason.IDLE);
-                    pending.deleteRow(i);
-                    n--;
-                    useful = true;
-                    continue;
-                }
-
-                // not fired, simply re-arm
-                ChannelStatus op = ChannelStatus.values()[(int) pending.get(i, M_OPERATION)];
-                switch (op) {
-                    case READ:
-                        readFdSet.add(fd);
-                        readFdCount++;
-                        i++;
-                        break;
-                    case WRITE:
-                        writeFdSet.add(fd);
-                        writeFdCount++;
-                        i++;
-                        break;
-                    case DISCONNECTED:
-                        disconnect(pending.get(i), DisconnectReason.SILLY);
-                        pending.deleteRow(i);
-                        n--;
-                        useful = true;
-                        break;
-                    case EOF:
-                        disconnect(pending.get(i), DisconnectReason.PEER);
-                        pending.deleteRow(i);
-                        n--;
-                        useful = true;
-                        break;
-                    default:
-                        break;
-                }
-            } else {
-                // this fd just has fired
-                // publish event
-                // and remove from pending
-                final IOContext context = pending.get(i);
-
-                if ((_new_op & FD_READ) > 0) {
-                    enqueue(context, ChannelStatus.READ);
-                }
-
-                if ((_new_op & FD_WRITE) > 0) {
-                    enqueue(context, ChannelStatus.WRITE);
-                }
-                pending.deleteRow(i);
-                n--;
-            }
-        }
-
-        readFdSet.setCount(readFdCount);
-        writeFdSet.setCount(writeFdCount);
-        return useful;
-    }
-
     private void accept(long timestamp) {
         while (true) {
             long _fd = Net.accept(socketFd);
@@ -334,6 +240,100 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
                 fds.put(fd, FD_READ | FD_WRITE);
             }
         }
+    }
+
+    @Override
+    protected boolean runSerially() {
+        int count = select(readFdSet.address, writeFdSet.address, 0);
+        if (count < 0) {
+            LOG.error().$("Error in select(): ").$(Os.errno()).$();
+            return false;
+        }
+
+        final long timestamp = System.currentTimeMillis();
+        boolean useful = false;
+        fds.clear();
+
+        // collect reads into hash map
+        if (count > 0) {
+            queryFdSets(timestamp);
+            useful = true;
+        }
+
+        // process returned fds
+        useful = processRegistrations(timestamp) | useful;
+
+        // re-arm select() fds
+        int readFdCount = 0;
+        int writeFdCount = 0;
+        readFdSet.reset();
+        writeFdSet.reset();
+        long deadline = timestamp - timeout;
+        for (int i = 0, n = pending.size(); i < n; ) {
+            long ts = pending.get(i, M_TIMESTAMP);
+            long fd = pending.get(i, M_FD);
+            int _new_op = fds.get(fd);
+
+            if (_new_op == -1) {
+
+                // check if expired
+                if (ts < deadline && fd != socketFd) {
+                    disconnect(pending.get(i), DisconnectReason.IDLE);
+                    pending.deleteRow(i);
+                    n--;
+                    useful = true;
+                    continue;
+                }
+
+                // not fired, simply re-arm
+                ChannelStatus op = ChannelStatus.values()[(int) pending.get(i, M_OPERATION)];
+                switch (op) {
+                    case READ:
+                        readFdSet.add(fd);
+                        readFdCount++;
+                        i++;
+                        break;
+                    case WRITE:
+                        writeFdSet.add(fd);
+                        writeFdCount++;
+                        i++;
+                        break;
+                    case DISCONNECTED:
+                        disconnect(pending.get(i), DisconnectReason.SILLY);
+                        pending.deleteRow(i);
+                        n--;
+                        useful = true;
+                        break;
+                    case EOF:
+                        disconnect(pending.get(i), DisconnectReason.PEER);
+                        pending.deleteRow(i);
+                        n--;
+                        useful = true;
+                        break;
+                    default:
+                        break;
+                }
+            } else {
+                // this fd just has fired
+                // publish event
+                // and remove from pending
+                final IOContext context = pending.get(i);
+
+                if ((_new_op & FD_READ) > 0) {
+                    enqueue(context, ChannelStatus.READ);
+                }
+
+                if ((_new_op & FD_WRITE) > 0) {
+                    enqueue(context, ChannelStatus.WRITE);
+                }
+                pending.deleteRow(i);
+                n--;
+            }
+        }
+
+        readFdSet.setCount(readFdCount);
+        writeFdSet.setCount(writeFdCount);
+        return useful;
     }
 
     private static class FDSet {

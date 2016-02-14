@@ -21,6 +21,7 @@
 
 package com.nfsdb.mp;
 
+import com.nfsdb.ex.FatalError;
 import com.nfsdb.misc.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -106,7 +107,7 @@ public class FanOut implements Barrier {
         try {
             BARRIERS = Unsafe.getUnsafe().objectFieldOffset(FanOut.class.getDeclaredField("barriers"));
         } catch (NoSuchFieldException e) {
-            throw new Error("Internal error", e);
+            throw new FatalError("Internal error", e);
         }
     }
 }

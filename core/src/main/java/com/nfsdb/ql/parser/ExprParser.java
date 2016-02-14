@@ -64,7 +64,7 @@ public class ExprParser {
     }
 
     @SuppressWarnings("ConstantConditions")
-    @SuppressFBWarnings({"CC_CYCLOMATIC_COMPLEXITY", "SF_SWITCH_NO_DEFAULT"})
+    @SuppressFBWarnings({"CC_CYCLOMATIC_COMPLEXITY"})
     public void parseExpr(ExprListener listener) throws ParserException {
 
         opStack.clear();
@@ -203,6 +203,9 @@ public class ExprParser {
                                     case NONE:
                                         // we have unary minus
                                         type = ExprOperator.OperatorType.UNARY;
+                                        break;
+                                    default:
+                                        break;
                                 }
                         }
 

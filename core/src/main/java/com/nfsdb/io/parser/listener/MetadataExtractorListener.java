@@ -133,7 +133,6 @@ public class MetadataExtractorListener implements Listener, Mutable {
 
     }
 
-    @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT"})
     @Override
     public void onLineCount(int count) {
         // try calculate types counting all rows

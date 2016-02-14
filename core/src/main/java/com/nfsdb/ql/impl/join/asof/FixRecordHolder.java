@@ -30,7 +30,6 @@ import com.nfsdb.std.IntList;
 import com.nfsdb.std.ObjList;
 import com.nfsdb.store.ColumnType;
 import com.nfsdb.store.SymbolTable;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
     private final ObjList<ColumnType> types;
@@ -39,7 +38,6 @@ public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
     private StorageFacade storageFacade;
     private boolean held = false;
 
-    @SuppressFBWarnings("SF_SWITCH_NO_DEFAULT")
     public FixRecordHolder(RecordMetadata metadata) {
         super(metadata);
 
@@ -71,6 +69,8 @@ public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
                 case SHORT:
                     size += 2;
                     break;
+                default:
+                    break;
             }
         }
         address = Unsafe.getUnsafe().allocateMemory(size);
@@ -91,7 +91,6 @@ public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
         this.storageFacade = cursor.getStorageFacade();
     }
 
-    @SuppressFBWarnings("SF_SWITCH_NO_DEFAULT")
     public void write(Record record) {
         this.held = true;
         for (int i = 0, n = types.size(); i < n; i++) {

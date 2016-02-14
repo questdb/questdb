@@ -64,7 +64,7 @@ public class JournalFactoryPoolTest extends AbstractTest {
                     public void run() {
                         try {
                             barrier.await();
-                            for (int i = 0; i < 10; i++) {
+                            for (int k = 0; k < 10; k++) {
                                 try (JournalReaderFactory rf = pool.get()) {
                                     try (Journal<Quote> r = rf.reader(Quote.class)) {
                                         Assert.assertEquals(recordCount, r.query().all().asResultSet().read().length);

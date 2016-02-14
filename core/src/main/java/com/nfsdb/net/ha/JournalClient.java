@@ -486,14 +486,13 @@ public class JournalClient {
                 LOG.error().$("Network error. Server died?").$();
                 LOG.debug().$("Network error details: ").$(e).$();
                 reason = DisconnectReason.BROKEN_CHANNEL;
+            } catch (Error e) {
+                LOG.error().$("Unhandled exception in client").$(e).$();
+                reason = DisconnectReason.CLIENT_ERROR;
+                throw e;
             } catch (Throwable e) {
                 LOG.error().$("Unhandled exception in client").$(e).$();
-                if (e instanceof Error) {
-                    reason = DisconnectReason.CLIENT_ERROR;
-                    throw e;
-                } else {
-                    reason = DisconnectReason.CLIENT_EXCEPTION;
-                }
+                reason = DisconnectReason.CLIENT_EXCEPTION;
             } finally {
                 disconnectCallback.onDisconnect(reason);
             }

@@ -71,7 +71,6 @@ public class MultipartParser implements Closeable, Mutable {
         return this;
     }
 
-    @SuppressFBWarnings("SF_SWITCH_NO_DEFAULT")
     public boolean parse(IOContext context, long ptr, int len, MultipartListener listener) throws HeadersTooLargeException, MalformedHeaderException, IOException {
         long hi = ptr + len;
         long _lo = Long.MAX_VALUE;
@@ -142,6 +141,8 @@ public class MultipartParser implements Closeable, Mutable {
                                 state = State.PRE_HEADERS;
                                 ptr += consumedBoundaryLen;
                                 break;
+                            default:
+                                break;
                         }
                     }
                     break;
@@ -159,6 +160,8 @@ public class MultipartParser implements Closeable, Mutable {
                             state = State.BODY_BROKEN;
                             break;
                     }
+                    break;
+                default:
                     break;
             }
         }

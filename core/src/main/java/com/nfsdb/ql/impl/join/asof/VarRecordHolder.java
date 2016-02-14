@@ -31,7 +31,6 @@ import com.nfsdb.std.IntList;
 import com.nfsdb.std.ObjList;
 import com.nfsdb.store.ColumnType;
 import com.nfsdb.store.SymbolTable;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolder {
     private final ObjList<ColumnType> types;
@@ -100,7 +99,6 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
         this.storageFacade = cursor.getStorageFacade();
     }
 
-    @SuppressFBWarnings("SF_SWITCH_NO_DEFAULT")
     public void write(Record record) {
         this.held = true;
         int sz = varOffset;
@@ -146,6 +144,8 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
                 case STRING:
                     Unsafe.getUnsafe().putInt(address, varOffset);
                     varOffset += Chars.put(this.address + varOffset, record.getFlyweightStr(i));
+                    break;
+                default:
                     break;
             }
         }

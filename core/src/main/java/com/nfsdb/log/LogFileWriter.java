@@ -56,34 +56,6 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
         this.level = level;
     }
 
-    @Override
-    public boolean _run() {
-        long cursor = subSeq.next();
-        if (cursor < 0) {
-
-            if (_wptr > buf) {
-                flush();
-                return true;
-            }
-
-            return false;
-        }
-
-        final LogRecordSink sink = ring.get(cursor);
-        if ((sink.getLevel() & this.level) != 0) {
-            int l = sink.length();
-
-            if (_wptr + l >= lim) {
-                flush();
-            }
-
-            Unsafe.getUnsafe().copyMemory(sink.getAddress(), _wptr, l);
-            _wptr += l;
-        }
-        subSeq.done(cursor);
-        return true;
-    }
-
     @SuppressFBWarnings("LEST_LOST_EXCEPTION_STACK_TRACE")
     @Override
     public void bindProperties() {
@@ -121,6 +93,34 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
 
     public int getBufSize() {
         return bufSize;
+    }
+
+    @Override
+    public boolean runSerially() {
+        long cursor = subSeq.next();
+        if (cursor < 0) {
+
+            if (_wptr > buf) {
+                flush();
+                return true;
+            }
+
+            return false;
+        }
+
+        final LogRecordSink sink = ring.get(cursor);
+        if ((sink.getLevel() & this.level) != 0) {
+            int l = sink.length();
+
+            if (_wptr + l >= lim) {
+                flush();
+            }
+
+            Unsafe.getUnsafe().copyMemory(sink.getAddress(), _wptr, l);
+            _wptr += l;
+        }
+        subSeq.done(cursor);
+        return true;
     }
 
     public void setBufferSize(String bufferSize) {

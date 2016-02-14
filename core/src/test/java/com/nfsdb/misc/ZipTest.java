@@ -21,6 +21,7 @@
 
 package com.nfsdb.misc;
 
+import com.nfsdb.ex.FatalError;
 import com.nfsdb.std.Path;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Rule;
@@ -69,7 +70,7 @@ public class ZipTest {
                             do {
                                 int ret;
                                 if ((ret = Zip.deflate(strm, out, available, false)) < 0) {
-                                    throw new RuntimeException("Error in deflator: " + ret);
+                                    throw new FatalError("Error in deflator: " + ret);
                                 }
 
                                 int have = available - Zip.availOut(strm);
@@ -84,7 +85,7 @@ public class ZipTest {
                         int ret;
                         do {
                             if ((ret = Zip.deflate(strm, out, available, true)) < 0) {
-                                throw new RuntimeException("Error in deflator: " + ret);
+                                throw new FatalError("Error in deflator: " + ret);
                             }
 
                             int have = available - Zip.availOut(strm);

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
@@ -26,6 +26,7 @@ import com.google.gson.GsonBuilder;
 import com.nfsdb.Journal;
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
+import com.nfsdb.ex.FatalError;
 import com.nfsdb.ex.JournalException;
 import com.nfsdb.ex.NumericException;
 import com.nfsdb.ex.ResponseContentBufferTooSmallException;
@@ -219,7 +220,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 try {
                     return Dates.parseDateTime("2015-12-05T13:30:00.000Z");
                 } catch (NumericException ignore) {
-                    throw new RuntimeException(ignore);
+                    throw new FatalError(ignore);
                 }
             }
         });
@@ -656,7 +657,7 @@ public class HttpServerTest extends AbstractJournalTest {
         }
     }
 
-    private static Header findHeader(String name, org.apache.http.Header[] headers) {
+    private static Header findHeader(String name, Header[] headers) {
         for (Header h : headers) {
             if (name.equals(h.getName())) {
                 return h;

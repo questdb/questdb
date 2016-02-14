@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
@@ -118,33 +118,6 @@ public class Response implements Closeable, Mutable {
         machine0();
     }
 
-    private ByteBuffer _prepareBody() {
-        out.limit((int) (_wPtr - outPtr));
-        _wPtr = outPtr;
-        return out;
-    }
-
-    private ByteBuffer _prepareChunk(int len) {
-        chunkSink.clear(Misc.EOL.length());
-        Numbers.appendHex(chunkSink, len);
-        chunkSink.put(Misc.EOL);
-        chunkHeader.limit(chunkSink.length());
-        return chunkHeader;
-    }
-
-    private void _prepareCompressedBody() {
-        if (z_streamp == 0) {
-            z_streamp = Zip.deflateInit();
-            zout = ByteBuffer.allocateDirect(sz);
-            pzout = ByteBuffers.getAddress(zout);
-        }
-        int r = (int) (_wPtr - outPtr);
-        Zip.setInput(z_streamp, outPtr, r);
-        this.crc = Zip.crc32(this.crc, outPtr, r);
-        this.total += r;
-        _wPtr = outPtr;
-    }
-
     final ChunkedResponse asChunked() {
         return chunkedResponse;
     }
@@ -213,7 +186,7 @@ public class Response implements Closeable, Mutable {
         }
 
         // first we need to flush chunk header
-        _flushBuf = _prepareChunk(zout.remaining());
+        _flushBuf = prepareChunk(zout.remaining());
 
         // if there is input remaining, don't change
         return flush && ret == 1 ? ResponseState.SEND_DEFLATED_END : ResponseState.SEND_DEFLATED_CONT;
@@ -247,10 +220,10 @@ public class Response implements Closeable, Mutable {
             switch (state) {
                 case MULTI_CHUNK:
                     if (compressed) {
-                        _prepareCompressedBody();
+                        prepareCompressedBody();
                         state = ResponseState.DEFLATE;
                     } else {
-                        _flushBuf = _prepareBody();
+                        _flushBuf = prepareBody();
                         state = ResponseState.DONE;
                     }
                     break;
@@ -270,20 +243,20 @@ public class Response implements Closeable, Mutable {
                     state = ResponseState.DONE;
                     break;
                 case CHUNK_HEAD:
-                    _flushBuf = _prepareChunk((int) (_wPtr - outPtr));
+                    _flushBuf = prepareChunk((int) (_wPtr - outPtr));
                     state = ResponseState.CHUNK_DATA;
                     break;
                 case CHUNK_DATA:
-                    _flushBuf = _prepareBody();
+                    _flushBuf = prepareBody();
                     state = ResponseState.END_CHUNK;
                     break;
                 case END_CHUNK:
-                    _flushBuf = _prepareChunk(0);
+                    _flushBuf = prepareChunk(0);
                     state = ResponseState.FIN;
                     break;
                 case FIN:
                     sink.put(Misc.EOL);
-                    _flushBuf = _prepareBody();
+                    _flushBuf = prepareBody();
                     state = ResponseState.DONE;
                     break;
                 case FLUSH:
@@ -294,6 +267,33 @@ public class Response implements Closeable, Mutable {
             }
         }
 
+    }
+
+    private ByteBuffer prepareBody() {
+        out.limit((int) (_wPtr - outPtr));
+        _wPtr = outPtr;
+        return out;
+    }
+
+    private ByteBuffer prepareChunk(int len) {
+        chunkSink.clear(Misc.EOL.length());
+        Numbers.appendHex(chunkSink, len);
+        chunkSink.put(Misc.EOL);
+        chunkHeader.limit(chunkSink.length());
+        return chunkHeader;
+    }
+
+    private void prepareCompressedBody() {
+        if (z_streamp == 0) {
+            z_streamp = Zip.deflateInit();
+            zout = ByteBuffer.allocateDirect(sz);
+            pzout = ByteBuffers.getAddress(zout);
+        }
+        int r = (int) (_wPtr - outPtr);
+        Zip.setInput(z_streamp, outPtr, r);
+        this.crc = Zip.crc32(this.crc, outPtr, r);
+        this.total += r;
+        _wPtr = outPtr;
     }
 
     private void resetZip() {
@@ -476,7 +476,7 @@ public class Response implements Closeable, Mutable {
                 if (compressed) {
                     machine(null, ResponseState.MULTI_CHUNK);
                 } else {
-                    machine(_prepareChunk((int) (_wPtr - outPtr)), ResponseState.MULTI_CHUNK);
+                    machine(prepareChunk((int) (_wPtr - outPtr)), ResponseState.MULTI_CHUNK);
                 }
             }
         }

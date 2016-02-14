@@ -21,6 +21,7 @@
 
 package com.nfsdb.misc;
 
+import com.nfsdb.ex.FatalError;
 import com.nfsdb.ex.NumericException;
 import com.nfsdb.std.CharSequenceObjHashMap;
 import com.nfsdb.std.DirectByteCharSequence;
@@ -43,7 +44,7 @@ public final class Misc {
                 ((Closeable) object).close();
                 return null;
             } catch (IOException e) {
-                throw new Error(e);
+                throw new FatalError(e);
             }
         }
         return object;

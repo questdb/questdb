@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,10 +17,11 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.misc;
 
+import com.nfsdb.ex.FatalError;
 import com.sun.management.OperatingSystemMXBean;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -58,7 +59,7 @@ public final class Os {
     private static void loadLib(String lib) {
         InputStream is = Os.class.getResourceAsStream(lib);
         if (is == null) {
-            throw new Error("Internal error: cannot find " + lib + ", broken package?");
+            throw new FatalError("Internal error: cannot find " + lib + ", broken package?");
         }
 
         try {
@@ -80,7 +81,7 @@ public final class Os {
                 }
                 System.load(tempLib.getAbsolutePath());
             } catch (IOException e) {
-                throw new Error("Internal error: cannot unpack " + tempLib, e);
+                throw new FatalError("Internal error: cannot unpack " + tempLib, e);
             }
         } finally {
             Misc.free(is);

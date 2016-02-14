@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.log;
 
@@ -42,7 +42,15 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
     }
 
     @Override
-    public boolean _run() {
+    public void bindProperties() {
+    }
+
+    @Override
+    public void close() {
+    }
+
+    @Override
+    public boolean runSerially() {
         long cursor = subSeq.next();
         if (cursor < 0) {
             return false;
@@ -54,14 +62,6 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
         }
         subSeq.done(cursor);
         return true;
-    }
-
-    @Override
-    public void bindProperties() {
-    }
-
-    @Override
-    public void close() {
     }
 
     static {

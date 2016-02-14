@@ -85,8 +85,7 @@ public class MulticastTest extends AbstractTest {
             addNode(new ServerNode(0, "[0:0:0:0:0:0:0:0]"));
             setHeartbeatFrequency(100);
         }}, factory, null, 0);
-        JournalClient client = new JournalClient(new ClientConfig() {{
-        }}, factory);
+        JournalClient client = new JournalClient(new ClientConfig(), factory);
 
 
         JournalWriter<Quote> remote = factory.writer(Quote.class, "remote");

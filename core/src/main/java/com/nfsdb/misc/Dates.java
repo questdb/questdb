@@ -743,12 +743,12 @@ final public class Dates {
     // DD/MM/YYYY
     private static long parseDateTimeFmt3(CharSequence seq, int lo, int lim) throws NumericException {
         int p = lo;
-        int day = _int(seq, p, p += 2, lim);
+        int day = int0(seq, p, p += 2, lim);
         checkChar(seq, p++, lim, '/');
-        int month = _int(seq, p, p += 2, lim);
+        int month = int0(seq, p, p += 2, lim);
         checkRange(month, 1, 12);
         checkChar(seq, p++, lim, '/');
-        int year = _int(seq, p, p + 4, lim);
+        int year = int0(seq, p, p + 4, lim);
         boolean l = isLeapYear(year);
         checkRange(day, 1, getDaysPerMonth(month, l));
         return yearMillis(year, l) + monthOfYearMillis(month, l) + (day - 1) * DAY_MILLIS;
@@ -759,7 +759,7 @@ final public class Dates {
         return yearMillis(y, l) + monthOfYearMillis(m, l) + (d - 1) * DAY_MILLIS;
     }
 
-    private static int _int(CharSequence s, int lo, int hi, int lim) throws NumericException {
+    private static int int0(CharSequence s, int lo, int hi, int lim) throws NumericException {
         if (hi > lim) {
             throw NumericException.INSTANCE;
         }

@@ -21,6 +21,8 @@
 
 package com.nfsdb.misc;
 
+import com.nfsdb.ex.FatalError;
+
 import java.lang.reflect.Field;
 
 public final class Unsafe {
@@ -102,7 +104,7 @@ public final class Unsafe {
             BOOL_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(boolean[].class);
             BOOL_SCALE = Unsafe.getUnsafe().arrayIndexScale(boolean[].class);
         } catch (Exception e) {
-            throw new Error(e);
+            throw new FatalError(e);
         }
     }
 }

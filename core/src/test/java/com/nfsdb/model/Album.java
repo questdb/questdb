@@ -27,9 +27,6 @@ public class Album {
     private String genre;
     private long releaseDate;
 
-    public Album() {
-    }
-
     public String getBand() {
         return band;
     }

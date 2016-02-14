@@ -537,6 +537,8 @@ public final class Numbers {
                 return parseFloatConst(sequence, p, lim, NaN, Float.NaN);
             case 'I':
                 return parseFloatConst(sequence, p, lim, INFINITY, negative ? Float.NEGATIVE_INFINITY : Float.POSITIVE_INFINITY);
+            default:
+                break;
         }
 
         int val = 0;

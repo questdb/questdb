@@ -21,6 +21,7 @@
 
 package com.nfsdb.mp;
 
+import com.nfsdb.ex.FatalError;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.std.ObjHashSet;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -89,7 +90,7 @@ public class Worker extends Thread {
         try {
             RUNNING_OFFSET = Unsafe.getUnsafe().objectFieldOffset(Worker.class.getDeclaredField("running"));
         } catch (NoSuchFieldException e) {
-            throw new Error(e);
+            throw new FatalError(e);
         }
     }
 }

@@ -52,8 +52,7 @@ public class MemoryRecordAccessorTest {
     public MemoryRecordAccessorTest() {
         try {
             this.factory = new JournalTestFactory(
-                    new JournalConfigurationBuilder() {{
-                    }}.build(Files.makeTempDir())
+                    new JournalConfigurationBuilder().build(Files.makeTempDir())
             );
             this.compiler = new QueryCompiler(factory);
         } catch (JournalConfigurationException e) {

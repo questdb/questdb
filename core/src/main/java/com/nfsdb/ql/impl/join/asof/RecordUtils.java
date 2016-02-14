@@ -27,9 +27,7 @@ import com.nfsdb.ql.impl.map.MultiMap;
 import com.nfsdb.std.IntHashSet;
 import com.nfsdb.std.ObjList;
 import com.nfsdb.store.ColumnType;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-@SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT", "SF_SWITCH_NO_DEFAULT"})
 final class RecordUtils {
     private RecordUtils() {
     }
@@ -60,6 +58,8 @@ final class RecordUtils {
                 break;
             case DATE:
                 Unsafe.getUnsafe().putLong(address, record.getDate(column));
+                break;
+            default:
                 break;
         }
     }
@@ -101,6 +101,8 @@ final class RecordUtils {
                     // we have to write out string rather than int
                     // because master int values for same strings can be different
                     kw.putStr(record.getSym(idx));
+                    break;
+                default:
                     break;
             }
         }

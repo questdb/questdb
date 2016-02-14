@@ -95,7 +95,6 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
     public void onFieldCount(int count) {
     }
 
-    @SuppressFBWarnings({"SF_SWITCH_NO_DEFAULT"})
     @Override
     public void onFields(int line, CharSequence[] values, int hi) {
         boolean append = true;
@@ -139,6 +138,9 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
                             break;
                         case BOOLEAN:
                             w.putBool(i, Chars.equalsIgnoreCase(Unsafe.arrayGet(values, i), "true"));
+                            break;
+                        default:
+                            break;
                     }
                 } catch (Exception e) {
                     errors.increment(i);

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
@@ -102,64 +102,6 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
         evt.status = status;
         LOG.debug().$("Re-queuing ").$(context.channel.getFd()).$();
         interestPubSequence.done(cursor);
-    }
-
-    @Override
-    protected boolean _run() {
-        boolean useful = false;
-        final int n = kqueue.poll();
-        int watermark = pending.size();
-        final long timestamp = clock.getTicks();
-        int offset = 0;
-        if (n > 0) {
-            // check all activated FDs
-            for (int i = 0; i < n; i++) {
-                kqueue.setOffset(offset);
-                offset += Kqueue.SIZEOF_KEVENT;
-                int fd = kqueue.getFd();
-                // this is server socket, accept if there aren't too many already
-                if (fd == socketFd) {
-                    long _fd = accept();
-                    if (_fd < 0) {
-                        continue;
-                    }
-                    addPending(_fd, timestamp);
-                } else {
-                    // find row in pending for two reasons:
-                    // 1. find payload
-                    // 2. remove row from pending, remaining rows will be timed out
-                    int row = findPending(fd, kqueue.getData());
-                    if (row < 0) {
-                        LOG.error().$("Internal error: unknown FD: ").$(fd).$();
-                        continue;
-                    }
-
-                    long cursor = ioSequence.nextBully();
-                    IOEvent evt = ioQueue.get(cursor);
-                    evt.context = pending.get(row);
-                    evt.status = kqueue.getFilter() == Kqueue.EVFILT_READ ? ChannelStatus.READ : ChannelStatus.WRITE;
-                    ioSequence.done(cursor);
-                    LOG.debug().$("Queuing ").$(kqueue.getFilter()).$(" on ").$(fd).$();
-                    pending.deleteRow(row);
-                    watermark--;
-                }
-            }
-
-            // process rows over watermark
-            if (watermark < pending.size()) {
-                enqueuePending(watermark);
-            }
-            useful = true;
-        }
-
-        // process timed out connections
-        long deadline = timestamp - timeout;
-        if (pending.size() > 0 && pending.get(0, 0) < deadline) {
-            processIdleConnections(deadline);
-            useful = true;
-        }
-
-        return processRegistrations(timestamp) || useful;
     }
 
     private long accept() {
@@ -286,6 +228,8 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
                 case EOF:
                     disconnect(context, DisconnectReason.PEER);
                     continue;
+                default:
+                    break;
             }
 
             int r = pending.addRow();
@@ -305,6 +249,64 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
         }
 
         return useful;
+    }
+
+    @Override
+    protected boolean runSerially() {
+        boolean useful = false;
+        final int n = kqueue.poll();
+        int watermark = pending.size();
+        final long timestamp = clock.getTicks();
+        int offset = 0;
+        if (n > 0) {
+            // check all activated FDs
+            for (int i = 0; i < n; i++) {
+                kqueue.setOffset(offset);
+                offset += Kqueue.SIZEOF_KEVENT;
+                int fd = kqueue.getFd();
+                // this is server socket, accept if there aren't too many already
+                if (fd == socketFd) {
+                    long _fd = accept();
+                    if (_fd < 0) {
+                        continue;
+                    }
+                    addPending(_fd, timestamp);
+                } else {
+                    // find row in pending for two reasons:
+                    // 1. find payload
+                    // 2. remove row from pending, remaining rows will be timed out
+                    int row = findPending(fd, kqueue.getData());
+                    if (row < 0) {
+                        LOG.error().$("Internal error: unknown FD: ").$(fd).$();
+                        continue;
+                    }
+
+                    long cursor = ioSequence.nextBully();
+                    IOEvent evt = ioQueue.get(cursor);
+                    evt.context = pending.get(row);
+                    evt.status = kqueue.getFilter() == Kqueue.EVFILT_READ ? ChannelStatus.READ : ChannelStatus.WRITE;
+                    ioSequence.done(cursor);
+                    LOG.debug().$("Queuing ").$(kqueue.getFilter()).$(" on ").$(fd).$();
+                    pending.deleteRow(row);
+                    watermark--;
+                }
+            }
+
+            // process rows over watermark
+            if (watermark < pending.size()) {
+                enqueuePending(watermark);
+            }
+            useful = true;
+        }
+
+        // process timed out connections
+        long deadline = timestamp - timeout;
+        if (pending.size() > 0 && pending.get(0, 0) < deadline) {
+            processIdleConnections(deadline);
+            useful = true;
+        }
+
+        return processRegistrations(timestamp) || useful;
     }
 
     private int scanRow(int r, int fd, long ts) {

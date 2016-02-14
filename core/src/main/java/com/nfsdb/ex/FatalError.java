@@ -19,36 +19,18 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.mp;
+package com.nfsdb.ex;
 
-import com.nfsdb.ex.FatalError;
-import com.nfsdb.misc.Unsafe;
-
-public abstract class SynchronizedJob implements Job {
-    private static final long LOCKED_OFFSET;
-
-    @SuppressWarnings({"unused", "FieldCanBeLocal"})
-    private volatile int locked = 0;
-
-    @Override
-    public boolean run(WorkerContext context) {
-        if (Unsafe.getUnsafe().compareAndSwapInt(this, LOCKED_OFFSET, 0, 1)) {
-            try {
-                return runSerially();
-            } finally {
-                locked = 0;
-            }
-        }
-        return false;
+public class FatalError extends Error {
+    public FatalError(Throwable cause) {
+        super(cause);
     }
 
-    protected abstract boolean runSerially();
+    public FatalError(String message) {
+        super(message);
+    }
 
-    static {
-        try {
-            LOCKED_OFFSET = Unsafe.getUnsafe().objectFieldOffset(SynchronizedJob.class.getDeclaredField("locked"));
-        } catch (NoSuchFieldException e) {
-            throw new FatalError(e);
-        }
+    public FatalError(String message, Throwable cause) {
+        super(message, cause);
     }
 }

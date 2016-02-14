@@ -182,7 +182,7 @@ public final class ByteBuffers {
             }
 
             // disconnected
-            if (result == 0 && target == r && Net.EOF()) {
+            if (result == 0 && target == r && Net.eof()) {
                 throw EndOfChannelException.INSTANCE;
             }
 

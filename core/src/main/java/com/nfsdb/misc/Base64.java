@@ -107,14 +107,13 @@ public class Base64 {
         int j = len - 1;
         for (; j > -1; j--) {
             byte code = decodeMap[text.charAt(j)];
-            if (code == PADDING) {
-                continue;
+            if (code != PADDING) {
+                if (code == -1) // most likely this base64 text is indented. go with the upper bound
+                {
+                    return text.length() / 4 * 3;
+                }
+                break;
             }
-            if (code == -1) // most likely this base64 text is indented. go with the upper bound
-            {
-                return text.length() / 4 * 3;
-            }
-            break;
         }
 
         j++;    // text.charAt(j) is now at some base64 char, so +1 to make it the size

@@ -828,7 +828,6 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
-    @SuppressFBWarnings("SF_SWITCH_NO_DEFAULT")
     private void writeDiscardFile(long rowid) throws JournalException {
 
         if (discardTxtRaf == null) {
@@ -885,6 +884,8 @@ public class JournalWriter<T> extends Journal<T> {
                                     break;
                                 case BOOLEAN:
                                     discardSink.put(partition.getBool(r, c) ? "true" : "false");
+                                    break;
+                                default:
                                     break;
                             }
 

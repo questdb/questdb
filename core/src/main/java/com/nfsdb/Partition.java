@@ -321,6 +321,9 @@ public class Partition<T> implements Closeable {
                     break;
                 case BINARY:
                     readBin(localRowID, obj, i, m);
+                    break;
+                default:
+                    break;
             }
         }
     }

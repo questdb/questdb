@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
@@ -33,7 +33,6 @@ import com.nfsdb.std.CharSequenceObjHashMap;
 import com.nfsdb.std.DirectByteCharSequence;
 import com.nfsdb.std.Mutable;
 import com.nfsdb.std.ObjectPool;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 
@@ -140,7 +139,6 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
         return headers.size();
     }
 
-    @SuppressFBWarnings("SF_SWITCH_NO_DEFAULT")
     public long write(long ptr, int len, boolean _method) throws HeadersTooLargeException, MalformedHeaderException {
         if (_method && needMethod) {
             int l = parseMethod(ptr, len);
@@ -184,6 +182,8 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
                     _lo = _wptr;
                     headers.put(n, v);
                     n = null;
+                    break;
+                default:
                     break;
             }
         }

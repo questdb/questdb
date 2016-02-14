@@ -36,7 +36,6 @@ import com.nfsdb.ql.impl.map.MultiMap;
 import com.nfsdb.std.*;
 import com.nfsdb.store.ColumnType;
 import com.nfsdb.store.SymbolTable;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class LastVarRecordMap implements LastRecordMap {
     private static final ObjList<RecordColumnMetadata> valueMetadata = new ObjList<>();
@@ -274,7 +273,6 @@ public class LastVarRecordMap implements LastRecordMap {
         writeRec0(pages.getQuick(pageIndex(offset)) + pageOffset(offset) + 4, record);
     }
 
-    @SuppressFBWarnings("SF_SWITCH_NO_DEFAULT")
     private void writeRec0(long addr, Record record) {
         int varOffset = this.varOffset;
         for (int i = 0, n = slaveValueIndexes.size(); i < n; i++) {
@@ -309,6 +307,8 @@ public class LastVarRecordMap implements LastRecordMap {
                 case STRING:
                     Unsafe.getUnsafe().putInt(address, varOffset);
                     varOffset += Chars.put(addr + varOffset, record.getFlyweightStr(idx));
+                    break;
+                default:
                     break;
             }
         }

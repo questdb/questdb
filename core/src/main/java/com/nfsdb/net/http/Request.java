@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
@@ -162,7 +162,7 @@ public class Request implements Closeable, Mutable {
         public BoundaryAugmenter() {
             this.lim = 64;
             this.lo = this._wptr = Unsafe.getUnsafe().allocateMemory(this.lim);
-            _of(BOUNDARY_PREFIX);
+            of0(BOUNDARY_PREFIX);
         }
 
         public DirectByteCharSequence of(CharSequence value) {
@@ -171,11 +171,11 @@ public class Request implements Closeable, Mutable {
                 resize(len);
             }
             _wptr = lo + BOUNDARY_PREFIX.length();
-            _of(value);
+            of0(value);
             return export.of(lo, _wptr);
         }
 
-        private void _of(CharSequence value) {
+        private void of0(CharSequence value) {
             int len = value.length();
             for (int i = 0; i < len; i++) {
                 Unsafe.getUnsafe().putByte(_wptr++, (byte) value.charAt(i));
@@ -186,7 +186,7 @@ public class Request implements Closeable, Mutable {
             Unsafe.getUnsafe().freeMemory(this.lo);
             this.lim = Numbers.ceilPow2(lim);
             this.lo = _wptr = Unsafe.getUnsafe().allocateMemory(this.lim);
-            _of(BOUNDARY_PREFIX);
+            of0(BOUNDARY_PREFIX);
         }
 
         @Override

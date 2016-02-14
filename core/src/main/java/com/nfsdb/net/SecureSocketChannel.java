@@ -233,6 +233,8 @@ public class SecureSocketChannel implements WrappedByteChannel {
                                 break;
                             case CLOSED:
                                 throw new IOException("Did not expect CLOSED");
+                            default:
+                                break;
                         }
                     } catch (SSLException e) {
                         LOG.error().$("Client SSL handshake failed: ").$(e.getMessage()).$();
@@ -273,6 +275,8 @@ public class SecureSocketChannel implements WrappedByteChannel {
                     break;
                 case CLOSED:
                     throw new IOException("Did not expect CLOSED");
+                default:
+                    break;
             }
         }
         return true;
