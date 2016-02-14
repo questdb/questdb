@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl.join.hash;
 
@@ -45,7 +45,7 @@ public class DirectPagedBufferStream extends DirectInputStream {
     }
 
     @Override
-    public long copyTo(long address, long start, long len) {
+    public long copyTo(final long address, long start, long len) {
         if (start < 0 || len < 0) {
             throw new IndexOutOfBoundsException();
         }
@@ -55,11 +55,12 @@ public class DirectPagedBufferStream extends DirectInputStream {
         long size = res = len > rem ? rem : len;
         long offset = this.offset + start;
 
+        long p = address;
         do {
             int remaining = buffer.pageRemaining(offset);
             int sz = size > remaining ? remaining : (int) size;
-            Unsafe.getUnsafe().copyMemory(buffer.addressOf(offset), address, sz);
-            address += sz;
+            Unsafe.getUnsafe().copyMemory(buffer.addressOf(offset), p, sz);
+            p += sz;
             offset += sz;
             size -= sz;
         } while (size > 0);

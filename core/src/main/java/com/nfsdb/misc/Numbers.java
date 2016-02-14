@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.misc;
 
@@ -41,7 +41,8 @@ public final class Numbers {
     private Numbers() {
     }
 
-    public static void append(CharSink sink, double d, int scale) {
+    public static void append(CharSink sink, final double value, int scale) {
+        double d = value;
         if (d == Double.POSITIVE_INFINITY) {
             sink.put("Infinity");
             return;
@@ -57,10 +58,11 @@ public final class Numbers {
             return;
         }
 
-        if (d < 0) {
+        if (value < 0) {
             sink.put('-');
-            d = -d;
+            d = -value;
         }
+
         long factor = pow10[scale];
         long scaled = (long) (d * factor + 0.5);
         int targetScale = scale + 1;
@@ -83,7 +85,8 @@ public final class Numbers {
         }
     }
 
-    public static void append(CharSink sink, float f, int scale) {
+    public static void append(CharSink sink, final float value, int scale) {
+        float f = value;
         if (f == Float.POSITIVE_INFINITY) {
             sink.put("Infinity");
             return;
@@ -126,7 +129,8 @@ public final class Numbers {
         }
     }
 
-    public static void append(CharSink sink, int i) {
+    public static void append(CharSink sink, final int value) {
+        int i = value;
         if (i < 0) {
             if (i == Integer.MIN_VALUE) {
                 sink.put("NaN");
@@ -205,7 +209,8 @@ public final class Numbers {
         }
     }
 
-    public static void append(CharSink sink, long i) {
+    public static void append(CharSink sink, final long value) {
+        long i = value;
         if (i > Integer.MAX_VALUE || i < Integer.MIN_VALUE) {
             if (i < 0) {
                 if (i == Long.MIN_VALUE) {
@@ -239,7 +244,8 @@ public final class Numbers {
         }
     }
 
-    public static void appendHex(CharSink sink, int i) {
+    public static void appendHex(CharSink sink, final int value) {
+        int i = value;
         if (i < 0) {
             if (i == Integer.MIN_VALUE) {
                 sink.put("NaN");
@@ -296,7 +302,8 @@ public final class Numbers {
         }
     }
 
-    public static void appendTrim(CharSink sink, double d, int scale) {
+    public static void appendTrim(CharSink sink, double d, final int inScale) {
+        int scale = inScale;
         if (d == Double.POSITIVE_INFINITY) {
             sink.put("Infinity");
             return;
@@ -356,20 +363,21 @@ public final class Numbers {
     }
 
     public static int ceilPow2(int value) {
-        if ((value != 0) && (value & (value - 1)) > 0) {
-            value |= (value >>> 1);
-            value |= (value >>> 2);
-            value |= (value >>> 4);
-            value |= (value >>> 8);
-            value |= (value >>> 16);
-            value++;
+        int i = value;
+        if ((i != 0) && (i & (i - 1)) > 0) {
+            i |= (i >>> 1);
+            i |= (i >>> 2);
+            i |= (i >>> 4);
+            i |= (i >>> 8);
+            i |= (i >>> 16);
+            i++;
 
-            if (value < 0) {
-                value >>>= 1;
+            if (i < 0) {
+                i >>>= 1;
             }
         }
 
-        return value;
+        return i;
     }
 
     public static int msb(int value) {
@@ -445,27 +453,28 @@ public final class Numbers {
     }
 
     @SuppressWarnings("Duplicates")
-    private static double parseDouble(CharSequence sequence, int p, int lim) throws NumericException {
+    private static double parseDouble(CharSequence sequence, final int p, int lim) throws NumericException {
 
         if (lim == p) {
             throw NumericException.INSTANCE;
         }
 
         boolean negative = sequence.charAt(p) == '-';
+        int i = p;
         if (negative) {
-            p++;
+            i++;
         }
 
-        if (p >= lim) {
+        if (i >= lim) {
             throw NumericException.INSTANCE;
         }
 
 
-        switch (sequence.charAt(p)) {
+        switch (sequence.charAt(i)) {
             case 'N':
-                return parseConst(sequence, p, lim, NaN, Double.NaN);
+                return parseConst(sequence, i, lim, NaN, Double.NaN);
             case 'I':
-                return parseConst(sequence, p, lim, INFINITY, negative ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY);
+                return parseConst(sequence, i, lim, INFINITY, negative ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY);
             default:
                 break;
         }
@@ -475,7 +484,7 @@ public final class Numbers {
         int dpe = lim;
         int exp = 0;
         out:
-        for (int i = p; i < lim; i++) {
+        for (; i < lim; i++) {
             int c = sequence.charAt(i);
             switch (c) {
                 case '.':
@@ -593,7 +602,7 @@ public final class Numbers {
     }
 
     @SuppressFBWarnings("CC_CYCLOMATIC_COMPLEXITY")
-    private static int parseHexInt(CharSequence sequence, int p, int lim) throws NumericException {
+    private static int parseHexInt(CharSequence sequence, final int p, int lim) throws NumericException {
 
         if (lim == p) {
             throw NumericException.INSTANCE;
@@ -601,8 +610,8 @@ public final class Numbers {
 
         int val = 0;
         int r;
-        for (; p < lim; p++) {
-            int c = sequence.charAt(p);
+        for (int i = p; i < lim; i++) {
+            int c = sequence.charAt(i);
             int n = val << 4;
 
             switch (c) {
@@ -657,27 +666,28 @@ public final class Numbers {
         return val;
     }
 
-    private static int parseIntSize(CharSequence sequence, int p, int lim) throws NumericException {
+    private static int parseIntSize(CharSequence sequence, final int p, int lim) throws NumericException {
 
         if (lim == p) {
             throw NumericException.INSTANCE;
         }
 
         boolean negative = sequence.charAt(p) == '-';
+        int i = p;
         if (negative) {
-            p++;
+            i++;
         }
 
-        if (p >= lim) {
+        if (i >= lim) {
             throw NumericException.INSTANCE;
         }
 
         int val = 0;
         EX:
-        for (; p < lim; p++) {
-            int c = sequence.charAt(p);
+        for (; i < lim; i++) {
+            int c = sequence.charAt(i);
             if (c < '0' || c > '9') {
-                if (p == lim - 1) {
+                if (i == lim - 1) {
                     switch (c) {
                         case 'K':
                         case 'k':
@@ -917,24 +927,25 @@ public final class Numbers {
         return value;
     }
 
-    private static int parseInt0(CharSequence sequence, int p, int lim) throws NumericException {
+    private static int parseInt0(CharSequence sequence, final int p, int lim) throws NumericException {
 
         if (lim == p) {
             throw NumericException.INSTANCE;
         }
 
         boolean negative = sequence.charAt(p) == '-';
+        int i = p;
         if (negative) {
-            p++;
+            i++;
         }
 
-        if (p >= lim) {
+        if (i >= lim) {
             throw NumericException.INSTANCE;
         }
 
         int val = 0;
-        for (; p < lim; p++) {
-            int c = sequence.charAt(p);
+        for (; i < lim; i++) {
+            int c = sequence.charAt(i);
             if (c < '0' || c > '9') {
                 throw NumericException.INSTANCE;
             }
@@ -952,24 +963,26 @@ public final class Numbers {
         return negative ? val : -val;
     }
 
-    private static long parseLong0(CharSequence sequence, int p, int lim) throws NumericException {
+    private static long parseLong0(CharSequence sequence, final int p, int lim) throws NumericException {
 
         if (lim == p) {
             throw NumericException.INSTANCE;
         }
 
         boolean negative = sequence.charAt(p) == '-';
+
+        int i = p;
         if (negative) {
-            p++;
+            i++;
         }
 
-        if (p >= lim) {
+        if (i >= lim) {
             throw NumericException.INSTANCE;
         }
 
         long val = 0;
-        for (; p < lim; p++) {
-            int c = sequence.charAt(p);
+        for (; i < lim; i++) {
+            int c = sequence.charAt(i);
             if (c < '0' || c > '9') {
                 throw NumericException.INSTANCE;
             }

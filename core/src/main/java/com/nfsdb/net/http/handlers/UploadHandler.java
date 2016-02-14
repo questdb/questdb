@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.net.http.handlers;
 
@@ -110,12 +110,13 @@ public class UploadHandler extends AbstractMultipartHandler {
         sink.flush();
     }
 
-    private void write0(ByteSequence data, int offset, long addr, int len) {
+    private void write0(ByteSequence data, int offset, final long addr, int len) {
         if (data instanceof DirectByteCharSequence) {
             Unsafe.getUnsafe().copyMemory(((DirectByteCharSequence) data).getLo() + offset, addr, len);
         } else {
+            long p = addr;
             for (int i = offset; i < len; i++) {
-                Unsafe.getUnsafe().putByte(addr++, data.byteAt(i));
+                Unsafe.getUnsafe().putByte(p++, data.byteAt(i));
             }
         }
     }

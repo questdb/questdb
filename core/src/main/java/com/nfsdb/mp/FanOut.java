@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.mp;
 
@@ -54,13 +54,14 @@ public class FanOut implements Barrier {
     // it has to take a copy of this.barriers as this reference can change while
     // loop is in flight
     @Override
-    public long availableIndex(long lo) {
-        Barrier[] barriers = this.barriers;
+    public long availableIndex(final long lo) {
+        final Barrier[] barriers = this.barriers;
+        long l = lo;
         for (int i = 0, n = barriers.length; i < n; i++) {
-            long cursor = Unsafe.arrayGet(barriers, i).availableIndex(lo);
-            lo = lo < cursor ? lo : cursor;
+            long cursor = Unsafe.arrayGet(barriers, i).availableIndex(l);
+            l = l < cursor ? l : cursor;
         }
-        return lo;
+        return l;
     }
 
     @Override

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl.join.hash;
 
@@ -273,13 +273,14 @@ public class MemoryRecordAccessor extends AbstractRecord {
         return Unsafe.getUnsafe().getLong(address - headerSize + (-offsets[index]) * 8);
     }
 
-    private void writeBin(OutputStream stream, long offset, long len) throws IOException {
+    private void writeBin(OutputStream stream, long offset, final long len) throws IOException {
         long position = offset;
         long copied = 0;
-        while (copied < len) {
+        long l = len;
+        while (copied < l) {
             long blockEndOffset = mem.pageRemaining(offset);
-            long copyEndOffset = Math.min(blockEndOffset, len - copied);
-            len += copyEndOffset - position;
+            long copyEndOffset = Math.min(blockEndOffset, l - copied);
+            l += copyEndOffset - position;
             while (position < copyEndOffset) {
                 stream.write(Unsafe.getUnsafe().getByte(mem.addressOf(offset) + position++));
             }

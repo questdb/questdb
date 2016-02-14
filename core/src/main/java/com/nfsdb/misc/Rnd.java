@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.misc;
 
@@ -50,11 +50,12 @@ public class Rnd {
         return bytes;
     }
 
-    public void nextChars(long address, int len) {
-        long limit = address + len - 2;
-        while (address < limit) {
-            Unsafe.getUnsafe().putChar(address, (char) (nextPositiveInt() % 25 + 66));
-            address += 2;
+    public void nextChars(final long address, int len) {
+        long addr = address;
+        long limit = addr + len - 2;
+        while (addr < limit) {
+            Unsafe.getUnsafe().putChar(addr, (char) (nextPositiveInt() % 25 + 66));
+            addr += 2;
         }
     }
 

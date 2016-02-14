@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl.join.asof;
 
@@ -222,13 +222,13 @@ public class LastVarRecordMap implements LastRecordMap {
         this.storageFacade = cursor.getStorageFacade();
     }
 
-    private void appendRec(Record record, int size, MapValues values) {
+    private void appendRec(Record record, final int sz, MapValues values) {
         int pgInx = pageIndex(appendOffset);
         int pgOfs = pageOffset(appendOffset);
 
         // input is net size of payload
         // add 4 byte prefix + 10%
-        size = size + 4 + size / 10;
+        int size = sz + 4 + sz / 10;
 
         if (pgOfs + size > pageSize) {
             pgInx++;

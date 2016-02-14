@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.mp;
 
@@ -43,9 +43,10 @@ public abstract class AbstractMSequence extends AbstractSSequence {
 
     @SuppressWarnings("StatementWithEmptyBody")
     @Override
-    public long availableIndex(long lo) {
-        for (long hi = this.index.fencedGet() + 1; lo < hi && available0(lo); lo++) ;
-        return lo - 1;
+    public long availableIndex(final long lo) {
+        long l = lo;
+        for (long hi = this.index.fencedGet() + 1; l < hi && available0(l); l++) ;
+        return l - 1;
     }
 
     @Override

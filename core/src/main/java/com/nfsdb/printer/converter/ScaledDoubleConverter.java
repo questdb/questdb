@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.printer.converter;
 
@@ -32,10 +32,13 @@ public class ScaledDoubleConverter implements Converter {
         this.scaleFactor = scaleFactor;
     }
 
-    public static void appendTo(StringBuilder builder, double d, int scaleFactor) {
-        if (d < 0) {
+    public static void appendTo(StringBuilder builder, final double value, int scaleFactor) {
+        double d;
+        if (value < 0) {
             builder.append('-');
-            d = -d;
+            d = -value;
+        } else {
+            d = value;
         }
 
         long factor = (long) Math.pow(10, scaleFactor);

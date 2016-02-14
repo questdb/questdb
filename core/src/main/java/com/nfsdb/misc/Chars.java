@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.misc;
 
@@ -34,7 +34,6 @@ public final class Chars {
         if (m == 0) {
             return false;
         }
-
 
         for (int i = 0, n = _this.length(); i < n; i++) {
             if (_this.charAt(i) == that.charAt(0)) {
@@ -142,7 +141,8 @@ public final class Chars {
         return indexOf(s, 0, c);
     }
 
-    public static int indexOf(CharSequence s, int i, char c) {
+    public static int indexOf(CharSequence s, final int lo, char c) {
+        int i = lo;
         for (int n = s.length(); i < n; i++) {
             if (s.charAt(i) == c) {
                 return i;
