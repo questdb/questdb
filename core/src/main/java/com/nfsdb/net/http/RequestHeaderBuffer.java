@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.net.http;
 
@@ -47,6 +47,7 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
     private long headerPtr;
     private CharSequence method;
     private CharSequence url;
+    private CharSequence methodLine;
     private boolean needMethod;
     private long _lo;
     private CharSequence n;
@@ -117,6 +118,10 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
 
     public CharSequence getMethod() {
         return method;
+    }
+
+    public CharSequence getMethodLine() {
+        return methodLine;
     }
 
     public CharSequence getUrl() {
@@ -334,10 +339,6 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
         long p = lo;
         long hi = lo + len;
 
-//        boolean m = true;
-//        boolean u = true;
-//        boolean q = false;
-
         while (p < hi) {
             if (_wptr == this.hi) {
                 throw HeadersTooLargeException.INSTANCE;
@@ -374,6 +375,7 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
                     _lo = _wptr;
                     break;
                 case '\n':
+                    methodLine = pool.next().of(((DirectByteCharSequence) method).getLo(), _wptr - 1);
                     needMethod = false;
                     this._lo = _wptr;
                     return (int) (p - lo);

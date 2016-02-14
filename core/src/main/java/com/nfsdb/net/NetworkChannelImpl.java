@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.net;
 
@@ -30,6 +30,7 @@ import java.nio.ByteBuffer;
 
 public class NetworkChannelImpl implements NetworkChannel {
     private final long fd;
+    private long totalWritten = 0;
 
     public NetworkChannelImpl(long fd) {
         this.fd = fd;
@@ -37,6 +38,13 @@ public class NetworkChannelImpl implements NetworkChannel {
 
     public long getFd() {
         return fd;
+    }
+
+    @Override
+    public long getTotalWrittenAndReset() {
+        long r = this.totalWritten;
+        this.totalWritten = 0;
+        return r;
     }
 
     @Override
@@ -63,6 +71,7 @@ public class NetworkChannelImpl implements NetworkChannel {
     public int write(ByteBuffer src) throws IOException {
         int written = Net.send(fd, ByteBuffers.getAddress(src) + src.position(), src.remaining());
         if (written > 0) {
+            totalWritten += written;
             src.position(src.position() + written);
             return written;
         }

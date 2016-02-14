@@ -89,6 +89,12 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_getEof
 JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_getEwouldblock
         (JNIEnv *, jclass);
 
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_getPeerIP
+        (JNIEnv *, jclass, jlong fd);
+
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_getPeerPort
+        (JNIEnv *, jclass, jlong fd);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.net.http;
 
@@ -108,6 +108,10 @@ public class Response implements Closeable, Mutable {
             Zip.deflateEnd(z_streamp);
             z_streamp = 0;
         }
+    }
+
+    public int getCode() {
+        return hb.getCode();
     }
 
     public void resume() throws DisconnectedChannelException, SlowWritableChannelException {

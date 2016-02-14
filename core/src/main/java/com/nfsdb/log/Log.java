@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,12 +17,13 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.log;
 
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.misc.Misc;
+import com.nfsdb.misc.Net;
 import com.nfsdb.mp.RingQueue;
 import com.nfsdb.mp.Sequence;
 
@@ -116,6 +117,12 @@ public class Log implements LogRecord {
     @Override
     public LogRecord $(Object x) {
         sink().put(x == null ? "null" : x.toString());
+        return this;
+    }
+
+    @Override
+    public LogRecord $ip(long ip) {
+        Net.appendIP4(sink(), ip);
         return this;
     }
 

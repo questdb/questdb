@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.net.http;
 
@@ -37,9 +37,9 @@ import com.nfsdb.std.LongMatrix;
 import java.io.IOException;
 
 public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
-    public static final int M_TIMESTAMP = 1;
-    public static final int M_FD = 2;
-    public static final int M_ID = 0;
+    private static final int M_TIMESTAMP = 1;
+    private static final int M_FD = 2;
+    private static final int M_ID = 0;
     private static final Log LOG = LogFactory.getLog(EpollDispatcher.class);
     private final long socketFd;
     private final RingQueue<IOEvent> ioQueue;
@@ -53,7 +53,7 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
     private final int timeout;
     private final LongMatrix<IOContext> pending = new LongMatrix<>(4);
     private final int maxConnections;
-    private volatile int connectionCount = 0;
+    private int connectionCount = 0;
     private long fdid = 1;
 
     public EpollDispatcher(
@@ -78,12 +78,13 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
         // bind socket
         this.epoll = new Epoll();
         this.socketFd = Net.socketTcp(false);
-        if (!Net.bind(this.socketFd, ip, port)) {
+        if (Net.bind(this.socketFd, ip, port)) {
+            Net.listen(this.socketFd, 128);
+            this.epoll.listen(socketFd);
+            LOG.debug().$("Listening socket: ").$(socketFd).$();
+        } else {
             throw new NetworkError("Failed to find socket");
         }
-        Net.listen(this.socketFd, 128);
-        this.epoll.listen(socketFd);
-        LOG.debug().$("Listening socket: ").$(socketFd).$();
     }
 
     @Override

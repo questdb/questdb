@@ -91,10 +91,6 @@ public class IOHttpJob implements Job {
                 sr.send(400);
             } else {
 
-                if (log && !r.isIncomplete()) {
-                    ACCESS.xinfo().$(" - ").$(r.getUrl()).$();
-                }
-
                 ContextHandler handler = urlMatcher.get(r.getUrl());
                 if (handler != null) {
                     switch (status) {
@@ -123,6 +119,23 @@ public class IOHttpJob implements Job {
                     }
                 } else {
                     sr.send(404);
+                }
+
+                if (log && !r.isIncomplete()) {
+                    //todo: implement native method on linux & osx
+/*
+                    ACCESS.xinfo().
+                            $ip(Net.getPeerIP(context.channel.getFd())).
+                            $(" -").
+                            $(" -").
+                            $(" [").
+                            $ts(System.currentTimeMillis()).
+                            $("] ").
+                            $('"').$(r.getMethodLine()).$('"').
+                            $(' ').$(context.getResponseCode()).
+                            $(' ').$(context.channel.getTotalWrittenAndReset()).
+                            $();
+*/
                 }
             }
             context.clear();

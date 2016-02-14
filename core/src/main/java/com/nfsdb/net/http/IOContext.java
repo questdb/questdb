@@ -108,6 +108,10 @@ public class IOContext implements Closeable, Mutable {
         return response.asFixedSize();
     }
 
+    public int getResponseCode() {
+        return response.getCode();
+    }
+
     @SuppressWarnings("unchecked")
     public <T> T getThreadLocal(CharSequence key, ObjectFactory<T> factory) {
         AssociativeCache<Object> cache = threadContext.getCache();

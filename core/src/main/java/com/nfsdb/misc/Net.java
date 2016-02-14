@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,12 +17,13 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.misc;
 
 import com.nfsdb.ex.NetworkError;
 import com.nfsdb.ex.NumericException;
+import com.nfsdb.io.sink.CharSink;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public final class Net {
@@ -39,6 +40,10 @@ public final class Net {
 
     public native static long accept(long fd);
 
+    public static void appendIP4(CharSink sink, long ip) {
+        sink.put(ip & 0xff).put('.').put((ip >> 8) & 0xff).put('.').put((ip >> 16) & 0xff).put('.').put((ip >> 24) & 0xff);
+    }
+
     public native static long available(long fd);
 
     public native static boolean bind(long fd, int address, int port);
@@ -48,6 +53,10 @@ public final class Net {
     }
 
     public static native int configureNonBlocking(long fd);
+
+    public native static long getPeerIP(long fd);
+
+    public native static long getPeerPort(long fd);
 
     public native static void listen(long fd, int backlog);
 

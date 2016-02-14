@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.net.http;
 
@@ -76,6 +76,7 @@ public class RequestHeaderBufferTest {
     private void assertHeaders(RequestHeaderBuffer hb) {
         TestUtils.assertEquals("GET", hb.getMethod());
         TestUtils.assertEquals("/status", hb.getUrl());
+        TestUtils.assertEquals("GET /status?x=1&a=&b6b HTTP/1.1", hb.getMethodLine());
         Assert.assertEquals(9, hb.size());
         TestUtils.assertEquals("localhost:9000", hb.get("Host"));
         TestUtils.assertEquals("keep-alive", hb.get("Connection"));

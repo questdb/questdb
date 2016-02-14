@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.net;
 
@@ -29,12 +29,12 @@ import com.nfsdb.misc.Unsafe;
 import java.io.Closeable;
 
 public final class Epoll implements Closeable {
-    public static final int NUM_KEVENTS = 1024;
     public static final short SIZEOF_EVENT;
     public static final int EPOLLIN;
     public static final int EPOLLOUT;
     public static final int EPOLL_CTL_ADD;
     public static final int EPOLL_CTL_MOD;
+    private static final int NUM_KEVENTS = 1024;
     private static final short DATA_OFFSET;
     private static final short EVENTS_OFFSET;
     private static final int EPOLLONESHOT;

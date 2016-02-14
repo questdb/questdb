@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.net.http;
 
@@ -50,7 +50,7 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
     private final int timeout;
     private final LongMatrix<IOContext> pending = new LongMatrix<>(2);
     private final int maxConnections;
-    private volatile int connectionCount = 0;
+    private int connectionCount = 0;
 
     public KQueueDispatcher(
             CharSequence ip,
@@ -74,12 +74,13 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
         // bind socket
         this.kqueue = new Kqueue();
         this.socketFd = Net.socketTcp(false);
-        if (!Net.bind(this.socketFd, ip, port)) {
+        if (Net.bind(this.socketFd, ip, port)) {
+            Net.listen(this.socketFd, 128);
+            this.kqueue.listen(socketFd);
+            LOG.debug().$("Listening socket: ").$(socketFd).$();
+        } else {
             throw new NetworkError("Failed to find socket");
         }
-        Net.listen(this.socketFd, 128);
-        this.kqueue.listen(socketFd);
-        LOG.debug().$("Listening socket: ").$(socketFd).$();
     }
 
     @Override

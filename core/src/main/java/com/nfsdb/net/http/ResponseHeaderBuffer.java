@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.net.http;
 
@@ -41,6 +41,7 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
     private final Clock clock;
     private long _wptr;
     private boolean chunky;
+    private int code;
 
     public ResponseHeaderBuffer(int size, Clock clock) {
         this.clock = clock;
@@ -96,6 +97,7 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
     }
 
     public String status(int code, CharSequence contentType, long contentLength) {
+        this.code = code;
         String status = httpStatusMap.get(code);
         if (status == null) {
             throw new IllegalArgumentException("Illegal status code: " + code);
@@ -117,6 +119,10 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
         }
 
         return status;
+    }
+
+    int getCode() {
+        return code;
     }
 
     ByteBuffer prepareBuffer() {

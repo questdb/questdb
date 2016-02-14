@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.misc;
 
@@ -44,7 +44,7 @@ public final class Zip {
 
     public static native long deflateInit();
 
-    public static native int deflateReset(long z_stream);
+    public static native void deflateReset(long z_stream);
 
     public static native int inflate(long z_streamp, long address, int available, boolean flush);
 

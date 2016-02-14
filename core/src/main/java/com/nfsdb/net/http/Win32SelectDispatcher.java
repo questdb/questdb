@@ -39,9 +39,9 @@ import java.io.IOException;
 
 public class Win32SelectDispatcher extends SynchronizedJob implements IODispatcher {
 
-    public static final int M_TIMESTAMP = 0;
-    public static final int M_FD = 1;
-    public static final int M_OPERATION = 2;
+    private static final int M_TIMESTAMP = 0;
+    private static final int M_FD = 1;
+    private static final int M_OPERATION = 2;
     private static final Log LOG = LogFactory.getLog(Win32SelectDispatcher.class);
     private static final int COUNT_OFFSET;
     private static final int ARRAY_OFFSET;
@@ -61,7 +61,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
     private final LongMatrix<IOContext> pending = new LongMatrix<>(4);
     private final int maxConnections;
     private final LongIntHashMap fds = new LongIntHashMap();
-    private volatile int connectionCount = 0;
+    private int connectionCount = 0;
 
     public Win32SelectDispatcher(
             CharSequence ip,
@@ -84,16 +84,17 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
 
         // bind socket
         this.socketFd = Net.socketTcp(false);
-        if (!Net.bind(this.socketFd, ip, port)) {
+        if (Net.bind(this.socketFd, ip, port)) {
+            Net.listen(this.socketFd, 128);
+            int r = pending.addRow();
+            pending.set(r, M_TIMESTAMP, System.currentTimeMillis());
+            pending.set(r, M_FD, socketFd);
+            readFdSet.add(socketFd);
+            readFdSet.setCount(1);
+            writeFdSet.setCount(0);
+        } else {
             throw new NetworkError("Failed to bind socket. System error " + Os.errno());
         }
-        Net.listen(this.socketFd, 128);
-        int r = pending.addRow();
-        pending.set(r, M_TIMESTAMP, System.currentTimeMillis());
-        pending.set(r, M_FD, socketFd);
-        readFdSet.add(socketFd);
-        readFdSet.setCount(1);
-        writeFdSet.setCount(0);
     }
 
     @Override
@@ -197,6 +198,8 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
                         n--;
                         useful = true;
                         break;
+                    default:
+                        break;
                 }
             } else {
                 // this fd just has fired
@@ -221,32 +224,36 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
         return useful;
     }
 
-    private long accept() {
-        long _fd = Net.accept(socketFd);
-        LOG.debug().$(" Connected ").$(_fd).$();
+    private void accept(long timestamp) {
+        while (true) {
+            long _fd = Net.accept(socketFd);
 
-        // something not right
-        if (_fd < 0) {
-            LOG.error().$("Error in accept: ").$(_fd).$();
-            return -1;
+            if (_fd < 0) {
+                int err = Os.errno();
+                if (err != Net.EWOULDBLOCK && err != 0) {
+                    LOG.error().$("Error in accept(): ").$(err).$();
+                }
+                break;
+            }
+
+            LOG.debug().$(" Connected ").$(_fd).$();
+
+            if (Net.configureNonBlocking(_fd) < 0) {
+                LOG.error().$("Cannot make FD non-blocking").$();
+                Files.close(_fd);
+            }
+
+            connectionCount++;
+
+            if (connectionCount > maxConnections) {
+                LOG.info().$("Too many connections, kicking out ").$(_fd).$();
+                Files.close(_fd);
+                connectionCount--;
+                return;
+            }
+
+            addPending(_fd, timestamp);
         }
-
-        if (Net.configureNonBlocking(_fd) < 0) {
-            LOG.error().$("Cannot make FD non-blocking").$();
-            Files.close(_fd);
-            return -1;
-        }
-
-        connectionCount++;
-
-        if (connectionCount > maxConnections) {
-            LOG.info().$("Too many connections, kicking out ").$(_fd).$();
-            Files.close(_fd);
-            connectionCount--;
-            return -1;
-        }
-
-        return _fd;
     }
 
     private void addPending(long _fd, long timestamp) {
@@ -311,11 +318,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
             long fd = readFdSet.get(i);
 
             if (fd == socketFd) {
-                long _fd = accept();
-                if (_fd < 0) {
-                    continue;
-                }
-                addPending(_fd, timestamp);
+                accept(timestamp);
             } else {
                 fds.put(fd, FD_READ);
             }
@@ -364,7 +367,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
         }
 
         private long get(int index) {
-            return Unsafe.getUnsafe().getLong(address + ARRAY_OFFSET + index * 8);
+            return Unsafe.getUnsafe().getLong(address + ARRAY_OFFSET + index * 8L);
         }
 
         private int getCount() {
