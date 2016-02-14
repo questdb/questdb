@@ -80,6 +80,8 @@ public class AsOfPartitionedJoinRecordSource extends AbstractImmutableIterator<R
                             var = true;
                         }
                         break OUT;
+                    default:
+                        break;
                 }
             }
             if (var) {

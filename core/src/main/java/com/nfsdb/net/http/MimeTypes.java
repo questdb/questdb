@@ -90,6 +90,7 @@ public final class MimeTypes extends CharSequenceObjHashMap<CharSequence> implem
                         if (newline) {
                             newline = false;
                         }
+                        break;
                 }
 
             }

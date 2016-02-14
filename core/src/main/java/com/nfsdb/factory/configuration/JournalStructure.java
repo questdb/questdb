@@ -180,6 +180,7 @@ public class JournalStructure implements MetadataBuilder<Object> {
                     break;
                 default:
                     meta.bitHint = ByteBuffers.getBitHint(meta.size, recordCountHint);
+                    break;
             }
 
             m[i] = meta;

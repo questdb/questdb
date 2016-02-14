@@ -152,6 +152,7 @@ public class ClusterController {
                                     if (running.get()) {
                                         server.joinCluster(statusListener);
                                     }
+                                    break;
                             }
                         }
                     });

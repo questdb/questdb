@@ -61,6 +61,7 @@ public class Interval {
             default:
                 this.lo = 0;
                 this.hi = Long.MAX_VALUE;
+                break;
         }
     }
 

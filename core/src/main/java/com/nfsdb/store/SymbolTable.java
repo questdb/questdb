@@ -71,6 +71,7 @@ public class SymbolTable implements Closeable {
                 break;
             default:
                 m = mode;
+                break;
         }
 
         MemoryFile dataFile = new MemoryFile(new File(directory, column + DATA_FILE_SUFFIX), ByteBuffers.getBitHint(avgStringSize * 2 + 4, keyCount), m);

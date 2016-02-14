@@ -569,6 +569,7 @@ public class Partition<T> implements Closeable {
                                     Unsafe.arrayGet(columnMetadata, i).size
                             )
                     );
+                    break;
             }
         }
 

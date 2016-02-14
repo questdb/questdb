@@ -116,6 +116,7 @@ public class IOHttpJob implements Job {
                             break;
                         default:
                             LOG.error().$("Unexpected status: ").$(status).$();
+                            break;
                     }
                 } else {
                     sr.send(404);

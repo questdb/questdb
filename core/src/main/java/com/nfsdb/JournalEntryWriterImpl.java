@@ -157,6 +157,7 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
                 break;
             default:
                 fixCol(index).putNull();
+                break;
         }
     }
 

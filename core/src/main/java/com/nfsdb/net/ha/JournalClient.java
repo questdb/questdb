@@ -477,6 +477,7 @@ public class JournalClient {
                             break OUT;
                         default:
                             LOG.info().$("Unknown command: ").$(commandConsumer.getValue()).$();
+                            break;
                     }
                 }
             } catch (IncompatibleJournalException e) {

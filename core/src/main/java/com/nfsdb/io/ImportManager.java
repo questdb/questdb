@@ -104,6 +104,7 @@ public final class ImportManager {
                     try (JournalImportListener l = new JournalImportListener(factory, location)) {
                         analyzeAndParse(file, parser, l, importSchema, sampleSize);
                     }
+                    break;
             }
         }
     }

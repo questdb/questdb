@@ -151,6 +151,7 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
                     break;
                 default:
                     meta.bitHint = ByteBuffers.getBitHint(meta.size, recordCountHint);
+                    break;
             }
 
             metadata[index] = meta;

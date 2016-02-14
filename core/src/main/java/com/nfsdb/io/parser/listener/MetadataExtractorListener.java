@@ -226,6 +226,7 @@ public class MetadataExtractorListener implements Listener, Mutable {
                     } else {
                         tempSink.put(c);
                     }
+                    break;
             }
         }
         return tempSink.toString();

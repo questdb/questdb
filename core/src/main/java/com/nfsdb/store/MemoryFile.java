@@ -215,6 +215,9 @@ public class MemoryFile implements Closeable {
                             }
                         }
                     }
+                    break;
+                default:
+                    break;
             }
         }
 

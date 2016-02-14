@@ -68,6 +68,6 @@ public class MergingPeekingIterator<T> extends MergingIterator<T> implements Pee
             return iterators.get(index);
         }
 
-        return new MergingPeekingIterator<T>().$new(iterators.get(index), mergePeek(iterators, comparator, ++index), comparator);
+        return new MergingPeekingIterator<T>().$new(iterators.get(index), mergePeek(iterators, comparator, index + 1), comparator);
     }
 }

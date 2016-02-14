@@ -370,8 +370,9 @@ final public class Dates {
     }
 
     @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE"})
-    public static Interval parseInterval(CharSequence seq, int p, int lim) throws NumericException {
-        int len = lim - p - 1;
+    public static Interval parseInterval(CharSequence seq, final int pos, int lim) throws NumericException {
+        int len = lim - pos - 1;
+        int p = pos;
         int year = Numbers.parseInt(seq, p, p += 4);
         boolean l = isLeapYear(year);
         if (p < len) {

@@ -183,6 +183,7 @@ public class PlainFile implements Closeable {
                 break;
             default:
                 m = "rw";
+                break;
         }
         openInternal(m);
     }

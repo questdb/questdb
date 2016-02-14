@@ -466,6 +466,8 @@ public final class Numbers {
                 return parseConst(sequence, p, lim, NaN, Double.NaN);
             case 'I':
                 return parseConst(sequence, p, lim, INFINITY, negative ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY);
+            default:
+                break;
         }
 
         long val = 0;
@@ -497,6 +499,7 @@ public final class Numbers {
                     } else if (dpe == lim) {
                         dpe = i;
                     }
+                    break;
             }
         }
 

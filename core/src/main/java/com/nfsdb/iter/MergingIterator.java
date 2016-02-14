@@ -77,7 +77,7 @@ public class MergingIterator<T> extends AbstractImmutableIterator<T> {
         return result;
     }
 
-    private static <T, X extends ImmutableIterator<T>> ImmutableIterator<T> merge(List<X> iterators, Comparator<T> comparator, int index) {
+    private static <T, X extends ImmutableIterator<T>> ImmutableIterator<T> merge(List<X> iterators, Comparator<T> comparator, final int index) {
         if (iterators == null || iterators.isEmpty()) {
             throw new IllegalArgumentException();
         }
@@ -86,6 +86,6 @@ public class MergingIterator<T> extends AbstractImmutableIterator<T> {
             return iterators.get(index);
         }
 
-        return new MergingIterator<T>().$new(iterators.get(index), merge(iterators, comparator, ++index), comparator);
+        return new MergingIterator<T>().$new(iterators.get(index), merge(iterators, comparator, index + 1), comparator);
     }
 }

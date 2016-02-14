@@ -189,6 +189,7 @@ public class ImportHandler extends AbstractMultipartHandler {
                         break;
                     default:
                         context.dataFormatValid = false;
+                        break;
                 }
             }
         }

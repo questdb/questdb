@@ -43,16 +43,17 @@ public final class Hash {
      * @param len     memory length in bytes
      * @return hash code
      */
-    public static int hashMem(long address, int len) {
+    public static int hashMem(final long address, int len) {
         int hash = 0;
         long end = address + len;
-        while (end - address > 1) {
-            hash = (hash << 5) - hash + Unsafe.getUnsafe().getChar(address);
-            address += 2;
+        long p = address;
+        while (end - p > 1) {
+            hash = (hash << 5) - hash + Unsafe.getUnsafe().getChar(p);
+            p += 2;
         }
 
-        if (address < end) {
-            hash = (hash << 5) - hash + Unsafe.getUnsafe().getByte(address);
+        if (p < end) {
+            hash = (hash << 5) - hash + Unsafe.getUnsafe().getByte(p);
         }
 
         return hash < 0 ? -hash : hash;

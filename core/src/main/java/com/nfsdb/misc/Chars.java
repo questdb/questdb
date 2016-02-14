@@ -163,9 +163,9 @@ public final class Chars {
     public static int put(long address, CharSequence value) {
         int len = value.length();
         Unsafe.getUnsafe().putInt(address, len);
-        address += 4;
+        long p = address + 4;
         for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putChar(address + (i << 1), value.charAt(i));
+            Unsafe.getUnsafe().putChar(p + (i << 1), value.charAt(i));
         }
         return (len << 1) + 4;
     }

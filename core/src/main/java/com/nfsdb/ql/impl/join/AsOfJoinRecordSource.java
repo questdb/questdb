@@ -79,6 +79,8 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
                     case STRING:
                         var = true;
                         break OUT;
+                    default:
+                        break;
                 }
             }
             if (var) {
