@@ -23,10 +23,7 @@ package com.nfsdb.ql.parser;
 
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.ex.InvalidColumnException;
-import com.nfsdb.ex.JournalException;
-import com.nfsdb.ex.NumericException;
-import com.nfsdb.ex.ParserException;
+import com.nfsdb.ex.*;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
@@ -1991,7 +1988,6 @@ public class SingleJournalQueryTest extends AbstractTest {
         printer.printCursor(src.prepareCursor(factory), false);
         TestUtils.assertEquals(expected, sink);
 
-
         // and one more time
         sink.clear();
         src = compiler.compileSource(factory, "select id, z from tab limit :xyz");
@@ -2041,6 +2037,21 @@ public class SingleJournalQueryTest extends AbstractTest {
         printer.printCursor(src.prepareCursor(factory), false);
 
         TestUtils.assertEquals(expected, sink);
+    }
+
+    @Test(expected = JournalRuntimeException.class)
+    public void testParamNotFound() throws Exception {
+        createTabWithNaNs2();
+        RecordSource src = compiler.compileSource(factory, "select id, z from tab where z > :min limit :lim");
+        src.getParam(":xyz");
+    }
+
+    @Test(expected = JournalRuntimeException.class)
+    public void testParamNotSet() throws Exception {
+        createTabWithNaNs2();
+        sink.clear();
+        RecordSource src = compiler.compileSource(factory, "select id, z from tab where z > :min limit :lim");
+        printer.printCursor(src.prepareCursor(factory), false);
     }
 
     @Test

@@ -21,6 +21,7 @@
 
 package com.nfsdb.ql.ops;
 
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
@@ -32,7 +33,11 @@ public abstract class AbstractRecordSource extends AbstractImmutableIterator<Rec
 
     @Override
     public Parameter getParam(CharSequence name) {
-        return parameterMap.get(name);
+        Parameter p = parameterMap.get(name);
+        if (p == null) {
+            throw new JournalRuntimeException("Parameter does not exist");
+        }
+        return p;
     }
 
     @Override
