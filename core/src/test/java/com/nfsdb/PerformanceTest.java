@@ -96,7 +96,9 @@ public class PerformanceTest extends AbstractTest {
             if (i == 0) {
                 t = System.nanoTime();
             }
-            for (Record r : compiler.compile(cf, "quote where timestamp = '2013-10-05T10:00:00.000Z;10d' and sym = 'LLOY.L'")) {
+            RecordCursor c = compiler.compile(cf, "quote where timestamp = '2013-10-05T10:00:00.000Z;10d' and sym = 'LLOY.L'");
+            for (; c.hasNext(); ) {
+                c.next();
             }
         }
         LOG.info().$("NEW journal.query().all().withKeys(\"LLOY.L\").slice(interval) (query only) latency: ").$((System.nanoTime() - t) / count / 1000).$("μs").$();

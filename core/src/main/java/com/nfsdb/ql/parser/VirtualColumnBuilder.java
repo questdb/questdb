@@ -82,6 +82,7 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
                     // lookup zero arg function from symbol table
                     mutableSig.clear();
                     stack.push(lookupFunction(node, mutableSig.setName(node.token).setParamCount(0), null));
+                    break;
             }
         } else {
             mutableSig.clear();
@@ -130,7 +131,6 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
                     return new BinaryRecordSourceColumn(index);
                 case DATE:
                     return new DateRecordSourceColumn(index);
-
                 default:
                     throw new ParserException(node.position, "Not yet supported type");
             }

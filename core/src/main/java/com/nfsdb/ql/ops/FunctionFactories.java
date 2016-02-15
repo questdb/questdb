@@ -99,6 +99,8 @@ public final class FunctionFactories {
                         return IntEqualsNaNOperator.FACTORY;
                     case LONG:
                         return LongEqualsNaNOperator.FACTORY;
+                    default:
+                        break;
                 }
             }
         }

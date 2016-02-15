@@ -1269,39 +1269,40 @@ public class QueryCompiler {
     /**
      * Splits "where" clauses into "and" concatenated list of boolean expressions.
      *
-     * @param node expression node
+     * @param node expression n
      * @throws ParserException
      */
     private void processAndConditions(QueryModel parent, ExprNode node) throws ParserException {
+        ExprNode n = node;
         // pre-order traversal
         exprNodeStack.clear();
-        while (!exprNodeStack.isEmpty() || node != null) {
-            if (node != null) {
-                switch (node.token) {
+        while (!exprNodeStack.isEmpty() || n != null) {
+            if (n != null) {
+                switch (n.token) {
                     case "and":
-                        if (node.rhs != null) {
-                            exprNodeStack.push(node.rhs);
+                        if (n.rhs != null) {
+                            exprNodeStack.push(n.rhs);
                         }
-                        node = node.lhs;
+                        n = n.lhs;
                         break;
                     case "=":
-                        analyseEquals(parent, node);
-                        node = null;
+                        analyseEquals(parent, n);
+                        n = null;
                         break;
                     case "or":
-                        processOrConditions(parent, node);
-                        node = null;
+                        processOrConditions(parent, n);
+                        n = null;
                         break;
                     case "~":
-                        analyseRegex(parent, node);
+                        analyseRegex(parent, n);
                         // intentional fallthrough
                     default:
-                        parent.addParsedWhereNode(node);
-                        node = null;
+                        parent.addParsedWhereNode(n);
+                        n = null;
                         break;
                 }
             } else {
-                node = exprNodeStack.poll();
+                n = exprNodeStack.poll();
             }
         }
     }
@@ -1453,6 +1454,7 @@ public class QueryCompiler {
                     break;
                 default:
                     cost += 5;
+                    break;
             }
 
             IntHashSet dependencies = m.getDependencies();
@@ -1567,10 +1569,10 @@ public class QueryCompiler {
     }
 
     @SuppressFBWarnings("PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS")
-    private RecordSource selectColumns0(RecordSource rs, QueryModel model) throws ParserException {
+    private RecordSource selectColumns0(final RecordSource recordSource, QueryModel model) throws ParserException {
         final ObjList<QueryColumn> columns = model.getColumns();
         final CharSequenceIntHashMap columnNameHistogram = model.getColumnNameHistogram();
-        final RecordMetadata meta = rs.getMetadata();
+        final RecordMetadata meta = recordSource.getMetadata();
 
         this.outerVirtualColumns.clear();
         this.aggregators.clear();
@@ -1635,11 +1637,13 @@ public class QueryCompiler {
                 virtualColumns = new ObjList<>();
             }
 
-            VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), rs.getMetadata());
+            VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), recordSource.getMetadata());
             vc.setName(qc.getAlias());
             virtualColumns.add(vc);
             groupKeyColumns.add(qc.getAlias());
         }
+
+        RecordSource rs = recordSource;
 
 
         // if virtual columns are present, create record source to calculate them
@@ -1732,18 +1736,19 @@ public class QueryCompiler {
     /**
      * Moves reversible join clauses, such as a.x = b.x from journal "from" to journal "to".
      *
-     * @param to   target journal index
-     * @param from source journal index
-     * @param jc   context of target journal index
+     * @param to      target journal index
+     * @param from    source journal index
+     * @param context context of target journal index
      * @return false if "from" is outer joined journal, otherwise - true
      */
-    private boolean swapJoinOrder(QueryModel parent, int to, int from, JoinContext jc) {
+    private boolean swapJoinOrder(QueryModel parent, int to, int from, final JoinContext context) {
         ObjList<QueryModel> joinModels = parent.getJoinModels();
         QueryModel jm = joinModels.getQuick(from);
         if (joinBarriers.contains(jm.getJoinType().ordinal())) {
             return false;
         }
 
+        JoinContext jc = context;
         clausesToSteal.clear();
 
         JoinContext that = jm.getContext();

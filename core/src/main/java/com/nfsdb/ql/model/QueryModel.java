@@ -375,6 +375,7 @@ public class QueryModel implements Mutable {
                         break;
                     default:
                         sink.put("unknown");
+                        break;
                 }
                 sink.put(' ').put(']').put(' ');
 
