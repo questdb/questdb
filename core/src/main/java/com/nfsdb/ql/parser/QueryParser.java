@@ -48,13 +48,13 @@ final class QueryParser {
     private final ObjectPool<QueryColumn> queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 64);
 
     private ParserException err(String msg) {
-        return new ParserException(lexer.position(), msg);
+        return QueryError.INSTANCE.$(lexer.position(), msg);
     }
 
     private ExprNode expectExpr() throws ParserException {
         ExprNode n = expr();
         if (n == null) {
-            throw new ParserException(lexer.position(), "Expression expected");
+            throw QueryError.INSTANCE.$(lexer.position(), "Expression expected");
         }
         return n;
     }
@@ -191,7 +191,7 @@ final class QueryParser {
         tok = optionTok();
 
         if (type == QueryModel.JoinType.CROSS && tok != null && Chars.equals(tok, "on")) {
-            throw new ParserException(lexer.position(), "Cross joins cannot have join clauses");
+            throw QueryError.INSTANCE.$(lexer.position(), "Cross joins cannot have join clauses");
         }
 
         switch (type) {
@@ -206,7 +206,7 @@ final class QueryParser {
                 expectTok(tok, "on");
                 ExprNode expr = expr();
                 if (expr == null) {
-                    throw new ParserException(lexer.position(), "Expression expected");
+                    throw QueryError.INSTANCE.$(lexer.position(), "Expression expected");
                 }
                 joinModel.setJoinCriteria(expr);
                 break;
@@ -218,7 +218,7 @@ final class QueryParser {
 //            expectTok(tok, "on");
 //            ExprNode expr = expr();
 //            if (expr == null) {
-//                throw new ParserException(toks.position(), "Expression expected");
+//                throw QueryError.INSTANCE.$(toks.position(), "Expression expected");
 //            }
 //            joinModel.setJoinCriteria(expr);
 //        } else {

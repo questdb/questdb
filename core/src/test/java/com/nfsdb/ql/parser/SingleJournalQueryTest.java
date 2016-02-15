@@ -23,10 +23,14 @@ package com.nfsdb.ql.parser;
 
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.ex.*;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
+import com.nfsdb.ex.NumericException;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
+import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Rnd;
@@ -864,7 +868,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             assertThat("", "select id, z from (tab where not(id in 'GMPLUCFTLNKYTSZ') and timestamp = '2015-12T10:00:00;5m;30m;10') where timestamp = '2015-03-12T10:00:00' and timestamp = '2015-03-12T14:00:00'");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertEquals(74, e.getPosition());
+            Assert.assertEquals(74, QueryError.INSTANCE.getPosition());
         }
     }
 
@@ -875,8 +879,8 @@ public class SingleJournalQueryTest extends AbstractTest {
             compiler.compile(factory, "select sym, bid, ask, timestamp from q latest by symx where sym in ('GKN.L') and ask > 100");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertEquals(49, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("nvalid column"));
+            Assert.assertEquals(49, QueryError.INSTANCE.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "nvalid column"));
         }
     }
 
@@ -887,8 +891,8 @@ public class SingleJournalQueryTest extends AbstractTest {
             compiler.compile(factory, "select sym, bid, ask, timestamp from q latest by ask where sym in ('GKN.L') and ask > 100");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertEquals(49, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("symbol or string column"));
+            Assert.assertEquals(49, QueryError.INSTANCE.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "symbol or string column"));
         }
     }
 
@@ -899,8 +903,8 @@ public class SingleJournalQueryTest extends AbstractTest {
             compiler.compile(factory, "select sym, bid, ask, timestamp from q latest by mode where sym in ('GKN.L') and ask > 100");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertEquals(49, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("not indexed"));
+            Assert.assertEquals(49, QueryError.INSTANCE.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "not indexed"));
         }
     }
 
@@ -911,8 +915,8 @@ public class SingleJournalQueryTest extends AbstractTest {
             compiler.compile(factory, "select sym, bid, ask, timestamp1 from q latest by sym where sym in ('GKN.L') and ask > 100");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertEquals(22, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("nvalid column"));
+            Assert.assertEquals(22, QueryError.INSTANCE.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "nvalid column"));
         }
     }
 
@@ -922,8 +926,8 @@ public class SingleJournalQueryTest extends AbstractTest {
         try {
             compiler.compile(factory, "select sym, (bid+ask2)/2, timestamp from q latest by sym where sym in ('GKN.L') and ask > 100");
             Assert.fail("Exception expected");
-        } catch (InvalidColumnException e) {
-            Assert.assertEquals(17, e.getPosition());
+        } catch (ParserException e) {
+            Assert.assertEquals(17, QueryError.INSTANCE.getPosition());
         }
     }
 
@@ -933,8 +937,8 @@ public class SingleJournalQueryTest extends AbstractTest {
         try {
             compiler.compile(factory, "select sym, bid, ask, timestamp from q where sym2 in ('GKN.L') and ask > 100");
             Assert.fail("Exception expected");
-        } catch (InvalidColumnException e) {
-            Assert.assertEquals(45, e.getPosition());
+        } catch (ParserException e) {
+            Assert.assertEquals(45, QueryError.INSTANCE.getPosition());
         }
     }
 
@@ -944,8 +948,8 @@ public class SingleJournalQueryTest extends AbstractTest {
         try {
             compiler.compile(factory, "select sym, bid, ask, timestamp from q where sym in ('GKN.L') and ask2 > 100");
             Assert.fail("Exception expected");
-        } catch (InvalidColumnException e) {
-            Assert.assertEquals(66, e.getPosition());
+        } catch (ParserException e) {
+            Assert.assertEquals(66, QueryError.INSTANCE.getPosition());
         }
     }
 
@@ -955,8 +959,8 @@ public class SingleJournalQueryTest extends AbstractTest {
             compiler.compile(factory, "select id, x, y, timestamp from q where id = ");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
-            Assert.assertEquals(32, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("does not exist"));
+            Assert.assertEquals(32, QueryError.INSTANCE.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "does not exist"));
         }
     }
 
@@ -1018,8 +1022,8 @@ public class SingleJournalQueryTest extends AbstractTest {
             compiler.compile(factory, "select id, x, y, timestamp from tab latest by id where x > y");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertEquals(46, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("column expected"));
+            Assert.assertEquals(46, QueryError.INSTANCE.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "column expected"));
         }
     }
 
@@ -1030,8 +1034,8 @@ public class SingleJournalQueryTest extends AbstractTest {
             compiler.compile(factory, "select id, x, y, timestamp from tab latest by id");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertEquals(46, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("Only SYM columns"));
+            Assert.assertEquals(46, QueryError.INSTANCE.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "Only SYM columns"));
         }
     }
 
@@ -1523,7 +1527,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             compiler.compile(factory, "select id, x, y, timestamp from q where id = ");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
-            Assert.assertEquals(43, e.getPosition());
+            Assert.assertEquals(43, QueryError.INSTANCE.getPosition());
         }
     }
 
@@ -2699,8 +2703,8 @@ public class SingleJournalQueryTest extends AbstractTest {
             compiler.compile(factory, "select x,y from tab where x~0");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertEquals(28, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("No such function"));
+            Assert.assertEquals(28, QueryError.INSTANCE.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "No such function"));
         }
     }
 
@@ -2913,8 +2917,8 @@ public class SingleJournalQueryTest extends AbstractTest {
             compiler.compile(factory, "select id, z from (select id from tab where z = NaN) where id = 'KKUSIMYDXUUSKCX'");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertEquals(11, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("Invalid column"));
+            Assert.assertEquals(11, QueryError.INSTANCE.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "Invalid column"));
         }
     }
 

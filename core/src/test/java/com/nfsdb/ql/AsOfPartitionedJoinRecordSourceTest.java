@@ -27,12 +27,14 @@ import com.nfsdb.ex.JournalException;
 import com.nfsdb.ex.ParserException;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.sink.StringSink;
+import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Rnd;
 import com.nfsdb.ql.impl.NoRowidSource;
 import com.nfsdb.ql.impl.join.AsOfJoinRecordSource;
 import com.nfsdb.ql.impl.join.AsOfPartitionedJoinRecordSource;
 import com.nfsdb.ql.parser.AbstractOptimiserTest;
+import com.nfsdb.ql.parser.QueryError;
 import com.nfsdb.std.CharSequenceHashSet;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -49,27 +51,27 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
         int xcount = 100;
         int ycount = 10;
         JournalWriter xw = factory.writer(new JournalStructure("x")
-                        .$ts()
-                        .$sym("ccy")
-                        .$double("rate")
-                        .$double("amount")
-                        .$str("trader")
-                        .$sym("contra")
-                        .$float("fl")
-                        .$short("sh")
-                        .$long("ln")
-                        .$bool("b")
-                        .recordCountHint(xcount)
-                        .$()
+                .$ts()
+                .$sym("ccy")
+                .$double("rate")
+                .$double("amount")
+                .$str("trader")
+                .$sym("contra")
+                .$float("fl")
+                .$short("sh")
+                .$long("ln")
+                .$bool("b")
+                .recordCountHint(xcount)
+                .$()
         );
 
         JournalWriter yw = factory.writer(new JournalStructure("y")
-                        .$ts()
-                        .$sym("ccy")
-                        .$double("amount")
-                        .$str("trader")
-                        .recordCountHint(ycount)
-                        .$()
+                .$ts()
+                .$sym("ccy")
+                .$double("amount")
+                .$str("trader")
+                .recordCountHint(ycount)
+                .$()
         );
 
         Rnd rnd = new Rnd();
@@ -111,17 +113,17 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
         // records for adjacent join test
 
         JournalWriter jwa = factory.writer(new JournalStructure("a")
-                        .$ts()
-                        .$sym("ccy")
-                        .$double("rate")
-                        .$()
+                .$ts()
+                .$sym("ccy")
+                .$double("rate")
+                .$()
         );
 
         JournalWriter jwb = factory.writer(new JournalStructure("b")
-                        .$ts()
-                        .$sym("ccy")
-                        .$double("amount")
-                        .$()
+                .$ts()
+                .$sym("ccy")
+                .$double("amount")
+                .$()
         );
 
         JournalEntryWriter ewa;
@@ -227,8 +229,8 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
         try {
             compile("select timestamp from y asof join x on x.ccy = y.ccy");
         } catch (ParserException e) {
-            Assert.assertEquals(7, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("Ambiguous"));
+            Assert.assertEquals(7, QueryError.INSTANCE.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "Ambiguous"));
         }
     }
 
@@ -237,8 +239,8 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
         try {
             compile("select sum(timestamp) from y asof join x on x.ccy = y.ccy");
         } catch (ParserException e) {
-            Assert.assertEquals(11, e.getPosition());
-            Assert.assertTrue(e.getMessage().contains("Ambiguous"));
+            Assert.assertEquals(11, QueryError.INSTANCE.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "Ambiguous"));
         }
     }
 

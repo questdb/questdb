@@ -22,7 +22,6 @@
 package com.nfsdb.ql.parser;
 
 import com.nfsdb.JournalKey;
-import com.nfsdb.ex.InvalidColumnException;
 import com.nfsdb.ex.JournalException;
 import com.nfsdb.ex.NumericException;
 import com.nfsdb.ex.ParserException;
@@ -169,7 +168,7 @@ public class QueryCompiler {
         if (selectedColumnAliases.add(alias)) {
             return;
         }
-        throw new ParserException(position, "Duplicate alias");
+        throw QueryError.INSTANCE.$(position, "Duplicate alias");
     }
 
     private void addFilterOrEmitJoin(QueryModel parent, int idx, int ai, CharSequence an, ExprNode ao, int bi, CharSequence bn, ExprNode bo) {
@@ -546,18 +545,18 @@ public class QueryCompiler {
     private JournalMetadata collectJournalMetadata(QueryModel model, JournalReaderFactory factory) throws ParserException, JournalException {
         ExprNode readerNode = model.getJournalName();
         if (readerNode.type != ExprNode.NodeType.LITERAL && readerNode.type != ExprNode.NodeType.CONSTANT) {
-            throw new ParserException(readerNode.position, "Journal name must be either literal or string constant");
+            throw QueryError.INSTANCE.$(readerNode.position, "Journal name must be either literal or string constant");
         }
 
         JournalConfiguration configuration = factory.getConfiguration();
 
         String reader = Chars.stripQuotes(readerNode.token);
         if (configuration.exists(reader) == JournalConfiguration.JournalExistenceCheck.DOES_NOT_EXIST) {
-            throw new ParserException(readerNode.position, "Journal does not exist");
+            throw QueryError.INSTANCE.$(readerNode.position, "Journal does not exist");
         }
 
         if (configuration.exists(reader) == JournalConfiguration.JournalExistenceCheck.EXISTS_FOREIGN) {
-            throw new ParserException(readerNode.position, "Journal directory is of unknown format");
+            throw QueryError.INSTANCE.$(readerNode.position, "Journal directory is of unknown format");
         }
 
         return factory.getOrCreateMetadata(new JournalKey<>(reader));
@@ -644,7 +643,7 @@ public class QueryCompiler {
         } else if (metadata instanceof JournalMetadata) {
             journalMetadata = (JournalMetadata) metadata;
         } else {
-            throw new ParserException(0, "Internal error: invalid metadata");
+            throw QueryError.INSTANCE.$(0, "Internal error: invalid metadata");
         }
 
         if (model.getAlias() != null) {
@@ -663,23 +662,23 @@ public class QueryCompiler {
         if (model.getLatestBy() != null) {
             latestByNode = model.getLatestBy();
             if (latestByNode.type != ExprNode.NodeType.LITERAL) {
-                throw new ParserException(latestByNode.position, "Column name expected");
+                throw QueryError.INSTANCE.$(latestByNode.position, "Column name expected");
             }
 
             int colIndex = journalMetadata.getColumnIndexQuiet(latestByNode.token);
             if (colIndex == -1) {
-                throw new InvalidColumnException(latestByNode.position);
+                throw QueryError.INSTANCE.invalidColumn(latestByNode.position);
             }
 
             latestByMetadata = journalMetadata.getColumnQuick(colIndex);
 
             ColumnType type = latestByMetadata.getType();
             if (type != ColumnType.SYMBOL && type != ColumnType.STRING && type != ColumnType.INT) {
-                throw new ParserException(latestByNode.position, "Expected symbol or string column, found: " + type);
+                throw QueryError.INSTANCE.position(latestByNode.position).$("Expected symbol or string column, found: ").$(type).$();
             }
 
             if (!latestByMetadata.isIndexed()) {
-                throw new ParserException(latestByNode.position, "Column is not indexed");
+                throw QueryError.INSTANCE.position(latestByNode.position).$("Column is not indexed").$();
             }
 
             latestByCol = latestByNode.token;
@@ -693,7 +692,7 @@ public class QueryCompiler {
 
             if (filter != null) {
                 if (filter.getType() != ColumnType.BOOLEAN) {
-                    throw new ParserException(im.filter.position, "Boolean expression expected");
+                    throw QueryError.INSTANCE.$(im.filter.position, "Boolean expression expected");
                 }
 
                 if (filter.isConstant()) {
@@ -752,14 +751,14 @@ public class QueryCompiler {
 
                         switch (m.getColumnCount()) {
                             case 0:
-                                throw new ParserException(im.keyValuePositions.getQuick(0), "Query must select at least one column");
+                                throw QueryError.INSTANCE.$(im.keyValuePositions.getQuick(0), "Query must select at least one column");
                             case 1:
                                 lambdaColIndex = 0;
                                 break;
                             default:
                                 lambdaColIndex = m.getColumnIndexQuiet(latestByCol);
                                 if (lambdaColIndex == -1) {
-                                    throw new ParserException(im.keyValuePositions.getQuick(0), "Ambiguous column names in lambda query. Specify select clause");
+                                    throw QueryError.INSTANCE.$(im.keyValuePositions.getQuick(0), "Ambiguous column names in lambda query. Specify select clause");
                                 }
                                 break;
                         }
@@ -770,7 +769,7 @@ public class QueryCompiler {
                         if (fact != null) {
                             rs = fact.newInstance(latestByCol, lambda, lambdaColIndex, filter);
                         } else {
-                            throw new ParserException(im.keyValuePositions.getQuick(0), "Mismatched types");
+                            throw QueryError.INSTANCE.$(im.keyValuePositions.getQuick(0), "Mismatched types");
                         }
                     } else {
                         switch (latestByMetadata.getType()) {
@@ -785,14 +784,14 @@ public class QueryCompiler {
                                 if (im.keyColumn != null) {
                                     rs = new KvIndexStrListHeadRowSource(latestByCol, new CharSequenceHashSet(im.keyValues), filter);
                                 } else {
-                                    throw new ParserException(latestByNode.position, "Filter on string column expected");
+                                    throw QueryError.INSTANCE.$(latestByNode.position, "Filter on string column expected");
                                 }
                                 break;
                             case INT:
                                 if (im.keyColumn != null) {
                                     rs = new KvIndexIntListHeadRowSource(latestByCol, toIntHashSet(im), filter);
                                 } else {
-                                    throw new ParserException(latestByNode.position, "Filter on int column expected");
+                                    throw QueryError.INSTANCE.$(latestByNode.position, "Filter on int column expected");
                                 }
                                 break;
                             default:
@@ -807,7 +806,7 @@ public class QueryCompiler {
                     rs = new KvIndexSymAllHeadRowSource(latestByCol, null);
                     break;
                 default:
-                    throw new ParserException(latestByNode.position, "Only SYM columns can be used here without filter");
+                    throw QueryError.INSTANCE.$(latestByNode.position, "Only SYM columns can be used here without filter");
             }
         }
 
@@ -907,10 +906,10 @@ public class QueryCompiler {
         if (slaveTimestampNode != null) {
             slaveTimestampIndex = slaveMetadata.getColumnIndexQuiet(slaveTimestampNode.token);
             if (slaveTimestampIndex == -1) {
-                throw new ParserException(slaveTimestampNode.position, "Invalid column");
+                throw QueryError.INSTANCE.$(slaveTimestampNode.position, "Invalid column");
             }
         } else if (slaveMetadata.getTimestampIndex() == -1) {
-            throw new ParserException(0, "Result set timestamp column is undefined");
+            throw QueryError.INSTANCE.$(0, "Result set timestamp column is undefined");
         } else {
             slaveTimestampIndex = slaveMetadata.getTimestampIndex();
         }
@@ -919,10 +918,10 @@ public class QueryCompiler {
         if (masterTimestampNode != null) {
             masterTimestampIndex = masterMetadata.getColumnIndexQuiet(masterTimestampNode.token);
             if (masterTimestampIndex == -1) {
-                throw new ParserException(masterTimestampNode.position, "Invalid column");
+                throw QueryError.INSTANCE.$(masterTimestampNode.position, "Invalid column");
             }
         } else if (masterMetadata.getTimestampIndex() == -1) {
-            throw new ParserException(0, "Result set timestamp column is undefined");
+            throw QueryError.INSTANCE.$(0, "Result set timestamp column is undefined");
         } else {
             masterTimestampIndex = masterMetadata.getTimestampIndex();
         }
@@ -961,7 +960,7 @@ public class QueryCompiler {
             int ib = bm.getColumnIndex(cb);
 
             if (am.getColumnQuick(ia).getType() != bm.getColumnQuick(ib).getType()) {
-                throw new ParserException(jc.aNodes.getQuick(k).position, "Column type mismatch");
+                throw QueryError.INSTANCE.$(jc.aNodes.getQuick(k).position, "Column type mismatch");
             }
 
             if (masterColIndices == null) {
@@ -1038,7 +1037,7 @@ public class QueryCompiler {
         if (col.isConstant()) {
             return !col.getBool(null);
         } else {
-            throw new ParserException(0, "Internal error: expected constant");
+            throw QueryError.INSTANCE.$(0, "Internal error: expected constant");
         }
     }
 
@@ -1061,12 +1060,12 @@ public class QueryCompiler {
                 try {
                     return new LongConstant(Numbers.parseLong(node.token));
                 } catch (NumericException e) {
-                    throw new ParserException(node.position, "Long number expected");
+                    throw QueryError.INSTANCE.$(node.position, "Long number expected");
                 }
             default:
                 break;
         }
-        throw new ParserException(node.position, "Constant expected");
+        throw QueryError.INSTANCE.$(node.position, "Constant expected");
     }
 
     private void linkDependencies(QueryModel model, int parent, int child) {
@@ -1414,7 +1413,7 @@ public class QueryCompiler {
         }
 
         if (root == -1) {
-            throw new ParserException(0, "Cycle");
+            throw QueryError.INSTANCE.$(0, "Cycle");
         }
     }
 
@@ -1517,7 +1516,7 @@ public class QueryCompiler {
 
         if (model.getAlias() != null) {
             if (!parent.addAliasIndex(model.getAlias(), index)) {
-                throw new ParserException(model.getAlias().position, "Duplicate alias");
+                throw QueryError.INSTANCE.$(model.getAlias().position, "Duplicate alias");
             }
             metadata.setAlias(model.getAlias().token);
         } else if (model.getJournalName() != null) {
@@ -1537,14 +1536,14 @@ public class QueryCompiler {
                 }
 
                 if (index > -1) {
-                    throw new ParserException(position, "Ambiguous column name");
+                    throw QueryError.INSTANCE.$(position, "Ambiguous column name");
                 }
 
                 index = i;
             }
 
             if (index == -1) {
-                throw new InvalidColumnException(position);
+                throw QueryError.INSTANCE.invalidColumn(position);
             }
 
             return index;
@@ -1552,12 +1551,12 @@ public class QueryCompiler {
             index = parent.getAliasIndex(alias);
 
             if (index == -1) {
-                throw new ParserException(position, "Invalid journal name/alias");
+                throw QueryError.INSTANCE.$(position, "Invalid journal name/alias");
             }
             RecordMetadata m = joinModels.getQuick(index).getMetadata();
 
             if (m.getColumnIndexQuiet(column) == -1) {
-                throw new InvalidColumnException(position);
+                throw QueryError.INSTANCE.invalidColumn(position);
             }
 
             return index;
@@ -1592,12 +1591,12 @@ public class QueryCompiler {
             if (node.type == ExprNode.NodeType.LITERAL) {
                 // check literal column validity
                 if (meta.getColumnIndexQuiet(node.token) == -1) {
-                    throw new InvalidColumnException(node.position);
+                    throw QueryError.INSTANCE.invalidColumn(node.position);
                 }
 
                 // check if this column is exists in more than one journal/result set
                 if (columnNameHistogram.get(node.token) > 0) {
-                    throw new ParserException(node.position, "Ambiguous column name");
+                    throw QueryError.INSTANCE.$(node.position, "Ambiguous column name");
                 }
 
                 // add to selected columns
@@ -1664,7 +1663,7 @@ public class QueryCompiler {
                     vc.setName(qc.getAlias());
                     af.add((AggregatorFunction) vc);
                 } else {
-                    throw new ParserException(qc.getAst().position, "Internal configuration error. Not an aggregate");
+                    throw QueryError.INSTANCE.$(qc.getAst().position, "Internal configuration error. Not an aggregate");
                 }
             }
 
@@ -1673,13 +1672,13 @@ public class QueryCompiler {
             } else {
                 TimestampSampler sampler = SamplerFactory.from(sampleBy.token);
                 if (sampler == null) {
-                    throw new ParserException(sampleBy.position, "Invalid sample");
+                    throw QueryError.INSTANCE.$(sampleBy.position, "Invalid sample");
                 }
                 rs = new ResampledRecordSource(rs, groupKeyColumns, af, sampler);
             }
         } else {
             if (sampleBy != null) {
-                throw new ParserException(sampleBy.position, "There are no aggregation columns");
+                throw QueryError.INSTANCE.$(sampleBy.position, "There are no aggregation columns");
             }
         }
 
@@ -1780,7 +1779,7 @@ public class QueryCompiler {
         try {
             return Numbers.parseInt(cs);
         } catch (NumericException e) {
-            throw new ParserException(pos, "int value expected");
+            throw QueryError.INSTANCE.$(pos, "int value expected");
         }
     }
 
@@ -1794,7 +1793,7 @@ public class QueryCompiler {
                 }
                 set.add(v);
             } catch (NumericException e) {
-                throw new ParserException(im.keyValuePositions.get(i), "int value expected");
+                throw QueryError.INSTANCE.$(im.keyValuePositions.get(i), "int value expected");
             }
         }
         return set;

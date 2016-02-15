@@ -112,6 +112,7 @@ public class MultipartParser implements Closeable, Mutable {
                         default:
                             _lo = ptr;
                             state = State.BODY_CONTINUED;
+                            break;
                     }
                     break;
                 case HEADERS:

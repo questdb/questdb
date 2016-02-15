@@ -120,6 +120,8 @@ public final class FunctionFactories {
                         return IntNotEqualsNaNOperator.FACTORY;
                     case LONG:
                         return LongNotEqualsNaNOperator.FACTORY;
+                    default:
+                        break;
                 }
             }
         }

@@ -52,6 +52,7 @@ public final class Os {
         return bean.getTotalPhysicalMemorySize();
     }
 
+    @SuppressWarnings("EmptyMethod")
     public static void init() {
     }
 

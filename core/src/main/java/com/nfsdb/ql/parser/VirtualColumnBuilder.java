@@ -21,7 +21,6 @@
 
 package com.nfsdb.ql.parser;
 
-import com.nfsdb.ex.InvalidColumnException;
 import com.nfsdb.ex.NoSuchColumnException;
 import com.nfsdb.ex.NumericException;
 import com.nfsdb.ex.ParserException;
@@ -92,7 +91,7 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
             for (int n = 0; n < argCount; n++) {
                 VirtualColumn c = stack.poll();
                 if (c == null) {
-                    throw new ParserException(node.position, "Too few arguments");
+                    throw QueryError.INSTANCE.$(node.position, "Too few arguments");
                 }
                 mutableSig.paramType(n, c.getType(), c.isConstant());
                 mutableArgs.setQuick(n, c);
@@ -105,7 +104,7 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
     private VirtualColumn lookupColumn(ExprNode node) throws ParserException {
         try {
             if (columnNameHistogram.get(node.token) > 0) {
-                throw new ParserException(node.position, "Ambiguous column name");
+                throw QueryError.INSTANCE.$(node.position, "Ambiguous column name");
             }
             int index = metadata.getColumnIndex(node.token);
             switch (metadata.getColumnQuick(index).getType()) {
@@ -132,20 +131,20 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
                 case DATE:
                     return new DateRecordSourceColumn(index);
                 default:
-                    throw new ParserException(node.position, "Not yet supported type");
+                    throw QueryError.INSTANCE.$(node.position, "Not yet supported type");
             }
         } catch (NoSuchColumnException e) {
-            throw new InvalidColumnException(node.position);
+            throw QueryError.INSTANCE.invalidColumn(node.position);
         }
     }
 
     private VirtualColumn lookupFunction(ExprNode node, Signature sig, ObjList<VirtualColumn> args) throws ParserException {
         if (node.type == ExprNode.NodeType.LAMBDA) {
-            throw new ParserException(node.position, "Cannot use lambda in this context");
+            throw QueryError.INSTANCE.$(node.position, "Cannot use lambda in this context");
         }
         FunctionFactory factory = FunctionFactories.find(sig, args);
         if (factory == null) {
-            throw new ParserException(node.position, "No such function: " + sig.userReadable());
+            throw QueryError.INSTANCE.$(node.position, "No such function: " + sig.userReadable());
         }
 
         Function f = factory.newInstance(args);
@@ -191,7 +190,7 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
 
         }
 
-        throw new ParserException(node.position, "Unknown value type: " + node.token);
+        throw QueryError.INSTANCE.$(node.position, "Unknown value type: " + node.token);
     }
 
     private VirtualColumn processConstantExpression(Function f) {

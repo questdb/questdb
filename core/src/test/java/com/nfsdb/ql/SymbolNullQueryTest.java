@@ -28,6 +28,7 @@ import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Rnd;
 import com.nfsdb.ql.parser.AbstractOptimiserTest;
+import com.nfsdb.ql.parser.QueryError;
 import com.nfsdb.std.ObjList;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -442,7 +443,7 @@ public class SymbolNullQueryTest extends AbstractOptimiserTest {
             compiler.compile(factory, "trades where quoteId in (`quotes where tag ~ 'UM'`)");
             Assert.fail();
         } catch (ParserException e) {
-            Assert.assertEquals(25, e.getPosition());
+            Assert.assertEquals(25, QueryError.INSTANCE.getPosition());
         }
     }
 

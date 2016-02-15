@@ -150,6 +150,7 @@ class Lexer extends AbstractImmutableIterator<CharSequence> {
                             return last = floatingSequence;
                         default:
                             _hi++;
+                            break;
                     }
                     break;
                 default:
