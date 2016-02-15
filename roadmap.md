@@ -18,6 +18,7 @@ __lang__
 - [ ] ordering
 - [x] top x rows (select ... limit low,high can be used for paging)
 - [ ] bottom x rows
+- [x] query parameters
 
 __server__
 
