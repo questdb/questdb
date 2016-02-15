@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.parser;
 
@@ -29,10 +29,12 @@ import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.ql.model.ExprNode;
+import com.nfsdb.ql.model.QueryModel;
 import com.nfsdb.ql.ops.*;
 import com.nfsdb.ql.ops.col.*;
 import com.nfsdb.ql.ops.constant.*;
 import com.nfsdb.std.CharSequenceIntHashMap;
+import com.nfsdb.std.CharSequenceObjHashMap;
 import com.nfsdb.std.ObjList;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -46,16 +48,15 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
     private final PostOrderTreeTraversalAlgo algo;
     private RecordMetadata metadata;
     private CharSequenceIntHashMap columnNameHistogram;
+    private CharSequenceObjHashMap<Parameter> parameterMap;
 
     public VirtualColumnBuilder(PostOrderTreeTraversalAlgo algo) {
         this.algo = algo;
     }
 
-    public VirtualColumn createVirtualColumn(
-            ExprNode node,
-            RecordMetadata metadata,
-            CharSequenceIntHashMap columnNameHistogram) throws ParserException {
-        this.columnNameHistogram = columnNameHistogram;
+    public VirtualColumn createVirtualColumn(QueryModel model, ExprNode node, RecordMetadata metadata) throws ParserException {
+        this.columnNameHistogram = model.getColumnNameHistogram();
+        this.parameterMap = model.getParameterMap();
         this.metadata = metadata;
         algo.traverse(node, this);
         return stack.poll();
@@ -67,8 +68,12 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
         if (argCount == 0) {
             switch (node.type) {
                 case LITERAL:
-                    // lookup column
-                    stack.push(lookupColumn(node));
+                    if (Chars.startsWith(node.token, ':')) {
+                        stack.push(Parameter.getOrCreate(node, parameterMap));
+                    } else {
+                        // lookup column
+                        stack.push(lookupColumn(node));
+                    }
                     break;
                 case CONSTANT:
                     stack.push(parseConstant(node));

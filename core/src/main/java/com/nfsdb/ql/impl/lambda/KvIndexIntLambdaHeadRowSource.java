@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl.lambda;
 
@@ -41,7 +41,7 @@ public class KvIndexIntLambdaHeadRowSource extends AbstractRowSource {
     public static final LatestByLambdaRowSourceFactory FACTORY = new Factory();
     private final String column;
     private final VirtualColumn filter;
-    private final RecordSource<? extends Record> recordSource;
+    private final RecordSource recordSource;
     private final int recordSourceColumn;
     private final LongList rows = new LongList();
     private final IntHashSet keys = new IntHashSet();
@@ -50,7 +50,7 @@ public class KvIndexIntLambdaHeadRowSource extends AbstractRowSource {
     private int buckets;
     private int columnIndex;
 
-    private KvIndexIntLambdaHeadRowSource(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
+    private KvIndexIntLambdaHeadRowSource(String column, RecordSource recordSource, int recordSourceColumn, VirtualColumn filter) {
         this.column = column;
         this.recordSource = recordSource;
         this.recordSourceColumn = recordSourceColumn;
@@ -128,7 +128,7 @@ public class KvIndexIntLambdaHeadRowSource extends AbstractRowSource {
 
     public static class Factory implements LatestByLambdaRowSourceFactory {
         @Override
-        public RowSource newInstance(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
+        public RowSource newInstance(String column, RecordSource recordSource, int recordSourceColumn, VirtualColumn filter) {
             return new KvIndexIntLambdaHeadRowSource(column, recordSource, recordSourceColumn, filter);
         }
     }

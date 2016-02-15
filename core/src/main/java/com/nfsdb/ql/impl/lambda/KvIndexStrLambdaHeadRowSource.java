@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl.lambda;
 
@@ -42,7 +42,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 public abstract class KvIndexStrLambdaHeadRowSource extends AbstractRowSource {
     private final String column;
     private final VirtualColumn filter;
-    private final RecordSource<? extends Record> recordSource;
+    private final RecordSource recordSource;
     private final int recordSourceColumn;
     private final LongList rows = new LongList();
     private final CharSequenceHashSet keys = new CharSequenceHashSet();
@@ -52,7 +52,7 @@ public abstract class KvIndexStrLambdaHeadRowSource extends AbstractRowSource {
     private int buckets;
     private int columnIndex;
 
-    KvIndexStrLambdaHeadRowSource(String column, RecordSource<? extends Record> recordSource, int recordSourceColumn, VirtualColumn filter) {
+    KvIndexStrLambdaHeadRowSource(String column, RecordSource recordSource, int recordSourceColumn, VirtualColumn filter) {
         this.column = column;
         this.recordSource = recordSource;
         this.recordSourceColumn = recordSourceColumn;

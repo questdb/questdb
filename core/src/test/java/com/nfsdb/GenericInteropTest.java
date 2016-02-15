@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb;
 
@@ -77,7 +77,7 @@ public class GenericInteropTest extends AbstractTest {
 
         writer.commit();
 
-        RecordCursor<? extends Record> src = compiler.compile("test");
+        RecordCursor src = compiler.compile("test");
         Record e;
 
         Assert.assertTrue(src.hasNext());
@@ -315,7 +315,7 @@ public class GenericInteropTest extends AbstractTest {
         writer.append(d);
         writer.commit();
 
-        RecordCursor<? extends Record> src = compiler.compile("test");
+        RecordCursor src = compiler.compile("test");
         Record e;
 
         Assert.assertTrue(src.hasNext());

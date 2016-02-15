@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl.virtual;
 
@@ -28,20 +28,20 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
+import com.nfsdb.ql.ops.AbstractRecordSource;
 import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.std.AbstractImmutableIterator;
 import com.nfsdb.std.ObjList;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
-public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record> {
-    private final RecordSource<? extends Record> recordSource;
+public class VirtualColumnRecordSource extends AbstractRecordSource {
+    private final RecordSource recordSource;
     private final RecordMetadata metadata;
     private final VirtualRecord current;
-    private RecordCursor<? extends Record> recordCursor;
+    private RecordCursor recordCursor;
 
 
-    public VirtualColumnRecordSource(RecordSource<? extends Record> recordSource, ObjList<VirtualColumn> virtualColumns) {
+    public VirtualColumnRecordSource(RecordSource recordSource, ObjList<VirtualColumn> virtualColumns) {
         this.recordSource = recordSource;
         RecordMetadata dm = recordSource.getMetadata();
         this.metadata = new VirtualRecordMetadata(dm, virtualColumns);
@@ -65,7 +65,7 @@ public class VirtualColumnRecordSource extends AbstractImmutableIterator<Record>
     }
 
     @Override
-    public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
         this.recordCursor = recordSource.prepareCursor(factory);
         current.prepare(recordCursor.getStorageFacade());
         return this;

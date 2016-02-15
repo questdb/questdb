@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql;
 
@@ -34,7 +34,6 @@ import com.nfsdb.model.Band;
 import com.nfsdb.ql.impl.AllRowSource;
 import com.nfsdb.ql.impl.JournalPartitionSource;
 import com.nfsdb.ql.impl.JournalSource;
-import com.nfsdb.ql.impl.join.InnerSkipNullJoinRecordSource;
 import com.nfsdb.ql.impl.join.NestedLoopJoinRecordSource;
 import com.nfsdb.ql.impl.unused.*;
 import com.nfsdb.ql.ops.SymGlue;
@@ -83,97 +82,6 @@ public class JoinSymbolOnSymbolTest {
     public void setUp() throws Exception {
         bw = factory.writer(Band.class);
         aw = factory.writer(Album.class);
-    }
-
-    @Test
-    public void testInnerOneToManyHead() throws Exception {
-
-        final String expected = "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum X\tpop\t1970-01-01T00:00:00.000Z\n" +
-                "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum BZ\trock\t1970-01-01T00:00:00.000Z\n" +
-                "1970-01-01T00:00:00.000Z\tband3\thttp://band3.com\tjazz\t\tband3\talbum Y\tmetal\t1970-01-01T00:00:00.000Z\n";
-
-        bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
-        bw.append(new Band().setName("band2").setType("hiphop").setUrl("http://band2.com"));
-        bw.append(new Band().setName("band3").setType("jazz").setUrl("http://band3.com"));
-
-        bw.commit();
-
-        aw.append(new Album().setName("album X").setBand("band1").setGenre("pop"));
-        aw.append(new Album().setName("album BZ").setBand("band1").setGenre("rock"));
-        aw.append(new Album().setName("album BZ").setBand("band1").setGenre("pop"));
-        aw.append(new Album().setName("album Y").setBand("band3").setGenre("metal"));
-
-        aw.commit();
-
-        // from band join album head by name
-        // **inner join
-        // **join first head after
-        StatefulJournalSourceImpl master = new StatefulJournalSourceImpl(
-                new JournalSource(new JournalPartitionSource(bw.getMetadata(), true), new AllRowSource())
-        );
-
-        SymGlue glue = new SymGlue(master, new SymRecordSourceColumn(master.getMetadata().getColumnIndex("name")));
-
-        out.printCursor(
-                new InnerSkipNullJoinRecordSource(
-                        new NestedLoopJoinRecordSource(
-                                master,
-                                new JournalSource(new JournalPartitionSource(aw.getMetadata(), false),
-                                        new DistinctSymbolRowSource(
-                                                new KvIndexRowSource(
-                                                        "band"
-                                                        , new SymLookupKeySource(aw.getSymbolTable("band"), glue)
-                                                )
-                                                , "name"
-                                        )
-                                )
-                        )
-                ).prepareCursor(factory)
-        );
-        Assert.assertEquals(expected, sink.toString());
-    }
-
-    @Test
-    public void testInnerOneToManyHeadFilter() throws Exception {
-
-        final String expected = "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum X\tpop\t1970-01-01T00:00:00.000Z\n" +
-                "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum BZ\trock\t1970-01-01T00:00:00.000Z\n" +
-                "1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\tband1\talbum BZ\tpop\t1970-01-01T00:00:00.000Z\n" +
-                "1970-01-01T00:00:00.000Z\tband3\thttp://band3.com\tjazz\t\tband3\talbum Y\tmetal\t1970-01-01T00:00:00.000Z\n";
-
-        bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
-        bw.append(new Band().setName("band2").setType("hiphop").setUrl("http://band2.com"));
-        bw.append(new Band().setName("band3").setType("jazz").setUrl("http://band3.com"));
-
-        bw.commit();
-
-        aw.append(new Album().setName("album X").setBand("band1").setGenre("pop"));
-        aw.append(new Album().setName("album BZ").setBand("band1").setGenre("rock"));
-        aw.append(new Album().setName("album BZ").setBand("band1").setGenre("pop"));
-        aw.append(new Album().setName("album Y").setBand("band3").setGenre("metal"));
-
-        aw.commit();
-
-        // from band join album head by name
-        StatefulJournalSourceImpl master = new StatefulJournalSourceImpl(
-                new JournalSource(new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource())
-        );
-
-        SymGlue glue = new SymGlue(master, new SymRecordSourceColumn(master.getMetadata().getColumnIndex("name")));
-
-        out.printCursor(
-                new InnerSkipNullJoinRecordSource(
-                        new NestedLoopJoinRecordSource(
-                                master,
-                                new JournalSource(new JournalPartitionSource(aw.getMetadata(), false),
-                                        new KvIndexRowSource(
-                                                "band"
-                                                , new SymLookupKeySource(aw.getSymbolTable("band"), glue)
-                                        ))
-                        )
-                ).prepareCursor(factory)
-        );
-        Assert.assertEquals(expected, sink.toString());
     }
 
     @Test
@@ -325,7 +233,7 @@ public class JoinSymbolOnSymbolTest {
         Assert.assertEquals(expected, sink.toString());
     }
 
-    private RecordSource<? extends Record> buildSource(Journal<Band> bw, Journal<Album> aw) {
+    private RecordSource buildSource(Journal<Band> bw, Journal<Album> aw) {
         StatefulJournalSourceImpl master = new StatefulJournalSourceImpl(
                 new JournalSource(
                         new JournalPartitionSource(bw.getMetadata(), true),

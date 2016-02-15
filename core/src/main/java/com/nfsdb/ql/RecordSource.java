@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,21 +17,27 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql;
 
 import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordMetadata;
+import com.nfsdb.ql.ops.Parameter;
+import com.nfsdb.std.CharSequenceObjHashMap;
 
-public interface RecordSource<T extends Record> {
+public interface RecordSource {
 
     RecordMetadata getMetadata();
 
-    RecordCursor<T> prepareCursor(JournalReaderFactory factory) throws JournalException;
+    Parameter getParam(CharSequence name);
+
+    RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException;
 
     void reset();
+
+    void setParameterMap(CharSequenceObjHashMap<Parameter> map);
 
     boolean supportsRowIdAccess();
 }

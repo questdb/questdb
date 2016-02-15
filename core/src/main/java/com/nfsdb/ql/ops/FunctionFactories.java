@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.ops;
 
@@ -278,6 +278,9 @@ public final class FunctionFactories {
         binSig("=", ColumnType.LONG, ColumnType.LONG, LongEqualsOperator.FACTORY);
         binSig("=", ColumnType.LONG, ColumnType.INT, LongEqualsOperator.FACTORY);
         binSig("=", ColumnType.INT, ColumnType.LONG, LongEqualsOperator.FACTORY);
+        // todo: review
+        binSig("=", ColumnType.LONG, ColumnType.PARAMETER, LongEqualsOperator.FACTORY);
+
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, false), StrEqualsOperator.FACTORY);
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, true), SymEqualsOperator.FACTORY);
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.SYMBOL, false), SymEqualsROperator.FACTORY);

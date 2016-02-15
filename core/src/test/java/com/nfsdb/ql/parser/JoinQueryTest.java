@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.parser;
 
@@ -29,7 +29,6 @@ import com.nfsdb.ex.ParserException;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Rnd;
-import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.impl.NoRowidSource;
 import com.nfsdb.ql.impl.join.HashJoinRecordSource;
@@ -482,10 +481,10 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                 "100\tPJFSREKEUNMKWOF\tUVKWCCVTJSKMXVEGPIG\tnull\tVMY\tRT\tEYYPDVRGRQG\t2015-07-10T00:00:00.100Z\t1528068156\t100\t400\tYBQE\t2015-07-10T00:01:20.643Z\tQXOLEEXZ\n" +
                 "100\tPJFSREKEUNMKWOF\tUVKWCCVTJSKMXVEGPIG\tnull\tVMY\tRT\tEYYPDVRGRQG\t2015-07-10T00:00:00.100Z\t1935884354\t100\t1503\tD\t2015-07-10T00:01:43.507Z\tRZVZJQRNYSRKZSJ\n";
 
-        final RecordSource<? extends Record> m = compiler.compileSource("customers where customerName ~ 'PJFSREKEUNMKWOF'");
-        final RecordSource<? extends Record> s = new NoRowidSource().of(compiler.compileSource("orders"));
+        final RecordSource m = compiler.compileSource("customers where customerName ~ 'PJFSREKEUNMKWOF'");
+        final RecordSource s = new NoRowidSource().of(compiler.compileSource("orders"));
 
-        RecordSource<? extends Record> r = new HashJoinRecordSource(
+        RecordSource r = new HashJoinRecordSource(
                 m,
                 new IntList() {{
                     add(m.getMetadata().getColumnIndex("customerId"));

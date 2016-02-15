@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl.map;
 
@@ -29,7 +29,7 @@ import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.std.AbstractImmutableIterator;
 import com.nfsdb.std.ObjList;
 
-public final class MapRecordSource extends AbstractImmutableIterator<Record> implements RecordCursor<Record> {
+public final class MapRecordSource extends AbstractImmutableIterator<Record> implements RecordCursor {
     private final MapRecord record;
     private final MapValues values;
     private final ObjList<MapRecordValueInterceptor> interceptors;

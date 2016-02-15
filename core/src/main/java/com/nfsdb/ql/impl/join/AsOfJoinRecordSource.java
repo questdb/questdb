@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl.join;
 
@@ -34,14 +34,14 @@ import com.nfsdb.ql.impl.join.asof.FixRecordHolder;
 import com.nfsdb.ql.impl.join.asof.RecordHolder;
 import com.nfsdb.ql.impl.join.asof.RowidRecordHolder;
 import com.nfsdb.ql.impl.join.asof.VarRecordHolder;
-import com.nfsdb.std.AbstractImmutableIterator;
+import com.nfsdb.ql.ops.AbstractRecordSource;
 
 import java.io.Closeable;
 import java.io.IOException;
 
-public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record>, Closeable {
-    private final RecordSource<? extends Record> master;
-    private final RecordSource<? extends Record> slave;
+public class AsOfJoinRecordSource extends AbstractRecordSource implements Closeable {
+    private final RecordSource master;
+    private final RecordSource slave;
     private final SplitRecordMetadata metadata;
     private final int masterTimestampIndex;
     private final int slaveTimestampIndex;
@@ -49,13 +49,13 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
     private final RecordHolder recordHolder;
     private final RecordHolder delayedHolder;
     private final SplitRecordStorageFacade storageFacade;
-    private RecordCursor<? extends Record> masterCursor;
-    private RecordCursor<? extends Record> slaveCursor;
+    private RecordCursor masterCursor;
+    private RecordCursor slaveCursor;
 
     public AsOfJoinRecordSource(
-            RecordSource<? extends Record> master,
+            RecordSource master,
             int masterTimestampIndex,
-            RecordSource<? extends Record> slave,
+            RecordSource slave,
             int slaveTimestampIndex
     ) {
         this.master = master;
@@ -118,7 +118,7 @@ public class AsOfJoinRecordSource extends AbstractImmutableIterator<Record> impl
     }
 
     @Override
-    public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
         this.masterCursor = master.prepareCursor(factory);
         this.slaveCursor = slave.prepareCursor(factory);
         this.recordHolder.setCursor(slaveCursor);

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl.aggregation;
 
@@ -33,7 +33,7 @@ import com.nfsdb.ql.impl.join.hash.KeyWriterHelper;
 import com.nfsdb.ql.impl.map.MapRecordValueInterceptor;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.impl.map.MultiMap;
-import com.nfsdb.std.AbstractImmutableIterator;
+import com.nfsdb.ql.ops.AbstractRecordSource;
 import com.nfsdb.std.ObjHashSet;
 import com.nfsdb.std.ObjList;
 import com.nfsdb.std.Transient;
@@ -43,18 +43,18 @@ import java.io.Closeable;
 import java.io.IOException;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
-public class AggregatedRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record>, Closeable {
+public class AggregatedRecordSource extends AbstractRecordSource implements Closeable {
 
     private final MultiMap map;
-    private final RecordSource<? extends Record> recordSource;
+    private final RecordSource recordSource;
     private final int[] keyIndices;
     private final ObjList<AggregatorFunction> aggregators;
-    private RecordCursor<? extends Record> recordCursor;
-    private RecordCursor<Record> mapRecordSource;
+    private RecordCursor recordCursor;
+    private RecordCursor mapRecordSource;
 
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public AggregatedRecordSource(
-            RecordSource<? extends Record> recordSource,
+            RecordSource recordSource,
             @Transient ObjHashSet<String> keyColumns,
             ObjList<AggregatorFunction> aggregators
     ) {
@@ -111,7 +111,7 @@ public class AggregatedRecordSource extends AbstractImmutableIterator<Record> im
     }
 
     @Override
-    public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
         this.recordCursor = recordSource.prepareCursor(factory);
         buildMap();
         return this;

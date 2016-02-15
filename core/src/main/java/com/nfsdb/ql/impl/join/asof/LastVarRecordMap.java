@@ -218,7 +218,7 @@ public class LastVarRecordMap implements LastRecordMap {
     }
 
     @Override
-    public void setSlaveCursor(RecordCursor<? extends Record> cursor) {
+    public void setSlaveCursor(RecordCursor cursor) {
         this.storageFacade = cursor.getStorageFacade();
     }
 

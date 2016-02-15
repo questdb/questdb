@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl.join.asof;
 
@@ -45,7 +45,7 @@ public class LastRowIdRecordMap implements LastRecordMap {
     private final ObjList<ColumnType> slaveKeyTypes;
     private final ObjList<ColumnType> masterKeyTypes;
     private final RecordMetadata metadata;
-    private RecordCursor<? extends Record> slaveCursor;
+    private RecordCursor slaveCursor;
 
     public LastRowIdRecordMap(
             RecordMetadata masterMetadata,
@@ -111,7 +111,7 @@ public class LastRowIdRecordMap implements LastRecordMap {
         map.clear();
     }
 
-    public void setSlaveCursor(RecordCursor<? extends Record> cursor) {
+    public void setSlaveCursor(RecordCursor cursor) {
         this.slaveCursor = cursor;
     }
 

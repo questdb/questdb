@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.parser;
 
@@ -55,6 +55,7 @@ import com.nfsdb.ql.impl.select.SelectedColumnsRecordSource;
 import com.nfsdb.ql.impl.virtual.VirtualColumnRecordSource;
 import com.nfsdb.ql.model.*;
 import com.nfsdb.ql.ops.FunctionFactories;
+import com.nfsdb.ql.ops.Parameter;
 import com.nfsdb.ql.ops.Signature;
 import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.ql.ops.constant.LongConstant;
@@ -73,7 +74,7 @@ public class QueryCompiler {
     private final static IntHashSet joinBarriers;
     private final QueryParser parser = new QueryParser();
     private final JournalReaderFactory factory;
-    private final AssociativeCache<RecordSource<? extends Record>> cache = new AssociativeCache<>(8, 1024);
+    private final AssociativeCache<RecordSource> cache = new AssociativeCache<>(8, 1024);
     private final QueryFilterAnalyser queryFilterAnalyser = new QueryFilterAnalyser();
     private final StringSink columnNameAssembly = new StringSink();
     private final int columnNamePrefixLen;
@@ -131,19 +132,24 @@ public class QueryCompiler {
         cache.clear();
     }
 
-    public <T> RecordCursor<? extends Record> compile(Class<T> clazz) throws JournalException, ParserException {
+    public <T> RecordCursor compile(Class<T> clazz) throws JournalException, ParserException {
         return compile(clazz.getName());
     }
 
-    public RecordCursor<? extends Record> compile(CharSequence query) throws ParserException, JournalException {
+    public RecordCursor compile(CharSequence query) throws ParserException, JournalException {
         return compileSource(query).prepareCursor(factory);
     }
 
-    public RecordSource<? extends Record> compileSource(CharSequence query) throws ParserException, JournalException {
+    public RecordSource compileSource(CharSequence query) throws ParserException, JournalException {
         // todo: remove query from cache to avoid it being reused by another thread
-        RecordSource<? extends Record> rs = cache.get(query);
+        RecordSource rs = cache.get(query);
         if (rs == null) {
-            rs = resetAndCompile(parser.parse(query).getQueryModel(), factory);
+            final QueryModel model = parser.parse(query).getQueryModel();
+            final CharSequenceObjHashMap<Parameter> map = new CharSequenceObjHashMap<>();
+
+            model.setParameterMap(map);
+            rs = resetAndCompile(model, factory);
+            rs.setParameterMap(map);
             cache.put(query, rs);
         } else {
             rs.reset();
@@ -363,9 +369,9 @@ public class QueryCompiler {
         ExprNode lo = model.getLimitLo();
         ExprNode hi = model.getLimitHi();
         if (hi == null) {
-            model.setLimitVc(LONG_ZERO_CONST, toVirtualColumn(lo));
+            model.setLimitVc(LONG_ZERO_CONST, limitToVirtualColumn(model, lo));
         } else {
-            model.setLimitVc(toVirtualColumn(lo), toVirtualColumn(hi));
+            model.setLimitVc(limitToVirtualColumn(model, lo), limitToVirtualColumn(model, hi));
         }
     }
 
@@ -530,7 +536,7 @@ public class QueryCompiler {
         constNameToToken.clear();
     }
 
-    private void collectColumnNameFrequency(QueryModel model, RecordSource<? extends Record> rs) {
+    private void collectColumnNameFrequency(QueryModel model, RecordSource rs) {
         CharSequenceIntHashMap map = model.getColumnNameHistogram();
         RecordMetadata m = rs.getMetadata();
         for (int i = 0, n = m.getColumnCount(); i < n; i++) {
@@ -559,7 +565,7 @@ public class QueryCompiler {
         return factory.getOrCreateMetadata(new JournalKey<>(reader));
     }
 
-    private RecordSource<? extends Record> compile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private RecordSource compile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         return limit(
                 selectColumns(
                         model.getJoinModels().size() > 1 ?
@@ -570,11 +576,11 @@ public class QueryCompiler {
         );
     }
 
-    private RecordSource<? extends Record> compileJoins(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private RecordSource compileJoins(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
 
         ObjList<QueryModel> joinModels = model.getJoinModels();
         IntList ordered = model.getOrderedJoinModels();
-        RecordSource<? extends Record> master = null;
+        RecordSource master = null;
 
         boolean collectColumnNameFrequency = model.getColumns().size() > 0;
 
@@ -583,7 +589,7 @@ public class QueryCompiler {
             QueryModel m = joinModels.getQuick(index);
 
             // compile
-            RecordSource<? extends Record> slave = m.getRecordSource();
+            RecordSource slave = m.getRecordSource();
 
             if (slave == null) {
                 slave = compileSingleOrSubQuery(m, factory);
@@ -618,7 +624,7 @@ public class QueryCompiler {
             // check if there are post-filters
             ExprNode filter = m.getPostJoinWhereClause();
             if (filter != null) {
-                master = new FilteredJournalRecordSource(master, createVirtualColumn(filter, master.getMetadata(), model.getColumnNameHistogram()));
+                master = new FilteredJournalRecordSource(master, virtualColumnBuilder.createVirtualColumn(model, filter, master.getMetadata()));
             }
         }
 
@@ -630,7 +636,7 @@ public class QueryCompiler {
 
     @SuppressWarnings("ConstantConditions")
     @SuppressFBWarnings({"CC_CYCLOMATIC_COMPLEXITY"})
-    private RecordSource<? extends Record> compileSingleJournal(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private RecordSource compileSingleJournal(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
 
         RecordMetadata metadata = model.getMetadata();
         JournalMetadata journalMetadata;
@@ -685,7 +691,7 @@ public class QueryCompiler {
         if (where != null) {
             IntrinsicModel im = queryFilterAnalyser.extract(where, journalMetadata, latestByCol);
 
-            VirtualColumn filter = im.filter != null ? createVirtualColumn(im.filter, journalMetadata, model.getColumnNameHistogram()) : null;
+            VirtualColumn filter = im.filter != null ? virtualColumnBuilder.createVirtualColumn(model, im.filter, journalMetadata) : null;
 
             if (filter != null) {
                 if (filter.getType() != ColumnType.BOOLEAN) {
@@ -743,7 +749,7 @@ public class QueryCompiler {
                 } else {
                     if (im.keyColumn != null && im.keyValuesIsLambda) {
                         int lambdaColIndex;
-                        RecordSource<? extends Record> lambda = compileSourceInternal(im.keyValues.get(0));
+                        RecordSource lambda = compileSourceInternal(im.keyValues.get(0));
                         RecordMetadata m = lambda.getMetadata();
 
                         switch (m.getColumnCount()) {
@@ -810,7 +816,7 @@ public class QueryCompiler {
         return new JournalSource(ps, rs == null ? new AllRowSource() : rs);
     }
 
-    private RecordSource<? extends Record> compileSingleOrSubQuery(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private RecordSource compileSingleOrSubQuery(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         // analyse limit first as it is easy win
         if (model.getLimitLo() != null || model.getLimitHi() != null) {
             analyseLimit(model);
@@ -819,8 +825,8 @@ public class QueryCompiler {
         return model.getJournalName() != null ? compileSingleJournal(model, factory) : compileSubQuery(model, factory);
     }
 
-    private RecordSource<? extends Record> compileSourceInternal(CharSequence query) throws ParserException, JournalException {
-        RecordSource<? extends Record> rs = cache.get(query);
+    private RecordSource compileSourceInternal(CharSequence query) throws ParserException, JournalException {
+        RecordSource rs = cache.get(query);
         if (rs == null) {
             rs = compile(parser.parseInternal(query).getQueryModel(), factory);
             cache.put(query, rs);
@@ -830,9 +836,9 @@ public class QueryCompiler {
         return rs;
     }
 
-    private RecordSource<? extends Record> compileSubQuery(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private RecordSource compileSubQuery(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
 
-        RecordSource<? extends Record> rs = compile(model.getNestedModel(), factory);
+        RecordSource rs = compile(model.getNestedModel(), factory);
         if (model.getWhereClause() == null) {
             return rs;
         }
@@ -848,7 +854,7 @@ public class QueryCompiler {
                     rs = new IntervalJournalRecordSource(rs, im.intervalSource);
                 }
                 if (im.filter != null) {
-                    VirtualColumn vc = createVirtualColumn(im.filter, m, model.getColumnNameHistogram());
+                    VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, im.filter, m);
                     if (vc.isConstant()) {
                         if (vc.getBool(null)) {
                             return rs;
@@ -886,11 +892,11 @@ public class QueryCompiler {
         return columnNameAssembly.toString();
     }
 
-    private RecordSource<? extends Record> createAsOfJoin(
+    private RecordSource createAsOfJoin(
             ExprNode masterTimestampNode,
             QueryModel model,
-            RecordSource<? extends Record> master,
-            RecordSource<? extends Record> slave) throws ParserException {
+            RecordSource master,
+            RecordSource slave) throws ParserException {
         JoinContext jc = model.getContext();
 
         ExprNode slaveTimestampNode = model.getTimestamp();
@@ -940,7 +946,7 @@ public class QueryCompiler {
         }
     }
 
-    private RecordSource<? extends Record> createHashJoin(QueryModel model, RecordSource<? extends Record> master, RecordSource<? extends Record> slave) throws ParserException {
+    private RecordSource createHashJoin(QueryModel model, RecordSource master, RecordSource slave) throws ParserException {
         JoinContext jc = model.getContext();
         RecordMetadata bm = master.getMetadata();
         RecordMetadata am = slave.getMetadata();
@@ -997,10 +1003,6 @@ public class QueryCompiler {
         }
     }
 
-    private VirtualColumn createVirtualColumn(ExprNode node, RecordMetadata metadata, CharSequenceIntHashMap columnNameHistogram) throws ParserException {
-        return virtualColumnBuilder.createVirtualColumn(node, metadata, columnNameHistogram);
-    }
-
     private CharSequence extractColumnName(CharSequence token, int dot) {
         return dot == -1 ? token : csPool.next().of(token, dot + 1, token.length() - dot - 1);
     }
@@ -1034,7 +1036,7 @@ public class QueryCompiler {
             return false;
         }
 
-        VirtualColumn col = createVirtualColumn(current, null, model.getColumnNameHistogram());
+        VirtualColumn col = virtualColumnBuilder.createVirtualColumn(model, current, null);
         if (col.isConstant()) {
             return !col.getBool(null);
         } else {
@@ -1042,12 +1044,31 @@ public class QueryCompiler {
         }
     }
 
-    private RecordSource<? extends Record> limit(RecordSource<? extends Record> rs, QueryModel model) {
+    private RecordSource limit(RecordSource rs, QueryModel model) {
         if (model.getLimitLoVc() == null || model.getLimitHiVc() == null) {
             return rs;
         } else {
             return new TopRecordSource(rs, model.getLimitLoVc(), model.getLimitHiVc());
         }
+    }
+
+    private VirtualColumn limitToVirtualColumn(QueryModel model, ExprNode node) throws ParserException {
+        switch (node.type) {
+            case LITERAL:
+                if (Chars.startsWith(node.token, ':')) {
+                    return Parameter.getOrCreate(node, model.getParameterMap());
+                }
+                break;
+            case CONSTANT:
+                try {
+                    return new LongConstant(Numbers.parseLong(node.token));
+                } catch (NumericException e) {
+                    throw new ParserException(node.position, "Long number expected");
+                }
+            default:
+                break;
+        }
+        throw new ParserException(node.position, "Constant expected");
     }
 
     private void linkDependencies(QueryModel model, int parent, int child) {
@@ -1473,7 +1494,7 @@ public class QueryCompiler {
         return node;
     }
 
-    private RecordSource<? extends Record> resetAndCompile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private RecordSource resetAndCompile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         clearState();
         return compile(model, factory);
     }
@@ -1489,7 +1510,7 @@ public class QueryCompiler {
         if (model.getJournalName() != null) {
             model.setMetadata(metadata = collectJournalMetadata(model, factory));
         } else {
-            RecordSource<? extends Record> rs = compile(model.getNestedModel(), factory);
+            RecordSource rs = compile(model.getNestedModel(), factory);
             model.setMetadata(metadata = rs.getMetadata());
             model.setRecordSource(rs);
         }
@@ -1543,12 +1564,12 @@ public class QueryCompiler {
         }
     }
 
-    private RecordSource<? extends Record> selectColumns(RecordSource<? extends Record> rs, QueryModel model) throws ParserException {
+    private RecordSource selectColumns(RecordSource rs, QueryModel model) throws ParserException {
         return model.getColumns().size() == 0 ? rs : selectColumns0(rs, model);
     }
 
     @SuppressFBWarnings("PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS")
-    private RecordSource<? extends Record> selectColumns0(RecordSource<? extends Record> rs, QueryModel model) throws ParserException {
+    private RecordSource selectColumns0(RecordSource rs, QueryModel model) throws ParserException {
         final ObjList<QueryColumn> columns = model.getColumns();
         final CharSequenceIntHashMap columnNameHistogram = model.getColumnNameHistogram();
         final RecordMetadata meta = rs.getMetadata();
@@ -1616,7 +1637,7 @@ public class QueryCompiler {
                 virtualColumns = new ObjList<>();
             }
 
-            VirtualColumn vc = createVirtualColumn(qc.getAst(), rs.getMetadata(), model.getColumnNameHistogram());
+            VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), rs.getMetadata());
             vc.setName(qc.getAlias());
             virtualColumns.add(vc);
             groupKeyColumns.add(qc.getAlias());
@@ -1636,7 +1657,7 @@ public class QueryCompiler {
             // create virtual columns
             for (int i = 0; i < asz; i++) {
                 QueryColumn qc = aggregators.get(i);
-                VirtualColumn vc = createVirtualColumn(qc.getAst(), rs.getMetadata(), model.getColumnNameHistogram());
+                VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), rs.getMetadata());
                 if (vc instanceof AggregatorFunction) {
                     vc.setName(qc.getAlias());
                     af.add((AggregatorFunction) vc);
@@ -1664,7 +1685,7 @@ public class QueryCompiler {
             ObjList<VirtualColumn> outer = new ObjList<>(outerVirtualColumns.size());
             for (int i = 0, n = outerVirtualColumns.size(); i < n; i++) {
                 QueryColumn qc = outerVirtualColumns.get(i);
-                VirtualColumn vc = createVirtualColumn(qc.getAst(), rs.getMetadata(), model.getColumnNameHistogram());
+                VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), rs.getMetadata());
                 vc.setName(qc.getAlias());
                 outer.add(vc);
             }
@@ -1774,18 +1795,6 @@ public class QueryCompiler {
             }
         }
         return set;
-    }
-
-    private VirtualColumn toVirtualColumn(ExprNode node) throws ParserException {
-        if (node.type == ExprNode.NodeType.CONSTANT) {
-            try {
-                return new LongConstant(Numbers.parseLong(node.token));
-            } catch (NumericException e) {
-                throw new ParserException(node.position, "Long number expected");
-            }
-        } else {
-            throw new ParserException(node.position, "Constant expected");
-        }
     }
 
     private void unlinkDependencies(QueryModel model, int parent, int child) {

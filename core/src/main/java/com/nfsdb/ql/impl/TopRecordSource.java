@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl;
 
@@ -28,24 +28,22 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
+import com.nfsdb.ql.ops.AbstractRecordSource;
 import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.std.AbstractImmutableIterator;
 
-public class TopRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record> {
+public class TopRecordSource extends AbstractRecordSource {
 
-    private final RecordSource<? extends Record> recordSource;
+    private final RecordSource recordSource;
     private final VirtualColumn lo;
     private final VirtualColumn hi;
     private long _top;
     private long _count;
-    private RecordCursor<? extends Record> recordCursor;
+    private RecordCursor recordCursor;
 
-    public TopRecordSource(RecordSource<? extends Record> recordSource, VirtualColumn lo, VirtualColumn hi) {
+    public TopRecordSource(RecordSource recordSource, VirtualColumn lo, VirtualColumn hi) {
         this.recordSource = recordSource;
         this.lo = lo;
         this.hi = hi;
-        this._top = lo.getLong(null);
-        this._count = hi.getLong(null) - this._top;
     }
 
     @Override
@@ -64,7 +62,9 @@ public class TopRecordSource extends AbstractImmutableIterator<Record> implement
     }
 
     @Override
-    public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
+        this._top = lo.getLong(null);
+        this._count = hi.getLong(null) - this._top;
         this.recordCursor = recordSource.prepareCursor(factory);
         return this;
     }

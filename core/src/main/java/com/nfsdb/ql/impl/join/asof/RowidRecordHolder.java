@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl.join.asof;
 
@@ -25,7 +25,7 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 
 public class RowidRecordHolder implements RecordHolder {
-    private RecordCursor<? extends Record> cursor;
+    private RecordCursor cursor;
     private long rowid = -1;
 
     @Override
@@ -39,7 +39,7 @@ public class RowidRecordHolder implements RecordHolder {
     }
 
     @Override
-    public void setCursor(RecordCursor<? extends Record> cursor) {
+    public void setCursor(RecordCursor cursor) {
         this.cursor = cursor;
     }
 

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,29 +17,35 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl;
 
 import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordMetadata;
-import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
+import com.nfsdb.ql.ops.Parameter;
+import com.nfsdb.std.CharSequenceObjHashMap;
 
-public class NoRowidSource implements RecordSource<Record> {
-    private RecordSource<? extends Record> delegate;
+public class NoRowidSource implements RecordSource {
+    private RecordSource delegate;
 
     @Override
     public RecordMetadata getMetadata() {
         return delegate.getMetadata();
     }
 
+    @Override
+    public Parameter getParam(CharSequence name) {
+        return null;
+    }
+
     @SuppressWarnings("unchecked")
     @Override
-    public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
-        return (RecordCursor<Record>) delegate.prepareCursor(factory);
+    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
+        return delegate.prepareCursor(factory);
     }
 
     @Override
@@ -48,11 +54,15 @@ public class NoRowidSource implements RecordSource<Record> {
     }
 
     @Override
+    public void setParameterMap(CharSequenceObjHashMap<Parameter> map) {
+    }
+
+    @Override
     public boolean supportsRowIdAccess() {
         return false;
     }
 
-    public NoRowidSource of(RecordSource<? extends Record> delegate) {
+    public NoRowidSource of(RecordSource delegate) {
         this.delegate = delegate;
         return this;
     }

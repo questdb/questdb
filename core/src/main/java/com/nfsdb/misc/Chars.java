@@ -184,6 +184,10 @@ public final class Chars {
         return true;
     }
 
+    public static boolean startsWith(CharSequence _this, char c) {
+        return _this.length() > 0 && _this.charAt(0) == c;
+    }
+
     public static String stripQuotes(String s) {
         int l;
         if (s == null || (l = s.length()) == 0) {

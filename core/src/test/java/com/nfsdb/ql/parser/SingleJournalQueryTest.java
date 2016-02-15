@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.parser;
 
@@ -34,6 +34,7 @@ import com.nfsdb.misc.Dates;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Rnd;
 import com.nfsdb.model.Quote;
+import com.nfsdb.ql.RecordSource;
 import com.nfsdb.std.ObjHashSet;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
@@ -1967,6 +1968,48 @@ public class SingleJournalQueryTest extends AbstractTest {
                 "KKUSIMYDXUUSKCX\t0.000000193413\t405.375000000000\t441\t345\t2016-04-30T13:00:00.000Z\n";
 
         assertThat(expected, "tab where id = 'KKUSIMYDXUUSKCX'");
+    }
+
+    @Test
+    public void testParamInLimit() throws Exception {
+        createTabWithNaNs2();
+
+        final String expected = "YDVRVNGSTEQODRZ\t-99\n" +
+                "RIIYMHOWKCDNZNL\t-397\n" +
+                "XZOUICWEKGHVUVS\t367\n" +
+                "FDTNPHFLPBNHGZW\t356\n" +
+                "MQMUDDCIHCNPUGJ\t304\n" +
+                "HYBTVZNCLNXFSUW\t-276\n" +
+                "UMKUBKXPMSXQSTV\t-100\n" +
+                "KJSMSSUQSRLTKVV\t345\n" +
+                "HOLNVTIQBZXIOVI\t112\n" +
+                "ZSFXUNYQXTGNJJI\t-162\n";
+
+        sink.clear();
+        RecordSource src = compiler.compileSource("select id, z from tab limit :xyz");
+        src.getParam(":xyz").set(10L);
+        printer.printCursor(src.prepareCursor(factory), false);
+        TestUtils.assertEquals(expected, sink);
+
+
+        // and one more time
+        sink.clear();
+        src = compiler.compileSource("select id, z from tab limit :xyz");
+        printer.printCursor(src.prepareCursor(factory), false);
+        TestUtils.assertEquals(expected, sink);
+
+        // and now change parameter
+        sink.clear();
+        src = compiler.compileSource("select id, z from tab limit :xyz");
+        src.getParam(":xyz").set(5L);
+        printer.printCursor(src.prepareCursor(factory), false);
+
+        final String expected2 = "YDVRVNGSTEQODRZ\t-99\n" +
+                "RIIYMHOWKCDNZNL\t-397\n" +
+                "XZOUICWEKGHVUVS\t367\n" +
+                "FDTNPHFLPBNHGZW\t356\n" +
+                "MQMUDDCIHCNPUGJ\t304\n";
+        TestUtils.assertEquals(expected2, sink);
     }
 
     @Test

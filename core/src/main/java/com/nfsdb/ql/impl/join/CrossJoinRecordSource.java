@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl.join;
 
@@ -28,18 +28,18 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
-import com.nfsdb.std.AbstractImmutableIterator;
+import com.nfsdb.ql.ops.AbstractRecordSource;
 
-public class CrossJoinRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record> {
-    private final RecordSource<? extends Record> masterSource;
-    private final RecordSource<? extends Record> slaveSource;
+public class CrossJoinRecordSource extends AbstractRecordSource {
+    private final RecordSource masterSource;
+    private final RecordSource slaveSource;
     private final SplitRecordMetadata metadata;
     private final SplitRecord record;
-    private RecordCursor<? extends Record> masterCursor;
-    private RecordCursor<? extends Record> slaveCursor;
+    private RecordCursor masterCursor;
+    private RecordCursor slaveCursor;
     private boolean nextSlave = false;
 
-    public CrossJoinRecordSource(RecordSource<? extends Record> masterSource, RecordSource<? extends Record> slaveSource) {
+    public CrossJoinRecordSource(RecordSource masterSource, RecordSource slaveSource) {
         this.masterSource = masterSource;
         this.slaveSource = slaveSource;
         this.metadata = new SplitRecordMetadata(masterSource.getMetadata(), slaveSource.getMetadata());
@@ -62,7 +62,7 @@ public class CrossJoinRecordSource extends AbstractImmutableIterator<Record> imp
     }
 
     @Override
-    public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
         masterCursor = masterSource.prepareCursor(factory);
         slaveCursor = slaveSource.prepareCursor(factory);
         return this;

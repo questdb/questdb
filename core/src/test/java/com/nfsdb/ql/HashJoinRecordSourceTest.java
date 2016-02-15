@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql;
 
@@ -85,7 +85,7 @@ public class HashJoinRecordSourceTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        RecordSource<? extends Record> joinResult = new SelectedColumnsRecordSource(
+        RecordSource joinResult = new SelectedColumnsRecordSource(
                 new HashJoinRecordSource(
                         new JournalSource(new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()),
                         new IntList() {{
@@ -118,7 +118,7 @@ public class HashJoinRecordSourceTest {
         final JournalWriter<Quote> w2 = factory.writer(Quote.class, "q2");
         TestUtils.generateQuoteData(w2, 100000);
 
-        RecordSource<Record> j = new HashJoinRecordSource(
+        RecordSource j = new HashJoinRecordSource(
                 new JournalSource(new JournalPartitionSource(w1.getMetadata(), false), new AllRowSource()),
                 new IntList() {{
                     w1.getMetadata().getColumnIndex("sym");
@@ -133,7 +133,7 @@ public class HashJoinRecordSourceTest {
         long t = System.currentTimeMillis();
         int count = 0;
 //        ExportManager.export(j, new File("c:/temp/join.csv"), TextFileFormat.TAB);
-        RecordCursor<Record> c = j.prepareCursor(factory);
+        RecordCursor c = j.prepareCursor(factory);
         while (c.hasNext()) {
             c.next();
             count++;
@@ -164,7 +164,7 @@ public class HashJoinRecordSourceTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        RecordSource<? extends Record> joinResult = new SelectedColumnsRecordSource(
+        RecordSource joinResult = new SelectedColumnsRecordSource(
                 new HashJoinRecordSource(
                         new JournalSource(new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()),
                         new IntList() {{
@@ -206,7 +206,7 @@ public class HashJoinRecordSourceTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        RecordSource<? extends Record> joinResult = new SelectedColumnsRecordSource(
+        RecordSource joinResult = new SelectedColumnsRecordSource(
                 new HashJoinRecordSource(
                         new JournalSource(new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()),
                         new IntList() {{

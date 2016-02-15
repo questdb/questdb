@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql;
 
@@ -202,7 +202,7 @@ public class VirtualColumnTest extends AbstractTest {
         plus.setRhs(new DoubleConstant(12.5));
 
         // select ccy, bid+12.5 plus from xyz
-        RecordSource<? extends Record> src = new SelectedColumnsRecordSource(
+        RecordSource src = new SelectedColumnsRecordSource(
                 new VirtualColumnRecordSource(
                         compiler.compileSource("xyz"),
                         new ObjList<VirtualColumn>() {{

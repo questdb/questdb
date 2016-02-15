@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl.aggregation;
 
@@ -31,25 +31,29 @@ import com.nfsdb.ql.impl.join.hash.KeyWriterHelper;
 import com.nfsdb.ql.impl.map.MapRecordValueInterceptor;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.impl.map.MultiMap;
-import com.nfsdb.std.*;
+import com.nfsdb.ql.ops.AbstractRecordSource;
+import com.nfsdb.std.IntList;
+import com.nfsdb.std.ObjHashSet;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.std.Transient;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
-public class ResampledRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record> {
+public class ResampledRecordSource extends AbstractRecordSource {
 
     private final MultiMap map;
-    private final RecordSource<? extends Record> recordSource;
+    private final RecordSource recordSource;
     private final IntList keyIndices;
     private final int tsIndex;
     private final ObjList<AggregatorFunction> aggregators;
     private final TimestampSampler sampler;
-    private RecordCursor<? extends Record> recordCursor;
-    private RecordCursor<Record> mapRecordSource;
+    private RecordCursor recordCursor;
+    private RecordCursor mapRecordSource;
     private Record nextRecord = null;
 
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public ResampledRecordSource(
-            RecordSource<? extends Record> recordSource,
+            RecordSource recordSource,
             @Transient ObjHashSet<String> keyColumns,
             ObjList<AggregatorFunction> aggregators,
             TimestampSampler sampler
@@ -111,7 +115,7 @@ public class ResampledRecordSource extends AbstractImmutableIterator<Record> imp
     }
 
     @Override
-    public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
         this.recordCursor = recordSource.prepareCursor(factory);
         return this;
     }

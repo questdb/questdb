@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl;
 
@@ -28,15 +28,15 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
-import com.nfsdb.std.AbstractImmutableIterator;
+import com.nfsdb.ql.ops.AbstractRecordSource;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class NoOpJournalRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record> {
+public class NoOpJournalRecordSource extends AbstractRecordSource {
 
-    private final RecordSource<? extends Record> delegate;
-    private RecordCursor<? extends Record> cursor;
+    private final RecordSource delegate;
+    private RecordCursor cursor;
 
-    public NoOpJournalRecordSource(RecordSource<? extends Record> delegate) {
+    public NoOpJournalRecordSource(RecordSource delegate) {
         this.delegate = delegate;
     }
 
@@ -56,7 +56,7 @@ public class NoOpJournalRecordSource extends AbstractImmutableIterator<Record> i
     }
 
     @Override
-    public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
         this.cursor = delegate.prepareCursor(factory);
         return this;
     }

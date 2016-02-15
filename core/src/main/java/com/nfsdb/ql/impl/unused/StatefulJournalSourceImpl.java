@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl.unused;
 
@@ -28,14 +28,14 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
-import com.nfsdb.std.AbstractImmutableIterator;
+import com.nfsdb.ql.ops.AbstractRecordSource;
 
-public class StatefulJournalSourceImpl extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record> {
-    private final RecordSource<? extends Record> recordSource;
-    private RecordCursor<? extends Record> recordCursor;
+public class StatefulJournalSourceImpl extends AbstractRecordSource {
+    private final RecordSource recordSource;
+    private RecordCursor recordCursor;
     private Record record;
 
-    public StatefulJournalSourceImpl(RecordSource<? extends Record> recordSource) {
+    public StatefulJournalSourceImpl(RecordSource recordSource) {
         this.recordSource = recordSource;
     }
 
@@ -55,7 +55,7 @@ public class StatefulJournalSourceImpl extends AbstractImmutableIterator<Record>
     }
 
     @Override
-    public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
         recordCursor = recordSource.prepareCursor(factory);
         return this;
     }

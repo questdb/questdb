@@ -48,7 +48,7 @@ public class Worker extends Thread {
         running = 2;
     }
 
-    @SuppressFBWarnings("MDM_THREAD_YIELD")
+    @SuppressFBWarnings({"MDM_THREAD_YIELD", "RV_RETURN_VALUE_IGNORED_NO_SIDE_EFFECT"})
     @Override
     public void run() {
         if (Unsafe.getUnsafe().compareAndSwapInt(this, RUNNING_OFFSET, 0, 1)) {

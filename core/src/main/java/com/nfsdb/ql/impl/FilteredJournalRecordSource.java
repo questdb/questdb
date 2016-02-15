@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl;
 
@@ -28,18 +28,18 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
+import com.nfsdb.ql.ops.AbstractRecordSource;
 import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.std.AbstractImmutableIterator;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class FilteredJournalRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record> {
+public class FilteredJournalRecordSource extends AbstractRecordSource {
 
-    private final RecordSource<? extends Record> delegate;
+    private final RecordSource delegate;
     private final VirtualColumn filter;
-    private RecordCursor<? extends Record> cursor;
+    private RecordCursor cursor;
     private Record record;
 
-    public FilteredJournalRecordSource(RecordSource<? extends Record> delegate, VirtualColumn filter) {
+    public FilteredJournalRecordSource(RecordSource delegate, VirtualColumn filter) {
         this.delegate = delegate;
         this.filter = filter;
     }
@@ -60,7 +60,7 @@ public class FilteredJournalRecordSource extends AbstractImmutableIterator<Recor
     }
 
     @Override
-    public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
         this.cursor = delegate.prepareCursor(factory);
         filter.prepare(cursor.getStorageFacade());
         return this;

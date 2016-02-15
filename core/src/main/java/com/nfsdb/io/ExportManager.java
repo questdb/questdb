@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,13 +17,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.io;
 
 import com.nfsdb.ex.JournalException;
 import com.nfsdb.io.sink.FileSink;
-import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 
 import java.io.File;
@@ -34,7 +33,7 @@ public final class ExportManager {
     private ExportManager() {
     }
 
-    public static void export(RecordCursor<? extends Record> from, File to, TextFileFormat format) throws JournalException, IOException {
+    public static void export(RecordCursor from, File to, TextFileFormat format) throws JournalException, IOException {
         if (to.isDirectory()) {
             throw new JournalException(to + "cannot be a directory");
         }

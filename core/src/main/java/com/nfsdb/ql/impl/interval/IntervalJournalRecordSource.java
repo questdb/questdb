@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl.interval;
 
@@ -29,21 +29,21 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
-import com.nfsdb.std.AbstractImmutableIterator;
+import com.nfsdb.ql.ops.AbstractRecordSource;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class IntervalJournalRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, RecordCursor<Record> {
+public class IntervalJournalRecordSource extends AbstractRecordSource {
 
-    private final RecordSource<? extends Record> delegate;
+    private final RecordSource delegate;
     private final IntervalSource intervalSource;
     private final int timestampIndex;
-    private RecordCursor<? extends Record> cursor;
+    private RecordCursor cursor;
     private Record record;
     private boolean needInterval = true;
     private boolean needRecord = true;
     private Interval interval;
 
-    public IntervalJournalRecordSource(RecordSource<? extends Record> delegate, IntervalSource intervalSource) {
+    public IntervalJournalRecordSource(RecordSource delegate, IntervalSource intervalSource) {
         this.delegate = delegate;
         this.intervalSource = intervalSource;
         final RecordMetadata metadata = delegate.getMetadata();
@@ -66,7 +66,7 @@ public class IntervalJournalRecordSource extends AbstractImmutableIterator<Recor
     }
 
     @Override
-    public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
         this.cursor = delegate.prepareCursor(factory);
         return this;
     }

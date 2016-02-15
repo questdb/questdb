@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.io;
 
@@ -44,11 +44,11 @@ public class RecordSourcePrinter {
         this.delimiter = delimiter;
     }
 
-    public void printCursor(RecordCursor<? extends Record> src) throws IOException {
+    public void printCursor(RecordCursor src) throws IOException {
         printCursor(src, false);
     }
 
-    public void printCursor(RecordCursor<? extends Record> src, boolean header) throws IOException {
+    public void printCursor(RecordCursor src, boolean header) throws IOException {
         RecordMetadata metadata = src.getMetadata();
         if (header) {
             printHeader(metadata);

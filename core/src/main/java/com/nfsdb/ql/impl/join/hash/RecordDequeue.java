@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl.join.hash;
 
@@ -33,7 +33,7 @@ import com.nfsdb.store.SequentialMemory;
 import java.io.Closeable;
 import java.io.IOException;
 
-public class RecordDequeue extends AbstractImmutableIterator<Record> implements Closeable, RecordCursor<Record>, Mutable {
+public class RecordDequeue extends AbstractImmutableIterator<Record> implements Closeable, RecordCursor, Mutable {
     private final SequentialMemory mem;
     private final MemoryRecordAccessor accessor;
     private final RecordMetadata metadata;

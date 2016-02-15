@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.store;
 
@@ -34,7 +34,8 @@ public enum ColumnType {
     STRING(String.class, 0),
     SYMBOL(null, 4),
     BINARY(ByteBuffer.class, 0),
-    DATE(long.class, 8);
+    DATE(long.class, 8),
+    PARAMETER(null, 0);
 
     private final Class type;
     private final int size;

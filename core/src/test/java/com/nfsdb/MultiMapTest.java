@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb;
 
@@ -143,7 +143,7 @@ public class MultiMapTest extends AbstractTest {
         }
 
         RecordSourcePrinter out = new RecordSourcePrinter(sink);
-        RecordCursor<Record> c = map.getCursor();
+        RecordCursor c = map.getCursor();
         out.printCursor(c);
         map.free();
 

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.experimental;
 
@@ -108,7 +108,7 @@ public class CstTest {
         );
 
         SymGlue glue = new SymGlue(m, new SymRecordSourceColumn(m.getMetadata().getColumnIndex("sym")));
-        RecordSource<? extends Record> src = new NestedLoopJoinRecordSource(
+        RecordSource src = new NestedLoopJoinRecordSource(
                 m,
                 new JournalSource(
                         new JournalPartitionSource(slave.getMetadata(), false),
@@ -155,7 +155,7 @@ public class CstTest {
 //
 //        StringRef sym = new StringRef("sym");
 //        StatefulJournalSourceImpl m;
-//        RecordSource<? extends Record> src = new NestedLoopLeftOuterJoin(
+//        RecordSource src = new NestedLoopLeftOuterJoin(
 //                m = new StatefulJournalSourceImpl(
 //                        new JournalSourceImpl(new JournalPartitionSource(master, false), new AllRowSource())
 //                )

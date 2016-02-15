@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,15 +17,15 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.model;
 
 import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.StringSink;
-import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordSource;
+import com.nfsdb.ql.ops.Parameter;
 import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.std.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -46,10 +46,10 @@ public class QueryModel implements Mutable {
     // column name frequency of 1 corresponds to map value 0
     // column name frequency of 0 corresponds to map value -1
     private final CharSequenceIntHashMap columnNameFrequencyMap = new CharSequenceIntHashMap();
-
     // list of "and" concatenated expressions
     private final ObjList<ExprNode> parsedWhere = new ObjList<>();
     private final IntHashSet parsedWhereConsts = new IntHashSet();
+    private CharSequenceObjHashMap<Parameter> parameterMap = new CharSequenceObjHashMap<>();
     private ExprNode whereClause;
     private ExprNode postJoinWhereClause;
     private QueryModel nestedModel;
@@ -58,7 +58,7 @@ public class QueryModel implements Mutable {
     private ExprNode latestBy;
     private ExprNode timestamp;
     private ExprNode sampleBy;
-    private RecordSource<? extends Record> recordSource;
+    private RecordSource recordSource;
     private RecordMetadata metadata;
     private JoinContext context;
     private ExprNode joinCriteria;
@@ -130,6 +130,7 @@ public class QueryModel implements Mutable {
         limitHiVc = null;
         limitLoVc = null;
         columnNameFrequencyMap.clear();
+        parameterMap.clear();
     }
 
     public ExprNode getAlias() {
@@ -247,6 +248,14 @@ public class QueryModel implements Mutable {
         this.orderedJoinModels = that;
     }
 
+    public CharSequenceObjHashMap<Parameter> getParameterMap() {
+        return parameterMap;
+    }
+
+    public void setParameterMap(CharSequenceObjHashMap<Parameter> parameterMap) {
+        this.parameterMap = parameterMap;
+    }
+
     public ObjList<ExprNode> getParsedWhere() {
         return parsedWhere;
     }
@@ -263,11 +272,11 @@ public class QueryModel implements Mutable {
         this.postJoinWhereClause = postJoinWhereClause;
     }
 
-    public RecordSource<? extends Record> getRecordSource() {
+    public RecordSource getRecordSource() {
         return recordSource;
     }
 
-    public void setRecordSource(RecordSource<? extends Record> recordSource) {
+    public void setRecordSource(RecordSource recordSource) {
         this.recordSource = recordSource;
     }
 
@@ -300,7 +309,7 @@ public class QueryModel implements Mutable {
      * Every time ordering takes place optimiser will keep at most two lists:
      * one is last known order the other is new order. If new order cost is better
      * optimiser will replace last known order with new one.
-     * <p>
+     * <p/>
      * To facilitate this behaviour the function will always return non-current list.
      *
      * @return non current order list.

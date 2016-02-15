@@ -19,15 +19,24 @@
  * limitations under the License.
  */
 
-package com.nfsdb.ql;
+package com.nfsdb.ql.ops;
 
-import com.nfsdb.factory.configuration.RecordMetadata;
-import com.nfsdb.std.ImmutableIterator;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordCursor;
+import com.nfsdb.ql.RecordSource;
+import com.nfsdb.std.AbstractImmutableIterator;
+import com.nfsdb.std.CharSequenceObjHashMap;
 
-public interface RecordCursor extends ImmutableIterator<Record> {
-    Record getByRowId(long rowId);
+public abstract class AbstractRecordSource extends AbstractImmutableIterator<Record> implements RecordSource, RecordCursor {
+    private CharSequenceObjHashMap<Parameter> parameterMap;
 
-    RecordMetadata getMetadata();
+    @Override
+    public Parameter getParam(CharSequence name) {
+        return parameterMap.get(name);
+    }
 
-    StorageFacade getStorageFacade();
+    @Override
+    public void setParameterMap(CharSequenceObjHashMap<Parameter> map) {
+        this.parameterMap = map;
+    }
 }

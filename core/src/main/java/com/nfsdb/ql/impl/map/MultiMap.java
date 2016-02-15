@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl.map;
 
@@ -27,7 +27,6 @@ import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.misc.Hash;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Unsafe;
-import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.std.*;
 
@@ -121,7 +120,7 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
         offsets.fill(-1);
     }
 
-    public RecordCursor<Record> getCursor() {
+    public RecordCursor getCursor() {
         return recordSource.init(kStart, size);
     }
 

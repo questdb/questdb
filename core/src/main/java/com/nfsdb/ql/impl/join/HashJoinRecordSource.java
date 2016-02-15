@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl.join;
 
@@ -34,7 +34,7 @@ import com.nfsdb.ql.impl.join.hash.MultiRecordMap;
 import com.nfsdb.ql.impl.join.hash.NullRecord;
 import com.nfsdb.ql.impl.join.hash.RowIdHolderRecord;
 import com.nfsdb.ql.impl.map.MultiMap;
-import com.nfsdb.std.AbstractImmutableIterator;
+import com.nfsdb.ql.ops.AbstractRecordSource;
 import com.nfsdb.std.IntList;
 import com.nfsdb.std.ObjHashSet;
 import com.nfsdb.std.ObjList;
@@ -46,9 +46,9 @@ import java.io.IOException;
 import static com.nfsdb.ql.impl.join.hash.KeyWriterHelper.setKey;
 
 
-public class HashJoinRecordSource extends AbstractImmutableIterator<Record> implements RecordSource<Record>, Closeable, RecordCursor<Record> {
-    private final RecordSource<? extends Record> master;
-    private final RecordSource<? extends Record> slave;
+public class HashJoinRecordSource extends AbstractRecordSource implements Closeable {
+    private final RecordSource master;
+    private final RecordSource slave;
     private final SplitRecordMetadata metadata;
     private final SplitRecord currentRecord;
     private final SplitRecordStorageFacade storageFacade;
@@ -61,15 +61,15 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
     private final boolean outer;
     private final NullRecord nullRecord;
     private final MultiRecordMap recordMap;
-    private RecordCursor<? extends Record> slaveCursor;
-    private RecordCursor<? extends Record> masterCursor;
-    private RecordCursor<? extends Record> hashTableCursor;
+    private RecordCursor slaveCursor;
+    private RecordCursor masterCursor;
+    private RecordCursor hashTableCursor;
 
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     public HashJoinRecordSource(
-            RecordSource<? extends Record> master,
+            RecordSource master,
             IntList masterColIndices,
-            RecordSource<? extends Record> slave,
+            RecordSource slave,
             IntList slaveColIndices,
             boolean outer) {
         this.master = master;
@@ -108,7 +108,7 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
     }
 
     @Override
-    public RecordCursor<Record> prepareCursor(JournalReaderFactory factory) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
         this.slaveCursor = slave.prepareCursor(factory);
         this.masterCursor = master.prepareCursor(factory);
         buildHashTable();
@@ -159,8 +159,8 @@ public class HashJoinRecordSource extends AbstractImmutableIterator<Record> impl
         }
     }
 
-    private MultiRecordMap createRecordMap(RecordSource<? extends Record> masterSource,
-                                           RecordSource<? extends Record> slaveSource) {
+    private MultiRecordMap createRecordMap(RecordSource masterSource,
+                                           RecordSource slaveSource) {
         RecordMetadata mm = masterSource.getMetadata();
         for (int i = 0, k = masterColIndex.size(); i < k; i++) {
             this.masterColumns.add(mm.getColumnQuick(masterColIndex.getQuick(i)));
