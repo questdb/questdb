@@ -77,7 +77,7 @@ public class GenericInteropTest extends AbstractTest {
 
         writer.commit();
 
-        RecordCursor src = compiler.compile("test");
+        RecordCursor src = compiler.compile(factory, "test");
         Record e;
 
         Assert.assertTrue(src.hasNext());
@@ -315,7 +315,7 @@ public class GenericInteropTest extends AbstractTest {
         writer.append(d);
         writer.commit();
 
-        RecordCursor src = compiler.compile("test");
+        RecordCursor src = compiler.compile(factory, "test");
         Record e;
 
         Assert.assertTrue(src.hasNext());

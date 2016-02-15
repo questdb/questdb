@@ -82,7 +82,7 @@ public class CstTest {
             }}.build(Files.makeTempDir())
     );
 
-    private final QueryCompiler compiler = new QueryCompiler(factory);
+    private final QueryCompiler compiler = new QueryCompiler();
 
     @BeforeClass
     public static void setUp() throws Exception {
@@ -276,7 +276,7 @@ public class CstTest {
                     null);
 
             long prev = -1;
-            for (Record e : compiler.compile("quote")) {
+            for (Record e : compiler.compile(factory, "quote")) {
                 long ts = Dates.floorMI(e.getLong(tsIndex));
 
                 if (ts != prev) {

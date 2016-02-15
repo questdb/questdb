@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.impl;
 
@@ -54,7 +54,7 @@ public class MemoryRecordAccessorTest {
             this.factory = new JournalTestFactory(
                     new JournalConfigurationBuilder().build(Files.makeTempDir())
             );
-            this.compiler = new QueryCompiler(factory);
+            this.compiler = new QueryCompiler();
         } catch (JournalConfigurationException e) {
             throw new JournalRuntimeException(e);
         }
@@ -241,7 +241,7 @@ public class MemoryRecordAccessorTest {
             MemoryRecordAccessor a = new MemoryRecordAccessor(journal.getMetadata(), buffer);
             LongList offsets = new LongList();
 
-            for (Record rec : compiler.compile(journal.getLocation().getName())) {
+            for (Record rec : compiler.compile(factory, journal.getLocation().getName())) {
                 offsets.add(a.append(rec));
             }
 

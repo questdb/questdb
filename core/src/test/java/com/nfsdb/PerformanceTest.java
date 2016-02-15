@@ -89,15 +89,14 @@ public class PerformanceTest extends AbstractTest {
         w.commit();
 
         JournalCachingFactory cf = new JournalCachingFactory(factory.getConfiguration());
-        QueryCompiler compiler = new QueryCompiler(cf);
-
+        QueryCompiler compiler = new QueryCompiler();
         int count = 1000;
         long t = 0;
         for (int i = -count; i < count; i++) {
             if (i == 0) {
                 t = System.nanoTime();
             }
-            for (Record r : compiler.compile("quote where timestamp = '2013-10-05T10:00:00.000Z;10d' and sym = 'LLOY.L'")) {
+            for (Record r : compiler.compile(cf, "quote where timestamp = '2013-10-05T10:00:00.000Z;10d' and sym = 'LLOY.L'")) {
             }
         }
         LOG.info().$("NEW journal.query().all().withKeys(\"LLOY.L\").slice(interval) (query only) latency: ").$((System.nanoTime() - t) / count / 1000).$("μs").$();
@@ -200,7 +199,7 @@ public class PerformanceTest extends AbstractTest {
             if (i == 0) {
                 t = System.nanoTime();
             }
-            RecordCursor s = compiler.compile("quote");
+            RecordCursor s = compiler.compile(factory, "quote");
             int cnt = 0;
             for (Record r : s) {
                 r.getLong(0);

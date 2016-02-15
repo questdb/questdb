@@ -47,7 +47,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     private final StringSink sink = new StringSink();
     private final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-    private final QueryCompiler compiler = new QueryCompiler(factory);
+    private final QueryCompiler compiler = new QueryCompiler();
 
     @Test
     public void testAddDoubleAndIntConst() throws Exception {
@@ -364,14 +364,14 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testConstantCondition1() throws Exception {
         createTab();
-        String plan = compiler.compile("select id, x, y from tab where x > 0 and 1 > 1").toString();
+        String plan = compiler.compile(factory, "select id, x, y from tab where x > 0 and 1 > 1").toString();
         Assert.assertTrue(plan.contains("NoOpJournalPartitionSource"));
     }
 
     @Test
     public void testConstantCondition2() throws Exception {
         createTab();
-        String plan = compiler.compile("select id, x, y from tab where x > 0 or 1 = 1").toString();
+        String plan = compiler.compile(factory, "select id, x, y from tab where x > 0 or 1 = 1").toString();
         Assert.assertTrue(plan.contains("AllRowSource"));
         Assert.assertFalse(plan.contains("NoOpJournalPartitionSource"));
     }
@@ -379,7 +379,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testConstantCondition3() throws Exception {
         createTab();
-        String plan = compiler.compile("select id, x, y from tab where 1 > 1 or 2 > 2").toString();
+        String plan = compiler.compile(factory, "select id, x, y from tab where 1 > 1 or 2 > 2").toString();
         Assert.assertTrue(plan.contains("NoOpJournalPartitionSource"));
     }
 
@@ -875,7 +875,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testInvalidLatestByColumn1() throws Exception {
         factory.writer(Quote.class, "q");
         try {
-            compiler.compile("select sym, bid, ask, timestamp from q latest by symx where sym in ('GKN.L') and ask > 100");
+            compiler.compile(factory, "select sym, bid, ask, timestamp from q latest by symx where sym in ('GKN.L') and ask > 100");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(49, e.getPosition());
@@ -887,7 +887,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testInvalidLatestByColumn2() throws Exception {
         factory.writer(Quote.class, "q");
         try {
-            compiler.compile("select sym, bid, ask, timestamp from q latest by ask where sym in ('GKN.L') and ask > 100");
+            compiler.compile(factory, "select sym, bid, ask, timestamp from q latest by ask where sym in ('GKN.L') and ask > 100");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(49, e.getPosition());
@@ -899,7 +899,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testInvalidLatestByColumn3() throws Exception {
         factory.writer(Quote.class, "q");
         try {
-            compiler.compile("select sym, bid, ask, timestamp from q latest by mode where sym in ('GKN.L') and ask > 100");
+            compiler.compile(factory, "select sym, bid, ask, timestamp from q latest by mode where sym in ('GKN.L') and ask > 100");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(49, e.getPosition());
@@ -911,7 +911,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testInvalidLiteralColumn() throws Exception {
         factory.writer(Quote.class, "q");
         try {
-            compiler.compile("select sym, bid, ask, timestamp1 from q latest by sym where sym in ('GKN.L') and ask > 100");
+            compiler.compile(factory, "select sym, bid, ask, timestamp1 from q latest by sym where sym in ('GKN.L') and ask > 100");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(22, e.getPosition());
@@ -923,7 +923,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testInvalidVirtualColumn() throws Exception {
         factory.writer(Quote.class, "q");
         try {
-            compiler.compile("select sym, (bid+ask2)/2, timestamp from q latest by sym where sym in ('GKN.L') and ask > 100");
+            compiler.compile(factory, "select sym, (bid+ask2)/2, timestamp from q latest by sym where sym in ('GKN.L') and ask > 100");
             Assert.fail("Exception expected");
         } catch (InvalidColumnException e) {
             Assert.assertEquals(17, e.getPosition());
@@ -934,7 +934,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testInvalidWhereColumn1() throws Exception {
         factory.writer(Quote.class, "q");
         try {
-            compiler.compile("select sym, bid, ask, timestamp from q where sym2 in ('GKN.L') and ask > 100");
+            compiler.compile(factory, "select sym, bid, ask, timestamp from q where sym2 in ('GKN.L') and ask > 100");
             Assert.fail("Exception expected");
         } catch (InvalidColumnException e) {
             Assert.assertEquals(45, e.getPosition());
@@ -945,7 +945,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testInvalidWhereColumn2() throws Exception {
         factory.writer(Quote.class, "q");
         try {
-            compiler.compile("select sym, bid, ask, timestamp from q where sym in ('GKN.L') and ask2 > 100");
+            compiler.compile(factory, "select sym, bid, ask, timestamp from q where sym in ('GKN.L') and ask2 > 100");
             Assert.fail("Exception expected");
         } catch (InvalidColumnException e) {
             Assert.assertEquals(66, e.getPosition());
@@ -955,7 +955,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testJournalDoesNotExist() throws Exception {
         try {
-            compiler.compile("select id, x, y, timestamp from q where id = ");
+            compiler.compile(factory, "select id, x, y, timestamp from q where id = ");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
             Assert.assertEquals(32, e.getPosition());
@@ -1018,7 +1018,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testLatestByStrIrrelevantFilter() throws Exception {
         createIndexedTab();
         try {
-            compiler.compile("select id, x, y, timestamp from tab latest by id where x > y");
+            compiler.compile(factory, "select id, x, y, timestamp from tab latest by id where x > y");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(46, e.getPosition());
@@ -1030,7 +1030,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testLatestByStrNoFilter() throws Exception {
         createIndexedTab();
         try {
-            compiler.compile("select id, x, y, timestamp from tab latest by id");
+            compiler.compile(factory, "select id, x, y, timestamp from tab latest by id");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(46, e.getPosition());
@@ -1523,7 +1523,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testMissingEqualsArgument() throws Exception {
         factory.writer(Quote.class, "q");
         try {
-            compiler.compile("select id, x, y, timestamp from q where id = ");
+            compiler.compile(factory, "select id, x, y, timestamp from q where id = ");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
             Assert.assertEquals(43, e.getPosition());
@@ -1986,7 +1986,7 @@ public class SingleJournalQueryTest extends AbstractTest {
                 "ZSFXUNYQXTGNJJI\t-162\n";
 
         sink.clear();
-        RecordSource src = compiler.compileSource("select id, z from tab limit :xyz");
+        RecordSource src = compiler.compileSource(factory, "select id, z from tab limit :xyz");
         src.getParam(":xyz").set(10L);
         printer.printCursor(src.prepareCursor(factory), false);
         TestUtils.assertEquals(expected, sink);
@@ -1994,13 +1994,13 @@ public class SingleJournalQueryTest extends AbstractTest {
 
         // and one more time
         sink.clear();
-        src = compiler.compileSource("select id, z from tab limit :xyz");
+        src = compiler.compileSource(factory, "select id, z from tab limit :xyz");
         printer.printCursor(src.prepareCursor(factory), false);
         TestUtils.assertEquals(expected, sink);
 
         // and now change parameter
         sink.clear();
-        src = compiler.compileSource("select id, z from tab limit :xyz");
+        src = compiler.compileSource(factory, "select id, z from tab limit :xyz");
         src.getParam(":xyz").set(5L);
         printer.printCursor(src.prepareCursor(factory), false);
 
@@ -2010,6 +2010,37 @@ public class SingleJournalQueryTest extends AbstractTest {
                 "FDTNPHFLPBNHGZW\t356\n" +
                 "MQMUDDCIHCNPUGJ\t304\n";
         TestUtils.assertEquals(expected2, sink);
+    }
+
+    @Test
+    public void testParamInQuery() throws Exception {
+        createTabWithNaNs2();
+
+        final String expected = "NDESHYUMEUKVZIE\t485\n" +
+                "LLEYMIWTCWLFORG\t456\n" +
+                "EOCVFFKMEKPFOYM\t481\n" +
+                "NZVDJIGSYLXGYTE\t489\n" +
+                "KIWIHBROKZKUTIQ\t498\n" +
+                "IWEODDBHEVGXYHJ\t463\n" +
+                "WCCNGTNLEGPUHHI\t452\n" +
+                "EENNEBQQEMXDKXE\t492\n" +
+                "BSQCNSFFLTRYZUZ\t494\n" +
+                "QBUYZVQQHSQSPZP\t452\n";
+
+        sink.clear();
+        RecordSource src = compiler.compileSource(factory, "select id, z from tab where z > :min limit :lim");
+        src.getParam(":min").set(450);
+        src.getParam(":lim").set(10L);
+        printer.printCursor(src.prepareCursor(factory), false);
+
+
+        sink.clear();
+        src = compiler.compileSource(factory, "select id, z from tab where :min < z limit :lim");
+        src.getParam(":min").set(450);
+        src.getParam(":lim").set(10L);
+        printer.printCursor(src.prepareCursor(factory), false);
+
+        TestUtils.assertEquals(expected, sink);
     }
 
     @Test
@@ -2654,7 +2685,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testSigLookupError() throws Exception {
         createTabWithNaNs2();
         try {
-            compiler.compile("select x,y from tab where x~0");
+            compiler.compile(factory, "select x,y from tab where x~0");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(28, e.getPosition());
@@ -2868,7 +2899,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testSubQuery3() throws Exception {
         createTabWithNaNs2();
         try {
-            compiler.compile("select id, z from (select id from tab where z = NaN) where id = 'KKUSIMYDXUUSKCX'");
+            compiler.compile(factory, "select id, z from (select id from tab where z = NaN) where id = 'KKUSIMYDXUUSKCX'");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(11, e.getPosition());
@@ -3156,7 +3187,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     private void assertThat(String expected, String query, boolean header) throws ParserException, JournalException, IOException {
         sink.clear();
-        printer.printCursor(compiler.compile(query), header);
+        printer.printCursor(compiler.compile(factory, query), header);
         TestUtils.assertEquals(expected, sink);
     }
 

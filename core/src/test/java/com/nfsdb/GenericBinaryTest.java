@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb;
 
@@ -61,7 +61,7 @@ public class GenericBinaryTest extends AbstractTest {
         writeOutputStream(writer, expected);
 
         List<byte[]> actual = new ArrayList<>();
-        for (Record e : compiler.compile("bintest")) {
+        for (Record e : compiler.compile(factory, "bintest")) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             InputStream in = e.getBin(0);
 
@@ -134,7 +134,7 @@ public class GenericBinaryTest extends AbstractTest {
 
     private List<byte[]> readOutputStream() throws JournalException, ParserException {
         List<byte[]> result = new ArrayList<>();
-        for (Record e : compiler.compile("bintest")) {
+        for (Record e : compiler.compile(factory, "bintest")) {
             ByteArrayOutputStream o = new ByteArrayOutputStream();
             e.getBin(0, o);
             result.add(o.toByteArray());

@@ -169,11 +169,6 @@ public final class FunctionFactories {
         aggregateFunctionNames.add(name);
     }
 
-    private static void binSigAgg(String name, ColumnType lhst, ColumnType rhst, FunctionFactory f) {
-        binSig(name, lhst, rhst, f);
-        aggregateFunctionNames.add(name);
-    }
-
     private static void triSig(String name, ColumnType lhst, ColumnType rhst, ColumnType scale, FunctionFactory f) {
         factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, false).paramType(1, rhst, false).paramType(2, scale, false), f);
         factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, false).paramType(1, rhst, false).paramType(2, scale, true), f);
@@ -186,115 +181,75 @@ public final class FunctionFactories {
         factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, true).paramType(1, rhst, true).paramType(2, scale, true), f);
     }
 
+    private static void binSig(String name, FunctionFactory doubleFactory, FunctionFactory longFactory, FunctionFactory intFactory) {
+        binSig(name, doubleFactory, longFactory, intFactory, null);
+    }
+
+    private static void binSigAgg(String name, FunctionFactory doubleFactory, FunctionFactory longFactory, FunctionFactory intFactory) {
+        binSig(name, doubleFactory, longFactory, intFactory, null);
+        aggregateFunctionNames.add(name);
+    }
+
+    private static void binSig(
+            String name,
+            FunctionFactory doubleFactory,
+            FunctionFactory longFactory,
+            FunctionFactory intFactory,
+            FunctionFactory strFactory
+    ) {
+        binSig(name, ColumnType.DOUBLE, ColumnType.PARAMETER, doubleFactory);
+        binSig(name, ColumnType.DOUBLE, ColumnType.DOUBLE, doubleFactory);
+        binSig(name, ColumnType.DOUBLE, ColumnType.FLOAT, doubleFactory);
+        binSig(name, ColumnType.DOUBLE, ColumnType.INT, doubleFactory);
+        binSig(name, ColumnType.DOUBLE, ColumnType.LONG, doubleFactory);
+
+        binSig(name, ColumnType.INT, ColumnType.DOUBLE, doubleFactory);
+        binSig(name, ColumnType.INT, ColumnType.FLOAT, doubleFactory);
+        binSig(name, ColumnType.LONG, ColumnType.DOUBLE, doubleFactory);
+        binSig(name, ColumnType.LONG, ColumnType.FLOAT, doubleFactory);
+
+        binSig(name, ColumnType.FLOAT, ColumnType.PARAMETER, doubleFactory);
+        binSig(name, ColumnType.FLOAT, ColumnType.DOUBLE, doubleFactory);
+        binSig(name, ColumnType.FLOAT, ColumnType.FLOAT, doubleFactory);
+        binSig(name, ColumnType.FLOAT, ColumnType.LONG, doubleFactory);
+        binSig(name, ColumnType.FLOAT, ColumnType.INT, doubleFactory);
+
+        binSig(name, ColumnType.LONG, ColumnType.PARAMETER, longFactory);
+        binSig(name, ColumnType.LONG, ColumnType.LONG, longFactory);
+        binSig(name, ColumnType.LONG, ColumnType.INT, longFactory);
+
+        binSig(name, ColumnType.INT, ColumnType.LONG, longFactory);
+        binSig(name, ColumnType.INT, ColumnType.PARAMETER, intFactory);
+
+        binSig(name, ColumnType.INT, ColumnType.INT, intFactory);
+
+        binSig(name, ColumnType.PARAMETER, ColumnType.DOUBLE, doubleFactory);
+        binSig(name, ColumnType.PARAMETER, ColumnType.FLOAT, doubleFactory);
+        binSig(name, ColumnType.PARAMETER, ColumnType.LONG, longFactory);
+        binSig(name, ColumnType.PARAMETER, ColumnType.INT, intFactory);
+
+        if (strFactory != null) {
+            binSig(name, ColumnType.STRING, ColumnType.STRING, strFactory);
+        }
+    }
+
     static {
-        binSig("+", ColumnType.DOUBLE, ColumnType.DOUBLE, AddDoubleOperator.FACTORY);
-        binSig("+", ColumnType.DOUBLE, ColumnType.LONG, AddDoubleOperator.FACTORY);
-        binSig("+", ColumnType.LONG, ColumnType.DOUBLE, AddDoubleOperator.FACTORY);
-        binSig("+", ColumnType.DOUBLE, ColumnType.INT, AddDoubleOperator.FACTORY);
-        binSig("+", ColumnType.INT, ColumnType.DOUBLE, AddDoubleOperator.FACTORY);
-        binSig("+", ColumnType.INT, ColumnType.INT, AddIntOperator.FACTORY);
-        binSig("+", ColumnType.LONG, ColumnType.INT, AddLongOperator.FACTORY);
-        binSig("+", ColumnType.INT, ColumnType.LONG, AddLongOperator.FACTORY);
-        binSig("+", ColumnType.LONG, ColumnType.LONG, AddLongOperator.FACTORY);
-        binSig("+", ColumnType.STRING, ColumnType.STRING, StrConcatOperator.FACTORY);
-
-        binSig("/", ColumnType.DOUBLE, ColumnType.DOUBLE, DivDoubleOperator.FACTORY);
-        binSig("/", ColumnType.DOUBLE, ColumnType.INT, DivDoubleOperator.FACTORY);
-        binSig("/", ColumnType.INT, ColumnType.DOUBLE, DivDoubleOperator.FACTORY);
-        binSig("/", ColumnType.INT, ColumnType.INT, DivDoubleOperator.FACTORY);
-        binSig("/", ColumnType.DOUBLE, ColumnType.LONG, DivDoubleOperator.FACTORY);
-        binSig("/", ColumnType.LONG, ColumnType.DOUBLE, DivDoubleOperator.FACTORY);
-        binSig("/", ColumnType.LONG, ColumnType.LONG, DivDoubleOperator.FACTORY);
-        binSig("/", ColumnType.LONG, ColumnType.INT, DivDoubleOperator.FACTORY);
-        binSig("/", ColumnType.INT, ColumnType.LONG, DivDoubleOperator.FACTORY);
-
-        binSig("*", ColumnType.DOUBLE, ColumnType.DOUBLE, MultDoubleOperator.FACTORY);
-        binSig("*", ColumnType.INT, ColumnType.DOUBLE, MultDoubleOperator.FACTORY);
-        binSig("*", ColumnType.DOUBLE, ColumnType.INT, MultDoubleOperator.FACTORY);
-        binSig("*", ColumnType.DOUBLE, ColumnType.LONG, MultDoubleOperator.FACTORY);
-        binSig("*", ColumnType.LONG, ColumnType.DOUBLE, MultDoubleOperator.FACTORY);
-        binSig("*", ColumnType.INT, ColumnType.INT, MultIntOperator.FACTORY);
-        binSig("*", ColumnType.LONG, ColumnType.LONG, MultLongOperator.FACTORY);
-        binSig("*", ColumnType.INT, ColumnType.LONG, MultLongOperator.FACTORY);
-        binSig("*", ColumnType.LONG, ColumnType.INT, MultLongOperator.FACTORY);
-
-        binSig("-", ColumnType.DOUBLE, ColumnType.DOUBLE, MinusDoubleOperator.FACTORY);
-        binSig("-", ColumnType.INT, ColumnType.DOUBLE, MinusDoubleOperator.FACTORY);
-        binSig("-", ColumnType.DOUBLE, ColumnType.INT, MinusDoubleOperator.FACTORY);
-        binSig("-", ColumnType.DOUBLE, ColumnType.LONG, MinusDoubleOperator.FACTORY);
-        binSig("-", ColumnType.LONG, ColumnType.DOUBLE, MinusDoubleOperator.FACTORY);
-        binSig("-", ColumnType.INT, ColumnType.INT, MinusIntOperator.FACTORY);
-        binSig("-", ColumnType.LONG, ColumnType.LONG, MinusLongOperator.FACTORY);
-        binSig("-", ColumnType.LONG, ColumnType.INT, MinusLongOperator.FACTORY);
-        binSig("-", ColumnType.INT, ColumnType.LONG, MinusLongOperator.FACTORY);
-
-        binSig(">", ColumnType.DOUBLE, ColumnType.DOUBLE, DoubleGreaterThanOperator.FACTORY);
-        binSig(">", ColumnType.INT, ColumnType.DOUBLE, DoubleGreaterThanOperator.FACTORY);
-        binSig(">", ColumnType.DOUBLE, ColumnType.INT, DoubleGreaterThanOperator.FACTORY);
-        binSig(">", ColumnType.INT, ColumnType.INT, IntGreaterThanOperator.FACTORY);
-        binSig(">", ColumnType.DOUBLE, ColumnType.LONG, DoubleGreaterThanOperator.FACTORY);
-        binSig(">", ColumnType.LONG, ColumnType.DOUBLE, DoubleGreaterThanOperator.FACTORY);
-        binSig(">", ColumnType.LONG, ColumnType.LONG, LongGreaterThanOperator.FACTORY);
-        binSig(">", ColumnType.INT, ColumnType.LONG, LongGreaterThanOperator.FACTORY);
-        binSig(">", ColumnType.LONG, ColumnType.INT, LongGreaterThanOperator.FACTORY);
-
-        binSig(">=", ColumnType.DOUBLE, ColumnType.DOUBLE, DoubleGreaterOrEqualOperator.FACTORY);
-        binSig(">=", ColumnType.INT, ColumnType.DOUBLE, DoubleGreaterOrEqualOperator.FACTORY);
-        binSig(">=", ColumnType.DOUBLE, ColumnType.INT, DoubleGreaterOrEqualOperator.FACTORY);
-        binSig(">=", ColumnType.DOUBLE, ColumnType.LONG, DoubleGreaterOrEqualOperator.FACTORY);
-        binSig(">=", ColumnType.LONG, ColumnType.DOUBLE, DoubleGreaterOrEqualOperator.FACTORY);
-        binSig(">=", ColumnType.INT, ColumnType.INT, IntGreaterOrEqualOperator.FACTORY);
-        binSig(">=", ColumnType.LONG, ColumnType.LONG, LongGreaterOrEqualOperator.FACTORY);
-        binSig(">=", ColumnType.LONG, ColumnType.INT, LongGreaterOrEqualOperator.FACTORY);
-        binSig(">=", ColumnType.INT, ColumnType.LONG, LongGreaterOrEqualOperator.FACTORY);
-
-        binSig("<", ColumnType.DOUBLE, ColumnType.DOUBLE, DoubleLessThanOperator.FACTORY);
-        binSig("<", ColumnType.INT, ColumnType.DOUBLE, DoubleLessThanOperator.FACTORY);
-        binSig("<", ColumnType.DOUBLE, ColumnType.INT, DoubleLessThanOperator.FACTORY);
-        binSig("<", ColumnType.DOUBLE, ColumnType.LONG, DoubleLessThanOperator.FACTORY);
-        binSig("<", ColumnType.LONG, ColumnType.DOUBLE, DoubleLessThanOperator.FACTORY);
-        binSig("<", ColumnType.INT, ColumnType.INT, IntLessThanOperator.FACTORY);
-        binSig("<", ColumnType.LONG, ColumnType.LONG, LongLessThanOperator.FACTORY);
-        binSig("<", ColumnType.LONG, ColumnType.INT, LongLessThanOperator.FACTORY);
-        binSig("<", ColumnType.INT, ColumnType.LONG, LongLessThanOperator.FACTORY);
-
-        binSig("<=", ColumnType.DOUBLE, ColumnType.DOUBLE, DoubleLessOrEqualOperator.FACTORY);
-        binSig("<=", ColumnType.INT, ColumnType.DOUBLE, DoubleLessOrEqualOperator.FACTORY);
-        binSig("<=", ColumnType.DOUBLE, ColumnType.INT, DoubleLessOrEqualOperator.FACTORY);
-        binSig("<=", ColumnType.DOUBLE, ColumnType.LONG, DoubleLessOrEqualOperator.FACTORY);
-        binSig("<=", ColumnType.LONG, ColumnType.DOUBLE, DoubleLessOrEqualOperator.FACTORY);
-        binSig("<=", ColumnType.INT, ColumnType.INT, IntLessOrEqualOperator.FACTORY);
-        binSig("<=", ColumnType.LONG, ColumnType.LONG, LongLessOrEqualOperator.FACTORY);
-        binSig("<=", ColumnType.LONG, ColumnType.INT, LongLessOrEqualOperator.FACTORY);
-        binSig("<=", ColumnType.INT, ColumnType.LONG, LongLessOrEqualOperator.FACTORY);
-
-        binSig("=", ColumnType.INT, ColumnType.INT, IntEqualsOperator.FACTORY);
-        binSig("=", ColumnType.STRING, ColumnType.STRING, StrEqualsOperator.FACTORY);
-        binSig("=", ColumnType.DOUBLE, ColumnType.DOUBLE, DoubleEqualsOperator.FACTORY);
-        binSig("=", ColumnType.INT, ColumnType.DOUBLE, DoubleEqualsOperator.FACTORY);
-        binSig("=", ColumnType.DOUBLE, ColumnType.INT, DoubleEqualsOperator.FACTORY);
-        binSig("=", ColumnType.DOUBLE, ColumnType.LONG, DoubleEqualsOperator.FACTORY);
-        binSig("=", ColumnType.LONG, ColumnType.DOUBLE, DoubleEqualsOperator.FACTORY);
-        binSig("=", ColumnType.LONG, ColumnType.LONG, LongEqualsOperator.FACTORY);
-        binSig("=", ColumnType.LONG, ColumnType.INT, LongEqualsOperator.FACTORY);
-        binSig("=", ColumnType.INT, ColumnType.LONG, LongEqualsOperator.FACTORY);
-        // todo: review
-        binSig("=", ColumnType.LONG, ColumnType.PARAMETER, LongEqualsOperator.FACTORY);
+        binSig("+", AddDoubleOperator.FACTORY, AddLongOperator.FACTORY, AddIntOperator.FACTORY, StrConcatOperator.FACTORY);
+        binSig("*", MultDoubleOperator.FACTORY, MultLongOperator.FACTORY, MultIntOperator.FACTORY);
+        binSig("/", DivDoubleOperator.FACTORY, DivDoubleOperator.FACTORY, DivDoubleOperator.FACTORY);
+        binSig("-", MinusDoubleOperator.FACTORY, MinusLongOperator.FACTORY, MinusIntOperator.FACTORY);
+        binSig(">", DoubleGreaterThanOperator.FACTORY, LongGreaterThanOperator.FACTORY, IntGreaterThanOperator.FACTORY);
+        binSig(">=", DoubleGreaterOrEqualOperator.FACTORY, LongGreaterOrEqualOperator.FACTORY, IntGreaterOrEqualOperator.FACTORY);
+        binSig("<", DoubleLessThanOperator.FACTORY, LongLessThanOperator.FACTORY, IntLessThanOperator.FACTORY);
+        binSig("<=", DoubleLessOrEqualOperator.FACTORY, LongLessOrEqualOperator.FACTORY, IntLessOrEqualOperator.FACTORY);
+        binSig("=", DoubleEqualsOperator.FACTORY, LongEqualsOperator.FACTORY, IntEqualsOperator.FACTORY, StrEqualsOperator.FACTORY);
 
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, false), StrEqualsOperator.FACTORY);
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, true), SymEqualsOperator.FACTORY);
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.SYMBOL, false), SymEqualsROperator.FACTORY);
 
-        binSig("!=", ColumnType.INT, ColumnType.INT, IntNotEqualsOperator.FACTORY);
-        binSig("!=", ColumnType.STRING, ColumnType.STRING, StrNotEqualsOperator.FACTORY);
-        binSig("!=", ColumnType.DOUBLE, ColumnType.DOUBLE, DoubleNotEqualsOperator.FACTORY);
-        binSig("!=", ColumnType.INT, ColumnType.DOUBLE, DoubleNotEqualsOperator.FACTORY);
-        binSig("!=", ColumnType.DOUBLE, ColumnType.INT, DoubleNotEqualsOperator.FACTORY);
-        binSig("!=", ColumnType.DOUBLE, ColumnType.LONG, DoubleNotEqualsOperator.FACTORY);
-        binSig("!=", ColumnType.LONG, ColumnType.DOUBLE, DoubleNotEqualsOperator.FACTORY);
-        binSig("!=", ColumnType.LONG, ColumnType.LONG, LongNotEqualsOperator.FACTORY);
-        binSig("!=", ColumnType.LONG, ColumnType.INT, LongNotEqualsOperator.FACTORY);
-        binSig("!=", ColumnType.INT, ColumnType.LONG, LongNotEqualsOperator.FACTORY);
+        binSig("!=", DoubleNotEqualsOperator.FACTORY, LongNotEqualsOperator.FACTORY, IntNotEqualsOperator.FACTORY, StrNotEqualsOperator.FACTORY);
+
         factories.put(new Signature().setName("!=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, false), StrNotEqualsOperator.FACTORY);
         factories.put(new Signature().setName("!=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, true), SymNotEqualsOperator.FACTORY);
         factories.put(new Signature().setName("!=").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.SYMBOL, false), SymNotEqualsROperator.FACTORY);
@@ -346,22 +301,7 @@ public final class FunctionFactories {
         unSigAgg("avg", ColumnType.LONG, AvgAggregator.FACTORY);
         unSigAgg("avg", ColumnType.FLOAT, AvgAggregator.FACTORY);
 
-        binSigAgg("vwap", ColumnType.DOUBLE, ColumnType.DOUBLE, VwapAggregator.FACTORY);
-        binSigAgg("vwap", ColumnType.DOUBLE, ColumnType.FLOAT, VwapAggregator.FACTORY);
-        binSigAgg("vwap", ColumnType.DOUBLE, ColumnType.INT, VwapAggregator.FACTORY);
-        binSigAgg("vwap", ColumnType.DOUBLE, ColumnType.LONG, VwapAggregator.FACTORY);
-        binSigAgg("vwap", ColumnType.FLOAT, ColumnType.DOUBLE, VwapAggregator.FACTORY);
-        binSigAgg("vwap", ColumnType.FLOAT, ColumnType.FLOAT, VwapAggregator.FACTORY);
-        binSigAgg("vwap", ColumnType.FLOAT, ColumnType.INT, VwapAggregator.FACTORY);
-        binSigAgg("vwap", ColumnType.FLOAT, ColumnType.LONG, VwapAggregator.FACTORY);
-        binSigAgg("vwap", ColumnType.INT, ColumnType.DOUBLE, VwapAggregator.FACTORY);
-        binSigAgg("vwap", ColumnType.INT, ColumnType.FLOAT, VwapAggregator.FACTORY);
-        binSigAgg("vwap", ColumnType.INT, ColumnType.INT, VwapAggregator.FACTORY);
-        binSigAgg("vwap", ColumnType.INT, ColumnType.LONG, VwapAggregator.FACTORY);
-        binSigAgg("vwap", ColumnType.LONG, ColumnType.DOUBLE, VwapAggregator.FACTORY);
-        binSigAgg("vwap", ColumnType.LONG, ColumnType.FLOAT, VwapAggregator.FACTORY);
-        binSigAgg("vwap", ColumnType.LONG, ColumnType.INT, VwapAggregator.FACTORY);
-        binSigAgg("vwap", ColumnType.LONG, ColumnType.LONG, VwapAggregator.FACTORY);
+        binSigAgg("vwap", VwapAggregator.FACTORY, VwapAggregator.FACTORY, VwapAggregator.FACTORY);
 
         unSigAgg("min", ColumnType.DOUBLE, MinDoubleAggregator.FACTORY);
         unSigAgg("min", ColumnType.FLOAT, MinDoubleAggregator.FACTORY);

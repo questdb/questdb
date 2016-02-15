@@ -101,8 +101,8 @@ public class JsonHandler implements ContextHandler {
 
         try {
             // Prepare Context.
-            QueryCompiler qc = new QueryCompiler(factory);
-            RecordCursor records = qc.compile(query);
+            QueryCompiler qc = new QueryCompiler();
+            RecordCursor records = qc.compile(factory, query);
             r.status(200, "application/json; charset=utf-8");
             r.sendHeader();
             sendQuery(r, query, encodingChar, encoded);

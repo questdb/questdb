@@ -66,7 +66,7 @@ public class VirtualColumnTest extends AbstractTest {
         plus.setRhs(new DoubleConstant(12.5));
 
         // select ccy, bid, bid+12.5 plus from xyz
-        VirtualColumnRecordSource src = new VirtualColumnRecordSource(compiler.compileSource("xyz"), new ObjList<VirtualColumn>() {{
+        VirtualColumnRecordSource src = new VirtualColumnRecordSource(compiler.compileSource(factory, "xyz"), new ObjList<VirtualColumn>() {{
             add(plus);
         }});
 
@@ -204,7 +204,7 @@ public class VirtualColumnTest extends AbstractTest {
         // select ccy, bid+12.5 plus from xyz
         RecordSource src = new SelectedColumnsRecordSource(
                 new VirtualColumnRecordSource(
-                        compiler.compileSource("xyz"),
+                        compiler.compileSource(factory, "xyz"),
                         new ObjList<VirtualColumn>() {{
                             add(plus);
                         }}

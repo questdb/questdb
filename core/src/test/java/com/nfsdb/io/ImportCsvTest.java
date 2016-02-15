@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.io;
 
@@ -66,7 +66,7 @@ public class ImportCsvTest extends AbstractTest {
         File actual = new File(factory.getConfiguration().getJournalBase(), "exp.csv");
         File expected = new File(this.getClass().getResource("/csv/test-export-expected.csv").getFile());
 
-        ExportManager.export(compiler.compile("'" + location + "'"), actual, TextFileFormat.CSV);
+        ExportManager.export(compiler.compile(factory, "'" + location + "'"), actual, TextFileFormat.CSV);
         TestUtils.assertEquals(actual, expected);
     }
 
@@ -114,7 +114,7 @@ public class ImportCsvTest extends AbstractTest {
     private void assertThat(String expected, String query) throws ParserException, JournalException, IOException {
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        p.printCursor(compiler.compile(query));
+        p.printCursor(compiler.compile(factory, query));
         Assert.assertEquals(expected, sink.toString());
 
     }

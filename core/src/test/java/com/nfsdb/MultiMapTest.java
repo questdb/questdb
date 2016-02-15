@@ -130,7 +130,7 @@ public class MultiMapTest extends AbstractTest {
                 }},
                 null);
 
-        for (Record e : compiler.compile("quote")) {
+        for (Record e : compiler.compile(factory, "quote")) {
             long ts = e.getLong(tsIndex);
 
             MapValues val = map.getOrCreateValues(

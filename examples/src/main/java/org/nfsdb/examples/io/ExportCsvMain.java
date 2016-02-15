@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package org.nfsdb.examples.io;
 
@@ -37,7 +37,7 @@ public class ExportCsvMain {
     public static void main(String[] args) throws JournalException, IOException, ParserException {
 
         JournalFactory factory = new JournalFactory(args[0]);
-        QueryCompiler compiler = new QueryCompiler(factory);
+        QueryCompiler compiler = new QueryCompiler();
         String from = args[1];
         String toDir = args[2];
         TextFileFormat format = TextFileFormat.valueOf(args[3]);
@@ -46,6 +46,6 @@ public class ExportCsvMain {
         // the same as name of exported journal.
         // Delimiter is selected via TextFormatEnum
 
-        ExportManager.export(compiler.compile(from), new File(toDir, from), format);
+        ExportManager.export(compiler.compile(factory, from), new File(toDir, from), format);
     }
 }

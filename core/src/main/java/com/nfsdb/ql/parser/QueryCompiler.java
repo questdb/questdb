@@ -73,7 +73,7 @@ public class QueryCompiler {
     private final static LongConstant LONG_ZERO_CONST = new LongConstant(0L);
     private final static IntHashSet joinBarriers;
     private final QueryParser parser = new QueryParser();
-    private final JournalReaderFactory factory;
+    //    private final JournalReaderFactory factory;
     private final AssociativeCache<RecordSource> cache = new AssociativeCache<>(8, 1024);
     private final QueryFilterAnalyser queryFilterAnalyser = new QueryFilterAnalyser();
     private final StringSink columnNameAssembly = new StringSink();
@@ -120,9 +120,7 @@ public class QueryCompiler {
     private ObjList<JoinContext> emittedJoinClauses;
     private int aggregateColumnSequence;
 
-    public QueryCompiler(JournalReaderFactory factory) {
-        this.factory = factory;
-
+    public QueryCompiler() {
         // seed column name assembly with default column prefix, which we will reuse
         columnNameAssembly.put("col");
         columnNamePrefixLen = 3;
@@ -132,15 +130,15 @@ public class QueryCompiler {
         cache.clear();
     }
 
-    public <T> RecordCursor compile(Class<T> clazz) throws JournalException, ParserException {
-        return compile(clazz.getName());
+    public <T> RecordCursor compile(JournalReaderFactory factory, Class<T> clazz) throws JournalException, ParserException {
+        return compile(factory, clazz.getName());
     }
 
-    public RecordCursor compile(CharSequence query) throws ParserException, JournalException {
-        return compileSource(query).prepareCursor(factory);
+    public RecordCursor compile(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
+        return compileSource(factory, query).prepareCursor(factory);
     }
 
-    public RecordSource compileSource(CharSequence query) throws ParserException, JournalException {
+    public RecordSource compileSource(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
         // todo: remove query from cache to avoid it being reused by another thread
         RecordSource rs = cache.get(query);
         if (rs == null) {
@@ -157,7 +155,7 @@ public class QueryCompiler {
         return rs;
     }
 
-    public CharSequence plan(CharSequence query) throws ParserException, JournalException {
+    public CharSequence plan(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
         QueryModel model = parser.parse(query).getQueryModel();
         resetAndOptimise(model, factory);
         return model.plan();
@@ -749,7 +747,7 @@ public class QueryCompiler {
                 } else {
                     if (im.keyColumn != null && im.keyValuesIsLambda) {
                         int lambdaColIndex;
-                        RecordSource lambda = compileSourceInternal(im.keyValues.get(0));
+                        RecordSource lambda = compileSourceInternal(factory, im.keyValues.get(0));
                         RecordMetadata m = lambda.getMetadata();
 
                         switch (m.getColumnCount()) {
@@ -825,7 +823,7 @@ public class QueryCompiler {
         return model.getJournalName() != null ? compileSingleJournal(model, factory) : compileSubQuery(model, factory);
     }
 
-    private RecordSource compileSourceInternal(CharSequence query) throws ParserException, JournalException {
+    private RecordSource compileSourceInternal(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
         RecordSource rs = cache.get(query);
         if (rs == null) {
             rs = compile(parser.parseInternal(query).getQueryModel(), factory);

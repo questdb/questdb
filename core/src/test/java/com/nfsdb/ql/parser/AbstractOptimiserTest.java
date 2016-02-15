@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.ql.parser;
 
@@ -37,17 +37,17 @@ public abstract class AbstractOptimiserTest {
 
     @ClassRule
     public static final JournalTestFactory factory = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
-    protected static final QueryCompiler compiler = new QueryCompiler(factory);
+    protected static final QueryCompiler compiler = new QueryCompiler();
     protected static final StringSink sink = new StringSink();
     protected static final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
 
     protected void assertPlan(String expected, String query) throws ParserException, JournalException {
-        TestUtils.assertEquals(expected, compiler.plan(query));
+        TestUtils.assertEquals(expected, compiler.plan(factory, query));
     }
 
     protected void assertThat(String expected, String query, boolean header) throws ParserException, JournalException, IOException {
         sink.clear();
-        printer.printCursor(compiler.compile(query), header);
+        printer.printCursor(compiler.compile(factory, query), header);
         TestUtils.assertEquals(expected, sink);
     }
 
