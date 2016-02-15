@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.std;
 
@@ -87,8 +87,16 @@ public class IntLongPriorityQueue {
         return v;
     }
 
+    private int binSearch(long v) {
+        if (size < 65) {
+            return scanSearch(v);
+        } else {
+            return binSearch0(v);
+        }
+    }
+
     @SuppressWarnings("StatementWithEmptyBody")
-    private int _binSearch(long v) {
+    private int binSearch0(long v) {
         int low = 0;
         int high = size;
 
@@ -111,14 +119,6 @@ public class IntLongPriorityQueue {
             }
         }
         return low;
-    }
-
-    private int binSearch(long v) {
-        if (size < 65) {
-            return scanSearch(v);
-        } else {
-            return _binSearch(v);
-        }
     }
 
     private int scanSearch(long v) {

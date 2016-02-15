@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.query;
 
@@ -68,6 +68,8 @@ public abstract class AbstractResultSetBuilder<T, X> {
                 return false;
             case BREAK:
                 return true;
+            default:
+                break;
         }
 
         long size = partition.open().size();

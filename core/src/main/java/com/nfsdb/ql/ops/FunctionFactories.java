@@ -135,6 +135,8 @@ public final class FunctionFactories {
                         return StrInOperator.FACTORY;
                     case SYMBOL:
                         return SymInOperator.FACTORY;
+                    default:
+                        break;
                 }
             }
         }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.std;
 
@@ -73,7 +73,7 @@ public class AssociativeCache<V> implements Closeable {
     }
 
     public V get(CharSequence key) {
-        int lo = _lo(key);
+        int lo = lo(key);
         for (int i = lo, hi = lo + blocks; i < hi; i++) {
             CharSequence k = Unsafe.arrayGet(keys, i);
             if (k == null) {
@@ -88,7 +88,7 @@ public class AssociativeCache<V> implements Closeable {
     }
 
     public CharSequence put(CharSequence key, V value) {
-        int lo = _lo(key);
+        int lo = lo(key);
         CharSequence ok = Unsafe.arrayGet(keys, lo + bmask);
         if (ok != null) {
             free(lo + bmask);
@@ -100,11 +100,11 @@ public class AssociativeCache<V> implements Closeable {
         return ok;
     }
 
-    private int _lo(CharSequence key) {
-        return (Chars.hashCode(key) & rmask) << bshift;
-    }
-
     private void free(int lo) {
         Unsafe.arrayPut(values, lo, Misc.free(Unsafe.arrayGet(values, lo)));
+    }
+
+    private int lo(CharSequence key) {
+        return (Chars.hashCode(key) & rmask) << bshift;
     }
 }

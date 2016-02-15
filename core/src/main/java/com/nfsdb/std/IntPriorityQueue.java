@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.std;
 
@@ -64,8 +64,16 @@ public class IntPriorityQueue {
         limit++;
     }
 
+    private int binSearch(int v) {
+        if (limit < 65) {
+            return scanSearch(v);
+        } else {
+            return binSearch0(v);
+        }
+    }
+
     @SuppressWarnings("StatementWithEmptyBody")
-    private int _binSearch(int v) {
+    private int binSearch0(int v) {
         int low = 0;
         int high = limit;
 
@@ -88,14 +96,6 @@ public class IntPriorityQueue {
             }
         }
         return low;
-    }
-
-    private int binSearch(int v) {
-        if (limit < 65) {
-            return scanSearch(v);
-        } else {
-            return _binSearch(v);
-        }
     }
 
     private void resize() {
