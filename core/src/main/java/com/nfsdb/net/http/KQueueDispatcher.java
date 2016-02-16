@@ -281,12 +281,16 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
                         continue;
                     }
 
-                    long cursor = ioSequence.nextBully();
-                    IOEvent evt = ioQueue.get(cursor);
-                    evt.context = pending.get(row);
-                    evt.status = kqueue.getFilter() == Kqueue.EVFILT_READ ? ChannelStatus.READ : ChannelStatus.WRITE;
-                    ioSequence.done(cursor);
-                    LOG.debug().$("Queuing ").$(kqueue.getFilter()).$(" on ").$(fd).$();
+                    if (kqueue.getFlags() == Kqueue.EV_EOF) {
+                        disconnect(pending.get(row), DisconnectReason.PEER);
+                    } else {
+                        long cursor = ioSequence.nextBully();
+                        IOEvent evt = ioQueue.get(cursor);
+                        evt.context = pending.get(row);
+                        evt.status = kqueue.getFilter() == Kqueue.EVFILT_READ ? ChannelStatus.READ : ChannelStatus.WRITE;
+                        ioSequence.done(cursor);
+                        LOG.debug().$("Queuing ").$(kqueue.getFilter()).$(" on ").$(fd).$();
+                    }
                     pending.deleteRow(row);
                     watermark--;
                 }

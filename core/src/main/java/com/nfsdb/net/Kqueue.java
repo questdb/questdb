@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p/>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p/>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p/>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -33,6 +33,7 @@ public final class Kqueue implements Closeable {
     public static final short EVFILT_READ;
     public static final int NUM_KEVENTS = 1024;
     public static final short SIZEOF_KEVENT;
+    public static final int EV_EOF = -32751;
     private static final short EVFILT_WRITE;
     private static final Log LOG = LogFactory.getLog(Kqueue.class);
     private static final short FD_OFFSET;
@@ -69,6 +70,10 @@ public final class Kqueue implements Closeable {
 
     public int getFilter() {
         return Unsafe.getUnsafe().getShort(_rPtr + FILTER_OFFSET);
+    }
+
+    public int getFlags() {
+        return Unsafe.getUnsafe().getShort(_rPtr + FLAGS_OFFSET);
     }
 
     public void listen(long sfd) {

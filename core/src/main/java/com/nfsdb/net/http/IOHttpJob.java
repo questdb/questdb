@@ -124,7 +124,6 @@ public class IOHttpJob implements Job {
                 }
 
                 if (log && !r.isIncomplete()) {
-                    //todo: implement native method on linux & osx
                     ACCESS.xinfo().
                             $ip(Net.getPeerIP(context.channel.getFd())).
                             $(" -").
