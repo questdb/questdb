@@ -68,14 +68,30 @@ JNIEXPORT void JNICALL Java_com_nfsdb_misc_Net_listen
     listen((int) fd, backlog);
 }
 
+jint convert_error(ssize_t n) {
+    if (n > 0) {
+        return (jint) n;
+    }
+
+    switch (n) {
+        case 0:
+            return com_nfsdb_misc_Net_EPEERDISCONNECT;
+        case EWOULDBLOCK:
+            return com_nfsdb_misc_Net_ERETRY;
+        default:
+            return com_nfsdb_misc_Net_EOTHERDISCONNECT;
+    }
+}
+
 JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_send
         (JNIEnv *e, jclass cl, jlong fd, jlong ptr, jint len) {
-    return (jint) send((int) fd, (const void *) ptr, (size_t) len, 0);
+    return convert_error(send((int) fd, (const void *) ptr, (size_t) len, 0));
 }
+
 
 JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_recv
         (JNIEnv *e, jclass cl, jlong fd, jlong ptr, jint len) {
-    return (jint) recv((int) fd, (void *) ptr, (size_t) len, 0);
+    return convert_error(recv((int) fd, (void *) ptr, (size_t) len, 0));
 }
 
 JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_configureNonBlocking
@@ -124,7 +140,7 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_getPeerIP
 
     if (getpeername((int) fd, &peer, &nameLen) == 0) {
         if (peer.sa_family == AF_INET) {
-            return inet_addr(inet_ntoa(((struct sockaddr_in *)&peer)->sin_addr));
+            return inet_addr(inet_ntoa(((struct sockaddr_in *) &peer)->sin_addr));
         } else {
             return -2;
         }
@@ -140,7 +156,7 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_getPeerPort
 
     if (getpeername((int) fd, &peer, &nameLen) == 0) {
         if (peer.sa_family == AF_INET) {
-            return ntohs(((struct sockaddr_in *)&peer)->sin_port);
+            return ntohs(((struct sockaddr_in *) &peer)->sin_port);
         } else {
             return -2;
         }

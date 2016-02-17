@@ -7,12 +7,26 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#undef com_nfsdb_misc_Net_ERETRY
+#define com_nfsdb_misc_Net_ERETRY 0L
+#undef com_nfsdb_misc_Net_EPEERDISCONNECT
+#define com_nfsdb_misc_Net_EPEERDISCONNECT -1L
+#undef com_nfsdb_misc_Net_EOTHERDISCONNECT
+#define com_nfsdb_misc_Net_EOTHERDISCONNECT -2L
 /*
  * Class:     com_nfsdb_misc_Net
  * Method:    accept
  * Signature: (J)J
  */
 JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_accept
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_nfsdb_misc_Net
+ * Method:    available
+ * Signature: (J)J
+ */
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_available
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -29,6 +43,22 @@ JNIEXPORT jboolean JNICALL Java_com_nfsdb_misc_Net_bind
  * Signature: (J)I
  */
 JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_configureNonBlocking
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_nfsdb_misc_Net
+ * Method:    getPeerIP
+ * Signature: (J)J
+ */
+JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_getPeerIP
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_nfsdb_misc_Net
+ * Method:    getPeerPort
+ * Signature: (J)I
+ */
+JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_getPeerPort
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -79,21 +109,21 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_setSndBuf
 JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_socketTcp
         (JNIEnv *, jclass, jboolean);
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_available
-        (JNIEnv *, jclass, jlong);
-
-
+/*
+ * Class:     com_nfsdb_misc_Net
+ * Method:    getEof
+ * Signature: ()I
+ */
 JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_getEof
         (JNIEnv *, jclass);
 
+/*
+ * Class:     com_nfsdb_misc_Net
+ * Method:    getEwouldblock
+ * Signature: ()I
+ */
 JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_getEwouldblock
         (JNIEnv *, jclass);
-
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_getPeerIP
-        (JNIEnv *, jclass, jlong fd);
-
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_getPeerPort
-        (JNIEnv *, jclass, jlong fd);
 
 #ifdef __cplusplus
 }

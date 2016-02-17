@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p/>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p/>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p/>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -148,7 +148,6 @@ public final class ByteBuffers {
         int retriesRemaining = retryCount;
         while (target > 0) {
             int result;
-
             try {
                 result = channel.write(from);
             } catch (SlowWritableChannelException e) {
@@ -157,10 +156,20 @@ public final class ByteBuffers {
                 throw DisconnectedChannelException.INSTANCE;
             }
 
-            if (result == 0 && --retriesRemaining < 0) {
-                throw SlowWritableChannelException.INSTANCE;
+            if (result > 0) {
+                target -= result;
+                continue;
             }
-            target -= result;
+
+            switch (result) {
+                case Net.ERETRY:
+                    if (--retriesRemaining < 0) {
+                        throw SlowWritableChannelException.INSTANCE;
+                    }
+                    break;
+                default:
+                    throw DisconnectedChannelException.INSTANCE;
+            }
         }
     }
 
@@ -171,6 +180,8 @@ public final class ByteBuffers {
         int r = to.remaining();
         int target = r;
         int retriesRemaining = retryCount;
+
+        OUT:
         while (target > 0) {
             int result;
             try {
@@ -181,18 +192,25 @@ public final class ByteBuffers {
                 throw DisconnectedChannelException.INSTANCE;
             }
 
-            // disconnected
-            if (result == 0 && target == r && Net.eof()) {
-                throw EndOfChannelException.INSTANCE;
+            if (result > 0) {
+                target -= result;
+                continue;
             }
 
-            if (result == 0 && target < r) {
-                break;
-            } else if (--retriesRemaining < 0) {
-                throw SlowReadableChannelException.INSTANCE;
+            switch (result) {
+                case Net.ERETRY:
+                    if (target < r) {
+                        break OUT;
+                    }
+                    if (--retriesRemaining < 0) {
+                        throw SlowReadableChannelException.INSTANCE;
+                    }
+                    break;
+                case Net.EPEERDISCONNECT:
+                    throw EndOfChannelException.INSTANCE;
+                default:
+                    throw DisconnectedChannelException.INSTANCE;
             }
-
-            target -= result;
         }
     }
 

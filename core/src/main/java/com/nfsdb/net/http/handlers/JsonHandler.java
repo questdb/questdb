@@ -34,6 +34,7 @@ import com.nfsdb.net.http.IOContext;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.parser.QueryCompiler;
+import com.nfsdb.ql.parser.QueryError;
 import sun.nio.cs.ArrayEncoder;
 
 import java.io.IOException;
@@ -133,7 +134,7 @@ public class JsonHandler implements ContextHandler {
             // Send records.
             resume(context);
         } catch (ParserException pex) {
-            sendException(r, query, pex.getMessage(), 400, encodingChar, encoded);
+            sendException(r, query, QueryError.INSTANCE.getMessage(), 400, encodingChar, encoded);
         } catch (JournalException jex) {
             sendException(r, query, jex.getMessage(), 500, encodingChar, encoded);
         }

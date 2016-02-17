@@ -29,7 +29,11 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 public final class Net {
 
     public static final int EWOULDBLOCK;
-    private static final int EOF;
+
+    public static final int ERETRY = 0;
+    public static final int EPEERDISCONNECT = -1;
+    @SuppressWarnings("unused")
+    public static final int EOTHERDISCONNECT = -2;
 
     private Net() {
     }
@@ -50,13 +54,9 @@ public final class Net {
 
     public static native int configureNonBlocking(long fd);
 
-    public static boolean eof() {
-        return Os.errno() == EOF;
-    }
-
     public native static long getPeerIP(long fd);
 
-    public native static long getPeerPort(long fd);
+    public native static int getPeerPort(long fd);
 
     public native static void listen(long fd, int backlog);
 
@@ -99,7 +99,6 @@ public final class Net {
     }
 
     static {
-        EOF = getEof();
         EWOULDBLOCK = getEwouldblock();
     }
 }

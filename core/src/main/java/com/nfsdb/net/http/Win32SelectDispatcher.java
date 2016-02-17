@@ -136,7 +136,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
 
             if (_fd < 0) {
                 int err = Os.errno();
-                if (err != Net.EWOULDBLOCK && err != 0) {
+                if (err != Net.EWOULDBLOCK) {
                     LOG.error().$("Error in accept(): ").$(err).$();
                 }
                 break;
@@ -147,6 +147,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
             if (Net.configureNonBlocking(_fd) < 0) {
                 LOG.error().$("Cannot make FD non-blocking").$();
                 Files.close(_fd);
+                continue;
             }
 
             connectionCount++;
@@ -319,16 +320,12 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
                 // and remove from pending
                 final IOContext context = pending.get(i);
 
-                if ((_new_op & FD_READ) > 0 && Net.available(fd) == 0) {
-                    disconnect(context, DisconnectReason.PEER);
-                } else {
-                    if ((_new_op & FD_READ) > 0) {
-                        enqueue(context, ChannelStatus.READ);
-                    }
+                if ((_new_op & FD_READ) > 0) {
+                    enqueue(context, ChannelStatus.READ);
+                }
 
-                    if ((_new_op & FD_WRITE) > 0) {
-                        enqueue(context, ChannelStatus.WRITE);
-                    }
+                if ((_new_op & FD_WRITE) > 0) {
+                    enqueue(context, ChannelStatus.WRITE);
                 }
                 pending.deleteRow(i);
                 n--;
