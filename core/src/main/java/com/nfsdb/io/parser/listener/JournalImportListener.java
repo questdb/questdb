@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.io.parser.listener;
 
@@ -169,9 +169,19 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
     public void onMetadata(ObjList<ImportedColumnMetadata> metadata) {
         if (writer == null) {
             try {
-                writer = factory.bulkWriter(new JournalStructure(location, this.metadata = metadata));
+                switch (factory.getConfiguration().exists(location)) {
+                    case DOES_NOT_EXIST:
+                        writer = factory.bulkWriter(new JournalStructure(location, this.metadata = metadata));
+                        break;
+//                    case EXISTS:
+//                        writer = factory.bulkWriter(location);
+//                        this.metadata = writer.getMetadata();
+//                        break;
+                    default:
+                        throw new JournalRuntimeException("Unusable name");
+                }
                 _size = writer.size();
-                errors.seed(metadata.size(), 0);
+                errors.seed(writer.getMetadata().getColumnCount(), 0);
             } catch (JournalException e) {
                 throw new JournalRuntimeException(e);
             }

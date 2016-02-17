@@ -82,14 +82,31 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_configureNonBlocking
     return ioctlsocket((SOCKET) fd, FIONBIO, &mode);
 }
 
+jint convert_error(int n) {
+    if (n > 0) {
+        return (jint) n;
+    }
+
+    switch (n) {
+        case 0:
+            return com_nfsdb_misc_Net_EPEERDISCONNECT;
+        default:
+            if (WSAGetLastError() == WSAEWOULDBLOCK) {
+                return com_nfsdb_misc_Net_ERETRY;
+            } else {
+                return com_nfsdb_misc_Net_EOTHERDISCONNECT;
+            }
+    }
+}
+
 JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_recv
         (JNIEnv *e, jclass cl, jlong fd, jlong addr, jint len) {
-    return recv((SOCKET) fd, (char *) addr, len, 0);
+    return convert_error(recv((SOCKET) fd, (char *) addr, len, 0));
 }
 
 JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_send
         (JNIEnv *e, jclass cl, jlong fd, jlong addr, jint len) {
-    return send((SOCKET) fd, (const char *) addr, len, 0);
+    return convert_error(send((SOCKET) fd, (const char *) addr, len, 0));
 }
 
 JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_setSndBuf

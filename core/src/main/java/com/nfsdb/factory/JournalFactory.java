@@ -97,6 +97,11 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
     }
 
     @Override
+    public JournalWriter bulkWriter(String location) throws JournalException {
+        return bulkWriter(new JournalKey(location));
+    }
+
+    @Override
     public <T> JournalWriter<T> writer(JournalKey<T> key) throws JournalException {
         return new JournalWriter<>(getConfiguration().createMetadata(key), key);
     }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.net.http.handlers;
 
@@ -160,6 +160,8 @@ public class ImportHandler extends AbstractMultipartHandler {
         // analyse columns and their types
         int sampleSize = 100;
         MetadataExtractorListener lsnr = context.getThreadLocal(IOWorkerContextKey.ME.name(), MetadataExtractorListener.FACTORY);
+        lsnr.clear();
+        // unashamedly use listener's metadata list
         context.textParser.parse(address, len, sampleSize, lsnr);
         lsnr.onLineCount(context.textParser.getLineCount());
         context.importer.onMetadata(lsnr.getMetadata());
