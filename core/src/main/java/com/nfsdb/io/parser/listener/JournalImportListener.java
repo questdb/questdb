@@ -169,16 +169,26 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
     public void onMetadata(ObjList<ImportedColumnMetadata> metadata) {
         if (writer == null) {
             try {
+                // todo: derive correct import metadata from existing journal
                 switch (factory.getConfiguration().exists(location)) {
-                    case DOES_NOT_EXIST:
-                        writer = factory.bulkWriter(new JournalStructure(location, this.metadata = metadata));
-                        break;
+//                    case DOES_NOT_EXIST:
+//                        writer = factory.bulkWriter(new JournalStructure(location, this.metadata = metadata));
+//                        break;
 //                    case EXISTS:
 //                        writer = factory.bulkWriter(location);
+//                        metadata.clear();
+//                        JournalMetadata m = writer.getMetadata();
+//                        metadata.seed(m.getColumnCount(), ImportedColumnMetadata.FACTORY);
+//                        for (int i = 0, n = m.getColumnCount(); i <n; i++) {
+//                            metadata.getQuick(i).importedType = m.getColumnQuick(i).type;
+//                        }
+//
+//
 //                        this.metadata = writer.getMetadata();
 //                        break;
                     default:
-                        throw new JournalRuntimeException("Unusable name");
+                        writer = factory.bulkWriter(new JournalStructure(location, this.metadata = metadata));
+//                        throw new JournalRuntimeException("Unusable name");
                 }
                 _size = writer.size();
                 errors.seed(writer.getMetadata().getColumnCount(), 0);

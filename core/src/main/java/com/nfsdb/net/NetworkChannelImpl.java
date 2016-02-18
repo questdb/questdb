@@ -62,9 +62,8 @@ public class NetworkChannelImpl implements NetworkChannel {
         int read = Net.recv(fd, ByteBuffers.getAddress(dst) + dst.position(), dst.remaining());
         if (read > 0) {
             dst.position(dst.position() + read);
-            return read;
         }
-        return 0;
+        return read;
     }
 
     @Override
@@ -73,8 +72,7 @@ public class NetworkChannelImpl implements NetworkChannel {
         if (written > 0) {
             totalWritten += written;
             src.position(src.position() + written);
-            return written;
         }
-        return 0;
+        return written;
     }
 }

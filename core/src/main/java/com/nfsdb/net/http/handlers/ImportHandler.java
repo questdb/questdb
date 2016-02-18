@@ -227,9 +227,7 @@ public class ImportHandler extends AbstractMultipartHandler {
     @Override
     protected void onPartEnd(IOContext context) throws IOException {
         if (context.textParser != null) {
-//            System.out.println("Closing importer for \n\r" + context.importer.getMetadata());
             context.textParser.parseLast();
-//            System.out.println(context.importer.getImportedRowCount());
             context.importer.commit();
             sendSummary(context);
             context.textParser = Misc.free(context.textParser);
