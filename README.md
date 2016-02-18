@@ -1,5 +1,4 @@
 [![Codacy Badge](https://api.codacy.com/project/badge/grade/83c6250bd9fc45a98c12c191af710754)](https://www.codacy.com/app/bluestreak/nfsdb)
-[![Build Status](https://secure.travis-ci.org/NFSdb/nfsdb.png?branch=master)](http://travis-ci.org/NFSdb/nfsdb)
 [![Build Status](https://semaphoreci.com/api/v1/projects/6a252c31-4627-4e49-b487-126062e66bba/681119/badge.svg)](https://semaphoreci.com/bluestreak/nfsdb)
 [![Gitter](https://badges.gitter.im/Join Chat.svg)](https://gitter.im/NFSdb/nfsdb?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 

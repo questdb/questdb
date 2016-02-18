@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p/>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p/>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p/>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -30,6 +30,7 @@ import com.nfsdb.net.http.*;
 import com.nfsdb.std.LPSZ;
 import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.std.PrefixedPath;
+import com.nfsdb.std.ThreadLocal;
 
 import java.io.File;
 import java.io.IOException;
@@ -38,18 +39,18 @@ import java.nio.ByteBuffer;
 public class StaticContentHandler implements ContextHandler {
 
     private static final Log LOG = LogFactory.getLog(StaticContentHandler.class);
-
     private final MimeTypes mimeTypes;
-    private final ObjectFactory<PrefixedPath> ppFactory;
+    private final ThreadLocal<PrefixedPath> tlPrefixedPath;
+    private final ThreadLocal<RangeParser> tlRangeParser = new ThreadLocal<>(RangeParser.FACTORY);
 
     public StaticContentHandler(final File publicDir, MimeTypes mimeTypes) {
         this.mimeTypes = mimeTypes;
-        this.ppFactory = new ObjectFactory<PrefixedPath>() {
+        this.tlPrefixedPath = new ThreadLocal<>(new ObjectFactory<PrefixedPath>() {
             @Override
             public PrefixedPath newInstance() {
                 return new PrefixedPath(publicDir.getAbsolutePath());
             }
-        };
+        });
     }
 
     @Override
@@ -58,7 +59,7 @@ public class StaticContentHandler implements ContextHandler {
         if (Chars.containts(url, "..")) {
             context.simpleResponse().send(404);
         } else {
-            PrefixedPath path = context.getThreadLocal(IOWorkerContextKey.PP.name(), ppFactory);
+            PrefixedPath path = tlPrefixedPath.get();
             if (Files.exists(path.of(url))) {
                 send(context, path, false);
             } else {
@@ -131,7 +132,7 @@ public class StaticContentHandler implements ContextHandler {
     }
 
     private void sendRange(IOContext context, CharSequence range, LPSZ path, CharSequence contentType, boolean asAttachment) throws IOException {
-        RangeParser rangeParser = context.getThreadLocal(IOWorkerContextKey.FP.name(), RangeParser.FACTORY);
+        RangeParser rangeParser = tlRangeParser.get();
         if (rangeParser.of(range)) {
 
             context.fd = Files.openRO(path);

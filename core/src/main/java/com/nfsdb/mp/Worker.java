@@ -35,9 +35,10 @@ public class Worker extends Thread {
     private static final long SLEEP_THRESHOLD = 10000000L;
     private final ObjHashSet<? extends Job> jobs;
     private final CountDownLatch haltLatch;
-    private final WorkerContext context = new WorkerContext();
     @SuppressWarnings("FieldCanBeLocal")
     private volatile int running = 0;
+
+    private volatile int fence;
 
     public Worker(ObjHashSet<? extends Job> jobs, CountDownLatch haltLatch) {
         this.jobs = jobs;
@@ -59,11 +60,11 @@ public class Worker extends Thread {
 
                 boolean useful = false;
                 for (int i = 0; i < n; i++) {
-                    context.loadFence();
+                    loadFence();
                     try {
-                        useful |= jobs.get(i).run(context);
+                        useful |= jobs.get(i).run();
                     } finally {
-                        context.storeFence();
+                        storeFence();
                     }
                 }
 
@@ -89,6 +90,14 @@ public class Worker extends Thread {
             }
         }
         haltLatch.countDown();
+    }
+
+    private int loadFence() {
+        return fence;
+    }
+
+    private void storeFence() {
+        fence = 1;
     }
 
     static {

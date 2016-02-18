@@ -31,13 +31,10 @@ import com.nfsdb.log.Log;
 import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.Files;
 import com.nfsdb.misc.Misc;
-import com.nfsdb.mp.WorkerContext;
 import com.nfsdb.net.NetworkChannel;
 import com.nfsdb.ql.Record;
-import com.nfsdb.std.AssociativeCache;
 import com.nfsdb.std.FlyweightCharSequence;
 import com.nfsdb.std.Mutable;
-import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.PlainFile;
 
 import java.io.Closeable;
@@ -53,7 +50,6 @@ public class IOContext implements Closeable, Mutable {
     public final byte[] encoded = new byte[4];
     public final char[] encodingChar = new char[1];
     private final Response response;
-    public WorkerContext threadContext;
     // multipart generic
     public boolean chunky = false;
     // file upload fields
@@ -110,16 +106,6 @@ public class IOContext implements Closeable, Mutable {
 
     public int getResponseCode() {
         return response.getCode();
-    }
-
-    @SuppressWarnings("unchecked")
-    public <T> T getThreadLocal(CharSequence key, ObjectFactory<T> factory) {
-        AssociativeCache<Object> cache = threadContext.getCache();
-        Object result = cache.get(key);
-        if (result == null) {
-            cache.put(key, result = factory.newInstance());
-        }
-        return (T) result;
     }
 
     public ResponseSink responseSink() {

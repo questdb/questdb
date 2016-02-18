@@ -22,5 +22,5 @@
 package com.nfsdb.mp;
 
 public interface Job {
-    boolean run(WorkerContext context);
+    boolean run();
 }

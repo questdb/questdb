@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p/>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p/>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p/>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -27,7 +27,6 @@ import com.nfsdb.io.parser.TextParser;
 import com.nfsdb.io.parser.listener.InputAnalysisListener;
 import com.nfsdb.io.parser.listener.JournalImportListener;
 import com.nfsdb.io.parser.listener.Listener;
-import com.nfsdb.io.parser.listener.MetadataExtractorListener;
 import com.nfsdb.misc.ByteBuffers;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.Nullable;
@@ -35,7 +34,6 @@ import org.jetbrains.annotations.Nullable;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 
@@ -143,7 +141,7 @@ public final class ImportManager {
                     MappedByteBuffer buf = channel.map(FileChannel.MapMode.READ_ONLY, p, size - p < bufSize ? size - p : bufSize);
                     try {
                         if (p == 0) {
-                            analyze(parser, buf, listener, importSchema, sampleSize);
+                            parser.analyse(importSchema, ByteBuffers.getAddress(buf), buf.remaining(), sampleSize, listener);
                         }
                         p += buf.remaining();
                         parser.parse(ByteBuffers.getAddress(buf), buf.remaining(), Integer.MAX_VALUE, listener);
@@ -154,16 +152,5 @@ public final class ImportManager {
                 parser.parseLast();
             }
         }
-    }
-
-    private static void analyze(TextParser parser, ByteBuffer buf, InputAnalysisListener listener, ImportSchema importSchema, int sampleSize) {
-        // use field detector listener to process first 100 lines of input
-        MetadataExtractorListener lsnr = new MetadataExtractorListener().of(importSchema);
-        parser.parse(ByteBuffers.getAddress(buf), buf.remaining(), sampleSize, lsnr);
-        lsnr.onLineCount(parser.getLineCount());
-        buf.clear();
-        listener.onMetadata(lsnr.getMetadata());
-        parser.setHeader(lsnr.isHeader());
-        parser.restart();
     }
 }

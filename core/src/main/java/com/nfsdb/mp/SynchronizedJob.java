@@ -31,7 +31,7 @@ public abstract class SynchronizedJob implements Job {
     private volatile int locked = 0;
 
     @Override
-    public boolean run(WorkerContext context) {
+    public boolean run() {
         if (Unsafe.getUnsafe().compareAndSwapInt(this, LOCKED_OFFSET, 0, 1)) {
             try {
                 return runSerially();

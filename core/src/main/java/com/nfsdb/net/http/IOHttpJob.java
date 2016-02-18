@@ -28,7 +28,6 @@ import com.nfsdb.misc.Net;
 import com.nfsdb.mp.Job;
 import com.nfsdb.mp.RingQueue;
 import com.nfsdb.mp.Sequence;
-import com.nfsdb.mp.WorkerContext;
 
 import java.io.IOException;
 
@@ -50,7 +49,7 @@ public class IOHttpJob implements Job {
     }
 
     @Override
-    public boolean run(WorkerContext context) {
+    public boolean run() {
         long cursor = ioSequence.next();
         if (cursor < 0) {
             return false;
@@ -62,7 +61,6 @@ public class IOHttpJob implements Job {
         final ChannelStatus op = evt.status;
 
         ioSequence.done(cursor);
-        ioContext.threadContext = context;
         process(ioContext, op);
 
         return true;

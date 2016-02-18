@@ -76,10 +76,8 @@ jint convert_error(ssize_t n) {
     switch (n) {
         case 0:
             return com_nfsdb_misc_Net_EPEERDISCONNECT;
-        case EWOULDBLOCK:
-            return com_nfsdb_misc_Net_ERETRY;
         default:
-            return com_nfsdb_misc_Net_EOTHERDISCONNECT;
+            return (jint) (errno == EWOULDBLOCK ? com_nfsdb_misc_Net_ERETRY : com_nfsdb_misc_Net_EOTHERDISCONNECT);
     }
 }
 

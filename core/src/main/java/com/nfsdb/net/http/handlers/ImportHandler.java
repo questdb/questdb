@@ -31,7 +31,6 @@ import com.nfsdb.io.parser.FormatParser;
 import com.nfsdb.io.parser.PipeParser;
 import com.nfsdb.io.parser.TabParser;
 import com.nfsdb.io.parser.listener.JournalImportListener;
-import com.nfsdb.io.parser.listener.MetadataExtractorListener;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Misc;
@@ -41,6 +40,7 @@ import com.nfsdb.net.http.ResponseSink;
 import com.nfsdb.std.ByteSequence;
 import com.nfsdb.std.DirectByteCharSequence;
 import com.nfsdb.std.LongList;
+import com.nfsdb.std.ThreadLocal;
 
 import java.io.IOException;
 
@@ -50,6 +50,7 @@ public class ImportHandler extends AbstractMultipartHandler {
     private static final int TO_STRING_COL3_PAD = 10;
 
     private final JournalFactory factory;
+    private final ThreadLocal<FormatParser> tlFormatParser = new ThreadLocal<>(FormatParser.FACTORY);
 
     public ImportHandler(JournalFactory factory) {
         this.factory = factory;
@@ -156,22 +157,9 @@ public class ImportHandler extends AbstractMultipartHandler {
         }
     }
 
-    private void analyseColumns(IOContext context, long address, int len) {
-        // analyse columns and their types
-        int sampleSize = 100;
-        MetadataExtractorListener lsnr = context.getThreadLocal(IOWorkerContextKey.ME.name(), MetadataExtractorListener.FACTORY);
-        lsnr.clear();
-        // unashamedly use listener's metadata list
-        context.textParser.parse(address, len, sampleSize, lsnr);
-        lsnr.onLineCount(context.textParser.getLineCount());
-        context.importer.onMetadata(lsnr.getMetadata());
-        context.textParser.setHeader(lsnr.isHeader());
-        context.textParser.restart();
-        context.analysed = true;
-    }
-
     private void analyseFormat(IOContext context, long address, int len) {
-        FormatParser parser = context.getThreadLocal(IOWorkerContextKey.FP.name(), FormatParser.FACTORY);
+        final FormatParser parser = tlFormatParser.get();
+
         parser.of(address, len);
         context.dataFormatValid = parser.getFormat() != null && parser.getStdDev() < 0.5;
 
@@ -209,7 +197,8 @@ public class ImportHandler extends AbstractMultipartHandler {
             if (!context.analysed) {
                 analyseFormat(context, lo, len);
                 if (context.dataFormatValid) {
-                    analyseColumns(context, lo, len);
+                    context.textParser.analyse(null, lo, len, 100, context.importer);
+                    context.analysed = true;
                 }
             }
 
