@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
@@ -260,7 +260,7 @@ public class AggregationTest extends AbstractOptimiserTest {
             compiler.compile(factory, "select orderDate, price+quantity from orders sample by 8h");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertEquals(55, QueryError.INSTANCE.getPosition());
+            Assert.assertEquals(55, QueryError.getPosition());
         }
     }
 

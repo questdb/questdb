@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql;
 
@@ -229,8 +229,8 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
         try {
             compile("select timestamp from y asof join x on x.ccy = y.ccy");
         } catch (ParserException e) {
-            Assert.assertEquals(7, QueryError.INSTANCE.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "Ambiguous"));
+            Assert.assertEquals(7, QueryError.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Ambiguous"));
         }
     }
 
@@ -239,8 +239,8 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
         try {
             compile("select sum(timestamp) from y asof join x on x.ccy = y.ccy");
         } catch (ParserException e) {
-            Assert.assertEquals(11, QueryError.INSTANCE.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "Ambiguous"));
+            Assert.assertEquals(11, QueryError.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Ambiguous"));
         }
     }
 

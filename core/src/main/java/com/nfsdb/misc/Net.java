@@ -70,8 +70,6 @@ public final class Net {
 
     public native static long socketTcp(boolean blocking);
 
-    private native static int getEof();
-
     private native static int getEwouldblock();
 
     @SuppressFBWarnings("LEST_LOST_EXCEPTION_STACK_TRACE")

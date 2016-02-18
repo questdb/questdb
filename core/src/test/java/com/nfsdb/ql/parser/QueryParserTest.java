@@ -1,17 +1,17 @@
 /*******************************************************************************
- * _  _ ___ ___     _ _
+ *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- * <p/>
+ *
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- * <p/>
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * <p/>
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * <p/>
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -52,7 +52,7 @@ public class QueryParserTest extends AbstractTest {
         try {
             parser.parse("from x 'a b' where x > 1");
         } catch (ParserException e) {
-            Assert.assertEquals(7, QueryError.INSTANCE.getPosition());
+            Assert.assertEquals(7, QueryError.getPosition());
         }
     }
 
@@ -62,8 +62,8 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select x from a a cross join b on b.x = a.x");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertEquals(31, QueryError.INSTANCE.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "cannot"));
+            Assert.assertEquals(31, QueryError.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "cannot"));
         }
     }
 
@@ -111,7 +111,7 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select x, y from tab sample by");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
-            Assert.assertEquals(28, QueryError.INSTANCE.getPosition());
+            Assert.assertEquals(28, QueryError.getPosition());
         }
     }
 
@@ -121,8 +121,8 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select x, y from tab order by");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
-            Assert.assertEquals(27, QueryError.INSTANCE.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "end of input"));
+            Assert.assertEquals(27, QueryError.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "end of input"));
         }
     }
 
@@ -142,8 +142,8 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select x, y from tab sample by x,");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
-            Assert.assertEquals(33, QueryError.INSTANCE.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "Unexpected"));
+            Assert.assertEquals(33, QueryError.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Unexpected"));
         }
     }
 
@@ -153,7 +153,7 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select x, y from (tab sample by x,)");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
-            Assert.assertEquals(34, QueryError.INSTANCE.getPosition());
+            Assert.assertEquals(34, QueryError.getPosition());
         }
     }
 
@@ -163,7 +163,7 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select x, y from tab sample by x, order by y");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
-            Assert.assertEquals(33, QueryError.INSTANCE.getPosition());
+            Assert.assertEquals(33, QueryError.getPosition());
         }
     }
 
@@ -173,8 +173,8 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select x from a a inner join b z");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertEquals(31, QueryError.INSTANCE.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "\"on\""));
+            Assert.assertEquals(31, QueryError.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "\"on\""));
         }
     }
 
@@ -184,8 +184,8 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select x from a a inner join b z on");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertEquals(33, QueryError.INSTANCE.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "Expression"));
+            Assert.assertEquals(33, QueryError.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Expression"));
         }
     }
 
@@ -195,8 +195,8 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select x, y from tab order by x,");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
-            Assert.assertEquals(32, QueryError.INSTANCE.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "end of input"));
+            Assert.assertEquals(32, QueryError.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "end of input"));
         }
     }
 
@@ -206,8 +206,8 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select x, y from (tab order by x,)");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
-            Assert.assertEquals(33, QueryError.INSTANCE.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "Expression expected"));
+            Assert.assertEquals(33, QueryError.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Expression expected"));
         }
     }
 
@@ -217,8 +217,8 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select x from a a outer join b z");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertEquals(31, QueryError.INSTANCE.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "\"on\""));
+            Assert.assertEquals(31, QueryError.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "\"on\""));
         }
     }
 
@@ -228,8 +228,8 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select x from a a outer join b z on");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertEquals(33, QueryError.INSTANCE.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "Expression"));
+            Assert.assertEquals(33, QueryError.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Expression"));
         }
     }
 
@@ -239,8 +239,8 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select x,y from (tab where x = 100) latest by x");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertEquals(36, QueryError.INSTANCE.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "latest"));
+            Assert.assertEquals(36, QueryError.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "latest"));
         }
 
     }
@@ -303,7 +303,7 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select id, x + 10, x from tab id ~ 'HBRO'");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertEquals(33, QueryError.INSTANCE.getPosition());
+            Assert.assertEquals(33, QueryError.getPosition());
         }
     }
 
@@ -461,7 +461,7 @@ public class QueryParserTest extends AbstractTest {
         try {
             parser.parse("select x x, y y from tab where x > z limit 100,200 b");
         } catch (ParserException e) {
-            Assert.assertEquals(51, QueryError.INSTANCE.getPosition());
+            Assert.assertEquals(51, QueryError.getPosition());
         }
     }
 
@@ -536,8 +536,8 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select x from (tab where x > 10 t1");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertEquals(32, QueryError.INSTANCE.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.INSTANCE.getMessage(), "expected"));
+            Assert.assertEquals(32, QueryError.getPosition());
+            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "expected"));
         }
     }
 

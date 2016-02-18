@@ -95,7 +95,7 @@ public class ExprParserTest {
             x("", "x * 4 + c(x,y,)");
             Assert.fail("Expected syntax exception");
         } catch (ParserException e) {
-            Assert.assertEquals(14, QueryError.INSTANCE.getPosition());
+            Assert.assertEquals(14, QueryError.getPosition());
         }
     }
 
@@ -105,7 +105,7 @@ public class ExprParserTest {
             x("", "x * 4 + c(x,,y)");
             Assert.fail("Expected syntax exception");
         } catch (ParserException e) {
-            Assert.assertEquals(12, QueryError.INSTANCE.getPosition());
+            Assert.assertEquals(12, QueryError.getPosition());
         }
     }
 
@@ -145,7 +145,7 @@ public class ExprParserTest {
             x("", "a+b(5,c(x,y)");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
-            Assert.assertEquals(4, QueryError.INSTANCE.getPosition());
+            Assert.assertEquals(4, QueryError.getPosition());
         }
     }
 

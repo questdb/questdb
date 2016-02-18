@@ -111,14 +111,6 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_socketTcp
 
 /*
  * Class:     com_nfsdb_misc_Net
- * Method:    getEof
- * Signature: ()I
- */
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_getEof
-        (JNIEnv *, jclass);
-
-/*
- * Class:     com_nfsdb_misc_Net
  * Method:    getEwouldblock
  * Signature: ()I
  */
