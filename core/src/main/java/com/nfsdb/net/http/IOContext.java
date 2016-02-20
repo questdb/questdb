@@ -24,45 +24,26 @@ package com.nfsdb.net.http;
 import com.nfsdb.ex.DisconnectedChannelException;
 import com.nfsdb.ex.SlowWritableChannelException;
 import com.nfsdb.factory.configuration.RecordMetadata;
-import com.nfsdb.io.parser.TextParser;
-import com.nfsdb.io.parser.listener.JournalImportListener;
 import com.nfsdb.iter.clock.Clock;
-import com.nfsdb.log.Log;
-import com.nfsdb.log.LogFactory;
-import com.nfsdb.misc.Files;
 import com.nfsdb.misc.Misc;
 import com.nfsdb.net.NetworkChannel;
 import com.nfsdb.ql.Record;
 import com.nfsdb.std.FlyweightCharSequence;
+import com.nfsdb.std.LocalValueMap;
+import com.nfsdb.std.Locality;
 import com.nfsdb.std.Mutable;
-import com.nfsdb.store.PlainFile;
 
 import java.io.Closeable;
-import java.io.RandomAccessFile;
 import java.util.Iterator;
 
-public class IOContext implements Closeable, Mutable {
-    private static final Log LOG = LogFactory.getLog(IOContext.class);
-
+public class IOContext implements Closeable, Mutable, Locality {
     public final NetworkChannel channel;
     public final Request request;
     public final FlyweightCharSequence ext = new FlyweightCharSequence();
     public final byte[] encoded = new byte[4];
     public final char[] encodingChar = new char[1];
+    private final LocalValueMap map = new LocalValueMap();
     private final Response response;
-    // multipart generic
-    public boolean chunky = false;
-    // file upload fields
-    public PlainFile mf;
-    public long wptr = 0;
-    // import handler fields
-    public boolean analysed = false;
-    public boolean dataFormatValid = false;
-    public TextParser textParser;
-    public JournalImportListener importer;
-    public long fd = -1;
-    public long bytesSent;
-    public long sendMax;
     // query sending fields
     public Iterator<Record> records;
     public RecordMetadata metadata;
@@ -71,8 +52,6 @@ public class IOContext implements Closeable, Mutable {
     public long stop;
     public Record current;
     public boolean includeCount;
-    // static sending fields
-    private RandomAccessFile raf;
 
     public IOContext(NetworkChannel channel, Clock clock, int reqHeaderSize, int reqContentSize, int reqMultipartHeaderSize, int respHeaderSize, int respContentSize) {
         this.channel = channel;
@@ -88,8 +67,7 @@ public class IOContext implements Closeable, Mutable {
     public void clear() {
         request.clear();
         response.clear();
-        this.chunky = false;
-        freeResources();
+        map.clear();
     }
 
     @Override
@@ -97,11 +75,16 @@ public class IOContext implements Closeable, Mutable {
         Misc.free(channel);
         request.close();
         response.close();
-        freeResources();
+        map.close();
     }
 
     public FixedSizeResponse fixedSizeResponse() {
         return response.asFixedSize();
+    }
+
+    @Override
+    public LocalValueMap getMap() {
+        return map;
     }
 
     public int getResponseCode() {
@@ -118,15 +101,5 @@ public class IOContext implements Closeable, Mutable {
 
     public SimpleResponse simpleResponse() {
         return response.asSimple();
-    }
-
-    private void freeResources() {
-        mf = Misc.free(mf);
-        raf = Misc.free(raf);
-        textParser = Misc.free(textParser);
-        importer = Misc.free(importer);
-        if (fd != -1 && Files.close(fd) != 0) {
-            LOG.error().$("Could not close file").$();
-        }
     }
 }

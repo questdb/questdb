@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.misc;
 
@@ -37,17 +37,17 @@ public final class Misc {
     private Misc() {
     }
 
+    @SuppressWarnings("SameReturnValue")
     @SuppressFBWarnings("CFS_CONFUSING_FUNCTION_SEMANTICS")
     public static <T> T free(T object) {
         if (object instanceof Closeable) {
             try {
                 ((Closeable) object).close();
-                return null;
             } catch (IOException e) {
                 throw new FatalError(e);
             }
         }
-        return object;
+        return null;
     }
 
     public static void urlDecode(long lo, long hi, CharSequenceObjHashMap<CharSequence> map, ObjectPool<DirectByteCharSequence> pool) {

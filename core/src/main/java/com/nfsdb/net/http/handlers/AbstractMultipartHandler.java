@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.net.http.handlers;
 
@@ -29,11 +29,17 @@ import com.nfsdb.net.http.MultipartListener;
 import com.nfsdb.net.http.RequestHeaderBuffer;
 import com.nfsdb.std.ByteSequence;
 import com.nfsdb.std.DirectByteCharSequence;
+import com.nfsdb.std.LocalValue;
+import com.nfsdb.std.Mutable;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+import java.io.Closeable;
 import java.io.IOException;
 
 public abstract class AbstractMultipartHandler implements ContextHandler, MultipartListener {
+
+    private final LocalValue<MultipartContext> lvContext = new LocalValue<>();
+
     @Override
     public final void handle(IOContext context) throws IOException {
         onPartEnd(context);
@@ -48,10 +54,15 @@ public abstract class AbstractMultipartHandler implements ContextHandler, Multip
     @Override
     public final void onChunk(IOContext context, RequestHeaderBuffer hb, DirectByteCharSequence data, boolean continued) throws IOException {
         if (!continued) {
-            if (context.chunky) {
+            MultipartContext h = lvContext.get(context);
+            if (h == null) {
+                lvContext.set(context, h = new MultipartContext());
+            }
+
+            if (h.chunky) {
                 onPartEnd(context);
             }
-            context.chunky = true;
+            h.chunky = true;
             onPartBegin(context, hb);
         }
         onData(context, hb, data);
@@ -64,4 +75,18 @@ public abstract class AbstractMultipartHandler implements ContextHandler, Multip
     protected abstract void onPartBegin(IOContext context, RequestHeaderBuffer hb) throws IOException;
 
     protected abstract void onPartEnd(IOContext context) throws IOException;
+
+    private static class MultipartContext implements Mutable, Closeable {
+        private boolean chunky = false;
+
+        @Override
+        public void clear() {
+            chunky = false;
+        }
+
+        @Override
+        public void close() {
+            clear();
+        }
+    }
 }

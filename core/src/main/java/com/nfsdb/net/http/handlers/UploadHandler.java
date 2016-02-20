@@ -29,13 +29,17 @@ import com.nfsdb.net.http.RequestHeaderBuffer;
 import com.nfsdb.net.http.ResponseSink;
 import com.nfsdb.std.ByteSequence;
 import com.nfsdb.std.DirectByteCharSequence;
+import com.nfsdb.std.LocalValue;
+import com.nfsdb.std.Mutable;
 import com.nfsdb.store.PlainFile;
 
+import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 
 public class UploadHandler extends AbstractMultipartHandler {
     private final File path;
+    private final LocalValue<UploadContext> lvContext = new LocalValue<>();
 
     public UploadHandler(File path) {
         this.path = path;
@@ -51,26 +55,27 @@ public class UploadHandler extends AbstractMultipartHandler {
 
     @Override
     protected void onData(IOContext context, RequestHeaderBuffer hb, ByteSequence data) {
-        if (context.mf != null) {
-            PlainFile mf = context.mf;
+        UploadContext h = lvContext.get(context);
+        if (h != null && h.mf != null) {
+            PlainFile mf = h.mf;
 
             int len = data.length();
-            long mapAddr = mf.addressOf(context.wptr);
-            int mapLen = mf.pageRemaining(context.wptr);
+            long mapAddr = mf.addressOf(h.wptr);
+            int mapLen = mf.pageRemaining(h.wptr);
             if (len < mapLen) {
                 write0(data, 0, mapAddr, len);
-                context.wptr += len;
+                h.wptr += len;
             } else {
                 int p = 0;
                 while (true) {
                     write0(data, p, mapAddr, mapLen);
-                    context.wptr += mapLen;
+                    h.wptr += mapLen;
                     len -= mapLen;
                     p += mapLen;
 
                     if (len > 0) {
-                        mapAddr = mf.addressOf(context.wptr);
-                        mapLen = mf.pageRemaining(context.wptr);
+                        mapAddr = mf.addressOf(h.wptr);
+                        mapLen = mf.pageRemaining(h.wptr);
                         if (len < mapLen) {
                             mapLen = len;
                         }
@@ -87,7 +92,11 @@ public class UploadHandler extends AbstractMultipartHandler {
         CharSequence file = hb.getContentDispositionFilename();
         if (file != null) {
             try {
-                context.mf = new PlainFile(new File(path, file.toString()), 21, JournalMode.APPEND);
+                UploadContext h = lvContext.get(context);
+                if (h == null) {
+                    lvContext.set(context, h = new UploadContext());
+                }
+                h.mf = new PlainFile(new File(path, file.toString()), 21, JournalMode.APPEND);
             } catch (IOException ignore) {
                 sendError(context);
             }
@@ -96,10 +105,10 @@ public class UploadHandler extends AbstractMultipartHandler {
 
     @Override
     protected void onPartEnd(IOContext context) throws IOException {
-        if (context.mf != null) {
-            context.mf.compact(context.wptr);
-            context.mf = null;
-            context.wptr = 0;
+        UploadContext h = lvContext.get(context);
+        if (h != null && h.mf != null) {
+            h.mf.compact(h.wptr);
+            h.clear();
         }
     }
 
@@ -118,6 +127,22 @@ public class UploadHandler extends AbstractMultipartHandler {
             for (int i = offset; i < len; i++) {
                 Unsafe.getUnsafe().putByte(p++, data.byteAt(i));
             }
+        }
+    }
+
+    private static class UploadContext implements Mutable, Closeable {
+        private long wptr = 0;
+        private PlainFile mf;
+
+        @Override
+        public void clear() {
+            mf = Misc.free(mf);
+            wptr = 0;
+        }
+
+        @Override
+        public void close() {
+            clear();
         }
     }
 }

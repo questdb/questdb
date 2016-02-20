@@ -26,10 +26,7 @@ import com.nfsdb.ex.SlowWritableChannelException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.io.parser.CsvParser;
-import com.nfsdb.io.parser.FormatParser;
-import com.nfsdb.io.parser.PipeParser;
-import com.nfsdb.io.parser.TabParser;
+import com.nfsdb.io.parser.*;
 import com.nfsdb.io.parser.listener.JournalImportListener;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.misc.Chars;
@@ -37,11 +34,10 @@ import com.nfsdb.misc.Misc;
 import com.nfsdb.net.http.IOContext;
 import com.nfsdb.net.http.RequestHeaderBuffer;
 import com.nfsdb.net.http.ResponseSink;
-import com.nfsdb.std.ByteSequence;
-import com.nfsdb.std.DirectByteCharSequence;
-import com.nfsdb.std.LongList;
+import com.nfsdb.std.*;
 import com.nfsdb.std.ThreadLocal;
 
+import java.io.Closeable;
 import java.io.IOException;
 
 public class ImportHandler extends AbstractMultipartHandler {
@@ -51,6 +47,7 @@ public class ImportHandler extends AbstractMultipartHandler {
 
     private final JournalFactory factory;
     private final ThreadLocal<FormatParser> tlFormatParser = new ThreadLocal<>(FormatParser.FACTORY);
+    private final LocalValue<ImportHandlerContext> lvContext = new LocalValue<>();
 
     public ImportHandler(JournalFactory factory) {
         this.factory = factory;
@@ -111,15 +108,15 @@ public class ImportHandler extends AbstractMultipartHandler {
         );
     }
 
-    private static void sendSummary(IOContext context) throws IOException {
-        if (context.importer != null) {
+    private static void sendSummary(IOContext context, ImportHandlerContext h) throws IOException {
+        if (h.importer != null && h.textParser != null) {
 
             ResponseSink r = context.responseSink();
 
             r.status(200, "text/plain; charset=utf-8");
 
-            JournalMetadata m = context.importer.getMetadata();
-            LongList errors = context.importer.getErrors();
+            JournalMetadata m = h.importer.getMetadata();
+            LongList errors = h.importer.getErrors();
 
             sep(r);
             r.put('|');
@@ -136,12 +133,12 @@ public class ImportHandler extends AbstractMultipartHandler {
 
             r.put('|');
             pad(r, TO_STRING_COL1_PAD, "Rows handled");
-            pad(r, TO_STRING_COL2_PAD, context.textParser.getLineCount());
+            pad(r, TO_STRING_COL2_PAD, h.textParser.getLineCount());
             pad(r, TO_STRING_COL3_PAD, "").put(Misc.EOL);
 
             r.put('|');
             pad(r, TO_STRING_COL1_PAD, "Rows imported");
-            pad(r, TO_STRING_COL2_PAD, context.importer.getImportedRowCount());
+            pad(r, TO_STRING_COL2_PAD, h.importer.getImportedRowCount());
             pad(r, TO_STRING_COL3_PAD, "").put(Misc.EOL);
             sep(r);
 
@@ -157,7 +154,7 @@ public class ImportHandler extends AbstractMultipartHandler {
         }
     }
 
-    private void analyseFormat(IOContext context, long address, int len) {
+    private void analyseFormat(ImportHandlerContext context, long address, int len) {
         final FormatParser parser = tlFormatParser.get();
 
         parser.of(address, len);
@@ -192,18 +189,21 @@ public class ImportHandler extends AbstractMultipartHandler {
     @Override
     protected void onData(IOContext context, RequestHeaderBuffer hb, ByteSequence data) throws DisconnectedChannelException, SlowWritableChannelException {
         int len;
+
+        ImportHandlerContext h = lvContext.get(context);
+
         if (hb.getContentDispositionFilename() != null && (len = data.length()) > 0) {
             long lo = ((DirectByteCharSequence) data).getLo();
-            if (!context.analysed) {
-                analyseFormat(context, lo, len);
-                if (context.dataFormatValid) {
-                    context.textParser.analyse(null, lo, len, 100, context.importer);
-                    context.analysed = true;
+            if (!h.analysed) {
+                analyseFormat(h, lo, len);
+                if (h.dataFormatValid) {
+                    h.textParser.analyse(null, lo, len, 100, h.importer);
+                    h.analysed = true;
                 }
             }
 
-            if (context.dataFormatValid) {
-                context.textParser.parse(lo, len, Integer.MAX_VALUE, context.importer);
+            if (h.dataFormatValid) {
+                h.textParser.parse(lo, len, Integer.MAX_VALUE, h.importer);
             } else {
                 context.simpleResponse().send(400, "Invalid data format");
                 throw DisconnectedChannelException.INSTANCE;
@@ -215,8 +215,15 @@ public class ImportHandler extends AbstractMultipartHandler {
     protected void onPartBegin(IOContext context, RequestHeaderBuffer hb) throws IOException {
         if (hb.getContentDispositionFilename() != null) {
             if (Chars.equals(hb.getContentDispositionName(), "data")) {
-                context.analysed = false;
-                context.importer = new JournalImportListener(factory, hb.getContentDispositionFilename().toString());
+
+                ImportHandlerContext h = lvContext.get(context);
+                if (h == null) {
+                    lvContext.set(context, h = new ImportHandlerContext());
+                }
+
+
+                h.analysed = false;
+                h.importer = new JournalImportListener(factory, hb.getContentDispositionFilename().toString());
             } else {
                 context.simpleResponse().send(400, "Unrecognised field");
                 throw DisconnectedChannelException.INSTANCE;
@@ -226,12 +233,33 @@ public class ImportHandler extends AbstractMultipartHandler {
 
     @Override
     protected void onPartEnd(IOContext context) throws IOException {
-        if (context.textParser != null) {
-            context.textParser.parseLast();
-            context.importer.commit();
-            sendSummary(context);
-            context.textParser = Misc.free(context.textParser);
-            context.importer = Misc.free(context.importer);
+        ImportHandlerContext h = lvContext.get(context);
+        if (h != null && h.textParser != null) {
+            h.textParser.parseLast();
+            h.importer.commit();
+            sendSummary(context, h);
+            h.textParser = Misc.free(h.textParser);
+            h.importer = Misc.free(h.importer);
+        }
+    }
+
+    private static class ImportHandlerContext implements Mutable, Closeable {
+        private boolean analysed = false;
+        private boolean dataFormatValid = false;
+        private TextParser textParser;
+        private JournalImportListener importer;
+
+        @Override
+        public void clear() {
+            analysed = false;
+            dataFormatValid = false;
+            textParser = Misc.free(textParser);
+            importer = Misc.free(importer);
+        }
+
+        @Override
+        public void close() {
+            clear();
         }
     }
 }

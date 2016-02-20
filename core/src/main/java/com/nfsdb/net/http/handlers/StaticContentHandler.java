@@ -1,47 +1,44 @@
-/*******************************************************************************
- * _  _ ___ ___     _ _
+/*
+ *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- * <p/>
+ *
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- * <p/>
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * <p/>
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * <p/>
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.net.http.handlers;
 
 import com.nfsdb.ex.NumericException;
 import com.nfsdb.io.sink.CharSink;
-import com.nfsdb.log.Log;
-import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.*;
 import com.nfsdb.net.http.*;
-import com.nfsdb.std.LPSZ;
-import com.nfsdb.std.ObjectFactory;
-import com.nfsdb.std.PrefixedPath;
+import com.nfsdb.std.*;
 import com.nfsdb.std.ThreadLocal;
 
+import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
 public class StaticContentHandler implements ContextHandler {
 
-    private static final Log LOG = LogFactory.getLog(StaticContentHandler.class);
     private final MimeTypes mimeTypes;
     private final ThreadLocal<PrefixedPath> tlPrefixedPath;
     private final ThreadLocal<RangeParser> tlRangeParser = new ThreadLocal<>(RangeParser.FACTORY);
+    private final LocalValue<FileDescriptorHolder> lvFd = new LocalValue<>();
 
     public StaticContentHandler(final File publicDir, MimeTypes mimeTypes) {
         this.mimeTypes = mimeTypes;
@@ -69,7 +66,9 @@ public class StaticContentHandler implements ContextHandler {
     }
 
     public void resume(IOContext context) throws IOException {
-        if (context.fd == -1) {
+        FileDescriptorHolder h = lvFd.get(context);
+
+        if (h == null || h.fd == -1) {
             return;
         }
 
@@ -79,21 +78,17 @@ public class StaticContentHandler implements ContextHandler {
         int sz = out.remaining();
 
         long l;
-        while (context.bytesSent < context.sendMax && (l = Files.read(context.fd, wptr, sz, context.bytesSent)) > 0) {
-            if (l + context.bytesSent > context.sendMax) {
-                l = context.sendMax - context.bytesSent;
+        while (h.bytesSent < h.sendMax && (l = Files.read(h.fd, wptr, sz, h.bytesSent)) > 0) {
+            if (l + h.bytesSent > h.sendMax) {
+                l = h.sendMax - h.bytesSent;
             }
             out.limit((int) l);
-            context.bytesSent += l;
+            h.bytesSent += l;
             r.sendChunk();
         }
         r.done();
-
         // reached the end naturally?
-        if (Files.close(context.fd) != 0) {
-            LOG.error().$("Could not close file").$();
-        }
-        context.fd = -1;
+        h.clear();
     }
 
     private void send(IOContext context, LPSZ path, boolean asAttachment) throws IOException {
@@ -135,26 +130,31 @@ public class StaticContentHandler implements ContextHandler {
         RangeParser rangeParser = tlRangeParser.get();
         if (rangeParser.of(range)) {
 
-            context.fd = Files.openRO(path);
-            if (context.fd == -1) {
+            FileDescriptorHolder h = lvFd.get(context);
+            if (h == null) {
+                lvFd.set(context, h = new FileDescriptorHolder());
+            }
+
+            h.fd = Files.openRO(path);
+            if (h.fd == -1) {
                 context.simpleResponse().send(404);
                 return;
             }
 
-            context.bytesSent = 0;
+            h.bytesSent = 0;
 
             final long length = Files.length(path);
-            final long l = rangeParser.getLo();
-            final long h = rangeParser.getHi();
-            if (l > length || (h != Long.MAX_VALUE && h > length) || l > h) {
+            final long lo = rangeParser.getLo();
+            final long hi = rangeParser.getHi();
+            if (lo > length || (hi != Long.MAX_VALUE && hi > length) || lo > hi) {
                 context.simpleResponse().send(416);
             } else {
-                context.bytesSent = l;
-                context.sendMax = h == Long.MAX_VALUE ? length : h;
+                h.bytesSent = lo;
+                h.sendMax = hi == Long.MAX_VALUE ? length : hi;
 
                 final FixedSizeResponse r = context.fixedSizeResponse();
 
-                r.status(206, contentType, context.sendMax - l);
+                r.status(206, contentType, h.sendMax - lo);
 
                 final CharSink sink = r.headers();
 
@@ -163,7 +163,7 @@ public class StaticContentHandler implements ContextHandler {
                     sink.put("Content-Disposition: attachment; filename=\"").put(path).put('\"').put(Misc.EOL);
                 }
                 sink.put("Accept-Ranges: bytes").put(Misc.EOL);
-                sink.put("Content-Range: bytes ").put(l).put('-').put(context.sendMax).put('/').put(length).put(Misc.EOL);
+                sink.put("Content-Range: bytes ").put(lo).put('-').put(h.sendMax).put('/').put(length).put(Misc.EOL);
                 sink.put("ETag: ").put(Files.getLastModified(path)).put(Misc.EOL);
                 r.sendHeader();
                 resume(context);
@@ -178,10 +178,14 @@ public class StaticContentHandler implements ContextHandler {
         if (fd == -1) {
             context.simpleResponse().send(404);
         } else {
-            context.fd = fd;
-            context.bytesSent = 0;
+            FileDescriptorHolder h = lvFd.get(context);
+            if (h == null) {
+                lvFd.set(context, h = new FileDescriptorHolder());
+            }
+            h.fd = fd;
+            h.bytesSent = 0;
             final long length = Files.length(path);
-            context.sendMax = Long.MAX_VALUE;
+            h.sendMax = Long.MAX_VALUE;
 
             final FixedSizeResponse r = context.fixedSizeResponse();
             r.status(200, contentType, length);
@@ -192,6 +196,27 @@ public class StaticContentHandler implements ContextHandler {
             r.headers().put("ETag: ").put('"').put(Files.getLastModified(path)).put('"').put(Misc.EOL);
             r.sendHeader();
             resume(context);
+        }
+    }
+
+    private static class FileDescriptorHolder implements Mutable, Closeable {
+        long fd = -1;
+        long bytesSent;
+        long sendMax;
+
+        @Override
+        public void clear() {
+            if (fd > -1) {
+                Files.close(fd);
+                fd = -1;
+            }
+            bytesSent = 0;
+            sendMax = Long.MAX_VALUE;
+        }
+
+        @Override
+        public void close() {
+            clear();
         }
     }
 }
