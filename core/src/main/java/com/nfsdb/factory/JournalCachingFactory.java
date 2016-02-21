@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p/>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p/>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p/>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -27,19 +27,22 @@ import com.nfsdb.JournalKey;
 import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
+import com.nfsdb.std.Mutable;
 import com.nfsdb.std.ObjObjHashMap;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
-public class JournalCachingFactory extends AbstractJournalReaderFactory implements JournalClosingListener {
-
+public class JournalCachingFactory extends AbstractJournalReaderFactory implements JournalClosingListener, Mutable {
     private final ObjObjHashMap<JournalKey, Journal> readers = new ObjObjHashMap<>();
     private final ObjObjHashMap<JournalKey, JournalBulkReader> bulkReaders = new ObjObjHashMap<>();
     private final List<Journal> journalList = new ArrayList<>();
     private JournalFactoryPool pool;
+    private boolean inPool = false;
+    private AtomicBoolean closed = new AtomicBoolean(false);
 
     public JournalCachingFactory(JournalConfiguration configuration) {
         super(configuration);
@@ -77,17 +80,28 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
     }
 
     @Override
+    public void clear() {
+        close();
+    }
+
+    @Override
     public void close() {
         if (pool != null) {
-            pool.release(this);
-        } else {
-            for (int i = 0, sz = journalList.size(); i < sz; i++) {
-                Journal journal = journalList.get(i);
-                journal.setCloseListener(null);
-                journal.close();
+            // To not release twice.
+            if (!inPool) {
+                inPool = true;
+                pool.release(this);
             }
-            readers.clear();
-            bulkReaders.clear();
+        } else {
+            if (closed.compareAndSet(false, true)) {
+                for (int i = 0, sz = journalList.size(); i < sz; i++) {
+                    Journal journal = journalList.get(i);
+                    journal.setCloseListener(null);
+                    journal.close();
+                }
+                readers.clear();
+                bulkReaders.clear();
+            }
         }
     }
 
@@ -114,6 +128,10 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
         for (int i = 0, sz = journalList.size(); i < sz; i++) {
             journalList.get(i).refresh();
         }
+    }
+
+    void setInUse() {
+        inPool = false;
     }
 
     void clearPool() {

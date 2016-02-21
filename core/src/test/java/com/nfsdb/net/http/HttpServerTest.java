@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p/>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p/>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p/>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -26,7 +26,11 @@ import com.google.gson.GsonBuilder;
 import com.nfsdb.Journal;
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.ex.*;
+import com.nfsdb.ex.FatalError;
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.NumericException;
+import com.nfsdb.ex.ResponseContentBufferTooSmallException;
+import com.nfsdb.factory.JournalFactoryPool;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.sink.FileSink;
 import com.nfsdb.iter.clock.Clock;
@@ -36,8 +40,6 @@ import com.nfsdb.net.http.handlers.ImportHandler;
 import com.nfsdb.net.http.handlers.JsonHandler;
 import com.nfsdb.net.http.handlers.StaticContentHandler;
 import com.nfsdb.net.http.handlers.UploadHandler;
-import com.nfsdb.ql.parser.QueryCompiler;
-import com.nfsdb.ql.parser.QueryError;
 import com.nfsdb.test.tools.TestUtils;
 import org.apache.http.Header;
 import org.apache.http.HttpResponse;
@@ -57,6 +59,7 @@ import org.apache.http.impl.client.HttpClients;
 import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
 import org.apache.http.ssl.SSLContextBuilder;
 import org.apache.http.ssl.TrustStrategy;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -89,6 +92,7 @@ public class HttpServerTest extends AbstractJournalTest {
             "\r\n";
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
+    private JournalFactoryPool factoryPool;
 
     public static HttpResponse get(String url) throws IOException {
         HttpGet post = new HttpGet(url);
@@ -305,32 +309,6 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
-    public void testImportAppend() throws Exception {
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(factory));
-        }});
-        server.start();
-
-        try {
-            Assert.assertEquals(200, upload("/csv/test-import.csv", "http://localhost:9000/imp"));
-            Assert.assertEquals(200, upload("/csv/test-import.csv", "http://localhost:9000/imp"));
-
-            try (Journal r = factory.reader("test-import.csv")) {
-                // todo: analyze result in-depth
-                QueryCompiler qc = new QueryCompiler();
-                try {
-                    qc.compile(factory, "select count() from 'test-import.csv' where IsoDate = NaN or Fmt1Date = NaN");
-                } catch (ParserException e) {
-                    System.out.println(QueryError.getMessage());
-                }
-                Assert.assertEquals(258, r.size());
-            }
-        } finally {
-            server.halt();
-        }
-    }
-
-    @Test
     public void testImportUnknownFormat() throws Exception {
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
             put("/imp", new ImportHandler(factory));
@@ -348,7 +326,7 @@ public class HttpServerTest extends AbstractJournalTest {
         int count = (int) 1E4;
         generateJournal(count);
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", new JsonHandler(factory));
+            put("/js", createHandler());
         }});
         server.start();
         try {
@@ -356,6 +334,7 @@ public class HttpServerTest extends AbstractJournalTest {
             QueryResponse queryResponse = download(query);
             Assert.assertEquals(count, queryResponse.result.length);
         } finally {
+            factoryPool.close();
             server.halt();
         }
     }
@@ -364,7 +343,7 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testJsonEmpty() throws Exception {
         generateJournal();
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", new JsonHandler(factory));
+            put("/js", createHandler());
         }});
         server.start();
         try {
@@ -372,6 +351,7 @@ public class HttpServerTest extends AbstractJournalTest {
             QueryResponse queryResponse = download(query, 0, 0);
             Assert.assertEquals(0, queryResponse.result.length);
         } finally {
+            factoryPool.close();
             server.halt();
         }
     }
@@ -380,7 +360,7 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testJsonEmpty0() throws Exception {
         generateJournal();
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", new JsonHandler(factory));
+            put("/js", createHandler());
         }});
         server.start();
         try {
@@ -388,6 +368,7 @@ public class HttpServerTest extends AbstractJournalTest {
             QueryResponse queryResponse = download(query, 0, 0);
             Assert.assertEquals(0, queryResponse.result.length);
         } finally {
+            factoryPool.close();
             server.halt();
         }
     }
@@ -402,7 +383,7 @@ public class HttpServerTest extends AbstractJournalTest {
         String allCharString = allChars.toString();
         generateJournal(allCharString, 1.900232E-10, 2.598E20, Long.MAX_VALUE, Integer.MIN_VALUE, -102023);
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", new JsonHandler(factory));
+            put("/js", createHandler());
         }});
         server.start();
         try {
@@ -414,6 +395,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 Assert.assertEquals(i + "", allCharString.charAt(i), queryResponse.result[0].id.charAt(i));
             }
         } finally {
+            factoryPool.close();
             server.halt();
         }
     }
@@ -422,7 +404,7 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testJsonEncodeNumbers() throws Exception {
         generateJournal(null, 1.900232E-10, Double.MAX_VALUE, Long.MAX_VALUE, Integer.MIN_VALUE, 10);
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", new JsonHandler(factory));
+            put("/js", createHandler());
         }});
         server.start();
         try {
@@ -435,6 +417,7 @@ public class HttpServerTest extends AbstractJournalTest {
             Assert.assertEquals(10, queryResponse.result[0].timestamp);
             Assert.assertEquals(false, queryResponse.moreExist);
         } finally {
+            factoryPool.close();
             server.halt();
         }
     }
@@ -443,7 +426,7 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testJsonLimits() throws Exception {
         generateJournal();
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", new JsonHandler(factory));
+            put("/js", createHandler());
         }});
         server.start();
         try {
@@ -454,6 +437,42 @@ public class HttpServerTest extends AbstractJournalTest {
             Assert.assertEquals("id2", queryResponse.result[0].id);
             Assert.assertEquals("id3", queryResponse.result[1].id);
         } finally {
+            factoryPool.close();
+            server.halt();
+        }
+    }
+
+    @Test
+    public void testJsonPooling() throws Exception {
+        generateJournal();
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            put("/js", createHandler());
+        }});
+        server.start();
+        try {
+            QueryResponse queryResponse1 = download("select 1 z from tab limit 10");
+            QueryResponse queryResponse2 = download("select 1 z from tab limit 10");
+
+            Assert.assertEquals(10, queryResponse1.result.length);
+            Assert.assertEquals(10, queryResponse2.result.length);
+        } finally {
+            factoryPool.close();
+            server.halt();
+        }
+    }
+
+    @Test
+    public void testJsonSimple() throws Exception {
+        generateJournal();
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            put("/js", createHandler());
+        }});
+        server.start();
+        try {
+            QueryResponse queryResponse = download("select 1 z from tab limit 10");
+            Assert.assertEquals(10, queryResponse.result.length);
+        } finally {
+            factoryPool.close();
             server.halt();
         }
     }
@@ -462,7 +481,7 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testJsonTakeLimit() throws Exception {
         generateJournal();
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", new JsonHandler(factory));
+            put("/js", createHandler());
         }});
         server.start();
         try {
@@ -471,6 +490,7 @@ public class HttpServerTest extends AbstractJournalTest {
             Assert.assertEquals(2, queryResponse.result.length);
             Assert.assertEquals(true, queryResponse.moreExist);
         } finally {
+            factoryPool.close();
             server.halt();
         }
     }
@@ -572,21 +592,6 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
-    public void testSimpleJson() throws Exception {
-        generateJournal();
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", new JsonHandler(factory));
-        }});
-        server.start();
-        try {
-            QueryResponse queryResponse = download("select 1 z from tab limit 10");
-            Assert.assertEquals(10, queryResponse.result.length);
-        } finally {
-            server.halt();
-        }
-    }
-
-    @Test
     public void testSslConcurrentDownload() throws Exception {
         final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/nfsdb.conf"));
         configuration.getSslConfig().setSecure(true);
@@ -617,9 +622,10 @@ public class HttpServerTest extends AbstractJournalTest {
         server.start();
 
         File expected = resourceFile("/csv/test-import.csv");
+        File actual = new File(dir, "test-import.csv");
         upload(expected, "http://localhost:9000/upload");
 
-        TestUtils.assertEquals(expected, new File(dir, "test-import.csv"));
+        TestUtils.assertEquals(expected, actual);
         server.halt();
     }
 
@@ -853,6 +859,12 @@ public class HttpServerTest extends AbstractJournalTest {
         while ((l = is.read(buf)) > 0) {
             os.write(buf, 0, l);
         }
+    }
+
+    @NotNull
+    private JsonHandler createHandler() throws InterruptedException {
+        factoryPool = new JournalFactoryPool(factory.getConfiguration(), 1);
+        return new JsonHandler(factoryPool);
     }
 
     private QueryResponse download(String queryUrl) throws Exception {

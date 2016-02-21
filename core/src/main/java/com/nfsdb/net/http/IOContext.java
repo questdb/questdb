@@ -23,18 +23,15 @@ package com.nfsdb.net.http;
 
 import com.nfsdb.ex.DisconnectedChannelException;
 import com.nfsdb.ex.SlowWritableChannelException;
-import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.misc.Misc;
 import com.nfsdb.net.NetworkChannel;
-import com.nfsdb.ql.Record;
 import com.nfsdb.std.FlyweightCharSequence;
 import com.nfsdb.std.LocalValueMap;
 import com.nfsdb.std.Locality;
 import com.nfsdb.std.Mutable;
 
 import java.io.Closeable;
-import java.util.Iterator;
 
 public class IOContext implements Closeable, Mutable, Locality {
     public final NetworkChannel channel;
@@ -44,14 +41,7 @@ public class IOContext implements Closeable, Mutable, Locality {
     public final char[] encodingChar = new char[1];
     private final LocalValueMap map = new LocalValueMap();
     private final Response response;
-    // query sending fields
-    public Iterator<Record> records;
-    public RecordMetadata metadata;
-    public long count;
-    public long skip;
-    public long stop;
-    public Record current;
-    public boolean includeCount;
+
 
     public IOContext(NetworkChannel channel, Clock clock, int reqHeaderSize, int reqContentSize, int reqMultipartHeaderSize, int respHeaderSize, int respContentSize) {
         this.channel = channel;

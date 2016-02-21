@@ -45,6 +45,8 @@ public class HttpServerConfiguration {
     private int httpThreads = 2;
     private int httpTimeout = 10000000;
     private int httpMaxConnections = 128;
+    private int journalPoolSize = 128;
+
     private File dbPath = new File("db");
     private File mimeTypes = new File("conf/mime.types");
     private File httpPublic = new File("public");
@@ -82,8 +84,8 @@ public class HttpServerConfiguration {
             this.httpMaxConnections = n;
         }
 
-        if ((n = parseSize(props, "http.buf.req.header")) > -1) {
-            this.httpBufReqHeader = n;
+        if ((n = parseInt(props, "http.max.connections")) > -1) {
+            this.httpMaxConnections = n;
         }
 
         if ((n = parseSize(props, "http.buf.req.content")) > -1) {
@@ -108,6 +110,12 @@ public class HttpServerConfiguration {
             this.dbPath = mkdirs(normalize(root, new File(s)));
         } else {
             this.dbPath = mkdirs(normalize(root, this.dbPath));
+        }
+
+        if ((n = parseSize(props, "db.max.pool.size")) > -1) {
+            this.journalPoolSize = n;
+        } else {
+            this.journalPoolSize = httpMaxConnections;
         }
 
         if ((s = props.getProperty("mime.types")) != null) {
@@ -226,6 +234,10 @@ public class HttpServerConfiguration {
         this.httpTimeout = httpTimeout;
     }
 
+    public int getJournalPoolSize() {
+        return journalPoolSize;
+    }
+
     public File getMimeTypes() {
         return mimeTypes;
     }
@@ -245,6 +257,7 @@ public class HttpServerConfiguration {
                 ",\n\thttpBufRespContent=" + httpBufRespContent +
                 ",\n\thttpThreads=" + httpThreads +
                 ",\n\tdbPath=" + dbPath +
+                ",\n\tjournalPoolSize=" + journalPoolSize +
                 "\n}";
     }
 

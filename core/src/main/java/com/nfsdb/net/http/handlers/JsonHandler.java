@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,15 +17,18 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.net.http.handlers;
 
 import com.nfsdb.ex.*;
-import com.nfsdb.factory.JournalReaderFactory;
+import com.nfsdb.factory.JournalCachingFactory;
+import com.nfsdb.factory.JournalFactoryPool;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.net.http.ChunkedResponse;
@@ -35,6 +38,7 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.parser.QueryCompiler;
 import com.nfsdb.ql.parser.QueryError;
+import com.nfsdb.std.LocalValue;
 import sun.nio.cs.ArrayEncoder;
 
 import java.io.IOException;
@@ -43,11 +47,21 @@ import java.nio.charset.CharsetEncoder;
 import java.util.Iterator;
 
 public class JsonHandler implements ContextHandler {
+    private static final Log LOG = LogFactory.getLog(JsonHandler.class);
     private static final ArrayEncoder UTF8Encoder;
-    private JournalReaderFactory factory;
+    private final JournalFactoryPool factoryPool;
+    private final LocalValue<CharSequence> queryContext = new LocalValue<>();
+    private final LocalValue<RecordMetadata> metadataContext = new LocalValue<>();
+    private final LocalValue<Iterator<Record>> recordsContext = new LocalValue<>();
+    private final LocalValue<Long> countContext = new LocalValue<>();
+    private final LocalValue<Long> skipContext = new LocalValue<>();
+    private final LocalValue<Long> stopContext = new LocalValue<>();
+    private final LocalValue<Record> currentContext = new LocalValue<>();
+    private final LocalValue<Boolean> includeCountContext = new LocalValue<>();
+    private final LocalValue<JournalCachingFactory> factoryContext = new LocalValue<>();
 
-    public JsonHandler(JournalReaderFactory journalFactory) {
-        this.factory = journalFactory;
+    public JsonHandler(JournalFactoryPool factoryPool) {
+        this.factoryPool = factoryPool;
     }
 
     @Override
@@ -98,46 +112,18 @@ public class JsonHandler implements ContextHandler {
         }
 
         CharSequence withCount = context.request.getUrlParam("withCount");
-        context.includeCount = withCount != null && Chars.equalsIgnoreCase(withCount, "true");
+        includeCountContext.set(context, withCount != null && Chars.equalsIgnoreCase(withCount, "true"));
+        queryContext.set(context, query);
+        countContext.set(context, 0L);
+        skipContext.set(context, skip);
+        stopContext.set(context, stop);
 
-        try {
-            // Prepare Context.
-            QueryCompiler qc = new QueryCompiler();
-            RecordCursor records = qc.compile(factory, query);
-            r.status(200, "application/json; charset=utf-8");
-            r.sendHeader();
-            sendQuery(r, query, encodingChar, encoded);
-            RecordMetadata metadata = records.getMetadata();
-            context.metadata = metadata;
-            context.records = records.iterator();
-            context.count = 0;
-            context.skip = skip;
-            context.stop = stop;
-
-            // List columns.
-            int columnCount = metadata.getColumnCount();
-            r.put(", \"columns\":[");
-
-            for (int i = 0; i < columnCount; i++) {
-                RecordColumnMetadata column = metadata.getColumn(i);
-                r.put("{\"name\":\"");
-                r.put(column.getName());
-                r.put("\",\"type\":\"");
-                r.put(column.getType().name());
-                r.put("\"}");
-                if (i < columnCount - 1) {
-                    r.put(',');
-                }
-            }
-            r.put("], \"result\":[");
-
-            // Send records.
-            resume(context);
-        } catch (ParserException pex) {
-            sendException(r, query, QueryError.getMessage(), 400, encodingChar, encoded);
-        } catch (JournalException jex) {
-            sendException(r, query, jex.getMessage(), 500, encodingChar, encoded);
+        if (executeQuery(r, context, encoded, encodingChar) == null) {
+            return;
         }
+
+        // Send records.
+        resume(context);
     }
 
     @Override
@@ -147,26 +133,39 @@ public class JsonHandler implements ContextHandler {
         final char[] encodingChar = context.encodingChar;
         ChunkedResponse r = context.chunkedResponse();
 
+        Iterator<Record> records = recordsContext.get(context);
+        if (records == null) {
+            records = executeQuery(r, context, encoded, encodingChar);
+            if (records == null) {
+                return;
+            }
+        }
+
         try {
-            Iterator<Record> records = context.records;
-            RecordMetadata metadata = context.metadata;
+            RecordMetadata metadata = metadataContext.get(context);
             int columnCount = metadata.getColumnCount();
 
-            if (context.current == null && records.hasNext()) {
-                context.current = records.next();
-                context.count++;
+            Record current = currentContext.get(context);
+            long count = countContext.get(context);
+            long skip = skipContext.get(context);
+            long stop = stopContext.get(context);
+            boolean includeCount = includeCountContext.get(context);
+
+            if (current == null && records.hasNext()) {
+                current = records.next();
+                count++;
             }
 
-            while (context.current != null) {
+            while (current != null) {
                 r.bookmark();
 
-                if (context.count > context.skip) {
-                    if (context.count > context.stop && !context.includeCount) {
+                if (count > skip) {
+                    if (count > stop && !includeCount) {
                         break;
                     }
 
-                    if (context.count <= context.stop) {
-                        if (context.count > context.skip + 1) {
+                    if (count <= stop) {
+                        if (count > skip + 1) {
                             // Record separator.
                             r.put(',');
                         }
@@ -177,7 +176,7 @@ public class JsonHandler implements ContextHandler {
                             r.put('\"');
                             stringToJson(r, metadata.getColumn(col).getName(), encodingChar, encoded);
                             r.put("\":");
-                            putValue(encoded, encodingChar, r, metadata, context.current, col);
+                            putValue(encoded, encodingChar, r, metadata, current, col);
 
                             if (col < columnCount - 1) {
                                 r.put(',');
@@ -189,27 +188,30 @@ public class JsonHandler implements ContextHandler {
                 }
 
                 if (records.hasNext()) {
-                    context.current = records.next();
-                    context.count++;
+                    current = records.next();
+                    count++;
                 } else {
-                    context.current = null;
+                    current = null;
                 }
+                currentContext.set(context, current);
+                countContext.set(context, count);
             }
-            if (context.count >= 0) {
+
+            if (count >= 0) {
                 // Finita.
                 r.bookmark();
 
                 r.put(']');
-                if (context.count > context.stop) {
+                if (count > stop) {
                     r.put(",\"moreExist\":true");
                 }
 
-                if (context.includeCount) {
+                if (includeCount) {
                     r.put(",\"totalCount\":");
-                    r.put(context.count);
+                    r.put(count);
                 }
                 r.put('}');
-                context.count = -1;
+                countContext.set(context, -1L);
                 r.sendChunk();
             }
             r.done();
@@ -239,13 +241,19 @@ public class JsonHandler implements ContextHandler {
         r.put("\"");
     }
 
-    private static void sendException(ChunkedResponse r, CharSequence query, CharSequence message, int status, char[] charSource, byte[] encoded) throws DisconnectedChannelException, SlowWritableChannelException {
+    private static void sendException(ChunkedResponse r, CharSequence query, int position, CharSequence message, int status, char[] charSource, byte[] encoded) throws DisconnectedChannelException, SlowWritableChannelException {
         r.status(status, "application/json; charset=utf-8");
         r.sendHeader();
         sendQuery(r, query, charSource, encoded);
         r.put(", \"error\" : \"");
         stringToJson(r, message, charSource, encoded);
-        r.put("\"}");
+        r.put("\"");
+        if (position >= 0) {
+            r.put(", \"position\" : ");
+            Numbers.append(r, position);
+        }
+
+        r.put("}");
         r.sendChunk();
         r.done();
     }
@@ -387,6 +395,55 @@ public class JsonHandler implements ContextHandler {
                 r.put(c);
                 break;
         }
+    }
+
+    private Iterator<Record> executeQuery(ChunkedResponse r, IOContext context, byte[] encoded, char[] encodingChar) throws IOException {
+        CharSequence query = queryContext.get(context);
+        try {
+            // Prepare Context.
+            JournalCachingFactory factory = factoryPool.get();
+            if (factory == null) {
+                // Pool exhausted.
+                LOG.debug().$("No journal factory available. Re-scheduling...").$();
+                return null;
+            }
+            factoryContext.set(context, factory);
+
+            QueryCompiler qc = new QueryCompiler();
+            RecordCursor records = qc.compile(factory, query);
+            r.status(200, "application/json; charset=utf-8");
+            r.sendHeader();
+            sendQuery(r, query, encodingChar, encoded);
+            RecordMetadata metadata = records.getMetadata();
+            metadataContext.set(context, metadata);
+            recordsContext.set(context, records);
+
+            // List columns.
+            int columnCount = metadata.getColumnCount();
+            r.put(", \"columns\":[");
+
+            for (int i = 0; i < columnCount; i++) {
+                RecordColumnMetadata column = metadata.getColumn(i);
+                r.put("{\"name\":\"");
+                r.put(column.getName());
+                r.put("\",\"type\":\"");
+                r.put(column.getType().name());
+                r.put("\"}");
+                if (i < columnCount - 1) {
+                    r.put(',');
+                }
+            }
+            r.put("], \"result\":[");
+            return records;
+        } catch (ParserException pex) {
+            sendException(r, query, QueryError.getPosition(), QueryError.getMessage(), 400, encodingChar, encoded);
+        } catch (JournalException jex) {
+            sendException(r, query, -1, jex.getMessage(), 500, encodingChar, encoded);
+        } catch (InterruptedException ex) {
+            LOG.info().$("Error executing query ").$(query).$(ex).$();
+            sendException(r, query, -1, "server busy, try again later", 500, encodingChar, encoded);
+        }
+        return null;
     }
 
     static {
