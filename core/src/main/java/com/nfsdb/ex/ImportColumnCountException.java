@@ -19,23 +19,13 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.ql.parser;
+package com.nfsdb.ex;
 
-import com.nfsdb.ex.ParserException;
+@SuppressWarnings("ThrowableInstanceNeverThrown")
+public final class ImportColumnCountException extends RuntimeException {
+    public final static ImportColumnCountException INSTANCE = new ImportColumnCountException();
 
-public interface QueryErrorBuilder {
-    @SuppressWarnings("SameReturnValue")
-    ParserException $();
-
-    QueryErrorBuilder $(CharSequence sequence);
-
-    QueryErrorBuilder $(int x);
-
-    QueryErrorBuilder $(double x);
-
-    QueryErrorBuilder $(long x);
-
-    QueryErrorBuilder $(char c);
-
-    QueryErrorBuilder $(Enum e);
+    private ImportColumnCountException() {
+        super("Column count mismatch");
+    }
 }

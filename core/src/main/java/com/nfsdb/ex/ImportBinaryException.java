@@ -19,23 +19,13 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.ql.parser;
+package com.nfsdb.ex;
 
-import com.nfsdb.ex.ParserException;
+@SuppressWarnings("ThrowableInstanceNeverThrown")
+public final class ImportBinaryException extends RuntimeException {
+    public final static ImportBinaryException INSTANCE = new ImportBinaryException();
 
-public interface QueryErrorBuilder {
-    @SuppressWarnings("SameReturnValue")
-    ParserException $();
-
-    QueryErrorBuilder $(CharSequence sequence);
-
-    QueryErrorBuilder $(int x);
-
-    QueryErrorBuilder $(double x);
-
-    QueryErrorBuilder $(long x);
-
-    QueryErrorBuilder $(char c);
-
-    QueryErrorBuilder $(Enum e);
+    private ImportBinaryException() {
+        super("Import of text files into journal with binary columns is disallowed");
+    }
 }

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.ops;
 
@@ -98,6 +98,7 @@ public final class FunctionFactories {
                     case INT:
                         return IntEqualsNaNOperator.FACTORY;
                     case LONG:
+                    case DATE:
                         return LongEqualsNaNOperator.FACTORY;
                     default:
                         break;
@@ -119,6 +120,7 @@ public final class FunctionFactories {
                     case INT:
                         return IntNotEqualsNaNOperator.FACTORY;
                     case LONG:
+                    case DATE:
                         return LongNotEqualsNaNOperator.FACTORY;
                     default:
                         break;

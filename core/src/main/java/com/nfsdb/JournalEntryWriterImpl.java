@@ -155,6 +155,9 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
             case BINARY:
                 putBin0(index, null);
                 break;
+            case DATE:
+                putDate(index, Long.MIN_VALUE);
+                break;
             default:
                 fixCol(index).putNull();
                 break;

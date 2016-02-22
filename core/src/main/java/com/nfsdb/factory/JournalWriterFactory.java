@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.factory;
 
@@ -26,6 +26,7 @@ import com.nfsdb.JournalKey;
 import com.nfsdb.JournalWriter;
 import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
+import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.factory.configuration.MetadataBuilder;
 
 public interface JournalWriterFactory {
@@ -39,6 +40,8 @@ public interface JournalWriterFactory {
     <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException;
 
     <T> JournalWriter<T> bulkWriter(MetadataBuilder<T> metadata) throws JournalException;
+
+    <T> JournalWriter<T> bulkWriter(JournalMetadata<T> metadata) throws JournalException;
 
     JournalWriter bulkWriter(String location) throws JournalException;
 

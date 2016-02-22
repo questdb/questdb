@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,23 +17,26 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.io.parser.listener;
 
 import com.nfsdb.JournalEntryWriter;
+import com.nfsdb.JournalKey;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.ex.JournalException;
-import com.nfsdb.ex.JournalRuntimeException;
+import com.nfsdb.ex.*;
 import com.nfsdb.factory.JournalWriterFactory;
+import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.ImportedColumnMetadata;
+import com.nfsdb.io.ImportedColumnType;
 import com.nfsdb.log.Log;
 import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.*;
 import com.nfsdb.std.LongList;
 import com.nfsdb.std.ObjList;
+import com.nfsdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
@@ -169,32 +172,85 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
     public void onMetadata(ObjList<ImportedColumnMetadata> metadata) {
         if (writer == null) {
             try {
-                // todo: derive correct import metadata from existing journal
                 switch (factory.getConfiguration().exists(location)) {
-//                    case DOES_NOT_EXIST:
-//                        writer = factory.bulkWriter(new JournalStructure(location, this.metadata = metadata));
-//                        break;
-//                    case EXISTS:
-//                        writer = factory.bulkWriter(location);
-//                        metadata.clear();
-//                        JournalMetadata m = writer.getMetadata();
-//                        metadata.seed(m.getColumnCount(), ImportedColumnMetadata.FACTORY);
-//                        for (int i = 0, n = m.getColumnCount(); i <n; i++) {
-//                            metadata.getQuick(i).importedType = m.getColumnQuick(i).type;
-//                        }
-//
-//
-//                        this.metadata = writer.getMetadata();
-//                        break;
-                    default:
+                    case DOES_NOT_EXIST:
                         writer = factory.bulkWriter(new JournalStructure(location, this.metadata = metadata));
-//                        throw new JournalRuntimeException("Unusable name");
+                        break;
+                    case EXISTS:
+                        writer = mapColumnsAndOpenWriter(location, this.metadata = metadata);
+                        break;
+                    default:
+                        throw ImportNameException.INSTANCE;
                 }
                 _size = writer.size();
                 errors.seed(writer.getMetadata().getColumnCount(), 0);
             } catch (JournalException e) {
                 throw new JournalRuntimeException(e);
             }
+        }
+    }
+
+    private JournalWriter mapColumnsAndOpenWriter(String location, ObjList<ImportedColumnMetadata> metadata) throws JournalException {
+        JournalMetadata jm = factory.getConfiguration().createMetadata(new JournalKey(location));
+
+        // now, compare column count.
+        // Cannot continue if different
+
+        if (jm.getColumnCount() != metadata.size()) {
+            throw ImportColumnCountException.INSTANCE;
+        }
+
+
+        // Go over "discovered" metadata and really adjust it
+        // to what journal can actually take
+        // one useful thing discovered type can bring is information
+        // about date format. The rest of it we will pretty much overwrite
+
+        for (int i = 0, n = metadata.size(); i < n; i++) {
+            ImportedColumnMetadata im = metadata.getQuick(i);
+            ColumnMetadata cm = jm.getColumnQuick(i);
+
+            im.type = cm.type;
+            im.importedType = toImportedType(cm.type, im.importedType);
+        }
+
+        return factory.bulkWriter(jm);
+    }
+
+    private ImportedColumnType toImportedType(ColumnType type, ImportedColumnType importedType) {
+        switch (type) {
+            case STRING:
+                return ImportedColumnType.STRING;
+            case BINARY:
+                throw ImportBinaryException.INSTANCE;
+            case BOOLEAN:
+                return ImportedColumnType.BOOLEAN;
+            case BYTE:
+                return ImportedColumnType.BYTE;
+            case DATE:
+                switch (importedType) {
+                    case DATE_1:
+                    case DATE_2:
+                    case DATE_3:
+                    case DATE_ISO:
+                        return importedType;
+                    default:
+                        return ImportedColumnType.DATE_ISO;
+                }
+            case DOUBLE:
+                return ImportedColumnType.DOUBLE;
+            case FLOAT:
+                return ImportedColumnType.FLOAT;
+            case INT:
+                return ImportedColumnType.INT;
+            case LONG:
+                return ImportedColumnType.LONG;
+            case SHORT:
+                return ImportedColumnType.SHORT;
+            case SYMBOL:
+                return ImportedColumnType.SYMBOL;
+            default:
+                return importedType;
         }
     }
 }

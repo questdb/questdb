@@ -1,17 +1,17 @@
 /*******************************************************************************
- * _  _ ___ ___     _ _
+ *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- * <p/>
+ *
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- * <p/>
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * <p/>
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * <p/>
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -26,10 +26,7 @@ import com.google.gson.GsonBuilder;
 import com.nfsdb.Journal;
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
-import com.nfsdb.ex.FatalError;
-import com.nfsdb.ex.JournalException;
-import com.nfsdb.ex.NumericException;
-import com.nfsdb.ex.ResponseContentBufferTooSmallException;
+import com.nfsdb.ex.*;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.sink.FileSink;
 import com.nfsdb.iter.clock.Clock;
@@ -39,6 +36,8 @@ import com.nfsdb.net.http.handlers.ImportHandler;
 import com.nfsdb.net.http.handlers.JsonHandler;
 import com.nfsdb.net.http.handlers.StaticContentHandler;
 import com.nfsdb.net.http.handlers.UploadHandler;
+import com.nfsdb.ql.parser.QueryCompiler;
+import com.nfsdb.ql.parser.QueryError;
 import com.nfsdb.test.tools.TestUtils;
 import org.apache.http.Header;
 import org.apache.http.HttpResponse;
@@ -299,6 +298,32 @@ public class HttpServerTest extends AbstractJournalTest {
                 Assert.fail("Expected exception due to connection timeout");
             } catch (SocketException ignored) {
 
+            }
+        } finally {
+            server.halt();
+        }
+    }
+
+    @Test
+    public void testImportAppend() throws Exception {
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            put("/imp", new ImportHandler(factory));
+        }});
+        server.start();
+
+        try {
+            Assert.assertEquals(200, upload("/csv/test-import.csv", "http://localhost:9000/imp"));
+            Assert.assertEquals(200, upload("/csv/test-import.csv", "http://localhost:9000/imp"));
+
+            try (Journal r = factory.reader("test-import.csv")) {
+                // todo: analyze result in-depth
+                QueryCompiler qc = new QueryCompiler();
+                try {
+                    qc.compile(factory, "select count() from 'test-import.csv' where IsoDate = NaN or Fmt1Date = NaN");
+                } catch (ParserException e) {
+                    System.out.println(QueryError.getMessage());
+                }
+                Assert.assertEquals(258, r.size());
             }
         } finally {
             server.halt();
@@ -592,10 +617,9 @@ public class HttpServerTest extends AbstractJournalTest {
         server.start();
 
         File expected = resourceFile("/csv/test-import.csv");
-        File actual = new File(dir, "test-import.csv");
         upload(expected, "http://localhost:9000/upload");
 
-        TestUtils.assertEquals(expected, actual);
+        TestUtils.assertEquals(expected, new File(dir, "test-import.csv"));
         server.halt();
     }
 

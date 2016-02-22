@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.factory;
 
@@ -77,6 +77,16 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
     }
 
     @Override
+    public <T> JournalWriter<T> bulkWriter(JournalMetadata<T> metadata) throws JournalException {
+        return new JournalBulkWriter<>(metadata, metadata.getKey());
+    }
+
+    @Override
+    public JournalWriter bulkWriter(String location) throws JournalException {
+        return bulkWriter(new JournalKey(location));
+    }
+
+    @Override
     public <T> JournalWriter<T> writer(Class<T> clazz) throws JournalException {
         return writer(new JournalKey<>(clazz));
     }
@@ -94,11 +104,6 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
     @Override
     public JournalWriter writer(String location) throws JournalException {
         return writer(new JournalKey<>(location));
-    }
-
-    @Override
-    public JournalWriter bulkWriter(String location) throws JournalException {
-        return bulkWriter(new JournalKey(location));
     }
 
     @Override

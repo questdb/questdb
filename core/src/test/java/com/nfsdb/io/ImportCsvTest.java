@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.io;
 
@@ -67,7 +67,7 @@ public class ImportCsvTest extends AbstractTest {
         File expected = new File(this.getClass().getResource("/csv/test-export-expected.csv").getFile());
 
         ExportManager.export(compiler.compile(factory, "'" + location + "'"), actual, TextFileFormat.CSV);
-        TestUtils.assertEquals(actual, expected);
+        TestUtils.assertEquals(expected, actual);
     }
 
     @Test
