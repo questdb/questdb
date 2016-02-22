@@ -21,7 +21,6 @@
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.AggregatorFunction;
@@ -63,27 +62,13 @@ public final class VwapAggregator extends AbstractBinaryOperator implements Aggr
     }
 
     @Override
-    public void getColumns(ObjList<RecordColumnMetadata> columns) {
+    public void prepare(ObjList<RecordColumnMetadata> columns, int offset) {
         columns.add(INTERNAL_COL_AMOUNT);
         columns.add(INTERNAL_COL_QUANTITY);
         columns.add(new ColumnMetadata().setName(getName()).setType(ColumnType.DOUBLE));
-    }
-
-    @Override
-    public void mapColumn(int k, int i) {
-        switch (k) {
-            case 0:
-                sumAmtIdx = i;
-                break;
-            case 1:
-                sumQtyIdx = i;
-                break;
-            case 2:
-                vwap = i;
-                break;
-            default:
-                throw new JournalRuntimeException("Internal bug. Column mismatch");
-        }
+        sumAmtIdx = offset;
+        sumQtyIdx = offset + 1;
+        vwap = offset + 2;
     }
 
     @Override

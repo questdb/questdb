@@ -21,7 +21,6 @@
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.AggregatorFunction;
@@ -61,27 +60,13 @@ public final class AvgAggregator extends AbstractUnaryOperator implements Aggreg
     }
 
     @Override
-    public void getColumns(ObjList<RecordColumnMetadata> columns) {
+    public void prepare(ObjList<RecordColumnMetadata> columns, int offset) {
         columns.add(INTERNAL_COL_COUNT);
         columns.add(INTERNAL_COL_SUM);
         columns.add(new ColumnMetadata().setName(getName()).setType(ColumnType.DOUBLE));
-    }
-
-    @Override
-    public void mapColumn(int k, int i) {
-        switch (k) {
-            case 0:
-                countIdx = i;
-                break;
-            case 1:
-                sumIdx = i;
-                break;
-            case 2:
-                avgIdx = i;
-                break;
-            default:
-                throw new JournalRuntimeException("Internal bug. Column mismatch");
-        }
+        countIdx = offset;
+        sumIdx = offset + 1;
+        avgIdx = offset + 2;
     }
 
     @Override

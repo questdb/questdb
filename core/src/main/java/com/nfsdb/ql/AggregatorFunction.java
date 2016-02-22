@@ -29,35 +29,5 @@ public interface AggregatorFunction {
 
     void calculate(Record rec, MapValues values);
 
-    /**
-     * Columns that aggregation function writes out. Out of {#ColumnMetadata} objects
-     * returned significant fields are "name" and "type". All other fields are ignored.
-     * <p/>
-     * Complex functions, such as average, may need to write three columns, "count", "sum" and
-     * possibly "average" itself.
-     * <p/>
-     * Returned array and its objects are immutable by convention. There is no need to
-     * be defensive and copy arrays.
-     * <p/>
-     * Also it is possible that this method is called multiple times, so expensive
-     * operations must be cached by implementation.
-     */
-    void getColumns(ObjList<RecordColumnMetadata> columns);
-
-    /**
-     * When calculating values implementing classes will be sharing columns of {#Record}. Each
-     * aggregator columns indexes need to be mapped into space of "record" column indexes. This
-     * is done once when aggregator is prepared. Implementing class must maintain column mapping
-     * in an int[] array. For example:
-     * <p/>
-     * <pre>
-     *     private int map[] = new int[columnCount];
-     *     ...
-     *     map[k] = i;
-     * </pre>
-     *
-     * @param k column index in space of aggregator function
-     * @param i column index in space of "record"
-     */
-    void mapColumn(int k, int i);
+    void prepare(ObjList<RecordColumnMetadata> columns, int offset);
 }

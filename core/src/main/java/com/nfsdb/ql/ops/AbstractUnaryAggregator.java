@@ -37,12 +37,8 @@ public abstract class AbstractUnaryAggregator extends AbstractUnaryOperator impl
     }
 
     @Override
-    public void getColumns(ObjList<RecordColumnMetadata> columns) {
+    public void prepare(ObjList<RecordColumnMetadata> columns, int offset) {
         columns.add(this);
-    }
-
-    @Override
-    public void mapColumn(int k, int i) {
-        valueIndex = i;
+        valueIndex = offset;
     }
 }
