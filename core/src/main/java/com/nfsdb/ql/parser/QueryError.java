@@ -26,10 +26,14 @@ import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.io.sink.StringSink;
 
 public final class QueryError implements QueryErrorBuilder {
-    public static final QueryError INSTANCE = new QueryError();
+    private static final QueryError INSTANCE = new QueryError();
     private final ThreadLocalDetails tl = new ThreadLocalDetails();
 
     private QueryError() {
+    }
+
+    public static ParserException $(int position, String message) {
+        return position(position).$(message).$();
     }
 
     public static CharSequence getMessage() {
@@ -38,6 +42,17 @@ public final class QueryError implements QueryErrorBuilder {
 
     public static int getPosition() {
         return INSTANCE.tl.get().position;
+    }
+
+    public static ParserException invalidColumn(int position, CharSequence column) {
+        return position(position).$("Invalid column: ").$(column).$();
+    }
+
+    public static QueryErrorBuilder position(int position) {
+        Holder h = INSTANCE.tl.get();
+        h.position = position;
+        h.sink.clear();
+        return INSTANCE;
     }
 
     @Override
@@ -78,21 +93,6 @@ public final class QueryError implements QueryErrorBuilder {
     @Override
     public QueryErrorBuilder $(Enum e) {
         sink().put(e.name());
-        return this;
-    }
-
-    public ParserException $(int position, String message) {
-        return position(position).$(message).$();
-    }
-
-    public ParserException invalidColumn(int position) {
-        return $(position, "Invalid column");
-    }
-
-    public QueryErrorBuilder position(int position) {
-        Holder h = tl.get();
-        h.position = position;
-        h.sink.clear();
         return this;
     }
 

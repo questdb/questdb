@@ -89,7 +89,7 @@ public class ExprParser {
                 case ',':
                     thisBranch = Branch.COMMA;
                     if (prevChar == ',') {
-                        throw QueryError.INSTANCE.$(lexer.position(), "Missing argument");
+                        throw QueryError.$(lexer.position(), "Missing argument");
                     }
 
                     if (braceCount == 0) {
@@ -125,7 +125,7 @@ public class ExprParser {
 
                 case ')':
                     if (prevChar == ',') {
-                        throw QueryError.INSTANCE.$(lexer.position(), "Missing argument");
+                        throw QueryError.$(lexer.position(), "Missing argument");
                     }
                     if (braceCount == 0) {
                         lexer.unparse();
@@ -255,7 +255,7 @@ public class ExprParser {
 
         while ((node = opStack.poll()) != null) {
             if (node.token.charAt(0) == '(') {
-                throw QueryError.INSTANCE.$(node.position, "Unbalanced (");
+                throw QueryError.$(node.position, "Unbalanced (");
             }
             listener.onNode(node);
         }

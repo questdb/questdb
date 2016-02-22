@@ -61,7 +61,7 @@ final class QueryFilterAnalyser {
 
     private boolean analyzeEquals0(IntrinsicModel model, ExprNode node, ExprNode a, ExprNode b, RecordMetadata m) throws ParserException {
         if (a == null || b == null) {
-            throw QueryError.INSTANCE.$(node.position, "Argument expected");
+            throw QueryError.$(node.position, "Argument expected");
         }
 
         if (a.type == ExprNode.NodeType.LITERAL && b.type == ExprNode.NodeType.CONSTANT) {
@@ -76,7 +76,7 @@ final class QueryFilterAnalyser {
                 return true;
             } else {
                 if (m.getColumnIndexQuiet(a.token) == -1) {
-                    throw QueryError.INSTANCE.invalidColumn(a.position);
+                    throw QueryError.invalidColumn(a.position, a.token);
                 }
                 RecordColumnMetadata meta = m.getColumn(a.token);
 
@@ -155,7 +155,7 @@ final class QueryFilterAnalyser {
                 node.intrinsicValue = IntrinsicValue.TRUE;
                 return true;
             } catch (NumericException e) {
-                throw QueryError.INSTANCE.$(node.rhs.position, "Not a date");
+                throw QueryError.$(node.rhs.position, "Not a date");
             }
         }
 
@@ -168,7 +168,7 @@ final class QueryFilterAnalyser {
                 node.intrinsicValue = IntrinsicValue.TRUE;
                 return true;
             } catch (NumericException e) {
-                throw QueryError.INSTANCE.$(node.lhs.position, "Not a date");
+                throw QueryError.$(node.lhs.position, "Not a date");
             }
         }
         return false;
@@ -177,17 +177,17 @@ final class QueryFilterAnalyser {
     private boolean analyzeIn(IntrinsicModel model, ExprNode node, RecordMetadata metadata) throws ParserException {
 
         if (node.paramCount < 2) {
-            throw QueryError.INSTANCE.$(node.position, "Too few arguments for 'in'");
+            throw QueryError.$(node.position, "Too few arguments for 'in'");
         }
 
         ExprNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
 
         if (col.type != ExprNode.NodeType.LITERAL) {
-            throw QueryError.INSTANCE.$(col.position, "Column name expected");
+            throw QueryError.$(col.position, "Column name expected");
         }
 
         if (metadata.getColumnIndexQuiet(col.token) == -1) {
-            throw QueryError.INSTANCE.invalidColumn(col.position);
+            throw QueryError.invalidColumn(col.position, col.token);
         }
         return analyzeInInterval(model, col, node)
                 || analyzeListOfValues(model, col.token, metadata, node)
@@ -201,12 +201,12 @@ final class QueryFilterAnalyser {
         }
 
         if (in.paramCount > 3) {
-            throw QueryError.INSTANCE.$(in.args.getQuick(0).position, "Too many args");
+            throw QueryError.$(in.args.getQuick(0).position, "Too many args");
         }
 
 
         if (in.paramCount < 3) {
-            throw QueryError.INSTANCE.$(in.position, "Too few args");
+            throw QueryError.$(in.position, "Too few args");
         }
 
         ExprNode lo = in.args.getQuick(1);
@@ -219,13 +219,13 @@ final class QueryFilterAnalyser {
             try {
                 loMillis = Dates.tryParse(quoteEraser.ofQuoted(lo.token));
             } catch (NumericException ignore) {
-                throw QueryError.INSTANCE.$(lo.position, "Unknown date format");
+                throw QueryError.$(lo.position, "Unknown date format");
             }
 
             try {
                 hiMillis = Dates.tryParse(quoteEraser.ofQuoted(hi.token));
             } catch (NumericException ignore) {
-                throw QueryError.INSTANCE.$(hi.position, "Unknown date format");
+                throw QueryError.$(hi.position, "Unknown date format");
             }
 
             model.overlapInterval(loMillis, hiMillis);
@@ -256,7 +256,7 @@ final class QueryFilterAnalyser {
 
             // todo: this is going to fail if "in" args are functions
             if ((col.equals(model.keyColumn) && model.keyValuesIsLambda) || node.paramCount > 2) {
-                throw QueryError.INSTANCE.$(node.position, "Multiple lambda expressions not supported");
+                throw QueryError.$(node.position, "Multiple lambda expressions not supported");
             }
 
             model.keyValues.clear();
@@ -293,7 +293,7 @@ final class QueryFilterAnalyser {
                 timestampNodes.add(node);
                 return true;
             } catch (NumericException e) {
-                throw QueryError.INSTANCE.$(node.rhs.position, "Not a date");
+                throw QueryError.$(node.rhs.position, "Not a date");
             }
         }
 
@@ -307,7 +307,7 @@ final class QueryFilterAnalyser {
                 timestampNodes.add(node);
                 return true;
             } catch (NumericException e) {
-                throw QueryError.INSTANCE.$(node.lhs.position, "Not a date");
+                throw QueryError.$(node.lhs.position, "Not a date");
             }
         }
         return false;
@@ -462,7 +462,7 @@ final class QueryFilterAnalyser {
         for (int i = lo; i < lim; i++) {
             if (seq.charAt(i) == ';') {
                 if (p > 1) {
-                    throw QueryError.INSTANCE.$(position, "Invalid interval format");
+                    throw QueryError.$(position, "Invalid interval format");
                 }
                 pos[++p] = i;
             }
@@ -496,7 +496,7 @@ final class QueryFilterAnalyser {
                     model.clearInterval();
                     return false;
                 } catch (NumericException e) {
-                    throw QueryError.INSTANCE.$(position, "Not a date");
+                    throw QueryError.$(position, "Not a date");
                 }
             case 0:
                 // single semicolon, expect period format after date
@@ -505,21 +505,21 @@ final class QueryFilterAnalyser {
                 break;
             case 2:
                 if (model.intervalSource != null) {
-                    throw QueryError.INSTANCE.$(position, "Duplicate interval filter is not supported");
+                    throw QueryError.$(position, "Duplicate interval filter is not supported");
                 }
                 Interval interval2 = parseInterval0(seq, lo, pos[0], pos[1], position);
                 int period;
                 try {
                     period = Numbers.parseInt(seq, pos[1] + 1, pos[2] - 1);
                 } catch (NumericException e) {
-                    throw QueryError.INSTANCE.$(position, "Period not a number");
+                    throw QueryError.$(position, "Period not a number");
                 }
                 char type = seq.charAt(pos[2] - 1);
                 int count;
                 try {
                     count = Numbers.parseInt(seq, pos[2] + 1, seq.length());
                 } catch (NumericException e) {
-                    throw QueryError.INSTANCE.$(position, "Count not a number");
+                    throw QueryError.$(position, "Count not a number");
                 }
                 switch (type) {
                     case 'y':
@@ -541,11 +541,11 @@ final class QueryFilterAnalyser {
                         model.intervalSource = new MillisIntervalSource(interval2, period * Dates.DAY_MILLIS, count);
                         break;
                     default:
-                        throw QueryError.INSTANCE.$(position, "Unknown period: " + type + " at " + (p - 1));
+                        throw QueryError.$(position, "Unknown period: " + type + " at " + (p - 1));
                 }
                 break;
             default:
-                throw QueryError.INSTANCE.$(position, "Invalid interval format");
+                throw QueryError.$(position, "Invalid interval format");
         }
 
         return true;
@@ -557,7 +557,7 @@ final class QueryFilterAnalyser {
         try {
             period = Numbers.parseInt(seq, p + 1, lim - 1);
         } catch (NumericException e) {
-            throw QueryError.INSTANCE.$(position, "Period not a number");
+            throw QueryError.$(position, "Period not a number");
         }
         try {
             Interval interval = Dates.parseInterval(seq, lo, p);
@@ -570,7 +570,7 @@ final class QueryFilterAnalyser {
             long hiMillis = Dates.addPeriod(loMillis, type, period);
             return new Interval(loMillis, hiMillis);
         } catch (NumericException e) {
-            throw QueryError.INSTANCE.$(position, "Neither interval nor date");
+            throw QueryError.$(position, "Neither interval nor date");
         }
     }
 
