@@ -990,7 +990,7 @@ public class HttpServerTest extends AbstractJournalTest {
     private void generateJournal(QueryResponse.Tab[] recs, int count) throws JournalException, NumericException {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").
-                        $str("id").
+                        $sym("id").
                         $double("x").
                         $double("y").
                         $long("z").
@@ -1004,7 +1004,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
         for (int i = 0; i < count; i++) {
             JournalEntryWriter ew = w.entryWriter();
-            ew.putStr(0, recs.length > i ? recs[i].id : "id" + i);
+            ew.putSym(0, recs.length > i ? recs[i].id : "id" + i);
             ew.putDouble(1, recs.length > i ? recs[i].x : rnd.nextDouble());
             if (recs.length > i) {
                 ew.putDouble(2, recs[i].y);

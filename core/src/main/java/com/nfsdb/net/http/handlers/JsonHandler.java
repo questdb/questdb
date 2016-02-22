@@ -39,6 +39,7 @@ import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.parser.QueryCompiler;
 import com.nfsdb.ql.parser.QueryError;
 import com.nfsdb.std.LocalValue;
+import com.nfsdb.store.ColumnType;
 import sun.nio.cs.ArrayEncoder;
 
 import java.io.IOException;
@@ -321,9 +322,9 @@ public class JsonHandler implements ContextHandler {
             case SHORT:
                 Numbers.append(r, rec.getShort(col));
                 break;
-            case SYMBOL:
             case STRING:
-                CharSequence str = rec.getFlyweightStr(col);
+            case SYMBOL:
+                CharSequence str = column.getType() == ColumnType.STRING ? rec.getFlyweightStr(col) : rec.getSym(col);
                 if (str == null) {
                     r.put("null");
                 } else {
@@ -332,6 +333,7 @@ public class JsonHandler implements ContextHandler {
                     r.put('\"');
                 }
                 break;
+
             case BINARY:
                 r.put('[');
                 r.put(']');
