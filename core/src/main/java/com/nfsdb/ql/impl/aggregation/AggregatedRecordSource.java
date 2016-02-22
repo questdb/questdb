@@ -83,7 +83,7 @@ public class AggregatedRecordSource extends AbstractRecordSource implements Clos
         for (int i = 0, sz = aggregators.size(); i < sz; i++) {
             AggregatorFunction func = aggregators.getQuick(i);
             int n = columns.size();
-            func.prepare(columns, index);
+            func.prepare(rm, columns, index);
             index += columns.size() - n;
 
             if (func instanceof MapRecordValueInterceptor) {

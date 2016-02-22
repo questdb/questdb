@@ -22,6 +22,7 @@
 package com.nfsdb.ql.ops.count;
 
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
+import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.AggregatorFunction;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
@@ -52,7 +53,7 @@ public final class CountAggregator extends AbstractVirtualColumn implements Aggr
     }
 
     @Override
-    public void prepare(ObjList<RecordColumnMetadata> columns, int offset) {
+    public void prepare(RecordMetadata metadata, ObjList<RecordColumnMetadata> columns, int offset) {
         columns.add(this);
         index = offset;
     }

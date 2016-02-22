@@ -38,7 +38,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class ResampledRecordSource extends AbstractRecordSource {
-    private static final com.nfsdb.std.ThreadLocal<ObjList<RecordColumnMetadata>> tlColumns = new ThreadLocal<>(new ObjectFactory<ObjList<RecordColumnMetadata>>() {
+    private static final ThreadLocal<ObjList<RecordColumnMetadata>> tlColumns = new ThreadLocal<>(new ObjectFactory<ObjList<RecordColumnMetadata>>() {
         @Override
         public ObjList<RecordColumnMetadata> newInstance() {
             return new ObjList<>();
@@ -91,7 +91,7 @@ public class ResampledRecordSource extends AbstractRecordSource {
         for (int i = 0, sz = aggregators.size(); i < sz; i++) {
             AggregatorFunction func = aggregators.getQuick(i);
             int n = columns.size();
-            func.prepare(columns, index);
+            func.prepare(rm, columns, index);
             index += columns.size() - n;
             if (func instanceof MapRecordValueInterceptor) {
                 interceptors.add((MapRecordValueInterceptor) func);

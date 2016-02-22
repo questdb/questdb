@@ -81,8 +81,9 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public JournalWriter bulkWriter(String location) throws JournalException {
-        return bulkWriter(new JournalKey(location));
+        return bulkWriter(new JournalKey<>(location));
     }
 
     @Override

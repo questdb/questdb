@@ -190,8 +190,9 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
         }
     }
 
+    @SuppressWarnings("unchecked")
     private JournalWriter mapColumnsAndOpenWriter(String location, ObjList<ImportedColumnMetadata> metadata) throws JournalException {
-        JournalMetadata jm = factory.getConfiguration().createMetadata(new JournalKey(location));
+        JournalMetadata<Object> jm = factory.getConfiguration().createMetadata(new JournalKey<>(location));
 
         // now, compare column count.
         // Cannot continue if different

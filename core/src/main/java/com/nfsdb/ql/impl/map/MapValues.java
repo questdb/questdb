@@ -54,6 +54,11 @@ public final class MapValues {
         return Unsafe.getUnsafe().getLong(address0(index));
     }
 
+    public void incrementLong(int index) {
+        long p = address0(index);
+        Unsafe.getUnsafe().putLong(p, Unsafe.getUnsafe().getLong(p));
+    }
+
     public boolean isNew() {
         return _new;
     }

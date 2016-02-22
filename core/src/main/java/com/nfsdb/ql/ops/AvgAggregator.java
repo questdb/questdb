@@ -23,6 +23,7 @@ package com.nfsdb.ql.ops;
 
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
+import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.AggregatorFunction;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.impl.map.MapRecordValueInterceptor;
@@ -60,7 +61,7 @@ public final class AvgAggregator extends AbstractUnaryOperator implements Aggreg
     }
 
     @Override
-    public void prepare(ObjList<RecordColumnMetadata> columns, int offset) {
+    public void prepare(RecordMetadata rm, ObjList<RecordColumnMetadata> columns, int offset) {
         columns.add(INTERNAL_COL_COUNT);
         columns.add(INTERNAL_COL_SUM);
         columns.add(new ColumnMetadata().setName(getName()).setType(ColumnType.DOUBLE));
