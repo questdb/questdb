@@ -72,8 +72,7 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
 
     @Override
     public <T> JournalWriter<T> bulkWriter(MetadataBuilder<T> b) throws JournalException {
-        JournalMetadata<T> metadata = getConfiguration().buildWithRootLocation(b);
-        return new JournalBulkWriter<>(metadata, metadata.getKey());
+        return bulkWriter(getConfiguration().buildWithRootLocation(b));
     }
 
     @Override

@@ -100,6 +100,14 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
     }
 
     @Override
+    public <T> JournalWriter<T> bulkWriter(JournalMetadata<T> metadata) throws JournalException {
+        JournalWriter<T> writer = super.bulkWriter(metadata);
+        journals.add(writer);
+        writer.setCloseListener(this);
+        return writer;
+    }
+
+    @Override
     public <T> JournalWriter<T> writer(JournalKey<T> key) throws JournalException {
         JournalWriter<T> writer = super.writer(key);
         journals.add(writer);

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
@@ -80,8 +80,8 @@ public class HttpServerConfiguration {
             this.httpTimeout = n;
         }
 
-        if ((n = parseInt(props, "http.max.connections")) > -1) {
-            this.httpMaxConnections = n;
+        if ((n = parseSize(props, "http.buf.req.header")) > -1) {
+            this.httpBufReqHeader = n;
         }
 
         if ((n = parseInt(props, "http.max.connections")) > -1) {
