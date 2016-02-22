@@ -23,6 +23,7 @@ package com.nfsdb.ql.ops;
 
 import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.AggregatorFunction;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.impl.map.MapRecordValueInterceptor;
@@ -33,7 +34,8 @@ import com.nfsdb.store.ColumnType;
 public final class AvgAggregator extends AbstractUnaryOperator implements AggregatorFunction, MapRecordValueInterceptor {
 
     public static final AvgAggregator FACTORY = new AvgAggregator();
-
+    private final static ColumnMetadata INTERNAL_COL_COUNT = new ColumnMetadata().setName("$count").setType(ColumnType.LONG);
+    private final static ColumnMetadata INTERNAL_COL_SUM = new ColumnMetadata().setName("$sum").setType(ColumnType.DOUBLE);
     private int countIdx;
     private int sumIdx;
     private int avgIdx;
@@ -59,12 +61,10 @@ public final class AvgAggregator extends AbstractUnaryOperator implements Aggreg
     }
 
     @Override
-    public ColumnMetadata[] getColumns() {
-        return new ColumnMetadata[]{
-                new ColumnMetadata().setName("$count").setType(ColumnType.LONG)
-                , new ColumnMetadata().setName("$sum").setType(ColumnType.DOUBLE)
-                , new ColumnMetadata().setName(getName()).setType(ColumnType.DOUBLE)
-        };
+    public void getColumns(ObjList<RecordColumnMetadata> columns) {
+        columns.add(INTERNAL_COL_COUNT);
+        columns.add(INTERNAL_COL_SUM);
+        columns.add(new ColumnMetadata().setName(getName()).setType(ColumnType.DOUBLE));
     }
 
     @Override

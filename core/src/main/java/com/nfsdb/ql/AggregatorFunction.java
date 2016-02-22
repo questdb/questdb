@@ -23,6 +23,7 @@ package com.nfsdb.ql;
 
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.impl.map.MapValues;
+import com.nfsdb.std.ObjList;
 
 public interface AggregatorFunction {
 
@@ -40,10 +41,8 @@ public interface AggregatorFunction {
      * <p/>
      * Also it is possible that this method is called multiple times, so expensive
      * operations must be cached by implementation.
-     *
-     * @return array of required columns
      */
-    RecordColumnMetadata[] getColumns();
+    void getColumns(ObjList<RecordColumnMetadata> columns);
 
     /**
      * When calculating values implementing classes will be sharing columns of {#Record}. Each

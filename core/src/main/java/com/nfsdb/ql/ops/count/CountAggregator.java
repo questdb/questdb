@@ -52,8 +52,8 @@ public final class CountAggregator extends AbstractVirtualColumn implements Aggr
     }
 
     @Override
-    public RecordColumnMetadata[] getColumns() {
-        return new RecordColumnMetadata[]{this};
+    public void getColumns(ObjList<RecordColumnMetadata> columns) {
+        columns.add(this);
     }
 
     @Override

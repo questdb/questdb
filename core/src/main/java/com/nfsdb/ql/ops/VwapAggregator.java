@@ -23,6 +23,7 @@ package com.nfsdb.ql.ops;
 
 import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.AggregatorFunction;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.impl.map.MapRecordValueInterceptor;
@@ -33,7 +34,8 @@ import com.nfsdb.store.ColumnType;
 public final class VwapAggregator extends AbstractBinaryOperator implements AggregatorFunction, MapRecordValueInterceptor {
 
     public static final VwapAggregator FACTORY = new VwapAggregator();
-
+    private final static ColumnMetadata INTERNAL_COL_AMOUNT = new ColumnMetadata().setName("$sumAmt").setType(ColumnType.DOUBLE);
+    private final static ColumnMetadata INTERNAL_COL_QUANTITY = new ColumnMetadata().setName("$sumQty").setType(ColumnType.DOUBLE);
     private int sumAmtIdx;
     private int sumQtyIdx;
     private int vwap;
@@ -61,12 +63,10 @@ public final class VwapAggregator extends AbstractBinaryOperator implements Aggr
     }
 
     @Override
-    public ColumnMetadata[] getColumns() {
-        return new ColumnMetadata[]{
-                new ColumnMetadata().setName("$sumAmt").setType(ColumnType.DOUBLE)
-                , new ColumnMetadata().setName("$sumQty").setType(ColumnType.DOUBLE)
-                , new ColumnMetadata().setName(getName()).setType(ColumnType.DOUBLE)
-        };
+    public void getColumns(ObjList<RecordColumnMetadata> columns) {
+        columns.add(INTERNAL_COL_AMOUNT);
+        columns.add(INTERNAL_COL_QUANTITY);
+        columns.add(new ColumnMetadata().setName(getName()).setType(ColumnType.DOUBLE));
     }
 
     @Override

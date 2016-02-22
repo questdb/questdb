@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl.aggregation;
 
@@ -32,14 +32,18 @@ import com.nfsdb.ql.impl.map.MapRecordValueInterceptor;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.impl.map.MultiMap;
 import com.nfsdb.ql.ops.AbstractRecordSource;
-import com.nfsdb.std.IntList;
-import com.nfsdb.std.ObjHashSet;
-import com.nfsdb.std.ObjList;
-import com.nfsdb.std.Transient;
+import com.nfsdb.std.*;
+import com.nfsdb.std.ThreadLocal;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class ResampledRecordSource extends AbstractRecordSource {
+    private static final com.nfsdb.std.ThreadLocal<ObjList<RecordColumnMetadata>> tlColumns = new ThreadLocal<>(new ObjectFactory<ObjList<RecordColumnMetadata>>() {
+        @Override
+        public ObjList<RecordColumnMetadata> newInstance() {
+            return new ObjList<>();
+        }
+    });
 
     private final MultiMap map;
     private final RecordSource recordSource;
@@ -78,15 +82,17 @@ public class ResampledRecordSource extends AbstractRecordSource {
         this.aggregators = aggregators;
         this.sampler = sampler;
 
-        ObjList<RecordColumnMetadata> valueCols = new ObjList<>();
         ObjList<MapRecordValueInterceptor> interceptors = new ObjList<>();
+        ObjList<RecordColumnMetadata> columns = tlColumns.get();
+        columns.clear();
+
         // take value columns from aggregator function
         int index = 0;
         for (int i = 0, sz = aggregators.size(); i < sz; i++) {
             AggregatorFunction func = aggregators.getQuick(i);
-            RecordColumnMetadata[] columns = func.getColumns();
-            for (int k = 0, len = columns.length; k < len; k++) {
-                valueCols.add(columns[k]);
+            int n = columns.size();
+            func.getColumns(columns);
+            for (int k = 0, len = columns.size() - n; k < len; k++) {
                 func.mapColumn(k, index++);
             }
 
@@ -95,7 +101,7 @@ public class ResampledRecordSource extends AbstractRecordSource {
             }
         }
 
-        this.map = new MultiMap(rm, keyCols, valueCols, interceptors);
+        this.map = new MultiMap(rm, keyCols, columns, interceptors);
         this.recordSource = recordSource;
     }
 

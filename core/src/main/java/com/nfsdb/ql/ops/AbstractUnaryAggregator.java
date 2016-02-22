@@ -23,13 +23,13 @@ package com.nfsdb.ql.ops;
 
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.ql.AggregatorFunction;
+import com.nfsdb.std.ObjList;
 import com.nfsdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"EI_EXPOSE_REP"})
 public abstract class AbstractUnaryAggregator extends AbstractUnaryOperator implements AggregatorFunction {
 
-    private final RecordColumnMetadata[] metadata = {this};
     protected int valueIndex;
 
     protected AbstractUnaryAggregator(ColumnType type) {
@@ -37,8 +37,8 @@ public abstract class AbstractUnaryAggregator extends AbstractUnaryOperator impl
     }
 
     @Override
-    public RecordColumnMetadata[] getColumns() {
-        return metadata;
+    public void getColumns(ObjList<RecordColumnMetadata> columns) {
+        columns.add(this);
     }
 
     @Override
