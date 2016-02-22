@@ -90,11 +90,11 @@ public class LogFactory implements Closeable {
         factory.startThread();
     }
 
-    public static Logger getLog(Class clazz) {
+    public static Log getLog(Class clazz) {
         return getLog(clazz.getName());
     }
 
-    public static Logger getLog(CharSequence key) {
+    public static Log getLog(CharSequence key) {
         if (!INSTANCE.configured) {
             configureFromSystemProperties(INSTANCE);
         }
@@ -138,7 +138,7 @@ public class LogFactory implements Closeable {
         }
     }
 
-    public Logger create(CharSequence key) {
+    public Log create(CharSequence key) {
         if (!configured) {
             throw new LogError("Not configured");
         }
