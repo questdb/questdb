@@ -24,7 +24,6 @@ package com.nfsdb.ql.ops;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.std.IntHashSet;
-import com.nfsdb.std.ObjList;
 import com.nfsdb.store.ColumnType;
 import com.nfsdb.store.SymbolTable;
 
@@ -48,7 +47,7 @@ public class SymRegexOperator extends AbstractBinaryOperator {
     }
 
     @Override
-    public Function newInstance(ObjList<VirtualColumn> args) {
+    public Function newInstance() {
         return new SymRegexOperator();
     }
 

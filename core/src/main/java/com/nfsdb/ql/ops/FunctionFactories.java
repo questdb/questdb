@@ -84,47 +84,53 @@ public final class FunctionFactories {
 
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     public static FunctionFactory find(Signature sig, ObjList<VirtualColumn> args) {
-        if (Chars.equals("=", sig.name) &&
-                sig.paramCount == 2 &&
-                sig.paramTypes.getQuick(1) == ColumnType.DOUBLE &&
-                args.getQuick(1).isConstant()) {
-            double d = args.getQuick(1).getDouble(null);
+        final VirtualColumn vc;
+        if (sig.paramCount == 2 && (vc = args.getQuick(1)).isConstant()) {
 
-            // NaN
-            if (d != d) {
-                switch (sig.paramTypes.getQuick(0)) {
-                    case DOUBLE:
-                        return DoubleEqualsNanOperator.FACTORY;
-                    case INT:
-                        return IntEqualsNaNOperator.FACTORY;
-                    case LONG:
-                    case DATE:
-                        return LongEqualsNaNOperator.FACTORY;
-                    default:
-                        break;
-                }
-            }
-        }
+            switch (sig.paramTypes.getQuick(1)) {
+                case DOUBLE:
+                    double d = vc.getDouble(null);
 
-        if (Chars.equals("!=", sig.name) &&
-                sig.paramCount == 2 &&
-                sig.paramTypes.getQuick(1) == ColumnType.DOUBLE &&
-                args.getQuick(1).isConstant()) {
-            double d = args.getQuick(1).getDouble(null);
-
-            // NaN
-            if (d != d) {
-                switch (sig.paramTypes.getQuick(0)) {
-                    case DOUBLE:
-                        return DoubleNotEqualsNanOperator.FACTORY;
-                    case INT:
-                        return IntNotEqualsNaNOperator.FACTORY;
-                    case LONG:
-                    case DATE:
-                        return LongNotEqualsNaNOperator.FACTORY;
-                    default:
-                        break;
-                }
+                    if (d != d) {
+                        ColumnType t = sig.paramTypes.getQuick(0);
+                        if (Chars.equals(sig.name, '=')) {
+                            switch (t) {
+                                case DOUBLE:
+                                    return DoubleEqualsNanOperator.FACTORY;
+                                case INT:
+                                    return IntEqualsNaNOperator.FACTORY;
+                                case LONG:
+                                case DATE:
+                                    return LongEqualsNaNOperator.FACTORY;
+                                default:
+                                    break;
+                            }
+                        } else if (Chars.equals("!=", sig.name)) {
+                            switch (t) {
+                                case DOUBLE:
+                                    return DoubleNotEqualsNanOperator.FACTORY;
+                                case INT:
+                                    return IntNotEqualsNaNOperator.FACTORY;
+                                case LONG:
+                                case DATE:
+                                    return LongNotEqualsNaNOperator.FACTORY;
+                                default:
+                                    break;
+                            }
+                        }
+                    }
+                    break;
+                case STRING:
+                    if (vc.getFlyweightStr(null) == null) {
+                        if (Chars.equals(sig.name, '=')) {
+                            return StrEqualsNullOperator.FACTORY;
+                        } else if (Chars.equals(sig.name, "!=")) {
+                            return StrNotEqualsNullOperator.FACTORY;
+                        }
+                    }
+                    break;
+                default:
+                    break;
             }
         }
 

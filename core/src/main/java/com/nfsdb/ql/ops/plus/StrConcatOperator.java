@@ -25,8 +25,6 @@ import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractBinaryOperator;
 import com.nfsdb.ql.ops.Function;
-import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.std.ObjList;
 import com.nfsdb.std.SplitCharSequence;
 import com.nfsdb.store.ColumnType;
 
@@ -63,7 +61,7 @@ public class StrConcatOperator extends AbstractBinaryOperator {
     }
 
     @Override
-    public Function newInstance(ObjList<VirtualColumn> args) {
+    public Function newInstance() {
         return new StrConcatOperator();
     }
 }

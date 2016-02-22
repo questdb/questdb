@@ -25,8 +25,6 @@ import com.nfsdb.misc.Chars;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractBinaryOperator;
 import com.nfsdb.ql.ops.Function;
-import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.std.ObjList;
 import com.nfsdb.store.ColumnType;
 
 public class StrEqualsOperator extends AbstractBinaryOperator {
@@ -43,11 +41,7 @@ public class StrEqualsOperator extends AbstractBinaryOperator {
     }
 
     @Override
-    public Function newInstance(ObjList<VirtualColumn> args) {
-        VirtualColumn vc = args.getQuick(1);
-        if (vc.isConstant() && vc.getFlyweightStr(null) == null) {
-            return new StrEqualsNullOperator();
-        }
+    public Function newInstance() {
         return new StrEqualsOperator();
     }
 }

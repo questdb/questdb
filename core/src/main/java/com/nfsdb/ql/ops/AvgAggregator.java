@@ -71,7 +71,7 @@ public final class AvgAggregator extends AbstractUnaryOperator implements Aggreg
     }
 
     @Override
-    public Function newInstance(ObjList<VirtualColumn> args) {
+    public Function newInstance() {
         return new AvgAggregator();
     }
 }

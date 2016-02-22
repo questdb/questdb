@@ -21,8 +21,6 @@
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.std.ObjList;
-
 public interface FunctionFactory {
-    Function newInstance(ObjList<VirtualColumn> args);
+    Function newInstance();
 }

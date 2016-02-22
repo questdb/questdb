@@ -68,7 +68,7 @@ public final class CountAggregator extends AbstractVirtualColumn implements Aggr
     }
 
     @Override
-    public Function newInstance(ObjList<VirtualColumn> args) {
+    public Function newInstance() {
         return new CountAggregator();
     }
 

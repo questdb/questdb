@@ -25,8 +25,6 @@ import com.nfsdb.misc.Numbers;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractUnaryOperator;
 import com.nfsdb.ql.ops.Function;
-import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.std.ObjList;
 import com.nfsdb.store.ColumnType;
 
 public class AtoIFunction extends AbstractUnaryOperator {
@@ -58,7 +56,7 @@ public class AtoIFunction extends AbstractUnaryOperator {
     }
 
     @Override
-    public Function newInstance(ObjList<VirtualColumn> args) {
+    public Function newInstance() {
         return new AtoIFunction();
     }
 }

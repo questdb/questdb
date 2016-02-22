@@ -27,7 +27,6 @@ import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.ops.AbstractVirtualColumn;
 import com.nfsdb.ql.ops.Function;
 import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.std.ObjList;
 import com.nfsdb.store.ColumnType;
 
 public class DoubleScaledEqualsOperator extends AbstractVirtualColumn implements Function {
@@ -60,7 +59,7 @@ public class DoubleScaledEqualsOperator extends AbstractVirtualColumn implements
     }
 
     @Override
-    public Function newInstance(ObjList<VirtualColumn> args) {
+    public Function newInstance() {
         return new DoubleScaledEqualsOperator();
     }
 

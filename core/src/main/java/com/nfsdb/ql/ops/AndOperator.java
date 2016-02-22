@@ -23,7 +23,6 @@ package com.nfsdb.ql.ops;
 
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.constant.BooleanConstant;
-import com.nfsdb.std.ObjList;
 import com.nfsdb.store.ColumnType;
 
 public class AndOperator extends AbstractBinaryOperator {
@@ -49,7 +48,7 @@ public class AndOperator extends AbstractBinaryOperator {
     }
 
     @Override
-    public Function newInstance(ObjList<VirtualColumn> args) {
+    public Function newInstance() {
         return new AndOperator();
     }
 }

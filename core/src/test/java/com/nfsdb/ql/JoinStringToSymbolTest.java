@@ -211,7 +211,7 @@ public class JoinStringToSymbolTest {
         cols.add(new SymRecordSourceColumn(bw.getMetadata().getColumnIndex("type")));
         cols.add(new StrConstant("rock"));
 
-        StrEqualsOperator filter = (StrEqualsOperator) StrEqualsOperator.FACTORY.newInstance(cols);
+        StrEqualsOperator filter = (StrEqualsOperator) StrEqualsOperator.FACTORY.newInstance();
         filter.setLhs(cols.get(0));
         filter.setRhs(cols.get(1));
 

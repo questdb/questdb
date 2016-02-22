@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql;
 
@@ -60,7 +60,7 @@ public class VirtualColumnTest extends AbstractTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        final AddDoubleOperator plus = (AddDoubleOperator) AddDoubleOperator.FACTORY.newInstance(null);
+        final AddDoubleOperator plus = (AddDoubleOperator) AddDoubleOperator.FACTORY.newInstance();
         plus.setName("plus");
         plus.setLhs(new DoubleRecordSourceColumn(w.getMetadata().getColumnIndex("bid")));
         plus.setRhs(new DoubleConstant(12.5));
@@ -196,7 +196,7 @@ public class VirtualColumnTest extends AbstractTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        final AddDoubleOperator plus = (AddDoubleOperator) AddDoubleOperator.FACTORY.newInstance(null);
+        final AddDoubleOperator plus = (AddDoubleOperator) AddDoubleOperator.FACTORY.newInstance();
         plus.setName("plus");
         plus.setLhs(new DoubleRecordSourceColumn(w.getMetadata().getColumnIndex("bid")));
         plus.setRhs(new DoubleConstant(12.5));

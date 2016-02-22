@@ -22,7 +22,6 @@
 package com.nfsdb.ql.ops;
 
 import com.nfsdb.ql.Record;
-import com.nfsdb.std.ObjList;
 import com.nfsdb.store.ColumnType;
 
 import java.util.regex.Matcher;
@@ -44,7 +43,7 @@ public class StrRegexOperator extends AbstractBinaryOperator {
     }
 
     @Override
-    public Function newInstance(ObjList<VirtualColumn> args) {
+    public Function newInstance() {
         return new StrRegexOperator();
     }
 

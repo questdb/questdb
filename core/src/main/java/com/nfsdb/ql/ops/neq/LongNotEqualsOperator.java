@@ -24,8 +24,6 @@ package com.nfsdb.ql.ops.neq;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractBinaryOperator;
 import com.nfsdb.ql.ops.Function;
-import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.std.ObjList;
 import com.nfsdb.store.ColumnType;
 
 public class LongNotEqualsOperator extends AbstractBinaryOperator {
@@ -42,7 +40,7 @@ public class LongNotEqualsOperator extends AbstractBinaryOperator {
     }
 
     @Override
-    public Function newInstance(ObjList<VirtualColumn> args) {
+    public Function newInstance() {
         return new LongNotEqualsOperator();
     }
 }

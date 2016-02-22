@@ -25,8 +25,6 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.ops.AbstractUnaryAggregator;
 import com.nfsdb.ql.ops.Function;
-import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.std.ObjList;
 import com.nfsdb.store.ColumnType;
 
 public final class FirstLongAggregator extends AbstractUnaryAggregator {
@@ -45,7 +43,7 @@ public final class FirstLongAggregator extends AbstractUnaryAggregator {
     }
 
     @Override
-    public Function newInstance(ObjList<VirtualColumn> args) {
+    public Function newInstance() {
         return new FirstLongAggregator();
     }
 }

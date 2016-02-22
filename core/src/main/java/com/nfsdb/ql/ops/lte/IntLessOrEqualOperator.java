@@ -24,8 +24,6 @@ package com.nfsdb.ql.ops.lte;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractBinaryOperator;
 import com.nfsdb.ql.ops.Function;
-import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.std.ObjList;
 import com.nfsdb.store.ColumnType;
 
 public class IntLessOrEqualOperator extends AbstractBinaryOperator {
@@ -43,7 +41,7 @@ public class IntLessOrEqualOperator extends AbstractBinaryOperator {
     }
 
     @Override
-    public Function newInstance(ObjList<VirtualColumn> args) {
+    public Function newInstance() {
         return new IntLessOrEqualOperator();
     }
 }

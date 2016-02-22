@@ -25,8 +25,6 @@ import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractUnaryOperator;
 import com.nfsdb.ql.ops.Function;
-import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.std.ObjList;
 import com.nfsdb.store.ColumnType;
 import com.nfsdb.store.VariableColumn;
 
@@ -60,7 +58,7 @@ public class StoAFunction extends AbstractUnaryOperator {
     }
 
     @Override
-    public Function newInstance(ObjList<VirtualColumn> args) {
+    public Function newInstance() {
         return new StoAFunction();
     }
 }

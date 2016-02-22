@@ -22,7 +22,6 @@
 package com.nfsdb.ql.ops;
 
 import com.nfsdb.ql.Record;
-import com.nfsdb.std.ObjList;
 import com.nfsdb.store.ColumnType;
 
 public class NotOperator extends AbstractUnaryOperator {
@@ -39,7 +38,7 @@ public class NotOperator extends AbstractUnaryOperator {
     }
 
     @Override
-    public Function newInstance(ObjList<VirtualColumn> args) {
+    public Function newInstance() {
         return new NotOperator();
     }
 }

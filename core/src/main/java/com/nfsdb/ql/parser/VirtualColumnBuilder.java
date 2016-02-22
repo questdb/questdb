@@ -147,7 +147,7 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
             throw QueryError.$(node.position, "No such function: " + sig.userReadable());
         }
 
-        Function f = factory.newInstance(args);
+        Function f = factory.newInstance();
         if (args != null) {
             int n = node.paramCount;
             for (int i = 0; i < n; i++) {

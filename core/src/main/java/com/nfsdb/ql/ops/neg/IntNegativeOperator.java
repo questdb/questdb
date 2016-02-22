@@ -24,8 +24,6 @@ package com.nfsdb.ql.ops.neg;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractUnaryOperator;
 import com.nfsdb.ql.ops.Function;
-import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.std.ObjList;
 import com.nfsdb.store.ColumnType;
 
 public class IntNegativeOperator extends AbstractUnaryOperator {
@@ -55,7 +53,7 @@ public class IntNegativeOperator extends AbstractUnaryOperator {
     }
 
     @Override
-    public Function newInstance(ObjList<VirtualColumn> args) {
+    public Function newInstance() {
         return new IntNegativeOperator();
     }
 

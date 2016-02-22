@@ -27,7 +27,6 @@ import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.ops.AbstractVirtualColumn;
 import com.nfsdb.ql.ops.Function;
 import com.nfsdb.ql.ops.VirtualColumn;
-import com.nfsdb.std.ObjList;
 import com.nfsdb.store.ColumnType;
 
 public class DoubleNegativeOperator extends AbstractVirtualColumn implements Function {
@@ -55,7 +54,7 @@ public class DoubleNegativeOperator extends AbstractVirtualColumn implements Fun
     }
 
     @Override
-    public Function newInstance(ObjList<VirtualColumn> args) {
+    public Function newInstance() {
         return new DoubleNegativeOperator();
     }
 
