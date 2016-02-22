@@ -24,11 +24,17 @@ package com.nfsdb.ql.ops.neg;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractUnaryOperator;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 public class IntNegativeOperator extends AbstractUnaryOperator {
 
-    public final static IntNegativeOperator FACTORY = new IntNegativeOperator();
+    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new IntNegativeOperator();
+        }
+    };
 
     private IntNegativeOperator() {
         super(ColumnType.INT);
@@ -51,10 +57,4 @@ public class IntNegativeOperator extends AbstractUnaryOperator {
         int v = value.getInt(rec);
         return v == Integer.MIN_VALUE ? Long.MIN_VALUE : -v;
     }
-
-    @Override
-    public Function newInstance() {
-        return new IntNegativeOperator();
-    }
-
 }

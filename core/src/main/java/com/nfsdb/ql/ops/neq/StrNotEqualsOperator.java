@@ -25,11 +25,17 @@ import com.nfsdb.misc.Chars;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractBinaryOperator;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 public class StrNotEqualsOperator extends AbstractBinaryOperator {
 
-    public final static StrNotEqualsOperator FACTORY = new StrNotEqualsOperator();
+    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new StrNotEqualsOperator();
+        }
+    };
 
     private StrNotEqualsOperator() {
         super(ColumnType.BOOLEAN);
@@ -38,10 +44,5 @@ public class StrNotEqualsOperator extends AbstractBinaryOperator {
     @Override
     public boolean getBool(Record rec) {
         return !Chars.equals(lhs.getFlyweightStr(rec), rhs.getFlyweightStr(rec));
-    }
-
-    @Override
-    public Function newInstance() {
-        return new StrNotEqualsOperator();
     }
 }

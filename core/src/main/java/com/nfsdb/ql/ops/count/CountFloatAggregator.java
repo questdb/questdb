@@ -25,11 +25,17 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.ops.AbstractUnaryAggregator;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 public final class CountFloatAggregator extends AbstractUnaryAggregator {
 
-    public static final CountFloatAggregator FACTORY = new CountFloatAggregator();
+    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new CountFloatAggregator();
+        }
+    };
 
     private CountFloatAggregator() {
         super(ColumnType.LONG);
@@ -43,10 +49,5 @@ public final class CountFloatAggregator extends AbstractUnaryAggregator {
         } else if (d == d) {
             values.putLong(valueIndex, values.getLong(valueIndex) + 1);
         }
-    }
-
-    @Override
-    public Function newInstance() {
-        return new CountFloatAggregator();
     }
 }

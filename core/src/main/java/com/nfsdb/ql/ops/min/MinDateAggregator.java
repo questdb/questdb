@@ -25,10 +25,16 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.ops.AbstractUnaryAggregator;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 public final class MinDateAggregator extends AbstractUnaryAggregator {
-    public static final MinDateAggregator FACTORY = new MinDateAggregator();
+    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new MinDateAggregator();
+        }
+    };
 
     private MinDateAggregator() {
         super(ColumnType.DATE);
@@ -40,10 +46,5 @@ public final class MinDateAggregator extends AbstractUnaryAggregator {
         if (values.isNew() || v < values.getLong(valueIndex)) {
             values.putLong(valueIndex, v);
         }
-    }
-
-    @Override
-    public Function newInstance() {
-        return new MinDateAggregator();
     }
 }

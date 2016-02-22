@@ -71,19 +71,20 @@ import com.nfsdb.ql.ops.sum.SumLongAggregator;
 import com.nfsdb.std.CharSequenceHashSet;
 import com.nfsdb.std.ObjList;
 import com.nfsdb.std.ObjObjHashMap;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public final class FunctionFactories {
 
-    private static final ObjObjHashMap<Signature, FunctionFactory> factories = new ObjObjHashMap<>();
+    private static final ObjObjHashMap<Signature, ObjectFactory<Function>> factories = new ObjObjHashMap<>();
     private static final CharSequenceHashSet aggregateFunctionNames = new CharSequenceHashSet();
 
     private FunctionFactories() {
     }
 
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
-    public static FunctionFactory find(Signature sig, ObjList<VirtualColumn> args) {
+    public static ObjectFactory<Function> find(Signature sig, ObjList<VirtualColumn> args) {
         final VirtualColumn vc;
         if (sig.paramCount == 2 && (vc = args.getQuick(1)).isConstant()) {
 
@@ -134,7 +135,7 @@ public final class FunctionFactories {
             }
         }
 
-        FunctionFactory factory = factories.get(sig);
+        ObjectFactory<Function> factory = factories.get(sig);
         if (factory != null) {
             return factory;
         } else {
@@ -157,33 +158,33 @@ public final class FunctionFactories {
         return aggregateFunctionNames.contains(name);
     }
 
-    private static void binSig(String name, ColumnType lhst, ColumnType rhst, FunctionFactory f) {
+    private static void binSig(String name, ColumnType lhst, ColumnType rhst, ObjectFactory<Function> f) {
         factories.put(new Signature().setName(name).setParamCount(2).paramType(0, lhst, false).paramType(1, rhst, false), f);
         factories.put(new Signature().setName(name).setParamCount(2).paramType(0, lhst, true).paramType(1, rhst, false), f);
         factories.put(new Signature().setName(name).setParamCount(2).paramType(0, lhst, false).paramType(1, rhst, true), f);
         factories.put(new Signature().setName(name).setParamCount(2).paramType(0, lhst, true).paramType(1, rhst, true), f);
     }
 
-    private static void unSig(String name, ColumnType type, FunctionFactory f) {
+    private static void unSig(String name, ColumnType type, ObjectFactory<Function> f) {
         factories.put(new Signature().setName(name).setParamCount(1).paramType(0, type, false), f);
         factories.put(new Signature().setName(name).setParamCount(1).paramType(0, type, true), f);
     }
 
-    private static void noargSig(String name, FunctionFactory f) {
+    private static void noargSig(String name, ObjectFactory<Function> f) {
         factories.put(new Signature().setName(name).setParamCount(0), f);
     }
 
-    private static void noargSigAgg(String name, FunctionFactory f) {
+    private static void noargSigAgg(String name, ObjectFactory<Function> f) {
         noargSig(name, f);
         aggregateFunctionNames.add(name);
     }
 
-    private static void unSigAgg(String name, ColumnType type, FunctionFactory f) {
+    private static void unSigAgg(String name, ColumnType type, ObjectFactory<Function> f) {
         unSig(name, type, f);
         aggregateFunctionNames.add(name);
     }
 
-    private static void triSig(String name, ColumnType lhst, ColumnType rhst, ColumnType scale, FunctionFactory f) {
+    private static void triSig(String name, ColumnType lhst, ColumnType rhst, ColumnType scale, ObjectFactory<Function> f) {
         factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, false).paramType(1, rhst, false).paramType(2, scale, false), f);
         factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, false).paramType(1, rhst, false).paramType(2, scale, true), f);
         factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, false).paramType(1, rhst, true).paramType(2, scale, false), f);
@@ -195,21 +196,21 @@ public final class FunctionFactories {
         factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, true).paramType(1, rhst, true).paramType(2, scale, true), f);
     }
 
-    private static void binSig(String name, FunctionFactory doubleFactory, FunctionFactory longFactory, FunctionFactory intFactory) {
+    private static void binSig(String name, ObjectFactory<Function> doubleFactory, ObjectFactory<Function> longFactory, ObjectFactory<Function> intFactory) {
         binSig(name, doubleFactory, longFactory, intFactory, null);
     }
 
-    private static void binSigAgg(String name, FunctionFactory doubleFactory, FunctionFactory longFactory, FunctionFactory intFactory) {
+    private static void binSigAgg(String name, ObjectFactory<Function> doubleFactory, ObjectFactory<Function> longFactory, ObjectFactory<Function> intFactory) {
         binSig(name, doubleFactory, longFactory, intFactory, null);
         aggregateFunctionNames.add(name);
     }
 
     private static void binSig(
             String name,
-            FunctionFactory doubleFactory,
-            FunctionFactory longFactory,
-            FunctionFactory intFactory,
-            FunctionFactory strFactory
+            ObjectFactory<Function> doubleFactory,
+            ObjectFactory<Function> longFactory,
+            ObjectFactory<Function> intFactory,
+            ObjectFactory<Function> strFactory
     ) {
         binSig(name, ColumnType.DOUBLE, ColumnType.PARAMETER, doubleFactory);
         binSig(name, ColumnType.DOUBLE, ColumnType.DOUBLE, doubleFactory);

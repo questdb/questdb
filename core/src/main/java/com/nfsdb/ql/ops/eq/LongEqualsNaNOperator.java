@@ -25,11 +25,17 @@ import com.nfsdb.misc.Numbers;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractBinaryOperator;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 public class LongEqualsNaNOperator extends AbstractBinaryOperator {
 
-    public final static LongEqualsNaNOperator FACTORY = new LongEqualsNaNOperator();
+    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new LongEqualsNaNOperator();
+        }
+    };
 
     private LongEqualsNaNOperator() {
         super(ColumnType.BOOLEAN);
@@ -38,10 +44,5 @@ public class LongEqualsNaNOperator extends AbstractBinaryOperator {
     @Override
     public boolean getBool(Record rec) {
         return lhs.getLong(rec) == Numbers.LONG_NaN;
-    }
-
-    @Override
-    public Function newInstance() {
-        return new LongEqualsNaNOperator();
     }
 }

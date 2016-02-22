@@ -24,11 +24,17 @@ package com.nfsdb.ql.ops.eq;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractBinaryOperator;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 public class DoubleEqualsOperator extends AbstractBinaryOperator {
 
-    public final static DoubleEqualsOperator FACTORY = new DoubleEqualsOperator();
+    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new DoubleEqualsOperator();
+        }
+    };
 
     private DoubleEqualsOperator() {
         super(ColumnType.BOOLEAN);
@@ -37,10 +43,5 @@ public class DoubleEqualsOperator extends AbstractBinaryOperator {
     @Override
     public boolean getBool(Record rec) {
         return lhs.getDouble(rec) == rhs.getDouble(rec);
-    }
-
-    @Override
-    public Function newInstance() {
-        return new DoubleEqualsOperator();
     }
 }

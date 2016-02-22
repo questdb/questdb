@@ -25,11 +25,17 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.ops.AbstractUnaryAggregator;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 public final class FirstFloatAggregator extends AbstractUnaryAggregator {
 
-    public static final FirstFloatAggregator FACTORY = new FirstFloatAggregator();
+    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new FirstFloatAggregator();
+        }
+    };
 
     private FirstFloatAggregator() {
         super(ColumnType.FLOAT);
@@ -40,10 +46,5 @@ public final class FirstFloatAggregator extends AbstractUnaryAggregator {
         if (values.isNew()) {
             values.putFloat(valueIndex, value.getFloat(rec));
         }
-    }
-
-    @Override
-    public Function newInstance() {
-        return new FirstFloatAggregator();
     }
 }

@@ -23,11 +23,17 @@ package com.nfsdb.ql.ops;
 
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.constant.BooleanConstant;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 public class AndOperator extends AbstractBinaryOperator {
 
-    public static final AndOperator FACTORY = new AndOperator();
+    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new AndOperator();
+        }
+    };
 
     private AndOperator() {
         super(ColumnType.BOOLEAN);
@@ -45,10 +51,5 @@ public class AndOperator extends AbstractBinaryOperator {
             return true;
         }
         return (lhs.isConstant() && !lhs.getBool(null)) || (lhs.isConstant() && rhs.isConstant());
-    }
-
-    @Override
-    public Function newInstance() {
-        return new AndOperator();
     }
 }

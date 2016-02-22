@@ -25,12 +25,18 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.ops.AbstractUnaryAggregator;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 import com.nfsdb.store.VariableColumn;
 
 public final class CountStrAggregator extends AbstractUnaryAggregator {
 
-    public static final CountStrAggregator FACTORY = new CountStrAggregator();
+    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new CountStrAggregator();
+        }
+    };
 
     private CountStrAggregator() {
         super(ColumnType.LONG);
@@ -44,10 +50,5 @@ public final class CountStrAggregator extends AbstractUnaryAggregator {
         } else if (len != VariableColumn.NULL_LEN) {
             values.putLong(valueIndex, values.getLong(valueIndex) + 1);
         }
-    }
-
-    @Override
-    public Function newInstance() {
-        return new CountStrAggregator();
     }
 }

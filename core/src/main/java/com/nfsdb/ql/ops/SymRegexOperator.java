@@ -24,6 +24,7 @@ package com.nfsdb.ql.ops;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.std.IntHashSet;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 import com.nfsdb.store.SymbolTable;
 
@@ -32,7 +33,12 @@ import java.util.regex.Pattern;
 
 public class SymRegexOperator extends AbstractBinaryOperator {
 
-    public final static SymRegexOperator FACTORY = new SymRegexOperator();
+    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new SymRegexOperator();
+        }
+    };
 
     private final IntHashSet set = new IntHashSet();
     private Matcher matcher;
@@ -44,11 +50,6 @@ public class SymRegexOperator extends AbstractBinaryOperator {
     @Override
     public boolean getBool(Record rec) {
         return set.contains(lhs.getInt(rec));
-    }
-
-    @Override
-    public Function newInstance() {
-        return new SymRegexOperator();
     }
 
     @Override

@@ -25,11 +25,17 @@ import com.nfsdb.ex.ParserException;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.std.CharSequenceHashSet;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 public class StrInOperator extends AbstractVirtualColumn implements Function {
 
-    public final static StrInOperator FACTORY = new StrInOperator();
+    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new StrInOperator();
+        }
+    };
 
     private final CharSequenceHashSet set = new CharSequenceHashSet();
     private VirtualColumn lhs;
@@ -51,11 +57,6 @@ public class StrInOperator extends AbstractVirtualColumn implements Function {
     @Override
     public void prepare(StorageFacade facade) {
         lhs.prepare(facade);
-    }
-
-    @Override
-    public Function newInstance() {
-        return new StrInOperator();
     }
 
     @Override

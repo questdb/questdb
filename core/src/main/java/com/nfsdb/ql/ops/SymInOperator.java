@@ -26,12 +26,18 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.std.CharSequenceHashSet;
 import com.nfsdb.std.IntHashSet;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 import com.nfsdb.store.SymbolTable;
 
 public class SymInOperator extends AbstractVirtualColumn implements Function {
 
-    public final static SymInOperator FACTORY = new SymInOperator();
+    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new SymInOperator();
+        }
+    };
 
     private final IntHashSet set = new IntHashSet();
     private final CharSequenceHashSet values = new CharSequenceHashSet();
@@ -61,11 +67,6 @@ public class SymInOperator extends AbstractVirtualColumn implements Function {
                 set.add(k);
             }
         }
-    }
-
-    @Override
-    public Function newInstance() {
-        return new SymInOperator();
     }
 
     @Override

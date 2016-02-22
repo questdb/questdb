@@ -24,11 +24,17 @@ package com.nfsdb.ql.ops.minus;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractBinaryOperator;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 public class MinusLongOperator extends AbstractBinaryOperator {
 
-    public final static MinusLongOperator FACTORY = new MinusLongOperator();
+    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new MinusLongOperator();
+        }
+    };
 
     private MinusLongOperator() {
         super(ColumnType.LONG);
@@ -46,10 +52,5 @@ public class MinusLongOperator extends AbstractBinaryOperator {
         long l = lhs.getLong(rec);
         long r = rhs.getLong(rec);
         return l > Long.MIN_VALUE && r > Long.MIN_VALUE ? l - r : Long.MIN_VALUE;
-    }
-
-    @Override
-    public Function newInstance() {
-        return new MinusLongOperator();
     }
 }

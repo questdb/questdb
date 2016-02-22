@@ -24,11 +24,17 @@ package com.nfsdb.ql.ops.conv;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractUnaryOperator;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 public class LtoDFunction extends AbstractUnaryOperator {
 
-    public final static LtoDFunction FACTORY = new LtoDFunction();
+    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new LtoDFunction();
+        }
+    };
 
     private LtoDFunction() {
         super(ColumnType.DATE);
@@ -42,10 +48,5 @@ public class LtoDFunction extends AbstractUnaryOperator {
     @Override
     public long getLong(Record rec) {
         return value.getLong(rec);
-    }
-
-    @Override
-    public Function newInstance() {
-        return new LtoDFunction();
     }
 }

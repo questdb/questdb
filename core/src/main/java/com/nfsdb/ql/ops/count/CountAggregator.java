@@ -31,11 +31,17 @@ import com.nfsdb.ql.ops.AbstractVirtualColumn;
 import com.nfsdb.ql.ops.Function;
 import com.nfsdb.ql.ops.VirtualColumn;
 import com.nfsdb.std.ObjList;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 public final class CountAggregator extends AbstractVirtualColumn implements AggregatorFunction, Function {
 
-    public static final CountAggregator FACTORY = new CountAggregator();
+    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new CountAggregator();
+        }
+    };
 
     private int index;
 
@@ -65,11 +71,6 @@ public final class CountAggregator extends AbstractVirtualColumn implements Aggr
 
     @Override
     public void prepare(StorageFacade facade) {
-    }
-
-    @Override
-    public Function newInstance() {
-        return new CountAggregator();
     }
 
     @Override

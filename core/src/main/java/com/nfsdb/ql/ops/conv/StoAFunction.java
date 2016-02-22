@@ -25,12 +25,18 @@ import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractUnaryOperator;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 import com.nfsdb.store.VariableColumn;
 
 public class StoAFunction extends AbstractUnaryOperator {
 
-    public final static StoAFunction FACTORY = new StoAFunction();
+    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new StoAFunction();
+        }
+    };
 
     private StoAFunction() {
         super(ColumnType.STRING);
@@ -55,10 +61,5 @@ public class StoAFunction extends AbstractUnaryOperator {
     public int getStrLen(Record rec) {
         CharSequence cs = value.getSym(rec);
         return cs == null ? VariableColumn.NULL_LEN : cs.length();
-    }
-
-    @Override
-    public Function newInstance() {
-        return new StoAFunction();
     }
 }

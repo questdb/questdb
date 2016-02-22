@@ -35,6 +35,7 @@ import com.nfsdb.ql.ops.constant.*;
 import com.nfsdb.std.CharSequenceIntHashMap;
 import com.nfsdb.std.CharSequenceObjHashMap;
 import com.nfsdb.std.ObjList;
+import com.nfsdb.std.ObjectFactory;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;
@@ -142,7 +143,7 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
         if (node.type == ExprNode.NodeType.LAMBDA) {
             throw QueryError.$(node.position, "Cannot use lambda in this context");
         }
-        FunctionFactory factory = FunctionFactories.find(sig, args);
+        ObjectFactory<Function> factory = FunctionFactories.find(sig, args);
         if (factory == null) {
             throw QueryError.$(node.position, "No such function: " + sig.userReadable());
         }

@@ -25,11 +25,17 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.ops.AbstractUnaryAggregator;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 public final class LastFloatAggregator extends AbstractUnaryAggregator {
 
-    public static final LastFloatAggregator FACTORY = new LastFloatAggregator();
+    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new LastFloatAggregator();
+        }
+    };
 
     private LastFloatAggregator() {
         super(ColumnType.FLOAT);
@@ -38,10 +44,5 @@ public final class LastFloatAggregator extends AbstractUnaryAggregator {
     @Override
     public void calculate(Record rec, MapValues values) {
         values.putFloat(valueIndex, value.getFloat(rec));
-    }
-
-    @Override
-    public Function newInstance() {
-        return new LastFloatAggregator();
     }
 }

@@ -24,12 +24,18 @@ package com.nfsdb.ql.ops.conv;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractUnaryOperator;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 import com.nfsdb.store.SymbolTable;
 
 public class AtoSFunction extends AbstractUnaryOperator {
 
-    public static final AtoSFunction FACTORY = new AtoSFunction();
+    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new AtoSFunction();
+        }
+    };
 
     private AtoSFunction() {
         super(ColumnType.SYMBOL);
@@ -43,10 +49,5 @@ public class AtoSFunction extends AbstractUnaryOperator {
     @Override
     public SymbolTable getSymbolTable() {
         return null;
-    }
-
-    @Override
-    public Function newInstance() {
-        return new AtoSFunction();
     }
 }

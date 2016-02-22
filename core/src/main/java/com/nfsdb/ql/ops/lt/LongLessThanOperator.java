@@ -24,11 +24,17 @@ package com.nfsdb.ql.ops.lt;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractBinaryOperator;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 public class LongLessThanOperator extends AbstractBinaryOperator {
 
-    public final static LongLessThanOperator FACTORY = new LongLessThanOperator();
+    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new LongLessThanOperator();
+        }
+    };
 
     private LongLessThanOperator() {
         super(ColumnType.BOOLEAN);
@@ -38,10 +44,5 @@ public class LongLessThanOperator extends AbstractBinaryOperator {
     public boolean getBool(Record rec) {
         long l = lhs.getLong(rec);
         return l < rhs.getLong(rec) && l > Long.MIN_VALUE;
-    }
-
-    @Override
-    public Function newInstance() {
-        return new LongLessThanOperator();
     }
 }

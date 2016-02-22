@@ -25,10 +25,16 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.ops.AbstractUnaryAggregator;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 public final class SumIntAggregator extends AbstractUnaryAggregator {
-    public static final SumIntAggregator FACTORY = new SumIntAggregator();
+    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new SumIntAggregator();
+        }
+    };
 
     private SumIntAggregator() {
         super(ColumnType.INT);
@@ -41,10 +47,5 @@ public final class SumIntAggregator extends AbstractUnaryAggregator {
         } else {
             values.putInt(valueIndex, values.getInt(valueIndex) + value.getInt(rec));
         }
-    }
-
-    @Override
-    public Function newInstance() {
-        return new SumIntAggregator();
     }
 }

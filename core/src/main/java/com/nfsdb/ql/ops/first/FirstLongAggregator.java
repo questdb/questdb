@@ -25,11 +25,17 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.ops.AbstractUnaryAggregator;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 public final class FirstLongAggregator extends AbstractUnaryAggregator {
 
-    public static final FirstLongAggregator FACTORY = new FirstLongAggregator();
+    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new FirstLongAggregator();
+        }
+    };
 
     private FirstLongAggregator() {
         super(ColumnType.LONG);
@@ -40,10 +46,5 @@ public final class FirstLongAggregator extends AbstractUnaryAggregator {
         if (values.isNew()) {
             values.putLong(valueIndex, value.getLong(rec));
         }
-    }
-
-    @Override
-    public Function newInstance() {
-        return new FirstLongAggregator();
     }
 }

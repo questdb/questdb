@@ -29,11 +29,18 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.impl.map.MapRecordValueInterceptor;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.std.ObjList;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 public final class VwapAggregator extends AbstractBinaryOperator implements AggregatorFunction, MapRecordValueInterceptor {
 
-    public static final VwapAggregator FACTORY = new VwapAggregator();
+    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new VwapAggregator();
+        }
+    };
+
     private final static ColumnMetadata INTERNAL_COL_AMOUNT = new ColumnMetadata().setName("$sumAmt").setType(ColumnType.DOUBLE);
     private final static ColumnMetadata INTERNAL_COL_QUANTITY = new ColumnMetadata().setName("$sumQty").setType(ColumnType.DOUBLE);
     private int sumAmtIdx;
@@ -70,10 +77,5 @@ public final class VwapAggregator extends AbstractBinaryOperator implements Aggr
         sumAmtIdx = offset;
         sumQtyIdx = offset + 1;
         vwap = offset + 2;
-    }
-
-    @Override
-    public Function newInstance() {
-        return new VwapAggregator();
     }
 }

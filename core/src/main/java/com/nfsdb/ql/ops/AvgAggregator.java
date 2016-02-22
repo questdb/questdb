@@ -29,11 +29,18 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.impl.map.MapRecordValueInterceptor;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.std.ObjList;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 public final class AvgAggregator extends AbstractUnaryOperator implements AggregatorFunction, MapRecordValueInterceptor {
 
-    public static final AvgAggregator FACTORY = new AvgAggregator();
+    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new AvgAggregator();
+        }
+    };
+
     private final static ColumnMetadata INTERNAL_COL_COUNT = new ColumnMetadata().setName("$count").setType(ColumnType.LONG);
     private final static ColumnMetadata INTERNAL_COL_SUM = new ColumnMetadata().setName("$sum").setType(ColumnType.DOUBLE);
     private int countIdx;
@@ -68,10 +75,5 @@ public final class AvgAggregator extends AbstractUnaryOperator implements Aggreg
         countIdx = offset;
         sumIdx = offset + 1;
         avgIdx = offset + 2;
-    }
-
-    @Override
-    public Function newInstance() {
-        return new AvgAggregator();
     }
 }

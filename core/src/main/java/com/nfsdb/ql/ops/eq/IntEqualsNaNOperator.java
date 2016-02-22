@@ -25,11 +25,17 @@ import com.nfsdb.misc.Numbers;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractBinaryOperator;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 public class IntEqualsNaNOperator extends AbstractBinaryOperator {
 
-    public final static IntEqualsNaNOperator FACTORY = new IntEqualsNaNOperator();
+    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new IntEqualsNaNOperator();
+        }
+    };
 
     private IntEqualsNaNOperator() {
         super(ColumnType.BOOLEAN);
@@ -38,10 +44,5 @@ public class IntEqualsNaNOperator extends AbstractBinaryOperator {
     @Override
     public boolean getBool(Record rec) {
         return lhs.getInt(rec) == Numbers.INT_NaN;
-    }
-
-    @Override
-    public Function newInstance() {
-        return new IntEqualsNaNOperator();
     }
 }

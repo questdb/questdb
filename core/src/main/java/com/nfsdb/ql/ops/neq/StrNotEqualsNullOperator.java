@@ -24,12 +24,18 @@ package com.nfsdb.ql.ops.neq;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractBinaryOperator;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 import com.nfsdb.store.VariableColumn;
 
 public class StrNotEqualsNullOperator extends AbstractBinaryOperator {
 
-    public static final StrNotEqualsNullOperator FACTORY = new StrNotEqualsNullOperator();
+    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new StrNotEqualsNullOperator();
+        }
+    };
 
     StrNotEqualsNullOperator() {
         super(ColumnType.BOOLEAN);
@@ -38,10 +44,5 @@ public class StrNotEqualsNullOperator extends AbstractBinaryOperator {
     @Override
     public boolean getBool(Record rec) {
         return lhs.getStrLen(rec) != VariableColumn.NULL_LEN;
-    }
-
-    @Override
-    public Function newInstance() {
-        return new StrNotEqualsNullOperator();
     }
 }

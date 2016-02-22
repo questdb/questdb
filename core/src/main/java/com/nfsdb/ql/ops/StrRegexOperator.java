@@ -22,6 +22,7 @@
 package com.nfsdb.ql.ops;
 
 import com.nfsdb.ql.Record;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 import java.util.regex.Matcher;
@@ -29,7 +30,12 @@ import java.util.regex.Pattern;
 
 public class StrRegexOperator extends AbstractBinaryOperator {
 
-    public final static StrRegexOperator FACTORY = new StrRegexOperator();
+    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new StrRegexOperator();
+        }
+    };
 
     private Matcher matcher;
 
@@ -40,11 +46,6 @@ public class StrRegexOperator extends AbstractBinaryOperator {
     @Override
     public boolean getBool(Record rec) {
         return matcher.reset(lhs.getFlyweightStr(rec)).find();
-    }
-
-    @Override
-    public Function newInstance() {
-        return new StrRegexOperator();
     }
 
     @Override

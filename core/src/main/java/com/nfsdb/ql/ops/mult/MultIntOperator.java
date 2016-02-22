@@ -24,11 +24,17 @@ package com.nfsdb.ql.ops.mult;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractBinaryOperator;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 public class MultIntOperator extends AbstractBinaryOperator {
 
-    public final static MultIntOperator FACTORY = new MultIntOperator();
+    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new MultIntOperator();
+        }
+    };
 
     private MultIntOperator() {
         super(ColumnType.INT);
@@ -60,10 +66,5 @@ public class MultIntOperator extends AbstractBinaryOperator {
         int l = lhs.getInt(rec);
         int r = rhs.getInt(rec);
         return l > Integer.MIN_VALUE && r > Integer.MIN_VALUE ? l * r : Long.MIN_VALUE;
-    }
-
-    @Override
-    public Function newInstance() {
-        return new MultIntOperator();
     }
 }

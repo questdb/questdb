@@ -25,11 +25,17 @@ import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.ops.AbstractBinaryOperator;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.std.SplitCharSequence;
 import com.nfsdb.store.ColumnType;
 
 public class StrConcatOperator extends AbstractBinaryOperator {
-    public final static StrConcatOperator FACTORY = new StrConcatOperator();
+    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new StrConcatOperator();
+        }
+    };
 
     private final SplitCharSequence cs = new SplitCharSequence();
 
@@ -58,10 +64,5 @@ public class StrConcatOperator extends AbstractBinaryOperator {
     @Override
     public int getStrLen(Record rec) {
         return lhs.getStrLen(rec) + rhs.getStrLen(rec);
-    }
-
-    @Override
-    public Function newInstance() {
-        return new StrConcatOperator();
     }
 }

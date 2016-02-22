@@ -27,11 +27,17 @@ import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.ops.AbstractVirtualColumn;
 import com.nfsdb.ql.ops.Function;
 import com.nfsdb.ql.ops.VirtualColumn;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 public class DoubleScaledEqualsOperator extends AbstractVirtualColumn implements Function {
 
-    public final static DoubleScaledEqualsOperator FACTORY = new DoubleScaledEqualsOperator();
+    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new DoubleScaledEqualsOperator();
+        }
+    };
     private VirtualColumn lhs;
     private VirtualColumn rhs;
     private VirtualColumn scale;
@@ -56,11 +62,6 @@ public class DoubleScaledEqualsOperator extends AbstractVirtualColumn implements
         lhs.prepare(facade);
         rhs.prepare(facade);
         scale.prepare(facade);
-    }
-
-    @Override
-    public Function newInstance() {
-        return new DoubleScaledEqualsOperator();
     }
 
     @Override

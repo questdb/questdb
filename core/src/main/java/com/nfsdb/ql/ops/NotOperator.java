@@ -22,11 +22,17 @@
 package com.nfsdb.ql.ops;
 
 import com.nfsdb.ql.Record;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 
 public class NotOperator extends AbstractUnaryOperator {
 
-    public final static NotOperator FACTORY = new NotOperator();
+    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new NotOperator();
+        }
+    };
 
     private NotOperator() {
         super(ColumnType.BOOLEAN);
@@ -35,10 +41,5 @@ public class NotOperator extends AbstractUnaryOperator {
     @Override
     public boolean getBool(Record rec) {
         return !value.getBool(rec);
-    }
-
-    @Override
-    public Function newInstance() {
-        return new NotOperator();
     }
 }

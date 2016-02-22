@@ -26,12 +26,18 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.ops.AbstractBinaryOperator;
 import com.nfsdb.ql.ops.Function;
+import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.store.ColumnType;
 import com.nfsdb.store.SymbolTable;
 
 public class SymNotEqualsOperator extends AbstractBinaryOperator {
 
-    public final static SymNotEqualsOperator FACTORY = new SymNotEqualsOperator();
+    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+        @Override
+        public Function newInstance() {
+            return new SymNotEqualsOperator();
+        }
+    };
 
     private int key = -2;
 
@@ -43,11 +49,6 @@ public class SymNotEqualsOperator extends AbstractBinaryOperator {
     public boolean getBool(Record rec) {
         int k = lhs.getInt(rec);
         return (k != key && (key != SymbolTable.VALUE_IS_NULL || k != Numbers.INT_NaN));
-    }
-
-    @Override
-    public Function newInstance() {
-        return new SymNotEqualsOperator();
     }
 
     @Override
