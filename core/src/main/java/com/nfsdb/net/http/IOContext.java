@@ -37,8 +37,6 @@ public class IOContext implements Closeable, Mutable, Locality {
     public final NetworkChannel channel;
     public final Request request;
     public final FlyweightCharSequence ext = new FlyweightCharSequence();
-    public final byte[] encoded = new byte[4];
-    public final char[] encodingChar = new char[1];
     private final LocalValueMap map = new LocalValueMap();
     private final Response response;
 

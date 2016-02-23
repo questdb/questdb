@@ -39,9 +39,10 @@ import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.parser.QueryCompiler;
 import com.nfsdb.ql.parser.QueryError;
 import com.nfsdb.std.LocalValue;
-import com.nfsdb.store.ColumnType;
+import com.nfsdb.std.Mutable;
 import sun.nio.cs.ArrayEncoder;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.nio.charset.CharsetEncoder;
@@ -51,15 +52,7 @@ public class JsonHandler implements ContextHandler {
     private static final Log LOG = LogFactory.getLog(JsonHandler.class);
     private static final ArrayEncoder UTF8Encoder;
     private final JournalFactoryPool factoryPool;
-    private final LocalValue<CharSequence> queryContext = new LocalValue<>();
-    private final LocalValue<RecordMetadata> metadataContext = new LocalValue<>();
-    private final LocalValue<Iterator<Record>> recordsContext = new LocalValue<>();
-    private final LocalValue<Long> countContext = new LocalValue<>();
-    private final LocalValue<Long> skipContext = new LocalValue<>();
-    private final LocalValue<Long> stopContext = new LocalValue<>();
-    private final LocalValue<Record> currentContext = new LocalValue<>();
-    private final LocalValue<Boolean> includeCountContext = new LocalValue<>();
-    private final LocalValue<JournalCachingFactory> factoryContext = new LocalValue<>();
+    private final LocalValue<$Context> localContext = new LocalValue<>();
 
     public JsonHandler(JournalFactoryPool factoryPool) {
         this.factoryPool = factoryPool;
@@ -67,9 +60,12 @@ public class JsonHandler implements ContextHandler {
 
     @Override
     public void handle(IOContext context) throws IOException {
-        // Reused for UTF-8 encoding.
-        final byte[] encoded = context.encoded;
-        final char[] encodingChar = context.encodingChar;
+        $Context ctx = localContext.get(context);
+        if (ctx == null) {
+            ctx = new $Context();
+            localContext.set(context, ctx);
+        }
+        ctx.fd = context.channel.getFd();
 
         // Query text.
         ChunkedResponse r = context.chunkedResponse();
@@ -113,13 +109,14 @@ public class JsonHandler implements ContextHandler {
         }
 
         CharSequence withCount = context.request.getUrlParam("withCount");
-        includeCountContext.set(context, withCount != null && Chars.equalsIgnoreCase(withCount, "true"));
-        queryContext.set(context, query);
-        countContext.set(context, 0L);
-        skipContext.set(context, skip);
-        stopContext.set(context, stop);
 
-        if (executeQuery(r, context, encoded, encodingChar) == null) {
+        ctx.includeCount = withCount != null && Chars.equalsIgnoreCase(withCount, "true");
+        ctx.query = query;
+        ctx.skip = skip;
+        ctx.count = 0L;
+        ctx.stop = stop;
+
+        if (executeQuery(r, ctx) == null) {
             return;
         }
 
@@ -129,44 +126,36 @@ public class JsonHandler implements ContextHandler {
 
     @Override
     public void resume(IOContext context) throws IOException {
-        // Reused for UTF-8 encoding. Thread local
-        final byte[] encoded = context.encoded;
-        final char[] encodingChar = context.encodingChar;
         ChunkedResponse r = context.chunkedResponse();
+        $Context ctx = localContext.get(context);
 
-        Iterator<Record> records = recordsContext.get(context);
+        Iterator<Record> records = ctx.records;
         if (records == null) {
-            records = executeQuery(r, context, encoded, encodingChar);
+            records = executeQuery(r, ctx);
             if (records == null) {
                 return;
             }
         }
 
         try {
-            RecordMetadata metadata = metadataContext.get(context);
+            RecordMetadata metadata = ctx.metadata;
             int columnCount = metadata.getColumnCount();
 
-            Record current = currentContext.get(context);
-            long count = countContext.get(context);
-            long skip = skipContext.get(context);
-            long stop = stopContext.get(context);
-            boolean includeCount = includeCountContext.get(context);
-
-            if (current == null && records.hasNext()) {
-                current = records.next();
-                count++;
+            if (ctx.current == null && records.hasNext()) {
+                ctx.current = records.next();
+                ctx.count++;
             }
 
-            while (current != null) {
+            while (ctx.current != null) {
                 r.bookmark();
 
-                if (count > skip) {
-                    if (count > stop && !includeCount) {
+                if (ctx.count > ctx.skip) {
+                    if (ctx.count > ctx.stop && !ctx.includeCount) {
                         break;
                     }
 
-                    if (count <= stop) {
-                        if (count > skip + 1) {
+                    if (ctx.count <= ctx.stop) {
+                        if (ctx.count > ctx.skip + 1) {
                             // Record separator.
                             r.put(',');
                         }
@@ -175,9 +164,9 @@ public class JsonHandler implements ContextHandler {
                         // Columns.
                         for (int col = 0; col < columnCount; col++) {
                             r.put('\"');
-                            stringToJson(r, metadata.getColumn(col).getName(), encodingChar, encoded);
+                            stringToJson(r, metadata.getColumn(col).getName(), ctx.encodingChar, ctx.encoded);
                             r.put("\":");
-                            putValue(encoded, encodingChar, r, metadata, current, col);
+                            putValue(ctx.encoded, ctx.encodingChar, r, metadata, ctx.current, col);
 
                             if (col < columnCount - 1) {
                                 r.put(',');
@@ -189,30 +178,27 @@ public class JsonHandler implements ContextHandler {
                 }
 
                 if (records.hasNext()) {
-                    current = records.next();
-                    count++;
+                    ctx.current = records.next();
+                    ctx.count++;
                 } else {
-                    current = null;
+                    ctx.current = null;
                 }
-                currentContext.set(context, current);
-                countContext.set(context, count);
             }
 
-            if (count >= 0) {
+            if (ctx.count >= 0) {
                 // Finita.
                 r.bookmark();
 
                 r.put(']');
-                if (count > stop) {
+                if (ctx.count > ctx.stop) {
                     r.put(",\"moreExist\":true");
                 }
 
-                if (includeCount) {
+                if (ctx.includeCount) {
                     r.put(",\"totalCount\":");
-                    r.put(count);
+                    r.put(ctx.count);
                 }
                 r.put('}');
-                countContext.set(context, -1L);
                 r.sendChunk();
             }
             r.done();
@@ -323,17 +309,11 @@ public class JsonHandler implements ContextHandler {
                 Numbers.append(r, rec.getShort(col));
                 break;
             case STRING:
-            case SYMBOL:
-                CharSequence str = column.getType() == ColumnType.STRING ? rec.getFlyweightStr(col) : rec.getSym(col);
-                if (str == null) {
-                    r.put("null");
-                } else {
-                    r.put('\"');
-                    stringToJson(r, str, encodingChar, encoded);
-                    r.put('\"');
-                }
+                sendStringOrNull(r, rec.getFlyweightStr(col), encodingChar, encoded);
                 break;
-
+            case SYMBOL:
+                sendStringOrNull(r,rec.getSym(col), encodingChar, encoded);
+                break;
             case BINARY:
                 r.put('[');
                 r.put(']');
@@ -341,6 +321,16 @@ public class JsonHandler implements ContextHandler {
 
             default:
                 throw new IllegalArgumentException(String.format("Column type %s not supported", column.getType()));
+        }
+    }
+
+    private static void sendStringOrNull(CharSink r, CharSequence str, char[] charSource, byte[] encoded) {
+        if (str == null) {
+            r.put("null");
+        } else {
+            r.put('\"');
+            stringToJson(r, str, charSource, encoded);
+            r.put('\"');
         }
     }
 
@@ -399,26 +389,26 @@ public class JsonHandler implements ContextHandler {
         }
     }
 
-    private Iterator<Record> executeQuery(ChunkedResponse r, IOContext context, byte[] encoded, char[] encodingChar) throws IOException {
-        CharSequence query = queryContext.get(context);
+    private Iterator<Record> executeQuery(ChunkedResponse r, $Context ctx) throws IOException {
+        CharSequence query = ctx.query;
         try {
             // Prepare Context.
             JournalCachingFactory factory = factoryPool.get();
             if (factory == null) {
                 // Pool exhausted.
-                LOG.debug().$("No journal factory available. Re-scheduling...").$();
+                LOG.debug().$("[").$(ctx.fd).$("] ").$("No journal factory available. Re-scheduling...").$();
                 return null;
             }
-            factoryContext.set(context, factory);
+            ctx.factory = factory;
 
             QueryCompiler qc = new QueryCompiler();
             RecordCursor records = qc.compile(factory, query);
             r.status(200, "application/json; charset=utf-8");
             r.sendHeader();
-            sendQuery(r, query, encodingChar, encoded);
+            sendQuery(r, query, ctx.encodingChar, ctx.encoded);
             RecordMetadata metadata = records.getMetadata();
-            metadataContext.set(context, metadata);
-            recordsContext.set(context, records);
+            ctx.metadata = metadata;
+            ctx.records = records;
 
             // List columns.
             int columnCount = metadata.getColumnCount();
@@ -438,12 +428,14 @@ public class JsonHandler implements ContextHandler {
             r.put("], \"result\":[");
             return records;
         } catch (ParserException pex) {
-            sendException(r, query, QueryError.getPosition(), QueryError.getMessage(), 400, encodingChar, encoded);
+            LOG.debug().$("[").$(ctx.fd).$("] ").$("Parser error executing query ").$(query).$(pex).$();
+            sendException(r, query, QueryError.getPosition(), QueryError.getMessage(), 400, ctx.encodingChar, ctx.encoded);
         } catch (JournalException jex) {
-            sendException(r, query, -1, jex.getMessage(), 500, encodingChar, encoded);
+            LOG.info().$("[").$(ctx.fd).$("] ").$("Server error executing query ").$(query).$(jex).$();
+            sendException(r, query, -1, jex.getMessage(), 500, ctx.encodingChar, ctx.encoded);
         } catch (InterruptedException ex) {
-            LOG.info().$("Error executing query ").$(query).$(ex).$();
-            sendException(r, query, -1, "server busy, try again later", 500, encodingChar, encoded);
+            LOG.info().$("[").$(ctx.fd).$("] ").$("Error executing query ").$(query).$(ex).$();
+            sendException(r, query, -1, "server busy, try again later", 500, ctx.encodingChar, ctx.encoded);
         }
         return null;
     }
@@ -454,6 +446,42 @@ public class JsonHandler implements ContextHandler {
             UTF8Encoder = (ArrayEncoder) encoder;
         } else {
             UTF8Encoder = null;
+        }
+    }
+
+    private static class $Context implements Mutable, Closeable {
+        private static final Log LOG = LogFactory.getLog(JsonHandler.class);
+        public final byte[] encoded = new byte[4];
+        public final char[] encodingChar = new char[1];
+        public CharSequence query;
+        public RecordMetadata metadata;
+        public Iterator<Record> records;
+        public long count;
+        public long skip;
+        public long stop;
+        public Record current;
+        public boolean includeCount;
+        public JournalCachingFactory factory;
+        public long fd;
+
+        @Override
+        public void clear() {
+            LOG.debug().$("[").$(fd).$("] ").$("Cleaning context").$();
+            query = null;
+            metadata = null;
+            records = null;
+            current = null;
+            if (factory != null) {
+                LOG.debug().$("[").$(fd).$("] ").$("Closing journal factory").$();
+                factory.close();
+                factory = null;
+            }
+        }
+
+        @Override
+        public void close() throws IOException {
+            LOG.debug().$("[").$(fd).$("] ").$("Closing context").$();
+            clear();
         }
     }
 }

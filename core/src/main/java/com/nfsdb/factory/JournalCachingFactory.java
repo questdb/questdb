@@ -27,7 +27,6 @@ import com.nfsdb.JournalKey;
 import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.std.Mutable;
 import com.nfsdb.std.ObjObjHashMap;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -36,7 +35,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
-public class JournalCachingFactory extends AbstractJournalReaderFactory implements JournalClosingListener, Mutable {
+public class JournalCachingFactory extends AbstractJournalReaderFactory implements JournalClosingListener {
     private final ObjObjHashMap<JournalKey, Journal> readers = new ObjObjHashMap<>();
     private final ObjObjHashMap<JournalKey, JournalBulkReader> bulkReaders = new ObjObjHashMap<>();
     private final List<Journal> journalList = new ArrayList<>();
@@ -77,11 +76,6 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
             journalList.add(result);
         }
         return result;
-    }
-
-    @Override
-    public void clear() {
-        close();
     }
 
     @Override
@@ -130,10 +124,6 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
         }
     }
 
-    void setInUse() {
-        inPool = false;
-    }
-
     void clearPool() {
         this.pool = null;
     }
@@ -142,5 +132,9 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
         for (int i = 0, sz = journalList.size(); i < sz; i++) {
             journalList.get(i).expireOpenFiles();
         }
+    }
+
+    void setInUse() {
+        inPool = false;
     }
 }
