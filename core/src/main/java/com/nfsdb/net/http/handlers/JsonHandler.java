@@ -29,6 +29,7 @@ import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.log.Log;
 import com.nfsdb.log.LogFactory;
+import com.nfsdb.log.LogRecord;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.net.http.ChunkedResponse;
@@ -36,10 +37,14 @@ import com.nfsdb.net.http.ContextHandler;
 import com.nfsdb.net.http.IOContext;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
+import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.parser.QueryCompiler;
 import com.nfsdb.ql.parser.QueryError;
 import com.nfsdb.std.LocalValue;
 import com.nfsdb.std.Mutable;
+import com.nfsdb.std.ObjectFactory;
+import com.nfsdb.std.ThreadLocal;
+import org.jetbrains.annotations.Nullable;
 import sun.nio.cs.ArrayEncoder;
 
 import java.io.Closeable;
@@ -49,8 +54,14 @@ import java.nio.charset.CharsetEncoder;
 import java.util.Iterator;
 
 public class JsonHandler implements ContextHandler {
-    private static final Log LOG = LogFactory.getLog(JsonHandler.class);
     private static final ArrayEncoder UTF8Encoder;
+    private static final ThreadLocal<QueryCompiler> queryCompilerLocal = new ThreadLocal<>(new ObjectFactory<QueryCompiler>() {
+        @Override
+        public QueryCompiler newInstance() {
+            return new QueryCompiler();
+        }
+    });
+
     private final JournalFactoryPool factoryPool;
     private final LocalValue<$Context> localContext = new LocalValue<>();
 
@@ -71,9 +82,10 @@ public class JsonHandler implements ContextHandler {
         ChunkedResponse r = context.chunkedResponse();
         CharSequence query = context.request.getUrlParam("query");
         if (query == null || query.length() == 0) {
+            ctx.info().$("Empty query request received. Sending empty reply.").$();
             r.status(200, "application/json; charset=utf-8");
             r.sendHeader();
-            sendQuery(r, "", null, null);
+            sendQuery(r, "", ctx);
             r.put("\"}");
             r.sendChunk();
             r.done();
@@ -109,13 +121,16 @@ public class JsonHandler implements ContextHandler {
         }
 
         CharSequence withCount = context.request.getUrlParam("withCount");
-
         ctx.includeCount = withCount != null && Chars.equalsIgnoreCase(withCount, "true");
         ctx.query = query;
         ctx.skip = skip;
         ctx.count = 0L;
         ctx.stop = stop;
 
+        ctx.info().$("Query: ").$(query).
+                $(", skip: ").$(skip).
+                $(", stop: ").$(stop).
+                $(", withCount: ").$(ctx.includeCount).$();
         if (executeQuery(r, ctx) == null) {
             return;
         }
@@ -147,9 +162,8 @@ public class JsonHandler implements ContextHandler {
             }
 
             while (ctx.current != null) {
-                r.bookmark();
-
                 if (ctx.count > ctx.skip) {
+                    r.bookmark();
                     if (ctx.count > ctx.stop && !ctx.includeCount) {
                         break;
                     }
@@ -164,9 +178,9 @@ public class JsonHandler implements ContextHandler {
                         // Columns.
                         for (int col = 0; col < columnCount; col++) {
                             r.put('\"');
-                            stringToJson(r, metadata.getColumn(col).getName(), ctx.encodingChar, ctx.encoded);
+                            stringToJson(r, metadata.getColumn(col).getName(), ctx);
                             r.put("\":");
-                            putValue(ctx.encoded, ctx.encodingChar, r, metadata, ctx.current, col);
+                            putValue(ctx, r, metadata, ctx.current, col);
 
                             if (col < columnCount - 1) {
                                 r.put(',');
@@ -184,28 +198,12 @@ public class JsonHandler implements ContextHandler {
                     ctx.current = null;
                 }
             }
-
-            if (ctx.count >= 0) {
-                // Finita.
-                r.bookmark();
-
-                r.put(']');
-                if (ctx.count > ctx.stop) {
-                    r.put(",\"moreExist\":true");
-                }
-
-                if (ctx.includeCount) {
-                    r.put(",\"totalCount\":");
-                    r.put(ctx.count);
-                }
-                r.put('}');
-                r.sendChunk();
-            }
-            r.done();
-
+            sendDone(r, ctx);
         } catch (ResponseContentBufferTooSmallException ex) {
+            ctx.debug().$("Buffer overflow on record ").$(ctx.count - 1).$();
             if (!r.resetToBookmark()) {
-                // Nowhere to reset!
+                ctx.error().$("IO buffer overflown but no previous bookmark found. Record ").$(ctx.count - 1)
+                        .$(". Aborting the query.").$();
                 throw ex;
             }
             r.sendChunk();
@@ -222,18 +220,18 @@ public class JsonHandler implements ContextHandler {
         return -1;
     }
 
-    private static void sendQuery(ChunkedResponse r, CharSequence query, char[] charSource, byte[] encoded) {
+    private static void sendQuery(ChunkedResponse r, CharSequence query, $Context ctx) {
         r.put("{ \"query\": \"");
-        stringToJson(r, query != null ? query : "", charSource, encoded);
+        stringToJson(r, query != null ? query : "", ctx);
         r.put("\"");
     }
 
-    private static void sendException(ChunkedResponse r, CharSequence query, int position, CharSequence message, int status, char[] charSource, byte[] encoded) throws DisconnectedChannelException, SlowWritableChannelException {
+    private static void sendException(ChunkedResponse r, CharSequence query, int position, CharSequence message, int status, $Context ctx) throws DisconnectedChannelException, SlowWritableChannelException {
         r.status(status, "application/json; charset=utf-8");
         r.sendHeader();
-        sendQuery(r, query, charSource, encoded);
+        sendQuery(r, query, ctx);
         r.put(", \"error\" : \"");
-        stringToJson(r, message, charSource, encoded);
+        stringToJson(r, message, ctx);
         r.put("\"");
         if (position >= 0) {
             r.put(", \"position\" : ");
@@ -245,7 +243,7 @@ public class JsonHandler implements ContextHandler {
         r.done();
     }
 
-    private static void putValue(byte[] encoded, char[] encodingChar, ChunkedResponse r, RecordMetadata metadata, Record rec, int col) {
+    private static void putValue($Context ctx, ChunkedResponse r, RecordMetadata metadata, Record rec, int col) {
         RecordColumnMetadata column = metadata.getColumn(col);
         switch (column.getType()) {
             case BOOLEAN:
@@ -309,10 +307,10 @@ public class JsonHandler implements ContextHandler {
                 Numbers.append(r, rec.getShort(col));
                 break;
             case STRING:
-                sendStringOrNull(r, rec.getFlyweightStr(col), encodingChar, encoded);
+                sendStringOrNull(r, rec.getFlyweightStr(col), ctx);
                 break;
             case SYMBOL:
-                sendStringOrNull(r,rec.getSym(col), encodingChar, encoded);
+                sendStringOrNull(r, rec.getSym(col), ctx);
                 break;
             case BINARY:
                 r.put('[');
@@ -324,12 +322,12 @@ public class JsonHandler implements ContextHandler {
         }
     }
 
-    private static void sendStringOrNull(CharSink r, CharSequence str, char[] charSource, byte[] encoded) {
+    private static void sendStringOrNull(CharSink r, CharSequence str, $Context ctx) {
         if (str == null) {
             r.put("null");
         } else {
             r.put('\"');
-            stringToJson(r, str, charSource, encoded);
+            stringToJson(r, str, ctx);
             r.put('\"');
         }
     }
@@ -338,13 +336,13 @@ public class JsonHandler implements ContextHandler {
         Numbers.append(r, d, 10);
     }
 
-    private static void stringToJson(CharSink r, CharSequence str, char[] charSource, byte[] encoded) {
+    private static void stringToJson(CharSink r, CharSequence str, $Context ctx) {
         for (int i = 0; i < str.length(); i++) {
             char c = str.charAt(i);
             if (c < 128) {
                 encodeControl(r, c);
             } else if (c < 0xD800) {
-                encodeUnicode(r, charSource, encoded, c);
+                encodeUnicode(r, ctx.encodingChar, ctx.encoded, c);
             } else {
                 r.put("?");
             }
@@ -389,23 +387,20 @@ public class JsonHandler implements ContextHandler {
         }
     }
 
+    @Nullable
     private Iterator<Record> executeQuery(ChunkedResponse r, $Context ctx) throws IOException {
         CharSequence query = ctx.query;
         try {
             // Prepare Context.
             JournalCachingFactory factory = factoryPool.get();
-            if (factory == null) {
-                // Pool exhausted.
-                LOG.debug().$("[").$(ctx.fd).$("] ").$("No journal factory available. Re-scheduling...").$();
-                return null;
-            }
             ctx.factory = factory;
 
-            QueryCompiler qc = new QueryCompiler();
-            RecordCursor records = qc.compile(factory, query);
+            ctx.recordSource = queryCompilerLocal.get().compileSource(factory, query);
+            RecordCursor records = ctx.recordSource.prepareCursor(factory);
+
             r.status(200, "application/json; charset=utf-8");
             r.sendHeader();
-            sendQuery(r, query, ctx.encodingChar, ctx.encoded);
+            sendQuery(r, query, ctx);
             RecordMetadata metadata = records.getMetadata();
             ctx.metadata = metadata;
             ctx.records = records;
@@ -428,16 +423,90 @@ public class JsonHandler implements ContextHandler {
             r.put("], \"result\":[");
             return records;
         } catch (ParserException pex) {
-            LOG.debug().$("[").$(ctx.fd).$("] ").$("Parser error executing query ").$(query).$(pex).$();
-            sendException(r, query, QueryError.getPosition(), QueryError.getMessage(), 400, ctx.encodingChar, ctx.encoded);
+            ctx.info().$("Parser error executing query ").$(query).$(pex).$();
+            sendException(r, query, QueryError.getPosition(), QueryError.getMessage(), 400, ctx);
         } catch (JournalException jex) {
-            LOG.info().$("[").$(ctx.fd).$("] ").$("Server error executing query ").$(query).$(jex).$();
-            sendException(r, query, -1, jex.getMessage(), 500, ctx.encodingChar, ctx.encoded);
+            ctx.info().$("Server error executing query ").$(query).$(jex).$();
+            sendException(r, query, -1, jex.getMessage(), 500, ctx);
         } catch (InterruptedException ex) {
-            LOG.info().$("[").$(ctx.fd).$("] ").$("Error executing query ").$(query).$(ex).$();
-            sendException(r, query, -1, "server busy, try again later", 500, ctx.encodingChar, ctx.encoded);
+            ctx.info().$("Error executing query. Server is shutting down. Query: ").$(query).$(ex).$();
+            sendException(r, query, -1, "Server is shutting down.", 500, ctx);
         }
         return null;
+    }
+
+    private void sendDone(ChunkedResponse r, $Context ctx) throws DisconnectedChannelException, SlowWritableChannelException {
+        if (ctx.count >= 0) {
+            // Finita.
+            r.bookmark();
+
+            r.put(']');
+            if (ctx.count > ctx.stop && !ctx.includeCount) {
+                r.put(",\"moreExist\":true");
+            }
+
+            if (ctx.includeCount) {
+                r.put(",\"totalCount\":");
+                r.put(ctx.count);
+            }
+            r.put('}');
+            ctx.count = -1;
+            r.sendChunk();
+        }
+        r.done();
+    }
+
+    private static class $Context implements Mutable, Closeable {
+        private static final Log LOG = LogFactory.getLog($Context.class);
+        private final byte[] encoded = new byte[4];
+        private final char[] encodingChar = new char[1];
+        public RecordSource recordSource;
+        private CharSequence query;
+        private RecordMetadata metadata;
+        private Iterator<Record> records;
+        private long count;
+        private long skip;
+        private long stop;
+        private Record current;
+        private boolean includeCount;
+        private JournalCachingFactory factory;
+        private long fd;
+
+        @Override
+        public void clear() {
+            debug().$("Cleaning context").$();
+            metadata = null;
+            records = null;
+            current = null;
+            if (factory != null) {
+                debug().$("Closing journal factory").$();
+                factory.close();
+                factory = null;
+            }
+            if (recordSource != null) {
+                queryCompilerLocal.get().reuse(query, recordSource);
+                recordSource = null;
+            }
+            query = null;
+        }
+
+        @Override
+        public void close() throws IOException {
+            debug().$("Closing context").$();
+            clear();
+        }
+
+        private LogRecord debug() {
+            return LOG.debug().$('[').$(fd).$("] ");
+        }
+
+        private LogRecord error() {
+            return LOG.error().$('[').$(fd).$("] ");
+        }
+
+        private LogRecord info() {
+            return LOG.info().$('[').$(fd).$("] ");
+        }
     }
 
     static {
@@ -446,42 +515,6 @@ public class JsonHandler implements ContextHandler {
             UTF8Encoder = (ArrayEncoder) encoder;
         } else {
             UTF8Encoder = null;
-        }
-    }
-
-    private static class $Context implements Mutable, Closeable {
-        private static final Log LOG = LogFactory.getLog(JsonHandler.class);
-        public final byte[] encoded = new byte[4];
-        public final char[] encodingChar = new char[1];
-        public CharSequence query;
-        public RecordMetadata metadata;
-        public Iterator<Record> records;
-        public long count;
-        public long skip;
-        public long stop;
-        public Record current;
-        public boolean includeCount;
-        public JournalCachingFactory factory;
-        public long fd;
-
-        @Override
-        public void clear() {
-            LOG.debug().$("[").$(fd).$("] ").$("Cleaning context").$();
-            query = null;
-            metadata = null;
-            records = null;
-            current = null;
-            if (factory != null) {
-                LOG.debug().$("[").$(fd).$("] ").$("Closing journal factory").$();
-                factory.close();
-                factory = null;
-            }
-        }
-
-        @Override
-        public void close() throws IOException {
-            LOG.debug().$("[").$(fd).$("] ").$("Closing context").$();
-            clear();
         }
     }
 }

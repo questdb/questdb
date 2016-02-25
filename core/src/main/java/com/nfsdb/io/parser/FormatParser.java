@@ -29,10 +29,10 @@ import com.nfsdb.std.ObjectFactory;
 
 public class FormatParser {
     public static final ObjectFactory<FormatParser> FACTORY = new ObjectFactory<FormatParser>() {
-        @Override
-        public FormatParser newInstance() {
-            return new FormatParser();
-        }
+            @Override
+            public FormatParser newInstance() {
+                return new FormatParser();
+            }
     };
     private static final int maxLines = 10000;
     private final IntList commas = new IntList(maxLines);

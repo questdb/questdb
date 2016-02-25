@@ -32,9 +32,9 @@ public class AssociativeCacheTest {
         cache.put("X", "1");
         cache.put("Y", "2");
         cache.put("Z", "3");
-        Assert.assertEquals("1", cache.get("X"));
-        Assert.assertEquals("2", cache.get("Y"));
-        Assert.assertEquals("3", cache.get("Z"));
+        Assert.assertEquals("1", cache.peek("X"));
+        Assert.assertEquals("2", cache.peek("Y"));
+        Assert.assertEquals("3", cache.peek("Z"));
     }
 
     @Test
@@ -55,7 +55,7 @@ public class AssociativeCacheTest {
 
         for (int i = 0; i < all.size(); i++) {
             CharSequence k = all.get(i);
-            if (cache.get(k) == null) {
+            if (cache.peek(k) == null) {
                 Assert.assertTrue(reject.contains(k));
             }
         }

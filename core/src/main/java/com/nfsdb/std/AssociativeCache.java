@@ -27,11 +27,11 @@ import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Unsafe;
 
 import java.io.Closeable;
-import java.util.Arrays;
 
 public class AssociativeCache<V> implements Closeable {
 
     private static final int MIN_BLOCKS = 2;
+    private static final int NOT_FOUND = -1;
     private static final int MINROWS = 16;
     private final CharSequence[] keys;
     private final V[] values;
@@ -42,7 +42,6 @@ public class AssociativeCache<V> implements Closeable {
 
     @SuppressWarnings("unchecked")
     public AssociativeCache(int blocks, int rows) {
-
         this.blocks = Math.max(MIN_BLOCKS, Numbers.ceilPow2(blocks));
         rows = Math.max(MINROWS, Numbers.ceilPow2(rows));
 
@@ -55,7 +54,6 @@ public class AssociativeCache<V> implements Closeable {
         this.rmask = rows - 1;
         this.bmask = this.blocks - 1;
         this.bshift = Numbers.msb(this.blocks);
-        Arrays.fill(keys, null);
     }
 
     public void clear() {
@@ -72,19 +70,22 @@ public class AssociativeCache<V> implements Closeable {
         clear();
     }
 
-    public V get(CharSequence key) {
-        int lo = lo(key);
-        for (int i = lo, hi = lo + blocks; i < hi; i++) {
-            CharSequence k = Unsafe.arrayGet(keys, i);
-            if (k == null) {
-                return null;
-            }
-
-            if (Chars.equals(k, key)) {
-                return Unsafe.arrayGet(values, i);
-            }
+    public V peek(CharSequence key) {
+        int index = getIndex(key);
+        if (index == NOT_FOUND) {
+            return null;
         }
-        return null;
+        return Unsafe.arrayGet(values, index);
+    }
+
+    public V poll(CharSequence key) {
+        int index = getIndex(key);
+        if (index == NOT_FOUND) {
+            return null;
+        }
+        V value = Unsafe.arrayGet(values, index);
+        Unsafe.arrayPut(values, index, null);
+        return value;
     }
 
     public CharSequence put(CharSequence key, V value) {
@@ -102,6 +103,21 @@ public class AssociativeCache<V> implements Closeable {
 
     private void free(int lo) {
         Unsafe.arrayPut(values, lo, Misc.free(Unsafe.arrayGet(values, lo)));
+    }
+
+    private int getIndex(CharSequence key) {
+        int lo = lo(key);
+        for (int i = lo, hi = lo + blocks; i < hi; i++) {
+            CharSequence k = Unsafe.arrayGet(keys, i);
+            if (k == null) {
+                return NOT_FOUND;
+            }
+
+            if (Chars.equals(k, key)) {
+                return i;
+            }
+        }
+        return NOT_FOUND;
     }
 
     private int lo(CharSequence key) {

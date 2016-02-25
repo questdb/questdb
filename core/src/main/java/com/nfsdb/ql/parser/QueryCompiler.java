@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p/>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p/>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p/>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -138,8 +138,7 @@ public class QueryCompiler {
     }
 
     public RecordSource compileSource(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
-        // todo: remove query from cache to avoid it being reused by another thread
-        RecordSource rs = cache.get(query);
+        RecordSource rs = cache.poll(query);
         if (rs == null) {
             final QueryModel model = parser.parse(query).getQueryModel();
             final CharSequenceObjHashMap<Parameter> map = new CharSequenceObjHashMap<>();
@@ -158,6 +157,12 @@ public class QueryCompiler {
         QueryModel model = parser.parse(query).getQueryModel();
         resetAndOptimise(model, factory);
         return model.plan();
+    }
+
+    public void reuse(CharSequence query, RecordSource rs) {
+        if (query != null) {
+            cache.put(query, rs);
+        }
     }
 
     private static Signature lbs(ColumnType master, boolean indexed, ColumnType lambda) {
@@ -823,7 +828,7 @@ public class QueryCompiler {
     }
 
     private RecordSource compileSourceInternal(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
-        RecordSource rs = cache.get(query);
+        RecordSource rs = cache.poll(query);
         if (rs == null) {
             rs = compile(parser.parseInternal(query).getQueryModel(), factory);
             cache.put(query, rs);

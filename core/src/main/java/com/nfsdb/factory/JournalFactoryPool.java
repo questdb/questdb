@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p/>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p/>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p/>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -37,7 +37,7 @@ public class JournalFactoryPool implements Closeable {
     private final ConcurrentLinkedDeque<JournalCachingFactory> pool;
     private final AtomicBoolean running = new AtomicBoolean(true);
     private final JournalConfiguration configuration;
-    private final AtomicInteger allLength = new AtomicInteger();
+    private final AtomicInteger openCount = new AtomicInteger();
     private final int capacity;
 
     @SuppressWarnings("unchecked")
@@ -66,10 +66,8 @@ public class JournalFactoryPool implements Closeable {
         if (running.get()) {
             JournalCachingFactory factory = pool.poll();
             if (factory == null) {
-                int index = allLength.incrementAndGet() - 1;
-                if (index < capacity) {
-                    factory = new JournalCachingFactory(configuration, this);
-                }
+                openCount.incrementAndGet();
+                factory = new JournalCachingFactory(configuration, this);
             } else {
                 factory.setInUse();
             }
@@ -79,13 +77,28 @@ public class JournalFactoryPool implements Closeable {
         }
     }
 
+    public int getOpenCount() {
+        return openCount.get();
+    }
+
+    public int getAvailableCount() {
+        return pool.size();
+    }
+
+    public int getCapacity() {
+        return capacity;
+    }
+
     void release(final JournalCachingFactory factory) {
         if (running.get()) {
-            factory.expireOpenFiles();
-            pool.addFirst(factory);
-        } else {
-            factory.clearPool();
-            factory.close();
+            if (openCount.get() < capacity) {
+                factory.expireOpenFiles();
+                pool.addFirst(factory);
+                return;
+            }
         }
+        openCount.decrementAndGet();
+        factory.clearPool();
+        factory.close();
     }
 }
