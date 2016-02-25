@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
@@ -32,6 +32,7 @@ import com.nfsdb.std.Locality;
 import com.nfsdb.std.Mutable;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class IOContext implements Closeable, Mutable, Locality {
     public final NetworkChannel channel;
@@ -39,7 +40,7 @@ public class IOContext implements Closeable, Mutable, Locality {
     public final FlyweightCharSequence ext = new FlyweightCharSequence();
     private final LocalValueMap map = new LocalValueMap();
     private final Response response;
-
+    private final AtomicBoolean open = new AtomicBoolean(true);
 
     public IOContext(NetworkChannel channel, Clock clock, int reqHeaderSize, int reqContentSize, int reqMultipartHeaderSize, int respHeaderSize, int respContentSize) {
         this.channel = channel;
@@ -60,10 +61,12 @@ public class IOContext implements Closeable, Mutable, Locality {
 
     @Override
     public void close() {
-        Misc.free(channel);
-        request.close();
-        response.close();
-        map.close();
+        if (open.compareAndSet(true, false)) {
+            Misc.free(channel);
+            Misc.free(request);
+            Misc.free(response);
+            Misc.free(map);
+        }
     }
 
     public FixedSizeResponse fixedSizeResponse() {

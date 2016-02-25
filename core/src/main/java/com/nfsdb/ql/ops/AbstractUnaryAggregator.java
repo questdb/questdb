@@ -22,7 +22,6 @@
 package com.nfsdb.ql.ops;
 
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.AggregatorFunction;
 import com.nfsdb.std.ObjList;
 import com.nfsdb.store.ColumnType;
@@ -38,7 +37,7 @@ public abstract class AbstractUnaryAggregator extends AbstractUnaryOperator impl
     }
 
     @Override
-    public void prepare(RecordMetadata metadata, ObjList<RecordColumnMetadata> columns, int offset) {
+    public void prepare(ObjList<RecordColumnMetadata> columns, int offset) {
         columns.add(this);
         valueIndex = offset;
     }

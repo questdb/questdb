@@ -22,7 +22,6 @@
 package com.nfsdb.ql;
 
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.std.ObjList;
 
@@ -30,5 +29,5 @@ public interface AggregatorFunction {
 
     void calculate(Record rec, MapValues values);
 
-    void prepare(RecordMetadata metadata, ObjList<RecordColumnMetadata> columns, int offset);
+    void prepare(ObjList<RecordColumnMetadata> columns, int offset);
 }

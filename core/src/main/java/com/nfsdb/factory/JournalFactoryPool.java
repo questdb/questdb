@@ -1,17 +1,17 @@
 /*******************************************************************************
- * _  _ ___ ___     _ _
+ *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- * <p/>
+ *
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- * <p/>
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * <p/>
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * <p/>
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -21,7 +21,6 @@
 
 package com.nfsdb.factory;
 
-import com.nfsdb.ex.JournalException;
 import com.nfsdb.factory.configuration.JournalConfiguration;
 import com.nfsdb.log.Log;
 import com.nfsdb.log.LogFactory;
@@ -42,7 +41,7 @@ public class JournalFactoryPool implements Closeable {
     private final int capacity;
 
     @SuppressWarnings("unchecked")
-    public JournalFactoryPool(JournalConfiguration configuration, int capacity) throws InterruptedException {
+    public JournalFactoryPool(JournalConfiguration configuration, int capacity) {
         this.configuration = configuration;
         this.capacity = capacity;
         this.pool = new ConcurrentLinkedDeque<>();
@@ -50,9 +49,7 @@ public class JournalFactoryPool implements Closeable {
 
     @Override
     public void close() {
-        if (running.get()) {
-            running.set(false);
-
+        if (running.compareAndSet(true, false)) {
             JournalCachingFactory factory;
             while ((factory = pool.poll()) != null) {
                 try {
@@ -65,7 +62,7 @@ public class JournalFactoryPool implements Closeable {
         }
     }
 
-    public JournalCachingFactory get() throws InterruptedException, JournalException {
+    public JournalCachingFactory get() throws InterruptedException {
         if (running.get()) {
             JournalCachingFactory factory = pool.poll();
             if (factory == null) {
@@ -73,8 +70,7 @@ public class JournalFactoryPool implements Closeable {
                 if (index < capacity) {
                     factory = new JournalCachingFactory(configuration, this);
                 }
-            }
-            else {
+            } else {
                 factory.setInUse();
             }
             return factory;

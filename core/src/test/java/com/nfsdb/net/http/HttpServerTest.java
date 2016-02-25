@@ -30,9 +30,12 @@ import com.nfsdb.ex.FatalError;
 import com.nfsdb.ex.JournalException;
 import com.nfsdb.ex.NumericException;
 import com.nfsdb.ex.ResponseContentBufferTooSmallException;
+import com.nfsdb.factory.JournalCachingFactory;
 import com.nfsdb.factory.JournalFactoryPool;
 import com.nfsdb.factory.configuration.JournalStructure;
+import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.FileSink;
+import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.misc.*;
 import com.nfsdb.net.ha.AbstractJournalTest;
@@ -40,6 +43,7 @@ import com.nfsdb.net.http.handlers.ImportHandler;
 import com.nfsdb.net.http.handlers.JsonHandler;
 import com.nfsdb.net.http.handlers.StaticContentHandler;
 import com.nfsdb.net.http.handlers.UploadHandler;
+import com.nfsdb.ql.parser.QueryCompiler;
 import com.nfsdb.test.tools.TestUtils;
 import org.apache.http.Header;
 import org.apache.http.HttpResponse;
@@ -315,16 +319,19 @@ public class HttpServerTest extends AbstractJournalTest {
         }});
         server.start();
 
-        try {
-            Assert.assertEquals(200, upload("/csv/test-import.csv", "http://localhost:9000/imp"));
-            Assert.assertEquals(200, upload("/csv/test-import.csv", "http://localhost:9000/imp"));
+        try (JournalCachingFactory f = new JournalCachingFactory(factory.getConfiguration())) {
 
-            try (Journal r = factory.reader("test-import.csv")) {
-                // todo: analyze result in-depth
-                Assert.assertEquals(258, r.size());
+            try {
+                Assert.assertEquals(200, upload("/csv/test-import.csv", "http://localhost:9000/imp"));
+                Assert.assertEquals(200, upload("/csv/test-import.csv", "http://localhost:9000/imp"));
+                StringSink sink = new StringSink();
+                RecordSourcePrinter printer = new RecordSourcePrinter(sink);
+                QueryCompiler qc = new QueryCompiler();
+                printer.printCursor(qc.compile(f, "select count(StrSym), count(IntSym), count(IntCol), count(long), count() from 'test-import.csv'"));
+                TestUtils.assertEquals("252\t252\t256\t258\t258\n", sink);
+            } finally {
+                server.halt();
             }
-        } finally {
-            server.halt();
         }
     }
 
