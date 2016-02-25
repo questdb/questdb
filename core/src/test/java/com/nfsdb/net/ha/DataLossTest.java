@@ -105,7 +105,7 @@ public class DataLossTest extends AbstractTest {
         TestUtils.generateQuoteData(master, 145, master.getMaxTimestamp());
         master.commit();
 
-        TestUtils.assertCounter(counter, 2, 1, TimeUnit.SECONDS);
+        TestUtils.assertCounter(counter, 2, 5, TimeUnit.SECONDS);
         client.halt();
 
         slave = factory.writer(Quote.class, "slave");
