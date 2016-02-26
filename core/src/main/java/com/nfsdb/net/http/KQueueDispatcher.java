@@ -26,6 +26,7 @@ import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.log.Log;
 import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.Files;
+import com.nfsdb.misc.Misc;
 import com.nfsdb.misc.Net;
 import com.nfsdb.mp.*;
 import com.nfsdb.net.Kqueue;
@@ -87,6 +88,11 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
     public void close() throws IOException {
         this.kqueue.close();
         Files.close(socketFd);
+        int n = pending.size();
+        for (int i = 0; i < n; i++) {
+            Misc.free(pending.get(i));
+        }
+        pending.zapTop(n);
     }
 
     @Override

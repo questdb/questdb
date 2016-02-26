@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http;
 
@@ -25,10 +25,7 @@ import com.nfsdb.ex.NetworkError;
 import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.log.Log;
 import com.nfsdb.log.LogFactory;
-import com.nfsdb.misc.Files;
-import com.nfsdb.misc.Net;
-import com.nfsdb.misc.Os;
-import com.nfsdb.misc.Unsafe;
+import com.nfsdb.misc.*;
 import com.nfsdb.mp.*;
 import com.nfsdb.net.NetworkChannelImpl;
 import com.nfsdb.net.NonBlockingSecureSocketChannel;
@@ -104,6 +101,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
 
         for (int i = 0, n = pending.size(); i < n; i++) {
             Files.close(pending.get(i, M_FD));
+            Misc.free(pending.get(i));
         }
 
         pending.zapTop(pending.size());
