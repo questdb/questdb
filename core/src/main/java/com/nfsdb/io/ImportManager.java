@@ -1,17 +1,17 @@
 /*******************************************************************************
- * _  _ ___ ___     _ _
+ *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- * <p/>
+ *
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- * <p/>
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * <p/>
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * <p/>
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -78,18 +78,18 @@ public final class ImportManager {
      * Parser will always attempt to infer journal structure from input, even of journal already exists. If input
      * structure does not match structure of journal - an exception is thrown.
      *
-     * @param factory      journal factory
-     * @param fileName     name of input file
-     * @param format       inout format
-     * @param importSchema optional instance of ImportSchema
+     * @param factory  journal factory
+     * @param fileName name of input file
+     * @param format   inout format
+     * @param schema   optional instance of ImportSchema
      * @throws IOException
      */
-    public static void importFile(JournalWriterFactory factory, String fileName, TextFileFormat format, @Nullable ImportSchema importSchema) throws IOException {
-        importFile(factory, fileName, format, importSchema, SAMPLE_SIZE);
+    public static void importFile(JournalWriterFactory factory, String fileName, TextFileFormat format, @Nullable CharSequence schema) throws IOException {
+        importFile(factory, fileName, format, schema, SAMPLE_SIZE);
     }
 
     @SuppressFBWarnings({"PATH_TRAVERSAL_IN"})
-    public static void importFile(JournalWriterFactory factory, String fileName, TextFileFormat format, ImportSchema importSchema, int sampleSize) throws IOException {
+    public static void importFile(JournalWriterFactory factory, String fileName, TextFileFormat format, CharSequence schema, int sampleSize) throws IOException {
 
         try (TextParser parser = format.newParser()) {
             File file = new File(fileName);
@@ -100,7 +100,7 @@ public final class ImportManager {
                     throw new JournalRuntimeException("A foreign file/directory already exists: " + (new File(factory.getConfiguration().getJournalBase(), location)));
                 default:
                     try (JournalImportListener l = new JournalImportListener(factory, location)) {
-                        analyzeAndParse(file, parser, l, importSchema, sampleSize);
+                        analyzeAndParse(file, parser, l, schema, sampleSize);
                     }
                     break;
             }
@@ -130,7 +130,7 @@ public final class ImportManager {
         }
     }
 
-    private static void analyzeAndParse(File file, TextParser parser, InputAnalysisListener listener, ImportSchema importSchema, int sampleSize) throws IOException {
+    private static void analyzeAndParse(File file, TextParser parser, InputAnalysisListener listener, CharSequence schema, int sampleSize) throws IOException {
         parser.clear();
         try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
             try (FileChannel channel = raf.getChannel()) {
@@ -141,7 +141,7 @@ public final class ImportManager {
                     MappedByteBuffer buf = channel.map(FileChannel.MapMode.READ_ONLY, p, size - p < bufSize ? size - p : bufSize);
                     try {
                         if (p == 0) {
-                            parser.analyse(importSchema, ByteBuffers.getAddress(buf), buf.remaining(), sampleSize, listener);
+                            parser.analyse(schema, ByteBuffers.getAddress(buf), buf.remaining(), sampleSize, listener);
                         }
                         p += buf.remaining();
                         parser.parse(ByteBuffers.getAddress(buf), buf.remaining(), Integer.MAX_VALUE, listener);

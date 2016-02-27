@@ -29,6 +29,7 @@ public class CsvParser extends AbstractTextParser {
     protected void parse(long lo, long len, int maxLine) {
         this.fieldHi = useLineRollBuf ? lineRollBufCur : (this.fieldLo = lo);
         long hi = lo + len;
+
         long ptr = lo;
 
         OUT:

@@ -19,28 +19,12 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.io.parser.listener.probe;
+package com.nfsdb.io;
 
-import com.nfsdb.ex.NumericException;
-import com.nfsdb.io.ImportedColumnMetadata;
-import com.nfsdb.io.ImportedColumnType;
-import com.nfsdb.misc.Dates;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import com.nfsdb.std.ObjList;
 
-public class DateFmt3Probe implements TypeProbe {
-    @Override
-    public void getMetadata(ImportedColumnMetadata m) {
-        m.type = ImportedColumnType.DATE_3;
-    }
+import java.io.Closeable;
 
-    @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_RETURN_FALSE")
-    @Override
-    public boolean probe(CharSequence seq) {
-        try {
-            Dates.parseDateTimeFmt3(seq);
-            return true;
-        } catch (NumericException e) {
-            return false;
-        }
-    }
+public interface Schema extends Closeable {
+    ObjList<ImportedColumnMetadata> getMetadata();
 }

@@ -889,7 +889,7 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @NotNull
-    private JsonHandler createHandler() throws InterruptedException {
+    private JsonHandler createHandler() {
         factoryPool = new JournalFactoryPool(factory.getConfiguration(), 1);
         return new JsonHandler(factoryPool);
     }

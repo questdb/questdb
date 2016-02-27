@@ -1,17 +1,17 @@
 /*******************************************************************************
- * _  _ ___ ___     _ _
+ *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- * <p/>
+ *
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- * <p/>
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * <p/>
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * <p/>
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -21,7 +21,8 @@
 
 package com.nfsdb.io.parser;
 
-import com.nfsdb.io.ImportSchema;
+import com.nfsdb.io.ImportedColumnMetadata;
+import com.nfsdb.io.SchemaImpl;
 import com.nfsdb.io.parser.listener.InputAnalysisListener;
 import com.nfsdb.io.parser.listener.Listener;
 import com.nfsdb.io.parser.listener.MetadataExtractorListener;
@@ -29,10 +30,16 @@ import com.nfsdb.log.Log;
 import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.std.DirectByteCharSequence;
+import com.nfsdb.std.ObjList;
+import com.nfsdb.std.ObjectPool;
 
 public abstract class AbstractTextParser implements TextParser {
     private final static Log LOG = LogFactory.getLog(AbstractTextParser.class);
-    private final MetadataExtractorListener mel = new MetadataExtractorListener();
+    private final ObjList<DirectByteCharSequence> fields = new ObjList<>();
+    private final ObjectPool<DirectByteCharSequence> csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 16);
+    private final ObjectPool<ImportedColumnMetadata> mPool = new ObjectPool<>(ImportedColumnMetadata.FACTORY, 256);
+    private final MetadataExtractorListener mel = new MetadataExtractorListener(mPool);
+    private final SchemaImpl schema = new SchemaImpl(csPool, mPool);
     boolean inQuote;
     boolean delayedOutQuote;
     boolean eol;
@@ -44,7 +51,6 @@ public abstract class AbstractTextParser implements TextParser {
     long lineRollBufCur;
     boolean ignoreEolOnce;
     private Listener listener;
-    private DirectByteCharSequence fields[];
     private boolean calcFields;
     private long lastLineStart;
     private long lineRollBufLen = 4 * 1024L;
@@ -52,15 +58,15 @@ public abstract class AbstractTextParser implements TextParser {
     private boolean header;
     private long lastQuotePos = -1;
 
-    AbstractTextParser() {
+    public AbstractTextParser() {
         clear();
     }
 
-    public void analyse(ImportSchema hints, long addr, int len, int sampleSize, InputAnalysisListener lsnr) {
-        mel.of(hints);
+    public void analyse(CharSequence schema, long addr, int len, int sampleSize, InputAnalysisListener ial) {
+        mel.of(schema == null ? null : this.schema.of(schema));
         parse(addr, len, sampleSize, mel);
         mel.onLineCount(lineCount);
-        lsnr.onMetadata(mel.getMetadata());
+        ial.onMetadata(mel.getMetadata());
         setHeader(mel.isHeader());
         restart();
     }
@@ -109,23 +115,25 @@ public abstract class AbstractTextParser implements TextParser {
     @Override
     public final void clear() {
         restart();
-        this.fields = null;
+        this.fields.clear();
         this.calcFields = true;
+        this.csPool.clear();
+        this.mPool.clear();
+        this.mel.clear();
     }
 
     @Override
     public void close() {
-        Unsafe.getUnsafe().freeMemory(lineRollBufPtr);
+        if (lineRollBufPtr != 0) {
+            Unsafe.getUnsafe().freeMemory(lineRollBufPtr);
+            lineRollBufPtr = 0;
+        }
+        schema.close();
     }
 
     private void calcField() {
-        if (fields == null || fields.length == fieldIndex) {
-            DirectByteCharSequence sa[] = new DirectByteCharSequence[fieldIndex + 1];
-            if (fields != null) {
-                System.arraycopy(fields, 0, sa, 0, fieldIndex);
-            }
-            sa[fieldIndex] = new DirectByteCharSequence();
-            fields = sa;
+        if (fields.size() == fieldIndex) {
+            fields.add(csPool.next());
         }
     }
 
@@ -181,7 +189,7 @@ public abstract class AbstractTextParser implements TextParser {
 
     private void shift(long d) {
         for (int i = 0; i < fieldIndex; i++) {
-            Unsafe.arrayGet(fields, i).lshift(d);
+            fields.getQuick(i).lshift(d);
         }
         this.fieldLo -= d;
         this.fieldHi -= d;
@@ -195,14 +203,14 @@ public abstract class AbstractTextParser implements TextParser {
             calcField();
         }
 
-        if (fieldIndex >= fields.length) {
+        if (fieldIndex >= fields.size()) {
             listener.onError(lineCount++);
             ignoreEolOnce = true;
             fieldIndex = 0;
             return;
         }
 
-        DirectByteCharSequence seq = Unsafe.arrayGet(fields, fieldIndex);
+        DirectByteCharSequence seq = fields.getQuick(fieldIndex);
 
         if (lastQuotePos > -1) {
             seq.of(this.fieldLo, lastQuotePos - 1);
@@ -217,7 +225,7 @@ public abstract class AbstractTextParser implements TextParser {
     void triggerLine(long ptr) {
         if (calcFields) {
             calcFields = false;
-            listener.onFieldCount(fields.length);
+            listener.onFieldCount(fields.size());
         }
 
         int hi = fieldIndex + 1;

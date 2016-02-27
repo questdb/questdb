@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,35 +17,20 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.io.parser.listener;
 
-import com.nfsdb.factory.configuration.ColumnMetadata;
-import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.io.ImportSchema;
 import com.nfsdb.io.ImportedColumnMetadata;
 import com.nfsdb.io.ImportedColumnType;
+import com.nfsdb.io.Schema;
 import com.nfsdb.io.parser.listener.probe.*;
 import com.nfsdb.io.sink.StringSink;
-import com.nfsdb.misc.Unsafe;
-import com.nfsdb.ql.impl.CollectionRecordMetadata;
-import com.nfsdb.std.IntList;
-import com.nfsdb.std.Mutable;
-import com.nfsdb.std.ObjList;
-import com.nfsdb.std.ObjectFactory;
-import com.nfsdb.store.ColumnType;
+import com.nfsdb.std.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"PL_PARALLEL_LISTS", "LII_LIST_INDEXED_ITERATING"})
 public class MetadataExtractorListener implements Listener, Mutable {
-
-    public static final ObjectFactory<MetadataExtractorListener> FACTORY = new ObjectFactory<MetadataExtractorListener>() {
-        @Override
-        public MetadataExtractorListener newInstance() {
-            return new MetadataExtractorListener();
-        }
-    };
     // order of probes in array is critical
     private static final TypeProbe probes[] = new TypeProbe[]{
             new IntProbe(),
@@ -58,17 +43,19 @@ public class MetadataExtractorListener implements Listener, Mutable {
             new DateFmt3Probe()
     };
     private static final int probeCount = probes.length;
-    private static final ObjList<RecordColumnMetadata> counterMeta = new ObjList<>(1);
-    private static final CollectionRecordMetadata keyMetadata = new CollectionRecordMetadata();
-    private static final ObjList<String> kc = new ObjList<>();
     private final StringSink tempSink = new StringSink();
     private final ObjList<ImportedColumnMetadata> _metadata = new ObjList<>();
     private final ObjList<String> _headers = new ObjList<>();
     private final IntList _blanks = new IntList();
     private final IntList _histogram = new IntList();
-    private ImportSchema importSchema;
+    private final CharSequenceObjHashMap<ImportedColumnMetadata> schemaColumns = new CharSequenceObjHashMap<>();
+    private final ObjectPool<ImportedColumnMetadata> mPool;
     private int fieldCount;
     private boolean header = false;
+
+    public MetadataExtractorListener(ObjectPool<ImportedColumnMetadata> mPool) {
+        this.mPool = mPool;
+    }
 
     @Override
     public void clear() {
@@ -78,8 +65,8 @@ public class MetadataExtractorListener implements Listener, Mutable {
         _histogram.clear();
         fieldCount = 0;
         header = false;
-        importSchema = null;
         _metadata.clear();
+        schemaColumns.clear();
     }
 
     public ObjList<ImportedColumnMetadata> getMetadata() {
@@ -90,39 +77,47 @@ public class MetadataExtractorListener implements Listener, Mutable {
         return header;
     }
 
-    public MetadataExtractorListener of(ImportSchema schema) {
+    public MetadataExtractorListener of(Schema schema) {
         clear();
-        this.importSchema = schema;
+        if (schema != null) {
+            ObjList<ImportedColumnMetadata> list = schema.getMetadata();
+            for (int i = 0, n = list.size(); i < n; i++) {
+                ImportedColumnMetadata m = list.getQuick(i);
+                schemaColumns.put(m.name, m);
+            }
+        }
         return this;
     }
 
     @Override
     public void onError(int line) {
-
     }
 
     @Override
     public void onFieldCount(int count) {
         this._histogram.setAll((fieldCount = count) * probeCount, 0);
         this._blanks.setAll(count, 0);
-        this._metadata.seed(count, ImportedColumnMetadata.FACTORY);
+        for (int i = 0; i < count; i++) {
+            this._metadata.add(mPool.next());
+        }
         this._headers.setAll(count, null);
     }
 
     @Override
-    public void onFields(int line, CharSequence values[], int hi) {
+    public void onFields(int line, ObjList<DirectByteCharSequence> values, int hi) {
         // keep first line in case its a header
         if (line == 0) {
             stashPossibleHeader(values, hi);
         }
 
         for (int i = 0; i < hi; i++) {
-            if (values[i].length() == 0) {
+            DirectByteCharSequence cs = values.getQuick(i);
+            if (cs.length() == 0) {
                 _blanks.increment(i);
             }
             int offset = i * probeCount;
             for (int k = 0; k < probeCount; k++) {
-                if (probes[k].probe(values[i])) {
+                if (probes[k].probe(cs)) {
                     _histogram.increment(k + offset);
                 }
             }
@@ -130,7 +125,7 @@ public class MetadataExtractorListener implements Listener, Mutable {
     }
 
     @Override
-    public void onHeader(CharSequence[] values, int hi) {
+    public void onHeader(ObjList<DirectByteCharSequence> values, int hi) {
 
     }
 
@@ -157,15 +152,12 @@ public class MetadataExtractorListener implements Listener, Mutable {
         }
 
         // override calculated types with user-supplied information
-        if (importSchema != null) {
-            ObjList<ImportedColumnMetadata> override = importSchema.getMetadata();
-            for (int i = 0, k = override.size(); i < k; i++) {
-                ImportedColumnMetadata m = override.getQuick(i);
-                if (m.columnIndex < fieldCount) {
-                    ImportedColumnMetadata im = _metadata.getQuick(m.columnIndex);
-                    im.importedType = m.importedType;
-                    im.type = m.type;
-                    im.size = m.size;
+        if (schemaColumns.size() > 0) {
+            for (int i = 0, k = _metadata.size(); i < k; i++) {
+                ImportedColumnMetadata _m = _metadata.getQuick(i);
+                ImportedColumnMetadata m = schemaColumns.get(_m.name);
+                if (m != null) {
+                    _m.type = m.type;
                 }
             }
         }
@@ -201,9 +193,7 @@ public class MetadataExtractorListener implements Listener, Mutable {
             }
 
             if (setDefault && unprobed) {
-                m.type = ColumnType.STRING;
-                m.importedType = ImportedColumnType.STRING;
-                m.size = m.avgSize + 4;
+                m.type = ImportedColumnType.STRING;
             }
         }
 
@@ -233,22 +223,9 @@ public class MetadataExtractorListener implements Listener, Mutable {
         return tempSink.toString();
     }
 
-    private void stashPossibleHeader(CharSequence values[], int hi) {
+    private void stashPossibleHeader(ObjList<DirectByteCharSequence> values, int hi) {
         for (int i = 0; i < hi; i++) {
-            _headers.setQuick(i, normalise(Unsafe.arrayGet(values, i)));
+            _headers.setQuick(i, normalise(values.getQuick(i)));
         }
-    }
-
-    static {
-        ColumnMetadata keyMeta = new ColumnMetadata();
-        keyMeta.setName("Key");
-        keyMeta.setType(ColumnType.STRING);
-        kc.add(keyMeta.getName());
-        keyMetadata.add(keyMeta);
-
-        ColumnMetadata counterMeta = new ColumnMetadata();
-        counterMeta.setName("Counter");
-        counterMeta.setType(ColumnType.INT);
-        MetadataExtractorListener.counterMeta.add(counterMeta);
     }
 }

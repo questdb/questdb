@@ -25,15 +25,12 @@ import com.nfsdb.ex.NumericException;
 import com.nfsdb.io.ImportedColumnMetadata;
 import com.nfsdb.io.ImportedColumnType;
 import com.nfsdb.misc.Dates;
-import com.nfsdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class DateFmt1Probe implements TypeProbe {
     @Override
     public void getMetadata(ImportedColumnMetadata m) {
-        m.type = ColumnType.DATE;
-        m.importedType = ImportedColumnType.DATE_1;
-        m.size = 8;
+        m.type = ImportedColumnType.DATE_1;
     }
 
     @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_RETURN_FALSE")

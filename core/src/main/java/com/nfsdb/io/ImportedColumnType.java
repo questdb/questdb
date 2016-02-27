@@ -21,18 +21,31 @@
 
 package com.nfsdb.io;
 
+import com.nfsdb.store.ColumnType;
+
 public enum ImportedColumnType {
-    BOOLEAN,
-    BYTE,
-    DOUBLE,
-    FLOAT,
-    INT,
-    LONG,
-    SHORT,
-    STRING,
-    SYMBOL,
-    DATE_ISO,
-    DATE_1,
-    DATE_2,
-    DATE_3
+
+    BOOLEAN(ColumnType.BOOLEAN),
+    BYTE(ColumnType.BYTE),
+    DOUBLE(ColumnType.DOUBLE),
+    FLOAT(ColumnType.FLOAT),
+    INT(ColumnType.INT),
+    LONG(ColumnType.LONG),
+    SHORT(ColumnType.SHORT),
+    STRING(ColumnType.STRING),
+    SYMBOL(ColumnType.SYMBOL),
+    DATE_ISO(ColumnType.DATE),
+    DATE_1(ColumnType.DATE),
+    DATE_2(ColumnType.DATE),
+    DATE_3(ColumnType.DATE);
+
+    private final ColumnType columnType;
+
+    ImportedColumnType(ColumnType columnType) {
+        this.columnType = columnType;
+    }
+
+    public ColumnType getColumnType() {
+        return columnType;
+    }
 }

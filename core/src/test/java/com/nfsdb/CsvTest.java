@@ -27,6 +27,8 @@ import com.nfsdb.io.parser.TabParser;
 import com.nfsdb.io.parser.TextParser;
 import com.nfsdb.io.parser.listener.Listener;
 import com.nfsdb.io.sink.StringSink;
+import com.nfsdb.std.DirectByteCharSequence;
+import com.nfsdb.std.ObjList;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -65,14 +67,14 @@ public class CsvTest {
                     }
 
                     @Override
-                    public void onFields(int line, CharSequence[] values, int hi) {
+                    public void onFields(int line, ObjList<DirectByteCharSequence> values, int hi) {
 
                     }
 
                     @Override
-                    public void onHeader(CharSequence[] values, int hi) {
+                    public void onHeader(ObjList<DirectByteCharSequence> values, int hi) {
                         for (int i = 0; i < hi; i++) {
-                            names.add(values[i].toString());
+                            names.add(values.getQuick(i).toString());
                         }
                     }
 
@@ -241,18 +243,18 @@ public class CsvTest {
         }
 
         @Override
-        public void onFields(int line, CharSequence[] values, int hi) {
+        public void onFields(int line, ObjList<DirectByteCharSequence> values, int hi) {
             for (int i = 0; i < hi; i++) {
                 if (i > 0) {
                     sink.put(',');
                 }
-                sink.put(values[i]);
+                sink.put(values.getQuick(i));
             }
             sink.put('\n');
         }
 
         @Override
-        public void onHeader(CharSequence[] values, int hi) {
+        public void onHeader(ObjList<DirectByteCharSequence> values, int hi) {
 
         }
 

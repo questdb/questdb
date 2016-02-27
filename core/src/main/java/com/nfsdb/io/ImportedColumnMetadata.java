@@ -21,10 +21,10 @@
 
 package com.nfsdb.io;
 
-import com.nfsdb.factory.configuration.ColumnMetadata;
+import com.nfsdb.std.Mutable;
 import com.nfsdb.std.ObjectFactory;
 
-public class ImportedColumnMetadata extends ColumnMetadata {
+public class ImportedColumnMetadata implements Mutable {
     public static final ObjectFactory<ImportedColumnMetadata> FACTORY = new ObjectFactory<ImportedColumnMetadata>() {
         @Override
         public ImportedColumnMetadata newInstance() {
@@ -32,24 +32,11 @@ public class ImportedColumnMetadata extends ColumnMetadata {
         }
     };
 
-    public int columnIndex;
-    public ImportedColumnType importedType;
+    public ImportedColumnType type;
+    public CharSequence name;
 
     @Override
-    public int hashCode() {
-        int result = super.hashCode();
-        result = 31 * result + columnIndex;
-        return 31 * result + importedType.hashCode();
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        if (!super.equals(o)) return false;
-
-        ImportedColumnMetadata that = (ImportedColumnMetadata) o;
-        return columnIndex == that.columnIndex && importedType == that.importedType;
+    public void clear() {
 
     }
 }

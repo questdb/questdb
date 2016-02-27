@@ -25,15 +25,12 @@ import com.nfsdb.ex.NumericException;
 import com.nfsdb.io.ImportedColumnMetadata;
 import com.nfsdb.io.ImportedColumnType;
 import com.nfsdb.misc.Numbers;
-import com.nfsdb.store.ColumnType;
 
 public class DoubleProbe implements TypeProbe {
 
     @Override
     public void getMetadata(ImportedColumnMetadata m) {
-        m.type = ColumnType.DOUBLE;
-        m.importedType = ImportedColumnType.DOUBLE;
-        m.size = 8;
+        m.type = ImportedColumnType.DOUBLE;
     }
 
     @Override

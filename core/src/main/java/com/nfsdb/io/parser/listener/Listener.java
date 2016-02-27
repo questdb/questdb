@@ -21,14 +21,17 @@
 
 package com.nfsdb.io.parser.listener;
 
+import com.nfsdb.std.DirectByteCharSequence;
+import com.nfsdb.std.ObjList;
+
 public interface Listener {
     void onError(int line);
 
     void onFieldCount(int count);
 
-    void onFields(int line, CharSequence values[], int hi);
+    void onFields(int line, ObjList<DirectByteCharSequence> fields, int hi);
 
-    void onHeader(CharSequence values[], int hi);
+    void onHeader(ObjList<DirectByteCharSequence> fields, int hi);
 
     void onLineCount(int count);
 }

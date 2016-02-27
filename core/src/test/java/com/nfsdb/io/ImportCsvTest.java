@@ -82,26 +82,8 @@ public class ImportCsvTest extends AbstractTest {
     @Test
     public void testImportSchema() throws Exception {
         String file = this.getClass().getResource("/csv/test-import.csv").getFile();
-        ImportManager.importFile(factory, file, TextFileFormat.CSV, new ImportSchema("1,INT,\n6,STRING,"));
+        ImportManager.importFile(factory, file, TextFileFormat.CSV, "IntSym=INT&Fmt2Date=STRING");
         String location = "test-import.csv";
-
-
-        Assert.assertEquals(JournalConfiguration.JournalExistenceCheck.EXISTS, factory.getConfiguration().exists(location));
-
-        Journal r = factory.reader(location);
-        JournalMetadata m = r.getMetadata();
-        Assert.assertEquals(ColumnType.INT, m.getColumn(1).type);
-        Assert.assertEquals(ColumnType.STRING, m.getColumn(6).type);
-    }
-
-    @Test
-    public void testImportSchemaFile() throws Exception {
-        String file = this.getClass().getResource("/csv/test-import.csv").getFile();
-        ImportManager.importFile(factory, file, TextFileFormat.CSV, new ImportSchema(
-                new File(this.getClass().getResource("/csv/test-import-schema.csv").getFile())
-        ));
-        String location = "test-import.csv";
-
 
         Assert.assertEquals(JournalConfiguration.JournalExistenceCheck.EXISTS, factory.getConfiguration().exists(location));
 

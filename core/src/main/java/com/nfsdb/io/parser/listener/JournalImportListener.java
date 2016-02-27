@@ -33,7 +33,11 @@ import com.nfsdb.io.ImportedColumnMetadata;
 import com.nfsdb.io.ImportedColumnType;
 import com.nfsdb.log.Log;
 import com.nfsdb.log.LogFactory;
-import com.nfsdb.misc.*;
+import com.nfsdb.misc.Chars;
+import com.nfsdb.misc.Dates;
+import com.nfsdb.misc.Misc;
+import com.nfsdb.misc.Numbers;
+import com.nfsdb.std.DirectByteCharSequence;
 import com.nfsdb.std.LongList;
 import com.nfsdb.std.ObjList;
 import com.nfsdb.store.ColumnType;
@@ -47,8 +51,8 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
     private final JournalWriterFactory factory;
     private final String location;
     private final LongList errors = new LongList();
-    private JournalWriter writer;
     private ObjList<ImportedColumnMetadata> metadata;
+    private JournalWriter writer;
     private long _size;
 
     public JournalImportListener(JournalWriterFactory factory, String location) {
@@ -99,48 +103,48 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
     }
 
     @Override
-    public void onFields(int line, CharSequence[] values, int hi) {
+    public void onFields(int line, ObjList<DirectByteCharSequence> values, int hi) {
         boolean append = true;
         try {
             JournalEntryWriter w = writer.entryWriter();
             for (int i = 0; i < hi; i++) {
-                if (Unsafe.arrayGet(values, i).length() == 0) {
+                if (values.getQuick(i).length() == 0) {
                     continue;
                 }
                 try {
-                    switch (metadata.getQuick(i).importedType) {
+                    switch (metadata.getQuick(i).type) {
                         case STRING:
-                            w.putStr(i, Unsafe.arrayGet(values, i));
+                            w.putStr(i, values.getQuick(i));
                             break;
                         case DOUBLE:
-                            w.putDouble(i, Numbers.parseDouble(Unsafe.arrayGet(values, i)));
+                            w.putDouble(i, Numbers.parseDouble(values.getQuick(i)));
                             break;
                         case INT:
-                            w.putInt(i, Numbers.parseInt(Unsafe.arrayGet(values, i)));
+                            w.putInt(i, Numbers.parseInt(values.getQuick(i)));
                             break;
                         case FLOAT:
-                            w.putFloat(i, Numbers.parseFloat(Unsafe.arrayGet(values, i)));
+                            w.putFloat(i, Numbers.parseFloat(values.getQuick(i)));
                             break;
                         case DATE_ISO:
-                            w.putDate(i, Dates.parseDateTime(Unsafe.arrayGet(values, i)));
+                            w.putDate(i, Dates.parseDateTime(values.getQuick(i)));
                             break;
                         case DATE_1:
-                            w.putDate(i, Dates.parseDateTimeFmt1(Unsafe.arrayGet(values, i)));
+                            w.putDate(i, Dates.parseDateTimeFmt1(values.getQuick(i)));
                             break;
                         case DATE_2:
-                            w.putDate(i, Dates.parseDateTimeFmt2(Unsafe.arrayGet(values, i)));
+                            w.putDate(i, Dates.parseDateTimeFmt2(values.getQuick(i)));
                             break;
                         case DATE_3:
-                            w.putDate(i, Dates.parseDateTimeFmt3(Unsafe.arrayGet(values, i)));
+                            w.putDate(i, Dates.parseDateTimeFmt3(values.getQuick(i)));
                             break;
                         case SYMBOL:
-                            w.putSym(i, Unsafe.arrayGet(values, i));
+                            w.putSym(i, values.getQuick(i));
                             break;
                         case LONG:
-                            w.putLong(i, Numbers.parseLong(Unsafe.arrayGet(values, i)));
+                            w.putLong(i, Numbers.parseLong(values.getQuick(i)));
                             break;
                         case BOOLEAN:
-                            w.putBool(i, Chars.equalsIgnoreCase(Unsafe.arrayGet(values, i), "true"));
+                            w.putBool(i, Chars.equalsIgnoreCase(values.getQuick(i), "true"));
                             break;
                         default:
                             break;
@@ -161,7 +165,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
     }
 
     @Override
-    public void onHeader(CharSequence[] values, int hi) {
+    public void onHeader(ObjList<DirectByteCharSequence> values, int hi) {
     }
 
     @Override
@@ -174,10 +178,12 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
             try {
                 switch (factory.getConfiguration().exists(location)) {
                     case DOES_NOT_EXIST:
-                        writer = factory.bulkWriter(new JournalStructure(location, this.metadata = metadata));
+                        this.metadata = metadata;
+                        writer = factory.bulkWriter(createStructure());
                         break;
                     case EXISTS:
-                        writer = mapColumnsAndOpenWriter(location, this.metadata = metadata);
+                        this.metadata = metadata;
+                        writer = mapColumnsAndOpenWriter();
                         break;
                     default:
                         throw ImportNameException.INSTANCE;
@@ -190,8 +196,29 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
         }
     }
 
+    private JournalStructure createStructure() {
+        ObjList<ColumnMetadata> m = new ObjList<>(metadata.size());
+        for (int i = 0, n = metadata.size(); i < n; i++) {
+            ColumnMetadata cm = new ColumnMetadata();
+            ImportedColumnMetadata im = metadata.getQuick(i);
+            cm.name = im.name.toString();
+            cm.type = im.type.getColumnType();
+
+            switch (cm.type) {
+                case STRING:
+                    cm.size = cm.avgSize + 4;
+                    break;
+                default:
+                    cm.size = cm.type.size();
+                    break;
+            }
+            m.add(cm);
+        }
+        return new JournalStructure(location, m);
+    }
+
     @SuppressWarnings("unchecked")
-    private JournalWriter mapColumnsAndOpenWriter(String location, ObjList<ImportedColumnMetadata> metadata) throws JournalException {
+    private JournalWriter mapColumnsAndOpenWriter() throws JournalException {
         JournalMetadata<Object> jm = factory.getConfiguration().createMetadata(new JournalKey<>(location));
 
         // now, compare column count.
@@ -210,9 +237,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
         for (int i = 0, n = metadata.size(); i < n; i++) {
             ImportedColumnMetadata im = metadata.getQuick(i);
             ColumnMetadata cm = jm.getColumnQuick(i);
-
-            im.type = cm.type;
-            im.importedType = toImportedType(cm.type, im.importedType);
+            im.type = toImportedType(cm.type, im.type);
         }
 
         return factory.bulkWriter(jm);

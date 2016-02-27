@@ -25,14 +25,11 @@ import com.nfsdb.ex.NumericException;
 import com.nfsdb.io.ImportedColumnMetadata;
 import com.nfsdb.io.ImportedColumnType;
 import com.nfsdb.misc.Numbers;
-import com.nfsdb.store.ColumnType;
 
 public class IntProbe implements TypeProbe {
     @Override
     public void getMetadata(ImportedColumnMetadata m) {
-        m.type = ColumnType.INT;
-        m.importedType = ImportedColumnType.INT;
-        m.size = 4;
+        m.type = ImportedColumnType.INT;
     }
 
     @Override

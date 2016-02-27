@@ -144,7 +144,6 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
             int l = parseMethod(ptr, len);
             len -= l;
             ptr += l;
-//            _lo += l;
         }
 
         long p = ptr;
