@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.io.parser.listener;
 
@@ -39,6 +39,7 @@ import com.nfsdb.misc.Misc;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.std.DirectByteCharSequence;
 import com.nfsdb.std.LongList;
+import com.nfsdb.std.Mutable;
 import com.nfsdb.std.ObjList;
 import com.nfsdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -46,23 +47,29 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.Closeable;
 
 @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
-public class JournalImportListener implements InputAnalysisListener, Closeable {
+public class JournalImportListener implements InputAnalysisListener, Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(JournalImportListener.class);
     private final JournalWriterFactory factory;
-    private final String location;
     private final LongList errors = new LongList();
+    private String location;
     private ObjList<ImportedColumnMetadata> metadata;
     private JournalWriter writer;
     private long _size;
 
-    public JournalImportListener(JournalWriterFactory factory, String location) {
+    public JournalImportListener(JournalWriterFactory factory) {
         this.factory = factory;
-        this.location = location;
+    }
+
+    @Override
+    public void clear() {
+        writer = Misc.free(writer);
+        errors.clear();
+        _size = 0;
     }
 
     @Override
     public void close() {
-        Misc.free(writer);
+        clear();
     }
 
     @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS")
@@ -91,6 +98,11 @@ public class JournalImportListener implements InputAnalysisListener, Closeable {
 
     public JournalMetadata getMetadata() {
         return writer.getMetadata();
+    }
+
+    public JournalImportListener of(String location) {
+        this.location = location;
+        return this;
     }
 
     @Override

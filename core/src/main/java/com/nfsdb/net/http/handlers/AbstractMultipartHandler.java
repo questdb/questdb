@@ -65,12 +65,12 @@ public abstract class AbstractMultipartHandler implements ContextHandler, Multip
             h.chunky = true;
             onPartBegin(context, hb);
         }
-        onData(context, hb, data);
+        onData(context, data);
     }
 
     protected abstract void onComplete0(IOContext context) throws IOException;
 
-    protected abstract void onData(IOContext context, RequestHeaderBuffer hb, ByteSequence data) throws DisconnectedChannelException, SlowWritableChannelException;
+    protected abstract void onData(IOContext context, ByteSequence data) throws DisconnectedChannelException, SlowWritableChannelException;
 
     protected abstract void onPartBegin(IOContext context, RequestHeaderBuffer hb) throws IOException;
 

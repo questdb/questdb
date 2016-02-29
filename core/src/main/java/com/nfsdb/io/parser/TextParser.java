@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.io.parser;
 
@@ -29,7 +29,7 @@ import java.io.Closeable;
 
 public interface TextParser extends Closeable, Mutable {
 
-    void analyse(long addr, int len, int sampleSize, InputAnalysisListener lsnr);
+    void analyseStructure(long addr, int len, int sampleSize, InputAnalysisListener lsnr);
 
     int getLineCount();
 
@@ -39,6 +39,8 @@ public interface TextParser extends Closeable, Mutable {
 
     void parseLast();
 
+    void putSchema(CharSequence schema);
+
     /**
      * Prepares parser to re-parse input keeping metadata intact.
      */
@@ -46,5 +48,4 @@ public interface TextParser extends Closeable, Mutable {
 
     void setHeader(boolean header);
 
-    void setSchema(CharSequence schema);
 }

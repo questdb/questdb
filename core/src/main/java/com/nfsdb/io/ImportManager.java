@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.io;
 
@@ -99,7 +99,7 @@ public final class ImportManager {
                 case EXISTS_FOREIGN:
                     throw new JournalRuntimeException("A foreign file/directory already exists: " + (new File(factory.getConfiguration().getJournalBase(), location)));
                 default:
-                    try (JournalImportListener l = new JournalImportListener(factory, location)) {
+                    try (JournalImportListener l = new JournalImportListener(factory).of(location)) {
                         analyzeAndParse(file, parser, l, schema, sampleSize);
                     }
                     break;
@@ -141,8 +141,8 @@ public final class ImportManager {
                     MappedByteBuffer buf = channel.map(FileChannel.MapMode.READ_ONLY, p, size - p < bufSize ? size - p : bufSize);
                     try {
                         if (p == 0) {
-                            parser.setSchema(schema);
-                            parser.analyse(ByteBuffers.getAddress(buf), buf.remaining(), sampleSize, listener);
+                            parser.putSchema(schema);
+                            parser.analyseStructure(ByteBuffers.getAddress(buf), buf.remaining(), sampleSize, listener);
                         }
                         p += buf.remaining();
                         parser.parse(ByteBuffers.getAddress(buf), buf.remaining(), Integer.MAX_VALUE, listener);

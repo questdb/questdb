@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.net.http.handlers;
 
@@ -62,7 +62,7 @@ public class UploadHandler extends AbstractMultipartHandler {
     }
 
     @Override
-    protected void onData(IOContext context, RequestHeaderBuffer hb, ByteSequence data) {
+    protected void onData(IOContext context, ByteSequence data) {
         UploadContext h = lvContext.get(context);
         if (h != null && h.mf != null) {
             PlainFile mf = h.mf;

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.io.parser;
 
@@ -59,42 +59,8 @@ public class DelimitedTextParser implements TextParser {
     private boolean header;
     private long lastQuotePos = -1;
 
-    public DelimitedTextParser() {
-    }
-
-    @Override
-    public final void clear() {
-        restart();
-        this.fields.clear();
-        this.calcFields = true;
-        this.csPool.clear();
-        this.mPool.clear();
-        this.mel.clear();
-    }
-
-    @Override
-    public void close() {
-        if (lineRollBufPtr != 0) {
-            Unsafe.getUnsafe().freeMemory(lineRollBufPtr);
-            lineRollBufPtr = 0;
-        }
-        schema.close();
-    }
-
-    @Override
-    public TextParser of(char separator) {
-        clear();
-        this.separator = separator;
-        return this;
-    }
-
-    public void setSchema(CharSequence schema) {
-        if (schema != null) {
-            this.schema.of(schema);
-        }
-    }
-
-    public void analyse(long addr, int len, int sampleSize, InputAnalysisListener ial) {
+    public void analyseStructure(long addr, int len, int sampleSize, InputAnalysisListener ial) {
+        this.schema.parse();
         mel.of(schema);
         parse(addr, len, sampleSize, mel);
         mel.onLineCount(lineCount);
@@ -106,6 +72,13 @@ public class DelimitedTextParser implements TextParser {
     @Override
     public int getLineCount() {
         return lineCount;
+    }
+
+    @Override
+    public TextParser of(char separator) {
+        clear();
+        this.separator = separator;
+        return this;
     }
 
     @Override
@@ -128,6 +101,12 @@ public class DelimitedTextParser implements TextParser {
         }
     }
 
+    public void putSchema(CharSequence schema) {
+        if (schema != null) {
+            this.schema.put(schema);
+        }
+    }
+
     public final void restart() {
         this.fieldLo = 0;
         this.eol = false;
@@ -142,6 +121,25 @@ public class DelimitedTextParser implements TextParser {
     @Override
     public void setHeader(boolean header) {
         this.header = header;
+    }
+
+    @Override
+    public final void clear() {
+        restart();
+        this.fields.clear();
+        this.calcFields = true;
+        this.csPool.clear();
+        this.mPool.clear();
+        this.mel.clear();
+    }
+
+    @Override
+    public void close() {
+        if (lineRollBufPtr != 0) {
+            Unsafe.getUnsafe().freeMemory(lineRollBufPtr);
+            lineRollBufPtr = 0;
+        }
+        schema.close();
     }
 
     private void calcField() {

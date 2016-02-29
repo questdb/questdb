@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,13 +17,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb.net.http.handlers;
 
 import com.nfsdb.ex.DisconnectedChannelException;
 import com.nfsdb.ex.SlowWritableChannelException;
 import com.nfsdb.factory.JournalFactory;
+import com.nfsdb.factory.JournalWriterFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
 import com.nfsdb.io.parser.DelimitedTextParser;
@@ -59,9 +60,8 @@ public class ImportHandler extends AbstractMultipartHandler {
     public void setup(IOContext context) {
         ImportHandlerContext h = lvContext.get(context);
         if (h == null) {
-            lvContext.set(context, h = new ImportHandlerContext());
+            lvContext.set(context, new ImportHandlerContext(factory));
         }
-        h.textParser = new DelimitedTextParser();
     }
 
     private static CharSink pad(CharSink b, int w, CharSequence value) {
@@ -182,74 +182,106 @@ public class ImportHandler extends AbstractMultipartHandler {
     }
 
     @Override
-    protected void onData(IOContext context, RequestHeaderBuffer hb, ByteSequence data) throws DisconnectedChannelException, SlowWritableChannelException {
+    protected void onData(IOContext context, ByteSequence data) throws DisconnectedChannelException, SlowWritableChannelException {
         int len;
 
         ImportHandlerContext h = lvContext.get(context);
+        if ((len = data.length()) < 1) {
+            return;
+        }
 
-        if (hb.getContentDispositionFilename() != null && (len = data.length()) > 0) {
-            long lo = ((DirectByteCharSequence) data).getLo();
-            if (!h.analysed) {
-                analyseFormat(h, lo, len);
-                if (h.dataFormatValid) {
-                    h.textParser.analyse(lo, len, 100, h.importer);
-                    h.analysed = true;
+        switch (h.part) {
+            case DATA:
+                long lo = ((DirectByteCharSequence) data).getLo();
+                if (!h.analysed) {
+                    analyseFormat(h, lo, len);
+                    if (h.dataFormatValid) {
+                        h.textParser.analyseStructure(lo, len, 100, h.importer);
+                        h.analysed = true;
+                    }
                 }
-            }
 
-            if (h.dataFormatValid) {
-                h.textParser.parse(lo, len, Integer.MAX_VALUE, h.importer);
-            } else {
-                context.simpleResponse().send(400, "Invalid data format");
-                throw DisconnectedChannelException.INSTANCE;
-            }
+                if (h.dataFormatValid) {
+                    h.textParser.parse(lo, len, Integer.MAX_VALUE, h.importer);
+                } else {
+                    context.simpleResponse().send(400, "Invalid data format");
+                    throw DisconnectedChannelException.INSTANCE;
+                }
+                break;
+            case SCHEMA:
+                h.textParser.putSchema((DirectByteCharSequence) data);
+                break;
+            default:
+                break;
+
         }
     }
 
     @Override
     protected void onPartBegin(IOContext context, RequestHeaderBuffer hb) throws IOException {
-        if (hb.getContentDispositionFilename() != null) {
-            if (Chars.equals(hb.getContentDispositionName(), "data")) {
+        ImportHandlerContext h = lvContext.get(context);
+        if (Chars.equals("data", hb.getContentDispositionName())) {
 
-                ImportHandlerContext h = lvContext.get(context);
-                h.analysed = false;
-                h.importer = new JournalImportListener(factory, hb.getContentDispositionFilename().toString());
-            } else {
-                context.simpleResponse().send(400, "Unrecognised field");
+            if (hb.getContentDispositionFilename() == null) {
+                context.simpleResponse().send(400, "data field should be of file type");
                 throw DisconnectedChannelException.INSTANCE;
             }
+            h.analysed = false;
+            h.importer.of(hb.getContentDispositionFilename().toString());
+            h.part = MessagePart.DATA;
+        } else if (Chars.equals("schema", hb.getContentDispositionName())) {
+            h.part = MessagePart.SCHEMA;
+        } else {
+            h.part = MessagePart.UNKNOWN;
         }
     }
 
     @Override
     protected void onPartEnd(IOContext context) throws IOException {
         ImportHandlerContext h = lvContext.get(context);
-        if (h != null && h.textParser != null) {
-            h.textParser.parseLast();
-            h.importer.commit();
-            sendSummary(context, h);
-            h.textParser = Misc.free(h.textParser);
-            h.importer = Misc.free(h.importer);
+        if (h != null) {
+            switch (h.part) {
+                case DATA:
+                    h.textParser.parseLast();
+                    h.importer.commit();
+                    sendSummary(context, h);
+                    h.clear();
+                    break;
+                default:
+                    break;
+            }
         }
+    }
+
+    private enum MessagePart {
+        SCHEMA, DATA, UNKNOWN
     }
 
     private static class ImportHandlerContext implements Mutable, Closeable {
         private boolean analysed = false;
         private boolean dataFormatValid = false;
-        private TextParser textParser;
+        private TextParser textParser = new DelimitedTextParser();
         private JournalImportListener importer;
+        private MessagePart part = MessagePart.UNKNOWN;
+
+        private ImportHandlerContext(JournalWriterFactory factory) {
+            this.importer = new JournalImportListener(factory);
+        }
 
         @Override
         public void clear() {
+            part = MessagePart.UNKNOWN;
             analysed = false;
             dataFormatValid = false;
-            textParser = Misc.free(textParser);
-            importer = Misc.free(importer);
+            textParser.clear();
+            importer.clear();
         }
 
         @Override
         public void close() {
             clear();
+            textParser = Misc.free(textParser);
+            importer = Misc.free(importer);
         }
     }
 }
