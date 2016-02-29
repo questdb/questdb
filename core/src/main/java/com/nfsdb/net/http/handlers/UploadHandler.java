@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http.handlers;
 
@@ -43,6 +43,14 @@ public class UploadHandler extends AbstractMultipartHandler {
 
     public UploadHandler(File path) {
         this.path = path;
+    }
+
+    @Override
+    public void setup(IOContext context) {
+        UploadContext h = lvContext.get(context);
+        if (h == null) {
+            lvContext.set(context, new UploadContext());
+        }
     }
 
     @Override
@@ -93,9 +101,6 @@ public class UploadHandler extends AbstractMultipartHandler {
         if (file != null) {
             try {
                 UploadContext h = lvContext.get(context);
-                if (h == null) {
-                    lvContext.set(context, h = new UploadContext());
-                }
                 h.mf = new PlainFile(new File(path, file.toString()), 21, JournalMode.APPEND);
             } catch (IOException ignore) {
                 sendError(context);

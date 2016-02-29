@@ -21,10 +21,7 @@
 
 package com.nfsdb.io;
 
-import com.nfsdb.ex.JournalRuntimeException;
-import com.nfsdb.io.parser.CsvParser;
-import com.nfsdb.io.parser.PipeParser;
-import com.nfsdb.io.parser.TabParser;
+import com.nfsdb.io.parser.DelimitedTextParser;
 import com.nfsdb.io.parser.TextParser;
 
 public enum TextFileFormat {
@@ -42,15 +39,6 @@ public enum TextFileFormat {
     }
 
     public TextParser newParser() {
-        switch (this) {
-            case CSV:
-                return new CsvParser();
-            case TAB:
-                return new TabParser();
-            case PIPE:
-                return new PipeParser();
-            default:
-                throw new JournalRuntimeException("Unknown file format: " + this);
-        }
+        return new DelimitedTextParser().of(delimiter);
     }
 }

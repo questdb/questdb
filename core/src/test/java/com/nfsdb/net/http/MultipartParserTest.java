@@ -123,5 +123,9 @@ public class MultipartParserTest {
                 lines.add(data.toString());
             }
         }
+
+        @Override
+        public void setup(IOContext context) {
+        }
     }
 }

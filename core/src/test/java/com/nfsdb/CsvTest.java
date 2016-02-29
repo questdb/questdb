@@ -22,8 +22,7 @@
 package com.nfsdb;
 
 import com.nfsdb.io.ImportManager;
-import com.nfsdb.io.parser.CsvParser;
-import com.nfsdb.io.parser.TabParser;
+import com.nfsdb.io.parser.DelimitedTextParser;
 import com.nfsdb.io.parser.TextParser;
 import com.nfsdb.io.parser.listener.Listener;
 import com.nfsdb.io.sink.StringSink;
@@ -52,7 +51,7 @@ public class CsvTest {
 
 
         ImportManager.parse(new File(this.getClass().getResource("/csv/test-headers.csv").getFile())
-                , new CsvParser()
+                , new DelimitedTextParser().of(',')
                 , 1024 * 1024
                 , true
                 , new Listener() {
@@ -91,22 +90,22 @@ public class CsvTest {
 
     @Test
     public void testParseDosCsvSmallBuf() throws Exception {
-        assertFile("/csv/test-dos.csv", 10, new CsvParser());
+        assertFile("/csv/test-dos.csv", 10, new DelimitedTextParser().of(','));
     }
 
     @Test
     public void testParseTab() throws Exception {
-        assertFile("/csv/test.txt", 1024 * 1024, new TabParser());
+        assertFile("/csv/test.txt", 1024 * 1024, new DelimitedTextParser().of('\t'));
     }
 
     @Test
     public void testParseTabSmallBuf() throws Exception {
-        assertFile("/csv/test.txt", 10, new TabParser());
+        assertFile("/csv/test.txt", 10, new DelimitedTextParser().of('\t'));
     }
 
     @Test
     public void testParseUnixCsvSmallBuf() throws Exception {
-        assertFile("/csv/test-unix.csv", 10, new CsvParser());
+        assertFile("/csv/test-unix.csv", 10, new DelimitedTextParser().of(','));
     }
 
 /*

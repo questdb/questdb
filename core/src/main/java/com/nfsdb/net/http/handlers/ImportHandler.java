@@ -26,7 +26,9 @@ import com.nfsdb.ex.SlowWritableChannelException;
 import com.nfsdb.factory.JournalFactory;
 import com.nfsdb.factory.configuration.ColumnMetadata;
 import com.nfsdb.factory.configuration.JournalMetadata;
-import com.nfsdb.io.parser.*;
+import com.nfsdb.io.parser.DelimitedTextParser;
+import com.nfsdb.io.parser.FormatParser;
+import com.nfsdb.io.parser.TextParser;
 import com.nfsdb.io.parser.listener.JournalImportListener;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.misc.Chars;
@@ -51,6 +53,15 @@ public class ImportHandler extends AbstractMultipartHandler {
 
     public ImportHandler(JournalFactory factory) {
         this.factory = factory;
+    }
+
+    @Override
+    public void setup(IOContext context) {
+        ImportHandlerContext h = lvContext.get(context);
+        if (h == null) {
+            lvContext.set(context, h = new ImportHandlerContext());
+        }
+        h.textParser = new DelimitedTextParser();
     }
 
     private static CharSink pad(CharSink b, int w, CharSequence value) {
@@ -155,32 +166,16 @@ public class ImportHandler extends AbstractMultipartHandler {
     }
 
     private void analyseFormat(ImportHandlerContext context, long address, int len) {
-        final FormatParser parser = tlFormatParser.get();
+        final FormatParser fmtParser = tlFormatParser.get();
 
-        parser.of(address, len);
-        context.dataFormatValid = parser.getFormat() != null && parser.getStdDev() < 0.5;
+        fmtParser.of(address, len);
+        context.dataFormatValid = fmtParser.getFormat() != null && fmtParser.getStdDev() < 0.5;
 
         if (context.dataFormatValid) {
-            if (context.textParser != null) {
-                context.textParser.clear();
-            } else {
-                switch (parser.getFormat()) {
-                    case CSV:
-                        context.textParser = new CsvParser();
-                        break;
-                    case TAB:
-                        context.textParser = new TabParser();
-                        break;
-                    case PIPE:
-                        context.textParser = new PipeParser();
-                        break;
-                    default:
-                        context.dataFormatValid = false;
-                        break;
-                }
-            }
+            context.textParser.of(fmtParser.getFormat().getDelimiter());
         }
     }
+
 
     @Override
     protected void onComplete0(IOContext context) throws IOException {
@@ -197,7 +192,7 @@ public class ImportHandler extends AbstractMultipartHandler {
             if (!h.analysed) {
                 analyseFormat(h, lo, len);
                 if (h.dataFormatValid) {
-                    h.textParser.analyse(null, lo, len, 100, h.importer);
+                    h.textParser.analyse(lo, len, 100, h.importer);
                     h.analysed = true;
                 }
             }
@@ -217,10 +212,6 @@ public class ImportHandler extends AbstractMultipartHandler {
             if (Chars.equals(hb.getContentDispositionName(), "data")) {
 
                 ImportHandlerContext h = lvContext.get(context);
-                if (h == null) {
-                    lvContext.set(context, h = new ImportHandlerContext());
-                }
-
                 h.analysed = false;
                 h.importer = new JournalImportListener(factory, hb.getContentDispositionFilename().toString());
             } else {

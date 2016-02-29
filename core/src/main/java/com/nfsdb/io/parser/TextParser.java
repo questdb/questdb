@@ -29,9 +29,11 @@ import java.io.Closeable;
 
 public interface TextParser extends Closeable, Mutable {
 
-    void analyse(CharSequence schema, long addr, int len, int sampleSize, InputAnalysisListener lsnr);
+    void analyse(long addr, int len, int sampleSize, InputAnalysisListener lsnr);
 
     int getLineCount();
+
+    TextParser of(char separator);
 
     void parse(long lo, long len, int lim, Listener listener);
 
@@ -43,4 +45,6 @@ public interface TextParser extends Closeable, Mutable {
     void restart();
 
     void setHeader(boolean header);
+
+    void setSchema(CharSequence schema);
 }

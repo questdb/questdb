@@ -27,4 +27,6 @@ import java.io.IOException;
 
 public interface MultipartListener {
     void onChunk(IOContext context, RequestHeaderBuffer hb, DirectByteCharSequence data, boolean continued) throws IOException;
+
+    void setup(IOContext context);
 }

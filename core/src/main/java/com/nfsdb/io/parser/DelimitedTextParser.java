@@ -33,23 +33,24 @@ import com.nfsdb.std.DirectByteCharSequence;
 import com.nfsdb.std.ObjList;
 import com.nfsdb.std.ObjectPool;
 
-public abstract class AbstractTextParser implements TextParser {
-    private final static Log LOG = LogFactory.getLog(AbstractTextParser.class);
+public class DelimitedTextParser implements TextParser {
+    private final static Log LOG = LogFactory.getLog(DelimitedTextParser.class);
     private final ObjList<DirectByteCharSequence> fields = new ObjList<>();
     private final ObjectPool<DirectByteCharSequence> csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 16);
     private final ObjectPool<ImportedColumnMetadata> mPool = new ObjectPool<>(ImportedColumnMetadata.FACTORY, 256);
     private final MetadataExtractorListener mel = new MetadataExtractorListener(mPool);
     private final SchemaImpl schema = new SchemaImpl(csPool, mPool);
-    boolean inQuote;
-    boolean delayedOutQuote;
-    boolean eol;
-    int fieldIndex;
-    long fieldLo;
-    long fieldHi;
-    int lineCount;
-    boolean useLineRollBuf = false;
-    long lineRollBufCur;
-    boolean ignoreEolOnce;
+    private boolean ignoreEolOnce;
+    private char separator;
+    private boolean inQuote;
+    private boolean delayedOutQuote;
+    private boolean eol;
+    private int fieldIndex;
+    private long fieldLo;
+    private long fieldHi;
+    private int lineCount;
+    private boolean useLineRollBuf = false;
+    private long lineRollBufCur;
     private Listener listener;
     private boolean calcFields;
     private long lastLineStart;
@@ -58,12 +59,43 @@ public abstract class AbstractTextParser implements TextParser {
     private boolean header;
     private long lastQuotePos = -1;
 
-    public AbstractTextParser() {
-        clear();
+    public DelimitedTextParser() {
     }
 
-    public void analyse(CharSequence schema, long addr, int len, int sampleSize, InputAnalysisListener ial) {
-        mel.of(schema == null ? null : this.schema.of(schema));
+    @Override
+    public final void clear() {
+        restart();
+        this.fields.clear();
+        this.calcFields = true;
+        this.csPool.clear();
+        this.mPool.clear();
+        this.mel.clear();
+    }
+
+    @Override
+    public void close() {
+        if (lineRollBufPtr != 0) {
+            Unsafe.getUnsafe().freeMemory(lineRollBufPtr);
+            lineRollBufPtr = 0;
+        }
+        schema.close();
+    }
+
+    @Override
+    public TextParser of(char separator) {
+        clear();
+        this.separator = separator;
+        return this;
+    }
+
+    public void setSchema(CharSequence schema) {
+        if (schema != null) {
+            this.schema.of(schema);
+        }
+    }
+
+    public void analyse(long addr, int len, int sampleSize, InputAnalysisListener ial) {
+        mel.of(schema);
         parse(addr, len, sampleSize, mel);
         mel.onLineCount(lineCount);
         ial.onMetadata(mel.getMetadata());
@@ -112,25 +144,6 @@ public abstract class AbstractTextParser implements TextParser {
         this.header = header;
     }
 
-    @Override
-    public final void clear() {
-        restart();
-        this.fields.clear();
-        this.calcFields = true;
-        this.csPool.clear();
-        this.mPool.clear();
-        this.mel.clear();
-    }
-
-    @Override
-    public void close() {
-        if (lineRollBufPtr != 0) {
-            Unsafe.getUnsafe().freeMemory(lineRollBufPtr);
-            lineRollBufPtr = 0;
-        }
-        schema.close();
-    }
-
     private void calcField() {
         if (fields.size() == fieldIndex) {
             fields.add(csPool.next());
@@ -151,13 +164,90 @@ public abstract class AbstractTextParser implements TextParser {
         lineRollBufLen = len;
     }
 
-    void ignoreEolOnce() {
+    private void ignoreEolOnce() {
         eol = true;
         fieldIndex = 0;
         ignoreEolOnce = false;
     }
 
-    protected abstract void parse(long lo, long len, int lim);
+    private void parse(long lo, long len, int maxLine) {
+        long hi = lo + len;
+        long ptr = lo;
+
+        OUT:
+        while (ptr < hi) {
+            byte c = Unsafe.getUnsafe().getByte(ptr++);
+
+            if (useLineRollBuf) {
+                putToRollBuf(c);
+            }
+
+            this.fieldHi++;
+
+            if (delayedOutQuote && c != '"') {
+                inQuote = delayedOutQuote = false;
+            }
+
+            if (c == separator) {
+                if (eol) {
+                    uneol(lo);
+                }
+
+                if (inQuote || ignoreEolOnce) {
+                    continue;
+                }
+                stashField();
+                fieldIndex++;
+            } else {
+                switch (c) {
+                    case '"':
+                        quote();
+                        break;
+                    case '\r':
+                    case '\n':
+
+                        if (inQuote) {
+                            break;
+                        }
+
+                        if (eol) {
+                            this.fieldLo = this.fieldHi;
+                            break;
+                        }
+
+                        stashField();
+
+                        if (ignoreEolOnce) {
+                            ignoreEolOnce();
+                            break;
+                        }
+
+                        triggerLine(ptr);
+
+                        if (lineCount > maxLine) {
+                            break OUT;
+                        }
+                        break;
+                    default:
+                        if (eol) {
+                            uneol(lo);
+                        }
+                        break;
+                }
+            }
+        }
+
+        if (useLineRollBuf) {
+            return;
+        }
+
+        if (eol) {
+            this.fieldLo = 0;
+        } else {
+            rollLine(lo, hi);
+            useLineRollBuf = true;
+        }
+    }
 
     void putToRollBuf(byte c) {
         if (lineRollBufCur - lineRollBufPtr == lineRollBufLen) {

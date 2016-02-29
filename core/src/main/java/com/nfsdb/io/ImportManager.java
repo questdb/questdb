@@ -141,7 +141,8 @@ public final class ImportManager {
                     MappedByteBuffer buf = channel.map(FileChannel.MapMode.READ_ONLY, p, size - p < bufSize ? size - p : bufSize);
                     try {
                         if (p == 0) {
-                            parser.analyse(schema, ByteBuffers.getAddress(buf), buf.remaining(), sampleSize, listener);
+                            parser.setSchema(schema);
+                            parser.analyse(ByteBuffers.getAddress(buf), buf.remaining(), sampleSize, listener);
                         }
                         p += buf.remaining();
                         parser.parse(ByteBuffers.getAddress(buf), buf.remaining(), Integer.MAX_VALUE, listener);

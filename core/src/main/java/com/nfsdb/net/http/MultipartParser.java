@@ -54,7 +54,7 @@ public class MultipartParser implements Closeable, Mutable {
 
     @Override
     public final void clear() {
-        this.state = State.START_BOUNDARY;
+        this.state = State.START_PARSING;
         this.boundaryPtr = 0;
         this.consumedBoundaryLen = 0;
         hb.clear();
@@ -82,6 +82,10 @@ public class MultipartParser implements Closeable, Mutable {
                     _lo = ptr;
                     state = State.BODY_CONTINUED;
                     break;
+                case START_PARSING:
+                    listener.setup(context);
+                    state = State.START_BOUNDARY;
+                    // fall thru
                 case START_BOUNDARY:
                     boundaryPtr = 2;
                     // fall thru
@@ -198,6 +202,7 @@ public class MultipartParser implements Closeable, Mutable {
     }
 
     private enum State {
+        START_PARSING,
         START_BOUNDARY,
         PARTIAL_START_BOUNDARY,
         HEADERS,

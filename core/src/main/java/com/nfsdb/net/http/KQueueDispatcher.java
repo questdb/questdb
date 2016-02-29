@@ -80,7 +80,7 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
             this.kqueue.listen(socketFd);
             LOG.debug().$("Listening socket: ").$(socketFd).$();
         } else {
-            throw new NetworkError("Failed to find socket");
+            throw new NetworkError("Failed to bind socket");
         }
     }
 
