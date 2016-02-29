@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- ******************************************************************************/
+ */
 
 package com.nfsdb;
 
@@ -490,6 +490,16 @@ public class Partition<T> implements Closeable {
         applyTx(Journal.TX_LIMIT_EVAL, null);
     }
 
+    private void closePartiallyOpenColumns() {
+        for (int i = 0, n = columns.length; i < n; i++) {
+            AbstractColumn c = columns[i];
+            if (c != null) {
+                c.close();
+                columns[i] = null;
+            }
+        }
+    }
+
     void commit() throws JournalException {
         for (int i = 0, k = indexProxies.size(); i < k; i++) {
             indexProxies.getQuick(i).getIndex().commit();
@@ -540,37 +550,42 @@ public class Partition<T> implements Closeable {
     private void open0() throws JournalException {
         columns = new AbstractColumn[journal.getMetadata().getColumnCount()];
 
-        for (int i = 0; i < columns.length; i++) {
-            switch (Unsafe.arrayGet(columnMetadata, i).type) {
-                case STRING:
-                case BINARY:
-                    Unsafe.arrayPut(columns, i,
-                            new VariableColumn(
-                                    new MemoryFile(
-                                            new File(partitionDir, Unsafe.arrayGet(columnMetadata, i).name + ".d"),
-                                            Unsafe.arrayGet(columnMetadata, i).bitHint, journal.getMode()
-                                    ),
-                                    new MemoryFile(
-                                            new File(partitionDir, Unsafe.arrayGet(columnMetadata, i).name + ".i"),
-                                            Unsafe.arrayGet(columnMetadata, i).indexBitHint,
-                                            journal.getMode()
-                                    )
-                            )
-                    );
-                    break;
-                default:
-                    Unsafe.arrayPut(columns, i,
-                            new FixedColumn(
-                                    new MemoryFile(
-                                            new File(partitionDir, Unsafe.arrayGet(columnMetadata, i).name + ".d"),
-                                            Unsafe.arrayGet(columnMetadata, i).bitHint,
-                                            journal.getMode()
-                                    ),
-                                    Unsafe.arrayGet(columnMetadata, i).size
-                            )
-                    );
-                    break;
+        try {
+            for (int i = 0; i < columns.length; i++) {
+                switch (Unsafe.arrayGet(columnMetadata, i).type) {
+                    case STRING:
+                    case BINARY:
+                        Unsafe.arrayPut(columns, i,
+                                new VariableColumn(
+                                        new MemoryFile(
+                                                new File(partitionDir, Unsafe.arrayGet(columnMetadata, i).name + ".d"),
+                                                Unsafe.arrayGet(columnMetadata, i).bitHint, journal.getMode()
+                                        ),
+                                        new MemoryFile(
+                                                new File(partitionDir, Unsafe.arrayGet(columnMetadata, i).name + ".i"),
+                                                Unsafe.arrayGet(columnMetadata, i).indexBitHint,
+                                                journal.getMode()
+                                        )
+                                )
+                        );
+                        break;
+                    default:
+                        Unsafe.arrayPut(columns, i,
+                                new FixedColumn(
+                                        new MemoryFile(
+                                                new File(partitionDir, Unsafe.arrayGet(columnMetadata, i).name + ".d"),
+                                                Unsafe.arrayGet(columnMetadata, i).bitHint,
+                                                journal.getMode()
+                                        ),
+                                        Unsafe.arrayGet(columnMetadata, i).size
+                                )
+                        );
+                        break;
+                }
             }
+        } catch (JournalException e) {
+            closePartiallyOpenColumns();
+            throw e;
         }
 
         int tsIndex = journal.getMetadata().getTimestampIndex();
