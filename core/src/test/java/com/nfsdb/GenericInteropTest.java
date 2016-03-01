@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb;
 
@@ -25,6 +25,7 @@ import com.nfsdb.ex.JournalException;
 import com.nfsdb.ex.JournalMetadataException;
 import com.nfsdb.factory.configuration.JournalMetadataBuilder;
 import com.nfsdb.factory.configuration.JournalStructure;
+import com.nfsdb.misc.Files;
 import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.test.tools.AbstractTest;
@@ -32,6 +33,7 @@ import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.Iterator;
 
 public class GenericInteropTest extends AbstractTest {
@@ -199,6 +201,34 @@ public class GenericInteropTest extends AbstractTest {
         Assert.assertNull(d.nullable);
         Assert.assertEquals(1234567, d.ticks);
         Assert.assertEquals(11000, d.modulo);
+    }
+
+    @Test
+    public void testInvalidColumnName() throws Exception {
+
+        File location = null;
+
+        try (JournalWriter w = factory.writer(new JournalStructure("test") {{
+            $int("id").index();
+            $str("status?\0x");
+        }})) {
+            location = w.getLocation();
+            w.entryWriter();
+            System.out.println("ok");
+        } catch (JournalException ignore) {
+            //ignore
+        }
+
+        Assert.assertNotNull(location);
+
+        Files.deleteOrException(location);
+
+        try (JournalWriter w = factory.writer(new JournalStructure("test") {{
+            $int("id").index();
+            $str("status");
+        }})) {
+            w.entryWriter();
+        }
     }
 
     @Test
