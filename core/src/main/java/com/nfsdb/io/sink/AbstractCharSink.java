@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p/>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p/>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p/>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -102,9 +102,79 @@ public abstract class AbstractCharSink implements CharSink {
     }
 
     @Override
+    public CharSink putQuoted(CharSequence cs) {
+        put('\"').put(cs).put('\"');
+        return this;
+    }
+
+    @Override
     public CharSink putTrim(double value, int scale) {
         Numbers.appendTrim(this, value, scale);
         return this;
+    }
+
+    @Override
+    public CharSink putUtf8Escaped(CharSequence cs) {
+        int hi = cs.length();
+        int i = 0;
+        while (i < hi) {
+            char c = cs.charAt(i++);
+            if (c > 31 && c < 128) {
+                switch (c) {
+                    case '/':
+                    case '\"':
+                    case '\\':
+                        put('\\');
+                        // intentional fall through
+                    default:
+                        put(c);
+                        break;
+                }
+            } else if (c < 32) {
+                putEscaped(c);
+            } else if (c < 2048) {
+                put((char) (192 | c >> 6)).put((char) (128 | c & 63));
+            } else if (Character.isSurrogate(c)) {
+                i = encodeSurrogate(c, cs, i, hi);
+            } else {
+                put((char) (224 | c >> 12)).put((char) (128 | c >> 6 & 63)).put((char) (128 | c & 63));
+            }
+        }
+        return this;
+    }
+
+    @Override
+    public CharSink putUtf8EscapedAndQuoted(CharSequence cs) {
+        put('\"').putUtf8Escaped(cs).put('\"');
+        return this;
+    }
+
+    private int encodeSurrogate(char c, CharSequence in, int pos, int hi) {
+        int dword;
+        if (Character.isHighSurrogate(c)) {
+            if (hi - pos < 1) {
+                put('?');
+                return pos;
+            } else {
+                char c2 = in.charAt(pos++);
+                if (Character.isLowSurrogate(c2)) {
+                    dword = Character.toCodePoint(c, c2);
+                } else {
+                    put('?');
+                    return pos;
+                }
+            }
+        } else if (Character.isLowSurrogate(c)) {
+            put('?');
+            return pos;
+        } else {
+            dword = c;
+        }
+        put((char) (240 | dword >> 18)).
+                put((char) (128 | dword >> 12 & 63)).
+                put((char) (128 | dword >> 6 & 63)).
+                put((char) (128 | dword & 63));
+        return pos;
     }
 
     private void put(Throwable throwable, StackTraceElement[] enclosingTrace, String caption, String prefix, Set<Throwable> dejaVu) {
@@ -174,6 +244,29 @@ public abstract class AbstractCharSink implements CharSink {
         put(e.getClass().getName());
         if (e.getMessage() != null) {
             put(": ").put(e.getMessage());
+        }
+    }
+
+    private void putEscaped(char c) {
+        switch (c) {
+            case '\b':
+                put("\\b");
+                break;
+            case '\f':
+                put("\\f");
+                break;
+            case '\n':
+                put("\\n");
+                break;
+            case '\r':
+                put("\\r");
+                break;
+            case '\t':
+                put("\\t");
+                break;
+            default:
+                put(c);
+                break;
         }
     }
 }

@@ -44,17 +44,14 @@ import com.nfsdb.std.LocalValue;
 import com.nfsdb.std.Mutable;
 import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.std.ThreadLocal;
+import com.nfsdb.store.ColumnType;
 import org.jetbrains.annotations.Nullable;
-import sun.nio.cs.ArrayEncoder;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.nio.charset.Charset;
-import java.nio.charset.CharsetEncoder;
 import java.util.Iterator;
 
 public class JsonHandler implements ContextHandler {
-    private static final ArrayEncoder UTF8Encoder;
     private static final ThreadLocal<QueryCompiler> queryCompilerLocal = new ThreadLocal<>(new ObjectFactory<QueryCompiler>() {
         @Override
         public QueryCompiler newInstance() {
@@ -63,7 +60,7 @@ public class JsonHandler implements ContextHandler {
     });
 
     private final JournalFactoryPool factoryPool;
-    private final LocalValue<$Context> localContext = new LocalValue<>();
+    private final LocalValue<JsonHandlerContext> localContext = new LocalValue<>();
 
     public JsonHandler(JournalFactoryPool factoryPool) {
         this.factoryPool = factoryPool;
@@ -71,10 +68,9 @@ public class JsonHandler implements ContextHandler {
 
     @Override
     public void handle(IOContext context) throws IOException {
-        $Context ctx = localContext.get(context);
+        JsonHandlerContext ctx = localContext.get(context);
         if (ctx == null) {
-            ctx = new $Context();
-            localContext.set(context, ctx);
+            localContext.set(context, ctx = new JsonHandlerContext());
         }
         ctx.fd = context.channel.getFd();
 
@@ -85,8 +81,7 @@ public class JsonHandler implements ContextHandler {
             ctx.info().$("Empty query request received. Sending empty reply.").$();
             r.status(200, "application/json; charset=utf-8");
             r.sendHeader();
-            sendQuery(r, "", ctx);
-            r.put("\"}");
+            r.put('{').putQuoted("query").put(':').putQuoted("").put('}');
             r.sendChunk();
             r.done();
             return;
@@ -98,7 +93,7 @@ public class JsonHandler implements ContextHandler {
 
         CharSequence limit = context.request.getUrlParam("limit");
         if (limit != null) {
-            int sepPos = separatorPos(limit);
+            int sepPos = Chars.indexOf(limit, ',');
             try {
                 if (sepPos > 0) {
                     skip = Numbers.parseLong(limit, 0, sepPos);
@@ -131,36 +126,32 @@ public class JsonHandler implements ContextHandler {
                 $(", skip: ").$(skip).
                 $(", stop: ").$(stop).
                 $(", withCount: ").$(ctx.includeCount).$();
-        if (executeQuery(r, ctx) == null) {
-            return;
-        }
 
-        // Send records.
-        resume(context);
+        if (executeQuery(r, ctx) != null) {
+            // Send records.
+            resume(context);
+        }
     }
 
     @Override
     public void resume(IOContext context) throws IOException {
-        ChunkedResponse r = context.chunkedResponse();
-        $Context ctx = localContext.get(context);
+        JsonHandlerContext ctx = localContext.get(context);
 
         Iterator<Record> records = ctx.records;
         if (records == null) {
-            records = executeQuery(r, ctx);
-            if (records == null) {
-                return;
-            }
+            return;
         }
 
+        RecordMetadata metadata = ctx.metadata;
+        final int columnCount = metadata.getColumnCount();
+
+        if (ctx.current == null && records.hasNext()) {
+            ctx.current = records.next();
+            ctx.count++;
+        }
+
+        final ChunkedResponse r = context.chunkedResponse();
         try {
-            RecordMetadata metadata = ctx.metadata;
-            int columnCount = metadata.getColumnCount();
-
-            if (ctx.current == null && records.hasNext()) {
-                ctx.current = records.next();
-                ctx.count++;
-            }
-
             while (ctx.current != null) {
                 if (ctx.count > ctx.skip) {
                     r.bookmark();
@@ -173,20 +164,17 @@ public class JsonHandler implements ContextHandler {
                             // Record separator.
                             r.put(',');
                         }
-                        r.put("{");
-
+                        r.put('{');
                         // Columns.
                         for (int col = 0; col < columnCount; col++) {
-                            r.put('\"');
-                            stringToJson(r, metadata.getColumn(col).getName(), ctx);
-                            r.put("\":");
-                            putValue(ctx, r, metadata, ctx.current, col);
-
-                            if (col < columnCount - 1) {
+                            RecordColumnMetadata m = metadata.getColumnQuick(col);
+                            if (col > 0) {
                                 r.put(',');
                             }
+                            r.putQuoted(m.getName()).put(':');
+                            putValue(r, m.getType(), ctx.current, col);
                         }
-                        r.put("}");
+                        r.put('}');
                         r.sendChunk();
                     }
                 }
@@ -200,254 +188,146 @@ public class JsonHandler implements ContextHandler {
             }
             sendDone(r, ctx);
         } catch (ResponseContentBufferTooSmallException ex) {
-            ctx.debug().$("Buffer overflow on record ").$(ctx.count - 1).$();
             if (!r.resetToBookmark()) {
-                ctx.error().$("IO buffer overflown but no previous bookmark found. Record ").$(ctx.count - 1)
-                        .$(". Aborting the query.").$();
+                ctx.error().$("IO buffer overflown but no previous bookmark found. Record ").
+                        $(ctx.count - 1).$(". Aborting the query.").$();
                 throw ex;
             }
+            ctx.debug().$("Buffer overflow on record ").$(ctx.count - 1).$();
             r.sendChunk();
         }
     }
 
-    private static int separatorPos(CharSequence str) {
-        if (str == null) return -1;
-        for (int i = 0; i < str.length(); i++) {
-            if (str.charAt(i) == ',') {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    private static void sendQuery(ChunkedResponse r, CharSequence query, $Context ctx) {
-        r.put("{ \"query\": \"");
-        stringToJson(r, query != null ? query : "", ctx);
-        r.put("\"");
-    }
-
-    private static void sendException(ChunkedResponse r, CharSequence query, int position, CharSequence message, int status, $Context ctx) throws DisconnectedChannelException, SlowWritableChannelException {
+    private static void sendException(ChunkedResponse r, CharSequence query, int position, CharSequence message, int status) throws DisconnectedChannelException, SlowWritableChannelException {
         r.status(status, "application/json; charset=utf-8");
         r.sendHeader();
-        sendQuery(r, query, ctx);
-        r.put(", \"error\" : \"");
-        stringToJson(r, message, ctx);
-        r.put("\"");
-        if (position >= 0) {
-            r.put(", \"position\" : ");
-            Numbers.append(r, position);
-        }
-
-        r.put("}");
+        r.put('{').
+                putQuoted("query").put(':').putUtf8EscapedAndQuoted(query).put(',').
+                putQuoted("error").put(':').putQuoted(message).put(',').
+                putQuoted("position").put(':').put(position);
+        r.put('}');
         r.sendChunk();
         r.done();
     }
 
-    private static void putValue($Context ctx, ChunkedResponse r, RecordMetadata metadata, Record rec, int col) {
-        RecordColumnMetadata column = metadata.getColumn(col);
-        switch (column.getType()) {
+    private static void putValue(CharSink sink, ColumnType type, Record rec, int col) {
+        switch (type) {
             case BOOLEAN:
-                r.put(rec.getBool(col) ? "true" : "false");
+                sink.put(rec.getBool(col));
                 break;
             case BYTE:
-                byte b = rec.get(col);
-                if (b == Byte.MIN_VALUE) {
-                    r.put("null");
-                } else {
-                    Numbers.append(r, b);
-                }
+                sink.put(rec.get(col));
                 break;
             case DOUBLE:
-                double d = rec.getDouble(col);
-                if (Double.isNaN(d)) {
-                    r.put("null");
-                    break;
-                }
-
-                if (d == Double.POSITIVE_INFINITY) {
-                    d = Double.MAX_VALUE;
-                } else if (d == Double.NEGATIVE_INFINITY) {
-                    d = Double.MIN_VALUE;
-                }
-                putDouble(r, d);
+                sink.put(rec.getDouble(col), 10);
                 break;
-
             case FLOAT:
-                float f = rec.getFloat(col);
-                if (Float.isNaN(f)) {
-                    r.put("null");
-                    break;
-                }
-
-                if (f == Float.POSITIVE_INFINITY) {
-                    f = Float.MAX_VALUE;
-                } else if (f == Float.NEGATIVE_INFINITY) {
-                    f = Float.MIN_VALUE;
-                }
-                putDouble(r, f);
+                sink.put(rec.getFloat(col), 10);
                 break;
             case INT:
-                int iint = rec.getInt(col);
-                if (iint == Integer.MIN_VALUE) {
-                    r.put("null");
+                final int i = rec.getInt(col);
+                if (i == Integer.MIN_VALUE) {
+                    sink.put("null");
                     break;
                 }
-                Numbers.append(r, iint);
+                Numbers.append(sink, i);
                 break;
             case LONG:
             case DATE:
-                long ll = rec.getLong(col);
-                if (ll == Long.MIN_VALUE) {
-                    r.put("null");
+                final long l = rec.getLong(col);
+                if (l == Long.MIN_VALUE) {
+                    sink.put("null");
                     break;
                 }
-                Numbers.append(r, rec.getLong(col));
+                sink.put(l);
                 break;
             case SHORT:
-                Numbers.append(r, rec.getShort(col));
+                sink.put(rec.getShort(col));
                 break;
             case STRING:
-                sendStringOrNull(r, rec.getFlyweightStr(col), ctx);
+                putStringOrNull(sink, rec.getFlyweightStr(col));
                 break;
             case SYMBOL:
-                sendStringOrNull(r, rec.getSym(col), ctx);
+                putStringOrNull(sink, rec.getSym(col));
                 break;
             case BINARY:
-                r.put('[');
-                r.put(']');
+                sink.put('[');
+                sink.put(']');
                 break;
-
             default:
-                throw new IllegalArgumentException(String.format("Column type %s not supported", column.getType()));
+                break;
         }
     }
 
-    private static void sendStringOrNull(CharSink r, CharSequence str, $Context ctx) {
+    private static void putStringOrNull(CharSink r, CharSequence str) {
         if (str == null) {
             r.put("null");
         } else {
-            r.put('\"');
-            stringToJson(r, str, ctx);
-            r.put('\"');
-        }
-    }
-
-    private static void putDouble(ChunkedResponse r, double d) {
-        Numbers.append(r, d, 10);
-    }
-
-    private static void stringToJson(CharSink r, CharSequence str, $Context ctx) {
-        for (int i = 0; i < str.length(); i++) {
-            char c = str.charAt(i);
-            if (c < 128) {
-                encodeControl(r, c);
-            } else if (c < 0xD800) {
-                encodeUnicode(r, ctx.encodingChar, ctx.encoded, c);
-            } else {
-                r.put("?");
-            }
-        }
-    }
-
-    private static void encodeUnicode(CharSink r, char[] charSource, byte[] encoded, char c) {
-        // Encode utf-8
-        charSource[0] = c;
-        int len = UTF8Encoder.encode(charSource, 0, 1, encoded);
-        for (int j = 0; j < len; j++) {
-            r.put((char) encoded[j]);
-        }
-    }
-
-    private static void encodeControl(CharSink r, char c) {
-        switch (c) {
-            case '\"':
-            case '\\':
-            case '/':
-                r.put('\\');
-                r.put(c);
-                break;
-            case '\b':
-                r.put("\\b");
-                break;
-            case '\f':
-                r.put("\\f");
-                break;
-            case '\n':
-                r.put("\\n");
-                break;
-            case '\r':
-                r.put("\\r");
-                break;
-            case '\t':
-                r.put("\\t");
-                break;
-            default:
-                r.put(c);
-                break;
+            r.putUtf8EscapedAndQuoted(str);
         }
     }
 
     @Nullable
-    private Iterator<Record> executeQuery(ChunkedResponse r, $Context ctx) throws IOException {
+    private Iterator<Record> executeQuery(ChunkedResponse r, JsonHandlerContext ctx) throws IOException {
         CharSequence query = ctx.query;
         try {
             // Prepare Context.
             JournalCachingFactory factory = factoryPool.get();
             ctx.factory = factory;
-
-            ctx.recordSource = queryCompilerLocal.get().compileSource(factory, query);
+            ctx.recordSource = queryCompilerLocal.get().compileAndRemoveFromCache(factory, query);
             RecordCursor records = ctx.recordSource.prepareCursor(factory);
 
             r.status(200, "application/json; charset=utf-8");
             r.sendHeader();
-            sendQuery(r, query, ctx);
+            r.put('{').putQuoted("query").put(':').putUtf8EscapedAndQuoted(query);
+            r.put(',').putQuoted("columns").put(':').put('[');
+
             RecordMetadata metadata = records.getMetadata();
             ctx.metadata = metadata;
             ctx.records = records;
 
             // List columns.
             int columnCount = metadata.getColumnCount();
-            r.put(", \"columns\":[");
 
             for (int i = 0; i < columnCount; i++) {
-                RecordColumnMetadata column = metadata.getColumn(i);
-                r.put("{\"name\":\"");
-                r.put(column.getName());
-                r.put("\",\"type\":\"");
-                r.put(column.getType().name());
-                r.put("\"}");
-                if (i < columnCount - 1) {
+                RecordColumnMetadata column = metadata.getColumnQuick(i);
+                if (i > 0) {
                     r.put(',');
                 }
+                r.put('{').
+                        putQuoted("name").put(':').putQuoted(column.getName()).
+                        put(',').
+                        putQuoted("type").put(':').putQuoted(column.getType().name());
+                r.put('}');
             }
-            r.put("], \"result\":[");
+            r.put(']').put(',');
+            r.putQuoted("result").put(':').put('[');
             return records;
         } catch (ParserException pex) {
+            // todo: log exception properly
             ctx.info().$("Parser error executing query ").$(query).$(pex).$();
-            sendException(r, query, QueryError.getPosition(), QueryError.getMessage(), 400, ctx);
+            sendException(r, query, QueryError.getPosition(), QueryError.getMessage(), 400);
         } catch (JournalException jex) {
             ctx.info().$("Server error executing query ").$(query).$(jex).$();
-            sendException(r, query, -1, jex.getMessage(), 500, ctx);
+            sendException(r, query, 0, jex.getMessage(), 500);
         } catch (InterruptedException ex) {
+            // todo: probably eliminate this
             ctx.info().$("Error executing query. Server is shutting down. Query: ").$(query).$(ex).$();
-            sendException(r, query, -1, "Server is shutting down.", 500, ctx);
+            sendException(r, query, 0, "Server is shutting down.", 500);
         }
         return null;
     }
 
-    private void sendDone(ChunkedResponse r, $Context ctx) throws DisconnectedChannelException, SlowWritableChannelException {
-        if (ctx.count >= 0) {
-            // Finita.
+    private void sendDone(ChunkedResponse r, JsonHandlerContext ctx) throws DisconnectedChannelException, SlowWritableChannelException {
+        if (ctx.count > -1) {
             r.bookmark();
-
             r.put(']');
             if (ctx.count > ctx.stop && !ctx.includeCount) {
                 r.put(",\"moreExist\":true");
             }
 
             if (ctx.includeCount) {
-                r.put(",\"totalCount\":");
-                r.put(ctx.count);
+                r.put(',').putQuoted("totalCount").put(':').put(ctx.count);
             }
             r.put('}');
             ctx.count = -1;
@@ -456,10 +336,8 @@ public class JsonHandler implements ContextHandler {
         r.done();
     }
 
-    private static class $Context implements Mutable, Closeable {
-        private static final Log LOG = LogFactory.getLog($Context.class);
-        private final byte[] encoded = new byte[4];
-        private final char[] encodingChar = new char[1];
+    private static class JsonHandlerContext implements Mutable, Closeable {
+        private static final Log LOG = LogFactory.getLog(JsonHandlerContext.class);
         public RecordSource recordSource;
         private CharSequence query;
         private RecordMetadata metadata;
@@ -506,15 +384,6 @@ public class JsonHandler implements ContextHandler {
 
         private LogRecord info() {
             return LOG.info().$('[').$(fd).$("] ");
-        }
-    }
-
-    static {
-        CharsetEncoder encoder = Charset.forName("utf-8").newEncoder();
-        if (encoder instanceof ArrayEncoder) {
-            UTF8Encoder = (ArrayEncoder) encoder;
-        } else {
-            UTF8Encoder = null;
         }
     }
 }

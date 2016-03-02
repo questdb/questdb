@@ -291,7 +291,7 @@ public class HttpServerTest extends AbstractJournalTest {
         server.start();
 
         try {
-            Socket socket = new Socket(InetAddress.getLocalHost(), 9000);
+            Socket socket = new Socket("127.0.0.1", 9000);
             OutputStream os = socket.getOutputStream();
             Thread.sleep(600);
 

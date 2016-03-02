@@ -72,7 +72,6 @@ public class QueryCompiler {
     private final static LongConstant LONG_ZERO_CONST = new LongConstant(0L);
     private final static IntHashSet joinBarriers;
     private final QueryParser parser = new QueryParser();
-    //    private final JournalReaderFactory factory;
     private final AssociativeCache<RecordSource> cache = new AssociativeCache<>(8, 1024);
     private final QueryFilterAnalyser queryFilterAnalyser = new QueryFilterAnalyser();
     private final StringSink columnNameAssembly = new StringSink();
@@ -137,16 +136,19 @@ public class QueryCompiler {
         return compileSource(factory, query).prepareCursor(factory);
     }
 
-    public RecordSource compileSource(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
+    public RecordSource compileAndRemoveFromCache(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
         RecordSource rs = cache.poll(query);
         if (rs == null) {
-            final QueryModel model = parser.parse(query).getQueryModel();
-            final CharSequenceObjHashMap<Parameter> map = new CharSequenceObjHashMap<>();
+            return resetAndCompile(factory, query);
+        }
+        rs.reset();
+        return rs;
+    }
 
-            model.setParameterMap(map);
-            rs = resetAndCompile(model, factory);
-            rs.setParameterMap(map);
-            cache.put(query, rs);
+    public RecordSource compileSource(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
+        RecordSource rs = cache.peek(query);
+        if (rs == null) {
+            cache.put(query, rs = resetAndCompile(factory, query));
         } else {
             rs.reset();
         }
@@ -1498,9 +1500,14 @@ public class QueryCompiler {
         return node;
     }
 
-    private RecordSource resetAndCompile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private RecordSource resetAndCompile(JournalReaderFactory factory, CharSequence query) throws JournalException, ParserException {
         clearState();
-        return compile(model, factory);
+        final QueryModel model = parser.parse(query).getQueryModel();
+        final CharSequenceObjHashMap<Parameter> map = new CharSequenceObjHashMap<>();
+        model.setParameterMap(map);
+        RecordSource rs = compile(model, factory);
+        rs.setParameterMap(map);
+        return rs;
     }
 
     private void resetAndOptimise(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
