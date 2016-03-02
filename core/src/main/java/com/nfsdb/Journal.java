@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -422,6 +422,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      * Read an object by global row id
      *
      * @param rowID the global row id to read
+     * @param obj   object, which attributes will be populated from journal record
      * @throws com.nfsdb.ex.JournalException if there is an error
      */
     public void read(long rowID, T obj) throws JournalException {
@@ -467,9 +468,12 @@ public class Journal<T> implements Iterable<T>, Closeable {
     }
 
     /**
-     * Selects column names to be accessed by this journal.
+     * Selects column names to be accessed by this journal. Non-selected columns and their
+     * associated files will not be accessed. This method used to improve performance of
+     * journal reads.
      *
      * @param columns the names of all the columns that have to be read.
+     * @return instance of journal with narrowed column selection
      */
     public Journal<T> select(String... columns) {
         if (columns == null || columns.length == 0) {

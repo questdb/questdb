@@ -325,7 +325,7 @@ final public class Dates {
 
     /**
      * Calculates if year is leap year using following algorithm:
-     * <p/>
+     * <p>
      * http://en.wikipedia.org/wiki/Leap_year
      *
      * @param year the year

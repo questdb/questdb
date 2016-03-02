@@ -45,36 +45,36 @@ public final class ImportManager {
 
     /**
      * Imports journal from delimited values text file. At present three types of delimited value files are supported:
-     * <el>
-     * <li>CSV</li>
-     * <li>TAB</li>
-     * <li>PIPE</li>
-     * </el>
-     * <p/>
+     * <ul>
+     * <li>CSV
+     * <li>TAB
+     * <li>PIPE
+     * </ul>
+     * <p>
      * Both Unix and DOS line endings are automatically detected and parsed.
-     * <p/>
+     * <p>
      * Parser will attempt to determine types of fields in the input by probing first 100 lines. It does a good job if
      * 100 lines are representative of the rest of file. In case 100 is too low, there is another method that takes
      * sample size as a parameter.
-     * <p/>
+     * <p>
      * Once types are auto-detected it is possible to override them by supplying Import Schema. Import Schema is a
      * CSV file with required three columns:
      * <pre>
      *     column#,type,format
      * </pre>
      * Where:
-     * <el>
-     * <li>column# - is column number between 0 and count-1, where count is number of columns in input</li>
-     * <li>type - is a value of ColumnType enum</li>
+     * <ul>
+     * <li>column# - is column number between 0 and count-1, where count is number of columns in input
+     * <li>type - is a value of ColumnType enum
      * <li>format - is mainly to disambiguate dates. Format selects date parser for column. There are only three
-     * possible values that are currently supported: YYYY-MM-DDThh:mm:ss, YYYY-MM-DD hh:mm:ss and MM/DD/YYYY</li>
-     * </el>
+     * possible values that are currently supported: YYYY-MM-DDThh:mm:ss, YYYY-MM-DD hh:mm:ss and MM/DD/YYYY
+     * </ul>
      * Import Schema does not have to describe all columns in input. It is there only to correct auto-detection mistakes.
      * So specify only columns where auto-detection gets it wrong.
-     * <p/>
+     * <p>
      * To import data efficiently parser can use up to 2GB of physical memory, or 1/4 of your total physical memory,
      * whichever is lower.
-     * </p>
+     * <p>
      * Parser will always attempt to infer journal structure from input, even of journal already exists. If input
      * structure does not match structure of journal - an exception is thrown.
      *
@@ -82,7 +82,7 @@ public final class ImportManager {
      * @param fileName name of input file
      * @param format   inout format
      * @param schema   optional instance of ImportSchema
-     * @throws IOException
+     * @throws IOException in case imported file cannot be read
      */
     public static void importFile(JournalWriterFactory factory, String fileName, TextFileFormat format, @Nullable CharSequence schema) throws IOException {
         importFile(factory, fileName, format, schema, SAMPLE_SIZE);

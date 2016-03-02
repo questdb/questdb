@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -32,9 +32,10 @@ public class Base64 {
      * @param text base64Binary data is likely to be long, and decoding requires
      *             each character to be accessed twice (once for counting length, another
      *             for decoding.)
-     *             <p/>
+     *             <p>
      *             A benchmark showed that taking {@link String} is faster, presumably
      *             because JIT can inline a lot of string access (with data of 1K chars, it was twice as fast)
+     * @return decoded bytes
      */
     public static byte[] parseBase64Binary(String text) {
         final int buflen = guessLength(text);
@@ -82,20 +83,20 @@ public class Base64 {
 
     /**
      * computes the length of binary data speculatively.
-     * <p/>
-     * <p/>
+     * <p>
+     * <p>
      * Our requirement is to create byte[] of the exact length to store the binary data.
      * If we do this in a straight-forward way, it takes two passes over the data.
      * Experiments show that this is a non-trivial overhead (35% or so is spent on
      * the first pass in calculating the length.)
-     * <p/>
-     * <p/>
+     * <p>
+     * <p>
      * So the approach here is that we compute the length speculatively, without looking
      * at the whole contents. The obtained speculative value is never less than the
      * actual length of the binary data, but it may be bigger. So if the speculation
      * goes wrong, we'll pay the cost of reallocation and buffer copying.
-     * <p/>
-     * <p/>
+     * <p>
+     * <p>
      * If the base64 text is tightly packed with no indentation nor illegal char
      * (like what most web services produce), then the speculation of this method
      * will be correct, so we get the performance benefit.

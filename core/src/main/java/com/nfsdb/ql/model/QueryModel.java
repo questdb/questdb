@@ -309,7 +309,7 @@ public class QueryModel implements Mutable {
      * Every time ordering takes place optimiser will keep at most two lists:
      * one is last known order the other is new order. If new order cost is better
      * optimiser will replace last known order with new one.
-     * <p/>
+     * <p>
      * To facilitate this behaviour the function will always return non-current list.
      *
      * @return non current order list.

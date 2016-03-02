@@ -43,7 +43,7 @@ public class SelectedColumnsMetadata extends AbstractRecordMetadata {
      * Metadata that contains only selected columns from delegate metadata. There is also
      * a possibility to rename column via renameMap. Columns that are not renamed do
      * not have to be present in rename map.
-     * <p/>
+     * <p>
      * Both names and renameMap are read only and this metadata instances will not hold on
      * to their references, so these data structured do not have to be allocated new each time
      * constructing metadata.

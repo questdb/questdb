@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -175,7 +175,7 @@ public class KVIndex implements Closeable {
      * Removes empty space at end of index files. This is useful if your chosen file copy routine does not support
      * sparse files, e.g. where size of file content significantly smaller then file size in directory catalogue.
      *
-     * @throws JournalException
+     * @throws JournalException in case of IO problems.
      */
     public void compact() throws JournalException {
         kData.compact();
@@ -221,15 +221,15 @@ public class KVIndex implements Closeable {
 
     /**
      * Counts values for a key. Uses case for this method is best illustrated by this code examples:
-     * <p/>
+     * <pre>
      * int c = index.getValueCount(key)
-     * for (int i = c-1; i >=0; i--) {
-     * long value = index.getValueQuick(key, i)
+     * for (int i = c-1; i {@literal >}=0; i--) {
+     *     long value = index.getValueQuick(key, i)
      * }
-     * <p/>
+     * </pre>
      * Note that the loop above is deliberately in reverse order, as #getValueQuick performance diminishes the
      * father away from last the current index is.
-     * <p/>
+     * <p>
      * If it is your intention to iterate through all index values consider #getValues, as it offers better for
      * this use case.
      *

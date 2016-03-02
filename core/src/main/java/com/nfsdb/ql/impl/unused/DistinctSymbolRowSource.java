@@ -36,7 +36,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 /**
  * Takes stream of rowids, converts them to int values of FixedColumn and
  * returns rowids for non-repeated int values. Rowids returned on first in - first out basis.
- * <p/>
+ * <p>
  * One of use cases might be streaming of journal in reverse chronological order (latest rows first)
  * via this filter to receive last records for every value of given column.
  */
